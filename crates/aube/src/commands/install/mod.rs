@@ -54,7 +54,7 @@ use materialize::{
     GvsPrewarmInputs, combine_install_pipeline_errors, materialize_channel, spawn_gvs_prewarm,
 };
 pub(crate) use settings::PeerDependencyRules;
-pub(crate) use settings::{ResolverConfigInputs, configure_resolver};
+pub(crate) use settings::{ResolverConfigInputs, configure_resolver, finalize_lockfile_graph};
 pub(crate) use side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root};
 
 use settings::{

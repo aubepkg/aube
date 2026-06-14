@@ -609,7 +609,14 @@ async fn write_fix_lockfile_update(
     }
 
     sync_root_dep_specifiers(&mut new_graph, &output_manifest);
-    super::prepare_resolved_graph_for_lockfile_write(&mut new_graph);
+    crate::commands::install::finalize_lockfile_graph(
+        cwd,
+        &mut new_graph,
+        &output_manifest,
+        false,
+        None,
+    )
+    .await;
     super::write_and_log_lockfile(cwd, &new_graph, &output_manifest)?;
     for name in &updated {
         let old = before

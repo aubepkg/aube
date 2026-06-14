@@ -743,8 +743,22 @@ pub async fn run(
         }
     }
 
-    super::prepare_resolved_graph_for_lockfile_write(&mut graph);
-    write_update_lockfile(&cwd, &graph, &manifest)?;
+    install::finalize_lockfile_graph(
+        &cwd,
+        &mut graph,
+        &manifest,
+        args.ignore_pnpmfile,
+        args.pnpmfile.as_deref(),
+    )
+    .await;
+    write_update_lockfile(
+        &cwd,
+        &graph,
+        &manifest,
+        args.ignore_pnpmfile,
+        absolute_cli_pnpmfile(&cwd, args.pnpmfile.as_deref()).as_deref(),
+    )
+    .await?;
 
     // Propagate `--ignore-pnpmfile` / `--pnpmfile` / `--global-pnpmfile`
     // into the chained install. Frozen-prefer normally short-circuits to
@@ -1314,7 +1328,10 @@ async fn run_filtered(
                     &pkg.manifest,
                     root_manifest,
                     root_graph,
-                )?;
+                    args.ignore_pnpmfile,
+                    absolute_cli_pnpmfile(&pkg.dir, args.pnpmfile.as_deref()).as_deref(),
+                )
+                .await?;
             }
         }
         Ok(())
@@ -1327,12 +1344,14 @@ fn resolve_shared_workspace_lockfile(cwd: &std::path::Path) -> miette::Result<bo
     with_update_settings_ctx(cwd, aube_settings::resolved::shared_workspace_lockfile)
 }
 
-fn merge_filtered_update_lockfile(
+async fn merge_filtered_update_lockfile(
     workspace_root: &std::path::Path,
     pkg_dir: &std::path::Path,
     pkg_manifest: &aube_manifest::PackageJson,
     root_manifest: &aube_manifest::PackageJson,
     root_graph: aube_lockfile::LockfileGraph,
+    ignore_pnpmfile: bool,
+    cli_pnpmfile: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let importer_path = super::workspace_importer_path(workspace_root, pkg_dir)?;
     let remove_pkg_lockfile = importer_path != ".";
@@ -1350,7 +1369,10 @@ fn merge_filtered_update_lockfile(
         root_manifest,
         root_graph,
         pkg_graph,
-    )?;
+        ignore_pnpmfile,
+        cli_pnpmfile,
+    )
+    .await?;
     if remove_pkg_lockfile {
         std::fs::remove_file(&pkg_lockfile)
             .into_diagnostic()
@@ -1359,10 +1381,29 @@ fn merge_filtered_update_lockfile(
     Ok(())
 }
 
-fn write_update_lockfile(
+// Resolve a `--pnpmfile` override to an absolute path against `cwd`. The
+// workspace-merge stamp below detects the pnpmfile against `workspace_root`,
+// not the member `cwd`, so a relative override has to be anchored here or it
+// would resolve against the wrong base.
+fn absolute_cli_pnpmfile(
+    cwd: &std::path::Path,
+    cli: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    cli.map(|p| {
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        }
+    })
+}
+
+async fn write_update_lockfile(
     cwd: &std::path::Path,
     graph: &aube_lockfile::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
+    ignore_pnpmfile: bool,
+    cli_pnpmfile: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let Some(workspace_root) = crate::dirs::find_workspace_root(cwd) else {
         super::write_and_log_lockfile(cwd, graph, manifest)?;
@@ -1381,15 +1422,20 @@ fn write_update_lockfile(
         &root_manifest,
         root_graph,
         graph.clone(),
+        ignore_pnpmfile,
+        cli_pnpmfile,
     )
+    .await
 }
 
-fn merge_update_graph_into_workspace_lockfile(
+async fn merge_update_graph_into_workspace_lockfile(
     workspace_root: &std::path::Path,
     pkg_dir: &std::path::Path,
     root_manifest: &aube_manifest::PackageJson,
     mut root_graph: aube_lockfile::LockfileGraph,
     mut pkg_graph: aube_lockfile::LockfileGraph,
+    ignore_pnpmfile: bool,
+    cli_pnpmfile: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     let importer_path = super::workspace_importer_path(workspace_root, pkg_dir)?;
     let pkg_deps = pkg_graph.importers.remove(".").ok_or_else(|| {
@@ -1432,7 +1478,21 @@ fn merge_update_graph_into_workspace_lockfile(
 
     let mut root_graph = root_graph.filter_deps(|_| true);
     retain_package_times(&mut root_graph);
-    super::prepare_resolved_graph_for_lockfile_write(&mut root_graph);
+    // Stamp the *root* lockfile against the workspace-root config
+    // (its package extensions + pnpmfile), matching what an install
+    // from the root would write — otherwise the shared lockfile loses
+    // the checksums on every `aube update` in a member package. Honor the
+    // same `--ignore-pnpmfile` / `--pnpmfile` flags the member resolve
+    // used so the root stamp can't re-add a pnpmfileChecksum the user
+    // opted out of (or stamp the wrong hook).
+    install::finalize_lockfile_graph(
+        workspace_root,
+        &mut root_graph,
+        root_manifest,
+        ignore_pnpmfile,
+        cli_pnpmfile,
+    )
+    .await;
     super::write_and_log_lockfile(workspace_root, &root_graph, root_manifest)?;
     Ok(())
 }

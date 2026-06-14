@@ -531,6 +531,48 @@ pub(crate) async fn stamp_pnpm_config_checksums(
     };
 }
 
+/// Finalize a freshly resolved graph for the lockfile write paths that
+/// live *outside* `install` (`update`/`upgrade`, `remove`, `dedupe`,
+/// `audit --fix`). Mirrors the install path's pre-write sequence:
+/// stamp pnpm's config checksums (`packageExtensionsChecksum` +
+/// `pnpmfileChecksum`) then apply the pnpm-parity snapshot passes
+/// (`optional: true`, `transitivePeerDependencies`).
+///
+/// Before this existed, those commands resolved a graph with both
+/// checksum fields `None` and wrote it straight to disk, so e.g.
+/// `aube upgrade` dropped the `packageExtensionsChecksum` /
+/// `pnpmfileChecksum` a prior `aube install` had recorded — and the
+/// chained frozen-prefer install reused the now-stale lockfile without
+/// restamping, so the fields never came back. pnpm writes these on
+/// every command that rewrites the lockfile; matching that keeps
+/// config-drift detection (ours and pnpm's) honest.
+///
+/// `ignore_pnpmfile` / `cli_pnpmfile` mirror the install flags: when a
+/// caller honors `--ignore-pnpmfile` the local pnpmfile is excluded
+/// from the checksum (pnpm clears it in that mode); `cli_pnpmfile` is
+/// the `--pnpmfile` override (only `update` exposes one today).
+pub(crate) async fn finalize_lockfile_graph(
+    cwd: &std::path::Path,
+    graph: &mut aube_lockfile::LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
+    ignore_pnpmfile: bool,
+    cli_pnpmfile: Option<&std::path::Path>,
+) {
+    let write_kind = aube_lockfile::detect_existing_lockfile_kind(cwd)
+        .unwrap_or(aube_lockfile::LockfileKind::Aube);
+    let files = crate::commands::FileSources::load(cwd);
+    let (ws_config, raw_workspace) = aube_manifest::workspace::load_both(cwd).unwrap_or_default();
+    let env = aube_settings::values::process_env();
+    let ctx = files.ctx(&raw_workspace, env, &[]);
+    let local_pnpmfile = if ignore_pnpmfile {
+        None
+    } else {
+        crate::pnpmfile::detect(cwd, cli_pnpmfile, ws_config.pnpmfile_path.as_deref())
+    };
+    stamp_pnpm_config_checksums(graph, write_kind, manifest, &ctx, local_pnpmfile.as_deref()).await;
+    crate::commands::prepare_resolved_graph_for_lockfile_write(graph);
+}
+
 fn merge_json_object_setting(
     ctx: &aube_settings::ResolveCtx<'_>,
     setting: &str,
@@ -1191,5 +1233,122 @@ mod peer_dependency_rules_tests {
         // match" rather than panicking or silencing everything.
         let r = rules(&[], &[], &[("react", "not-a-range")]);
         assert!(!r.silences(&unmet("parent", "react", "^18.0.0", Some("19.0.0"))));
+    }
+}
+
+#[cfg(test)]
+mod finalize_lockfile_graph_tests {
+    use super::*;
+
+    fn node_available() -> bool {
+        std::process::Command::new(crate::runtime::node_program())
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn manifest() -> aube_manifest::PackageJson {
+        aube_manifest::PackageJson {
+            name: Some("x".to_string()),
+            version: Some("1.0.0".to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Regression for `aube upgrade`/`dedupe`/`remove`/`audit` dropping
+    /// `packageExtensionsChecksum`: every command that rewrites a
+    /// pnpm-lock.yaml must stamp the checksum just like `aube install`.
+    #[tokio::test]
+    async fn finalize_stamps_package_extensions_checksum_on_pnpm_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::write(cwd.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
+        std::fs::write(
+            cwd.join("package.json"),
+            r#"{"name":"x","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join("pnpm-workspace.yaml"),
+            "packageExtensions:\n  foo@*:\n    dependencies:\n      bar: 1.0.0\n",
+        )
+        .unwrap();
+
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        assert!(graph.package_extensions_checksum.is_none());
+        // ignore_pnpmfile=true keeps this assertion node-free.
+        finalize_lockfile_graph(cwd, &mut graph, &manifest(), true, None).await;
+        assert!(
+            graph.package_extensions_checksum.is_some(),
+            "packageExtensions checksum must be stamped on pnpm-lock writes"
+        );
+    }
+
+    /// aube-lock.yaml must never grow pnpm-only checksum fields — the
+    /// stamp is a no-op when no pnpm lockfile is present.
+    #[tokio::test]
+    async fn finalize_skips_checksums_on_aube_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::write(
+            cwd.join("package.json"),
+            r#"{"name":"x","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join("pnpm-workspace.yaml"),
+            "packageExtensions:\n  foo@*:\n    dependencies:\n      bar: 1.0.0\n",
+        )
+        .unwrap();
+
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        finalize_lockfile_graph(cwd, &mut graph, &manifest(), false, None).await;
+        assert!(
+            graph.package_extensions_checksum.is_none(),
+            "aube-lock.yaml must not grow pnpm-only checksum fields"
+        );
+        assert!(graph.pnpmfile_checksum.is_none());
+    }
+
+    /// The pnpmfile half of the same regression: a local pnpmfile that
+    /// exports hooks gets its `pnpmfileChecksum` recorded on a pnpm-lock
+    /// rewrite (matching pnpm + a fresh `aube install`).
+    #[tokio::test]
+    async fn finalize_stamps_pnpmfile_checksum_on_pnpm_lock() {
+        if !node_available() {
+            eprintln!("skipping: `node` not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::write(cwd.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
+        std::fs::write(
+            cwd.join("package.json"),
+            r#"{"name":"x","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join(".pnpmfile.cjs"),
+            "module.exports = { hooks: { readPackage: (pkg) => pkg } }\n",
+        )
+        .unwrap();
+
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        finalize_lockfile_graph(cwd, &mut graph, &manifest(), false, None).await;
+        assert!(
+            graph.pnpmfile_checksum.is_some(),
+            "pnpmfile checksum must be stamped when a hook-exporting pnpmfile is present"
+        );
+
+        // --ignore-pnpmfile clears it, matching pnpm.
+        let mut ignored = aube_lockfile::LockfileGraph::default();
+        finalize_lockfile_graph(cwd, &mut ignored, &manifest(), true, None).await;
+        assert!(
+            ignored.pnpmfile_checksum.is_none(),
+            "--ignore-pnpmfile must not record a pnpmfile checksum"
+        );
     }
 }
