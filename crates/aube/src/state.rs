@@ -1114,7 +1114,8 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     // like catalog, overrides, packageExtensions, onlyBuiltDependencies
     // where any change means a real re-resolve.
     let files = crate::commands::FileSources::load(project_dir);
-    let raw_workspace = aube_manifest::workspace::load_raw(project_dir).unwrap_or_default();
+    let (ws_config, raw_workspace) =
+        aube_manifest::workspace::load_both(project_dir).unwrap_or_default();
     let env = aube_settings::values::capture_env();
     let ctx = files.ctx(&raw_workspace, &env, cli_flags);
     let mut hasher = blake3::Hasher::new();
@@ -1231,6 +1232,26 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
         }
     }
     hasher.update(b"\0");
+    // pnpmfile content. A local `.pnpmfile.{cjs,mjs}` (or a
+    // `pnpmfilePath` override) `readPackage` / `afterAllResolved` hook
+    // rewrites the resolved tree, so editing it must re-resolve. The
+    // workspace-yaml hash above only catches the `pnpmfilePath` *setting*,
+    // not the hook file's bytes — without this a changed pnpmfile rode the
+    // warm path and the hook (e.g. dependency pins) silently never
+    // re-applied, leaving node_modules and the lockfile stale (and pnpm's
+    // `readPackage` log never reappeared). Mirrors pnpm folding the
+    // pnpmfile into its own up-to-date check.
+    hasher.update(b"pnpmfile=");
+    if let Some(path) =
+        crate::pnpmfile::detect(project_dir, None, ws_config.pnpmfile_path.as_deref())
+    {
+        hasher.update(path.as_os_str().as_encoded_bytes());
+        hasher.update(b"\x1f");
+        if let Ok(bytes) = std::fs::read(&path) {
+            hasher.update(&bytes);
+        }
+    }
+    hasher.update(b"\0");
     // OS + arch + libc. Optional deps filter by these. Swap host
     // between runs (committed node_modules across machines, shared
     // CI cache volume, Rosetta switch) and the correct prebuilts
@@ -1311,7 +1332,7 @@ mod tests {
     use super::{
         InstallLayoutMode, InstallLayoutState, InstallState, InstalledPackageState,
         collect_package_json_hashes_from_manifests, empty_blake3_hash, fresh_state_file, hash_file,
-        install_state_file, member_lockfiles_stale, read_or_migrate_fresh_state,
+        hash_settings, install_state_file, member_lockfiles_stale, read_or_migrate_fresh_state,
         relative_path_or_original, remove_state, verify_install_layout,
     };
     use std::collections::BTreeMap;
@@ -1769,6 +1790,41 @@ mod tests {
         assert_eq!(
             member_lockfiles_stale(&dir, &state),
             Some("packages/b was removed from the workspace".to_string())
+        );
+    }
+
+    #[test]
+    fn settings_hash_busts_warm_path_on_pnpmfile_change() {
+        // A `.pnpmfile.{mjs,cjs}` `readPackage` hook rewrites the resolved
+        // tree, so adding / editing / removing it must change the
+        // freshness verdict — otherwise the hook silently never re-applies
+        // and the lockfile + node_modules go stale on the warm path.
+        let dir = temp_project_dir("settings-hash-pnpmfile");
+        std::fs::write(dir.join("package.json"), r#"{"name":"x"}"#).unwrap();
+
+        let baseline = hash_settings(&dir, &[]);
+
+        // Adding a pnpmfile must change the hash.
+        let pnpmfile = dir.join(".pnpmfile.mjs");
+        std::fs::write(&pnpmfile, "export function readPackage(p){return p}\n").unwrap();
+        let with_file = hash_settings(&dir, &[]);
+        assert_ne!(baseline, with_file, "adding a pnpmfile must bust the hash");
+
+        // Editing the hook body must change the hash again.
+        std::fs::write(
+            &pnpmfile,
+            "export function readPackage(p){p.dependencies={};return p}\n",
+        )
+        .unwrap();
+        let edited = hash_settings(&dir, &[]);
+        assert_ne!(with_file, edited, "editing a pnpmfile must bust the hash");
+
+        // Removing it returns to the baseline verdict.
+        std::fs::remove_file(&pnpmfile).unwrap();
+        assert_eq!(
+            baseline,
+            hash_settings(&dir, &[]),
+            "removing the pnpmfile must restore the baseline hash"
         );
     }
 }
