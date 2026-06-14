@@ -320,6 +320,67 @@ pub fn filter_graph(
     graph.packages.retain(|k, _| reachable.contains(k));
 }
 
+/// Set each package's `optional` flag the way pnpm marks the
+/// `snapshots:` section: a package is `optional: true` when it is
+/// reachable *only* through optional dependency edges (the classic case
+/// is every `@esbuild/*` platform native sitting under `esbuild`'s
+/// `optionalDependencies`). pnpm derives this during resolution; aube
+/// recomputes it as a post-resolve pass so freshly resolved lockfiles
+/// carry the same markers pnpm writes instead of an empty `{}` snapshot.
+///
+/// Algorithm: seed a `required` set from every non-optional direct
+/// dependency of every importer, then walk each required package's
+/// *non-optional* edges. A package's non-optional edges are its
+/// `dependencies` minus its `optional_dependencies`, because the pnpm
+/// parser mirrors active optional edges into `dependencies`. Any package
+/// not reached this way is optional. A single fully-required path keeps a
+/// package required even when other paths to it are optional, matching
+/// pnpm.
+pub fn mark_optional_packages(graph: &mut aube_lockfile::LockfileGraph) {
+    use crate::FxHashSet;
+    use aube_lockfile::DepType;
+
+    let mut required: FxHashSet<String> = FxHashSet::default();
+    let mut stack: Vec<String> = Vec::new();
+    for deps in graph.importers.values() {
+        for dep in deps {
+            if dep.dep_type != DepType::Optional {
+                stack.push(dep.dep_path.clone());
+            }
+        }
+    }
+    while let Some(dep_path) = stack.pop() {
+        if !required.insert(dep_path.clone()) {
+            continue;
+        }
+        let Some(pkg) = graph.packages.get(&dep_path) else {
+            continue;
+        };
+        for (name, tail) in &pkg.dependencies {
+            // Skip optional edges. `dependencies` carries pnpm's mirrored
+            // active optionals, so the `optional_dependencies` membership
+            // check is what separates a required edge from an optional one.
+            if pkg.optional_dependencies.contains_key(name) {
+                continue;
+            }
+            // Match `filter_graph`'s child-key convention: the pnpm reader
+            // stores the dep_path tail (`"1.2.3"`), npm/yarn/bun store the
+            // full dep_path (`"foo@1.2.3"`).
+            let child = if graph.packages.contains_key(tail) {
+                tail.clone()
+            } else {
+                format!("{name}@{tail}")
+            };
+            if graph.packages.contains_key(&child) {
+                stack.push(child);
+            }
+        }
+    }
+    for (dep_path, pkg) in graph.packages.iter_mut() {
+        pkg.optional = !required.contains(dep_path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +532,82 @@ mod tests {
         assert!(!host.dependencies.contains_key("native-linux"));
         assert!(graph.packages.contains_key("native-darwin@1.0.0"));
         assert!(!graph.packages.contains_key("native-linux@1.0.0"));
+    }
+
+    fn dep(name: &str, dep_type: aube_lockfile::DepType) -> aube_lockfile::DirectDep {
+        aube_lockfile::DirectDep {
+            name: name.to_string(),
+            dep_path: format!("{name}@1.0.0"),
+            dep_type,
+            specifier: Some("1.0.0".to_string()),
+        }
+    }
+
+    fn pkg(name: &str, deps: &[&str], opt_deps: &[&str]) -> (String, aube_lockfile::LockedPackage) {
+        let dep_path = format!("{name}@1.0.0");
+        (
+            dep_path.clone(),
+            aube_lockfile::LockedPackage {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                dep_path,
+                dependencies: deps
+                    .iter()
+                    .map(|d| ((*d).to_string(), "1.0.0".to_string()))
+                    .collect(),
+                optional_dependencies: opt_deps
+                    .iter()
+                    .map(|d| ((*d).to_string(), "1.0.0".to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn mark_optional_packages_marks_optional_only_reachable() {
+        use aube_lockfile::DepType;
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![
+                dep("host", DepType::Production),
+                dep("also-required", DepType::Production),
+                dep("opt-root", DepType::Optional),
+            ],
+        );
+        // `host` has a required prod dep (`shared`), two optional-only
+        // natives, and `dual` reachable both optionally (here) and via a
+        // required edge from `also-required`. pnpm mirrors active optionals
+        // into `dependencies`, so they appear in both maps.
+        graph.packages.extend([
+            pkg(
+                "host",
+                &["shared", "native-darwin", "native-linux", "dual"],
+                &["native-darwin", "native-linux", "dual"],
+            ),
+            pkg("also-required", &["dual"], &[]),
+            pkg("shared", &[], &[]),
+            pkg("native-darwin", &[], &[]),
+            pkg("native-linux", &[], &[]),
+            pkg("dual", &[], &[]),
+            pkg("opt-root", &[], &[]),
+        ]);
+
+        mark_optional_packages(&mut graph);
+
+        let is_opt = |k: &str| graph.packages[k].optional;
+        // Required by a non-optional path.
+        assert!(!is_opt("host@1.0.0"));
+        assert!(!is_opt("also-required@1.0.0"));
+        assert!(!is_opt("shared@1.0.0"));
+        // Reachable both optionally and via a required edge → stays required.
+        assert!(!is_opt("dual@1.0.0"));
+        // Reachable only through optional edges → optional.
+        assert!(is_opt("native-darwin@1.0.0"));
+        assert!(is_opt("native-linux@1.0.0"));
+        // Direct optional importer dep with no required path → optional.
+        assert!(is_opt("opt-root@1.0.0"));
     }
 
     #[test]

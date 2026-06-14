@@ -1526,6 +1526,11 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                     local_pnpmfile.as_deref(),
                 )
                 .await;
+                // Mark optional-only packages on the full (pre-host-filter)
+                // graph so the lockfile snapshot carries pnpm's `optional:
+                // true` markers (e.g. every `@esbuild/*` native). Runs before
+                // the write and before the host-only `filter_graph` below.
+                aube_resolver::platform::mark_optional_packages(&mut graph);
                 if shared_workspace_lockfile || !has_workspace {
                     let written_path = write_lockfile_dir_remapped(
                         &lockfile_dir,

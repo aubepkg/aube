@@ -54,6 +54,10 @@ teardown() {
 	# resolving from this file picks it up.
 	run grep -F 'aube-test-optional-win32@1.0.0' aube-lock.yaml
 	assert_success
+	# A package reachable only through an optional edge must carry
+	# `optional: true` in the snapshots block, exactly as pnpm marks it.
+	run grep -A1 -F 'aube-test-optional-win32@1.0.0:' aube-lock.yaml
+	assert_output --partial 'optional: true'
 }
 
 @test "required platform-mismatched dep still gets fetched and linked" {
@@ -111,6 +115,11 @@ teardown() {
 	# CI run resolving from this file picks it up.
 	run grep -F 'aube-test-optional-win32@1.0.0:' pnpm-lock.yaml
 	assert_success
+	# pnpm flags optional-only packages with `optional: true` in the
+	# snapshots block; aube matches so a parse-then-write round-trip and a
+	# fresh resolve produce byte-identical snapshots.
+	run grep -A1 -F 'aube-test-optional-win32@1.0.0:' pnpm-lock.yaml
+	assert_output --partial 'optional: true'
 }
 
 @test "pnpm-lock.yaml records optional natives for exotic arches (full pnpm parity)" {
