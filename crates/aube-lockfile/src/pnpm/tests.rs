@@ -689,6 +689,130 @@ snapshots:
     assert_eq!(pkg.tarball_url.as_deref(), Some(url));
 }
 
+/// Fresh-resolve companion to `url_dep_path_round_trips_with_pnpm_version_field`.
+///
+/// When the resolver promotes a hosted-git dep to a codeload tarball it
+/// stores the package under the *hashed* `name@url+<hash>` dep_path (not
+/// the bare URL), so the writer's `url_keyed` heuristic is false. pnpm
+/// still records these as `name@<codeload-url>` with a `version:` field
+/// and `resolution: {gitHosted: true, integrity, tarball}`. This drives
+/// a resolver-shaped graph through `write` and asserts that shape —
+/// without it a fresh `aube install` emits the `<url>.git#<sha>` /
+/// `type: git` form and drifts from pnpm.
+#[test]
+fn fresh_resolved_codeload_tarball_writes_pnpm_version_and_resolution() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+
+    let codeload = "https://codeload.github.com/xmppo/node-expat/tar.gz/78e559baa908942097330f7967dfbf623ebc2529".to_string();
+    let remote = LocalSource::RemoteTarball(crate::RemoteTarballSource {
+        url: codeload.clone(),
+        integrity: "sha512-nodeexpat==".to_string(),
+        git_hosted: true,
+    });
+    // The resolver keys the package by the hashed `name@url+<hash>` form.
+    let node_expat_dp = remote.dep_path("node-expat");
+    assert!(
+        node_expat_dp.starts_with("node-expat@url+"),
+        "sanity: resolver dep_path is the hashed url form, got {node_expat_dp}"
+    );
+    // The hashed tail is what the parent records as its dep value, and
+    // what must NOT leak into the written lockfile.
+    let node_expat_tail = node_expat_dp
+        .strip_prefix("node-expat@")
+        .unwrap()
+        .to_string();
+
+    let mut packages = BTreeMap::new();
+    packages.insert(
+        node_expat_dp.clone(),
+        LockedPackage {
+            name: "node-expat".to_string(),
+            version: "2.4.3".to_string(),
+            dep_path: node_expat_dp.clone(),
+            local_source: Some(remote),
+            ..Default::default()
+        },
+    );
+    packages.insert(
+        "xml2json@0.12.0".to_string(),
+        LockedPackage {
+            name: "xml2json".to_string(),
+            version: "0.12.0".to_string(),
+            integrity: Some("sha512-xml2json==".to_string()),
+            dep_path: "xml2json@0.12.0".to_string(),
+            dependencies: BTreeMap::from([("node-expat".to_string(), node_expat_tail.clone())]),
+            ..Default::default()
+        },
+    );
+
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "xml2json".to_string(),
+            dep_path: "xml2json@0.12.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("^0.12.0".to_string()),
+        }],
+    );
+
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let manifest = PackageJson {
+        name: Some("root".to_string()),
+        version: Some("0.0.0".to_string()),
+        dependencies: BTreeMap::from([("xml2json".to_string(), "^0.12.0".to_string())]),
+        ..PackageJson::default()
+    };
+
+    write(&lockfile_path, &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&lockfile_path).unwrap();
+
+    // Keyed by the bare codeload URL (pnpm parity), never the hashed
+    // form and never the `.git#<sha>` form.
+    assert!(
+        written.contains(&format!("node-expat@{codeload}:")),
+        "expected codeload-keyed entry, got:\n{written}"
+    );
+    assert!(
+        !written.contains(&node_expat_tail),
+        "internal hashed dep_path leaked into the lockfile:\n{written}"
+    );
+    assert!(
+        !written.contains(".git#"),
+        "git-url form must be promoted to codeload tarball:\n{written}"
+    );
+    // pnpm records the real semver next to the tarball resolution.
+    assert!(
+        written.contains("    version: 2.4.3"),
+        "missing `version:` on the codeload entry:\n{written}"
+    );
+    assert!(
+        written.contains(&format!(
+            "resolution: {{gitHosted: true, integrity: sha512-nodeexpat==, tarball: {codeload}}}"
+        )),
+        "missing/incorrect codeload resolution block:\n{written}"
+    );
+    // The parent references it by the bare codeload URL.
+    assert!(
+        written.contains(&format!("node-expat: {codeload}")),
+        "parent must reference the codeload URL:\n{written}"
+    );
+
+    // And it survives a re-parse onto `tarball_url` (drift-free).
+    let reparsed = parse(&lockfile_path).unwrap();
+    let pkg = reparsed
+        .packages
+        .get(&format!("node-expat@{codeload}"))
+        .expect("codeload entry survives round-trip");
+    assert_eq!(pkg.version, "2.4.3");
+    assert_eq!(pkg.tarball_url.as_deref(), Some(codeload.as_str()));
+}
+
 #[test]
 fn direct_url_importer_strips_peer_suffix_from_fetch_url() {
     // Regression: when a direct dep's importer `version:` is a

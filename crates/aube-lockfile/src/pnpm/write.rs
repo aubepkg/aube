@@ -365,7 +365,18 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         // semver. Ordinary registry entries skip this — the key already
         // carries the version, and adding a field would diverge from
         // byte-for-byte pnpm output.
-        let write_version = url_keyed.then(|| pkg.version.clone());
+        //
+        // Freshly-resolved remote tarballs (codeload hosted-git deps,
+        // pkg.pr.new, etc.) key their `packages:` entry by the URL via
+        // `specifier()`, but their internal `dep_path` is the hashed
+        // `url+<hash>` form, so `url_keyed` is false. pnpm still records
+        // the real semver in a `version:` field next to the codeload
+        // resolution (`node-expat@https://codeload…: { …, version: 2.4.3 }`),
+        // so emit it for `RemoteTarball` too — otherwise a fresh resolve
+        // drops the field and drifts from a re-read lockfile (and pnpm).
+        let write_version = (url_keyed
+            || matches!(pkg.local_source, Some(LocalSource::RemoteTarball(_))))
+        .then(|| pkg.version.clone());
         packages.insert(
             canonical,
             WritablePackageInfo {
@@ -827,27 +838,38 @@ struct WritableCatalogEntry {
     version: String,
 }
 
+// Field order is alphabetical by *serialized* key name to match pnpm's
+// sorted-key lockfile emitter (it runs every `resolution:` map through
+// `sortKeys`). The cases this spans:
+//   registry  → {integrity}  /  {integrity, tarball}
+//   directory → {directory, type: directory}
+//   git       → {commit, integrity?, path?, repo, type: git}
+//   codeload  → {gitHosted, integrity, tarball}   (hosted-git tarball)
+//   runtime   → {type: variations, variants}
+// Serde serializes in declaration order regardless of `rename`, so the
+// fields are declared in the order of their renamed names (`gitHosted`,
+// `type`) — not the Rust identifiers.
 #[derive(Debug, Serialize)]
 struct WritableResolution {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    integrity: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not", rename = "gitHosted")]
-    git_hosted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    directory: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tarball: Option<String>,
     // Git resolution fields (pnpm v9 `{type: git, repo, commit}` form).
     #[serde(skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    repo: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
-    type_: Option<String>,
+    directory: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not", rename = "gitHosted")]
+    git_hosted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    integrity: Option<String>,
     /// pnpm `&path:/<sub>` selector — emitted with leading `/` to
     /// match pnpm's own writer.
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tarball: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
+    type_: Option<String>,
     /// `type: variations` artifact list for runtime pins. `None` for
     /// every ordinary package resolution.
     #[serde(skip_serializing_if = "Option::is_none")]

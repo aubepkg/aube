@@ -305,6 +305,44 @@ pub(crate) fn should_block_exotic_subdep(
             })
 }
 
+/// Pick the lockfile source representation for a *resolved* hosted-git
+/// dependency. pnpm records a github / gitlab / bitbucket dep pinned to
+/// a 40-char commit SHA as a **codeload tarball** (`RemoteTarball`) —
+/// not a `git` resolution — whenever a flat HTTPS archive URL exists
+/// (`codeload_url`) and there's no `&path:` subdir selector. aube
+/// already *fetches* that tarball; emitting it as `RemoteTarball` makes
+/// the written lockfile match pnpm (codeload key + `version:` +
+/// `resolution: {tarball, gitHosted}`) instead of the divergent
+/// `<url>.git#<sha>` / `resolution: {type: git, repo, commit}` form.
+///
+/// Falls back to `Git` for: non-hosted or `git+ssh://` sources (no
+/// codeload URL — pnpm keeps those as `type: git` too), branch/tag refs
+/// that never pinned to a SHA, and `&path:` subpath selectors (a flat
+/// tarball can't address a repo subdirectory).
+fn hosted_git_local_source(
+    original_url: String,
+    committish: Option<String>,
+    resolved: String,
+    subpath: Option<String>,
+    integrity: Option<String>,
+    codeload_url: Option<&str>,
+) -> LocalSource {
+    match (subpath.as_deref(), codeload_url) {
+        (None, Some(codeload)) => LocalSource::RemoteTarball(aube_lockfile::RemoteTarballSource {
+            url: codeload.to_string(),
+            integrity: integrity.unwrap_or_default(),
+            git_hosted: true,
+        }),
+        _ => LocalSource::Git(aube_lockfile::GitSource {
+            url: original_url,
+            committish,
+            resolved,
+            integrity,
+            subpath,
+        }),
+    }
+}
+
 /// Turn a raw `GitSource` (committish parsed from the user's
 /// specifier, empty `resolved`) into a fully-resolved one by either
 /// fetching a hosted-tarball over HTTPS (github / gitlab / bitbucket
@@ -412,13 +450,14 @@ pub(crate) async fn resolve_git_source(
             .map_err(|e| Error::Registry(name.to_string(), e.to_string()))?;
         let version = pj.version.unwrap_or_else(|| "0.0.0".to_string());
         return Ok((
-            LocalSource::Git(aube_lockfile::GitSource {
-                url: original_url,
+            hosted_git_local_source(
+                original_url,
                 committish,
-                resolved: resolved_sha,
-                integrity: git.integrity.clone(),
+                resolved_sha,
                 subpath,
-            }),
+                git.integrity.clone(),
+                codeload_url.as_deref(),
+            ),
             version,
             pj.dependencies,
             integrity,
@@ -485,13 +524,14 @@ pub(crate) async fn resolve_git_source(
                 match extracted {
                     Ok((resolved, version, deps)) => {
                         return Ok((
-                            LocalSource::Git(aube_lockfile::GitSource {
-                                url: original_url,
+                            hosted_git_local_source(
+                                original_url,
                                 committish,
                                 resolved,
-                                integrity: Some(integrity.clone()),
                                 subpath,
-                            }),
+                                Some(integrity.clone()),
+                                Some(url_to_fetch),
+                            ),
                             version,
                             deps,
                             Some(integrity),
@@ -805,5 +845,84 @@ mod cve_audit_tarball_bomb {
             result.is_err(),
             "decompressed dummy entry preceding package.json must hit the output cap"
         );
+    }
+}
+
+#[cfg(test)]
+mod hosted_git_local_source_tests {
+    use super::*;
+
+    const SHA: &str = "78e559baa908942097330f7967dfbf623ebc2529";
+
+    #[test]
+    fn hosted_sha_without_subpath_becomes_codeload_remote_tarball() {
+        let codeload = format!("https://codeload.github.com/xmppo/node-expat/tar.gz/{SHA}");
+        let src = hosted_git_local_source(
+            "git+ssh://git@github.com/xmppo/node-expat.git".to_string(),
+            Some(format!("v2.4.3#{SHA}")),
+            SHA.to_string(),
+            None,
+            Some("sha512-deadbeef".to_string()),
+            Some(codeload.as_str()),
+        );
+        match src {
+            LocalSource::RemoteTarball(t) => {
+                // pnpm keys the lockfile entry by this flat tarball URL.
+                assert_eq!(t.url, codeload);
+                assert_eq!(t.integrity, "sha512-deadbeef");
+                assert!(t.git_hosted, "codeload archives must flag gitHosted");
+                // The specifier the writer threads into snapshot deps and
+                // the packages key is exactly the codeload URL.
+                assert_eq!(
+                    LocalSource::RemoteTarball(t).specifier(),
+                    codeload,
+                    "specifier must be the bare codeload URL pnpm records"
+                );
+            }
+            other => panic!("expected RemoteTarball, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subpath_selector_stays_git() {
+        // A flat tarball can't address a repo subdirectory, so pnpm keeps
+        // `&path:` deps as `type: git`. We must too.
+        let codeload = format!("https://codeload.github.com/acme/mono/tar.gz/{SHA}");
+        let src = hosted_git_local_source(
+            "git+ssh://git@github.com/acme/mono.git".to_string(),
+            Some(SHA.to_string()),
+            SHA.to_string(),
+            Some("packages/leaf".to_string()),
+            Some("sha512-x".to_string()),
+            Some(codeload.as_str()),
+        );
+        match src {
+            LocalSource::Git(g) => {
+                assert_eq!(g.resolved, SHA);
+                assert_eq!(g.subpath.as_deref(), Some("packages/leaf"));
+            }
+            other => panic!("expected Git with subpath, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_codeload_url_stays_git() {
+        // Non-hosted / ssh-only sources have no flat archive URL; pnpm
+        // records those as `type: git` and so do we.
+        let src = hosted_git_local_source(
+            "git+ssh://git@example.com/internal/dep.git".to_string(),
+            Some(SHA.to_string()),
+            SHA.to_string(),
+            None,
+            Some("sha512-y".to_string()),
+            None,
+        );
+        match src {
+            LocalSource::Git(g) => {
+                assert_eq!(g.url, "git+ssh://git@example.com/internal/dep.git");
+                assert_eq!(g.integrity.as_deref(), Some("sha512-y"));
+            }
+            other => panic!("expected Git, got {other:?}"),
+        }
     }
 }
