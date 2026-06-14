@@ -19,7 +19,7 @@ pub mod io;
 
 // Convenience re-exports so consumers can reference `aube_util::Embedder`
 // / `aube_util::embedder()` without naming the module.
-pub use identity::{AUBE, Embedder, embedder, set_embedder};
+pub use identity::{AUBE, Embedder, cmd, embedder, prog, set_embedder};
 pub mod path;
 pub mod pkg;
 pub mod snapshot;
