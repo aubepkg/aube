@@ -813,6 +813,137 @@ fn fresh_resolved_codeload_tarball_writes_pnpm_version_and_resolution() {
     assert_eq!(pkg.tarball_url.as_deref(), Some(codeload.as_str()));
 }
 
+/// A git / remote-tarball dep that is *also* used as a peer must render
+/// its peer suffix as the resolved spec, never aube's internal FS-safe
+/// hashed dep_path. pnpm writes
+/// `request-promise-core@1.1.4(request@https://codeload.…/tar.gz/<sha>)`,
+/// not `(request@url+<hash>)` — the latter is only an in-memory key. The
+/// writer translates hashed→spec and the reader re-derives spec→hashed so
+/// a round-trip is a fixed point (a divergence would re-key every install
+/// and churn the lockfile).
+#[test]
+fn git_tarball_peer_suffix_renders_as_spec_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+
+    let codeload =
+        "https://codeload.github.com/owner/request/tar.gz/abcdef1234567890abcdef1234567890abcdef12"
+            .to_string();
+    let remote = LocalSource::RemoteTarball(crate::RemoteTarballSource {
+        url: codeload.clone(),
+        integrity: "sha512-request==".to_string(),
+        git_hosted: true,
+    });
+    // Resolver-internal keys: the tarball is hashed, registry packages that
+    // peer with it carry the hashed suffix.
+    let request_dp = remote.dep_path("request");
+    let request_tail = request_dp.strip_prefix("request@").unwrap().to_string();
+    assert!(
+        request_tail.starts_with("url+"),
+        "sanity: hashed tarball tail, got {request_tail}"
+    );
+    let core_key = format!("request-promise-core@1.1.4({request_dp})");
+    let rp_key = format!("request-promise@4.2.6({request_dp})");
+
+    let mut packages = BTreeMap::new();
+    packages.insert(
+        request_dp.clone(),
+        LockedPackage {
+            name: "request".to_string(),
+            version: "2.88.2".to_string(),
+            dep_path: request_dp.clone(),
+            local_source: Some(remote),
+            ..Default::default()
+        },
+    );
+    packages.insert(
+        core_key.clone(),
+        LockedPackage {
+            name: "request-promise-core".to_string(),
+            version: "1.1.4".to_string(),
+            integrity: Some("sha512-core==".to_string()),
+            dep_path: core_key.clone(),
+            peer_dependencies: BTreeMap::from([("request".to_string(), "^2.34".to_string())]),
+            dependencies: BTreeMap::from([("request".to_string(), request_tail.clone())]),
+            ..Default::default()
+        },
+    );
+    packages.insert(
+        rp_key.clone(),
+        LockedPackage {
+            name: "request-promise".to_string(),
+            version: "4.2.6".to_string(),
+            integrity: Some("sha512-rp==".to_string()),
+            dep_path: rp_key.clone(),
+            peer_dependencies: BTreeMap::from([("request".to_string(), "^2.34".to_string())]),
+            dependencies: BTreeMap::from([
+                ("request".to_string(), request_tail.clone()),
+                // pnpm references the peer-bearing sibling by its
+                // contextualized (hashed, in-memory) tail.
+                (
+                    "request-promise-core".to_string(),
+                    format!("1.1.4({request_dp})"),
+                ),
+            ]),
+            ..Default::default()
+        },
+    );
+
+    let graph = LockfileGraph {
+        packages,
+        ..Default::default()
+    };
+    let manifest = PackageJson {
+        name: Some("root".to_string()),
+        version: Some("0.0.0".to_string()),
+        ..PackageJson::default()
+    };
+
+    write(&lockfile_path, &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&lockfile_path).unwrap();
+
+    // Snapshot keys + embedded dep values render the suffix as the spec.
+    assert!(
+        written.contains(&format!("request-promise-core@1.1.4(request@{codeload}):")),
+        "core snapshot key suffix not rendered as spec:\n{written}"
+    );
+    assert!(
+        written.contains(&format!("request-promise@4.2.6(request@{codeload}):")),
+        "request-promise snapshot key suffix not rendered as spec:\n{written}"
+    );
+    assert!(
+        written.contains(&format!("request-promise-core: 1.1.4(request@{codeload})")),
+        "embedded dep-value suffix not rendered as spec:\n{written}"
+    );
+    // The internal hashed form must never leak into the file.
+    assert!(
+        !written.contains(&request_tail),
+        "internal hashed dep_path leaked into the lockfile:\n{written}"
+    );
+
+    // Reader re-derives the hashed suffix: keys match a fresh resolve, so a
+    // re-install reads its own (or pnpm's) lockfile as a fixed point.
+    let reparsed = parse(&lockfile_path).unwrap();
+    assert!(
+        reparsed.packages.contains_key(&core_key),
+        "reader must normalize the spec suffix back to the hashed key; got keys: {:?}",
+        reparsed.packages.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        reparsed.packages.contains_key(&rp_key),
+        "reader must normalize request-promise's hashed key"
+    );
+    let rp = reparsed.packages.get(&rp_key).unwrap();
+    assert_eq!(
+        rp.dependencies
+            .get("request-promise-core")
+            .map(String::as_str),
+        Some(format!("1.1.4({request_dp})").as_str()),
+        "reader must normalize the embedded dep-value suffix: {:?}",
+        rp.dependencies
+    );
+}
+
 #[test]
 fn direct_url_importer_strips_peer_suffix_from_fetch_url() {
     // Regression: when a direct dep's importer `version:` is a

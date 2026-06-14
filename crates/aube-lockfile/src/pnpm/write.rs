@@ -1,4 +1,6 @@
-use super::dep_path::{dep_path_tail, parse_dep_path, peerless_dep_path, version_to_dep_path};
+use super::dep_path::{
+    dep_path_tail, parse_dep_path, peerless_dep_path, rewrite_peer_suffix, version_to_dep_path,
+};
 use super::format::reformat_for_pnpm_parity;
 use crate::{DepType, Error, LocalSource, LockfileGraph};
 use aube_manifest::PackageJson;
@@ -12,6 +14,26 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "pnpm-lock.yaml");
+    // Translate a *flat* peer reference from aube's internal FS-safe
+    // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
+    // resolved spec pnpm writes inside a peer suffix
+    // (`request@https://codeload.…/tar.gz/<sha>`). The reference is itself a
+    // package key, so a direct lookup yields the target's source. Registry
+    // peers aren't in the table under their suffix head (or carry no
+    // `local_source`) and return `None`, leaving `react@18.2.0` untouched.
+    // Restricted to git / remote-tarball so it stays the exact inverse of
+    // the reader's `shared_local_dep_path` pass (which only re-derives those
+    // two kinds); `file:` / `link:` peers never occur in practice and a
+    // one-sided translation would break the round-trip.
+    let peer_suffix_to_spec = |head: &str| -> Option<String> {
+        let pkg = graph.packages.get(head)?;
+        match pkg.local_source.as_ref()? {
+            local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_)) => {
+                Some(format!("{}@{}", pkg.name, local.specifier()))
+            }
+            _ => None,
+        }
+    };
     let mut importers = BTreeMap::new();
     let exclude_links = graph.settings.exclude_links_from_lockfile;
     for (importer_path, deps) in &graph.importers {
@@ -73,10 +95,14 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
             {
                 format!("{real_name}@{}", dep_path_tail(&dep.dep_path, &dep.name))
             } else {
-                dep.dep_path
-                    .strip_prefix(&format!("{}@", dep.name))
-                    .unwrap_or(&dep.dep_path)
-                    .to_string()
+                // Registry dep: the tail may carry a `(git/tarball@hash)`
+                // peer suffix that must render as the resolved spec.
+                rewrite_peer_suffix(
+                    dep.dep_path
+                        .strip_prefix(&format!("{}@", dep.name))
+                        .unwrap_or(&dep.dep_path),
+                    &peer_suffix_to_spec,
+                )
             };
 
             let spec = WritableDepSpec {
@@ -511,7 +537,10 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 {
                     (name, format!("{real_name}@{value}"))
                 } else {
-                    (name, value)
+                    // Registry dep whose value may carry a
+                    // `(git/tarball@hash)` peer suffix — render the suffix
+                    // as the resolved spec (`1.1.4(request@https://…)`).
+                    (name, rewrite_peer_suffix(&value, &peer_suffix_to_spec))
                 }
             })
             .collect()
@@ -530,7 +559,10 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 if native_pnpm_aliases && let Some(real_name) = pkg.alias_of.as_deref() {
                     format!("{real_name}@{}", dep_path_tail(dep_path, &pkg.name))
                 } else {
-                    dep_path.clone()
+                    // Registry snapshot key whose `(git/tarball@hash)` peer
+                    // suffix must render as the resolved spec to match pnpm
+                    // (`request-promise-core@1.1.4(request@https://…)`).
+                    rewrite_peer_suffix(dep_path, &peer_suffix_to_spec)
                 }
             }
         };

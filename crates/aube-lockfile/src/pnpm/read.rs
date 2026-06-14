@@ -1,5 +1,6 @@
 use super::dep_path::{
-    parse_dep_path, peerless_alias_target, rewrite_snapshot_alias_deps, version_to_dep_path,
+    parse_dep_path, peerless_alias_target, rewrite_peer_suffix, rewrite_snapshot_alias_deps,
+    version_to_dep_path,
 };
 use super::raw::{
     RawBinSpec, RawDepSpec, RawRuntimeVariant, local_source_from_resolution, parse_raw_lockfile,
@@ -726,6 +727,52 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
 
     for (k, v) in local_packages {
         packages.insert(k, v);
+    }
+
+    // Normalize peer suffixes that reference a git / remote-tarball peer by
+    // its resolved spec — pnpm (and aube's own writer) emit
+    // `request-promise-core@1.1.4(request@https://codeload.…/tar.gz/<sha>)`,
+    // but aube's internal dep_path keys that peer with the FS-safe hashed
+    // form (`request@url+<hash>`). Re-derive the hashed form here so a
+    // lockfile round-trip produces the same graph a fresh resolve does:
+    // without it every registry package that peers with a git / tarball dep
+    // would re-key on the next install, busting the warm path (and emitting
+    // a churned lockfile). Inverse of the writer's hashed→spec pass.
+    let spec_peer_to_hashed = |head: &str| -> Option<String> {
+        let (name, value) = parse_dep_path(head)?;
+        crate::shared_local_dep_path(&name, &value)
+    };
+    let has_local_source = packages.values().any(|p| {
+        matches!(
+            p.local_source,
+            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+        )
+    });
+    if has_local_source && packages.keys().any(|k| k.contains('(')) {
+        let rekeyed: BTreeMap<String, LockedPackage> = std::mem::take(&mut packages)
+            .into_iter()
+            .map(|(key, mut pkg)| {
+                let new_key = rewrite_peer_suffix(&key, &spec_peer_to_hashed);
+                pkg.dep_path = new_key.clone();
+                pkg.dependencies = pkg
+                    .dependencies
+                    .into_iter()
+                    .map(|(n, v)| (n, rewrite_peer_suffix(&v, &spec_peer_to_hashed)))
+                    .collect();
+                pkg.optional_dependencies = pkg
+                    .optional_dependencies
+                    .into_iter()
+                    .map(|(n, v)| (n, rewrite_peer_suffix(&v, &spec_peer_to_hashed)))
+                    .collect();
+                (new_key, pkg)
+            })
+            .collect();
+        packages = rekeyed;
+        for deps in importers.values_mut() {
+            for dep in deps {
+                dep.dep_path = rewrite_peer_suffix(&dep.dep_path, &spec_peer_to_hashed);
+            }
+        }
     }
 
     let settings = raw
