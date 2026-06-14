@@ -217,7 +217,8 @@ pub(super) fn ensure_target_writable(target: &Path) -> miette::Result<()> {
         Ok(mut entries) => {
             if entries.next().is_some() {
                 return Err(miette!(
-                    "aube deploy: target directory {} is not empty",
+                    "{}: target directory {} is not empty",
+                    aube_util::cmd("deploy"),
                     target.display()
                 ));
             }
@@ -225,7 +226,8 @@ pub(super) fn ensure_target_writable(target: &Path) -> miette::Result<()> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(miette!(
-            "aube deploy: failed to inspect {}: {e}",
+            "{}: failed to inspect {}: {e}",
+            aube_util::cmd("deploy"),
             target.display()
         )),
     }

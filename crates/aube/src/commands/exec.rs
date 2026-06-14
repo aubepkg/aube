@@ -177,7 +177,8 @@ async fn run_filtered_parallel(
                     .as_deref()
                     .unwrap_or_else(|| pkg.dir.to_str().unwrap_or("<unknown>"));
                 return Err(miette!(
-                    "binary not found in {name}: {bin}\nTry running `aube install` first, or check that the package providing '{bin}' is in its dependencies."
+                    "binary not found in {name}: {bin}\nTry running `{}` first, or check that the package providing '{bin}' is in its dependencies.",
+                    aube_util::cmd("install")
                 ));
             }
         }
@@ -251,7 +252,10 @@ async fn run_filtered_parallel(
                 if !status.success() && first_exit.is_none() {
                     let code = aube_scripts::exit_code_from_status(status);
                     first_exit = Some(code);
-                    first_err = Some(miette!("aube exec: `{bin}` failed in {name} (exit {code})"));
+                    first_err = Some(miette!(
+                        "{}: `{bin}` failed in {name} (exit {code})",
+                        aube_util::cmd("exec")
+                    ));
                 }
             }
             Ok(Err(e)) if first_err.is_none() => first_err = Some(e),
@@ -289,7 +293,8 @@ pub(crate) async fn exec_bin_with_node_args(
 ) -> miette::Result<()> {
     if !shell_mode && !bin_path.exists() {
         return Err(miette!(
-            "binary not found: {bin}\nTry running `aube install` first, or check that the package providing '{bin}' is in your dependencies."
+            "binary not found: {bin}\nTry running `{}` first, or check that the package providing '{bin}' is in your dependencies.",
+            aube_util::cmd("install")
         ));
     }
 
@@ -351,7 +356,8 @@ pub(crate) async fn exec_bin_status_with_node_args(
 ) -> miette::Result<std::process::ExitStatus> {
     if !shell_mode && !bin_path.exists() {
         return Err(miette!(
-            "binary not found: {bin}\nTry running `aube install` first, or check that the package providing '{bin}' is in your dependencies."
+            "binary not found: {bin}\nTry running `{}` first, or check that the package providing '{bin}' is in your dependencies.",
+            aube_util::cmd("install")
         ));
     }
 

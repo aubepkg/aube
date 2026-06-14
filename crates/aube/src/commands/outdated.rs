@@ -158,7 +158,10 @@ async fn run_filtered(
     let graph = match aube_lockfile::parse_lockfile(&root, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
-            eprintln!("No lockfile found. Run `aube install` first.");
+            eprintln!(
+                "No lockfile found. Run `{}` first.",
+                aube_util::cmd("install")
+            );
             return Ok(());
         }
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
@@ -208,7 +211,10 @@ async fn run_one(cwd: &Path, args: OutdatedArgs, importer: Option<String>) -> mi
     let graph = match aube_lockfile::parse_lockfile(cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
-            eprintln!("No lockfile found. Run `aube install` first.");
+            eprintln!(
+                "No lockfile found. Run `{}` first.",
+                aube_util::cmd("install")
+            );
             return Ok(false);
         }
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),

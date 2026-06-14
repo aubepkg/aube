@@ -72,7 +72,9 @@ pub async fn run(args: CatIndexArgs) -> miette::Result<()> {
     let index_path = match matches.as_slice() {
         [] => {
             return Err(miette!(
-                "no cached index for {name}@{version}\nhelp: run `aube fetch` or `aube install` to populate the store first"
+                "no cached index for {name}@{version}\nhelp: run `{}` or `{}` to populate the store first",
+                aube_util::cmd("fetch"),
+                aube_util::cmd("install")
             ));
         }
         [p] => p.clone(),
@@ -90,9 +92,10 @@ pub async fn run(args: CatIndexArgs) -> miette::Result<()> {
                 msg.push_str(&p.display().to_string());
                 msg.push('\n');
             }
-            msg.push_str(
-                "help: read the specific file directly, or re-run `aube fetch` in the project whose tarball you want.",
-            );
+            msg.push_str(&format!(
+                "help: read the specific file directly, or re-run `{}` in the project whose tarball you want.",
+                aube_util::cmd("fetch")
+            ));
             return Err(miette!("{msg}"));
         }
     };
@@ -102,7 +105,8 @@ pub async fn run(args: CatIndexArgs) -> miette::Result<()> {
         .into_diagnostic()
         .map_err(|e| {
             miette!(
-                "cached index for {name}@{version} is corrupt: {e}\nhelp: re-run `aube fetch` to regenerate it"
+                "cached index for {name}@{version} is corrupt: {e}\nhelp: re-run `{}` to regenerate it",
+                aube_util::cmd("fetch")
             )
         })?;
 

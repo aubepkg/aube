@@ -112,7 +112,8 @@ pub async fn run(args: PatchArgs) -> Result<()> {
         user_dir.display()
     );
     println!(
-        "Once you're done with your changes, run \"aube patch-commit '{}'\"",
+        "Once you're done with your changes, run \"{} '{}'\"",
+        aube_util::cmd("patch-commit"),
         user_dir.display()
     );
     Ok(())
@@ -174,15 +175,16 @@ fn find_pnpm_entry(
         }
     }
     Err(miette!(
-        "package {name}@{version} is not installed (looked under {}). Run `aube install` first.",
-        pnpm_dir.display()
+        "package {name}@{version} is not installed (looked under {}). Run `{}` first.",
+        pnpm_dir.display(),
+        aube_util::cmd("install")
     ))
 }
 
 fn parse_spec(input: &str) -> Result<(String, String)> {
     let (name, ver) = crate::commands::split_name_spec(input);
     let ver = ver.ok_or_else(|| {
-        miette!("`aube patch` requires `<name>@<version>` (got {input:?}); a bare name is ambiguous because the same package can be installed at multiple versions")
+        miette!("`{}` requires `<name>@<version>` (got {input:?}); a bare name is ambiguous because the same package can be installed at multiple versions", aube_util::cmd("patch"))
     })?;
     Ok((name.to_string(), ver.to_string()))
 }
@@ -212,8 +214,9 @@ pub fn read_state(edit_dir: &Path) -> Result<PatchState> {
         .into_diagnostic()
         .map_err(|e| {
             miette!(
-                "{} is not a directory created by `aube patch` (no state sidecar: {e})",
-                edit_dir.display()
+                "{} is not a directory created by `{}` (no state sidecar: {e})",
+                edit_dir.display(),
+                aube_util::cmd("patch")
             )
         })?;
     let v: serde_json::Value = serde_json::from_str(&raw)

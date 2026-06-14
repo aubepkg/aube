@@ -69,7 +69,10 @@ async fn check(args: PeersCheckArgs) -> miette::Result<()> {
     let graph = super::load_graph(
         &cwd,
         &manifest,
-        "no lockfile found\nhelp: run `aube install` first",
+        &format!(
+            "no lockfile found\nhelp: run `{}` first",
+            aube_util::cmd("install")
+        ),
     )?;
 
     let issues = collect_issues(&graph);

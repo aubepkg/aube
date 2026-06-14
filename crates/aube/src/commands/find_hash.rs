@@ -83,8 +83,10 @@ pub async fn run(args: FindHashArgs) -> miette::Result<()> {
     let index_dir = store.index_dir();
     if !index_dir.exists() {
         return Err(miette!(
-            "index cache is empty at {}\nhelp: run `aube install` or `aube fetch` first to populate the store",
-            index_dir.display()
+            "index cache is empty at {}\nhelp: run `{}` or `{}` first to populate the store",
+            index_dir.display(),
+            aube_util::cmd("install"),
+            aube_util::cmd("fetch")
         ));
     }
 

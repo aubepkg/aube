@@ -52,7 +52,8 @@ pub async fn run(args: UnlinkArgs) -> miette::Result<()> {
             // not user-created links. Remove via the shared guard so scope cleanup still runs.
             if !remove_if_external_symlink(&cwd, &link_path)? {
                 return Err(miette!(
-                    "{name} is not a linked package (points into .aube — run `aube install` to restore)"
+                    "{name} is not a linked package (points into .aube — run `{}` to restore)",
+                    aube_util::cmd("install")
                 ));
             }
             eprintln!("Unlinked {name}");
@@ -118,8 +119,9 @@ pub async fn run(args: UnlinkArgs) -> miette::Result<()> {
                 eprintln!("No linked packages found");
             } else {
                 eprintln!(
-                    "Unlinked {unlinked} package{}. Run `aube install` to restore from registry.",
-                    if unlinked == 1 { "" } else { "s" }
+                    "Unlinked {unlinked} package{}. Run `{}` to restore from registry.",
+                    if unlinked == 1 { "" } else { "s" },
+                    aube_util::cmd("install")
                 );
             }
         }

@@ -67,28 +67,32 @@ fn resolve_catalog_for_rewrite(
         .map(|n| if n.is_empty() { "default" } else { n })
         .ok_or_else(|| {
             miette!(
-                "aube deploy: internal error — resolve_catalog_for_rewrite called on non-catalog spec {spec:?}"
+                "{}: internal error — resolve_catalog_for_rewrite called on non-catalog spec {spec:?}",
+                aube_util::cmd("deploy")
             )
         })?;
     let Some(catalog) = catalogs.get(catalog_name) else {
         return Err(miette!(
             code = aube_codes::errors::ERR_AUBE_UNKNOWN_CATALOG,
             help = "define the catalog in `pnpm-workspace.yaml` or under `pnpm.catalog` / `workspaces.catalog` in `package.json`",
-            "aube deploy: {} declares `{pkg_name}: {spec}` but catalog `{catalog_name}` is not defined in the source workspace",
+            "{}: {} declares `{pkg_name}: {spec}` but catalog `{catalog_name}` is not defined in the source workspace",
+            aube_util::cmd("deploy"),
             manifest_path.display(),
         ));
     };
     let Some(value) = catalog.get(pkg_name) else {
         return Err(miette!(
             code = aube_codes::errors::ERR_AUBE_UNKNOWN_CATALOG_ENTRY,
-            "aube deploy: {} declares `{pkg_name}: {spec}` but catalog `{catalog_name}` has no entry for {pkg_name:?}",
+            "{}: {} declares `{pkg_name}: {spec}` but catalog `{catalog_name}` has no entry for {pkg_name:?}",
+            aube_util::cmd("deploy"),
             manifest_path.display(),
         ));
     };
     if aube_util::pkg::is_catalog_spec(value) {
         return Err(miette!(
             code = aube_codes::errors::ERR_AUBE_UNKNOWN_CATALOG_ENTRY,
-            "aube deploy: catalog `{catalog_name}` entry for {pkg_name:?} is itself a catalog reference ({value:?}); catalogs cannot chain",
+            "{}: catalog `{catalog_name}` entry for {pkg_name:?} is itself a catalog reference ({value:?}); catalogs cannot chain",
+            aube_util::cmd("deploy"),
         ));
     }
     Ok(value.clone())
@@ -190,7 +194,8 @@ pub(super) fn rewrite_local_refs(
             if aube_util::pkg::is_workspace_spec(spec) {
                 let Some((sibling_dir, sibling_version)) = ws_index.get(name) else {
                     return Err(miette!(
-                        "aube deploy: {} declares `{name}: {spec}` but no workspace package named {name:?} was found",
+                        "{}: {} declares `{name}: {spec}` but no workspace package named {name:?} was found",
+                        aube_util::cmd("deploy"),
                         manifest_path.display()
                     ));
                 };
@@ -216,7 +221,8 @@ pub(super) fn rewrite_local_refs(
                     if *field == "peerDependencies" {
                         let Some(sibling_version) = sibling_version else {
                             return Err(miette!(
-                                "aube deploy: workspace package {name:?} has no `version` field, required to rewrite `{name}: {spec}` in {}",
+                                "{}: workspace package {name:?} has no `version` field, required to rewrite `{name}: {spec}` in {}",
+                                aube_util::cmd("deploy"),
                                 manifest_path.display()
                             ));
                         };
@@ -227,7 +233,8 @@ pub(super) fn rewrite_local_refs(
                         continue;
                     }
                     return Err(miette!(
-                        "aube deploy: bundling plan missing entry for workspace sibling {name:?} declared in {}",
+                        "{}: bundling plan missing entry for workspace sibling {name:?} declared in {}",
+                        aube_util::cmd("deploy"),
                         manifest_path.display()
                     ));
                 };
@@ -261,11 +268,13 @@ pub(super) fn rewrite_local_refs(
                     // whose paths resolve nowhere at runtime.
                     if *field == "peerDependencies" {
                         return Err(miette!(
-                            "aube deploy: peerDependencies cannot reference a local `file:`/`link:` target ({name:?} -> {spec:?}) — peers aren't bundled into the deploy and the relative path won't resolve under the target. Promote the peer to a regular dependency or drop the local path."
+                            "{}: peerDependencies cannot reference a local `file:`/`link:` target ({name:?} -> {spec:?}) — peers aren't bundled into the deploy and the relative path won't resolve under the target. Promote the peer to a regular dependency or drop the local path.",
+                            aube_util::cmd("deploy")
                         ));
                     }
                     return Err(miette!(
-                        "aube deploy: bundling plan missing entry for `{name}: {spec}` declared in {}",
+                        "{}: bundling plan missing entry for `{name}: {spec}` declared in {}",
+                        aube_util::cmd("deploy"),
                         manifest_path.display()
                     ));
                 };

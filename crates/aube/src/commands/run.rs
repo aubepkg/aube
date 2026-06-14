@@ -272,7 +272,8 @@ fn prompt_for_script() -> miette::Result<String> {
     if !std::io::stdin().is_terminal() {
         let names: Vec<&str> = scripts.iter().map(|(n, _)| n.as_str()).collect();
         return Err(miette!(
-            "aube run: script name required when stdin is not a TTY. Available scripts: {}",
+            "{}: script name required when stdin is not a TTY. Available scripts: {}",
+            aube_util::cmd("run"),
             names.join(", ")
         ));
     }
@@ -516,7 +517,10 @@ async fn run_script_filtered(
             if if_present {
                 continue;
             }
-            return Err(miette!("aube run: package {name} has no `{script}` script"));
+            return Err(miette!(
+                "{}: package {name} has no `{script}` script",
+                aube_util::cmd("run")
+            ));
         }
         if !silent {
             tracing::info!("aube run: {name} -> {script}");
@@ -658,7 +662,8 @@ async fn run_filtered_parallel(
                     .clone()
                     .unwrap_or_else(|| pkg.dir.display().to_string());
                 Some(Err(miette!(
-                    "aube run: package {name} has no `{script}` script"
+                    "{}: package {name} has no `{script}` script",
+                    aube_util::cmd("run")
                 )))
             }
         })
@@ -786,7 +791,8 @@ async fn run_filtered_parallel(
                     let code = aube_scripts::exit_code_from_status(status);
                     first_exit = Some(code);
                     first_err = Some(miette!(
-                        "aube run: `{script}` failed in {name} (exit {code})"
+                        "{}: `{script}` failed in {name} (exit {code})",
+                        aube_util::cmd("run")
                     ));
                 }
             }

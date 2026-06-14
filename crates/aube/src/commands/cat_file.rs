@@ -53,8 +53,9 @@ pub async fn run(args: CatFileArgs) -> miette::Result<()> {
 
     if !path.exists() {
         return Err(miette!(
-            "no file with hash {} in store\nhelp: install the owning package first, or check the hash against `aube store path`",
-            args.hash
+            "no file with hash {} in store\nhelp: install the owning package first, or check the hash against `{}`",
+            args.hash,
+            aube_util::cmd("store path")
         ));
     }
 

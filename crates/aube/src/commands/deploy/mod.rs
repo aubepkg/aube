@@ -130,7 +130,8 @@ pub async fn run(
     args.virtual_store.install_overrides();
     if filter.is_empty() {
         return Err(miette!(
-            "aube deploy: --filter/-F is required to pick a workspace package"
+            "{}: --filter/-F is required to pick a workspace package",
+            aube_util::cmd("deploy")
         ));
     }
     let source_root = crate::dirs::cwd().wrap_err("failed to read current directory")?;
@@ -163,8 +164,9 @@ pub async fn run(
         .map_err(|e| miette!("failed to discover workspace packages: {e}"))?;
     if workspace_pkgs.is_empty() {
         return Err(miette!(
-            "aube deploy: no workspace packages found. \
+            "{}: no workspace packages found. \
              `deploy` requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at {}",
+            aube_util::cmd("deploy"),
             source_root.display()
         ));
     }
@@ -192,7 +194,8 @@ pub async fn run(
     if matches.is_empty() {
         let names: Vec<&str> = ws_index.keys().map(String::as_str).collect();
         return Err(miette!(
-            "aube deploy: --filter {:?} did not match any workspace package. Known: {}",
+            "{}: --filter {:?} did not match any workspace package. Known: {}",
+            aube_util::cmd("deploy"),
             filter,
             names.join(", ")
         ));
@@ -229,14 +232,16 @@ pub async fn run(
                 .map(str::to_string)
                 .ok_or_else(|| {
                     miette!(
-                        "aube deploy: workspace package {} has no directory name",
+                        "{}: workspace package {} has no directory name",
+                        aube_util::cmd("deploy"),
                         src.display()
                     )
                 })?;
             if let Some(prev) = used.insert(base.clone(), name.clone()) {
                 return Err(miette!(
-                    "aube deploy: workspace packages {prev:?} and {name:?} both live in a directory named {base:?}; \
-                     multi-package deploy uses the source basename as the target subdir, so these would collide"
+                    "{}: workspace packages {prev:?} and {name:?} both live in a directory named {base:?}; \
+                     multi-package deploy uses the source basename as the target subdir, so these would collide",
+                    aube_util::cmd("deploy")
                 ));
             }
             v.push((name, src, target_root.join(&base)));

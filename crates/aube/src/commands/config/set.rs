@@ -163,9 +163,11 @@ fn try_set_aube_map_entry(
         return Err(miette!(
             code = aube_codes::errors::ERR_AUBE_CONFIG_NESTED_AUBE_KEY,
             help = format!(
-                "use `aube config set --local {prefix}.{entry} {value}` to edit `pnpm-workspace.yaml#{prefix}.{entry}` (or `package.json#aube.{prefix}.{entry}` if no workspace yaml exists). Aube doesn't read user-scope `{prefix}` today.",
+                "use `{} --local {prefix}.{entry} {value}` to edit `pnpm-workspace.yaml#{prefix}.{entry}` (or `package.json#aube.{prefix}.{entry}` if no workspace yaml exists). Aube doesn't read user-scope `{prefix}` today.",
+                aube_util::cmd("config set"),
             ),
-            "`{key}` only applies at project scope: `{prefix}` is read from `pnpm-workspace.yaml` / `package.json#<pnpm|aube>.{prefix}`, not user-scope aube config."
+            "`{key}` only applies at project scope: `{prefix}` is read from `pnpm-workspace.yaml` / `package.json#<pnpm|aube>.{prefix}`, not user-scope {} config.",
+            aube_util::prog()
         ));
     }
 
@@ -253,7 +255,8 @@ fn reject_aube_map_key(key: &str, meta: &aube_settings::meta::SettingMeta) -> mi
     miette!(
         code = aube_codes::errors::ERR_AUBE_CONFIG_NESTED_AUBE_KEY,
         help = format!(
-            "set a single entry with `aube config set --local {key}.<entry> <value>`, or edit `{key}:` directly in `pnpm-workspace.yaml` / `aube.{key}` in `package.json`.",
+            "set a single entry with `{} --local {key}.<entry> <value>`, or edit `{key}:` directly in `pnpm-workspace.yaml` / `aube.{key}` in `package.json`.",
+            aube_util::cmd("config set"),
         ),
         "`{key}` is an aube map setting (type `{}`) and can't be set as a single scalar — set one entry at a time, or edit the map structurally.",
         meta.type_,
@@ -320,8 +323,11 @@ fn reject_scalar_nested_key(key: &str) -> miette::Result<()> {
     Err(miette!(
         code = aube_codes::errors::ERR_AUBE_CONFIG_NESTED_AUBE_KEY,
         help = format!(
-            "`{}` is type `{}` — set it directly with `aube config set {} <value>`.",
-            meta.name, meta.type_, meta.name,
+            "`{}` is type `{}` — set it directly with `{} {} <value>`.",
+            meta.name,
+            meta.type_,
+            aube_util::cmd("config set"),
+            meta.name,
         ),
         "`{key}` is not a writable config key: `{}` is a scalar aube setting and has no nested namespace.",
         meta.name,

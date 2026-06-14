@@ -283,13 +283,18 @@ fn bootstrap_blocking(
         .current_dir(tool_dir)
         .status()
         .into_diagnostic()
-        .wrap_err("failed to spawn recursive aube install for node-gyp bootstrap")?;
+        .wrap_err(format!(
+            "failed to spawn recursive {} for node-gyp bootstrap",
+            aube_util::cmd("install")
+        ))?;
     if !status.success() {
         return Err(miette!(
-            "recursive aube install failed while bootstrapping node-gyp (exit {:?}) — \
-             pre-populate {} or run `aube install` once while online",
+            "recursive {} failed while bootstrapping node-gyp (exit {:?}) — \
+             pre-populate {} or run `{}` once while online",
+            aube_util::cmd("install"),
             status.code(),
-            tool_dir.display()
+            tool_dir.display(),
+            aube_util::cmd("install")
         ));
     }
     if !node_gyp_bin_exists(bin_dir) {

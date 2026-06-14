@@ -398,7 +398,8 @@ pub(super) fn select_lockfile_result(
                     return Err(miette!(
                         "lockfile is out of date with package.json: {reason}\n\
                          help: run without --frozen-lockfile to update the lockfile, \
-                         or run `aube install --no-frozen-lockfile` to regenerate it"
+                         or run `{} --no-frozen-lockfile` to regenerate it",
+                        aube_util::cmd("install")
                     ));
                 }
             }

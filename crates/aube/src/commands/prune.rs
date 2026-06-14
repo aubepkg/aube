@@ -45,7 +45,10 @@ pub async fn run(args: PruneArgs) -> miette::Result<()> {
 
     let graph = aube_lockfile::parse_lockfile(&cwd, &manifest)
         .map_err(miette::Report::new)
-        .wrap_err("failed to read lockfile — run `aube install` first")?;
+        .wrap_err(format!(
+            "failed to read lockfile — run `{}` first",
+            aube_util::cmd("install")
+        ))?;
 
     // Build the filtered graph via the existing BFS helper.
     let filtered = graph.filter_deps(|dep| {

@@ -204,7 +204,8 @@ impl ConfigTui {
 pub fn run() -> miette::Result<()> {
     if !io::stdout().is_terminal() {
         return Err(miette!(
-            "`aube config tui` requires an interactive terminal"
+            "`{}` requires an interactive terminal",
+            aube_util::cmd("config tui")
         ));
     }
 
@@ -729,8 +730,11 @@ fn edit_target(meta: &settings_meta::SettingMeta) -> Option<EditTarget> {
 fn edit_unavailable_message(meta: &settings_meta::SettingMeta) -> String {
     if !is_tui_editable_type(meta.type_) {
         return format!(
-            "`{}` uses `{}` values, which this TUI editor cannot write yet. Use `aube config explain {}` for the accepted shape, then edit the config file manually.",
-            meta.name, meta.type_, meta.name
+            "`{}` uses `{}` values, which this TUI editor cannot write yet. Use `{} {}` for the accepted shape, then edit the config file manually.",
+            meta.name,
+            meta.type_,
+            aube_util::cmd("config explain"),
+            meta.name
         );
     }
 
@@ -743,15 +747,18 @@ fn edit_unavailable_message(meta: &settings_meta::SettingMeta) -> String {
     }
     if !meta.npmrc_keys.is_empty() || !meta.workspace_yaml_keys.is_empty() {
         actions.push(format!(
-            "run `aube config explain {}` to see the supported config-file keys",
+            "run `{} {}` to see the supported config-file keys",
+            aube_util::cmd("config explain"),
             meta.name
         ));
     }
 
     if actions.is_empty() {
         format!(
-            "`{}` has no writable .npmrc or workspace YAML key. Run `aube config explain {}` to see where it can be set.",
-            meta.name, meta.name
+            "`{}` has no writable .npmrc or workspace YAML key. Run `{} {}` to see where it can be set.",
+            meta.name,
+            aube_util::cmd("config explain"),
+            meta.name
         )
     } else {
         format!(

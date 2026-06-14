@@ -46,7 +46,10 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
     let graph = super::load_graph(
         &cwd,
         &manifest,
-        "no lockfile found — run `aube install` before generating an SBOM",
+        &format!(
+            "no lockfile found — run `{}` before generating an SBOM",
+            aube_util::cmd("install")
+        ),
     )?;
 
     let filter = DepFilter::from_flags(args.prod, args.dev);

@@ -146,7 +146,11 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
     let graph = super::load_graph(
         &cwd,
         &manifest,
-        "no lockfile found — run `aube install` before `aube audit`",
+        &format!(
+            "no lockfile found — run `{}` before `{}`",
+            aube_util::cmd("install"),
+            aube_util::cmd("audit")
+        ),
     )?;
 
     let filter = DepFilter::from_flags(args.prod, args.dev);

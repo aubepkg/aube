@@ -11,8 +11,9 @@ pub struct ExplainArgs {
 pub fn run(args: ExplainArgs) -> miette::Result<()> {
     let Some(meta) = setting_for_key(&args.key) else {
         return Err(miette!(
-            "unknown setting `{}`; try `aube config find <words>`",
-            args.key
+            "unknown setting `{}`; try `{} <words>`",
+            args.key,
+            aube_util::cmd("config find")
         ));
     };
 

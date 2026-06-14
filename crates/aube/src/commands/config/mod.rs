@@ -165,7 +165,11 @@ pub async fn run(args: ConfigArgs) -> miette::Result<()> {
 fn reject_parent_list_args(args: &list::ListArgs, subcommand: &str) -> miette::Result<()> {
     if args.has_parent_overrides() {
         Err(miette!(
-            "`aube config` list flags must be used with `aube config` or `aube config list`, not `aube config {subcommand}`"
+            "`{}` list flags must be used with `{}` or `{}`, not `{} {subcommand}`",
+            aube_util::cmd("config"),
+            aube_util::cmd("config"),
+            aube_util::cmd("config list"),
+            aube_util::cmd("config")
         ))
     } else {
         Ok(())
@@ -178,7 +182,8 @@ mod tui {
 
     pub fn run() -> miette::Result<()> {
         Err(miette!(
-            "`aube config tui` was not enabled in this build; rebuild with the `config-tui` feature"
+            "`{}` was not enabled in this build; rebuild with the `config-tui` feature",
+            aube_util::cmd("config tui")
         ))
     }
 }

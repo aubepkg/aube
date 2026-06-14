@@ -201,7 +201,8 @@ pub async fn run(
             .map_err(|e| miette!("failed to discover workspace packages: {e}"))?;
         if workspace_pkgs.is_empty() {
             return Err(miette!(
-                "aube list: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at or above {}",
+                "{}: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at or above {}",
+                aube_util::cmd("list"),
                 cwd.display()
             ));
         }
@@ -217,7 +218,8 @@ pub async fn run(
                     .map(String::as_str)
                     .collect();
                 return Err(miette!(
-                    "aube list: filter {shown:?} did not match any workspace package"
+                    "{}: filter {shown:?} did not match any workspace package",
+                    aube_util::cmd("list")
                 ));
             }
             if format == ListFormat::Default {
@@ -242,7 +244,10 @@ pub async fn run(
     let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
-            eprintln!("No lockfile found. Run `aube install` to populate node_modules.");
+            eprintln!(
+                "No lockfile found. Run `{}` to populate node_modules.",
+                aube_util::cmd("install")
+            );
             return Ok(());
         }
         Err(e) => {

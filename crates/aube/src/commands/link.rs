@@ -87,7 +87,8 @@ pub async fn run(args: LinkArgs) -> miette::Result<()> {
             if source.symlink_metadata().is_err() {
                 return Err(miette!(
                     "package {name} is not linked globally\n\
-                     Run `aube link` in the package directory first"
+                     Run `{}` in the package directory first",
+                    aube_util::cmd("link")
                 ));
             }
 

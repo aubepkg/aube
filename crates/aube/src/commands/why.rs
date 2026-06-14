@@ -89,7 +89,10 @@ pub async fn run(
     let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
-            eprintln!("No lockfile found. Run `aube install` first.");
+            eprintln!(
+                "No lockfile found. Run `{}` first.",
+                aube_util::cmd("install")
+            );
             return Ok(());
         }
         Err(e) => {
@@ -124,7 +127,8 @@ fn run_filtered(
 ) -> miette::Result<()> {
     let workspace_root = crate::dirs::find_workspace_root(cwd).ok_or_else(|| {
         miette!(
-            "aube why: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at or above {}",
+            "{}: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at or above {}",
+            aube_util::cmd("why"),
             cwd.display()
         )
     })?;
@@ -134,7 +138,10 @@ fn run_filtered(
     let graph = match aube_lockfile::parse_lockfile(&workspace_root, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
-            eprintln!("No lockfile found. Run `aube install` first.");
+            eprintln!(
+                "No lockfile found. Run `{}` first.",
+                aube_util::cmd("install")
+            );
             return Ok(());
         }
         Err(e) => {
@@ -146,7 +153,8 @@ fn run_filtered(
         .map_err(|e| miette!("failed to discover workspace packages: {e}"))?;
     if workspace_pkgs.is_empty() {
         return Err(miette!(
-            "aube why: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at {}",
+            "{}: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at {}",
+            aube_util::cmd("why"),
             workspace_root.display()
         ));
     }
@@ -159,7 +167,8 @@ fn run_filtered(
     .map_err(|e| miette!("invalid --filter selector: {e}"))?;
     if selected.is_empty() {
         return Err(miette!(
-            "aube why: filter {workspace_filter:?} did not match any workspace package"
+            "{}: filter {workspace_filter:?} did not match any workspace package",
+            aube_util::cmd("why")
         ));
     }
 

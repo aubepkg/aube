@@ -62,7 +62,8 @@ pub async fn run(args: RuntimeArgs) -> miette::Result<()> {
 async fn run_set(args: RuntimeSetArgs) -> miette::Result<()> {
     if args.name != "node" {
         return Err(miette!(
-            "aube only manages the `node` runtime (got `{}`); deno/bun pins are not supported",
+            "{} only manages the `node` runtime (got `{}`); deno/bun pins are not supported",
+            aube_util::prog(),
             args.name
         ));
     }
@@ -108,7 +109,8 @@ async fn run_set(args: RuntimeSetArgs) -> miette::Result<()> {
 
     let project_dir = crate::dirs::find_project_root(&cwd).ok_or_else(|| {
         miette!(
-            "aube runtime set: no package.json found in {}",
+            "{}: no package.json found in {}",
+            aube_util::cmd("runtime set"),
             cwd.display()
         )
     })?;
@@ -221,8 +223,11 @@ async fn run_set_global(
     }
     if let Some(bin_dir) = &resolution.bin_dir {
         println!(
-            "aube has no shims — projects running through aube pick it up automatically;\n\
-             to use it outside aube, add it to PATH: export PATH=\"{}:$PATH\"",
+            "{} has no shims — projects running through {} pick it up automatically;\n\
+             to use it outside {}, add it to PATH: export PATH=\"{}:$PATH\"",
+            aube_util::prog(),
+            aube_util::prog(),
+            aube_util::prog(),
             bin_dir.display()
         );
     }

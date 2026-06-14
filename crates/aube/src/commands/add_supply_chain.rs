@@ -724,7 +724,8 @@ async fn downloads_gate(
         if !prompt_continue(name, weekly, threshold)? {
             return Err(miette!(
                 code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
-                "user aborted `aube add {name}`"
+                "user aborted `{} {name}`",
+                aube_util::cmd("add")
             ));
         }
     }

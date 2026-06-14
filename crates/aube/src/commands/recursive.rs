@@ -20,7 +20,7 @@ pub struct RecursiveGlobals {
 /// parses and dispatches this in-process.
 pub fn argv(args: RecursiveArgs, globals: RecursiveGlobals) -> miette::Result<Vec<String>> {
     if args.args.is_empty() {
-        return Err(miette!("aube recursive: missing command"));
+        return Err(miette!("{}: missing command", aube_util::cmd("recursive")));
     }
 
     let mut argv = vec!["aube".to_string()];

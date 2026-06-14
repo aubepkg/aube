@@ -69,7 +69,7 @@ impl AubeConfigEdit {
     pub(super) fn save(&self, path: &Path) -> miette::Result<()> {
         let out = toml::to_string_pretty(&self.table)
             .into_diagnostic()
-            .wrap_err("failed to serialize aube config")?;
+            .wrap_err(format!("failed to serialize {} config", aube_util::prog()))?;
         // Follow symlinks so a user-managed `~/.config/aube/config.toml`
         // pointing at e.g. a dotfiles repo keeps its symlink intact;
         // atomic_write renames a sibling temp over the path, which
@@ -86,7 +86,10 @@ pub(crate) fn user_aube_config_path() -> miette::Result<PathBuf> {
         return Ok(dir.join("aube").join("config.toml"));
     }
     let home = aube_util::env::home_dir().ok_or_else(|| {
-        miette!("could not locate home directory. set HOME or USERPROFILE to point at aube config")
+        miette!(
+            "could not locate home directory. set HOME or USERPROFILE to point at {} config",
+            aube_util::prog()
+        )
     })?;
     Ok(home.join(".config").join("aube").join("config.toml"))
 }

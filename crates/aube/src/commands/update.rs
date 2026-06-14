@@ -124,7 +124,8 @@ pub async fn run(
         // workaround for the genuine refresh-transitives case.
         eprintln!(
             "warn: --depth {depth} is ignored; aube only refreshes direct deps. \
-             For a full refresh, run `rm aube-lock.yaml && aube install`."
+             For a full refresh, run `rm aube-lock.yaml && {}`.",
+            aube_util::cmd("install")
         );
     }
     if args.global {
@@ -933,7 +934,8 @@ async fn pick_update_interactively(
 ) -> miette::Result<BTreeSet<String>> {
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err(miette!(
-            "`aube update --interactive` requires stdin and stderr to be TTYs; pass package names explicitly to update non-interactively"
+            "`{} --interactive` requires stdin and stderr to be TTYs; pass package names explicitly to update non-interactively",
+            aube_util::cmd("update")
         ));
     }
 

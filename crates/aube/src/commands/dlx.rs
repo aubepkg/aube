@@ -252,7 +252,8 @@ pub async fn run(args: DlxArgs) -> miette::Result<()> {
         if !bin_path.exists() {
             return Err(miette!(
                 "dlx: binary not found after install: {resolved_bin_name}\n\
-                 help: the package may ship the binary under a different name — try `aube dlx -p <package> <bin>`"
+                 help: the package may ship the binary under a different name — try `{} -p <package> <bin>`",
+                aube_util::cmd("dlx")
             ));
         }
         // The linker writes three shims for every bin on Windows:

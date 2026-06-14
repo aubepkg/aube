@@ -148,10 +148,10 @@ fn runtime_section(warnings: &mut Vec<String>) -> Section {
         Some(v) => s.push("node", format!("v{v}")),
         None => {
             s.push("node", "(not found)");
-            warnings.push(
-                "`node` is not available on PATH — lifecycle scripts and `aube run` will fail"
-                    .to_string(),
-            );
+            warnings.push(format!(
+                "`node` is not available on PATH — lifecycle scripts and `{}` will fail",
+                aube_util::cmd("run")
+            ));
         }
     }
     if let Some(ctx) = crate::runtime::current() {
@@ -306,7 +306,8 @@ fn check_install_state(anchor: &Path, report: &mut Report) {
         let modules_dir = super::project_modules_dir(anchor);
         if modules_dir.exists() {
             report.warnings.push(format!(
-                "node_modules is stale: {reason}. Run `aube install`."
+                "node_modules is stale: {reason}. Run `{}`.",
+                aube_util::cmd("install")
             ));
         }
     }
@@ -355,7 +356,7 @@ fn check_virtual_store_links(anchor: &Path, report: &mut Report) -> miette::Resu
         // `aube-linker`'s `aube_dir`), so route the reported path through
         // the profile. Standalone aube → `node_modules/.aube/`.
         report.errors.push(format!(
-            "{} broken {} in node_modules/.{}/ (run `aube check` for details)",
+            "{} broken {} in node_modules/.{}/ (run `{}` for details)",
             links.issues.len(),
             if links.issues.len() == 1 {
                 "dependency link"
@@ -363,6 +364,7 @@ fn check_virtual_store_links(anchor: &Path, report: &mut Report) -> miette::Resu
                 "dependency links"
             },
             aube_util::embedder().name,
+            aube_util::cmd("check"),
         ));
     }
     Ok(())

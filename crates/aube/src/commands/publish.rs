@@ -182,8 +182,9 @@ fn enforce_git_checks(cwd: &Path) -> miette::Result<()> {
     let dirty = String::from_utf8_lossy(&status.stdout);
     if !dirty.trim().is_empty() {
         return Err(miette!(
-            "aube publish: working tree has uncommitted changes:\n{}\n\
+            "{}: working tree has uncommitted changes:\n{}\n\
              help: commit or stash them, or pass --no-git-checks to override",
+            aube_util::cmd("publish"),
             dirty.trim_end()
         ));
     }
@@ -225,8 +226,9 @@ fn enforce_git_checks(cwd: &Path) -> miette::Result<()> {
         || is_version_branch(&branch, "release");
     if !ok {
         return Err(miette!(
-            "aube publish: current branch `{branch}` is not a release branch\n\
-             help: switch to main/master or pass --no-git-checks to override"
+            "{}: current branch `{branch}` is not a release branch\n\
+             help: switch to main/master or pass --no-git-checks to override",
+            aube_util::cmd("publish")
         ));
     }
     Ok(())
@@ -245,8 +247,9 @@ async fn run_recursive(
         .map_err(|e| miette!("failed to discover workspace packages: {e}"))?;
     if workspace_pkgs.is_empty() {
         return Err(miette!(
-            "aube publish: no workspace packages found. \
+            "{}: no workspace packages found. \
              `--recursive` / `--filter` requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at {}",
+            aube_util::cmd("publish"),
             source_root.display()
         ));
     }
@@ -255,12 +258,14 @@ async fn run_recursive(
     if selected.is_empty() {
         if !filter.is_empty() {
             return Err(miette!(
-                "aube publish: --filter {:?} did not match any workspace package",
+                "{}: --filter {:?} did not match any workspace package",
+                aube_util::cmd("publish"),
                 filter
             ));
         }
         return Err(miette!(
-            "aube publish: no publishable workspace packages (all private or empty)"
+            "{}: no publishable workspace packages (all private or empty)",
+            aube_util::cmd("publish")
         ));
     }
 
@@ -300,7 +305,8 @@ async fn run_recursive(
             .collect::<Vec<_>>()
             .join("\n");
         return Err(miette!(
-            "aube publish: {} failed:\n{joined}",
+            "{}: {} failed:\n{joined}",
+            aube_util::cmd("publish"),
             pluralizer::pluralize("package", failures.len() as isize, true)
         ));
     }
@@ -466,8 +472,9 @@ async fn publish_one(
             });
         }
         return Err(miette!(
-            "aube publish: {name}@{version} is already on {registry_url}\n\
-             help: pass --force to republish (the registry must allow it; npm's public registry does not)"
+            "{}: {name}@{version} is already on {registry_url}\n\
+             help: pass --force to republish (the registry must allow it; npm's public registry does not)",
+            aube_util::cmd("publish")
         ));
     }
 

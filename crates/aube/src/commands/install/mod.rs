@@ -1677,7 +1677,8 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             return Err(miette!(
                 "no lockfile found and --frozen-lockfile is set\n\
                  help: commit pnpm-lock.yaml to your repository, or run \
-                 `aube install --no-frozen-lockfile` to generate one"
+                 `{} --no-frozen-lockfile` to generate one",
+                aube_util::cmd("install")
             ));
         }
         Err(e) => {

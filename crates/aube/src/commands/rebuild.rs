@@ -68,8 +68,9 @@ pub async fn run(
     // exit Ok with no scripts run and no diagnostic — invisible in CI.
     if selected.is_some() && graph.is_none() {
         return Err(miette!(
-            "no lockfile found at {} — run `aube install` before targeting specific packages",
-            cwd.display()
+            "no lockfile found at {} — run `{}` before targeting specific packages",
+            cwd.display(),
+            aube_util::cmd("install")
         ));
     }
 

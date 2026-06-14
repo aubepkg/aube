@@ -269,9 +269,11 @@ fn view(args: ViewArgs) -> miette::Result<()> {
 
     if !found {
         return Err(miette!(
-            "no cached metadata for `{}`\nhelp: run `aube view {}` or `aube install` first to populate the cache",
+            "no cached metadata for `{}`\nhelp: run `{} {}` or `{}` first to populate the cache",
             args.name,
+            aube_util::cmd("view"),
             args.name,
+            aube_util::cmd("install"),
         ));
     }
     Ok(())

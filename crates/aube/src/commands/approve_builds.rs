@@ -73,7 +73,11 @@ fn run_project(cwd: &Path, all: bool, packages: Vec<String>) -> miette::Result<(
     for name in &selected {
         println!("  {name}");
     }
-    println!("Run `aube install` (or `aube rebuild`) to execute their scripts.");
+    println!(
+        "Run `{}` (or `{}`) to execute their scripts.",
+        aube_util::cmd("install"),
+        aube_util::cmd("rebuild")
+    );
     Ok(())
 }
 
@@ -132,7 +136,10 @@ fn run_global(args: ApproveBuildsArgs) -> miette::Result<()> {
     }
 
     println!("Approved {approved} package(s) across {written_dirs} global install(s).");
-    println!("Run `aube -C <global-install-dir> install` (or `rebuild`) to execute their scripts.");
+    println!(
+        "Run `{} -C <global-install-dir> install` (or `rebuild`) to execute their scripts.",
+        aube_util::prog()
+    );
     Ok(())
 }
 
@@ -158,8 +165,9 @@ fn select_project(
             .collect();
         if !unknown.is_empty() {
             return Err(miette!(
-                "not in the ignored-builds set: {}. Run `aube ignored-builds` to see candidates.",
-                unknown.join(", ")
+                "not in the ignored-builds set: {}. Run `{}` to see candidates.",
+                unknown.join(", "),
+                aube_util::cmd("ignored-builds")
             ));
         }
         return Ok(dedupe(packages));
@@ -215,8 +223,9 @@ fn select_global_packages(
         .collect();
     if !unknown.is_empty() {
         return Err(miette!(
-            "not in the ignored-builds set: {}. Run `aube ignored-builds -g` to see candidates.",
-            unknown.join(", ")
+            "not in the ignored-builds set: {}. Run `{} -g` to see candidates.",
+            unknown.join(", "),
+            aube_util::cmd("ignored-builds")
         ));
     }
 

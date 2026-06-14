@@ -104,8 +104,9 @@ pub fn run(args: DeleteArgs) -> miette::Result<()> {
             ));
         }
         return Err(miette!(
-            "{} not set in aube config or {}",
+            "{} not set in {} config or {}",
             args.key,
+            aube_util::prog(),
             npmrc_path.display()
         ));
     }
@@ -146,8 +147,10 @@ fn try_delete_aube_map_entry(key: &str, location: Location) -> miette::Result<Op
 
     if !matches!(location, Location::Project) {
         return Err(miette!(
-            "`{key}` only applies at project scope: `{prefix}` is read from `pnpm-workspace.yaml` / `package.json#<pnpm|aube>.{prefix}`, not user-scope aube config.\n\
-             use `aube config delete --local {prefix}.{entry}` to remove it from the project workspace yaml / `package.json`.",
+            "`{key}` only applies at project scope: `{prefix}` is read from `pnpm-workspace.yaml` / `package.json#<pnpm|aube>.{prefix}`, not user-scope {} config.\n\
+             use `{} --local {prefix}.{entry}` to remove it from the project workspace yaml / `package.json`.",
+            aube_util::prog(),
+            aube_util::cmd("config delete"),
         ));
     }
 
@@ -185,9 +188,10 @@ fn missing_aube_key_error(
             "{key} is not set in {} but an entry exists in {}.\n\
              aube doesn't modify `.npmrc` for aube-only settings (it's shared with \
              npm/pnpm/yarn) — edit that file directly to remove it, or run \
-             `aube config set {key} <value>` to override it from {}.",
+             `{} {key} <value>` to override it from {}.",
             config_path.display(),
             npmrc_path.display(),
+            aube_util::cmd("config set"),
             config_path.display(),
         );
     }

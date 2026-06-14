@@ -72,7 +72,9 @@ pub(crate) async fn ensure_installed(no_install: bool) -> miette::Result<()> {
         }
         VerifyDepsBeforeRun::Error => {
             return Err(miette!(
-                "dependencies need install before run: {reason}\nRun `aube install`, or set verifyDepsBeforeRun=install to let aube do it automatically."
+                "dependencies need install before run: {reason}\nRun `{}`, or set verifyDepsBeforeRun=install to let {} do it automatically.",
+                aube_util::cmd("install"),
+                aube_util::prog()
             ));
         }
         VerifyDepsBeforeRun::Install => {}

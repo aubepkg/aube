@@ -127,7 +127,8 @@ pub(super) fn filter_graph_to_workspace_selection(
     .map_err(|e| miette!("invalid --filter selector: {e}"))?;
     if selected.is_empty() {
         return Err(miette!(
-            "aube install: filter {filters:?} did not match any workspace package"
+            "{}: filter {filters:?} did not match any workspace package",
+            aube_util::cmd("install")
         ));
     }
     let mut keep_importers = std::collections::BTreeSet::new();

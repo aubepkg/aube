@@ -91,7 +91,8 @@ pub(super) fn plan_injections(
             if aube_util::pkg::is_workspace_spec(&dep_spec) {
                 let Some((sibling_dir, _)) = ws_index.get(&dep_name) else {
                     return Err(miette!(
-                        "aube deploy: {} declares `{dep_name}: {dep_spec}` but no workspace package named {dep_name:?} was found",
+                        "{}: {} declares `{dep_name}: {dep_spec}` but no workspace package named {dep_name:?} was found",
+                        aube_util::cmd("deploy"),
                         manifest_path.display()
                     ));
                 };

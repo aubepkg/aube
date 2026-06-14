@@ -170,7 +170,8 @@ pub(crate) fn ensure_registry_auth(
         Ok(())
     } else {
         Err(miette!(
-            "no auth token for {registry_url}. Run `aube login --registry {registry_url}` first."
+            "no auth token for {registry_url}. Run `{} --registry {registry_url}` first.",
+            aube_util::cmd("login")
         ))
     }
 }

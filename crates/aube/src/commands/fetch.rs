@@ -54,8 +54,9 @@ pub async fn run(args: FetchArgs) -> miette::Result<()> {
         Ok(pair) => pair,
         Err(aube_lockfile::Error::NotFound(_)) => {
             return Err(miette!(
-                "no lockfile found — aube fetch requires a lockfile \
-                 (pnpm-lock.yaml, yarn.lock, package-lock.json, npm-shrinkwrap.json, or bun.lock)"
+                "no lockfile found — {} requires a lockfile \
+                 (pnpm-lock.yaml, yarn.lock, package-lock.json, npm-shrinkwrap.json, or bun.lock)",
+                aube_util::cmd("fetch")
             ));
         }
         Err(e) => {
