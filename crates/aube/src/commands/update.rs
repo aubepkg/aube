@@ -743,6 +743,7 @@ pub async fn run(
         }
     }
 
+    super::prepare_resolved_graph_for_lockfile_write(&mut graph);
     write_update_lockfile(&cwd, &graph, &manifest)?;
 
     // Propagate `--ignore-pnpmfile` / `--pnpmfile` / `--global-pnpmfile`
@@ -1431,6 +1432,7 @@ fn merge_update_graph_into_workspace_lockfile(
 
     let mut root_graph = root_graph.filter_deps(|_| true);
     retain_package_times(&mut root_graph);
+    super::prepare_resolved_graph_for_lockfile_write(&mut root_graph);
     super::write_and_log_lockfile(workspace_root, &root_graph, root_manifest)?;
     Ok(())
 }

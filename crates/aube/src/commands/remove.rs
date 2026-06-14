@@ -160,13 +160,14 @@ pub async fn run(
     let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
     let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
-    let graph = resolver
+    let mut graph = resolver
         .resolve(&manifest, existing.as_ref())
         .await
         .map_err(miette::Report::new)
         .wrap_err("failed to resolve dependencies")?;
     eprintln!("Resolved {} packages", graph.packages.len());
 
+    super::prepare_resolved_graph_for_lockfile_write(&mut graph);
     super::write_and_log_lockfile(&cwd, &graph, &manifest)?;
 
     // Reinstall to clean up node_modules

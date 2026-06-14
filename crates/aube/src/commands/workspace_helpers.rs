@@ -84,6 +84,20 @@ pub(crate) fn finish_filtered_workspace(
     }
 }
 
+/// Run the post-resolve passes every fresh-resolve lockfile write needs so the
+/// written snapshot carries pnpm-parity metadata: `optional: true` on
+/// optional-only packages and `transitivePeerDependencies` on each ancestor.
+///
+/// Must run on the full (pre-host-filter) resolved graph, immediately before the
+/// lockfile is written. Centralized here so every fresh-resolve write path —
+/// `install`, the `--lockfile-only` path, `remove`, `update` (including the
+/// workspace root-merge path), `dedupe`, and `audit --fix` — stays in sync
+/// instead of each re-deriving the passes or silently skipping them.
+pub(crate) fn prepare_resolved_graph_for_lockfile_write(graph: &mut aube_lockfile::LockfileGraph) {
+    aube_resolver::platform::mark_optional_packages(graph);
+    aube_resolver::platform::mark_transitive_peer_dependencies(graph);
+}
+
 /// Write lockfile preserving existing format and log the file name.
 pub(crate) fn write_and_log_lockfile(
     cwd: &Path,

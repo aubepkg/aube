@@ -75,7 +75,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
 
     let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
-    let graph = resolver
+    let mut graph = resolver
         .resolve_workspace(&manifests, None, &ws_package_versions)
         .await
         .map_err(miette::Report::new)
@@ -110,6 +110,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
         return Err(miette!("dedupe --check: lockfile is not deduped"));
     }
 
+    super::prepare_resolved_graph_for_lockfile_write(&mut graph);
     super::write_and_log_lockfile(&cwd, &graph, &manifest)?;
 
     // Resync node_modules against the new lockfile.

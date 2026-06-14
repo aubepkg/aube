@@ -1539,14 +1539,10 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                     local_pnpmfile.as_deref(),
                 )
                 .await;
-                // Mark optional-only packages on the full (pre-host-filter)
-                // graph so the lockfile snapshot carries pnpm's `optional:
-                // true` markers (e.g. every `@esbuild/*` native). Runs before
-                // the write and before the host-only `filter_graph` below.
-                aube_resolver::platform::mark_optional_packages(&mut graph);
-                // Compute pnpm's `transitivePeerDependencies` for each
-                // snapshot from the peer-contextualized graph.
-                aube_resolver::platform::mark_transitive_peer_dependencies(&mut graph);
+                // Annotate the full (pre-host-filter) graph with pnpm-parity
+                // snapshot metadata (`optional: true`, `transitivePeerDependencies`)
+                // before the write and before the host-only `filter_graph` below.
+                crate::commands::prepare_resolved_graph_for_lockfile_write(&mut graph);
                 if shared_workspace_lockfile || !has_workspace {
                     let written_path = write_lockfile_dir_remapped(
                         &lockfile_dir,

@@ -288,11 +288,10 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         lo_local_pnpmfile.as_deref(),
     )
     .await;
-    // Mark optional-only packages so `--lockfile-only` output stays
-    // byte-identical to a regular install (and to pnpm's `optional: true`).
-    aube_resolver::platform::mark_optional_packages(&mut graph);
-    // Compute pnpm's `transitivePeerDependencies` for each snapshot.
-    aube_resolver::platform::mark_transitive_peer_dependencies(&mut graph);
+    // Annotate the resolved graph with pnpm-parity snapshot metadata
+    // (`optional: true`, `transitivePeerDependencies`) so `--lockfile-only`
+    // output stays byte-identical to a regular install.
+    crate::commands::prepare_resolved_graph_for_lockfile_write(&mut graph);
     if shared_workspace_lockfile || !has_workspace {
         let lo_written = write_lockfile_dir_remapped(
             lockfile_dir,
