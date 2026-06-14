@@ -1089,12 +1089,13 @@ fn overrides_round_trip_through_pnpm_lock_yaml() {
     assert_eq!(reparsed.overrides.get("foo").unwrap(), "npm:bar@^2");
 }
 
-/// `patchedDependencies:` must land between `overrides:` and
-/// `catalogs:` in the emitted YAML — that's where pnpm itself
-/// writes it, and any other position produces a gratuitous diff
-/// against pnpm's output on every install.
+/// Top-level blocks must follow pnpm's `sortLockfileKeys` ROOT_KEYS
+/// order: `catalogs:` → `overrides:` → … → `patchedDependencies:`.
+/// pnpm writes `catalogs:` right after `settings:` (before `overrides:`)
+/// and `patchedDependencies:` after the checksums; any other position
+/// produces a gratuitous diff against pnpm's output on every install.
 #[test]
-fn patched_dependencies_emitted_after_overrides_before_catalogs() {
+fn catalogs_overrides_patched_dependencies_match_pnpm_order() {
     let dir = tempfile::tempdir().unwrap();
     let lockfile_path = dir.path().join("pnpm-lock.yaml");
 
@@ -1131,14 +1132,14 @@ fn patched_dependencies_emitted_after_overrides_before_catalogs() {
     write(&lockfile_path, &graph, &manifest).unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
 
+    let catalogs_at = yaml.find("catalogs:").expect("catalogs:");
     let overrides_at = yaml.find("overrides:").expect("overrides:");
     let patched_at = yaml
         .find("patchedDependencies:")
         .expect("patchedDependencies:");
-    let catalogs_at = yaml.find("catalogs:").expect("catalogs:");
     assert!(
-        overrides_at < patched_at && patched_at < catalogs_at,
-        "expected order: overrides < patchedDependencies < catalogs, got\n{yaml}"
+        catalogs_at < overrides_at && overrides_at < patched_at,
+        "expected order: catalogs < overrides < patchedDependencies, got\n{yaml}"
     );
 }
 
@@ -2168,14 +2169,14 @@ snapshots:
         );
     }
 
+    let catalogs_at = written.find("\ncatalogs:").expect("catalogs");
     let overrides_at = written.find("\noverrides:").expect("overrides");
     let patched_at = written
         .find("\npatchedDependencies:")
         .expect("patchedDependencies");
-    let catalogs_at = written.find("\ncatalogs:").expect("catalogs");
     let importers_at = written.find("\nimporters:").expect("importers");
     assert!(
-        overrides_at < patched_at && patched_at < catalogs_at && catalogs_at < importers_at,
+        catalogs_at < overrides_at && overrides_at < patched_at && patched_at < importers_at,
         "pnpm top-level section order drifted:\n{written}"
     );
     let packages_at = written.find("\npackages:").expect("packages");

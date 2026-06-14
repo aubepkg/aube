@@ -706,38 +706,42 @@ fn pruned_time_entries(
 struct WritablePnpmLockfile {
     lockfile_version: String,
     settings: WritableSettings,
-    // pnpm v9 places `overrides:` immediately after `settings:` and
-    // before `importers:`. Field order matters because we serialize
-    // through yaml_serde and want byte-for-byte parity with pnpm output
-    // for the no-overrides case (the field is skipped when empty).
+    /// pnpm v9 emits a top-level `catalogs:` map immediately after
+    /// `settings:` and before `overrides:` — see pnpm's
+    /// `sortLockfileKeys` ROOT_KEYS order (lockfileVersion, settings,
+    /// catalogs, overrides, packageExtensionsChecksum, pnpmfileChecksum,
+    /// patchedDependencies, importers, packages). Field order matters
+    /// because we serialize through yaml_serde and want byte-for-byte
+    /// parity with pnpm. Skipped when empty so a no-catalogs install
+    /// stays byte-identical to pnpm output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalogs: Option<BTreeMap<String, BTreeMap<String, WritableCatalogEntry>>>,
+    // pnpm v9 places `overrides:` after `catalogs:` and before
+    // `packageExtensionsChecksum:`. Field order matters because we
+    // serialize through yaml_serde and want byte-for-byte parity with
+    // pnpm output (the field is skipped when empty).
     #[serde(skip_serializing_if = "Option::is_none")]
     overrides: Option<BTreeMap<String, String>>,
     /// pnpm v9's top-level `packageExtensionsChecksum:` — emitted right
-    /// after `overrides:` (and before `patchedDependencies:`) when the
+    /// after `overrides:` and before `pnpmfileChecksum:` when the
     /// effective config declares any `packageExtensions`. Already
     /// carries pnpm's `sha256-` prefix. Skipped when absent so a
     /// no-extensions install stays byte-identical to pnpm.
     #[serde(skip_serializing_if = "Option::is_none")]
     package_extensions_checksum: Option<String>,
     /// pnpm v9's top-level `pnpmfileChecksum:` — emitted immediately
-    /// after `packageExtensionsChecksum:` when a local pnpmfile
-    /// participates. Skipped when absent for byte-identical output.
+    /// after `packageExtensionsChecksum:` and before
+    /// `patchedDependencies:` when a local pnpmfile participates.
+    /// Skipped when absent for byte-identical output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pnpmfile_checksum: Option<String>,
     /// pnpm v9+ top-level `patchedDependencies:` — preserved so a
     /// bun→aube-lock conversion keeps the user's patches and a
     /// re-emit doesn't strip the block. pnpm emits this block right
-    /// after `overrides:` and before `catalogs:`, so the field order
-    /// here follows the same sequence for byte-identical output.
+    /// after `pnpmfileChecksum:` and before `importers:`, so the field
+    /// order here follows the same sequence for byte-identical output.
     #[serde(skip_serializing_if = "Option::is_none")]
     patched_dependencies: Option<BTreeMap<String, String>>,
-    /// pnpm v9 emits a top-level `catalogs:` map after
-    /// `overrides:` and before `importers:` when `pnpm-workspace.yaml`
-    /// declares any referenced catalog entries.
-    /// Skipped when empty so a no-catalogs install stays byte-identical
-    /// to pnpm output.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    catalogs: Option<BTreeMap<String, BTreeMap<String, WritableCatalogEntry>>>,
     /// pnpm v9 emits a top-level `time:` map when `resolution-mode=time-based`
     /// is active. Keyed by canonical `name@version`; values are ISO-8601
     /// publish timestamps pulled from the registry packument. Placed
