@@ -431,19 +431,31 @@ pub fn mark_transitive_peer_dependencies(graph: &mut aube_lockfile::LockfileGrap
             };
             if graph.packages.contains_key(&child) {
                 parents.entry(child).or_default().push(dep_path.clone());
+            } else {
+                // Edge points outside the resolved graph (workspace
+                // `link:`/`file:` deps, or a child pruned by platform
+                // filtering). It has no snapshot to bubble peers through,
+                // so dropping it is correct — log at debug for anyone
+                // chasing a missing `transitivePeerDependencies` entry.
+                tracing::debug!(
+                    parent = %dep_path,
+                    dep = %name,
+                    tail = %tail,
+                    "transitive-peer pass: dependency edge has no graph node, skipping"
+                );
             }
         }
         // Declared peers plus pnpm's meta-only peers (the optional
-        // `peerDependenciesMeta` keys the writer synthesizes a `*` range
-        // for, e.g. debug's `supports-color`). A peer that resolved is
-        // mirrored into `dependencies`, so subtracting `dependencies` keys
-        // leaves exactly the unresolved set that bubbles up.
+        // `peerDependenciesMeta` keys, folded in as `*` by the helper —
+        // e.g. debug's `supports-color`). A resolved peer is mirrored into
+        // `dependencies` (pnpm does the same for active optionals too, so
+        // only `dependencies` needs checking — never `optional_dependencies`),
+        // so subtracting `dependencies` keys leaves exactly the unresolved
+        // set that bubbles up.
         let own: BTreeSet<String> = pkg
-            .peer_dependencies
-            .keys()
-            .chain(pkg.peer_dependencies_meta.keys())
-            .filter(|p| !pkg.dependencies.contains_key(*p))
-            .cloned()
+            .peer_dependencies_with_meta_defaults()
+            .into_keys()
+            .filter(|p| !pkg.dependencies.contains_key(p))
             .collect();
         if !own.is_empty() {
             unresolved.insert(dep_path.clone(), own.into_iter().collect());

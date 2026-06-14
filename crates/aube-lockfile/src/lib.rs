@@ -495,6 +495,24 @@ impl LockedPackage {
             .as_ref()
             .map(|source| format!("{}@{}", self.registry_name(), source.specifier()))
     }
+
+    /// Declared peer ranges with pnpm's meta-only peers folded in as `*`.
+    ///
+    /// pnpm records a `peerDependencies: { x: '*' }` entry for every
+    /// `peerDependenciesMeta` key a package ships without an explicit
+    /// range (debug's optional `supports-color`, typescript-eslint's
+    /// optional `typescript`, …). This returns `peer_dependencies` with
+    /// those meta-only keys added as `*` — both what the pnpm writer emits
+    /// in `packages:` and the "declared peers" set the transitive-peer
+    /// pass subtracts resolved deps from. Centralizing the rule keeps the
+    /// writer and the resolver's transitive-peer pass from drifting.
+    pub fn peer_dependencies_with_meta_defaults(&self) -> BTreeMap<String, String> {
+        let mut deps = self.peer_dependencies.clone();
+        for name in self.peer_dependencies_meta.keys() {
+            deps.entry(name.clone()).or_insert_with(|| "*".to_string());
+        }
+        deps
+    }
 }
 
 #[cfg(test)]

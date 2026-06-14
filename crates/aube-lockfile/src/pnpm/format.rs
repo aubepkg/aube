@@ -365,11 +365,13 @@ mod tests {
     #[test]
     fn folds_explicit_long_keys_into_inline_form() {
         // yaml_serde emits a >128-byte mapping key in explicit `? `/`: `
-        // form; pnpm always writes the quoted key inline. The value block
-        // must end up indented exactly like an inline-key snapshot.
+        // form; pnpm always writes the quoted key inline. A multi-key value
+        // block (dependencies + optionalDependencies + transitivePeer-
+        // Dependencies) must end up indented exactly like an inline-key
+        // snapshot — every child carried over verbatim, not just the first.
         let long = "@typescript-eslint/eslint-plugin@7.18.0(@typescript-eslint/parser@7.18.0(eslint@8.57.1)(typescript@5.6.3))(eslint@8.57.1)(typescript@5.6.3)";
         let input = format!(
-            "snapshots:\n  ? '{long}'\n  : dependencies:\n      '@typescript-eslint/parser': 7.18.0(eslint@8.57.1)(typescript@5.6.3)\n    transitivePeerDependencies:\n    - supports-color\n"
+            "snapshots:\n  ? '{long}'\n  : dependencies:\n      '@typescript-eslint/parser': 7.18.0(eslint@8.57.1)(typescript@5.6.3)\n    optionalDependencies:\n      typescript: 5.6.3\n    transitivePeerDependencies:\n    - supports-color\n"
         );
         let out = reformat_for_pnpm_parity(&input);
         assert!(
@@ -379,6 +381,10 @@ mod tests {
         assert!(
             out.contains("    dependencies:\n      '@typescript-eslint/parser': 7.18.0(eslint@8.57.1)(typescript@5.6.3)\n"),
             "deps reindented:\n{out}"
+        );
+        assert!(
+            out.contains("    optionalDependencies:\n      typescript: 5.6.3\n"),
+            "optionalDependencies carried over verbatim:\n{out}"
         );
         assert!(
             out.contains("    transitivePeerDependencies:\n      - supports-color\n"),

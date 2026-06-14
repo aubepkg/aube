@@ -202,16 +202,13 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         // pnpm records a `peerDependencies: { x: '*' }` entry for every
         // `peerDependenciesMeta` key a package declares without an explicit
         // range (the classic case is debug's optional `supports-color`,
-        // shipped only under `peerDependenciesMeta`). Synthesize the same
-        // `*` here, at write time, so the packages entry matches pnpm
-        // byte-for-byte without ever letting the optional peer into
-        // peer-context resolution (which would bind it to an unrelated copy
-        // in the tree and grow spurious dep-path suffixes).
+        // shipped only under `peerDependenciesMeta`). `LockedPackage`'s
+        // helper folds those `*` ranges in so the packages entry matches
+        // pnpm byte-for-byte; doing it at write time keeps the optional
+        // peer out of peer-context resolution (which would bind it to an
+        // unrelated copy in the tree and grow spurious dep-path suffixes).
         let peer_deps = {
-            let mut deps = pkg.peer_dependencies.clone();
-            for name in pkg.peer_dependencies_meta.keys() {
-                deps.entry(name.clone()).or_insert_with(|| "*".to_string());
-            }
+            let deps = pkg.peer_dependencies_with_meta_defaults();
             if deps.is_empty() { None } else { Some(deps) }
         };
         let peer_meta = if pkg.peer_dependencies_meta.is_empty() {
