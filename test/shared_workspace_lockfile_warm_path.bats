@@ -231,6 +231,62 @@ _setup_no_shared_workspace() {
 	assert_link_exists packages/service-name/node_modules/is-number
 }
 
+@test "sharedWorkspaceLockfile=false: member lockfile drift busts the warm path when the root is itself a package" {
+	# The workspace root is *itself a package* (it has its own
+	# dependencies), so under sharedWorkspaceLockfile=false it carries its
+	# own per-project lockfile. `active_lockfile` then resolves that root
+	# lockfile, so the freshness check has a lockfile to read and — pre-fix
+	# — stopped there, never consulting the per-member lockfiles. A member
+	# lockfile could drift while the root lockfile stayed put, and the warm
+	# path wrongly reported "Already up to date". The config-only-root tests
+	# above can't catch this: with no root lockfile the member branch always
+	# ran.
+	cat >package.json <<-'JSON'
+		{
+		  "name": "ws-root",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "3.0.1"
+		  }
+		}
+	JSON
+	cat >pnpm-workspace.yaml <<-'YAML'
+		packages:
+		  - packages/*
+		sharedWorkspaceLockfile: false
+	YAML
+	mkdir -p packages/svc
+	cat >packages/svc/package.json <<-'JSON'
+		{
+		  "name": "svc",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-number": "6.0.0"
+		  }
+		}
+	JSON
+
+	run aube install
+	assert_success
+	# Precondition: the root *is* a package, so it owns its own lockfile —
+	# this is the variant the per-member check used to skip.
+	assert_file_exists aube-lock.yaml
+	assert_file_exists packages/svc/aube-lock.yaml
+
+	# Tamper with the member lockfile in place. No package.json changes and
+	# no root-lockfile changes — only the member-lockfile freshness check
+	# can notice this. A trailing comment keeps the file valid YAML.
+	printf '\n# tampered\n' >>packages/svc/aube-lock.yaml
+
+	run aube install
+	assert_success
+	# Warm path busted: the full pipeline ran (even as a no-op it prints the
+	# "(N packages)" count), proving the member-lockfile drift was noticed.
+	# Pre-fix this short-circuited on the unchanged root lockfile and printed
+	# a bare "Already up to date" with no count.
+	assert_output --partial "up to date ("
+}
+
 @test "sharedWorkspaceLockfile=false: adding a new member busts the warm path" {
 	_setup_no_shared_workspace
 
