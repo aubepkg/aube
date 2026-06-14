@@ -756,12 +756,16 @@ fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {
 }
 
 /// True for importer specifiers that point at a local on-disk source
-/// (`link:` / `file:` / `portal:`) rather than a registry range or
-/// workspace alias. The drift check uses this to recognize
-/// pnpmfile-`readPackage`-rewritten importer deps, where the hook turns
-/// a plain range into a local link (e.g. `"*"` → `link:../pkg/dist`).
+/// (`link:` / `file:` / `portal:` / `exec:`) rather than a registry range
+/// or workspace alias — the same set `LocalSource::parse` recognizes. The
+/// drift check uses this to recognize pnpmfile-`readPackage`-rewritten
+/// importer deps, where the hook turns a plain range into a local link
+/// (e.g. `"*"` → `link:../pkg/dist`).
 fn is_local_source_spec(spec: &str) -> bool {
-    spec.starts_with("link:") || spec.starts_with("file:") || spec.starts_with("portal:")
+    spec.starts_with("link:")
+        || spec.starts_with("file:")
+        || spec.starts_with("portal:")
+        || spec.starts_with("exec:")
 }
 
 #[cfg(test)]
