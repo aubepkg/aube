@@ -780,33 +780,30 @@ pub(crate) fn configure_resolver(
     let force_metadata_primer = resolve_force_metadata_primer(settings_ctx);
     let (sup_os, sup_cpu, sup_libc) =
         aube_manifest::effective_supported_architectures(manifest, workspace_config);
-    // aube-lock.yaml, pnpm-lock.yaml, and bun.lock are all committed,
-    // cross-platform artifacts that carry per-package os/cpu metadata:
-    // if the user hasn't declared `pnpm.supportedArchitectures` we widen
-    // the resolver's platform filter so optional natives for other
-    // platforms still land in the committed lockfile — withholding them
-    // leaves cross-platform teammates with "Cannot find native binding"
-    // on install. Install-time filtering (`filter_graph`) and the
-    // streaming-fetch gate run against the unmodified manifest setting,
-    // so `node_modules` and tarball downloads stay trimmed to the host.
-    //
-    // pnpm-lock.yaml gets the *full* match set (`accept_all`): pnpm
-    // records EVERY optional-dep variant a package declares (all 25
-    // `@rollup/rollup-*` natives, freebsd/ppc64/s390x and all), so a
-    // pnpm-lock.yaml aube regenerates must match. aube-lock.yaml / bun.lock
-    // use the curated wide matrix instead, which covers every common
-    // platform without baking in rare triples. Yarn / npm lockfiles don't
-    // carry per-package os/cpu metadata, so widening there would only
-    // bloat the lockfile — keep pnpm's host-only default for those.
+    // pnpm-lock.yaml, aube-lock.yaml, and bun.lock are all committed,
+    // cross-platform artifacts that carry per-package os/cpu metadata.
+    // When the user hasn't declared `pnpm.supportedArchitectures`, record
+    // EVERY optional-dep variant a package declares (`accept_all`) so the
+    // committed lockfile installs cleanly on every contributor's platform
+    // — withholding variants leaves teammates with "Cannot find native
+    // binding". This matches what pnpm AND bun both write verbatim (all 26
+    // `@esbuild/*` / `@rollup/rollup-*` natives, freebsd/ppc64/s390x and
+    // all), so a lockfile aube regenerates stays diff-clean against the
+    // native tool. Install-time filtering (`filter_graph`) and the
+    // streaming-fetch gate run against the unmodified host triple, so
+    // `node_modules` and tarball downloads stay trimmed to the host — the
+    // wider lockfile costs only bytes, never extra installs. Yarn / npm
+    // lockfiles don't carry the same per-package os/cpu metadata, so
+    // widening there would only bloat them — keep pnpm's host-only default.
     let manifest_set_supported_arch =
         !(sup_os.is_empty() && sup_cpu.is_empty() && sup_libc.is_empty());
-    let writes_pnpm_lock = matches!(
+    let writes_cross_platform_lock = matches!(
         target_lockfile_kind,
-        Some(aube_lockfile::LockfileKind::Pnpm)
-    );
-    let writes_curated_cross_platform_lock = matches!(
-        target_lockfile_kind,
-        Some(aube_lockfile::LockfileKind::Aube | aube_lockfile::LockfileKind::Bun)
+        Some(
+            aube_lockfile::LockfileKind::Pnpm
+                | aube_lockfile::LockfileKind::Aube
+                | aube_lockfile::LockfileKind::Bun
+        )
     );
     let supported_architectures = if manifest_set_supported_arch {
         aube_resolver::SupportedArchitectures {
@@ -815,13 +812,11 @@ pub(crate) fn configure_resolver(
             libc: sup_libc,
             ..Default::default()
         }
-    } else if writes_pnpm_lock {
+    } else if writes_cross_platform_lock {
         aube_resolver::SupportedArchitectures {
             accept_all: true,
             ..Default::default()
         }
-    } else if writes_curated_cross_platform_lock {
-        aube_resolver::SupportedArchitectures::aube_lock_default()
     } else {
         aube_resolver::SupportedArchitectures {
             os: sup_os,

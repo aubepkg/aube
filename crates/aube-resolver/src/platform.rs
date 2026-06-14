@@ -25,92 +25,28 @@
 /// literal `"current"` inside any array expands to the same host value
 /// so users can write `["current", "linux"]` to keep their native
 /// platform *and* also resolve optionals for Linux.
-///
-/// `explicit_combinations` sidesteps the cartesian expansion entirely —
-/// [`aube_lock_default`] uses it to emit a hand-picked matrix that
-/// drops rare combinations (darwin-x64) without shrinking the OS / CPU
-/// lists a user might inspect.
 #[derive(Debug, Clone, Default)]
 pub struct SupportedArchitectures {
     pub os: Vec<String>,
     pub cpu: Vec<String>,
     pub libc: Vec<String>,
-    /// When `Some`, `combinations()` returns these triples verbatim
-    /// instead of computing `os` × `cpu` × `libc`. Lets a preset prune
-    /// individual (os, cpu, libc) combinations the cartesian product
-    /// would otherwise include.
-    pub explicit_combinations: Option<Vec<(String, String, String)>>,
     /// When true, [`is_supported`] accepts every package regardless of
-    /// its `os`/`cpu`/`libc`. Used at *resolve* time for pnpm-lock.yaml so
-    /// every optional-dep variant a package declares lands in the
-    /// committed lockfile — exactly what pnpm records, regardless of the
-    /// host running the resolve. Link-time filtering (`filter_graph`) and
-    /// the streaming-fetch gate run against the host triple instead, so
-    /// `node_modules` and the tarball downloads stay trimmed to the host.
+    /// its `os`/`cpu`/`libc`. Set at *resolve* time for the committed,
+    /// cross-platform lockfiles (pnpm-lock.yaml, aube-lock.yaml,
+    /// bun.lock) so every optional-dep variant a package declares lands
+    /// in the lockfile — exactly what pnpm and bun both record,
+    /// regardless of the host running the resolve. Link-time filtering
+    /// (`filter_graph`) and the streaming-fetch gate run against the
+    /// host triple instead, so `node_modules` and the tarball downloads
+    /// stay trimmed to the host.
     pub accept_all: bool,
 }
 
 impl SupportedArchitectures {
-    /// Wide default used when resolving into `aube-lock.yaml` with no
-    /// user-declared `pnpm.supportedArchitectures`. Covers the common
-    /// npm OS / CPU / libc combinations so optional native deps for
-    /// every major platform land in the lockfile on a first resolve —
-    /// a project resolved on macOS installs correctly on Linux CI
-    /// without the user having to hand-edit their manifest. pnpm-lock
-    /// / yarn / npm outputs stay host-only (pnpm parity) so we don't
-    /// silently change the shape of a non-native lockfile.
-    ///
-    /// darwin-x64 is not in the baseline matrix: Apple Silicon is the
-    /// shipping Mac platform, and several major native package
-    /// ecosystems (sharp, swc) have already dropped Intel Mac binaries,
-    /// so an Apple Silicon developer's lockfile doesn't need to bake in
-    /// Intel Mac natives for other contributors. The host's own triple
-    /// is always added to the set, though — an Intel Mac user installing
-    /// on that same machine gets darwin-x64 natives because the host
-    /// triple joins the matrix here. Exotic hosts (freebsd, ppc64, …)
-    /// get the same treatment: their native deps still install for the
-    /// user, and the wide matrix covers everyone else.
-    pub fn aube_lock_default() -> Self {
-        let mut combos = vec![
-            ("darwin".to_string(), "arm64".to_string(), String::new()),
-            ("linux".to_string(), "x64".to_string(), "glibc".to_string()),
-            ("linux".to_string(), "x64".to_string(), "musl".to_string()),
-            (
-                "linux".to_string(),
-                "arm64".to_string(),
-                "glibc".to_string(),
-            ),
-            ("linux".to_string(), "arm64".to_string(), "musl".to_string()),
-            ("win32".to_string(), "x64".to_string(), String::new()),
-            ("win32".to_string(), "arm64".to_string(), String::new()),
-        ];
-        // Ensure the host's own triple is always included. Without this
-        // step an Intel Mac user (darwin-x64) would silently lose their
-        // own native optional deps — the cross-platform widening dropped
-        // them from the matrix, and the post-resolve `filter_graph` can't
-        // bring back packages that never entered the graph in the first
-        // place.
-        let host = host_triple();
-        let host_triple_owned = (host.0.to_string(), host.1.to_string(), host.2.to_string());
-        if !combos.contains(&host_triple_owned) {
-            combos.push(host_triple_owned);
-        }
-        Self {
-            os: Vec::new(),
-            cpu: Vec::new(),
-            libc: Vec::new(),
-            explicit_combinations: Some(combos),
-            accept_all: false,
-        }
-    }
-
     /// Expand any `"current"` entries to the host triple and default
     /// empty arrays to `[host]`. The result is a non-empty list of
     /// (os, cpu, libc) combinations the caller can test against.
     fn combinations(&self) -> Vec<(String, String, String)> {
-        if let Some(ref explicit) = self.explicit_combinations {
-            return explicit.clone();
-        }
         let host = host_triple();
         let expand = |field: &[String], host_val: &str| -> Vec<String> {
             if field.is_empty() {
@@ -429,50 +365,13 @@ mod tests {
     }
 
     #[test]
-    fn aube_lock_default_accepts_every_common_native() {
-        // A first-time `aube install` run on macOS must still pull the
-        // Linux / Windows native variants into `aube-lock.yaml` so the
-        // committed lockfile installs cleanly on CI — that's the whole
-        // point of the wide default.
-        let sup = SupportedArchitectures::aube_lock_default();
-        assert!(is_supported(&s(&["darwin"]), &s(&["arm64"]), &[], &sup));
-        assert!(is_supported(
-            &s(&["linux"]),
-            &s(&["x64"]),
-            &s(&["glibc"]),
-            &sup
-        ));
-        assert!(is_supported(
-            &s(&["linux"]),
-            &s(&["arm64"]),
-            &s(&["musl"]),
-            &sup
-        ));
-        assert!(is_supported(&s(&["win32"]), &s(&["x64"]), &[], &sup));
-        assert!(is_supported(&s(&["win32"]), &s(&["arm64"]), &[], &sup));
-    }
-
-    #[test]
-    fn aube_lock_default_always_accepts_host_triple() {
-        // The wide matrix excludes darwin-x64 by design (see
-        // `aube_lock_default`'s doc), but the host's own triple is
-        // unconditionally added to the set. An Intel Mac or a freebsd
-        // box that runs `aube install` must still get its own native
-        // optional deps, regardless of which combinations the baseline
-        // matrix covers.
-        let sup = SupportedArchitectures::aube_lock_default();
-        let (os, cpu, libc) = host_triple();
-        let pkg_libc = if libc.is_empty() { vec![] } else { s(&[libc]) };
-        assert!(is_supported(&s(&[os]), &s(&[cpu]), &pkg_libc, &sup));
-    }
-
-    #[test]
-    fn accept_all_accepts_every_arch_including_curated_rejects() {
-        // pnpm-lock parity: `accept_all` records every optional-dep
-        // variant a package declares, even triples the curated wide
-        // matrix deliberately drops (darwin-x64, freebsd, ppc64, s390x,
-        // …). Without it, a regenerated pnpm-lock.yaml loses arches that
-        // pnpm keeps, breaking teammates on those platforms.
+    fn accept_all_accepts_every_arch_including_non_host_triples() {
+        // pnpm/bun parity: `accept_all` records every optional-dep
+        // variant a package declares, even triples a host-only filter
+        // would reject (darwin-x64 on an arm64 mac, freebsd, ppc64,
+        // s390x, …). Without it, a regenerated cross-platform lockfile
+        // loses arches pnpm/bun keep, breaking teammates on those
+        // platforms.
         let sup = SupportedArchitectures {
             accept_all: true,
             ..Default::default()
@@ -492,32 +391,17 @@ mod tests {
             &sup
         ));
         assert!(is_supported(&s(&["win32"]), &s(&["ia32"]), &[], &sup));
-        // Sanity: the curated matrix rejects at least one of these, so the
-        // accept-all branch is doing real work.
-        let curated = SupportedArchitectures::aube_lock_default();
+        // Sanity: a host-only (default) set rejects at least one of
+        // these, so the accept-all branch is doing real work.
+        let host_only = SupportedArchitectures::default();
         let (host_os, _, _) = host_triple();
         if host_os != "freebsd" {
             assert!(!is_supported(
                 &s(&["freebsd"]),
                 &s(&["arm64"]),
                 &[],
-                &curated
+                &host_only
             ));
-        }
-    }
-
-    #[test]
-    fn aube_lock_default_rejects_exotic_non_host_triples() {
-        // Exotic triples the host isn't running as (openbsd, ppc64, …)
-        // stay out of the default set — users targeting them still need
-        // to opt in via `pnpm.supportedArchitectures`.
-        let sup = SupportedArchitectures::aube_lock_default();
-        let (os, _, _) = host_triple();
-        if os != "openbsd" {
-            assert!(!is_supported(&s(&["openbsd"]), &s(&["x64"]), &[], &sup));
-        }
-        if os != "aix" {
-            assert!(!is_supported(&s(&["aix"]), &s(&["ppc64"]), &[], &sup));
         }
     }
 
