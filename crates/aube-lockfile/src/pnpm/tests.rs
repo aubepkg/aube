@@ -860,6 +860,191 @@ fn test_write_and_reparse_roundtrip() {
     assert_eq!(root_deps[0].dep_type, DepType::Production);
 }
 
+/// pnpm strips engines entries whose value is exactly `*` and omits the
+/// field when nothing survives (verified against pnpm v11 + its
+/// `updateLockfile.ts`: `if (version === '*') continue`). Everything
+/// else is kept verbatim — including the array-shaped
+/// `{'0': node >=0.6.0}` pnpm emits for packages that declared `engines`
+/// as an array, so the filter must key off the *value*, not the shape.
+#[test]
+fn engines_star_values_are_dropped_like_pnpm() {
+    let mk = |name: &str, engines: &[(&str, &str)]| {
+        (
+            format!("{name}@1.0.0"),
+            LockedPackage {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                integrity: Some(format!("sha512-{name}")),
+                dep_path: format!("{name}@1.0.0"),
+                engines: engines
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        )
+    };
+
+    let packages = BTreeMap::from([
+        mk("arrayform", &[("0", "node >=0.6.0")]),
+        mk("real", &[("node", ">=14")]),
+        mk("starnode", &[("node", "*")]),
+        mk("starplusnpm", &[("node", "*"), ("npm", ">=6")]),
+    ]);
+
+    let graph = LockfileGraph {
+        packages,
+        ..Default::default()
+    };
+    let manifest = PackageJson {
+        name: Some("eng".to_string()),
+        version: Some("0.0.0".to_string()),
+        ..Default::default()
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("pnpm-lock.yaml");
+    write(&out, &graph, &manifest).unwrap();
+    let yaml = std::fs::read_to_string(&out).unwrap();
+
+    // `{node: '*'}` collapses to nothing → exactly three engines lines
+    // survive (starplusnpm keeps only npm, plus arrayform + real).
+    assert_eq!(
+        yaml.matches("    engines: {").count(),
+        3,
+        "expected 3 engines lines (starnode fully dropped):\n{yaml}"
+    );
+    assert!(
+        yaml.contains("engines: {npm: '>=6'}"),
+        "node:'*' dropped but npm kept:\n{yaml}"
+    );
+    assert!(
+        yaml.contains("engines: {'0': node >=0.6.0}"),
+        "array-shaped engines must be preserved (pnpm keeps them):\n{yaml}"
+    );
+    assert!(
+        yaml.contains("engines: {node: '>=14'}"),
+        "ordinary engines must be preserved:\n{yaml}"
+    );
+
+    // Round-trip: the fully-dropped entry stays empty, survivors reparse.
+    let reparsed = parse(&out).unwrap();
+    assert!(
+        reparsed.packages["starnode@1.0.0"].engines.is_empty(),
+        "starnode must round-trip with no engines"
+    );
+    assert_eq!(
+        reparsed.packages["starplusnpm@1.0.0"]
+            .engines
+            .get("npm")
+            .map(String::as_str),
+        Some(">=6")
+    );
+    assert!(
+        !reparsed.packages["starplusnpm@1.0.0"]
+            .engines
+            .contains_key("node"),
+        "node:'*' must not come back on reparse"
+    );
+    assert_eq!(
+        reparsed.packages["arrayform@1.0.0"]
+            .engines
+            .get("0")
+            .map(String::as_str),
+        Some("node >=0.6.0")
+    );
+}
+
+/// pnpm records the registry `deprecated:` reason on `packages:`
+/// entries, placed after `engines`/`cpu`/`os`/`libc` and before
+/// `hasBin` (verified against pnpm v11 output for `coffee-script` /
+/// `fsevents` / `request`). aube carries the reason on
+/// `LockedPackage::extra_meta["deprecated"]` so the reader and writer
+/// round-trip it instead of dropping the field on a parse/write cycle.
+#[test]
+fn deprecated_message_round_trips_in_pnpm_field_order() {
+    let yaml = r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      coffee-script:
+        specifier: 1.12.7
+        version: 1.12.7
+
+packages:
+
+  coffee-script@1.12.7:
+    resolution: {integrity: sha512-coffee}
+    engines: {node: '>=0.8.0'}
+    deprecated: CoffeeScript on NPM has moved to "coffeescript" (no hyphen)
+    hasBin: true
+
+snapshots:
+
+  coffee-script@1.12.7: {}
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, yaml).unwrap();
+
+    // Reader: the deprecation reason lands on extra_meta verbatim.
+    let graph = parse(&path).unwrap();
+    let pkg = graph.packages.get("coffee-script@1.12.7").unwrap();
+    assert_eq!(
+        pkg.extra_meta.get("deprecated").and_then(|v| v.as_str()),
+        Some(r#"CoffeeScript on NPM has moved to "coffeescript" (no hyphen)"#),
+        "reader must capture deprecated into extra_meta"
+    );
+
+    // Writer: re-emit it as a plain scalar (embedded quotes and all,
+    // matching pnpm), positioned after engines and before hasBin.
+    let manifest = PackageJson {
+        name: Some("dep-test".to_string()),
+        version: Some("0.0.0".to_string()),
+        dependencies: [("coffee-script".to_string(), "1.12.7".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let out = dir.path().join("out.yaml");
+    write(&out, &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&out).unwrap();
+
+    assert!(
+        written.contains(
+            "    deprecated: CoffeeScript on NPM has moved to \"coffeescript\" (no hyphen)\n"
+        ),
+        "writer must emit the deprecated line verbatim:\n{written}"
+    );
+    let engines_at = written.find("engines:").expect("engines:");
+    let deprecated_at = written.find("deprecated:").expect("deprecated:");
+    let has_bin_at = written.find("hasBin:").expect("hasBin:");
+    assert!(
+        engines_at < deprecated_at && deprecated_at < has_bin_at,
+        "deprecated must sit after engines and before hasBin:\n{written}"
+    );
+
+    // Round-trip: the field survives a parse → write → parse cycle.
+    let reparsed = parse(&out).unwrap();
+    assert_eq!(
+        reparsed
+            .packages
+            .get("coffee-script@1.12.7")
+            .unwrap()
+            .extra_meta
+            .get("deprecated")
+            .and_then(|v| v.as_str()),
+        Some(r#"CoffeeScript on NPM has moved to "coffeescript" (no hyphen)"#),
+        "deprecated reason must survive a full round-trip"
+    );
+}
+
 #[test]
 fn test_write_prunes_time_to_direct_importer_deps() {
     let dir = tempfile::tempdir().unwrap();

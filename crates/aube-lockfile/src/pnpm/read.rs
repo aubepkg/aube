@@ -587,6 +587,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         let cpu = pkg_info.map(|p| p.cpu.clone()).unwrap_or_default();
         let libc = pkg_info.map(|p| p.libc.clone()).unwrap_or_default();
         let engines = pkg_info.map(|p| p.engines.clone()).unwrap_or_default();
+        // pnpm records a registry `deprecated:` reason on package
+        // entries; stash it on the generic meta map so the writer can
+        // re-emit it (matching how bun round-trips the same field).
+        let extra_meta = pkg_info
+            .and_then(|p| p.deprecated.clone())
+            .map(|msg| BTreeMap::from([("deprecated".to_string(), serde_json::Value::String(msg))]))
+            .unwrap_or_default();
         // pnpm's lockfile only stores `hasBin: true/false` (no paths);
         // reconstruct an opaque single-entry map on parse so
         // `!bin.is_empty()` stays equivalent to `hasBin`, then let
@@ -681,7 +688,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 // `None`.
                 license: None,
                 funding_url: None,
-                extra_meta: BTreeMap::new(),
+                extra_meta,
             },
         );
     }

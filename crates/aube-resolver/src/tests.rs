@@ -3013,6 +3013,81 @@ async fn lockfile_reuse_handles_name_at_version_dep_form() {
     );
 }
 
+// A fresh resolve must stash the packument's `deprecated` reason on the
+// LockedPackage (via `extra_meta`) so the pnpm/aube lockfile writer can
+// emit pnpm's `deprecated:` field. Without this the reason is dropped
+// and aube's lockfile drifts from pnpm's for every deprecated dep.
+#[tokio::test]
+async fn fresh_resolve_records_deprecated_reason_on_extra_meta() {
+    let mut foo = make_packument("foo", &["1.0.0"], "1.0.0");
+    foo.versions.get_mut("1.0.0").unwrap().deprecated = Some("use bar instead".to_string());
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    resolver.cache.insert("foo".to_string(), foo);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("foo".to_string(), "1.0.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("resolve failed");
+
+    let foo_pkg = graph.packages.get("foo@1.0.0").expect("foo resolved");
+    assert_eq!(
+        foo_pkg
+            .extra_meta
+            .get("deprecated")
+            .and_then(|v| v.as_str()),
+        Some("use bar instead"),
+        "fresh resolve must record the deprecation reason on extra_meta"
+    );
+}
+
+// `allowedDeprecatedVersions` only silences the install *warning* — it
+// must not strip the `deprecated:` field from the lockfile. pnpm keeps
+// recording the reason on the package entry regardless, so the resolver
+// stores the raw packument message rather than the warning-gated one.
+#[tokio::test]
+async fn deprecated_reason_recorded_even_when_warning_suppressed() {
+    let mut foo = make_packument("foo", &["1.0.0"], "1.0.0");
+    foo.versions.get_mut("1.0.0").unwrap().deprecated = Some("use bar instead".to_string());
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client).with_dependency_policy(DependencyPolicy {
+        allowed_deprecated_versions: [("foo".to_string(), "*".to_string())].into_iter().collect(),
+        ..Default::default()
+    });
+    resolver.cache.insert("foo".to_string(), foo);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("foo".to_string(), "1.0.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("resolve failed");
+
+    let foo_pkg = graph.packages.get("foo@1.0.0").expect("foo resolved");
+    assert_eq!(
+        foo_pkg
+            .extra_meta
+            .get("deprecated")
+            .and_then(|v| v.as_str()),
+        Some("use bar instead"),
+        "lockfile must record deprecated even when the warning is suppressed"
+    );
+}
+
 // ===== peersSuffixMaxLength =====
 //
 // Helpers exercised directly: `effective_peer_suffix` for the pnpm

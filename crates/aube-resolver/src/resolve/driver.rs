@@ -1019,7 +1019,24 @@ impl<'a> ResolveDriver<'a> {
                 funding_url: version_meta.funding_url.clone(),
                 optional: false,
                 transitive_peer_dependencies: Vec::new(),
-                extra_meta: BTreeMap::new(),
+                // Record the registry's deprecation reason so the
+                // pnpm/aube writers can emit the `deprecated:` field
+                // pnpm keeps on package entries. Stored on the generic
+                // meta map rather than a typed slot to match how bun
+                // round-trips it. Uses the raw packument message, not
+                // `deprecated_msg`: that one is gated by
+                // `allowedDeprecatedVersions`, which only silences the
+                // install warning — pnpm still records the field.
+                extra_meta: version_meta
+                    .deprecated
+                    .as_deref()
+                    .map(|msg| {
+                        BTreeMap::from([(
+                            "deprecated".to_string(),
+                            serde_json::Value::String(msg.to_string()),
+                        )])
+                    })
+                    .unwrap_or_default(),
             },
         );
 

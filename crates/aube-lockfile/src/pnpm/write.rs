@@ -364,14 +364,30 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
             WritablePackageInfo {
                 resolution,
                 version: write_version,
-                engines: if pkg.engines.is_empty() {
-                    None
-                } else {
-                    Some(pkg.engines.clone())
+                // pnpm drops every engines entry whose value is exactly
+                // `*` and omits the field when nothing survives
+                // (updateLockfile.ts: `if (version === '*') continue`).
+                // Mirror that so e.g. `engines: {node: '*'}` never lands
+                // in the lockfile, while real constraints (including the
+                // array-shaped `{'0': node >=0.6.0}` pnpm keeps verbatim)
+                // are preserved.
+                engines: {
+                    let filtered: BTreeMap<String, String> = pkg
+                        .engines
+                        .iter()
+                        .filter(|(_, v)| v.as_str() != "*")
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    (!filtered.is_empty()).then_some(filtered)
                 },
                 cpu: pkg.cpu.to_vec(),
                 os: pkg.os.to_vec(),
                 libc: pkg.libc.to_vec(),
+                deprecated: pkg
+                    .extra_meta
+                    .get("deprecated")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
                 has_bin: !pkg.bin.is_empty(),
                 peer_dependencies: peer_deps,
                 peer_dependencies_meta: peer_meta,
@@ -443,6 +459,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 os: Vec::new(),
                 cpu: Vec::new(),
                 libc: Vec::new(),
+                deprecated: None,
                 has_bin: pin.has_bin,
                 peer_dependencies: None,
                 peer_dependencies_meta: None,
@@ -898,7 +915,9 @@ struct WritablePackageInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<String>,
     /// pnpm writes `engines: {node: '>=8'}` in flow form immediately
-    /// after `resolution:` when the package declared any engines.
+    /// after `resolution:` when the package declared any engines —
+    /// minus entries whose value is exactly `*`, which pnpm drops (so a
+    /// manifest's `engines: {node: '*'}` yields no `engines:` line).
     /// Emitted as a block map here — `reformat_for_pnpm_parity` flips it
     /// to flow form to match pnpm byte-for-byte.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -914,6 +933,13 @@ struct WritablePackageInfo {
     os: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     libc: Vec<String>,
+    /// Registry deprecation reason. pnpm emits `deprecated: <reason>`
+    /// right after `cpu`/`os`/`libc` and before `hasBin` (verified
+    /// against pnpm v11 output for `request` / `coffee-script` /
+    /// `fsevents`). Skipped when absent so non-deprecated packages stay
+    /// byte-identical to pnpm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deprecated: Option<String>,
     /// pnpm emits `hasBin: true` only when the package has executables;
     /// `hasBin: false` is never written. Skip the default to match.
     #[serde(skip_serializing_if = "std::ops::Not::not")]

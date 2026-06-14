@@ -208,6 +208,12 @@ pub(super) struct RawPackageInfo {
     pub(super) libc: Vec<String>,
     #[serde(default)]
     pub(super) has_bin: bool,
+    /// Registry deprecation message pnpm records on a `packages:` entry
+    /// (`deprecated: <reason>`). Round-tripped so a parse/write cycle
+    /// keeps the field pnpm wrote; carried on the shared graph via
+    /// `LockedPackage::extra_meta["deprecated"]`.
+    #[serde(default)]
+    pub(super) deprecated: Option<String>,
     /// Paired writer field. See `WritablePackageInfo::alias_of`. `None`
     /// for ordinary (non-aliased) packages.
     #[serde(default)]
