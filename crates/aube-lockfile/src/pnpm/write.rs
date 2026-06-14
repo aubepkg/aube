@@ -369,8 +369,8 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 } else {
                     Some(pkg.engines.clone())
                 },
-                os: pkg.os.to_vec(),
                 cpu: pkg.cpu.to_vec(),
+                os: pkg.os.to_vec(),
                 libc: pkg.libc.to_vec(),
                 has_bin: !pkg.bin.is_empty(),
                 peer_dependencies: peer_deps,
@@ -899,13 +899,15 @@ struct WritablePackageInfo {
     /// to flow form to match pnpm byte-for-byte.
     #[serde(skip_serializing_if = "Option::is_none")]
     engines: Option<BTreeMap<String, String>>,
-    // pnpm v9 emits os/cpu/libc after `engines` and before `hasBin`.
-    // Keep this order to stay byte-identical with pnpm-written lockfiles
-    // for native packages.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    os: Vec<String>,
+    // pnpm v9 emits `cpu`, then `os`, then `libc` after `engines` and
+    // before `hasBin` (see pnpm's `sortLockfileKeys` ORDERED_KEYS:
+    // cpu=6, os=7, libc=8). Keep this order to stay byte-identical with
+    // pnpm-written lockfiles for native packages. `reformat_for_pnpm_parity`
+    // flips each of these block sequences to flow form (`cpu: [arm64]`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     cpu: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    os: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     libc: Vec<String>,
     /// pnpm emits `hasBin: true` only when the package has executables;

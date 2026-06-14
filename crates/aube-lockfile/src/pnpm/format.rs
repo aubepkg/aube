@@ -1,11 +1,18 @@
 /// Post-process a `yaml_serde`-emitted pnpm-lock.yaml into the exact
-/// shape real pnpm writes. Two tweaks:
+/// shape real pnpm writes. Four tweaks:
 ///
 ///   1. Collapse `resolution:` / `engines:` block maps into flow form
 ///      (`resolution: {integrity: sha512-…}`). pnpm writes both inline
 ///      and `yaml_serde` can't be coerced into flow style per-field
 ///      without a custom emitter.
-///   2. Insert blank-line separators above every top-level section
+///   2. Collapse `cpu:` / `os:` / `libc:` block sequences into flow form
+///      (`cpu: [arm64]`). pnpm writes these short architecture lists
+///      inline; yaml_serde emits them as block sequences.
+///   3. Re-indent the remaining block sequences (e.g.
+///      `transitivePeerDependencies:`) so the `- item` lines sit two
+///      spaces past the key, matching pnpm/js-yaml. yaml_serde aligns
+///      list items with their key instead.
+///   4. Insert blank-line separators above every top-level section
 ///      (`settings:`, `importers:`, `packages:`, `snapshots:`, …) and
 ///      between 2-indent entries inside the entry-bearing sections
 ///      (`importers:`, `packages:`, `snapshots:`, `catalogs:`).
@@ -16,7 +23,7 @@
 pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
     let lines: Vec<&str> = yaml.lines().collect();
 
-    // Pass 1: flow-style `resolution:` / `engines:` blocks.
+    // Pass 1: flow-style blocks + block-sequence re-indentation.
     let mut compact: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
     while i < lines.len() {
@@ -73,6 +80,37 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
                 continue;
             }
         }
+
+        // Flow-style `cpu:` / `os:` / `libc:` sequences. yaml_serde
+        // aligns the `- item` lines with the key; collect them and
+        // inline as `cpu: [arm64]`.
+        if matches!(key, Some("cpu") | Some("os") | Some("libc"))
+            && let Some((items, next_i)) = gather_block_seq(&lines, i, indent)
+        {
+            compact.push(format!(
+                "{}{}: [{}]",
+                " ".repeat(indent),
+                key.unwrap(),
+                items.join(", ")
+            ));
+            i = next_i;
+            continue;
+        }
+
+        // Remaining block sequences (`transitivePeerDependencies:`, …):
+        // keep block form but push each item two spaces past the key so
+        // the indentation matches pnpm.
+        if key.is_some()
+            && let Some((items, next_i)) = gather_block_seq(&lines, i, indent)
+        {
+            compact.push(line.to_string());
+            for item in items {
+                compact.push(format!("{}- {}", " ".repeat(indent + 2), item));
+            }
+            i = next_i;
+            continue;
+        }
+
         compact.push(line.to_string());
         i += 1;
     }
@@ -109,4 +147,109 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
         }
     }
     out
+}
+
+/// Collect a *scalar* `yaml_serde`-emitted block sequence whose key is on
+/// `lines[key_idx]`. yaml_serde aligns `- item` lines with their key, so
+/// the items sit at `key_indent` (not `key_indent + 2`). Returns the item
+/// values (with the `- ` marker stripped) and the index of the first line
+/// past the sequence.
+///
+/// Returns `None` when the key does not introduce a scalar sequence:
+/// either the next line is not a `- ` item (a map or scalar), or an item
+/// is followed by a deeper continuation line — i.e. the sequence holds
+/// map items (the runtime-pin `variants:` / `targets:` lists). Those can't
+/// be re-indented by a flat textual shift without corrupting their nested
+/// structure, so the caller leaves them exactly as `yaml_serde` wrote them.
+fn gather_block_seq(
+    lines: &[&str],
+    key_idx: usize,
+    key_indent: usize,
+) -> Option<(Vec<String>, usize)> {
+    let mut items = Vec::new();
+    let mut j = key_idx + 1;
+    while j < lines.len() {
+        let next = lines[j];
+        let n_stripped = next.trim_start();
+        let n_indent = next.len() - n_stripped.len();
+        if n_indent != key_indent || !n_stripped.starts_with("- ") {
+            break;
+        }
+        items.push(n_stripped[2..].to_string());
+        j += 1;
+    }
+    if items.is_empty() {
+        return None;
+    }
+    // Pure-scalar guard: a line deeper than the key after the last item
+    // is a map-item continuation (e.g. `variants:` holds `- resolution:`
+    // blocks). Bail so the caller leaves such sequences untouched.
+    if let Some(stop) = lines.get(j) {
+        let s = stop.trim_start();
+        let stop_indent = stop.len() - s.len();
+        if !s.is_empty() && stop_indent > key_indent {
+            return None;
+        }
+    }
+    Some((items, j))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reformat_for_pnpm_parity;
+
+    #[test]
+    fn collapses_cpu_os_libc_into_flow_sequences() {
+        // yaml_serde aligns block-sequence items with their key; pnpm
+        // writes these short architecture lists inline.
+        let input = "packages:\n  '@rollup/rollup-darwin-arm64@4.61.0':\n    resolution: {integrity: sha512-aaa==}\n    cpu:\n    - arm64\n    os:\n    - darwin\n    libc:\n    - glibc\n";
+        let out = reformat_for_pnpm_parity(input);
+        assert!(out.contains("    cpu: [arm64]\n"), "cpu flow:\n{out}");
+        assert!(out.contains("    os: [darwin]\n"), "os flow:\n{out}");
+        assert!(out.contains("    libc: [glibc]\n"), "libc flow:\n{out}");
+        // No leftover block-sequence dashes for these keys.
+        assert!(!out.contains("- arm64"), "no block cpu:\n{out}");
+        assert!(!out.contains("- darwin"), "no block os:\n{out}");
+    }
+
+    #[test]
+    fn flow_sequence_keeps_multiple_items_comma_separated() {
+        let input = "packages:\n  pkg@1.0.0:\n    os:\n    - darwin\n    - linux\n";
+        let out = reformat_for_pnpm_parity(input);
+        assert!(out.contains("    os: [darwin, linux]\n"), "{out}");
+    }
+
+    #[test]
+    fn reindents_transitive_peer_dependencies_two_spaces() {
+        // pnpm indents block-sequence items two spaces past the key;
+        // yaml_serde aligns them with the key.
+        let input = "snapshots:\n  rollup@4.61.0:\n    dependencies:\n      '@types/estree': 1.0.9\n    transitivePeerDependencies:\n    - supports-color\n";
+        let out = reformat_for_pnpm_parity(input);
+        assert!(
+            out.contains("    transitivePeerDependencies:\n      - supports-color\n"),
+            "tPD reindented:\n{out}"
+        );
+    }
+
+    #[test]
+    fn leaves_map_item_sequences_untouched() {
+        // A runtime-pin `variants:` / `targets:` block holds map items
+        // (each `- resolution:` carries a nested block). A flat +2 shift
+        // can't re-indent those without desyncing the nested keys, so the
+        // rewriter must leave them exactly as yaml_serde wrote them.
+        let input = "packages:\n  node@runtime:24.4.1:\n    resolution:\n      type: variations\n      variants:\n      - resolution:\n          archive: tarball\n          type: binary\n        targets:\n        - cpu: arm64\n          os: darwin\n";
+        let out = reformat_for_pnpm_parity(input);
+        // `variants:` map items stay at the key's own indent (untouched).
+        assert!(
+            out.contains("      variants:\n      - resolution:\n"),
+            "{out}"
+        );
+        // Inner `targets:` map items likewise untouched.
+        assert!(
+            out.contains("        targets:\n        - cpu: arm64\n"),
+            "{out}"
+        );
+        // The variations resolution is not flow-collapsed.
+        assert!(!out.contains("resolution: {type: variations"), "{out}");
+    }
 }
