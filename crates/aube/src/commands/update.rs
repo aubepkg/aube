@@ -111,7 +111,7 @@ pub struct UpdateArgs {
 pub async fn run(
     args: UpdateArgs,
     mut filter: aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();
@@ -442,7 +442,7 @@ pub async fn run(
     };
 
     if args.interactive && !manifest_keys_to_update.is_empty() {
-        let selected = pick_update_interactively(
+        let selected = match pick_update_interactively(
             &manifest_keys_to_update,
             &manifest,
             &all_specifiers,
@@ -452,10 +452,15 @@ pub async fn run(
             &cwd,
             latest,
         )
-        .await?;
+        .await?
+        {
+            Some(sel) => sel,
+            // Picker cancelled (Ctrl-C / Esc): exit 130 via the return path.
+            None => return Ok(Some(130)),
+        };
         if selected.is_empty() && indirect_arg_names.is_empty() {
             eprintln!("No packages selected.");
-            return Ok(());
+            return Ok(None);
         }
         manifest_keys_to_update.retain(|key| selected.contains(key));
     }
@@ -786,10 +791,10 @@ pub async fn run(
     chained.lockfile_only = args.lockfile_only;
     install::run(chained).await?;
 
-    Ok(())
+    Ok(None)
 }
 
-async fn run_global(args: UpdateArgs) -> miette::Result<()> {
+async fn run_global(args: UpdateArgs) -> miette::Result<Option<i32>> {
     reject_unsupported_pkg_specs(&args.packages)?;
 
     let layout = super::global::GlobalLayout::resolve()?;
@@ -852,7 +857,8 @@ async fn run_global(args: UpdateArgs) -> miette::Result<()> {
         Ok(())
     }
     .await;
-    super::finish_filtered_workspace(&original_cwd, result)
+    super::finish_filtered_workspace(&original_cwd, result)?;
+    Ok(None)
 }
 
 fn select_global_updates(
@@ -937,6 +943,11 @@ fn workspace_package_versions(cwd: &std::path::Path) -> miette::Result<HashMap<S
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Interactively pick which dependencies to update. `Ok(Some(set))` is the
+/// selection (possibly empty); `Ok(None)` means the user cancelled the picker
+/// (Ctrl-C / Esc), which the caller maps to exit code 130 — returned up to the
+/// binary's single `std::process::exit` rather than terminating here, keeping
+/// the command embed-safe.
 async fn pick_update_interactively(
     keys: &[String],
     manifest: &aube_manifest::PackageJson,
@@ -946,7 +957,7 @@ async fn pick_update_interactively(
     preserve_pin: &BTreeSet<String>,
     cwd: &std::path::Path,
     latest: bool,
-) -> miette::Result<BTreeSet<String>> {
+) -> miette::Result<Option<BTreeSet<String>>> {
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err(miette!(
             "`{} --interactive` requires stdin and stderr to be TTYs; pass package names explicitly to update non-interactively",
@@ -979,7 +990,7 @@ async fn pick_update_interactively(
         })
         .collect();
     if registry_keys.is_empty() {
-        return Ok(BTreeSet::new());
+        return Ok(Some(BTreeSet::new()));
     }
 
     let client = std::sync::Arc::new(super::make_client(cwd));
@@ -1055,19 +1066,22 @@ async fn pick_update_interactively(
         shown += 1;
     }
     if shown == 0 {
-        return Ok(BTreeSet::new());
+        return Ok(Some(BTreeSet::new()));
     }
 
     let picked: Vec<String> = match picker.run() {
         Ok(picked) => picked,
-        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => std::process::exit(130),
+        // Cancelled (Ctrl-C / Esc): signal to the caller, which returns exit
+        // code 130 via the return path rather than hard-exiting in place,
+        // keeping the command embed-safe.
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
         Err(e) => {
             return Err(e)
                 .into_diagnostic()
                 .wrap_err("failed to read update selection");
         }
     };
-    Ok(picked.into_iter().collect())
+    Ok(Some(picked.into_iter().collect()))
 }
 
 fn dep_bucket(manifest: &aube_manifest::PackageJson, key: &str) -> &'static str {
@@ -1187,7 +1201,7 @@ fn with_update_settings_ctx<T>(
 async fn run_filtered(
     args: UpdateArgs,
     filter: &aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     reject_unsupported_pkg_specs(&args.packages)?;
     let cwd = crate::dirs::cwd()?;
     let (root, matched) = super::select_workspace_packages(&cwd, filter, "update")?;
@@ -1339,7 +1353,8 @@ async fn run_filtered(
         Ok(())
     }
     .await;
-    super::finish_filtered_workspace(&cwd, result)
+    super::finish_filtered_workspace(&cwd, result)?;
+    Ok(None)
 }
 
 fn resolve_shared_workspace_lockfile(cwd: &std::path::Path) -> miette::Result<bool> {

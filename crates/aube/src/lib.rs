@@ -854,17 +854,33 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             commands::add::run(args, effective_filter.clone()).await?;
         }
         Some(Commands::ApproveBuilds(args)) => commands::approve_builds::run(args).await?,
-        Some(Commands::Audit(args)) => commands::audit::run(args).await?,
+        Some(Commands::Audit(args)) => {
+            if let Some(code) = commands::audit::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Bin(args)) => commands::bin::run(args).await?,
         Some(Commands::Cache(args)) => commands::cache::run(args).await?,
         Some(Commands::CatFile(args)) => commands::cat_file::run(args).await?,
         Some(Commands::CatIndex(args)) => commands::cat_index::run(args).await?,
-        Some(Commands::Check(args)) => commands::check::run(args).await?,
+        Some(Commands::Check(args)) => {
+            if let Some(code) = commands::check::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Ci(args)) => commands::ci::run(args).await?,
-        Some(Commands::Clean(args)) => commands::clean::run(args).await?,
+        Some(Commands::Clean(args)) => {
+            if let Some(code) = commands::clean::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Completion(args)) => commands::completion::run(args).await?,
         Some(Commands::Config(args)) => commands::config::run(args).await?,
-        Some(Commands::Create(args)) => commands::create::run(args).await?,
+        Some(Commands::Create(args)) => {
+            if let Some(code) = commands::create::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Dedupe(args)) => commands::dedupe::run(args).await?,
         Some(Commands::Deploy(args)) => {
             commands::deploy::run(args, effective_filter.clone()).await?
@@ -877,9 +893,21 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         }
         Some(Commands::Diag(args)) => commands::diag::run(args).await?,
         Some(Commands::DistTag(args)) => commands::dist_tag::run(args).await?,
-        Some(Commands::Dlx(args)) => commands::dlx::run(args).await?,
-        Some(Commands::Doctor(args)) => commands::doctor::run(args).await?,
-        Some(Commands::Exec(args)) => commands::exec::run(args, effective_filter.clone()).await?,
+        Some(Commands::Dlx(args)) => {
+            if let Some(code) = commands::dlx::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
+        Some(Commands::Doctor(args)) => {
+            if let Some(code) = commands::doctor::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
+        Some(Commands::Exec(args)) => {
+            if let Some(code) = commands::exec::run(args, effective_filter.clone()).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Fetch(args)) => commands::fetch::run(args).await?,
         Some(Commands::FindHash(args)) => commands::find_hash::run(args).await?,
         Some(Commands::Get(args)) => commands::config::get(args)?,
@@ -889,7 +917,11 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Install(args)) => {
             run_install_command(args, effective_filter.clone(), cli.workspace_root).await?;
         }
-        Some(Commands::InstallTest(args)) => commands::install_test::run(args).await?,
+        Some(Commands::InstallTest(args)) => {
+            if let Some(code) = commands::install_test::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::La(mut args)) | Some(Commands::Ll(mut args)) => {
             args.long = true;
             commands::list::run(args, effective_filter.clone()).await?;
@@ -900,7 +932,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Login(args)) => commands::login::run(args).await?,
         Some(Commands::Logout(args)) => commands::logout::run(args).await?,
         Some(Commands::Outdated(args)) => {
-            commands::outdated::run(args, effective_filter.clone()).await?
+            if let Some(code) = commands::outdated::run(args, effective_filter.clone()).await? {
+                return Ok(Some(code));
+            }
         }
         Some(Commands::Owner(args)) => {
             return Ok(Some(commands::npm_fallback::run("owner", &args)?));
@@ -909,7 +943,11 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Patch(args)) => commands::patch::run(args).await?,
         Some(Commands::PatchCommit(args)) => commands::patch_commit::run(args).await?,
         Some(Commands::PatchRemove(args)) => commands::patch_remove::run(args).await?,
-        Some(Commands::Peers(args)) => commands::peers::run(args).await?,
+        Some(Commands::Peers(args)) => {
+            if let Some(code) = commands::peers::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Pkg(args)) => {
             return Ok(Some(commands::npm_fallback::run("pkg", &args)?));
         }
@@ -917,7 +955,11 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Publish(args)) => {
             commands::publish::run(args, effective_filter.clone()).await?
         }
-        Some(Commands::Purge(args)) => commands::clean::run_purge(args).await?,
+        Some(Commands::Purge(args)) => {
+            if let Some(code) = commands::clean::run_purge(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Query(args)) => commands::query::run(args, effective_filter.clone()).await?,
         Some(Commands::Rebuild(args)) => {
             commands::rebuild::run(args, effective_filter.clone()).await?
@@ -948,7 +990,11 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     commands::add::run(args, nested_filter).await?;
                 }
                 Some(Commands::Deploy(args)) => commands::deploy::run(args, nested_filter).await?,
-                Some(Commands::Exec(args)) => commands::exec::run(args, nested_filter).await?,
+                Some(Commands::Exec(args)) => {
+                    if let Some(code) = commands::exec::run(args, nested_filter).await? {
+                        return Ok(Some(code));
+                    }
+                }
                 Some(Commands::Install(args)) => {
                     run_install_command(args, nested_filter, nested.workspace_root).await?;
                 }
@@ -958,7 +1004,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     commands::list::run(args, nested_filter).await?;
                 }
                 Some(Commands::Outdated(args)) => {
-                    commands::outdated::run(args, nested_filter).await?
+                    if let Some(code) = commands::outdated::run(args, nested_filter).await? {
+                        return Ok(Some(code));
+                    }
                 }
                 Some(Commands::Publish(args)) => {
                     commands::publish::run(args, nested_filter).await?
@@ -968,27 +1016,50 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                 }
                 Some(Commands::Remove(args)) => commands::remove::run(args, nested_filter).await?,
                 Some(Commands::Restart(args)) => {
-                    commands::restart::run(args, nested_filter).await?
+                    if let Some(code) = commands::restart::run(args, nested_filter).await? {
+                        return Ok(Some(code));
+                    }
                 }
-                Some(Commands::Run(args)) => commands::run::run(args, nested_filter).await?,
+                Some(Commands::Run(args)) => {
+                    if let Some(code) = commands::run::run(args, nested_filter).await? {
+                        return Ok(Some(code));
+                    }
+                }
                 Some(Commands::Start(args)) => {
-                    run_script_lifecycle("start", args, &nested_filter).await?;
+                    if let Some(code) = run_script_lifecycle("start", args, &nested_filter).await? {
+                        return Ok(Some(code));
+                    }
                 }
                 Some(Commands::Stop(args)) => {
-                    run_script_lifecycle("stop", args, &nested_filter).await?;
+                    if let Some(code) = run_script_lifecycle("stop", args, &nested_filter).await? {
+                        return Ok(Some(code));
+                    }
                 }
                 Some(Commands::Test(args)) => {
-                    run_script_lifecycle("test", args, &nested_filter).await?;
+                    if let Some(code) = run_script_lifecycle("test", args, &nested_filter).await? {
+                        return Ok(Some(code));
+                    }
                 }
                 Some(Commands::Update(args)) => {
-                    commands::update::run(args, nested_filter).await?;
+                    if let Some(code) = commands::update::run(args, nested_filter).await? {
+                        return Ok(Some(code));
+                    }
                 }
                 Some(Commands::Why(args)) => commands::why::run(args, nested_filter).await?,
                 Some(Commands::External(args)) => {
                     let script = &args[0];
                     let script_args: Vec<String> = args[1..].to_vec();
-                    commands::run::run_script(script, &script_args, false, false, &nested_filter)
-                        .await?;
+                    if let Some(code) = commands::run::run_script(
+                        script,
+                        &script_args,
+                        false,
+                        false,
+                        &nested_filter,
+                    )
+                    .await?
+                    {
+                        return Ok(Some(code));
+                    }
                 }
                 Some(_) | None => {
                     return Err(miette::miette!(
@@ -1000,10 +1071,16 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             }
         }
         Some(Commands::Restart(args)) => {
-            commands::restart::run(args, effective_filter.clone()).await?
+            if let Some(code) = commands::restart::run(args, effective_filter.clone()).await? {
+                return Ok(Some(code));
+            }
         }
         Some(Commands::Root(args)) => commands::root::run(args).await?,
-        Some(Commands::Run(args)) => commands::run::run(args, effective_filter.clone()).await?,
+        Some(Commands::Run(args)) => {
+            if let Some(code) = commands::run::run(args, effective_filter.clone()).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Runtime(args)) => commands::runtime::run(args).await?,
         Some(Commands::Sbom(args)) => commands::sbom::run(args).await?,
         Some(Commands::Search(args)) => {
@@ -1018,14 +1095,20 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             return Ok(Some(commands::npm_fallback::run("stage", &args)?));
         }
         Some(Commands::Start(args)) => {
-            run_script_lifecycle("start", args, &effective_filter).await?;
+            if let Some(code) = run_script_lifecycle("start", args, &effective_filter).await? {
+                return Ok(Some(code));
+            }
         }
         Some(Commands::Stop(args)) => {
-            run_script_lifecycle("stop", args, &effective_filter).await?;
+            if let Some(code) = run_script_lifecycle("stop", args, &effective_filter).await? {
+                return Ok(Some(code));
+            }
         }
         Some(Commands::Store(args)) => commands::store::run(args).await?,
         Some(Commands::Test(args)) => {
-            run_script_lifecycle("test", args, &effective_filter).await?;
+            if let Some(code) = run_script_lifecycle("test", args, &effective_filter).await? {
+                return Ok(Some(code));
+            }
         }
         Some(Commands::Token(args)) => {
             return Ok(Some(commands::npm_fallback::run("token", &args)?));
@@ -1034,7 +1117,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Unlink(args)) => commands::unlink::run(args).await?,
         Some(Commands::Unpublish(args)) => commands::unpublish::run(args).await?,
         Some(Commands::Update(args)) => {
-            commands::update::run(args, effective_filter.clone()).await?;
+            if let Some(code) = commands::update::run(args, effective_filter.clone()).await? {
+                return Ok(Some(code));
+            }
         }
         Some(Commands::Version(args)) => commands::version::run(args).await?,
         Some(Commands::View(args)) => commands::view::run(args).await?,
@@ -1081,8 +1166,12 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     ));
                 }
             }
-            commands::run::run_script(script, &script_args, false, false, &effective_filter)
-                .await?;
+            if let Some(code) =
+                commands::run::run_script(script, &script_args, false, false, &effective_filter)
+                    .await?
+            {
+                return Ok(Some(code));
+            }
         }
         None => {
             // Bare `aube` prints `--help` and exits 0, matching pnpm.
@@ -1110,7 +1199,7 @@ async fn run_script_lifecycle(
     name: &str,
     args: commands::run::ScriptArgs,
     filter: &aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();

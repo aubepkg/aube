@@ -55,13 +55,13 @@ pub struct PeersCheckArgs {
     pub json: bool,
 }
 
-pub async fn run(args: PeersArgs) -> miette::Result<()> {
+pub async fn run(args: PeersArgs) -> miette::Result<Option<i32>> {
     match args.command {
         PeersCommand::Check(a) => check(a).await,
     }
 }
 
-async fn check(args: PeersCheckArgs) -> miette::Result<()> {
+async fn check(args: PeersCheckArgs) -> miette::Result<Option<i32>> {
     let cwd = crate::dirs::project_root()?;
 
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
@@ -84,9 +84,12 @@ async fn check(args: PeersCheckArgs) -> miette::Result<()> {
     }
 
     if !issues.is_empty() {
-        std::process::exit(1);
+        // pnpm-compat: exit 1 when any peer-dependency issue is found.
+        // Return the code for the binary's single `std::process::exit`
+        // rather than terminating here, keeping the command embed-safe.
+        return Ok(Some(1));
     }
-    Ok(())
+    Ok(None)
 }
 
 #[derive(Debug, Clone)]

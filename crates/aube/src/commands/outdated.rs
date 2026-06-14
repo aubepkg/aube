@@ -122,7 +122,7 @@ fn serialize_dep_type<S: serde::Serializer>(dt: &DepType, s: S) -> Result<S::Ok,
 pub async fn run(
     args: OutdatedArgs,
     mut filter: aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     let mut cwd = crate::dirs::project_root()?;
     if !filter.is_empty() {
@@ -144,15 +144,22 @@ pub async fn run(
     {
         cwd = root;
     }
-    run_one(&cwd, args, None).await?;
-    Ok(())
+    // Match pnpm: exit 1 when any dependency is outdated so CI patterns
+    // like `aube outdated || exit 1` behave the same. The code is
+    // returned for the binary's single `std::process::exit` rather than
+    // exited in place, keeping the command embed-safe.
+    if run_one(&cwd, args, None).await? {
+        Ok(Some(1))
+    } else {
+        Ok(None)
+    }
 }
 
 async fn run_filtered(
     cwd: &Path,
     args: OutdatedArgs,
     filter: &aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     let (root, matched) = super::select_workspace_packages(cwd, filter, "outdated")?;
     let manifest = super::load_manifest(&root.join("package.json"))?;
     let graph = match aube_lockfile::parse_lockfile(&root, &manifest) {
@@ -162,7 +169,7 @@ async fn run_filtered(
                 "No lockfile found. Run `{}` first.",
                 aube_util::cmd("install")
             );
-            return Ok(());
+            return Ok(None);
         }
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
     };
@@ -200,9 +207,11 @@ async fn run_filtered(
         }
     }
     if any_drift {
-        std::process::exit(1);
+        // Return the code for the binary's single `std::process::exit`
+        // rather than exiting in place, keeping the command embed-safe.
+        return Ok(Some(1));
     }
-    Ok(())
+    Ok(None)
 }
 
 async fn run_one(cwd: &Path, args: OutdatedArgs, importer: Option<String>) -> miette::Result<bool> {
@@ -352,14 +361,11 @@ async fn run_graph(
         render_table(&rows, args.long);
     }
 
-    // Match pnpm: exit 1 when any dependency is outdated so CI patterns like
-    // `aube outdated || exit 1` and bare `aube outdated && echo ok` behave
-    // the same as with pnpm. `std::process::exit` is fine here because the
-    // command has no resources to clean up beyond what the OS handles.
-    if has_drift && importer.is_none() {
-        std::process::exit(1);
-    }
-
+    // Return the drift flag to the caller. The single-project caller (`run`)
+    // maps `true` to exit code 1 (pnpm parity: `aube outdated || exit 1`),
+    // and the recursive caller (`run_filtered`) aggregates drift across
+    // importers — the exit decision lives at the top so the command layer
+    // stays embed-safe (no in-place `std::process::exit`).
     Ok(has_drift)
 }
 

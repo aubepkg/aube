@@ -79,7 +79,7 @@ pub struct DlxArgs {
 ///      an already-removed scratch dir.
 ///   3. Exec `<tmp>/node_modules/.bin/<command>` from the user's original cwd.
 ///   4. tempfile removes the scratch dir on drop.
-pub async fn run(args: DlxArgs) -> miette::Result<()> {
+pub async fn run(args: DlxArgs) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();
@@ -104,7 +104,7 @@ pub async fn run(args: DlxArgs) -> miette::Result<()> {
             .print_help()
             .map_err(|e| miette!("failed to render help: {e}"))?;
         println!();
-        return Ok(());
+        return Ok(None);
     }
 
     // When only `-p` is given, dlx needs at least one arg to serve as the
@@ -285,9 +285,12 @@ pub async fn run(args: DlxArgs) -> miette::Result<()> {
     drop(tmp);
 
     if !status.success() {
-        std::process::exit(aube_scripts::exit_code_from_status(status));
+        // Propagate the dlx binary's non-zero exit up to the binary's single
+        // `std::process::exit` rather than terminating here, keeping the
+        // command embed-safe. The scratch project (`tmp`) is already dropped.
+        return Ok(Some(aube_scripts::exit_code_from_status(status)));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn dlx_manifest(install_specs: &[String], allow_build: &[String]) -> serde_json::Value {

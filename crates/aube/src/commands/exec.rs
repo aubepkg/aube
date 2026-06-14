@@ -75,7 +75,7 @@ pub struct ExecArgs {
 pub async fn run(
     exec_args: ExecArgs,
     filter: aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     exec_args.network.install_overrides();
     exec_args.lockfile.install_overrides();
     exec_args.virtual_store.install_overrides();
@@ -129,7 +129,7 @@ async fn run_filtered(
     parallel: bool,
     filter: &aube_workspace::selector::EffectiveFilter,
     recursive: super::run::RecursiveOpts,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     let (_root, matched) = super::select_workspace_packages(cwd, filter, "exec")?;
     let matched = super::run::order_matched_packages(matched, &recursive)?;
 
@@ -150,9 +150,13 @@ async fn run_filtered(
 
     for pkg in matched {
         let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
-        exec_bin(&pkg.dir, &bin_path, bin, args, shell_mode).await?;
+        // Sequential fanout bails on the first non-zero exit, matching the
+        // previous behavior where the inner `exec` terminated the process.
+        if let Some(code) = exec_bin(&pkg.dir, &bin_path, bin, args, shell_mode).await? {
+            return Ok(Some(code));
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -164,7 +168,7 @@ async fn run_filtered_parallel(
     concurrency: usize,
     reporter_hide_prefix: bool,
     reverse: bool,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
@@ -246,16 +250,17 @@ async fn run_filtered_parallel(
 
     let mut first_err: Option<miette::Report> = None;
     let mut first_exit: Option<i32> = None;
-    for (task, name) in tasks.into_iter().zip(task_names) {
+    for (task, _name) in tasks.into_iter().zip(task_names) {
         match task.await {
             Ok(Ok(status)) => {
                 if !status.success() && first_exit.is_none() {
-                    let code = aube_scripts::exit_code_from_status(status);
-                    first_exit = Some(code);
-                    first_err = Some(miette!(
-                        "{}: `{bin}` failed in {name} (exit {code})",
-                        aube_util::cmd("exec")
-                    ));
+                    // Record the first non-zero child status; the code travels
+                    // up via `Ok(Some(code))` below. Deliberately no `miette!`
+                    // here: the exit-code return path (not an error) carries
+                    // the failure, matching the sequential path, and creating
+                    // an error would clobber any earlier task's real error in
+                    // `first_err` (which the fallback path still needs).
+                    first_exit = Some(aube_scripts::exit_code_from_status(status));
                 }
             }
             Ok(Err(e)) if first_err.is_none() => first_err = Some(e),
@@ -265,12 +270,15 @@ async fn run_filtered_parallel(
         }
     }
     if let Some(code) = first_exit {
-        std::process::exit(code);
+        // Propagate the first non-zero child exit up to the binary's single
+        // `std::process::exit` rather than terminating here, so an embedder
+        // driving aube in-process isn't hard-killed by a failing task.
+        return Ok(Some(code));
     }
     if let Some(e) = first_err {
         return Err(e);
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(crate) async fn exec_bin(
@@ -279,10 +287,15 @@ pub(crate) async fn exec_bin(
     bin: &str,
     args: &[String],
     shell_mode: bool,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     exec_bin_with_node_args(cwd, bin_path, bin, args, &[], shell_mode).await
 }
 
+/// Run a project-local binary. On a non-zero child exit, returns
+/// `Ok(Some(code))` so the caller can propagate the code up to the binary's
+/// single `std::process::exit` instead of terminating in place — keeping the
+/// command layer embed-safe for a host driving aube as a library.
+/// `Ok(None)` means the binary succeeded.
 pub(crate) async fn exec_bin_with_node_args(
     cwd: &Path,
     bin_path: &Path,
@@ -290,7 +303,7 @@ pub(crate) async fn exec_bin_with_node_args(
     args: &[String],
     node_args: &[String],
     shell_mode: bool,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     if !shell_mode && !bin_path.exists() {
         return Err(miette!(
             "binary not found: {bin}\nTry running `{}` first, or check that the package providing '{bin}' is in your dependencies.",
@@ -327,10 +340,10 @@ pub(crate) async fn exec_bin_with_node_args(
         .wrap_err("failed to execute binary")?;
 
     if !status.success() {
-        std::process::exit(aube_scripts::exit_code_from_status(status));
+        return Ok(Some(aube_scripts::exit_code_from_status(status)));
     }
 
-    Ok(())
+    Ok(None)
 }
 
 pub(crate) async fn exec_bin_status(

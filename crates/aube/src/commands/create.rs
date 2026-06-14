@@ -32,7 +32,7 @@ pub struct CreateArgs {
 /// Scaffold a project from a `create-*` starter kit. Matches pnpm/npm
 /// semantics: `aube create foo` runs the `create-foo` package via dlx,
 /// `aube create @scope/foo` runs `@scope/create-foo`, etc.
-pub async fn run(args: CreateArgs) -> miette::Result<()> {
+pub async fn run(args: CreateArgs) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     let CreateArgs { params, network } = args;
 
@@ -47,7 +47,7 @@ pub async fn run(args: CreateArgs) -> miette::Result<()> {
             .print_help()
             .map_err(|e| miette!("failed to render help: {e}"))?;
         println!();
-        return Ok(());
+        return Ok(None);
     }
 
     let (template, rest) = params.split_first().expect("checked non-empty above");

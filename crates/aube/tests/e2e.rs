@@ -7,6 +7,7 @@
 //! Unix. These tests fill the gap for the Windows CI job.
 
 use assert_cmd::Command;
+use predicates::boolean::PredicateBooleanExt;
 use std::fs;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
@@ -123,4 +124,72 @@ fn run_executes_a_simple_script() {
         .assert()
         .success()
         .stdout(predicates::str::contains("aube-e2e-ok"));
+}
+
+// --- standalone exit-code contract ---------------------------------------
+//
+// The command layer (`aube::commands::*::run`) no longer calls
+// `std::process::exit` directly: a failing command returns a propagatable
+// exit code that the binary's single `std::process::exit` (in `main.rs`)
+// applies. That keeps the layer embed-safe — a host driving aube as a
+// library is handed the code instead of being hard-killed. These tests pin
+// the *standalone* contract so the indirection stays byte-for-byte: the code
+// the user sees on the command line must be unchanged by the refactor.
+
+#[test]
+fn run_propagates_a_failing_scripts_exact_exit_code() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(
+        r#"{
+            "name": "e2e-exit",
+            "version": "0.0.0",
+            "scripts": { "boom": "exit 7" }
+        }"#,
+    );
+
+    // The child's exit code (7) must surface as aube's own exit code,
+    // not be flattened to a generic 1 — this is the path that previously
+    // called `std::process::exit(exit_code_from_status(status))` in place.
+    sbx.cmd()
+        .args(["run", "--no-install", "boom"])
+        .assert()
+        .code(7);
+}
+
+#[test]
+fn run_if_present_on_missing_script_exits_zero() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(r#"{"name":"e2e-ifpresent","version":"0.0.0"}"#);
+
+    // The `--if-present` no-op path returns `Ok(None)` (success) rather
+    // than a non-zero code; pin it so the success side of the contract
+    // can't silently start exiting non-zero.
+    sbx.cmd()
+        .args(["run", "--no-install", "--if-present", "nope"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn run_failing_pre_script_short_circuits_with_its_code() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(
+        r#"{
+            "name": "e2e-prescript",
+            "version": "0.0.0",
+            "scripts": { "prebuild": "exit 5", "build": "echo MAIN_RAN" }
+        }"#,
+    );
+
+    // A failing pre-script propagates its exact code (5) AND stops the
+    // chain before the main script runs — the previous in-place exit gave
+    // the same ordering, so the short-circuit must be preserved.
+    sbx.cmd()
+        .args(["run", "--no-install", "build"])
+        .assert()
+        .code(5)
+        .stdout(predicates::str::contains("MAIN_RAN").not());
 }

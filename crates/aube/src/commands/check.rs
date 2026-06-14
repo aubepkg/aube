@@ -48,7 +48,7 @@ pub struct CheckArgs {
     pub json: bool,
 }
 
-pub async fn run(args: CheckArgs) -> miette::Result<()> {
+pub async fn run(args: CheckArgs) -> miette::Result<Option<i32>> {
     // `project_root_or_cwd` falls back to the current directory when
     // nothing above it has a `package.json`. `run_report` is already a
     // no-op when `node_modules/.aube/` doesn't exist, so running
@@ -65,9 +65,12 @@ pub async fn run(args: CheckArgs) -> miette::Result<()> {
     }
 
     if !report.issues.is_empty() {
-        std::process::exit(1);
+        // Exit 1 when the store check found broken links. Return the code
+        // for the binary's single `std::process::exit` rather than
+        // terminating here, keeping the command embed-safe.
+        return Ok(Some(1));
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Result of scanning the virtual store.

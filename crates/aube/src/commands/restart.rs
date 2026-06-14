@@ -7,7 +7,7 @@ use crate::commands::run::{ScriptArgs, run_script};
 pub async fn run(
     script_args: ScriptArgs,
     filter: aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     script_args.network.install_overrides();
     script_args.lockfile.install_overrides();
     script_args.virtual_store.install_overrides();
@@ -38,17 +38,28 @@ pub async fn run(
         || manifest.scripts.contains_key("stop")
         || manifest.scripts.contains_key("start");
     if !has_any {
-        return Ok(());
+        return Ok(None);
     }
 
     ensure_installed(no_install).await?;
 
     if manifest.scripts.contains_key("restart") {
-        exec_script(&cwd, &manifest, "restart", args).await?;
+        // Propagate a non-zero `restart` exit up to the binary's single
+        // `std::process::exit` rather than terminating in place.
+        if let Some(code) = exec_script(&cwd, &manifest, "restart", args).await? {
+            return Ok(Some(code));
+        }
     } else {
-        exec_optional(&cwd, &manifest, "stop", &[]).await?;
-        exec_optional(&cwd, &manifest, "start", args).await?;
+        // `stop` then `start`, each optional. A non-zero `stop` short-circuits
+        // before `start` runs — matching the previous behavior where the inner
+        // script runner terminated the process on the first failure.
+        if let Some(Some(code)) = exec_optional(&cwd, &manifest, "stop", &[]).await? {
+            return Ok(Some(code));
+        }
+        if let Some(Some(code)) = exec_optional(&cwd, &manifest, "start", args).await? {
+            return Ok(Some(code));
+        }
     }
 
-    Ok(())
+    Ok(None)
 }

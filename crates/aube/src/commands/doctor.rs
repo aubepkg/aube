@@ -41,7 +41,7 @@ pub struct DoctorArgs {
     pub json: bool,
 }
 
-pub async fn run(args: DoctorArgs) -> miette::Result<()> {
+pub async fn run(args: DoctorArgs) -> miette::Result<Option<i32>> {
     let cwd = crate::dirs::cwd()?;
     let project_root = crate::dirs::find_project_root(&cwd);
     let anchor = project_root.clone().unwrap_or_else(|| cwd.clone());
@@ -67,9 +67,12 @@ pub async fn run(args: DoctorArgs) -> miette::Result<()> {
     crate::update_check::check_and_notify(&anchor).await;
 
     if !report.errors.is_empty() {
-        std::process::exit(1);
+        // Exit 1 when the doctor found errors. Return the code for the
+        // binary's single `std::process::exit` rather than terminating
+        // here, keeping the command embed-safe.
+        return Ok(Some(1));
     }
-    Ok(())
+    Ok(None)
 }
 
 #[derive(Debug, Default)]

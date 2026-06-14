@@ -130,7 +130,7 @@ pub struct ScriptArgs {
 pub async fn run(
     run_args: RunArgs,
     filter: aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     run_args.network.install_overrides();
     run_args.lockfile.install_overrides();
     run_args.virtual_store.install_overrides();
@@ -158,7 +158,11 @@ pub async fn run(
     let silent = silent || super::global_output_flags().silent;
     let script = match script {
         Some(s) => s,
-        None => prompt_for_script()?,
+        None => match prompt_for_script()? {
+            Some(s) => s,
+            // Picker cancelled (Ctrl-C / Esc): exit 130 via the return path.
+            None => return Ok(Some(130)),
+        },
     };
     let node_args = node_args_from_run_flags(inspect, inspect_brk);
     // Resolve the project's Node runtime before anything spawns —
@@ -254,7 +258,12 @@ fn node_arg(flag: &str, value: &str) -> String {
 /// off to `run_script_with`, which re-reads the manifest through the
 /// typed path — the extra read is one `fs::read` and only happens on
 /// the interactive prompt path, so the simpler call graph is worth it.
-fn prompt_for_script() -> miette::Result<String> {
+/// Interactively pick a script. `Ok(Some(name))` is the chosen script;
+/// `Ok(None)` means the user cancelled the picker (Ctrl-C / Esc), which
+/// the caller maps to the conventional SIGINT exit code 130 — returned up
+/// to the binary's single `std::process::exit` rather than terminating
+/// here, so an embedder driving the command in-process isn't hard-killed.
+fn prompt_for_script() -> miette::Result<Option<String>> {
     let initial_cwd = crate::dirs::cwd()?;
     let cwd = crate::dirs::find_project_root(&initial_cwd).ok_or_else(|| {
         miette!(
@@ -285,11 +294,11 @@ fn prompt_for_script() -> miette::Result<String> {
         picker = picker.option(demand::DemandOption::new(name.clone()).label(&label));
     }
     match picker.run() {
-        Ok(name) => Ok(name),
-        // Ctrl-C / Esc cancels the prompt — exit silently with the
-        // conventional SIGINT code rather than printing a miette error
+        Ok(name) => Ok(Some(name)),
+        // Ctrl-C / Esc cancels the prompt — signal cancellation silently so
+        // the caller can return exit code 130 without printing a miette error
         // for what was a deliberate user action.
-        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => std::process::exit(130),
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Ok(None),
         Err(e) => Err(e)
             .into_diagnostic()
             .wrap_err("failed to read script selection"),
@@ -325,7 +334,7 @@ pub(crate) async fn run_script(
     no_install: bool,
     if_present: bool,
     filter: &aube_workspace::selector::EffectiveFilter,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     let silent = super::global_output_flags().silent;
     run_script_with(
         script,
@@ -352,7 +361,7 @@ pub(crate) async fn run_script_with(
     silent: bool,
     filter: &aube_workspace::selector::EffectiveFilter,
     recursive: RecursiveOpts,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     let initial_cwd = crate::dirs::cwd()?;
     // Walk upward to the nearest `package.json` so `aube run` from a
     // subdirectory picks up the project root's scripts, matching pnpm.
@@ -408,7 +417,7 @@ pub(crate) async fn run_script_with(
             .await;
         }
         if if_present {
-            return Ok(());
+            return Ok(None);
         }
         // Old error was "script not found: foo" with no list. User
         // has to cat package.json to figure out what to type. npm
@@ -463,7 +472,7 @@ async fn run_script_filtered(
     filter: &aube_workspace::selector::EffectiveFilter,
     enable_pre_post_scripts: bool,
     recursive: RecursiveOpts,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     // `cwd` is the nearest ancestor with a `package.json`, which in a
     // monorepo subpackage is the child — not the workspace root. The
     // shared helper walks up to the real workspace root before
@@ -508,10 +517,16 @@ async fn run_script_filtered(
                 if !silent {
                     tracing::info!("aube run: {name} -> {script}");
                 }
-                super::exec::exec_bin_with_node_args(
+                // Sequential fanout bails on the first non-zero exit, matching
+                // the previous behavior where the inner `exec` terminated the
+                // process. Propagate the code instead of exiting in place.
+                if let Some(code) = super::exec::exec_bin_with_node_args(
                     &pkg.dir, &bin_path, script, args, node_args, false,
                 )
-                .await?;
+                .await?
+                {
+                    return Ok(Some(code));
+                }
                 continue;
             }
             if if_present {
@@ -525,7 +540,7 @@ async fn run_script_filtered(
         if !silent {
             tracing::info!("aube run: {name} -> {script}");
         }
-        exec_script_chain(
+        if let Some(code) = exec_script_chain(
             &pkg.dir,
             &pkg.manifest,
             script,
@@ -533,9 +548,12 @@ async fn run_script_filtered(
             node_args,
             enable_pre_post_scripts,
         )
-        .await?;
+        .await?
+        {
+            return Ok(Some(code));
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Apply topo sort, reverse, and resume-from to a matched-package list.
@@ -623,7 +641,8 @@ pub(crate) fn effective_concurrency(
 /// validate every package up front (no orphaned children if a
 /// script-name lookup errors mid-spawn), let every started task finish
 /// so output isn't truncated by an early bail, and report the first
-/// non-zero exit's code through `std::process::exit`. Output mode per
+/// non-zero exit's code by returning `Ok(Some(code))` for the caller to
+/// propagate to the binary's single `std::process::exit`. Output mode per
 /// task: prefixed (`<pkg>: <line>`, color-rotated) by default;
 /// unprefixed but still piped under `--reporter-hide-prefix`.
 #[allow(clippy::too_many_arguments)]
@@ -638,7 +657,7 @@ async fn run_filtered_parallel(
     concurrency: usize,
     reporter_hide_prefix: bool,
     reverse: bool,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
@@ -803,12 +822,15 @@ async fn run_filtered_parallel(
         }
     }
     if let Some(code) = first_exit {
-        std::process::exit(code);
+        // Propagate the first non-zero child exit up to the binary's single
+        // `std::process::exit` rather than terminating here, so an embedder
+        // driving aube in-process isn't hard-killed by a failing task.
+        return Ok(Some(code));
     }
     if let Some(e) = first_err {
         return Err(e);
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(crate) fn load_manifest(cwd: &Path) -> miette::Result<PackageJson> {
@@ -829,38 +851,43 @@ fn configure_script_settings_for_project(cwd: &Path) -> miette::Result<bool> {
     Ok(enable_pre_post_scripts)
 }
 
-/// Run `script` if it exists in `manifest.scripts`. Returns `true` if the
-/// script was found and executed, `false` if it was missing. Errors only
-/// when the script ran but exited non-zero (via `exit`).
+/// Run `script` if it exists in `manifest.scripts`. Returns the optional
+/// missing flag plus the propagated exit code: `Ok(None)` if the script was
+/// missing (nothing ran), `Ok(Some(None))` if it ran and succeeded, and
+/// `Ok(Some(Some(code)))` if it ran and exited non-zero. The non-zero code
+/// travels up to the binary's single `std::process::exit` rather than
+/// terminating here, keeping the command layer embed-safe.
 pub(crate) async fn exec_optional(
     cwd: &Path,
     manifest: &PackageJson,
     script: &str,
     args: &[String],
-) -> miette::Result<bool> {
+) -> miette::Result<Option<Option<i32>>> {
     if !manifest.scripts.contains_key(script) {
-        return Ok(false);
+        return Ok(None);
     }
-    exec_script(cwd, manifest, script, args).await?;
-    Ok(true)
+    Ok(Some(exec_script(cwd, manifest, script, args).await?))
 }
 
+/// Run a single script. Returns `Ok(Some(code))` on a non-zero child exit
+/// (propagated up rather than exited in place — see
+/// [`exec_script_with_node_args`]), `Ok(None)` on success.
 pub(crate) async fn exec_script(
     cwd: &Path,
     manifest: &PackageJson,
     script: &str,
     args: &[String],
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     exec_script_with_node_args(cwd, manifest, script, args, &[]).await
 }
 
 /// Build a fully-configured `tokio::process::Command` for running a
 /// package.json script. Handles arg quoting, PATH prepend, npm-compat
-/// env vars, and INIT_CWD. Shared between `exec_script` (which exits
-/// on non-zero) and `exec_script_status` (which returns the status
-/// so the parallel path can collect all outcomes). Keeping one place
-/// to configure these means future security fixes land once, not
-/// twice.
+/// env vars, and INIT_CWD. Shared between `exec_script` (which returns a
+/// propagatable exit code on non-zero) and `exec_script_status` (which
+/// returns the raw status so the parallel path can collect all outcomes).
+/// Keeping one place to configure these means future security fixes land
+/// once, not twice.
 async fn build_script_command(
     cwd: &Path,
     manifest: &PackageJson,
@@ -984,6 +1011,10 @@ fn inject_node_args(cmd: &str, node_args: &[String]) -> String {
     out
 }
 
+/// Run `pre<script>`, `<script>`, then `post<script>`. A non-zero exit at
+/// any stage short-circuits and returns `Ok(Some(code))` (the pre/main/post
+/// ordering matches npm/pnpm: a failing pre-script stops the chain before
+/// the main script runs). `Ok(None)` means every stage that ran succeeded.
 pub(crate) async fn exec_script_chain(
     cwd: &Path,
     manifest: &PackageJson,
@@ -991,26 +1022,37 @@ pub(crate) async fn exec_script_chain(
     args: &[String],
     node_args: &[String],
     enable_pre_post_scripts: bool,
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     if enable_pre_post_scripts {
         let pre = format!("pre{script}");
-        exec_optional(cwd, manifest, &pre, &[]).await?;
+        if let Some(Some(code)) = exec_optional(cwd, manifest, &pre, &[]).await? {
+            return Ok(Some(code));
+        }
     }
-    exec_script_with_node_args(cwd, manifest, script, args, node_args).await?;
+    if let Some(code) = exec_script_with_node_args(cwd, manifest, script, args, node_args).await? {
+        return Ok(Some(code));
+    }
     if enable_pre_post_scripts {
         let post = format!("post{script}");
-        exec_optional(cwd, manifest, &post, &[]).await?;
+        if let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[]).await? {
+            return Ok(Some(code));
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
+/// Run a script. On a non-zero child exit, returns `Ok(Some(code))` so the
+/// caller can propagate the code up to the binary's single
+/// `std::process::exit`. Returning rather than exiting in place keeps the
+/// command layer embed-safe: a host driving aube as a library is not
+/// hard-killed by a failing script. `Ok(None)` means the script succeeded.
 async fn exec_script_with_node_args(
     cwd: &Path,
     manifest: &PackageJson,
     script: &str,
     args: &[String],
     node_args: &[String],
-) -> miette::Result<()> {
+) -> miette::Result<Option<i32>> {
     let cmd = manifest
         .scripts
         .get(script)
@@ -1025,16 +1067,15 @@ async fn exec_script_with_node_args(
         .wrap_err("failed to execute script")?;
 
     if !status.success() {
-        std::process::exit(aube_scripts::exit_code_from_status(status));
+        return Ok(Some(aube_scripts::exit_code_from_status(status)));
     }
 
-    Ok(())
+    Ok(None)
 }
 
-/// Same shell as `exec_script` but returns the `ExitStatus` instead of
-/// `std::process::exit`-ing on failure. Used by the `--parallel` path,
-/// which needs to collect every task's outcome before deciding how to
-/// terminate.
+/// Same shell as `exec_script` but returns the raw `ExitStatus` rather than
+/// a propagatable exit code. Used by the `--parallel` path, which needs to
+/// collect every task's outcome before deciding how to terminate.
 pub(crate) async fn exec_script_status(
     cwd: &Path,
     manifest: &PackageJson,

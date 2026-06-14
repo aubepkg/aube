@@ -137,7 +137,7 @@ pub enum FixMode {
     Override,
 }
 
-pub async fn run(args: AuditArgs) -> miette::Result<()> {
+pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     let cwd = crate::dirs::project_root()?;
 
@@ -172,7 +172,7 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
         } else {
             println!("No dependencies to audit.");
         }
-        return Ok(());
+        return Ok(None);
     }
 
     let client = build_client(&cwd, args.network.registry.as_deref());
@@ -209,7 +209,10 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
                         "audit degraded: advisory fetch failed, vulnerability status unknown"
                     );
                 }
-                std::process::exit(2);
+                // Degraded status exits 2. Return the code for the binary's
+                // single `std::process::exit` rather than terminating here,
+                // keeping the command embed-safe.
+                return Ok(Some(2));
             }
             return Err(miette!("advisory fetch failed: {e}"));
         }
@@ -247,7 +250,11 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
         && !rows.is_empty()
     {
         let selected = if args.interactive {
-            select_fix_rows(&rows)?
+            match select_fix_rows(&rows)? {
+                Some(sel) => sel,
+                // Picker cancelled (Ctrl-C / Esc): exit 130 via the return path.
+                None => return Ok(Some(130)),
+            }
         } else {
             rows.clone()
         };
@@ -263,14 +270,17 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
                 )
                 .await?;
                 if remaining.is_empty() {
-                    return Ok(());
+                    return Ok(None);
                 }
                 render_fix_remaining(&selected, &remaining);
-                std::process::exit(1);
+                // Some advisories remain unfixed: exit 1. Return the code for
+                // the binary's single `std::process::exit` rather than
+                // terminating here, keeping the command embed-safe.
+                return Ok(Some(1));
             }
             FixMode::Override => {
                 write_fix_overrides(&cwd, &selected, &client).await?;
-                return Ok(());
+                return Ok(None);
             }
         }
     }
@@ -286,28 +296,38 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
     }
 
     if rows.is_empty() {
-        Ok(())
+        Ok(None)
     } else {
-        // pnpm-compat: exit 1 when any advisory matches the threshold.
-        std::process::exit(1);
+        // pnpm-compat: exit 1 when any advisory matches the threshold. Return
+        // the code for the binary's single `std::process::exit` rather than
+        // terminating here, keeping the command embed-safe.
+        Ok(Some(1))
     }
 }
 
-fn select_fix_rows(rows: &[Row]) -> miette::Result<Vec<Row>> {
+/// Interactively pick which advisories to fix. `Ok(Some(rows))` is the
+/// selection (all rows when not a TTY); `Ok(None)` means the user cancelled
+/// the picker (Ctrl-C / Esc), which the caller maps to exit code 130 —
+/// returned up to the binary's single `std::process::exit` rather than
+/// terminating here, keeping the command embed-safe.
+fn select_fix_rows(rows: &[Row]) -> miette::Result<Option<Vec<Row>>> {
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
-        return Ok(rows.to_vec());
+        return Ok(Some(rows.to_vec()));
     }
 
     let picked = match advisory_picker(rows).run() {
         Ok(picked) => picked,
-        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => std::process::exit(130),
+        // Cancelled: signal to the caller, which returns exit code 130.
+        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
         Err(e) => {
             return Err(e)
                 .into_diagnostic()
                 .wrap_err("failed to read audit selection");
         }
     };
-    Ok(picked.into_iter().map(|idx| rows[idx].clone()).collect())
+    Ok(Some(
+        picked.into_iter().map(|idx| rows[idx].clone()).collect(),
+    ))
 }
 
 fn advisory_picker(rows: &[Row]) -> demand::MultiSelect<'_, usize> {

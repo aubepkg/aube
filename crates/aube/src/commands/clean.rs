@@ -44,15 +44,15 @@ fn lockfile_names() -> [&'static str; 6] {
     ]
 }
 
-pub async fn run(args: CleanArgs) -> miette::Result<()> {
+pub async fn run(args: CleanArgs) -> miette::Result<Option<i32>> {
     run_as("clean", args).await
 }
 
-pub async fn run_purge(args: CleanArgs) -> miette::Result<()> {
+pub async fn run_purge(args: CleanArgs) -> miette::Result<Option<i32>> {
     run_as("purge", args).await
 }
 
-async fn run_as(invoked_as: &str, args: CleanArgs) -> miette::Result<()> {
+async fn run_as(invoked_as: &str, args: CleanArgs) -> miette::Result<Option<i32>> {
     let cwd = crate::dirs::project_root()?;
     let _lock = super::take_project_lock(&cwd)?;
 
@@ -154,5 +154,5 @@ async fn run_as(invoked_as: &str, args: CleanArgs) -> miette::Result<()> {
         }
     }
 
-    Ok(())
+    Ok(None)
 }
