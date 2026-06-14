@@ -73,6 +73,8 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
                 compact.push(format!(
                     "{}{}: {{{}}}",
                     " ".repeat(indent),
+                    // `is_flow_candidate` already matched `key` as
+                    // `Some("resolution" | "engines")`, so this can't panic.
                     key.unwrap(),
                     entries.join(", ")
                 ));
@@ -83,14 +85,15 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
 
         // Flow-style `cpu:` / `os:` / `libc:` sequences. yaml_serde
         // aligns the `- item` lines with the key; collect them and
-        // inline as `cpu: [arm64]`.
-        if matches!(key, Some("cpu") | Some("os") | Some("libc"))
+        // inline as `cpu: [arm64]`. Binding the key name in the pattern
+        // (rather than re-matching + `unwrap()`) keeps the branch panic-free.
+        if let Some(arch_key @ ("cpu" | "os" | "libc")) = key
             && let Some((items, next_i)) = gather_block_seq(&lines, i, indent)
         {
             compact.push(format!(
                 "{}{}: [{}]",
                 " ".repeat(indent),
-                key.unwrap(),
+                arch_key,
                 items.join(", ")
             ));
             i = next_i;
@@ -184,6 +187,15 @@ fn gather_block_seq(
     // Pure-scalar guard: a line deeper than the key after the last item
     // is a map-item continuation (e.g. `variants:` holds `- resolution:`
     // blocks). Bail so the caller leaves such sequences untouched.
+    //
+    // NOTE: this detects map items only via a deeper continuation line.
+    // A sequence of single-field inline maps with no continuation
+    // (`- type: tarball` directly followed by a sibling key at the key's
+    // indent) would slip through and be re-indented as if scalar. aube
+    // never emits that shape — every map-item sequence in pnpm-lock
+    // (`variants:` / `targets:`) carries nested content — and
+    // `leaves_map_item_sequences_untouched` covers the real paths. Any
+    // new yaml_serde-emitted sequence shape must re-check this guard.
     if let Some(stop) = lines.get(j) {
         let s = stop.trim_start();
         let stop_indent = stop.len() - s.len();
