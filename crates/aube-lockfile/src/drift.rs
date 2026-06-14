@@ -437,6 +437,34 @@ impl LockfileGraph {
                     {
                         continue;
                     }
+                    // A pnpmfile `readPackage` hook can rewrite an
+                    // importer's own dep spec into a local source — the
+                    // canonical case is wiring a monorepo package to a
+                    // sibling's build output (`"@scope/api": "*"` →
+                    // `link:../api/dist`). pnpm records the *rewritten*
+                    // spec in the lockfile importer (so does aube), then
+                    // re-runs the hook on every install to compare. The
+                    // drift fast path deliberately does not re-run the
+                    // hook, so a raw `manifest says *, lockfile says
+                    // link:...` comparison would read stale forever and
+                    // re-resolve (or hard-fail `--frozen-lockfile`) on
+                    // every install. Trust the lockfile's hook-derived
+                    // local spec when (a) the lockfile was produced with
+                    // a pnpmfile that exports hooks (`pnpmfileChecksum`
+                    // is recorded) and (b) the manifest spec is a plain
+                    // non-local range the hook turned into a
+                    // link/file/portal. A pnpmfile edit changes the
+                    // recorded checksum (busting the warm path
+                    // separately), so this cannot mask a stale link once
+                    // the hook itself changes; and gating on a non-local
+                    // manifest spec keeps a user-authored `link:` that
+                    // was later repointed at the registry detectable.
+                    if self.pnpmfile_checksum.is_some()
+                        && is_local_source_spec(locked_spec)
+                        && !is_local_source_spec(spec)
+                    {
+                        continue;
+                    }
                     return DriftStatus::Stale {
                         reason: format!(
                             "{label}{name}: manifest says {spec}, lockfile says {locked_spec}"
@@ -727,6 +755,15 @@ fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {
     )
 }
 
+/// True for importer specifiers that point at a local on-disk source
+/// (`link:` / `file:` / `portal:`) rather than a registry range or
+/// workspace alias. The drift check uses this to recognize
+/// pnpmfile-`readPackage`-rewritten importer deps, where the hook turns
+/// a plain range into a local link (e.g. `"*"` → `link:../pkg/dist`).
+fn is_local_source_spec(spec: &str) -> bool {
+    spec.starts_with("link:") || spec.starts_with("file:") || spec.starts_with("portal:")
+}
+
 #[cfg(test)]
 mod drift_tests {
     use super::*;
@@ -844,6 +881,67 @@ mod drift_tests {
             DriftStatus::Stale { reason } => assert!(reason.contains("express")),
             DriftStatus::Fresh => panic!("expected Stale"),
         }
+    }
+
+    #[test]
+    fn fresh_when_pnpmfile_hook_rewrites_dep_to_link() {
+        // A pnpmfile `readPackage` hook rewrites `"@scope/api": "*"` to
+        // `link:../api/dist` (wiring a sibling's build output). pnpm and
+        // aube both record the *rewritten* spec in the importer, so the
+        // raw manifest (`*`) never matches the lockfile (`link:...`). With
+        // a `pnpmfileChecksum` recorded — i.e. the lockfile was produced
+        // by a hook-exporting pnpmfile — trust the local spec instead of
+        // re-resolving on every install. Mirrors pnpm, which re-runs the
+        // hook and reports "Already up to date".
+        let manifest = make_manifest(&[("@scope/api", "*")]);
+        let mut graph = make_graph(&[(
+            "@scope/api",
+            "link:../api/dist",
+            "@scope/api@link:../api/dist",
+        )]);
+        graph.pnpmfile_checksum = Some("sha256-deadbeef".into());
+        assert_eq!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn stale_when_link_importer_spec_has_no_pnpmfile_checksum() {
+        // Without a recorded pnpmfileChecksum there's no hook to attribute
+        // the link to, so a `link:` importer spec the manifest doesn't
+        // contain is genuine drift (e.g. the user hand-edited the lockfile
+        // or repointed a dep) and must re-resolve.
+        let manifest = make_manifest(&[("@scope/api", "*")]);
+        let graph = make_graph(&[(
+            "@scope/api",
+            "link:../api/dist",
+            "@scope/api@link:../api/dist",
+        )]);
+        assert!(matches!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Stale { .. }
+        ));
+    }
+
+    #[test]
+    fn stale_when_manifest_link_repointed_even_with_pnpmfile_checksum() {
+        // The hook exemption only covers a *non-local* manifest range the
+        // hook turned into a link. A user-authored `link:` that changed
+        // target stays a local spec on the manifest side, so the gate
+        // (`!is_local_source_spec(spec)`) keeps it detectable and forces a
+        // re-resolve rather than silently trusting a stale link.
+        let manifest = make_manifest(&[("@scope/api", "link:../api/old")]);
+        let mut graph = make_graph(&[(
+            "@scope/api",
+            "link:../api/new",
+            "@scope/api@link:../api/new",
+        )]);
+        graph.pnpmfile_checksum = Some("sha256-deadbeef".into());
+        assert!(matches!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Stale { .. }
+        ));
     }
 
     // Regression guard for #42: the drift check must recognize

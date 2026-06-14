@@ -210,6 +210,15 @@ pub struct InstalledPackageState {
     pub package_json_path: String,
     #[serde(default)]
     pub package_json_hash: String,
+    /// `link:` dependency — materialized as a bare symlink to an
+    /// arbitrary on-disk directory (often a sibling's build output that
+    /// may not exist yet). The symlink's own presence is verified via
+    /// `direct_entries`; the target's `package.json` is deliberately not
+    /// hashed here, matching pnpm, which treats a present (even dangling)
+    /// link symlink as installed and never re-resolves on a link target
+    /// change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub link: bool,
 }
 
 /// Check if install is needed. Returns None if up-to-date, or Some(reason) if stale.
@@ -773,6 +782,10 @@ impl InstallLayoutState {
             let Some(pkg) = graph.packages.get(&dep_path) else {
                 continue;
             };
+            let is_link = matches!(
+                pkg.local_source.as_ref(),
+                Some(aube_lockfile::LocalSource::Link(_))
+            );
             let package_json_path = match pkg.local_source.as_ref() {
                 Some(aube_lockfile::LocalSource::Link(path)) => {
                     project_dir.join(path).join("package.json")
@@ -793,6 +806,7 @@ impl InstallLayoutState {
                     version: pkg.version.clone(),
                     package_json_path: relative_path_or_original(&package_json_path, project_dir),
                     package_json_hash: hash_file_if_exists(&package_json_path).unwrap_or_default(),
+                    link: is_link,
                 },
             );
         }
@@ -813,13 +827,29 @@ fn verify_install_layout(
     for entries in layout.direct_entries.values() {
         for rel in entries {
             let path = project_dir.join(rel);
-            if !path.exists() {
+            // `symlink_metadata` (lstat) checks the entry itself, not the
+            // path it resolves to. A `link:` dep points at an arbitrary
+            // directory — often a sibling's build output that may not be
+            // built yet — so `exists()` (which follows the symlink) would
+            // report a perfectly-installed link symlink as "missing" and
+            // bust the warm path on every install. pnpm uses the same
+            // lstat semantics here.
+            if path.symlink_metadata().is_err() {
                 return Some(format!("installed entry missing: {rel}"));
             }
         }
     }
 
     for pkg in layout.packages.values() {
+        // `link:` deps are bare symlinks (verified above via
+        // `direct_entries`). Their target is an arbitrary on-disk
+        // directory whose `package.json` may legitimately be absent (an
+        // unbuilt sibling) or churn independently of the lockfile, so
+        // hashing it here would re-trigger installs forever. pnpm doesn't
+        // track link targets in its up-to-date check either.
+        if pkg.link {
+            continue;
+        }
         let pkg_json_path = project_dir.join(&pkg.package_json_path);
         let current_hash = hash_file_if_exists(&pkg_json_path);
         if let Some(current_hash) = current_hash
@@ -1151,6 +1181,7 @@ mod tests {
                             "node_modules/.aube/missing/node_modules/is-odd/package.json"
                                 .to_string(),
                         package_json_hash: empty_blake3_hash().to_string(),
+                        link: false,
                     },
                 )]),
             }),
@@ -1163,6 +1194,67 @@ mod tests {
                 "installed package metadata missing: node_modules/.aube/missing/node_modules/is-odd/package.json"
                     .to_string()
             )
+        );
+    }
+
+    /// A `link:` dep is a bare symlink to an arbitrary directory — often a
+    /// sibling's build output that may not be built yet. The symlink can
+    /// dangle, but its presence still means "installed": pnpm uses lstat
+    /// here and stays warm, and the link target's `package.json` is not
+    /// hashed (it may legitimately be absent). Regression for a
+    /// readPackage-hook-wired `link:` dep busting the warm path on every
+    /// install with "installed entry missing".
+    #[cfg(unix)]
+    #[test]
+    fn verify_install_layout_treats_dangling_link_symlink_as_installed() {
+        let project_dir = temp_project_dir("dangling-link");
+        let scope_dir = project_dir.join("node_modules/@scope");
+        std::fs::create_dir_all(&scope_dir).expect("node_modules dir should write");
+        // Target deliberately does not exist (an unbuilt sibling output).
+        std::os::unix::fs::symlink("../../../api/dist", scope_dir.join("api"))
+            .expect("symlink should create");
+
+        let state = InstallLayoutState {
+            linker: InstallLayoutMode::Isolated,
+            direct_entries: BTreeMap::from([(
+                ".".to_string(),
+                vec!["node_modules/@scope/api".to_string()],
+            )]),
+            packages: BTreeMap::from([(
+                "@scope/api@link:../api/dist".to_string(),
+                InstalledPackageState {
+                    name: "@scope/api".to_string(),
+                    version: "0.0.0".to_string(),
+                    package_json_path: "../api/dist/package.json".to_string(),
+                    package_json_hash: String::new(),
+                    link: true,
+                },
+            )]),
+        };
+
+        assert_eq!(verify_install_layout(&project_dir, Some(&state)), None);
+    }
+
+    /// If the link symlink itself is gone (not merely its target), the
+    /// dep genuinely isn't installed and the warm path must bust.
+    #[test]
+    fn verify_install_layout_flags_missing_link_symlink() {
+        let project_dir = temp_project_dir("missing-link");
+        std::fs::create_dir_all(project_dir.join("node_modules/@scope"))
+            .expect("node_modules dir should write");
+
+        let state = InstallLayoutState {
+            linker: InstallLayoutMode::Isolated,
+            direct_entries: BTreeMap::from([(
+                ".".to_string(),
+                vec!["node_modules/@scope/api".to_string()],
+            )]),
+            packages: BTreeMap::new(),
+        };
+
+        assert_eq!(
+            verify_install_layout(&project_dir, Some(&state)),
+            Some("installed entry missing: node_modules/@scope/api".to_string())
         );
     }
 

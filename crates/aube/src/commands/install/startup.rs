@@ -52,7 +52,7 @@ fn install_fast_path_eligible(
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
 ) -> bool {
-    matches!(mode, FrozenMode::Frozen | FrozenMode::Prefer)
+    let preconditions_met = matches!(mode, FrozenMode::Frozen | FrozenMode::Prefer)
         && !opts.force
         && !opts.lockfile_only
         && !opts.dep_selection.is_filtered()
@@ -60,8 +60,21 @@ fn install_fast_path_eligible(
         && !opts.strict_no_lockfile
         && !opts.dangerously_allow_all_builds
         && opts.workspace_filter.is_empty()
-        && modules_cache_sweep_default
-        && state::check_needs_install_with_flags(cwd, &opts.cli_flags).is_none()
+        && modules_cache_sweep_default;
+    if !preconditions_met {
+        return false;
+    }
+    // Surface *why* the warm path was missed at debug level — the state
+    // freshness reason is otherwise discarded here (only `.is_none()` is
+    // consulted), leaving `aube install -v` silent on repeat-install loops
+    // that originate from state drift rather than lockfile drift.
+    match state::check_needs_install_with_flags(cwd, &opts.cli_flags) {
+        None => true,
+        Some(reason) => {
+            tracing::debug!("install warm path skipped: {reason}");
+            false
+        }
+    }
 }
 
 fn restore_missing_lockfile_fast_path_eligible(
