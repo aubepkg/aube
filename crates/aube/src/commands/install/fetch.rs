@@ -357,7 +357,8 @@ pub(super) async fn import_local_source(
                 tracing::warn!(
                     code = aube_codes::warnings::WARN_AUBE_MISSING_INTEGRITY,
                     url = %aube_util::url::redact_url(&t.url),
-                    "remote tarball lockfile entry has no integrity field; importing fetched bytes without verification (run `aube install --no-frozen-lockfile` to refresh the lockfile)",
+                    "remote tarball lockfile entry has no integrity field; importing fetched bytes without verification (run `{} --no-frozen-lockfile` to refresh the lockfile)",
+                    aube_util::cmd("install"),
                 );
             } else {
                 aube_store::verify_integrity(&bytes, &t.integrity)

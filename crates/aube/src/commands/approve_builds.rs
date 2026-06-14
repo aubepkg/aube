@@ -137,7 +137,8 @@ fn run_global(args: ApproveBuildsArgs) -> miette::Result<()> {
 
     println!("Approved {approved} package(s) across {written_dirs} global install(s).");
     println!(
-        "Run `{} -C <global-install-dir> install` (or `rebuild`) to execute their scripts.",
+        "Run `{} -C <global-install-dir> install` (or `{} -C <global-install-dir> rebuild`) to execute their scripts.",
+        aube_util::prog(),
         aube_util::prog()
     );
     Ok(())

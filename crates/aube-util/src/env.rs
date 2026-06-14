@@ -174,17 +174,32 @@ mod tests {
     /// registers a real non-aube profile in its own process.
     #[test]
     fn embedder_and_config_env_read_aube_prefixed_under_default_profile() {
+        // RAII guard so a panic in `f()` still restores the prior value —
+        // a bare restore-after-`f()` would leak the var on panic and flake
+        // the next serial test.
+        struct EnvGuard {
+            key: String,
+            prev: Option<std::ffi::OsString>,
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                // SAFETY: tests run serially via RUST_TEST_THREADS=1.
+                unsafe {
+                    match &self.prev {
+                        Some(v) => std::env::set_var(&self.key, v),
+                        None => std::env::remove_var(&self.key),
+                    }
+                }
+            }
+        }
         fn with_var<F: FnOnce()>(key: &str, value: &str, f: F) {
-            let prev = std::env::var_os(key);
+            let _guard = EnvGuard {
+                key: key.to_string(),
+                prev: std::env::var_os(key),
+            };
             // SAFETY: tests run serially via RUST_TEST_THREADS=1.
             unsafe { std::env::set_var(key, value) };
             f();
-            unsafe {
-                match prev {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
         }
 
         with_var("AUBE_DISABLE_CLONEDIR", "1", || {

@@ -44,9 +44,10 @@ pub(super) fn emit_warning(unreviewed: &[UnreviewedBuild]) {
         code = aube_codes::warnings::WARN_AUBE_IGNORED_BUILD_SCRIPTS,
         count = unreviewed.len(),
         packages = ?spec_keys,
-        "ignored build scripts for {} package(s): {}. Run `aube approve-builds` to review and enable them, or set `strictDepBuilds=true` to fail installs that have unreviewed builds.",
+        "ignored build scripts for {} package(s): {}. Run `{}` to review and enable them, or set `strictDepBuilds=true` to fail installs that have unreviewed builds.",
         unreviewed.len(),
-        list
+        list,
+        aube_util::cmd("approve-builds")
     );
     for build in unreviewed {
         if build.suspicions.is_empty() {

@@ -52,6 +52,9 @@ use std::path::{Path, PathBuf};
 /// (those words aren't commands), keeping the lint conservative.
 const VERBS: &[&str] = &[
     "install",
+    "install-test",
+    "it",
+    "test",
     "i",
     "ci",
     "add",

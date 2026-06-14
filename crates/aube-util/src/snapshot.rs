@@ -3,8 +3,9 @@
 //! Portable per-file reflink walker. On CoW filesystems (APFS,
 //! btrfs, XFS-with-reflinks, ReFS) produces an O(extent-tree)
 //! snapshot via the `reflink-copy` crate; falls through to
-//! `std::fs::copy` per file otherwise. `AUBE_DISABLE_SNAPSHOTS=1`
-//! forces the buffered-copy path for byte-identity diffs.
+//! `std::fs::copy` per file otherwise. `<ENV_PREFIX>_DISABLE_SNAPSHOTS=1`
+//! (default profile: `AUBE_DISABLE_SNAPSHOTS=1`) forces the
+//! buffered-copy path for byte-identity diffs.
 
 use std::fs;
 use std::io;
@@ -28,7 +29,8 @@ pub enum SnapshotOutcome {
 /// target (relative or absolute, copied verbatim). Files use
 /// `reflink_or_copy`; directories are walked depth-first.
 ///
-/// `AUBE_DISABLE_SNAPSHOTS=1` forces every file through `fs::copy`
+/// `<ENV_PREFIX>_DISABLE_SNAPSHOTS=1` (default profile:
+/// `AUBE_DISABLE_SNAPSHOTS=1`) forces every file through `fs::copy`
 /// even when reflinks are available, for use as a regression
 /// killswitch.
 pub fn clone_tree(src: &Path, dst: &Path) -> io::Result<SnapshotOutcome> {
