@@ -1531,6 +1531,9 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 // true` markers (e.g. every `@esbuild/*` native). Runs before
                 // the write and before the host-only `filter_graph` below.
                 aube_resolver::platform::mark_optional_packages(&mut graph);
+                // Compute pnpm's `transitivePeerDependencies` for each
+                // snapshot from the peer-contextualized graph.
+                aube_resolver::platform::mark_transitive_peer_dependencies(&mut graph);
                 if shared_workspace_lockfile || !has_workspace {
                     let written_path = write_lockfile_dir_remapped(
                         &lockfile_dir,

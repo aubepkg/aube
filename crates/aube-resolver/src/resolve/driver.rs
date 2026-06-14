@@ -908,10 +908,25 @@ impl<'a> ResolveDriver<'a> {
                 .await;
         }
 
-        // Capture the declared peer deps now so the post-pass can
-        // compute each consumer's peer context without re-reading
-        // the packument.
-        let peer_deps = version_meta.peer_dependencies.clone();
+        // Capture the declared peer deps now so the post-pass can compute
+        // each consumer's peer context without re-reading the packument.
+        // pnpm records a `peerDependencies: { x: '*' }` entry for every
+        // `peerDependenciesMeta` key a package ships without an explicit
+        // range (debug's optional `supports-color`, typescript-eslint's
+        // optional `typescript`, …). Synthesize the same `*` so peer
+        // context resolves these exactly like pnpm: an optional peer that
+        // a real ancestor / the workspace root provides (typescript) gets
+        // a dep-path suffix, while one nothing on the path provides
+        // (supports-color) is left unresolved and surfaces under
+        // `transitivePeerDependencies`. The optional-peer branch in
+        // `visit_peer_context` is what keeps the graph-wide scan from
+        // binding the latter to an unrelated copy in the tree.
+        let mut peer_deps = version_meta.peer_dependencies.clone();
+        for name in version_meta.peer_dependencies_meta.keys() {
+            peer_deps
+                .entry(name.clone())
+                .or_insert_with(|| "*".to_string());
+        }
         let peer_meta: BTreeMap<String, aube_lockfile::PeerDepMeta> = version_meta
             .peer_dependencies_meta
             .iter()

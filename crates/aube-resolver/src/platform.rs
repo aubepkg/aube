@@ -381,6 +381,103 @@ pub fn mark_optional_packages(graph: &mut aube_lockfile::LockfileGraph) {
     }
 }
 
+/// Populate each package's `transitive_peer_dependencies` the way pnpm
+/// does: a snapshot lists every peer name that some package in its
+/// dependency subtree declares but leaves unresolved (the peers that
+/// "bubble up" to be provided by a consumer). A peer that *was* resolved
+/// is mirrored into the declaring package's `dependencies` (pnpm and aube
+/// both do this — e.g. `@babel/core` lands in
+/// `@babel/helper-module-transforms`'s deps), so `peer_dependencies` minus
+/// `dependencies` is exactly the unresolved set. Those unresolved names are
+/// propagated to every ancestor; a package never lists its own peers.
+///
+/// Runs on the final, peer-contextualized graph (after `apply_peer_contexts`
+/// and the dedupe passes) so dep-path tails carry their peer suffixes.
+pub fn mark_transitive_peer_dependencies(graph: &mut aube_lockfile::LockfileGraph) {
+    use crate::{FxHashMap, FxHashSet};
+    use std::collections::BTreeSet;
+
+    // Reverse edges (child dep_path -> the parents that depend on it) plus
+    // each package's unresolved declared peers.
+    let mut parents: FxHashMap<String, Vec<String>> = FxHashMap::default();
+    let mut unresolved: FxHashMap<String, Vec<String>> = FxHashMap::default();
+
+    for (dep_path, pkg) in &graph.packages {
+        for (name, tail) in pkg
+            .dependencies
+            .iter()
+            .chain(pkg.optional_dependencies.iter())
+        {
+            // Skip resolved-peer edges. A dependency the package also
+            // declares as a peer (e.g. `eslint` inside an eslint plugin) is
+            // an injected peer, not an owned dependency — pnpm satisfies it
+            // from the consumer's context and does not bubble that peer's
+            // own transitive peers through the edge. Mirroring that keeps a
+            // plugin from inheriting `supports-color`/`typescript` purely
+            // because its injected `eslint`/`typescript` peer transitively
+            // depends on them.
+            if pkg.peer_dependencies.contains_key(name)
+                || pkg.peer_dependencies_meta.contains_key(name)
+            {
+                continue;
+            }
+            // Match `filter_graph`'s child-key convention: the pnpm reader
+            // stores the dep_path tail (`"1.2.3"`), npm/yarn/bun store the
+            // full dep_path (`"foo@1.2.3"`).
+            let child = if graph.packages.contains_key(tail) {
+                tail.clone()
+            } else {
+                format!("{name}@{tail}")
+            };
+            if graph.packages.contains_key(&child) {
+                parents.entry(child).or_default().push(dep_path.clone());
+            }
+        }
+        // Declared peers plus pnpm's meta-only peers (the optional
+        // `peerDependenciesMeta` keys the writer synthesizes a `*` range
+        // for, e.g. debug's `supports-color`). A peer that resolved is
+        // mirrored into `dependencies`, so subtracting `dependencies` keys
+        // leaves exactly the unresolved set that bubbles up.
+        let own: BTreeSet<String> = pkg
+            .peer_dependencies
+            .keys()
+            .chain(pkg.peer_dependencies_meta.keys())
+            .filter(|p| !pkg.dependencies.contains_key(*p))
+            .cloned()
+            .collect();
+        if !own.is_empty() {
+            unresolved.insert(dep_path.clone(), own.into_iter().collect());
+        }
+    }
+
+    // Bubble each package's unresolved peers up to every ancestor. The
+    // originating package is pre-marked visited, so it never collects its
+    // own peers even inside a dependency cycle.
+    let mut acc: FxHashMap<String, BTreeSet<String>> = FxHashMap::default();
+    for (origin, peers) in &unresolved {
+        let mut visited: FxHashSet<String> = FxHashSet::default();
+        visited.insert(origin.clone());
+        let mut stack: Vec<String> = parents.get(origin).cloned().unwrap_or_default();
+        while let Some(node) = stack.pop() {
+            if !visited.insert(node.clone()) {
+                continue;
+            }
+            let entry = acc.entry(node.clone()).or_default();
+            entry.extend(peers.iter().cloned());
+            if let Some(ps) = parents.get(&node) {
+                stack.extend(ps.iter().cloned());
+            }
+        }
+    }
+
+    for (dep_path, pkg) in graph.packages.iter_mut() {
+        pkg.transitive_peer_dependencies = acc
+            .get(dep_path)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,6 +705,72 @@ mod tests {
         assert!(is_opt("native-linux@1.0.0"));
         // Direct optional importer dep with no required path → optional.
         assert!(is_opt("opt-root@1.0.0"));
+    }
+
+    fn pkg_with_peers(
+        name: &str,
+        deps: &[&str],
+        peers: &[&str],
+    ) -> (String, aube_lockfile::LockedPackage) {
+        let (key, mut p) = pkg(name, deps, &[]);
+        p.peer_dependencies = peers
+            .iter()
+            .map(|d| ((*d).to_string(), "*".to_string()))
+            .collect();
+        (key, p)
+    }
+
+    #[test]
+    fn transitive_peer_dependencies_bubble_unresolved_peers() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.packages.extend([
+            pkg("app", &["host", "mid"], &[]),
+            // `host` declares `core` as a peer AND resolves it (core is in
+            // deps, mirrored like pnpm), so nothing bubbles from host.
+            pkg_with_peers("host", &["core"], &["core"]),
+            pkg("core", &[], &[]),
+            // `mid` -> `leaf`, and `leaf` peers on an unresolved
+            // `supports-color` (not in its deps): it must bubble to ancestors.
+            pkg("mid", &["leaf"], &[]),
+            pkg_with_peers("leaf", &["ms"], &["supports-color"]),
+            pkg("ms", &[], &[]),
+        ]);
+
+        mark_transitive_peer_dependencies(&mut graph);
+
+        let tp = |k: &str| graph.packages[k].transitive_peer_dependencies.clone();
+        // Unresolved peer bubbles to every ancestor of `leaf`.
+        assert_eq!(tp("app@1.0.0"), vec!["supports-color".to_string()]);
+        assert_eq!(tp("mid@1.0.0"), vec!["supports-color".to_string()]);
+        // `leaf` declares the peer itself → not in its OWN transitive list.
+        assert!(tp("leaf@1.0.0").is_empty());
+        assert!(tp("ms@1.0.0").is_empty());
+        // `host` resolves its `core` peer → nothing unresolved to bubble.
+        assert!(tp("host@1.0.0").is_empty());
+        assert!(tp("core@1.0.0").is_empty());
+    }
+
+    #[test]
+    fn transitive_peer_dependencies_handle_cycles_without_self() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        // a <-> b dependency cycle, each with a distinct unresolved peer.
+        graph.packages.extend([
+            pkg_with_peers("a", &["b"], &["pa"]),
+            pkg_with_peers("b", &["a"], &["pb"]),
+        ]);
+
+        mark_transitive_peer_dependencies(&mut graph);
+
+        // Each node collects the other's peer through the cycle but never its
+        // own — `a` doesn't list `pa`, `b` doesn't list `pb`.
+        assert_eq!(
+            graph.packages["a@1.0.0"].transitive_peer_dependencies,
+            vec!["pb".to_string()]
+        );
+        assert_eq!(
+            graph.packages["b@1.0.0"].transitive_peer_dependencies,
+            vec!["pa".to_string()]
+        );
     }
 
     #[test]

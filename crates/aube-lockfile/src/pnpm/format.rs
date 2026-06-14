@@ -1,6 +1,12 @@
 /// Post-process a `yaml_serde`-emitted pnpm-lock.yaml into the exact
-/// shape real pnpm writes. Four tweaks:
+/// shape real pnpm writes. Five tweaks:
 ///
+///   0. Fold `yaml_serde`'s explicit-key form (`? 'KEY'` / `: value`)
+///      back into pnpm's inline `'KEY':` form. yaml_serde switches to
+///      explicit keys once a mapping key grows past ~128 bytes; deeply
+///      nested peer suffixes (an eslint plugin pinned through parser +
+///      eslint + typescript) cross that, while pnpm/js-yaml always quote
+///      the key inline regardless of length.
 ///   1. Collapse `resolution:` / `engines:` block maps into flow form
 ///      (`resolution: {integrity: sha512-…}`). pnpm writes both inline
 ///      and `yaml_serde` can't be coerced into flow style per-field
@@ -25,7 +31,8 @@
 /// are all simple scalars in the fixed set above, so there's nothing to
 /// quote-escape. Validated by `test_write_byte_identical_to_native_pnpm`.
 pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
-    let lines: Vec<&str> = yaml.lines().collect();
+    let folded = fold_explicit_keys(&yaml.lines().collect::<Vec<_>>());
+    let lines: Vec<&str> = folded.iter().map(String::as_str).collect();
 
     // Pass 1: flow-style blocks + block-sequence re-indentation.
     let mut compact: Vec<String> = Vec::with_capacity(lines.len());
@@ -160,6 +167,80 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
     out
 }
 
+/// Fold `yaml_serde`'s explicit-key form back into pnpm's inline form.
+///
+/// Past ~128 bytes yaml_serde emits a mapping entry as
+///
+/// ```text
+///   ? 'very…long…key'
+///   : dependencies:
+///       dep: 1.0.0
+///     transitivePeerDependencies:
+///     - supports-color
+/// ```
+///
+/// pnpm/js-yaml always write the quoted key inline:
+///
+/// ```text
+///   'very…long…key':
+///     dependencies:
+///       dep: 1.0.0
+///     transitivePeerDependencies:
+///     - supports-color
+/// ```
+///
+/// The value block under `: ` already carries pnpm-equivalent indentation,
+/// so only the key line and the first value line need rewriting: drop the
+/// `? ` indicator, and replace the `: ` indicator with two spaces (or keep
+/// an inline `{}` value on the key line). Later passes then collapse/
+/// re-indent the value block exactly as they do for inline-key entries.
+fn fold_explicit_keys(lines: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let stripped = line.trim_start();
+        let indent = line.len() - stripped.len();
+        if let Some(key) = stripped.strip_prefix("? ") {
+            // The value indicator is the next non-blank line at the same
+            // indent (yaml_serde never separates them, but skip blanks
+            // defensively).
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim().is_empty() {
+                j += 1;
+            }
+            if let Some(vline) = lines.get(j) {
+                let v_stripped = vline.trim_start();
+                let v_indent = vline.len() - v_stripped.len();
+                let value = v_stripped
+                    .strip_prefix(": ")
+                    .or_else(|| (v_stripped == ":").then_some(""));
+                if v_indent == indent
+                    && let Some(rest) = value
+                {
+                    let pad = " ".repeat(indent);
+                    if rest.is_empty() || rest.ends_with(':') {
+                        // Block-map value: key on its own line, the first
+                        // child re-indented two spaces past the key.
+                        out.push(format!("{pad}{key}:"));
+                        if !rest.is_empty() {
+                            out.push(format!("{pad}  {rest}"));
+                        }
+                    } else {
+                        // Inline value such as `{}` stays on the key line.
+                        out.push(format!("{pad}{key}: {rest}"));
+                    }
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+        i += 1;
+    }
+    out
+}
+
 /// Collect a *scalar* `yaml_serde`-emitted block sequence whose key is on
 /// `lines[key_idx]`. yaml_serde aligns `- item` lines with their key, so
 /// the items sit at `key_indent` (not `key_indent + 2`). Returns the item
@@ -279,6 +360,45 @@ mod tests {
             out.contains("\n\nimporters:\n"),
             "blank before importers:\n{out}"
         );
+    }
+
+    #[test]
+    fn folds_explicit_long_keys_into_inline_form() {
+        // yaml_serde emits a >128-byte mapping key in explicit `? `/`: `
+        // form; pnpm always writes the quoted key inline. The value block
+        // must end up indented exactly like an inline-key snapshot.
+        let long = "@typescript-eslint/eslint-plugin@7.18.0(@typescript-eslint/parser@7.18.0(eslint@8.57.1)(typescript@5.6.3))(eslint@8.57.1)(typescript@5.6.3)";
+        let input = format!(
+            "snapshots:\n  ? '{long}'\n  : dependencies:\n      '@typescript-eslint/parser': 7.18.0(eslint@8.57.1)(typescript@5.6.3)\n    transitivePeerDependencies:\n    - supports-color\n"
+        );
+        let out = reformat_for_pnpm_parity(&input);
+        assert!(
+            out.contains(&format!("  '{long}':\n")),
+            "inline key:\n{out}"
+        );
+        assert!(
+            out.contains("    dependencies:\n      '@typescript-eslint/parser': 7.18.0(eslint@8.57.1)(typescript@5.6.3)\n"),
+            "deps reindented:\n{out}"
+        );
+        assert!(
+            out.contains("    transitivePeerDependencies:\n      - supports-color\n"),
+            "tPD reindented:\n{out}"
+        );
+        assert!(!out.contains("? '"), "no explicit key left:\n{out}");
+        assert!(!out.contains("\n  : "), "no value indicator left:\n{out}");
+    }
+
+    #[test]
+    fn folds_explicit_long_key_with_empty_map_value() {
+        // An empty snapshot (`{}`) with a long key keeps the value inline.
+        let long = "a-very-long-package-name-that-definitely-exceeds-the-yaml-serde-explicit-key-threshold@1.0.0(peer-one@1.0.0)(peer-two@2.0.0)(peer-three@3.0.0)";
+        let input = format!("snapshots:\n  ? '{long}'\n  : {{}}\n");
+        let out = reformat_for_pnpm_parity(&input);
+        assert!(
+            out.contains(&format!("  '{long}': {{}}\n")),
+            "inline empty:\n{out}"
+        );
+        assert!(!out.contains("? '"), "no explicit key left:\n{out}");
     }
 
     #[test]

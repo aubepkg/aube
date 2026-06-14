@@ -1617,14 +1617,32 @@ fn visit_peer_context<'g>(
                 .map(|(_, tail)| tail)
         };
 
-        if let Some(version) = from_ancestor
-            .or(from_pkg_deps)
-            .or(from_ancestor_incompatible)
-            .or(from_pkg_deps_incompatible)
-            .or(from_root)
-            .or_else(from_graph_scan)
-            .or(from_root_incompatible)
-        {
+        // pnpm resolves an *optional* peer (one flagged
+        // `peerDependenciesMeta.optional`) only from the resolution path it
+        // is actually on — the nearest ancestor, the package's own
+        // auto-installed deps, or the workspace root — and otherwise leaves
+        // it unresolved so it surfaces under `transitivePeerDependencies`.
+        // It never reaches for a range-incompatible version or scans the
+        // whole graph for an unrelated copy. Mirroring that is what lets
+        // `typescript` (an optional peer the root provides) take a dep-path
+        // suffix while debug's optional `supports-color` (which nothing on
+        // the path provides) bubbles up instead of binding to a cousin.
+        let is_optional = pkg
+            .peer_dependencies_meta
+            .get(peer_name)
+            .is_some_and(|m| m.optional);
+        let resolved = if is_optional {
+            from_ancestor.or(from_pkg_deps).or(from_root)
+        } else {
+            from_ancestor
+                .or(from_pkg_deps)
+                .or(from_ancestor_incompatible)
+                .or(from_pkg_deps_incompatible)
+                .or(from_root)
+                .or_else(from_graph_scan)
+                .or(from_root_incompatible)
+        };
+        if let Some(version) = resolved {
             peer_context.push((peer_name.clone(), version));
         }
     }
