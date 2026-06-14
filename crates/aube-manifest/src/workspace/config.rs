@@ -803,25 +803,26 @@ pub enum WorkspaceYamlKind {
 /// belongs to — otherwise the member resolves to itself, its workspace
 /// siblings can't be linked, and the install never settles.
 ///
-/// A successful parse is memoized through the typed cache, so a later
-/// [`WorkspaceConfig::load`] for the same directory stays warm.
+/// Deliberately does *not* warm the typed cache. `find_workspace_root`'s
+/// ancestor walk runs early and probes many directories through here, but
+/// a command that writes a workspace yaml mid-process (`patch-commit`,
+/// `approve-builds`, catalog edits) and then re-reads through
+/// [`WorkspaceConfig::load`] must see the fresh bytes — not a config this
+/// walk parsed before the write. Caching the pre-write config here made
+/// the post-write read stale (e.g. `patch-commit` recorded a patch but
+/// the in-process reinstall reused a cached config without it and skipped
+/// applying the patch). `WorkspaceConfig::load` still memoizes for its
+/// own direct callers.
 pub fn workspace_yaml_kind(project_dir: &Path) -> WorkspaceYamlKind {
     match WorkspaceConfig::load_present(project_dir) {
         Ok(Some(config)) => {
-            let kind = if config.packages.is_empty() {
+            if config.packages.is_empty() {
                 WorkspaceYamlKind::SettingsOnly
             } else {
                 WorkspaceYamlKind::DeclaresMembers
-            };
-            typed_cache_insert(project_dir, config);
-            kind
+            }
         }
-        // Don't negative-cache an absent yaml. `find_workspace_root`'s
-        // ancestor walk probes every directory through here, and a
-        // bootstrap command (`aube add`) can create a workspace yaml
-        // mid-process; a cached `default()` would shadow that fresh file
-        // until the next process. Mirrors the positive-only caching that
-        // `find_workspace_root`/`find_project_root` already document.
+        // An absent yaml is simply `Absent`; nothing to cache.
         Ok(None) => WorkspaceYamlKind::Absent,
         // A present-but-unreadable/unparseable yaml is its own state.
         // Stop discovery here instead of collapsing into `SettingsOnly`
@@ -959,5 +960,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(workspace_yaml_kind(dir.path()), WorkspaceYamlKind::Invalid);
+    }
+
+    #[test]
+    fn workspace_yaml_kind_does_not_cache_pre_write_config() {
+        // Regression: discovery must not warm the typed config cache.
+        // `find_workspace_root` classifies every ancestor through
+        // `workspace_yaml_kind` *before* a command such as `patch-commit`
+        // writes `patchedDependencies` into that same yaml. When the early
+        // pass cached the pre-write config, the in-process
+        // `WorkspaceConfig::load` after the write returned the stale
+        // (patch-less) config, so the reinstall skipped applying the patch.
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = dir.path().join("pnpm-workspace.yaml");
+        std::fs::write(&yaml, "packages:\n  - 'packages/*'\n").unwrap();
+
+        // Discovery-time classification (the early ancestor probe).
+        assert_eq!(
+            workspace_yaml_kind(dir.path()),
+            WorkspaceYamlKind::DeclaresMembers
+        );
+
+        // A command now records a patch in the very same yaml.
+        std::fs::write(
+            &yaml,
+            "packages:\n  - 'packages/*'\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n",
+        )
+        .unwrap();
+
+        // The post-write read must observe the patch, not a cached
+        // pre-write config.
+        let cfg = WorkspaceConfig::load(dir.path()).unwrap();
+        assert_eq!(
+            cfg.patched_dependencies
+                .get("is-odd@3.0.1")
+                .map(String::as_str),
+            Some("patches/is-odd@3.0.1.patch"),
+        );
     }
 }
