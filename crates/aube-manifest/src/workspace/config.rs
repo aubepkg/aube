@@ -776,15 +776,22 @@ pub enum WorkspaceYamlKind {
     SettingsOnly,
     /// A yaml exists and declares members (a non-empty `packages:` list).
     DeclaresMembers,
+    /// A yaml exists but can't be read or parsed. Discovery must stop
+    /// here rather than walk past it: collapsing this into `SettingsOnly`
+    /// would silently resolve a member command to a parent workspace and
+    /// hide the broken member config. The parse/IO error then surfaces
+    /// when the config is loaded for real.
+    Invalid,
 }
 
 /// Classify `project_dir`'s workspace yaml in a single file probe.
 ///
-/// Workspace-root discovery needs three outcomes per directory:
+/// Workspace-root discovery needs four outcomes per directory:
 /// `DeclaresMembers` (stop — this is the root), `SettingsOnly` (remember
-/// as a fallback root, keep walking), and `Absent` (keep walking).
-/// [`WorkspaceConfig::load`] collapses the latter two — an absent file
-/// and a memberless one both yield an empty `packages` list — so
+/// as a fallback root, keep walking), `Absent` (keep walking), and
+/// `Invalid` (stop — a present-but-broken yaml must surface, not be
+/// silently skipped). [`WorkspaceConfig::load`] collapses absent and
+/// memberless yamls — both yield an empty `packages` list — so
 /// classifying here lets the ancestor walk use one probe per directory
 /// instead of a memoized load plus a redundant existence stat.
 ///
@@ -809,14 +816,19 @@ pub fn workspace_yaml_kind(project_dir: &Path) -> WorkspaceYamlKind {
             typed_cache_insert(project_dir, config);
             kind
         }
-        Ok(None) => {
-            typed_cache_insert(project_dir, WorkspaceConfig::default());
-            WorkspaceYamlKind::Absent
-        }
-        // A present-but-unreadable/unparseable yaml is not a members
-        // root, but it still exists — treat it as a settings-only root
-        // candidate, matching the prior existence-stat behavior.
-        Err(_) => WorkspaceYamlKind::SettingsOnly,
+        // Don't negative-cache an absent yaml. `find_workspace_root`'s
+        // ancestor walk probes every directory through here, and a
+        // bootstrap command (`aube add`) can create a workspace yaml
+        // mid-process; a cached `default()` would shadow that fresh file
+        // until the next process. Mirrors the positive-only caching that
+        // `find_workspace_root`/`find_project_root` already document.
+        Ok(None) => WorkspaceYamlKind::Absent,
+        // A present-but-unreadable/unparseable yaml is its own state.
+        // Stop discovery here instead of collapsing into `SettingsOnly`
+        // and walking up to a parent workspace, which would silently
+        // ignore the broken member config; the parse/IO error surfaces
+        // when the config is loaded for real.
+        Err(_) => WorkspaceYamlKind::Invalid,
     }
 }
 
@@ -932,5 +944,20 @@ mod tests {
             workspace_yaml_kind(dir.path()),
             WorkspaceYamlKind::SettingsOnly
         );
+    }
+
+    #[test]
+    fn workspace_yaml_kind_treats_unparseable_yaml_as_invalid() {
+        // A present-but-malformed yaml must classify as `Invalid` so
+        // discovery stops at this directory instead of walking past a
+        // broken member config to a parent workspace. A tab as the first
+        // indent char is a spec-level YAML syntax error.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n\t- pkg\n",
+        )
+        .unwrap();
+        assert_eq!(workspace_yaml_kind(dir.path()), WorkspaceYamlKind::Invalid);
     }
 }

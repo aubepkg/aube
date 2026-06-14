@@ -143,14 +143,19 @@ fn find_workspace_root_uncached(start: &Path) -> Option<PathBuf> {
     // Only when no members-declaring root exists above do we fall back
     // to the nearest settings-only yaml: a standalone single package
     // that keeps its config in `pnpm-workspace.yaml` is still its own
-    // root.
+    // root. A present-but-broken yaml (`Invalid`) also stops the walk
+    // here — escaping past it to a parent would silently ignore the
+    // member's own (malformed) config; anchoring on it surfaces the
+    // parse/IO error downstream instead.
     use aube_manifest::workspace::{WorkspaceYamlKind, workspace_yaml_kind};
     let mut settings_only_root: Option<PathBuf> = None;
     for dir in start.ancestors() {
         // One probe per dir classifies the yaml as members-declaring,
-        // settings-only, or absent — no separate existence stat.
+        // settings-only, absent, or invalid — no separate existence stat.
         match workspace_yaml_kind(dir) {
-            WorkspaceYamlKind::DeclaresMembers => return Some(dir.to_path_buf()),
+            WorkspaceYamlKind::DeclaresMembers | WorkspaceYamlKind::Invalid => {
+                return Some(dir.to_path_buf());
+            }
             WorkspaceYamlKind::SettingsOnly if settings_only_root.is_none() => {
                 settings_only_root = Some(dir.to_path_buf());
             }
@@ -416,6 +421,29 @@ mod tests {
         );
 
         assert_eq!(find_workspace_root(dir.path()).unwrap(), dir.path());
+    }
+
+    #[test]
+    fn find_workspace_root_stops_at_member_with_broken_yaml() {
+        // A member that carries a *malformed* `pnpm-workspace.yaml` must
+        // anchor discovery on itself rather than silently escaping to the
+        // enclosing members-declaring workspace. Walking past the broken
+        // file would hide the member's own (unparseable) config; stopping
+        // here surfaces the parse error when the config is loaded.
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - 'services/*'\n",
+        );
+        let member = dir.path().join("services/svc-a");
+        write(&member.join("package.json"), r#"{"name":"@t/svc-a"}"#);
+        // Tab as the first indent char is a spec-level YAML syntax error.
+        write(
+            &member.join("pnpm-workspace.yaml"),
+            "packages:\n\t- broken\n",
+        );
+
+        assert_eq!(find_workspace_root(&member).unwrap(), member);
     }
 
     #[test]
