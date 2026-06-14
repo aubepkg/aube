@@ -64,6 +64,30 @@ EOF
 	assert_failure
 }
 
+@test "minimumReleaseAge + trustPolicy do not add a time: block under default resolution (pnpm parity)" {
+	# Regression for the reported pnpm <-> aube incoherence: with
+	# `minimumReleaseAge` (and `trustPolicy: no-downgrade`) set but the
+	# default `resolution-mode=highest`, pnpm writes no top-level `time:`
+	# block — it enforces both policies from a separate on-disk metadata
+	# cache, persisting `time:` only under `resolution-mode=time-based`.
+	# aube used to leak a `time:` block here because `should_record_times`
+	# also keyed off these two policies. The fixture packages are years
+	# old, so a one-week cutoff resolves cleanly.
+	_setup_basic_fixture
+	rm aube-lock.yaml
+	cat >pnpm-workspace.yaml <<EOF
+packages:
+  - "."
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade
+EOF
+	run aube install
+	assert_success
+	assert_file_exists aube-lock.yaml
+	run grep -E '^time:' aube-lock.yaml
+	assert_failure
+}
+
 @test "minimumReleaseAgeExclude lets named packages bypass the cutoff" {
 	# With strict mode + an impossible cutoff, the install would fail
 	# unless every range in the dep tree is excluded. Excluding the
