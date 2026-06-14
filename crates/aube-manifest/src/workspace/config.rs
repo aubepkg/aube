@@ -632,25 +632,19 @@ impl WorkspaceConfig {
         if let Some(hit) = typed_cache_lookup(project_dir) {
             return Ok(hit);
         }
-        let value = Self::load_present(project_dir)?.unwrap_or_default();
+        let value = Self::load_uncached(project_dir)?;
         typed_cache_insert(project_dir, value.clone());
         Ok(value)
     }
 
-    /// Parse the workspace yaml in `project_dir`, distinguishing an
-    /// *absent* file (`None`) from a *present* one (`Some`, possibly the
-    /// empty default). [`load`](Self::load) folds both into
-    /// `Self::default()`, but workspace-root discovery must tell them
-    /// apart — a present-but-memberless yaml is a settings-only root
-    /// candidate, an absent one is not. See [`workspace_yaml_kind`].
-    fn load_present(project_dir: &Path) -> Result<Option<Self>, crate::Error> {
+    fn load_uncached(project_dir: &Path) -> Result<Self, crate::Error> {
         let Some((path, content)) = find_and_read(project_dir)? else {
-            return Ok(None);
+            return Ok(Self::default());
         };
         if content.trim().is_empty() {
-            return Ok(Some(Self::default()));
+            return Ok(Self::default());
         }
-        Ok(Some(crate::parse_yaml(&path, content)?))
+        crate::parse_yaml(&path, content)
     }
 }
 
@@ -764,75 +758,6 @@ pub fn workspace_yaml_existing(project_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// How a directory participates in workspace-root discovery, derived
-/// from its workspace yaml (`aube-workspace.yaml` / `pnpm-workspace.yaml`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceYamlKind {
-    /// No workspace yaml in this directory.
-    Absent,
-    /// A yaml exists but declares no members — settings-only:
-    /// per-package config (`minimumReleaseAge`, `pnpmfile`, `catalog`,
-    /// etc.) with no `packages:` list.
-    SettingsOnly,
-    /// A yaml exists and declares members (a non-empty `packages:` list).
-    DeclaresMembers,
-    /// A yaml exists but can't be read or parsed. Discovery must stop
-    /// here rather than walk past it: collapsing this into `SettingsOnly`
-    /// would silently resolve a member command to a parent workspace and
-    /// hide the broken member config. The parse/IO error then surfaces
-    /// when the config is loaded for real.
-    Invalid,
-}
-
-/// Classify `project_dir`'s workspace yaml in a single file probe.
-///
-/// Workspace-root discovery needs four outcomes per directory:
-/// `DeclaresMembers` (stop — this is the root), `SettingsOnly` (remember
-/// as a fallback root, keep walking), `Absent` (keep walking), and
-/// `Invalid` (stop — a present-but-broken yaml must surface, not be
-/// silently skipped). [`WorkspaceConfig::load`] collapses absent and
-/// memberless yamls — both yield an empty `packages` list — so
-/// classifying here lets the ancestor walk use one probe per directory
-/// instead of a memoized load plus a redundant existence stat.
-///
-/// pnpm treats *any* `pnpm-workspace.yaml` as a workspace root, but a
-/// member of an enclosing workspace that drops a settings-only yaml into
-/// its own directory is configuring itself, not declaring a new
-/// workspace. Discovery walks past such a file to the real root so `cd
-/// member && aube install` still targets the workspace the member
-/// belongs to — otherwise the member resolves to itself, its workspace
-/// siblings can't be linked, and the install never settles.
-///
-/// Deliberately does *not* warm the typed cache. `find_workspace_root`'s
-/// ancestor walk runs early and probes many directories through here, but
-/// a command that writes a workspace yaml mid-process (`patch-commit`,
-/// `approve-builds`, catalog edits) and then re-reads through
-/// [`WorkspaceConfig::load`] must see the fresh bytes — not a config this
-/// walk parsed before the write. Caching the pre-write config here made
-/// the post-write read stale (e.g. `patch-commit` recorded a patch but
-/// the in-process reinstall reused a cached config without it and skipped
-/// applying the patch). `WorkspaceConfig::load` still memoizes for its
-/// own direct callers.
-pub fn workspace_yaml_kind(project_dir: &Path) -> WorkspaceYamlKind {
-    match WorkspaceConfig::load_present(project_dir) {
-        Ok(Some(config)) => {
-            if config.packages.is_empty() {
-                WorkspaceYamlKind::SettingsOnly
-            } else {
-                WorkspaceYamlKind::DeclaresMembers
-            }
-        }
-        // An absent yaml is simply `Absent`; nothing to cache.
-        Ok(None) => WorkspaceYamlKind::Absent,
-        // A present-but-unreadable/unparseable yaml is its own state.
-        // Stop discovery here instead of collapsing into `SettingsOnly`
-        // and walking up to a parent workspace, which would silently
-        // ignore the broken member config; the parse/IO error surfaces
-        // when the config is loaded for real.
-        Err(_) => WorkspaceYamlKind::Invalid,
-    }
-}
-
 /// Resolve which workspace-yaml path a writer should mutate in
 /// `project_dir`. Existing `aube-workspace.yaml` wins over
 /// `pnpm-workspace.yaml`; when neither exists, falls back to
@@ -893,109 +818,5 @@ pub fn config_write_target(project_dir: &Path) -> ConfigWriteTarget {
     match workspace_yaml_existing(project_dir) {
         Some(path) => ConfigWriteTarget::WorkspaceYaml(path),
         None => ConfigWriteTarget::PackageJson,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn workspace_yaml_kind_classifies_absent_settings_only_and_members() {
-        // Absent: no workspace yaml at all — discovery keeps walking.
-        let absent = tempfile::tempdir().unwrap();
-        assert_eq!(
-            workspace_yaml_kind(absent.path()),
-            WorkspaceYamlKind::Absent
-        );
-
-        // Settings-only: a yaml with no `packages:` list, i.e. the
-        // per-package config a member drops into its own directory.
-        let settings = tempfile::tempdir().unwrap();
-        std::fs::write(
-            settings.path().join("pnpm-workspace.yaml"),
-            "minimumReleaseAge: 0\nenableGlobalVirtualStore: true\n",
-        )
-        .unwrap();
-        assert_eq!(
-            workspace_yaml_kind(settings.path()),
-            WorkspaceYamlKind::SettingsOnly
-        );
-
-        // Declares members: a non-empty `packages:` list — the real root.
-        let members = tempfile::tempdir().unwrap();
-        std::fs::write(
-            members.path().join("pnpm-workspace.yaml"),
-            "packages:\n  - 'packages/*'\n",
-        )
-        .unwrap();
-        assert_eq!(
-            workspace_yaml_kind(members.path()),
-            WorkspaceYamlKind::DeclaresMembers
-        );
-    }
-
-    #[test]
-    fn workspace_yaml_kind_treats_empty_yaml_as_settings_only() {
-        // A present-but-empty yaml is settings-only, not absent: the file
-        // exists, so it is still a settings-root candidate.
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("pnpm-workspace.yaml"), "\n").unwrap();
-        assert_eq!(
-            workspace_yaml_kind(dir.path()),
-            WorkspaceYamlKind::SettingsOnly
-        );
-    }
-
-    #[test]
-    fn workspace_yaml_kind_treats_unparseable_yaml_as_invalid() {
-        // A present-but-malformed yaml must classify as `Invalid` so
-        // discovery stops at this directory instead of walking past a
-        // broken member config to a parent workspace. A tab as the first
-        // indent char is a spec-level YAML syntax error.
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("pnpm-workspace.yaml"),
-            "packages:\n\t- pkg\n",
-        )
-        .unwrap();
-        assert_eq!(workspace_yaml_kind(dir.path()), WorkspaceYamlKind::Invalid);
-    }
-
-    #[test]
-    fn workspace_yaml_kind_does_not_cache_pre_write_config() {
-        // Regression: discovery must not warm the typed config cache.
-        // `find_workspace_root` classifies every ancestor through
-        // `workspace_yaml_kind` *before* a command such as `patch-commit`
-        // writes `patchedDependencies` into that same yaml. When the early
-        // pass cached the pre-write config, the in-process
-        // `WorkspaceConfig::load` after the write returned the stale
-        // (patch-less) config, so the reinstall skipped applying the patch.
-        let dir = tempfile::tempdir().unwrap();
-        let yaml = dir.path().join("pnpm-workspace.yaml");
-        std::fs::write(&yaml, "packages:\n  - 'packages/*'\n").unwrap();
-
-        // Discovery-time classification (the early ancestor probe).
-        assert_eq!(
-            workspace_yaml_kind(dir.path()),
-            WorkspaceYamlKind::DeclaresMembers
-        );
-
-        // A command now records a patch in the very same yaml.
-        std::fs::write(
-            &yaml,
-            "packages:\n  - 'packages/*'\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n",
-        )
-        .unwrap();
-
-        // The post-write read must observe the patch, not a cached
-        // pre-write config.
-        let cfg = WorkspaceConfig::load(dir.path()).unwrap();
-        assert_eq!(
-            cfg.patched_dependencies
-                .get("is-odd@3.0.1")
-                .map(String::as_str),
-            Some("patches/is-odd@3.0.1.patch"),
-        );
     }
 }

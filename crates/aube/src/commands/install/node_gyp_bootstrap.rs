@@ -239,33 +239,22 @@ fn bootstrap_blocking(
     // so its workspace-root walk-up stops here instead of escaping
     // upward. `tool_dir` lives under `$XDG_CACHE_HOME/aube/tools/` —
     // i.e. inside the user's HOME and inside any test temp dir set
-    // via `HOME=$TEST_TEMP_DIR`. Without a members-declaring marker,
-    // `find_workspace_root` walks past `$XDG_CACHE_HOME`, discovers an
-    // enclosing project's `pnpm-workspace.yaml` / `package.json#workspaces`,
-    // and runs the recursive install against the *outer* tree —
-    // deadlocking on the outer process's project lock.
-    //
-    // The marker must *declare members* (a non-empty `packages:` list)
-    // so workspace-root discovery classifies `tool_dir` as
-    // `WorkspaceYamlKind::DeclaresMembers` and stops here. A
-    // settings-only (empty) yaml no longer halts the walk — discovery
-    // treats it as per-package config and keeps climbing toward the
-    // enclosing workspace — so an empty marker would re-introduce the
-    // deadlock. The glob is deliberately one that matches nothing under
-    // `tool_dir`, so `find_workspace_packages` returns empty and the
-    // recursive install still runs as a single-package install
-    // (`has_workspace` is false).
+    // via `HOME=$TEST_TEMP_DIR`. Without this stub yaml,
+    // `find_workspace_root` would walk past `$XDG_CACHE_HOME`,
+    // discover the outer project's `pnpm-workspace.yaml`, and run
+    // the recursive install against the *outer* tree — deadlocking
+    // on the outer process's project lock. Any `pnpm-workspace.yaml`
+    // is a hard boundary, so the empty stub hits the first marker
+    // check at the start of the walk, returns `tool_dir`, and the
+    // install runs as a single-package install (`workspace_packages`
+    // is empty so `has_workspace` is false).
     // Use whichever workspace-yaml name this tool's discovery recognizes
     // first (its branded YAML, or the shared `pnpm-workspace.yaml`).
     let marker = aube_manifest::workspace::workspace_yaml_names()
         .first()
         .copied()
         .unwrap_or("pnpm-workspace.yaml");
-    aube_util::fs_atomic::atomic_write(
-        &tool_dir.join(marker),
-        b"packages:\n  - 'aube-node-gyp-bootstrap-has-no-members/*'\n",
-    )
-    .into_diagnostic()?;
+    aube_util::fs_atomic::atomic_write(&tool_dir.join(marker), b"").into_diagnostic()?;
     // Forward the outer project's `.npmrc` so private registries and
     // auth tokens configured at project scope carry through to the
     // recursive install. The subprocess's cwd is `tool_dir`, so

@@ -133,43 +133,27 @@ fn find_workspace_root_uncached(start: &Path) -> Option<PathBuf> {
     // a workspaces field, and attach to that workspace. Cap the walk
     // at $HOME so that never happens.
     let stop = home_stop_boundary();
-    // A *settings-only* `pnpm-workspace.yaml` (no `packages:`) inside a
-    // member of an enclosing workspace configures that member; it does
-    // not declare a new workspace. Walk past it to the real root (the
-    // nearest ancestor that declares members) so `cd member && aube
-    // install` targets the workspace the member belongs to — otherwise
-    // the member resolves to itself, its workspace siblings (e.g.
-    // `@scope/lib`) can't be linked, and the warm path never settles.
-    // Only when no members-declaring root exists above do we fall back
-    // to the nearest settings-only yaml: a standalone single package
-    // that keeps its config in `pnpm-workspace.yaml` is still its own
-    // root. A present-but-broken yaml (`Invalid`) also stops the walk
-    // here — escaping past it to a parent would silently ignore the
-    // member's own (malformed) config; anchoring on it surfaces the
-    // parse/IO error downstream instead.
-    use aube_manifest::workspace::{WorkspaceYamlKind, workspace_yaml_kind};
-    let mut settings_only_root: Option<PathBuf> = None;
+    // Any `pnpm-workspace.yaml` is a hard workspace boundary, matching
+    // pnpm: a file with no `packages:` list configures a single-package
+    // workspace (just the root package) — it does not mean "ignore this
+    // file and keep walking to an enclosing workspace". So `cd member &&
+    // aube install` anchors on the member's own yaml rather than the
+    // outer root; per-member lockfile freshness (tracked in install
+    // state) is what keeps repeat installs warm under
+    // `sharedWorkspaceLockfile=false`.
     for dir in start.ancestors() {
-        // One probe per dir classifies the yaml as members-declaring,
-        // settings-only, absent, or invalid — no separate existence stat.
-        match workspace_yaml_kind(dir) {
-            WorkspaceYamlKind::DeclaresMembers | WorkspaceYamlKind::Invalid => {
-                return Some(dir.to_path_buf());
-            }
-            WorkspaceYamlKind::SettingsOnly if settings_only_root.is_none() => {
-                settings_only_root = Some(dir.to_path_buf());
-            }
-            _ => {}
+        if aube_manifest::workspace::workspace_yaml_existing(dir).is_some() {
+            return Some(dir.to_path_buf());
         }
         let pkg = dir.join("package.json");
         if pkg.is_file() && package_json_has_workspaces(&pkg) {
             return Some(dir.to_path_buf());
         }
         if stop.as_deref() == Some(dir) {
-            break;
+            return None;
         }
     }
-    settings_only_root
+    None
 }
 
 /// Walk upward from `start` looking for the nearest ancestor that
@@ -384,14 +368,13 @@ mod tests {
     }
 
     #[test]
-    fn find_workspace_root_walks_past_settings_only_member_yaml() {
-        // A member of a `packages:`-declaring workspace can drop a
-        // settings-only `pnpm-workspace.yaml` (no `packages:`) in its
-        // own directory to carry per-package config. That file must NOT
-        // make the member look like its own workspace root — discovery
-        // walks past it to the real root, so `cd member && aube install`
-        // targets the enclosing workspace where the member's workspace
-        // siblings actually live (otherwise the install never settles).
+    fn find_workspace_root_stops_at_member_settings_only_yaml() {
+        // A `pnpm-workspace.yaml` is a hard boundary even when it declares
+        // no `packages:` list. pnpm treats a memberless yaml as a
+        // single-package workspace (just the root package), not as "ignore
+        // this file and keep walking to the enclosing workspace". So a
+        // member that drops its own settings-only yaml resolves to
+        // *itself*, not the outer `packages:`-declaring root.
         let dir = tempfile::tempdir().unwrap();
         write(
             &dir.path().join("pnpm-workspace.yaml"),
@@ -404,7 +387,7 @@ mod tests {
             "# per-service settings, no packages:\nenableGlobalVirtualStore: true\n",
         );
 
-        assert_eq!(find_workspace_root(&member).unwrap(), dir.path());
+        assert_eq!(find_workspace_root(&member).unwrap(), member);
     }
 
     #[test]
@@ -425,11 +408,10 @@ mod tests {
 
     #[test]
     fn find_workspace_root_stops_at_member_with_broken_yaml() {
-        // A member that carries a *malformed* `pnpm-workspace.yaml` must
-        // anchor discovery on itself rather than silently escaping to the
-        // enclosing members-declaring workspace. Walking past the broken
-        // file would hide the member's own (unparseable) config; stopping
-        // here surfaces the parse error when the config is loaded.
+        // A `pnpm-workspace.yaml` is a hard boundary regardless of whether
+        // it parses: its mere presence anchors discovery on this directory
+        // rather than the enclosing members-declaring workspace, and the
+        // parse error surfaces later when the config is loaded for real.
         let dir = tempfile::tempdir().unwrap();
         write(
             &dir.path().join("pnpm-workspace.yaml"),
