@@ -327,26 +327,29 @@ fn check_needs_install_compute(
         // false to true. The previous false-layout install left a
         // non-empty `member_lockfile_hashes` and an empty `lockfile_hash`
         // (no shared root lockfile then), but a shared root lockfile now
-        // exists, so we land here rather than the member-lockfile branch
-        // below. Its hash can't match the empty recorded one, so we
-        // report a change and the full reinstall rewrites the state into
-        // the shared shape — the `member_lockfile_hashes.is_empty()`
-        // guard below is not the only path that handles the transition.
+        // exists, so we land here. Its hash can't match the empty recorded
+        // one, so we report a change and the full reinstall rewrites the
+        // state into the shared shape.
         let current_hash = hash_file(&path);
         if current_hash != state.lockfile_hash {
             return Some(format!("{lockfile_name} has changed"));
         }
-    } else if !state.member_lockfile_hashes.is_empty() {
-        // No shared root lockfile, but the last install recorded
-        // per-member lockfiles — this is a `sharedWorkspaceLockfile=false`
-        // workspace. The members own the lockfiles, so verify those
-        // instead of falling through to "no lockfile found" (which would
-        // make every install/run re-run the full pipeline).
-        if let Some(reason) = member_lockfiles_stale(project_dir, &state) {
-            return Some(reason);
-        }
-    } else {
+    } else if state.member_lockfile_hashes.is_empty() {
         lockfile_missing = true;
+    }
+    // Under `sharedWorkspaceLockfile=false` the members own the lockfiles,
+    // so verify them whenever any were recorded — independent of the root
+    // lockfile. A workspace root that is *itself* a package carries its own
+    // per-project lockfile, so `lockfile_path` is `Some` and the branch
+    // above only checked the root; a member lockfile can still drift under
+    // it. Checking here too keeps member add/remove/edit busting the warm
+    // path instead of silently reporting "up to date". When no shared root
+    // lockfile exists, this is also the only member check (the `else if`
+    // above just avoids a spurious "no lockfile found").
+    if !state.member_lockfile_hashes.is_empty()
+        && let Some(reason) = member_lockfiles_stale(project_dir, &state)
+    {
+        return Some(reason);
     }
     drop(_diag_lock);
 
