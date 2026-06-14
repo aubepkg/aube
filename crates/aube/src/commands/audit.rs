@@ -616,7 +616,7 @@ async fn write_fix_lockfile_update(
         false,
         None,
     )
-    .await;
+    .await?;
     super::write_and_log_lockfile(cwd, &new_graph, &output_manifest)?;
     for name in &updated {
         let old = before

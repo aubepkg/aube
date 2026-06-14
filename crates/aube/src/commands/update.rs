@@ -750,7 +750,7 @@ pub async fn run(
         args.ignore_pnpmfile,
         args.pnpmfile.as_deref(),
     )
-    .await;
+    .await?;
     write_update_lockfile(
         &cwd,
         &graph,
@@ -1492,7 +1492,7 @@ async fn merge_update_graph_into_workspace_lockfile(
         ignore_pnpmfile,
         cli_pnpmfile,
     )
-    .await;
+    .await?;
     super::write_and_log_lockfile(workspace_root, &root_graph, root_manifest)?;
     Ok(())
 }

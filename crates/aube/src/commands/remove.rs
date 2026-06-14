@@ -167,7 +167,7 @@ pub async fn run(
         .wrap_err("failed to resolve dependencies")?;
     eprintln!("Resolved {} packages", graph.packages.len());
 
-    install::finalize_lockfile_graph(&cwd, &mut graph, &manifest, false, None).await;
+    install::finalize_lockfile_graph(&cwd, &mut graph, &manifest, false, None).await?;
     super::write_and_log_lockfile(&cwd, &graph, &manifest)?;
 
     // Reinstall to clean up node_modules

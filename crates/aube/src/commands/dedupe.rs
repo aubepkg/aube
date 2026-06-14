@@ -110,7 +110,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
         return Err(miette!("dedupe --check: lockfile is not deduped"));
     }
 
-    install::finalize_lockfile_graph(&cwd, &mut graph, &manifest, false, None).await;
+    install::finalize_lockfile_graph(&cwd, &mut graph, &manifest, false, None).await?;
     super::write_and_log_lockfile(&cwd, &graph, &manifest)?;
 
     // Resync node_modules against the new lockfile.

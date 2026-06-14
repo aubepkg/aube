@@ -1,6 +1,6 @@
 use super::super::{packument_cache_dir, packument_full_cache_dir};
 use super::version_from_dep_path;
-use miette::miette;
+use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 
 /// Accept pnpm's documented aliases (`highest`, `time-based`, `time`,
@@ -551,17 +551,27 @@ pub(crate) async fn stamp_pnpm_config_checksums(
 /// caller honors `--ignore-pnpmfile` the local pnpmfile is excluded
 /// from the checksum (pnpm clears it in that mode); `cli_pnpmfile` is
 /// the `--pnpmfile` override (only `update` exposes one today).
+///
+/// Fails fast if `pnpm-workspace.yaml` is present but malformed: the
+/// stamped checksums are derived from that config, so falling back to an
+/// empty workspace would persist a checksum computed from the wrong
+/// inputs and desync config-drift detection. This matches the install
+/// entry path, which also propagates the parse error (a missing or empty
+/// workspace file is `Ok(default)`, not an error, so single-package
+/// projects are unaffected).
 pub(crate) async fn finalize_lockfile_graph(
     cwd: &std::path::Path,
     graph: &mut aube_lockfile::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
     ignore_pnpmfile: bool,
     cli_pnpmfile: Option<&std::path::Path>,
-) {
+) -> miette::Result<()> {
     let write_kind = aube_lockfile::detect_existing_lockfile_kind(cwd)
         .unwrap_or(aube_lockfile::LockfileKind::Aube);
     let files = crate::commands::FileSources::load(cwd);
-    let (ws_config, raw_workspace) = aube_manifest::workspace::load_both(cwd).unwrap_or_default();
+    let (ws_config, raw_workspace) = aube_manifest::workspace::load_both(cwd)
+        .into_diagnostic()
+        .wrap_err("failed to load workspace config for lockfile finalization")?;
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
     let local_pnpmfile = if ignore_pnpmfile {
@@ -571,6 +581,7 @@ pub(crate) async fn finalize_lockfile_graph(
     };
     stamp_pnpm_config_checksums(graph, write_kind, manifest, &ctx, local_pnpmfile.as_deref()).await;
     crate::commands::prepare_resolved_graph_for_lockfile_write(graph);
+    Ok(())
 }
 
 fn merge_json_object_setting(
@@ -1280,7 +1291,9 @@ mod finalize_lockfile_graph_tests {
         let mut graph = aube_lockfile::LockfileGraph::default();
         assert!(graph.package_extensions_checksum.is_none());
         // ignore_pnpmfile=true keeps this assertion node-free.
-        finalize_lockfile_graph(cwd, &mut graph, &manifest(), true, None).await;
+        finalize_lockfile_graph(cwd, &mut graph, &manifest(), true, None)
+            .await
+            .unwrap();
         assert!(
             graph.package_extensions_checksum.is_some(),
             "packageExtensions checksum must be stamped on pnpm-lock writes"
@@ -1305,7 +1318,9 @@ mod finalize_lockfile_graph_tests {
         .unwrap();
 
         let mut graph = aube_lockfile::LockfileGraph::default();
-        finalize_lockfile_graph(cwd, &mut graph, &manifest(), false, None).await;
+        finalize_lockfile_graph(cwd, &mut graph, &manifest(), false, None)
+            .await
+            .unwrap();
         assert!(
             graph.package_extensions_checksum.is_none(),
             "aube-lock.yaml must not grow pnpm-only checksum fields"
@@ -1337,7 +1352,9 @@ mod finalize_lockfile_graph_tests {
         .unwrap();
 
         let mut graph = aube_lockfile::LockfileGraph::default();
-        finalize_lockfile_graph(cwd, &mut graph, &manifest(), false, None).await;
+        finalize_lockfile_graph(cwd, &mut graph, &manifest(), false, None)
+            .await
+            .unwrap();
         assert!(
             graph.pnpmfile_checksum.is_some(),
             "pnpmfile checksum must be stamped when a hook-exporting pnpmfile is present"
@@ -1345,7 +1362,9 @@ mod finalize_lockfile_graph_tests {
 
         // --ignore-pnpmfile clears it, matching pnpm.
         let mut ignored = aube_lockfile::LockfileGraph::default();
-        finalize_lockfile_graph(cwd, &mut ignored, &manifest(), true, None).await;
+        finalize_lockfile_graph(cwd, &mut ignored, &manifest(), true, None)
+            .await
+            .unwrap();
         assert!(
             ignored.pnpmfile_checksum.is_none(),
             "--ignore-pnpmfile must not record a pnpmfile checksum"
