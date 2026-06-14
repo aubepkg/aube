@@ -15,7 +15,11 @@
 ///   4. Insert blank-line separators above every top-level section
 ///      (`settings:`, `importers:`, `packages:`, `snapshots:`, …) and
 ///      between 2-indent entries inside the entry-bearing sections
-///      (`importers:`, `packages:`, `snapshots:`, `catalogs:`).
+///      (`importers:`, `packages:`, `snapshots:`). `catalogs:` is
+///      deliberately excluded: pnpm writes the whole nested
+///      catalog-name → package → {specifier, version} block tight (no
+///      blank line after the header, none between catalog names), so it
+///      stays out of the entry-section set.
 ///
 /// The rewrites are textual — not YAML-aware — but the keys aube emits
 /// are all simple scalars in the fixed set above, so there's nothing to
@@ -122,8 +126,12 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
     // Sections where each 2-indent key-ending-in-`:` is an entry header
     // that pnpm separates with a blank line above. `overrides:` /
     // `time:` / `settings:` carry scalar key→value pairs instead and
-    // stay tight.
-    const ENTRY_SECTIONS: &[&str] = &["importers:", "packages:", "snapshots:", "catalogs:"];
+    // stay tight. `catalogs:` is also tight: its 2-indent keys are
+    // catalog *names* (`default:`), and pnpm emits the whole nested
+    // block without blank lines (verified against pnpm v11 output) —
+    // including it here would wrongly inject a blank after `catalogs:`
+    // and between catalog names.
+    const ENTRY_SECTIONS: &[&str] = &["importers:", "packages:", "snapshots:"];
     let mut out = String::with_capacity(yaml.len() + 512);
     let mut in_entries = false;
     for (idx, line) in compact.iter().enumerate() {
@@ -240,6 +248,36 @@ mod tests {
         assert!(
             out.contains("    transitivePeerDependencies:\n      - supports-color\n"),
             "tPD reindented:\n{out}"
+        );
+    }
+
+    #[test]
+    fn catalogs_block_stays_tight_like_pnpm() {
+        // pnpm v11 writes `catalogs:` as one tight nested block: no
+        // blank line after the header, none between catalog names. Only
+        // the top-level section separators (blank line *before*
+        // `catalogs:` and before the next section) apply.
+        let input = "settings:\n  autoInstallPeers: true\ncatalogs:\n  default:\n    esbuild:\n      specifier: ^0.27.0\n      version: 0.27.7\n  evens:\n    is-even:\n      specifier: ^1.0.0\n      version: 1.0.0\nimporters:\n  .:\n    dependencies:\n      esbuild:\n        specifier: 'catalog:'\n        version: 0.27.7\n";
+        let out = reformat_for_pnpm_parity(input);
+        // No blank line after the `catalogs:` header…
+        assert!(
+            out.contains("catalogs:\n  default:\n"),
+            "tight header:\n{out}"
+        );
+        // …and none between catalog names.
+        assert!(
+            out.contains("      version: 0.27.7\n  evens:\n"),
+            "tight catalog names:\n{out}"
+        );
+        // Top-level separators are still present: a blank line before
+        // `catalogs:` and before the following `importers:` section.
+        assert!(
+            out.contains("\n\ncatalogs:\n"),
+            "blank before catalogs:\n{out}"
+        );
+        assert!(
+            out.contains("\n\nimporters:\n"),
+            "blank before importers:\n{out}"
         );
     }
 
