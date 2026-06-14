@@ -40,6 +40,14 @@ pub struct SupportedArchitectures {
     /// individual (os, cpu, libc) combinations the cartesian product
     /// would otherwise include.
     pub explicit_combinations: Option<Vec<(String, String, String)>>,
+    /// When true, [`is_supported`] accepts every package regardless of
+    /// its `os`/`cpu`/`libc`. Used at *resolve* time for pnpm-lock.yaml so
+    /// every optional-dep variant a package declares lands in the
+    /// committed lockfile — exactly what pnpm records, regardless of the
+    /// host running the resolve. Link-time filtering (`filter_graph`) and
+    /// the streaming-fetch gate run against the host triple instead, so
+    /// `node_modules` and the tarball downloads stay trimmed to the host.
+    pub accept_all: bool,
 }
 
 impl SupportedArchitectures {
@@ -92,6 +100,7 @@ impl SupportedArchitectures {
             cpu: Vec::new(),
             libc: Vec::new(),
             explicit_combinations: Some(combos),
+            accept_all: false,
         }
     }
 
@@ -255,6 +264,13 @@ pub fn is_supported(
     pkg_libc: &[String],
     supported: &SupportedArchitectures,
 ) -> bool {
+    // pnpm-lock parity: record every declared variant in the lockfile
+    // regardless of host. Host-only trimming happens later via
+    // `filter_graph` / the streaming-fetch gate, which use the real host
+    // triple rather than this accept-all set.
+    if supported.accept_all {
+        return true;
+    }
     for (os, cpu, libc) in supported.combinations() {
         if !field_matches(pkg_os, &os) {
             continue;
@@ -448,6 +464,46 @@ mod tests {
         let (os, cpu, libc) = host_triple();
         let pkg_libc = if libc.is_empty() { vec![] } else { s(&[libc]) };
         assert!(is_supported(&s(&[os]), &s(&[cpu]), &pkg_libc, &sup));
+    }
+
+    #[test]
+    fn accept_all_accepts_every_arch_including_curated_rejects() {
+        // pnpm-lock parity: `accept_all` records every optional-dep
+        // variant a package declares, even triples the curated wide
+        // matrix deliberately drops (darwin-x64, freebsd, ppc64, s390x,
+        // …). Without it, a regenerated pnpm-lock.yaml loses arches that
+        // pnpm keeps, breaking teammates on those platforms.
+        let sup = SupportedArchitectures {
+            accept_all: true,
+            ..Default::default()
+        };
+        assert!(is_supported(&s(&["darwin"]), &s(&["x64"]), &[], &sup));
+        assert!(is_supported(&s(&["freebsd"]), &s(&["arm64"]), &[], &sup));
+        assert!(is_supported(
+            &s(&["linux"]),
+            &s(&["ppc64"]),
+            &s(&["glibc"]),
+            &sup
+        ));
+        assert!(is_supported(
+            &s(&["openharmony"]),
+            &s(&["arm64"]),
+            &[],
+            &sup
+        ));
+        assert!(is_supported(&s(&["win32"]), &s(&["ia32"]), &[], &sup));
+        // Sanity: the curated matrix rejects at least one of these, so the
+        // accept-all branch is doing real work.
+        let curated = SupportedArchitectures::aube_lock_default();
+        let (host_os, _, _) = host_triple();
+        if host_os != "freebsd" {
+            assert!(!is_supported(
+                &s(&["freebsd"]),
+                &s(&["arm64"]),
+                &[],
+                &curated
+            ));
+        }
     }
 
     #[test]

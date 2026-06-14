@@ -113,6 +113,57 @@ teardown() {
 	assert_success
 }
 
+@test "pnpm-lock.yaml records optional natives for exotic arches (full pnpm parity)" {
+	# pnpm records EVERY optional-dep variant a package declares — even
+	# rare triples like linux-ppc64 that aube's curated cross-platform
+	# matrix deliberately omits. The win32 case above can't catch this:
+	# win32-x64 is inside the curated matrix, so it lands either way. This
+	# fixture declares `cpu: ["ppc64"]`, which the curated matrix drops, so
+	# it only survives into pnpm-lock.yaml under the full accept-all set —
+	# the actual fix for the rollup optionalDependencies parity report.
+	: >pnpm-lock.yaml
+	cat >package.json <<-'JSON'
+		{
+		  "name": "pnpm-lock-exotic-arch",
+		  "version": "0.0.0",
+		  "optionalDependencies": {
+		    "aube-test-optional-ppc64": "1.0.0"
+		  }
+		}
+	JSON
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_exists pnpm-lock.yaml
+	# Never installed on the x64/arm64 CI host…
+	assert_not_exists node_modules/aube-test-optional-ppc64
+	# …but recorded in the lockfile's `packages:` block, matching pnpm.
+	run grep -F 'aube-test-optional-ppc64@1.0.0:' pnpm-lock.yaml
+	assert_success
+}
+
+@test "aube-lock.yaml curated matrix omits exotic arches off the common set" {
+	# aube-lock.yaml is aube's own format and uses a curated cross-platform
+	# matrix (every common platform, host always included) rather than
+	# pnpm's record-everything policy — so a linux-ppc64-only optional
+	# stays out. pnpm-lock.yaml gets the full set (see the parity test
+	# above); this locks in the intentional difference between the two.
+	cat >package.json <<-'JSON'
+		{
+		  "name": "aube-lock-exotic-arch",
+		  "version": "0.0.0",
+		  "optionalDependencies": {
+		    "aube-test-optional-ppc64": "1.0.0"
+		  }
+		}
+	JSON
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_exists aube-lock.yaml
+	assert_not_exists node_modules/aube-test-optional-ppc64
+	run grep -F 'aube-test-optional-ppc64@1.0.0' aube-lock.yaml
+	assert_failure
+}
+
 @test "pnpm.supportedArchitectures widens the match set" {
 	cat >package.json <<-'JSON'
 		{
