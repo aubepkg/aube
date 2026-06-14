@@ -119,9 +119,9 @@ _require_registry() {
 
 	# Dedupe parity: extract the snapshots section and count keys that
 	# start with `'@pnpm.e2e/abc@1.0.0` — should be exactly one. The
-	# packages: and time: sections each carry an `'@pnpm.e2e/abc@1.0.0'`
-	# entry without a peer suffix, so we anchor the grep to lines that
-	# follow the `snapshots:` header.
+	# packages: section also carries an `'@pnpm.e2e/abc@1.0.0'` entry
+	# without a peer suffix, so we anchor the grep to lines that follow
+	# the `snapshots:` header.
 	run bash -c "awk '/^snapshots:/{f=1;next} /^[a-z]/{f=0} f' aube-lock.yaml | grep -cE \"^  '@pnpm\\\\.e2e/abc@1\\\\.0\\\\.0(\\\\(|':)\""
 	assert_success
 	assert_output "1"

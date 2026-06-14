@@ -137,16 +137,28 @@ impl Resolver {
     }
 
     /// Whether the resolver should round-trip registry `time:` entries
-    /// into the output graph. pnpm only writes `time:` to its lockfile
-    /// when one of `resolution-mode=time-based` / `minimumReleaseAge`
-    /// is active — otherwise the field is dead weight and, worse, shows
-    /// up as churn in a pnpm ↔ aube diff. Gate the insertion at the
-    /// two `resolved_times.insert` call sites on this predicate so
-    /// Highest-mode installs never populate the map.
+    /// into the output graph (and from there into the lockfile's
+    /// top-level `time:` block).
+    ///
+    /// pnpm writes `time:` to the lockfile *only* under
+    /// `resolution-mode=time-based`. In `resolveDependencies.ts` the
+    /// `time` map is populated solely inside the `if (ctx.resolutionMode
+    /// === 'time-based')` branch, and `updateLockfile` then guards
+    /// `newLockfile.time = …` behind that map being truthy. The
+    /// `minimumReleaseAge` and `trustPolicy=no-downgrade` policies do
+    /// *not* persist `time:` — pnpm enforces them from a separate
+    /// on-disk metadata cache (re-fetching full metadata as needed), so
+    /// its lockfiles stay `time:`-free even with both policies active.
+    ///
+    /// aube mirrors that here: the two policies still drive `needs_time`
+    /// (we fetch the publish dates to enforce them in-memory during the
+    /// resolve), but they no longer leak a `time:` block that pnpm would
+    /// never write. Including them previously produced a spurious `time:`
+    /// block on every default install (aube defaults `trustPolicy` to
+    /// `no-downgrade` and `minimumReleaseAge` to 1440), which showed up
+    /// as churn in a pnpm ↔ aube lockfile diff.
     pub(crate) fn should_record_times(&self) -> bool {
         self.resolution_mode == ResolutionMode::TimeBased
-            || self.minimum_release_age.is_some()
-            || self.dependency_policy.trust_policy == crate::TrustPolicy::NoDowngrade
     }
 
     /// Override the default `auto-install-peers=true` behavior. pnpm reads

@@ -29,31 +29,32 @@ teardown() {
 	assert_success
 }
 
-@test "aube install --resolution-mode=highest writes time: when packument carries it" {
+@test "aube install --resolution-mode=highest writes no time: block (pnpm parity)" {
 	_setup_basic_fixture
 	rm aube-lock.yaml
 	run aube install --resolution-mode=highest
 	assert_success
 	assert_file_exists aube-lock.yaml
-	# Matches pnpm's opportunistic `publishedAt` wiring: whenever the
-	# registry metadata carries a `time` map we round-trip it into the
-	# lockfile, regardless of resolution mode. The fixture Verdaccio
-	# ships `time` in its corgi responses, so the block is present here.
-	# (npmjs.org's corgi omits `time`, so real-world default installs
-	# still won't get a `time:` block — matching pnpm's behavior there.)
+	# pnpm aggregates publish times into the lockfile *only* under
+	# resolution-mode=time-based: resolveDependencies.ts populates its
+	# `time` map solely inside the `if (ctx.resolutionMode ===
+	# 'time-based')` branch, and updateLockfile then guards
+	# `newLockfile.time = …` on that map. Highest mode must therefore
+	# stay time:-free even though the fixture Verdaccio ships `time` in
+	# its corgi responses — matching pnpm. (Regression: aube used to
+	# round-trip the field opportunistically in every mode.)
 	run grep -E '^time:' aube-lock.yaml
-	assert_success
+	assert_failure
 }
 
 @test "aube install --resolution-mode rejects unknown values via .npmrc fallback" {
 	_setup_basic_fixture
 	rm aube-lock.yaml
 	# Unknown CLI value silently falls back to the .npmrc/default
-	# path; the install should still succeed with classic highest
-	# resolution. The fixture Verdaccio returns `time` in its corgi
-	# metadata, so the opportunistic `time:` block is expected.
+	# (highest) path; the install should still succeed with classic
+	# highest resolution, which — like pnpm — writes no time: block.
 	run aube install --resolution-mode=bogus
 	assert_success
 	run grep -E '^time:' aube-lock.yaml
-	assert_success
+	assert_failure
 }

@@ -323,24 +323,94 @@ EOF
 	assert_success
 }
 
-# Companion regression for discussion #345: `aube update` was dropping
-# `time:` entries for direct deps from the rewritten lockfile because
-# (a) the stripped-down `build_resolver` skipped install-time settings
-# and (b) `aube update`'s `filtered_existing` strips direct deps from
-# `existing.packages` to force a fresh re-resolve, so the lockfile-
-# reuse path's time-carry-forward never fired for them. Transitive
-# deps stayed in `existing.packages`; the writer now prunes transitive
-# publish times for pnpm v11 parity.
-@test "aube update preserves time: entries for direct deps" {
-	# `^0.1.0` is the only spec that exposes the bug cleanly: `>=0.1.0`
-	# would bump is-odd to 3.0.1 and the resolver would (correctly)
-	# write a fresh `time:` entry for the new version, masking the
-	# regression. With `^0.1.0` the highest in-range version equals
-	# the locked one (0.1.2), so the resolver re-resolves to the
-	# same version and the `time:` entry must round-trip.
+# Companion regression for discussion #345: under `resolution-mode=time-based`
+# `aube update` was dropping `time:` entries for direct deps from the
+# rewritten lockfile because (a) the stripped-down `build_resolver`
+# skipped install-time settings and (b) `aube update`'s `filtered_existing`
+# strips direct deps from `existing.packages` to force a fresh re-resolve,
+# so the lockfile-reuse path's time-carry-forward never fired for them.
+# Transitive deps stayed in `existing.packages`; the writer prunes their
+# publish times for pnpm v11 parity. pnpm only persists the `time:` block
+# in time-based mode (resolveDependencies.ts populates `time` solely in the
+# `time-based` branch), so this preservation behavior is asserted there.
+@test "aube update preserves time: entries for direct deps (time-based mode)" {
+	# Use is-odd@^3.0.1 (-> is-number@6.0.0): in time-based mode the
+	# cutoff is derived from the direct dep's publish time, and that
+	# direct must be newer than its transitives or they get filtered
+	# out. is-odd@3.0.1 is newer than is-number@6.0.0 (the inverse
+	# is-odd@0.1.2 -> is-number@3.0.0 tree fails to resolve under the
+	# cutoff). `^3.0.1` pins to the only 3.x in the fixture, so the
+	# re-resolve lands back on 3.0.1 and the `time:` entry round-trips.
 	cat >package.json <<-'JSON'
 		{
 		  "name": "update-time-preserve",
+		  "version": "0.0.0",
+		  "dependencies": {
+		    "is-odd": "^3.0.1"
+		  }
+		}
+	JSON
+	# Append so the registry= line _common_setup wrote stays in place.
+	cat >>.npmrc <<-'EOF'
+		resolution-mode=time-based
+	EOF
+	cat >aube-lock.yaml <<-'EOF'
+		lockfileVersion: '9.0'
+
+		settings:
+		  autoInstallPeers: true
+		  excludeLinksFromLockfile: false
+
+		time:
+		  is-odd@3.0.1: '2099-01-02T00:00:00.000Z'
+		  is-number@6.0.0: '2099-01-03T00:00:00.000Z'
+
+		importers:
+		  .:
+		    dependencies:
+		      is-odd:
+		        specifier: ^3.0.1
+		        version: 3.0.1
+
+		packages:
+		  is-number@6.0.0:
+		    resolution: {integrity: sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==}
+		  is-odd@3.0.1:
+		    resolution: {integrity: sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==}
+
+		snapshots:
+		  is-number@6.0.0: {}
+		  is-odd@3.0.1:
+		    dependencies:
+		      is-number: 6.0.0
+	EOF
+
+	run aube update
+	assert_success
+
+	# The direct dep must keep a `time:` entry after the rewrite. We
+	# can't pin the timestamp value because the resolver may have
+	# refreshed it from the packument during re-resolve, but the entry
+	# MUST be present. pnpm v11 prunes transitive publish times from the
+	# written lockfile, so the transitive is-number@6.0.0 must be gone.
+	#
+	time_block="$(awk '/^time:/{f=1;next} /^[^[:space:]].*:/{f=0} f' aube-lock.yaml)"
+	run bash -c "grep -E '^  is-odd@3\\.0\\.1: [^[:space:]]' <<<\"\$1\"" _ "$time_block"
+	assert_success
+	run bash -c "grep -E '^  is-number@6\\.0\\.0: [^[:space:]]' <<<\"\$1\"" _ "$time_block"
+	assert_failure
+}
+
+# Default (highest) resolution must drop a stray `time:` block on rewrite,
+# matching pnpm: outside time-based mode pnpm never assigns `newLockfile.time`,
+# so a lockfile that picked up a `time:` block elsewhere (an older aube, a
+# time-based install, a hand edit) is cleaned up on the next update. Guards the
+# fix for the bug where `minimumReleaseAge`/`trustPolicy` leaked a `time:` block
+# into highest-mode lockfiles.
+@test "aube update drops a stray time: block under default resolution (pnpm parity)" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "update-time-drop",
 		  "version": "0.0.0",
 		  "dependencies": {
 		    "is-odd": "^0.1.0"
@@ -386,18 +456,6 @@ EOF
 
 	run aube update
 	assert_success
-
-	# The direct dep must keep a `time:` entry after the rewrite. We
-	# can't pin the timestamp value because the resolver may have
-	# refreshed it from the packument during re-resolve, but the entry
-	# MUST be present. pnpm v11 prunes transitive publish times from the
-	# written lockfile, so only the importer dep is asserted here.
-	#
-	time_block="$(awk '/^time:/{f=1;next} /^[^[:space:]].*:/{f=0} f' aube-lock.yaml)"
-	run bash -c "grep -E '^  is-odd@0\\.1\\.2: [^[:space:]]' <<<\"\$1\"" _ "$time_block"
-	assert_success
-	run bash -c "grep -E '^  is-number@3\\.0\\.0: [^[:space:]]' <<<\"\$1\"" _ "$time_block"
-	assert_failure
-	run bash -c "grep -E '^  kind-of@3\\.2\\.2: [^[:space:]]' <<<\"\$1\"" _ "$time_block"
+	run grep -E '^time:' aube-lock.yaml
 	assert_failure
 }
