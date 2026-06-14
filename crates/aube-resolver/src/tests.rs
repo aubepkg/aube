@@ -3761,6 +3761,89 @@ fn peer_suffix_propagation_dedupes_nested_self_segments() {
     );
 }
 
+// A peer suffix must stop at the package that *supplies* the peer.
+// Real-world chain: `xml2json -> node-expat -> node-gyp -> tinyglobby ->
+// fdir`, where `fdir` declares an OPTIONAL `picomatch` peer and
+// `tinyglobby` lists `picomatch` in its own `dependencies`. pnpm tags
+// only `fdir@6.5.0(picomatch@4.0.4)`; every ancestor — including the
+// supplier `tinyglobby` — stays bare. The
+// `propagate_peer_suffixes_to_ancestors` post-pass used to leak
+// `(picomatch@4.0.4)` all the way up to `xml2json@0.12.0`; suppressing a
+// peer that the absorbing package supplies itself restores pnpm parity.
+#[test]
+fn peer_suffix_stops_at_supplier_of_the_peer() {
+    let xml2json = mk_locked("xml2json", "0.12.0", &[("node-expat", "2.4.3")], &[]);
+    let node_expat = mk_locked("node-expat", "2.4.3", &[("node-gyp", "12.3.0")], &[]);
+    let node_gyp = mk_locked("node-gyp", "12.3.0", &[("tinyglobby", "0.2.17")], &[]);
+    // tinyglobby supplies `picomatch` (resolving fdir's optional peer).
+    let tinyglobby = mk_locked(
+        "tinyglobby",
+        "0.2.17",
+        &[("fdir", "6.5.0"), ("picomatch", "4.0.4")],
+        &[],
+    );
+    // fdir only *declares* the optional peer — it doesn't supply it.
+    let mut fdir = mk_locked("fdir", "6.5.0", &[], &[("picomatch", "^3 || ^4")]);
+    fdir.peer_dependencies_meta.insert(
+        "picomatch".to_string(),
+        aube_lockfile::PeerDepMeta { optional: true },
+    );
+    let picomatch = mk_locked("picomatch", "4.0.4", &[], &[]);
+
+    let mut packages = BTreeMap::new();
+    for p in [xml2json, node_expat, node_gyp, tinyglobby, fdir, picomatch] {
+        packages.insert(p.dep_path.clone(), p);
+    }
+
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "xml2json".to_string(),
+            dep_path: "xml2json@0.12.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("^0.12.0".to_string()),
+        }],
+    );
+
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+
+    let keys: Vec<&String> = out.packages.keys().collect();
+    // Only fdir — the peer *declarer* — carries the suffix.
+    assert!(
+        out.packages.contains_key("fdir@6.5.0(picomatch@4.0.4)"),
+        "fdir keeps its own optional-peer suffix; got {keys:?}"
+    );
+    // The supplier and every ancestor above it stay bare (pnpm parity).
+    for bare in [
+        "tinyglobby@0.2.17",
+        "node-gyp@12.3.0",
+        "node-expat@2.4.3",
+        "xml2json@0.12.0",
+    ] {
+        assert!(
+            out.packages.contains_key(bare),
+            "{bare} must stay bare; got {keys:?}"
+        );
+    }
+    assert!(
+        !out.packages
+            .contains_key("tinyglobby@0.2.17(picomatch@4.0.4)"),
+        "tinyglobby supplies picomatch, so the suffix must stop there; got {keys:?}"
+    );
+    assert!(
+        !out.packages
+            .contains_key("xml2json@0.12.0(picomatch@4.0.4)"),
+        "xml2json must not inherit a transitive optional peer; got {keys:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // direct_dep_info
 // ---------------------------------------------------------------------------

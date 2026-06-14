@@ -1004,6 +1004,15 @@ fn propagate_peer_suffixes_to_ancestors(
     // their own peers don't accept descendant-peer propagation (see
     // the rule in the doc comment above).
     let mut has_own_peers: BTreeMap<String, bool> = BTreeMap::new();
+    // Per-package set of dependency names a package supplies itself
+    // (regular or optional). A peer a descendant needs is *resolved* at
+    // the nearest ancestor that supplies it, so the `(peer@version)`
+    // suffix must stop there — that supplier, and everything above it,
+    // stays bare. pnpm leaves e.g. `tinyglobby@0.2.17` bare because it
+    // lists `picomatch` in its own `dependencies` (resolving `fdir`'s
+    // optional peer); only `fdir` keeps the suffix. Without this gate the
+    // suffix leaks onto every ancestor up to the importer.
+    let mut provides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (key, pkg) in &graph.packages {
         let children: Vec<String> = pkg
             .dependencies
@@ -1013,6 +1022,13 @@ fn propagate_peer_suffixes_to_ancestors(
             .collect();
         forward.insert(key.clone(), children);
         has_own_peers.insert(key.clone(), !pkg.peer_dependencies.is_empty());
+        let supplied: BTreeSet<String> = pkg
+            .dependencies
+            .keys()
+            .chain(pkg.optional_dependencies.keys())
+            .cloned()
+            .collect();
+        provides.insert(key.clone(), supplied);
     }
 
     // Memoized DFS. `cumulative` stores the by-name segment map per
@@ -1024,6 +1040,7 @@ fn propagate_peer_suffixes_to_ancestors(
         key: &str,
         forward: &BTreeMap<String, Vec<String>>,
         has_own_peers: &BTreeMap<String, bool>,
+        provides: &BTreeMap<String, BTreeSet<String>>,
         cumulative: &mut BTreeMap<String, BTreeMap<String, String>>,
         visiting: &mut BTreeSet<String>,
     ) -> BTreeMap<String, String> {
@@ -1084,11 +1101,26 @@ fn propagate_peer_suffixes_to_ancestors(
         if !canonical_name.is_empty() {
             suppressed.insert(canonical_name);
         }
+        // A peer this package supplies itself is resolved here, so it must
+        // neither decorate this package's dep_path nor propagate above it
+        // (pnpm stops the suffix at the supplier). This is what keeps a
+        // supplier like `tinyglobby` (and its non-peer ancestors) bare
+        // while `fdir`, which only *declares* the peer, keeps its suffix.
+        if let Some(supplied) = provides.get(key) {
+            suppressed.extend(supplied.iter().cloned());
+        }
 
         // Child contributions.
         if let Some(children) = forward.get(key) {
             for child in children {
-                let child_peers = collect(child, forward, has_own_peers, cumulative, visiting);
+                let child_peers = collect(
+                    child,
+                    forward,
+                    has_own_peers,
+                    provides,
+                    cumulative,
+                    visiting,
+                );
                 for (name, seg) in child_peers {
                     if suppressed.contains(&name) {
                         continue;
@@ -1111,6 +1143,7 @@ fn propagate_peer_suffixes_to_ancestors(
             key,
             &forward,
             &has_own_peers,
+            &provides,
             &mut cumulative,
             &mut visiting,
         );
@@ -1121,6 +1154,7 @@ fn propagate_peer_suffixes_to_ancestors(
                 &dep.dep_path,
                 &forward,
                 &has_own_peers,
+                &provides,
                 &mut cumulative,
                 &mut visiting,
             );
