@@ -267,15 +267,16 @@ impl DiagConfig {
      * per-event log is the costly bit.
      */
     pub fn from_env() -> Option<Self> {
-        let file = std::env::var_os("AUBE_DIAG_FILE").map(PathBuf::from);
-        let print = std::env::var_os("AUBE_DIAG_PRINT").is_some();
-        let summary_env = std::env::var_os("AUBE_DIAG_SUMMARY").is_some();
-        let critpath_env = std::env::var_os("AUBE_DIAG_CRITPATH").is_some();
+        let file = crate::env::embedder_env("DIAG_FILE").map(PathBuf::from);
+        let print = crate::env::embedder_env("DIAG_PRINT").is_some();
+        let summary_env = crate::env::embedder_env("DIAG_SUMMARY").is_some();
+        let critpath_env = crate::env::embedder_env("DIAG_CRITPATH").is_some();
         if file.is_none() && !print && !summary_env && !critpath_env {
             return None;
         }
-        let threshold_ms = std::env::var("AUBE_DIAG_THRESHOLD_MS")
-            .ok()
+        let threshold_ms = crate::env::embedder_env("DIAG_THRESHOLD_MS")
+            .as_deref()
+            .and_then(|s| s.to_str())
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
         Some(Self {

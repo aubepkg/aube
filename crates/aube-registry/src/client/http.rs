@@ -265,5 +265,7 @@ fn build_http_client_inner(
 /// or accidentally-set empty value won't silently balloon registry
 /// traffic on end-user machines.
 pub(super) fn force_full_packument() -> bool {
-    std::env::var("AUBE_INTERNAL_FORCE_FULL_PACKUMENT").as_deref() == Ok("1")
+    aube_util::env::embedder_env("INTERNAL_FORCE_FULL_PACKUMENT")
+        .as_deref()
+        .is_some_and(|v| v == "1")
 }

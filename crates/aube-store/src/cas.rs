@@ -139,8 +139,9 @@ impl Store {
                 {
                     static O_TMPFILE_DISABLED: std::sync::OnceLock<bool> =
                         std::sync::OnceLock::new();
-                    let disabled = *O_TMPFILE_DISABLED
-                        .get_or_init(|| std::env::var_os("AUBE_DISABLE_O_TMPFILE").is_some());
+                    let disabled = *O_TMPFILE_DISABLED.get_or_init(|| {
+                        aube_util::env::embedder_env("DISABLE_O_TMPFILE").is_some()
+                    });
                     if !disabled {
                         match try_o_tmpfile_publish(path, bytes) {
                             Ok(outcome) => return Ok(outcome),
@@ -530,15 +531,20 @@ const CAS_SMALL_FILE_THRESHOLD_DEFAULT: usize = 64 * 1024;
 #[cfg(target_os = "linux")]
 fn cas_small_file_threshold() -> usize {
     static THRESHOLD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *THRESHOLD.get_or_init(|| match std::env::var("AUBE_CAS_SMALL_FILE_THRESHOLD") {
-        Err(_) => CAS_SMALL_FILE_THRESHOLD_DEFAULT,
-        Ok(raw) => raw.parse::<usize>().unwrap_or_else(|_| {
-            warn!(
-                "AUBE_CAS_SMALL_FILE_THRESHOLD={raw:?} is not a non-negative integer; \
-                 falling back to default {CAS_SMALL_FILE_THRESHOLD_DEFAULT}"
-            );
-            CAS_SMALL_FILE_THRESHOLD_DEFAULT
-        }),
+    *THRESHOLD.get_or_init(|| {
+        match aube_util::env::embedder_env("CAS_SMALL_FILE_THRESHOLD")
+            .as_deref()
+            .map(|s| s.to_string_lossy().into_owned())
+        {
+            None => CAS_SMALL_FILE_THRESHOLD_DEFAULT,
+            Some(raw) => raw.parse::<usize>().unwrap_or_else(|_| {
+                warn!(
+                    "CAS_SMALL_FILE_THRESHOLD={raw:?} is not a non-negative integer; \
+                     falling back to default {CAS_SMALL_FILE_THRESHOLD_DEFAULT}"
+                );
+                CAS_SMALL_FILE_THRESHOLD_DEFAULT
+            }),
+        }
     })
 }
 

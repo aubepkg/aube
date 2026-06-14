@@ -20,7 +20,7 @@ const DEFAULT_RACE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Returns true when speculative request racing is disabled.
 #[inline]
 pub fn is_disabled() -> bool {
-    std::env::var_os("AUBE_DISABLE_REQUEST_RACING").is_some()
+    crate::env::embedder_env("DISABLE_REQUEST_RACING").is_some()
 }
 
 /// Race the given `(client, url)` candidates in parallel. The first

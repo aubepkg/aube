@@ -19,7 +19,7 @@ const PREWARM_TIMEOUT: Duration = Duration::from_secs(5);
 /// Returns true when the speculative TLS prewarm is disabled.
 #[inline]
 pub fn is_disabled() -> bool {
-    std::env::var_os("AUBE_DISABLE_SPECULATIVE_TLS").is_some()
+    crate::env::embedder_env("DISABLE_SPECULATIVE_TLS").is_some()
 }
 
 /// Spawn a fire-and-forget HEAD against each `(client, url)` pair on

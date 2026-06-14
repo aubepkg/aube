@@ -62,7 +62,7 @@ fn should_check() -> bool {
     if aube_util::env::is_ci() {
         return false;
     }
-    if std::env::var_os("AUBE_NO_UPDATE_CHECK").is_some() {
+    if aube_util::env::embedder_env("NO_UPDATE_CHECK").is_some() {
         return false;
     }
     true

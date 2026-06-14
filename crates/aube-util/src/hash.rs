@@ -195,7 +195,7 @@ fn blake3_streaming(path: &Path, mut hasher: blake3::Hasher) -> io::Result<[u8; 
 }
 
 fn mmap_disabled() -> bool {
-    std::env::var_os("AUBE_DISABLE_MMAP_BLAKE3").is_some()
+    crate::env::embedder_env("DISABLE_MMAP_BLAKE3").is_some()
 }
 
 pub fn ordered_seq_hash<I, T>(iter: I) -> u64

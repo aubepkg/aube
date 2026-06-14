@@ -1,31 +1,35 @@
 //! Concurrency configuration helpers shared across aube crates.
 //!
-//! Today this module exposes one thing: the
-//! `AUBE_CONCURRENCY=<N>` env override that lets users pin the
-//! tarball-fetch fan-out when the default 128 in-flight requests
-//! trigger 429/503 throttling on slow private registries
-//! (Artifactory, Nexus). The override is a knob, not a probe — when
-//! AIMD ramping lands it will live alongside the semaphore in
+//! Today this module exposes one thing: a first-class env override that
+//! lets users pin the tarball-fetch fan-out when the default 128
+//! in-flight requests trigger 429/503 throttling on slow private
+//! registries (Artifactory, Nexus). Read under the active embedder's
+//! config-env brand via [`config_env`](crate::env::config_env) — so it's
+//! `AUBE_CONCURRENCY` for standalone aube and `<BRAND>_CONCURRENCY` for an
+//! embedder with its own `config_env_prefix`, and the branded `AUBE_*`
+//! form is never read under such a host. The override is a knob, not a
+//! probe — when AIMD ramping lands it will live alongside the semaphore in
 //! `aube-registry::concurrency` (the layer that owns retry signals).
 //!
 //! Range-clamped to `[CONCURRENCY_FLOOR, CONCURRENCY_CEILING]` so a
 //! hostile or typo'd value can't exhaust file descriptors on Windows
 //! (default ulimit 8192).
 
-/// Lower bound on `AUBE_CONCURRENCY`. A degenerate slow link still
+/// Lower bound on the concurrency override. A degenerate slow link still
 /// makes progress with 8 in-flight fetches.
 pub const CONCURRENCY_FLOOR: u32 = 8;
 
-/// Upper bound on `AUBE_CONCURRENCY`. Picked so a pathological env
+/// Upper bound on the concurrency override. Picked so a pathological env
 /// value cannot exhaust the Windows default fd ulimit.
 pub const CONCURRENCY_CEILING: u32 = 256;
 
-/// Read `AUBE_CONCURRENCY` as a clamped integer override.
+/// Read the `{config_env_prefix}_CONCURRENCY` override (`AUBE_CONCURRENCY`
+/// under standalone aube) as a clamped integer.
 /// Returns `None` when the variable is unset, missing, or outside
 /// the range — callers fall back to the default (npmrc / setting /
 /// hard-coded). Out-of-range and non-numeric values warn.
 pub fn parse_concurrency_env() -> Option<u32> {
-    let raw = std::env::var_os("AUBE_CONCURRENCY")?;
+    let raw = crate::env::config_env("CONCURRENCY")?;
     if let Some(s) = raw.to_str()
         && let Ok(n) = s.parse::<u32>()
         && (CONCURRENCY_FLOOR..=CONCURRENCY_CEILING).contains(&n)
@@ -37,7 +41,7 @@ pub fn parse_concurrency_env() -> Option<u32> {
         value = ?raw,
         floor = CONCURRENCY_FLOOR,
         ceiling = CONCURRENCY_CEILING,
-        "AUBE_CONCURRENCY ignored: must be an integer in [floor, ceiling]; using default"
+        "concurrency override ignored: must be an integer in [floor, ceiling]; using default"
     );
     None
 }

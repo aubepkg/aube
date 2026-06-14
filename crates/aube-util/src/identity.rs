@@ -89,9 +89,26 @@ pub struct Embedder {
     /// manifest **root** as top-level `package.json` keys — never under a
     /// foreign brand's namespace, and never as a literal `""` key.
     pub manifest_namespace: &'static str,
-    /// Env-var prefix for tool-specific variables, e.g. `Some("AUBE")` →
-    /// `AUBE_*`. `None` means the tool reads no branded env family.
+    /// Env-var prefix for the tool's *internal* debug / diagnostic / perf-bisect
+    /// toggles, read through [`embedder_env`](crate::env::embedder_env), e.g.
+    /// `Some("AUBE")` → `AUBE_DISABLE_CLONEDIR`, `AUBE_DIAG_PRINT`, … `None`
+    /// means the tool exposes *no* branded debug-toggle family — every such
+    /// toggle is simply unreadable, so an embedding host's brand never sprouts a
+    /// dozen `<HOST>_DISABLE_*` perf switches. This gates the non-settings,
+    /// non-user-facing toggle family only; the few user-facing config knobs go
+    /// through [`config_env_prefix`](Self::config_env_prefix), and the settings
+    /// table's branded aliases go through
+    /// [`branded_env_alias_enabled`](crate::env::branded_env_alias_enabled).
     pub env_prefix: Option<&'static str>,
+    /// Env-var prefix for the tool's small set of *first-class config* knobs —
+    /// the cache dir and the fetch concurrency — read through
+    /// [`config_env`](crate::env::config_env), e.g. `Some("AUBE")` →
+    /// `AUBE_CACHE_DIR` / `AUBE_CONCURRENCY`, `Some("NUB")` → `NUB_CACHE_DIR` /
+    /// `NUB_CONCURRENCY`. Distinct from [`env_prefix`](Self::env_prefix): these
+    /// few knobs ARE legitimate config the host wants under its own brand,
+    /// whereas the debug toggles vanish under an embedder that hides them.
+    /// `None` reads no first-class config env.
+    pub config_env_prefix: Option<&'static str>,
     /// Leaf directory name under the OS cache root, e.g. `"aube"` →
     /// `<XDG_CACHE_HOME>/aube`.
     pub cache_namespace: &'static str,
@@ -139,6 +156,7 @@ pub const AUBE: Embedder = Embedder {
     workspace_yaml: Some("aube-workspace.yaml"),
     manifest_namespace: "aube",
     env_prefix: Some("AUBE"),
+    config_env_prefix: Some("AUBE"),
     cache_namespace: "aube",
     data_namespace: "aube",
     canonical_lockfile_always_wins: true,
@@ -227,6 +245,7 @@ mod tests {
         assert_eq!(id.workspace_yaml, Some("aube-workspace.yaml"));
         assert_eq!(id.manifest_namespace, "aube");
         assert_eq!(id.env_prefix, Some("AUBE"));
+        assert_eq!(id.config_env_prefix, Some("AUBE"));
         assert_eq!(id.cache_namespace, "aube");
         assert_eq!(id.data_namespace, "aube");
         assert!(id.canonical_lockfile_always_wins);

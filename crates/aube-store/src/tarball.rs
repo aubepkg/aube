@@ -131,8 +131,8 @@ impl Store {
          * regression debugging.
          */
         const PIPELINE_CHUNK_SIZE: usize = 64;
-        let pipelined_disabled = std::env::var_os("AUBE_DISABLE_PIPELINED_IMPORT").is_some();
-        let parallel_disabled = std::env::var_os("AUBE_DISABLE_PARALLEL_IMPORT").is_some();
+        let pipelined_disabled = aube_util::env::embedder_env("DISABLE_PIPELINED_IMPORT").is_some();
+        let parallel_disabled = aube_util::env::embedder_env("DISABLE_PARALLEL_IMPORT").is_some();
         let mut staged: Vec<(String, Vec<u8>, bool)> = Vec::new();
         let mut entries_seen: usize = 0;
         let mut total_uncompressed: u64 = 0;

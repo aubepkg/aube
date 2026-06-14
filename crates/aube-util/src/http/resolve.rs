@@ -20,7 +20,7 @@ const DEFAULT_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Returns true when DNS pre-resolution is disabled.
 #[inline]
 pub fn is_disabled() -> bool {
-    std::env::var_os("AUBE_DISABLE_DNS_PRERESOLVE").is_some()
+    crate::env::embedder_env("DISABLE_DNS_PRERESOLVE").is_some()
 }
 
 /// Pre-resolve `(host, port)` pairs in parallel via tokio's runtime,

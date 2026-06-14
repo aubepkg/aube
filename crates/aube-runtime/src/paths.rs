@@ -17,7 +17,7 @@ use std::path::PathBuf;
 /// for tests and unusual setups. The data namespace comes from the
 /// active embedder (standalone aube → `"aube"`).
 pub fn runtime_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("AUBE_RUNTIME_DIR")
+    if let Some(dir) = aube_util::env::embedder_env("RUNTIME_DIR")
         && !dir.is_empty()
     {
         return Some(PathBuf::from(dir));

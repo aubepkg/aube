@@ -54,7 +54,7 @@ struct WalkState {
 }
 
 fn snapshots_disabled() -> bool {
-    std::env::var_os("AUBE_DISABLE_SNAPSHOTS").is_some()
+    crate::env::embedder_env("DISABLE_SNAPSHOTS").is_some()
 }
 
 fn walk(src: &Path, dst: &Path, state: &mut WalkState) -> io::Result<()> {

@@ -88,7 +88,7 @@ struct InstallPhaseTimings {
 impl InstallPhaseTimings {
     fn from_env() -> Self {
         Self {
-            path: std::env::var_os("AUBE_BENCH_PHASES_FILE").map(std::path::PathBuf::from),
+            path: aube_util::env::embedder_env("BENCH_PHASES_FILE").map(std::path::PathBuf::from),
             phases_ms: BTreeMap::new(),
             last_kernel_snap: aube_util::diag_kernel::snapshot(),
         }
@@ -130,7 +130,8 @@ impl InstallPhaseTimings {
         };
         let payload = serde_json::json!({
             "cwd": cwd,
-            "scenario": std::env::var("AUBE_BENCH_SCENARIO").ok(),
+            "scenario": aube_util::env::embedder_env("BENCH_SCENARIO")
+                .and_then(|s| s.into_string().ok()),
             "total_ms": total.as_millis(),
             "packages": packages,
             "cached": cached,
@@ -922,9 +923,9 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 let persistent_for_save = persistent.clone();
                 // Hoist env-driven flags out of the per-tarball loop.
                 let streaming_sha512_enabled =
-                    std::env::var_os("AUBE_DISABLE_STREAMING_SHA512").is_none();
+                    aube_util::env::embedder_env("DISABLE_STREAMING_SHA512").is_none();
                 let tarball_stream_enabled =
-                    std::env::var_os("AUBE_DISABLE_TARBALL_STREAM").is_none();
+                    aube_util::env::embedder_env("DISABLE_TARBALL_STREAM").is_none();
                 // JoinSet over bare Vec<JoinHandle>. If the first
                 // fetch errors and we return via `?`, a plain Vec
                 // drops the remaining JoinHandles which detaches the

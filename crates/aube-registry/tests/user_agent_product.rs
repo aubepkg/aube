@@ -25,6 +25,7 @@ static MYTOOL: Embedder = Embedder {
     workspace_yaml: Some("mytool-workspace.yaml"),
     manifest_namespace: "mytool",
     env_prefix: Some("MYTOOL"),
+    config_env_prefix: Some("MYTOOL"),
     cache_namespace: "mytool",
     data_namespace: "mytool",
     canonical_lockfile_always_wins: true,

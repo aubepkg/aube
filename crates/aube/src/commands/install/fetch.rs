@@ -707,7 +707,7 @@ where
     // their lockfile-discovery order; only the natives jump ahead.
     // `AUBE_DISABLE_CRITICAL_PATH=1` reverts to the previous order
     // for byte-identity comparison runs.
-    if std::env::var_os("AUBE_DISABLE_CRITICAL_PATH").is_none() {
+    if aube_util::env::embedder_env("DISABLE_CRITICAL_PATH").is_none() {
         to_fetch
             .sort_by_key(|(_, _, registry_name, _, _, _)| !is_likely_native_build(registry_name));
     }
@@ -756,8 +756,10 @@ where
         // Hoist env-driven flags out of the per-tarball closure so
         // the libc lock fires once instead of N times on a 1000-pkg
         // install.
-        let streaming_sha512_enabled = std::env::var_os("AUBE_DISABLE_STREAMING_SHA512").is_none();
-        let tarball_stream_enabled = std::env::var_os("AUBE_DISABLE_TARBALL_STREAM").is_none();
+        let streaming_sha512_enabled =
+            aube_util::env::embedder_env("DISABLE_STREAMING_SHA512").is_none();
+        let tarball_stream_enabled =
+            aube_util::env::embedder_env("DISABLE_TARBALL_STREAM").is_none();
         // JoinSet so a first-error path aborts the sibling fetches
         // instead of detaching them into the background. Detached
         // tasks keep writing to the CAS after the install command

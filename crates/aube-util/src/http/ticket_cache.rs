@@ -45,7 +45,7 @@ const FORMAT_MAGIC: &str = "aube-tls-tickets/v1";
 /// Returns true when the on-disk ticket cache is disabled.
 #[inline]
 pub fn is_disabled() -> bool {
-    std::env::var_os("AUBE_DISABLE_TLS_TICKET_CACHE").is_some()
+    crate::env::embedder_env("DISABLE_TLS_TICKET_CACHE").is_some()
 }
 
 /// One serialized ticket entry. `ticket` is opaque to this module —

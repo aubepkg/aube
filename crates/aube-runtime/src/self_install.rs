@@ -56,7 +56,7 @@ pub struct InstalledAube {
 /// aube's own versions dir (`$XDG_DATA_HOME/aube/self`).
 /// `AUBE_SELF_DIR` overrides for tests.
 pub fn self_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("AUBE_SELF_DIR")
+    if let Some(dir) = aube_util::env::embedder_env("SELF_DIR")
         && !dir.is_empty()
     {
         return Some(PathBuf::from(dir));
@@ -197,16 +197,16 @@ pub fn release_target_triple() -> Result<String, Error> {
 }
 
 fn release_base() -> String {
-    std::env::var("AUBE_SELF_DOWNLOAD_BASE")
-        .ok()
+    aube_util::env::embedder_env("SELF_DOWNLOAD_BASE")
+        .and_then(|s| s.into_string().ok())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or_else(|| RELEASE_BASE.to_string())
 }
 
 fn versions_host() -> String {
-    std::env::var("AUBE_VERSIONS_HOST")
-        .ok()
+    aube_util::env::embedder_env("VERSIONS_HOST")
+        .and_then(|s| s.into_string().ok())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or_else(|| VERSIONS_HOST.to_string())
@@ -235,8 +235,8 @@ pub async fn available_aube_versions(retries: u32) -> Result<Vec<node_semver::Ve
             tracing::debug!(%list_url, error = %e, "versions host unreachable; falling back");
         }
     }
-    let url = std::env::var("AUBE_SELF_VERSION_URL")
-        .ok()
+    let url = aube_util::env::embedder_env("SELF_VERSION_URL")
+        .and_then(|s| s.into_string().ok())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| VERSION_URL.to_string());
     let text = fetch_text(&http, &url).await?;
@@ -456,17 +456,17 @@ async fn fetch_release_digest(
     version: &node_semver::Version,
     archive_name: &str,
 ) -> Option<[u8; 32]> {
-    let api_override = std::env::var("AUBE_SELF_API_BASE")
-        .ok()
+    let api_override = aube_util::env::embedder_env("SELF_API_BASE")
+        .and_then(|s| s.into_string().ok())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim_end_matches('/').to_string());
-    let host_override = std::env::var_os("AUBE_VERSIONS_HOST").is_some();
+    let host_override = aube_util::env::embedder_env("VERSIONS_HOST").is_some();
     // Custom download mirrors may serve different bytes than GitHub's
     // archives; digests describing GitHub's copies don't apply unless
     // a test override says otherwise.
     if api_override.is_none()
         && !host_override
-        && std::env::var_os("AUBE_SELF_DOWNLOAD_BASE").is_some()
+        && aube_util::env::embedder_env("SELF_DOWNLOAD_BASE").is_some()
     {
         return None;
     }

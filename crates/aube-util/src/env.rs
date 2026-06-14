@@ -62,6 +62,43 @@ fn looks_branded(alias: &str) -> bool {
     }
 }
 
+/// Read a tool-prefixed *non-settings, non-user-facing* env toggle through the
+/// active embedder's [`env_prefix`](crate::identity::Embedder::env_prefix). For
+/// standalone aube (`Some("AUBE")`) `embedder_env("DISABLE_CLONEDIR")` reads
+/// `AUBE_DISABLE_CLONEDIR`; for an embedder with `env_prefix = None` (a host
+/// that exposes no branded debug surface) it reads nothing and returns `None`,
+/// so no branded debug/perf/diag toggle leaks under the embedding host's brand.
+///
+/// This is for the dev/debug/perf-bisect/diagnostic toggles that are NOT
+/// user-facing config — `AUBE_DISABLE_*`, `AUBE_DIAG_*`, `AUBE_CAS_*`,
+/// `AUBE_INTERNAL_*`, `AUBE_BENCH_*`, the self-update endpoints, … User-facing
+/// config knobs go through [`config_env`] instead, and settings-table branded
+/// aliases through [`branded_env_alias_enabled`]. Additive and no-op for
+/// standalone aube: an embedder that registers nothing reads exactly the
+/// `AUBE_*` forms it read before.
+pub fn embedder_env(suffix: &str) -> Option<std::ffi::OsString> {
+    let prefix = embedder().env_prefix?;
+    std::env::var_os(format!("{prefix}_{suffix}"))
+}
+
+/// Read one of the tool's *first-class config* env knobs through the active
+/// embedder's [`config_env_prefix`](crate::identity::Embedder::config_env_prefix).
+/// For standalone aube (`Some("AUBE")`) `config_env("CACHE_DIR")` reads
+/// `AUBE_CACHE_DIR`; for an embedder with `config_env_prefix = Some("NUB")` it
+/// reads `NUB_CACHE_DIR`. `None` reads nothing.
+///
+/// This is the deliberate, minimal exception to the debug-toggle gate: the
+/// handful of knobs a host legitimately wants under its OWN brand — the cache
+/// dir, the fetch concurrency — rather than hidden. Distinct from
+/// [`embedder_env`]: that family vanishes under an embedder with no
+/// `env_prefix`; this family follows the host's `config_env_prefix`, so a host
+/// reads its own brand for exactly these knobs and the branded `AUBE_*` form is
+/// never read under it.
+pub fn config_env(suffix: &str) -> Option<std::ffi::OsString> {
+    let prefix = embedder().config_env_prefix?;
+    std::env::var_os(format!("{prefix}_{suffix}"))
+}
+
 pub fn is_ci() -> bool {
     std::env::var_os("CI").is_some()
 }
@@ -120,6 +157,48 @@ mod tests {
         assert!(branded_env_alias_enabled("CI"));
         assert!(branded_env_alias_enabled("HTTP_PROXY"));
         assert!(branded_env_alias_enabled("NODE_OPTIONS"));
+    }
+
+    /// Under the default (AUBE) profile — `env_prefix = Some("AUBE")`,
+    /// `config_env_prefix = Some("AUBE")` — both helpers compose the prefix onto
+    /// the suffix and read the resulting `AUBE_*` var. This is the
+    /// standalone-neutrality contract: a binary that registers no profile reads
+    /// exactly the `AUBE_*` forms it read before the helpers existed. Tests run
+    /// serially (`RUST_TEST_THREADS=1`) and restore the prior value so they
+    /// don't bleed into the next test.
+    ///
+    /// The `None`-prefix branch (an embedder that hides a family → the helper
+    /// returns `None`) can't be exercised here without `set_embedder`, which
+    /// would flip the process-global fallback the default-profile tests rely on;
+    /// it's covered by the `embedder_env_brand_gate` integration test, which
+    /// registers a real non-aube profile in its own process.
+    #[test]
+    fn embedder_and_config_env_read_aube_prefixed_under_default_profile() {
+        fn with_var<F: FnOnce()>(key: &str, value: &str, f: F) {
+            let prev = std::env::var_os(key);
+            // SAFETY: tests run serially via RUST_TEST_THREADS=1.
+            unsafe { std::env::set_var(key, value) };
+            f();
+            unsafe {
+                match prev {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+
+        with_var("AUBE_DISABLE_CLONEDIR", "1", || {
+            assert_eq!(
+                embedder_env("DISABLE_CLONEDIR").as_deref(),
+                Some(std::ffi::OsStr::new("1")),
+            );
+        });
+        with_var("AUBE_CACHE_DIR", "/tmp/x", || {
+            assert_eq!(
+                config_env("CACHE_DIR").as_deref(),
+                Some(std::ffi::OsStr::new("/tmp/x")),
+            );
+        });
     }
 
     /// `looks_branded` separates the tool-branded `<UPPER>_<NAME>` shape from
