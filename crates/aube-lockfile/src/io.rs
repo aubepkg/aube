@@ -430,6 +430,7 @@ fn parse_one(
 }
 
 fn validate_resolution_shapes(path: &Path, graph: &LockfileGraph) -> Result<(), Error> {
+    validate_dependency_aliases(path, graph)?;
     for (dep_path, pkg) in &graph.packages {
         if pkg.local_source.is_some() && dep_path_has_registry_version(dep_path, &pkg.name) {
             return Err(Error::ResolutionShapeMismatch(
@@ -443,6 +444,83 @@ fn validate_resolution_shapes(path: &Path, graph: &LockfileGraph) -> Result<(), 
         }
     }
     Ok(())
+}
+
+fn validate_dependency_aliases(path: &Path, graph: &LockfileGraph) -> Result<(), Error> {
+    for (importer_path, deps) in &graph.importers {
+        for dep in deps {
+            if !is_safe_package_alias(&dep.name) {
+                return Err(Error::parse(
+                    path,
+                    format!(
+                        "importer {importer_path} has unsafe dependency alias `{}`",
+                        dep.name
+                    ),
+                ));
+            }
+        }
+    }
+    for (dep_path, pkg) in &graph.packages {
+        if !is_safe_package_alias(&pkg.name) {
+            return Err(Error::parse(
+                path,
+                format!("package {dep_path} has unsafe package name `{}`", pkg.name),
+            ));
+        }
+        for alias in pkg
+            .dependencies
+            .keys()
+            .chain(pkg.optional_dependencies.keys())
+            .chain(pkg.peer_dependencies.keys())
+        {
+            if !is_safe_package_alias(alias) {
+                return Err(Error::parse(
+                    path,
+                    format!("package {dep_path} has unsafe dependency alias `{alias}`"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_safe_package_alias(name: &str) -> bool {
+    if name.is_empty()
+        || name.contains('\0')
+        || name.contains('\\')
+        || name.starts_with('/')
+        || matches!(name, ".bin" | ".pnpm" | "node_modules")
+    {
+        return false;
+    }
+    let parts: Vec<&str> = name.split('/').collect();
+    match parts.as_slice() {
+        [bare] => is_safe_package_alias_component(bare),
+        [scope, bare] => {
+            scope.starts_with('@')
+                && scope.len() > 1
+                && is_safe_package_alias_component(scope)
+                && is_safe_package_alias_component(bare)
+        }
+        _ => false,
+    }
+}
+
+fn is_safe_package_alias_component(component: &str) -> bool {
+    if component.is_empty() || matches!(component, "." | "..") {
+        return false;
+    }
+    if component.len() >= 2 && component.as_bytes()[1] == b':' {
+        return false;
+    }
+    !std::path::Path::new(component).components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    })
 }
 
 fn dep_path_has_registry_version(dep_path: &str, name: &str) -> bool {
@@ -460,10 +538,11 @@ fn dep_path_has_registry_version(dep_path: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::dep_path_has_registry_version;
-    use crate::{GitSource, LocalSource, RemoteTarballSource};
+    use super::{dep_path_has_registry_version, validate_dependency_aliases};
+    use crate::{DepType, DirectDep, GitSource, LocalSource, LockedPackage, RemoteTarballSource};
     use proptest::prelude::*;
-    use std::path::PathBuf;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
 
     fn package_name() -> impl Strategy<Value = String> {
         prop_oneof![
@@ -509,6 +588,97 @@ mod tests {
                 },
             )),
         ]
+    }
+
+    #[test]
+    fn rejects_unsafe_importer_dependency_aliases() {
+        for alias in [
+            "../../../escape",
+            ".bin",
+            ".pnpm",
+            "node_modules",
+            "@scope/pkg/extra",
+            "\\evil",
+        ] {
+            let mut graph = crate::LockfileGraph::default();
+            graph.importers.insert(
+                ".".into(),
+                vec![DirectDep {
+                    name: alias.into(),
+                    dep_path: "ok@1.0.0".into(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".into()),
+                }],
+            );
+
+            let err = validate_dependency_aliases(Path::new("pnpm-lock.yaml"), &graph)
+                .expect_err("unsafe alias must be rejected");
+            assert!(
+                err.to_string().contains("unsafe dependency alias"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_package_dependency_aliases() {
+        let mut graph = crate::LockfileGraph::default();
+        graph.packages.insert(
+            "parent@1.0.0".into(),
+            LockedPackage {
+                name: "parent".into(),
+                version: "1.0.0".into(),
+                dep_path: "parent@1.0.0".into(),
+                dependencies: BTreeMap::from([("../escape".into(), "1.0.0".into())]),
+                ..LockedPackage::default()
+            },
+        );
+
+        let err = validate_dependency_aliases(Path::new("pnpm-lock.yaml"), &graph)
+            .expect_err("unsafe alias must be rejected");
+        assert!(
+            err.to_string()
+                .contains("package parent@1.0.0 has unsafe dependency alias `../escape`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_valid_scoped_and_unscoped_dependency_aliases() {
+        let mut graph = crate::LockfileGraph::default();
+        graph.importers.insert(
+            ".".into(),
+            vec![
+                DirectDep {
+                    name: "left-pad".into(),
+                    dep_path: "left-pad@1.3.0".into(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.3.0".into()),
+                },
+                DirectDep {
+                    name: "@scope/pkg".into(),
+                    dep_path: "@scope/pkg@1.0.0".into(),
+                    dep_type: DepType::Dev,
+                    specifier: Some("1.0.0".into()),
+                },
+            ],
+        );
+        graph.packages.insert(
+            "parent@1.0.0".into(),
+            LockedPackage {
+                name: "parent".into(),
+                version: "1.0.0".into(),
+                dep_path: "parent@1.0.0".into(),
+                dependencies: BTreeMap::from([
+                    ("left-pad".into(), "1.3.0".into()),
+                    ("@scope/pkg".into(), "1.0.0".into()),
+                ]),
+                ..LockedPackage::default()
+            },
+        );
+
+        validate_dependency_aliases(Path::new("pnpm-lock.yaml"), &graph)
+            .expect("valid aliases should pass");
     }
 
     proptest! {
