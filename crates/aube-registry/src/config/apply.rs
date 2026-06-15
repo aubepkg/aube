@@ -139,12 +139,23 @@ impl NpmConfig {
         registry_url: &str,
         package_name: &str,
     ) -> Option<&AuthConfig> {
-        if let Some(scope) = package_scope(package_name)
-            && let Some(auth_by_scope) =
-                lookup_by_uri_prefix(&self.scoped_auth_by_uri, &registry_uri_key(registry_url))
-            && let Some(auth) = auth_by_scope.get(&scope.to_lowercase())
-        {
-            return Some(auth);
+        if let Some(scope) = package_scope(package_name) {
+            let scope = scope.to_lowercase();
+            let uri_key = registry_uri_key(registry_url);
+            if let Some((_, auth)) = self
+                .scoped_auth_by_uri
+                .iter()
+                .filter_map(|(prefix, auth_by_scope)| {
+                    if uri_key.starts_with(prefix.as_str()) {
+                        auth_by_scope.get(&scope).map(|auth| (prefix.len(), auth))
+                    } else {
+                        None
+                    }
+                })
+                .max_by_key(|(prefix_len, _)| *prefix_len)
+            {
+                return Some(auth);
+            }
         }
         self.registry_config_for(registry_url)
     }

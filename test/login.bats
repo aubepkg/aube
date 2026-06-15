@@ -63,7 +63,9 @@ teardown() {
 		--registry=https://myorg.example.com/ \
 		--scope=@myorg
 	assert_success
-	assert_file_contains "$HOME/.npmrc" "//myorg.example.com/:_authToken=scoped"
+	run cat "$HOME/.npmrc"
+	assert_success
+	assert_output --partial "//myorg.example.com/:@myorg:_authToken=scoped"
 	assert_file_contains "$HOME/.npmrc" "@myorg:registry=https://myorg.example.com/"
 }
 
@@ -108,8 +110,10 @@ teardown() {
 		--registry="http://127.0.0.1:$MOCK_WEB_LOGIN_PORT/" \
 		--scope=@myorg
 	assert_success
-	assert_file_contains "$HOME/.npmrc" \
-		"//127.0.0.1:$MOCK_WEB_LOGIN_PORT/:_authToken=mock-web-token"
+	run cat "$HOME/.npmrc"
+	assert_success
+	assert_output --partial \
+		"//127.0.0.1:$MOCK_WEB_LOGIN_PORT/:@myorg:_authToken=mock-web-token"
 	assert_file_contains "$HOME/.npmrc" \
 		"@myorg:registry=http://127.0.0.1:$MOCK_WEB_LOGIN_PORT/"
 }

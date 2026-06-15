@@ -163,10 +163,11 @@ impl RegistryClient {
         {
             return cached.clone();
         }
-        let resolved = if let Some(auth) = package_name
-            .and_then(|name| self.config.registry_config_for_package(registry_url, name))
-            .or_else(|| self.config.registry_config_for(registry_url))
-        {
+        let auth_config = match package_name {
+            Some(name) => self.config.registry_config_for_package(registry_url, name),
+            None => self.config.registry_config_for(registry_url),
+        };
+        let resolved = if let Some(auth) = auth_config {
             if let Some(token) = auth.auth_token.as_ref() {
                 Some(token.to_string())
             } else if let Some(helper) = auth.token_helper.as_deref() {
@@ -523,6 +524,20 @@ impl RegistryClient {
 fn package_name_from_tarball_url(url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(url).ok()?;
     let segments: Vec<&str> = parsed.path_segments()?.collect();
+    if let Some(dash_idx) = segments.iter().position(|segment| *segment == "-")
+        && dash_idx >= 1
+    {
+        let name = segments[dash_idx - 1];
+        if let Some((scope, name)) = name.split_once("%2F").or_else(|| name.split_once("%2f"))
+            && scope.starts_with('@')
+        {
+            return Some(format!("{scope}/{name}"));
+        }
+        if dash_idx >= 2 && segments[dash_idx - 2].starts_with('@') {
+            return Some(format!("{}/{}", segments[dash_idx - 2], name));
+        }
+        return Some(name.to_string());
+    }
     for (idx, segment) in segments.iter().enumerate() {
         if let Some((scope, name)) = segment
             .split_once("%2F")
@@ -567,6 +582,13 @@ mod tests {
         assert_eq!(
             package_name_from_tarball_url("https://registry.example.com/lodash/-/lodash-1.0.0.tgz")
                 .as_deref(),
+            Some("lodash")
+        );
+        assert_eq!(
+            package_name_from_tarball_url(
+                "https://registry.example.com/npm/lodash/-/lodash-1.0.0.tgz"
+            )
+            .as_deref(),
             Some("lodash")
         );
     }

@@ -107,7 +107,7 @@ pub(crate) use package_spec::{
 pub(crate) use project_lock::take_project_lock;
 pub(crate) use script_settings::{configure_script_settings, configure_script_settings_for_cwd};
 pub(crate) use settings_context::{
-    FileSources, GlobalOutputFlags, build_resolver, chained_frozen_mode, ensure_registry_auth,
+    FileSources, GlobalOutputFlags, build_resolver, chained_frozen_mode,
     ensure_registry_auth_for_package, expand_setting_path, global_frozen_override,
     global_output_flags, global_virtual_store_flags, load_npm_config, make_client, open_store,
     packument_cache_dir, packument_full_cache_dir, project_modules_dir, resolve_fetch_policy,

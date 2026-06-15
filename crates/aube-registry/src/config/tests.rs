@@ -2064,3 +2064,24 @@ fn scoped_auth_token_honors_path_scoped_registry_prefix() {
         Some("root-token")
     );
 }
+
+#[test]
+fn scoped_auth_lookup_checks_shorter_prefixes_before_unscoped_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".npmrc"),
+        "//registry.example.com/npm/private/:_authToken=private-root-token\n\
+         //registry.example.com/npm/:@org-a:_authToken=org-a-token\n",
+    )
+    .unwrap();
+
+    let config = NpmConfig::load_isolated(dir.path());
+
+    assert_eq!(
+        config.auth_token_for_package(
+            "https://registry.example.com/npm/private/@org-a/pkg/-/pkg-1.0.0.tgz",
+            "@org-a/pkg"
+        ),
+        Some("org-a-token")
+    );
+}

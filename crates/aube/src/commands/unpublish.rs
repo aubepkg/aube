@@ -25,7 +25,7 @@
 //! Auth and per-registry TLS follow the same `RegistryClient` path as
 //! `aube publish` / `aube dist-tag`.
 
-use crate::commands::{encode_package_name, ensure_registry_auth, split_name_spec};
+use crate::commands::{encode_package_name, ensure_registry_auth_for_package, split_name_spec};
 use aube_manifest::PackageJson;
 use aube_registry::client::RegistryClient;
 use aube_registry::config::{NpmConfig, normalize_registry_url_pub};
@@ -107,7 +107,7 @@ pub async fn run(args: UnpublishArgs) -> miette::Result<()> {
 
     let policy = crate::commands::resolve_fetch_policy(&cwd);
     let client = RegistryClient::from_config_with_policy(config, policy);
-    ensure_registry_auth(&client, &registry_url)?;
+    ensure_registry_auth_for_package(&client, &registry_url, &target.name)?;
 
     match target.version {
         Some(version) => {
@@ -176,7 +176,8 @@ async fn unpublish_package(
         encode_package_name(name),
         rev
     );
-    let mut req = client.authed_request(reqwest::Method::DELETE, &url, registry_url);
+    let mut req =
+        client.authed_request_for_package(reqwest::Method::DELETE, &url, registry_url, name);
     if let Some(otp) = otp {
         req = req.header("npm-otp", otp);
     }
@@ -215,7 +216,7 @@ async fn unpublish_version(
         rev
     );
     let mut req = client
-        .authed_request(reqwest::Method::PUT, &put_url, registry_url)
+        .authed_request_for_package(reqwest::Method::PUT, &put_url, registry_url, name)
         .header("content-type", "application/json")
         .body(serde_json::to_vec(&packument).into_diagnostic()?);
     if let Some(otp) = otp {
@@ -273,7 +274,8 @@ async fn unpublish_version(
         tarball_path,
         new_rev
     );
-    let mut req = client.authed_request(reqwest::Method::DELETE, &del_url, registry_url);
+    let mut req =
+        client.authed_request_for_package(reqwest::Method::DELETE, &del_url, registry_url, name);
     if let Some(otp) = otp {
         req = req.header("npm-otp", otp);
     }
@@ -310,7 +312,7 @@ async fn fetch_packument(
         encode_package_name(name)
     );
     let resp = client
-        .authed_request(reqwest::Method::GET, &url, registry_url)
+        .authed_request_for_package(reqwest::Method::GET, &url, registry_url, name)
         .send()
         .await
         .into_diagnostic()
