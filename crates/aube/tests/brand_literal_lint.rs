@@ -16,7 +16,8 @@
 //! layer (`src/commands/`), only flags string-literal lines (a `"` on the
 //! line), only matches `aube <verb>` where `<verb>` is a real CLI command, and
 //! skips everything that is legitimately not a runtime command reference:
-//! doc/line comments, `tracing::*` internal logs, branded filenames
+//! doc/line comments, *non-user-facing* `tracing::` logs (`debug!`/`trace!`/
+//! `info!` — see the severity split below), branded filenames
 //! (`aube-lock.yaml`, `aube-workspace.yaml` use `aube-`, never `aube `),
 //! manifest keys (`package.json#aube`, `aube.<key>`), sentence-start
 //! capitalized prose ("Aube …"), and — importantly — **clap help text**, which
@@ -27,6 +28,22 @@
 //! `$ aube <verb>` shell-example lines they contain. (Branding help text is a
 //! separate, clap-level concern tracked as a follow-up.) An explicit
 //! [`ALLOWLIST`] covers any remaining one-off intentional mention.
+//!
+//! ## `tracing::` severity split — why `warn!`/`error!` ARE scanned
+//! Not all `tracing::` lines are internal. `tracing::debug!` / `trace!` /
+//! `info!` are developer logs the user never sees on a normal run, so they may
+//! contain `aube <verb>` freely and stay exempt. But `tracing::warn!` and
+//! `tracing::error!` SURFACE to the user (the default subscriber prints them),
+//! so a command hint inside one — ``"Run `aube approve-builds`"``,
+//! ``"run `aube install --no-frozen-lockfile`"`` — is exactly as user-facing as
+//! the same hint in a `bail!`/`eprintln!`, and is held to the same `cmd()`
+//! contract. The lint therefore scans `warn!`/`error!` with the identical
+//! `aube <verb>` verb matcher (NOT a blanket "contains aube" — a `warn!` that
+//! mentions `aube` for a non-command reason, e.g. a path or proper noun, never
+//! trips because the word after `aube ` isn't a CLI verb), and exempts only the
+//! lower severities. The macro a line is judged under is the one whose
+//! statement it sits inside (a multi-line `warn!(...)` is scanned across all of
+//! its lines; the leading-word severity governs the whole call).
 //!
 //! ## How to satisfy this lint
 //! Replace the hardcoded reference with the helper:
@@ -159,23 +176,47 @@ fn is_help_const_open(line: &str) -> bool {
     t.starts_with("pub const ") && t.contains("_HELP") && t.contains(": &str")
 }
 
+/// `tracing::` severities that are *not* user-facing: developer logs that the
+/// default subscriber doesn't surface on a normal run. Lines inside one of
+/// these (and their multi-line continuations) are exempt — they may contain
+/// `aube <verb>` freely. Conversely `warn!` / `error!` DO surface to the user
+/// and are scanned like any other emission macro (see module docs, severity
+/// split). Returns the level word if `line` opens a `tracing::<level>!` call.
+fn tracing_level(line: &str) -> Option<&str> {
+    let rest = line.split_once("tracing::")?.1;
+    let level: &str = rest
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .next()?;
+    (!level.is_empty()).then_some(level)
+}
+
+/// Is this `tracing::<level>` an internal (non-user-facing) log? `debug`,
+/// `trace`, `info` — everything that is NOT `warn`/`error`. A `tracing::warn!`
+/// or `tracing::error!` is user-facing and must be scanned.
+fn is_internal_tracing_level(level: &str) -> bool {
+    !matches!(level, "warn" | "error")
+}
+
 /// A line is exempt when it can't be a *runtime* user-facing command
-/// reference. `in_help_const` is the region flag for the clap help-text blocks
-/// (see [`scan_file`]).
-fn is_exempt(line: &str, in_help_const: bool) -> bool {
+/// reference. `in_exempt_region` is the region flag for the clap help-text
+/// blocks and internal (`debug`/`trace`/`info`) multi-line tracing calls (see
+/// the scan loop in [`no_hardcoded_aube_verb_in_user_facing_strings`]).
+fn is_exempt(line: &str, in_exempt_region: bool) -> bool {
     let t = line.trim_start();
     // Comments (line + doc).
     if t.starts_with("//") {
         return true;
     }
-    // Internal logging is not user-facing.
-    if t.contains("tracing::") {
+    // Internal logging is not user-facing — but only the lower severities.
+    // `tracing::warn!` / `tracing::error!` surface to the user and ARE scanned.
+    if tracing_level(line).is_some_and(is_internal_tracing_level) {
         return true;
     }
     // Clap help text — a `&'static str` resolved at definition time, can't call
     // the runtime helper. The whole `pub const ..._HELP` block is exempt, plus
     // any `$ aube <verb>` shell-example line (the canonical help-example shape).
-    if in_help_const || t.contains("$ aube ") {
+    // Also covers internal multi-line tracing (`debug`/`trace`/`info`) regions.
+    if in_exempt_region || t.contains("$ aube ") {
         return true;
     }
     // Must be a string literal to be emitted text at all.
@@ -239,26 +280,34 @@ fn no_hardcoded_aube_verb_in_user_facing_strings() {
     for file in &files {
         let src = fs::read_to_string(file).expect("read source");
         // Region flags. A `pub const ..._HELP: &str = "..."` clap help block and
-        // a multi-line `tracing::<level>!(...)` internal-log call both span
-        // several lines; their inner string lines are exempt (help can't use the
-        // runtime helper; tracing is internal). Track whether we're inside one.
+        // a multi-line *internal* `tracing::{debug,trace,info}!(...)` call both
+        // span several lines; their inner string lines are exempt (help can't
+        // use the runtime helper; low-severity tracing is internal). A
+        // multi-line `tracing::warn!`/`error!` is NOT exempt — it surfaces to
+        // the user — so its continuation lines are scanned normally. Track
+        // whether we're inside an exempt region.
         let mut in_help_const = false;
-        let mut in_tracing = false;
+        let mut in_internal_tracing = false;
         for (i, line) in src.lines().enumerate() {
             if !in_help_const && is_help_const_open(line) {
                 in_help_const = true;
             }
-            if !in_tracing && line.contains("tracing::") && !line.trim_end().contains(';') {
-                in_tracing = true;
+            // Open an internal-tracing region only for the non-user-facing
+            // severities; `warn!`/`error!` deliberately do not start one.
+            if !in_internal_tracing
+                && !line.trim_end().contains(';')
+                && tracing_level(line).is_some_and(is_internal_tracing_level)
+            {
+                in_internal_tracing = true;
             }
-            let exempt = is_exempt(line, in_help_const || in_tracing);
+            let exempt = is_exempt(line, in_help_const || in_internal_tracing);
             // A help block ends on its closing `";`; a tracing call ends on the
             // line that closes its statement with `;`.
             if in_help_const && line.contains("\";") {
                 in_help_const = false;
             }
-            if in_tracing && line.trim_end().ends_with(';') {
-                in_tracing = false;
+            if in_internal_tracing && line.trim_end().ends_with(';') {
+                in_internal_tracing = false;
             }
             if exempt {
                 continue;

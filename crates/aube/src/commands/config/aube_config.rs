@@ -118,7 +118,11 @@ fn load_entries_at(path: &Path) -> Vec<(String, String)> {
     match AubeConfigEdit::load(path) {
         Ok(edit) => edit.entries(),
         Err(err) => {
-            tracing::warn!("failed to load aube config at {}: {err}", path.display());
+            tracing::warn!(
+                "failed to load {} config at {}: {err}",
+                aube_util::prog(),
+                path.display()
+            );
             Vec::new()
         }
     }
