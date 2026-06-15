@@ -91,6 +91,14 @@ impl NpmConfig {
             .and_then(|auth| auth.auth_token.as_deref())
     }
 
+    /// Get the auth token for a package request, preferring
+    /// scope-specific credentials when `.npmrc` configured
+    /// `//registry/:@scope:_authToken=...`.
+    pub fn auth_token_for_package(&self, registry_url: &str, package_name: &str) -> Option<&str> {
+        self.registry_config_for_package(registry_url, package_name)
+            .and_then(|auth| auth.auth_token.as_deref())
+    }
+
     pub fn token_helper_for(&self, registry_url: &str) -> Option<&str> {
         self.registry_config_for(registry_url)
             .and_then(|auth| auth.token_helper.as_deref())
@@ -98,7 +106,14 @@ impl NpmConfig {
 
     /// Get the basic auth (_auth) for a given registry URL.
     pub fn basic_auth_for(&self, registry_url: &str) -> Option<String> {
-        let auth = self.registry_config_for(registry_url)?;
+        self.basic_auth_from_config(self.registry_config_for(registry_url)?)
+    }
+
+    pub fn basic_auth_for_package(&self, registry_url: &str, package_name: &str) -> Option<String> {
+        self.basic_auth_from_config(self.registry_config_for_package(registry_url, package_name)?)
+    }
+
+    fn basic_auth_from_config(&self, auth: &AuthConfig) -> Option<String> {
         if let Some(ref a) = auth.auth {
             return Some(a.clone());
         }
@@ -117,6 +132,21 @@ impl NpmConfig {
     pub fn registry_config_for(&self, registry_url: &str) -> Option<&AuthConfig> {
         let uri_key = registry_uri_key(registry_url);
         lookup_by_uri_prefix(&self.auth_by_uri, &uri_key)
+    }
+
+    pub fn registry_config_for_package(
+        &self,
+        registry_url: &str,
+        package_name: &str,
+    ) -> Option<&AuthConfig> {
+        if let Some(scope) = package_scope(package_name)
+            && let Some(auth_by_scope) =
+                lookup_by_uri_prefix(&self.scoped_auth_by_uri, &registry_uri_key(registry_url))
+            && let Some(auth) = auth_by_scope.get(&scope.to_lowercase())
+        {
+            return Some(auth);
+        }
+        self.registry_config_for(registry_url)
     }
 
     /// Test-only compatibility shim. Production code must go through
@@ -398,28 +428,45 @@ impl NpmConfig {
             } else if key.starts_with("//") {
                 // URI-specific config: //registry.url/:_authToken=TOKEN
                 if let Some((uri, suffix)) = key.rsplit_once(':') {
+                    let (uri, scope) = split_uri_scope_key(uri);
                     // Normalize so `//host:443/x/` and `//host/x/` collapse
                     // to the same key — matches what `registry_uri_key`
                     // produces on the lookup side after stripping the
                     // scheme's default port.
                     let uri_key = normalize_npmrc_uri_key(uri);
-                    let entry = self.auth_by_uri.entry(uri_key.clone()).or_default();
+                    let entry = if let Some(scope) = scope {
+                        self.scoped_auth_by_uri
+                            .entry(uri_key.clone())
+                            .or_default()
+                            .entry(scope.to_lowercase())
+                            .or_default()
+                    } else {
+                        self.auth_by_uri.entry(uri_key.clone()).or_default()
+                    };
                     match suffix {
                         "_authToken" => {
                             entry.auth_token = Some(value);
-                            explicit_uri_fields.insert((uri_key, "_authToken"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "_authToken"));
+                            }
                         }
                         "_auth" => {
                             entry.auth = Some(value);
-                            explicit_uri_fields.insert((uri_key, "_auth"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "_auth"));
+                            }
                         }
                         "username" => {
                             entry.username = Some(value);
-                            explicit_uri_fields.insert((uri_key, "username"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "username"));
+                            }
                         }
                         "_password" => {
                             entry.password = Some(value);
-                            explicit_uri_fields.insert((uri_key, "_password"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "_password"));
+                            }
                         }
                         "tokenHelper" | "token-helper" => {
                             // CVE-2025-69262 (pnpm GHSA-2phv-j68v-wwqx)
@@ -445,17 +492,23 @@ impl NpmConfig {
                                 continue;
                             };
                             entry.token_helper = Some(sanitized);
-                            explicit_uri_fields.insert((uri_key, "tokenHelper"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "tokenHelper"));
+                            }
                         }
                         "ca" | "ca[]" => entry.tls.ca.push(pem_value(value)),
                         "cafile" | "caFile" => entry.tls.cafile = Some(PathBuf::from(value)),
                         "cert" => {
                             entry.tls.cert = Some(pem_value(value));
-                            explicit_uri_fields.insert((uri_key, "cert"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "cert"));
+                            }
                         }
                         "key" => {
                             entry.tls.key = Some(pem_value(value));
-                            explicit_uri_fields.insert((uri_key, "key"));
+                            if scope.is_none() {
+                                explicit_uri_fields.insert((uri_key, "key"));
+                            }
                         }
                         _ => {} // Ignore unknown suffixes for now
                     }
@@ -503,6 +556,17 @@ impl NpmConfig {
             .or_default();
         apply(entry);
     }
+}
+
+fn split_uri_scope_key(uri: &str) -> (&str, Option<&str>) {
+    if let Some((base, scope)) = uri.rsplit_once(':')
+        && scope.starts_with('@')
+        && scope.len() > 1
+        && !scope.contains('/')
+    {
+        return (base, Some(scope));
+    }
+    (uri, None)
 }
 
 fn canonical_rescoped_suffix(suffix: &str) -> Option<&'static str> {

@@ -31,7 +31,7 @@
 use crate::commands::pack::{
     BuiltArchive, build_archive, build_archive_with_package_json, tarball_filename,
 };
-use crate::commands::{encode_package_name, ensure_registry_auth};
+use crate::commands::{encode_package_name, ensure_registry_auth_for_package};
 use aube_manifest::PackageJson;
 use aube_registry::client::RegistryClient;
 use aube_registry::config::{NpmConfig, normalize_registry_url_pub};
@@ -542,13 +542,14 @@ async fn publish_one(
     let url = put_url(&registry_url, &archive.name);
     let trusted_publish_token = trusted_publish_token(client, &registry_url, &archive.name).await?;
     if trusted_publish_token.is_none() {
-        ensure_registry_auth(client, &registry_url)?;
+        ensure_registry_auth_for_package(client, &registry_url, &archive.name)?;
     }
     let body_bytes = serde_json::to_vec(&body).into_diagnostic()?;
     match send_publish_put(
         client,
         &url,
         &registry_url,
+        &archive.name,
         body_bytes.clone(),
         trusted_publish_token.as_deref(),
         args.otp.as_deref(),
@@ -562,6 +563,7 @@ async fn publish_one(
                 client,
                 &url,
                 &registry_url,
+                &archive.name,
                 body_bytes,
                 trusted_publish_token.as_deref(),
                 Some(&otp),
@@ -763,6 +765,7 @@ async fn send_publish_put(
     client: &RegistryClient,
     url: &str,
     registry_url: &str,
+    name: &str,
     body: Vec<u8>,
     trusted_publish_token: Option<&str>,
     otp: Option<&str>,
@@ -772,7 +775,7 @@ async fn send_publish_put(
             .request(reqwest::Method::PUT, url, registry_url)
             .bearer_auth(token)
     } else {
-        client.authed_request(reqwest::Method::PUT, url, registry_url)
+        client.authed_request_for_package(reqwest::Method::PUT, url, registry_url, name)
     }
     .header("content-type", "application/json")
     .body(body);
@@ -898,7 +901,7 @@ async fn version_on_registry(
 ) -> bool {
     let url = put_url(registry_url, name);
     let Ok(resp) = client
-        .authed_request(reqwest::Method::GET, &url, registry_url)
+        .authed_request_for_package(reqwest::Method::GET, &url, registry_url, name)
         .send()
         .await
     else {

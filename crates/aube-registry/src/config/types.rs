@@ -65,6 +65,9 @@ pub struct NpmConfig {
     pub scoped_registries: BTreeMap<String, String>,
     /// Auth config keyed by registry URL prefix (e.g., "//registry.example.com/")
     pub auth_by_uri: BTreeMap<String, AuthConfig>,
+    /// Scope-specific auth config keyed by registry URL prefix, then
+    /// package scope (e.g., "//npm.pkg.github.com/" -> "@org").
+    pub scoped_auth_by_uri: BTreeMap<String, BTreeMap<String, AuthConfig>>,
     /// Proxy URL for outgoing HTTPS requests (`https-proxy` / `HTTPS_PROXY`).
     pub https_proxy: Option<String>,
     /// Proxy URL for outgoing HTTP requests (`proxy` / `http-proxy` / `HTTP_PROXY`).
@@ -136,6 +139,7 @@ impl Default for NpmConfig {
             registry: String::new(),
             scoped_registries: BTreeMap::new(),
             auth_by_uri: BTreeMap::new(),
+            scoped_auth_by_uri: BTreeMap::new(),
             https_proxy: None,
             http_proxy: None,
             no_proxy: None,

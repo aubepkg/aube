@@ -62,9 +62,11 @@ pub async fn run(args: LoginArgs) -> miette::Result<()> {
 
     let path = user_npmrc_path()?;
     let mut edit = NpmrcEdit::load(&path)?;
-    edit.set(&format!("{host_key}:_authToken"), &token);
     if let Some(scope) = &args.scope {
+        edit.set(&format!("{host_key}:{scope}:_authToken"), &token);
         edit.set(&format!("{scope}:registry"), &registry);
+    } else {
+        edit.set(&format!("{host_key}:_authToken"), &token);
     }
     edit.save(&path)?;
 

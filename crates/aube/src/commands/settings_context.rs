@@ -176,6 +176,20 @@ pub(crate) fn ensure_registry_auth(
     }
 }
 
+pub(crate) fn ensure_registry_auth_for_package(
+    client: &RegistryClient,
+    registry_url: &str,
+    package_name: &str,
+) -> miette::Result<()> {
+    if client.has_resolved_auth_for_package(registry_url, package_name) {
+        Ok(())
+    } else {
+        Err(miette!(
+            "no auth token for {registry_url} package {package_name}. Run `aube login --registry {registry_url} --scope <scope>` first."
+        ))
+    }
+}
+
 /// Open the global content-addressable store, honoring a `storeDir`
 /// override from `.npmrc` or `pnpm-workspace.yaml` in `cwd`. Falls
 /// back to the aube-owned default under `$XDG_DATA_HOME/aube/store/`
