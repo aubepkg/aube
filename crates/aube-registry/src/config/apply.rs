@@ -153,6 +153,7 @@ impl NpmConfig {
                     }
                 })
                 .max_by_key(|(prefix_len, _)| *prefix_len)
+                .filter(|(_, auth)| has_credential_material(auth))
             {
                 return Some(auth);
             }
@@ -616,6 +617,13 @@ impl NpmConfig {
             .or_default();
         apply(entry);
     }
+}
+
+fn has_credential_material(auth: &AuthConfig) -> bool {
+    auth.auth_token.is_some()
+        || auth.auth.is_some()
+        || auth.token_helper.is_some()
+        || (auth.username.is_some() && auth.password.is_some())
 }
 
 fn auth_entry_for_uri<'a>(

@@ -2068,6 +2068,25 @@ fn scoped_auth_token_overrides_registry_token_for_matching_scope() {
 }
 
 #[test]
+fn scoped_tls_config_does_not_shadow_registry_token() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".npmrc"),
+        "registry=https://npm.pkg.github.com/\n\
+         //npm.pkg.github.com/:_authToken=registry-token\n\
+         //npm.pkg.github.com/:@org-a:ca=-----BEGIN CERTIFICATE-----\\nca\\n-----END CERTIFICATE-----\n",
+    )
+    .unwrap();
+
+    let config = NpmConfig::load_isolated(dir.path());
+
+    assert_eq!(
+        config.auth_token_for_package("https://npm.pkg.github.com/", "@org-a/pkg"),
+        Some("registry-token")
+    );
+}
+
+#[test]
 fn scoped_auth_token_honors_path_scoped_registry_prefix() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

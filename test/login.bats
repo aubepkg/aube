@@ -152,7 +152,7 @@ teardown() {
 @test "aube logout --scope strips the scope mapping too" {
 	printf '%s\n' \
 		'@myorg:registry=https://myorg.example.com/' \
-		'//myorg.example.com/:_authToken=tok' >"$HOME/.npmrc"
+		'//myorg.example.com/:@myorg:_authToken=tok' >"$HOME/.npmrc"
 
 	run aube logout --scope=@myorg --registry=https://myorg.example.com/
 	assert_success
