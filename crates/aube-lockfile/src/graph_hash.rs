@@ -345,6 +345,63 @@ fn transitively_requires_build(
     result
 }
 
+/// The set of dep_paths whose final graph hash folds in a content
+/// fingerprint: every globally-shareable source dependency (git /
+/// remote tarball — see [`LocalSource::is_globally_shareable`]) plus
+/// every package that transitively depends on one.
+///
+/// This exists to keep the GVS-prewarm materializer honest. Prewarm
+/// runs *concurrently with fetch*, so it can't fingerprint source trees
+/// that haven't been imported yet — it hashes with [`ContentHashFn`]
+/// returning `None` for everything. The link phase runs after fetch and
+/// folds the real fingerprints in via [`compute_graph_hashes_full`]. For
+/// any package in this set the two passes compute *different* hashes, so
+/// a node the prewarm materializes lands at a content-less path the link
+/// phase never references — stranding a duplicate cohort in the global
+/// store. Worse, prewarm skips the shareable-source *leaves* themselves
+/// (it can't materialize an un-fetched tree), so that stranded cohort's
+/// sibling symlinks dangle and Node's module walk silently resolves a
+/// second copy of the package higher up the tree (a duplicate-singleton
+/// "Cannot find module" class of bug). Prewarm must skip exactly this set
+/// and defer it to the link phase, which materializes every node at its
+/// final content-ful path.
+///
+/// Computed by reverse reachability from the shareable-source seeds so
+/// it's order- and cycle-independent: a source-backed subtree can sit
+/// inside a self-referential peer-dependency cycle, which a forward DFS
+/// memo would mis-handle depending on traversal entry point.
+///
+/// [`LocalSource::is_globally_shareable`]: crate::LocalSource::is_globally_shareable
+pub fn content_affected_dep_paths(graph: &LockfileGraph) -> FxHashSet<String> {
+    let mut parents_of: FxHashMap<String, Vec<String>> = FxHashMap::default();
+    let mut stack: Vec<String> = Vec::new();
+    for (dep_path, pkg) in &graph.packages {
+        if pkg
+            .local_source
+            .as_ref()
+            .is_some_and(|source| source.is_globally_shareable())
+        {
+            stack.push(dep_path.clone());
+        }
+        for (alias, child_tail) in &pkg.dependencies {
+            let child = child_dep_path(alias, child_tail);
+            if graph.packages.contains_key(&child) {
+                parents_of.entry(child).or_default().push(dep_path.clone());
+            }
+        }
+    }
+    let mut affected: FxHashSet<String> = FxHashSet::default();
+    while let Some(dep_path) = stack.pop() {
+        if !affected.insert(dep_path.clone()) {
+            continue;
+        }
+        if let Some(parents) = parents_of.get(&dep_path) {
+            stack.extend(parents.iter().cloned());
+        }
+    }
+    affected
+}
+
 /// `full_pkg_id` — pnpm uses `${pkgIdWithPatchHash}:${resolution}`; we
 /// use `${name}@${version}[:patch:<hex>]:${source?}[:content:<hex>]:${integrity}`.
 /// Source-backed packages fold in their stable specifier so two local
@@ -719,6 +776,96 @@ mod tests {
         let h = compute_graph_hashes(&g, &|_| false, None);
         assert!(h.node_hash.contains_key("a@1.0.0"));
         assert!(h.node_hash.contains_key("b@1.0.0"));
+    }
+
+    fn shareable_source() -> LocalSource {
+        LocalSource::RemoteTarball(crate::RemoteTarballSource {
+            url: "https://example.com/dep.tgz".into(),
+            integrity: "sha512-Z".into(),
+            git_hosted: false,
+        })
+    }
+
+    #[test]
+    fn content_affected_covers_shareable_source_and_all_ancestors() {
+        // parent -> midware -> tarball(shareable); `pure` is an unrelated
+        // sibling whose subtree contains no source dep.
+        let mut g = empty_graph();
+        let mut parent = mk_pkg("parent", "1.0.0", Some("sha512-P"));
+        parent.dependencies.insert("midware".into(), "1.0.0".into());
+        g.packages.insert("parent@1.0.0".into(), parent);
+
+        let mut midware = mk_pkg("midware", "1.0.0", Some("sha512-M"));
+        midware
+            .dependencies
+            .insert("tardep".into(), "url+aaa".into());
+        g.packages.insert("midware@1.0.0".into(), midware);
+
+        let mut tardep = mk_pkg("tardep", "1.0.0", None);
+        tardep.dep_path = "tardep@url+aaa".into();
+        tardep.local_source = Some(shareable_source());
+        g.packages.insert("tardep@url+aaa".into(), tardep);
+
+        g.packages.insert(
+            "pure@1.0.0".into(),
+            mk_pkg("pure", "1.0.0", Some("sha512-X")),
+        );
+
+        let affected = content_affected_dep_paths(&g);
+        assert!(
+            affected.contains("tardep@url+aaa"),
+            "the source leaf itself"
+        );
+        assert!(affected.contains("midware@1.0.0"), "direct ancestor");
+        assert!(affected.contains("parent@1.0.0"), "transitive ancestor");
+        assert!(
+            !affected.contains("pure@1.0.0"),
+            "a source-free subtree must stay prewarm-eligible"
+        );
+    }
+
+    #[test]
+    fn content_affected_handles_self_referential_cycle() {
+        // host <-> srcdep(shareable) cycle, mirroring a real-world
+        // self-referential peer cycle. Both nodes must be flagged
+        // regardless of the back-edge; reverse reachability from the
+        // source seed makes this order-independent.
+        let mut g = empty_graph();
+        let mut host = mk_pkg("host", "2.0.0", Some("sha512-L"));
+        host.dependencies.insert("srcdep".into(), "url+bbb".into());
+        g.packages.insert("host@2.0.0".into(), host);
+
+        let mut srcdep = mk_pkg("srcdep", "2.0.0", None);
+        srcdep.dep_path = "srcdep@url+bbb".into();
+        srcdep.local_source = Some(shareable_source());
+        srcdep.dependencies.insert("host".into(), "2.0.0".into());
+        g.packages.insert("srcdep@url+bbb".into(), srcdep);
+
+        let affected = content_affected_dep_paths(&g);
+        assert!(affected.contains("srcdep@url+bbb"));
+        assert!(
+            affected.contains("host@2.0.0"),
+            "ancestor inside a cycle with the source must still be flagged"
+        );
+    }
+
+    #[test]
+    fn content_affected_ignores_non_shareable_local_sources() {
+        // A `file:` directory dep is not globally shareable: it gets no
+        // content fingerprint, so its hash is identical across prewarm
+        // and link and prewarm may safely materialize its ancestors.
+        let mut g = empty_graph();
+        let mut parent = mk_pkg("parent", "1.0.0", Some("sha512-P"));
+        parent.dependencies.insert("dir".into(), "file+ccc".into());
+        g.packages.insert("parent@1.0.0".into(), parent);
+
+        let mut dir = mk_pkg("dir", "1.0.0", None);
+        dir.dep_path = "dir@file+ccc".into();
+        dir.local_source = Some(LocalSource::Directory(PathBuf::from("vendor/dir")));
+        g.packages.insert("dir@file+ccc".into(), dir);
+
+        let affected = content_affected_dep_paths(&g);
+        assert!(affected.is_empty(), "got: {affected:?}");
     }
 
     #[test]

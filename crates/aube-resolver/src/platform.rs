@@ -300,19 +300,14 @@ pub fn filter_graph(
         }
         if let Some(pkg) = graph.packages.get(&dep_path) {
             for (name, tail) in &pkg.dependencies {
-                // Different lockfile readers use different conventions
-                // for dependency values: the pnpm reader stores the
-                // dep_path *tail* (`"1.2.3"`), while the npm/yarn/bun
-                // readers store the full dep_path (`"foo@1.2.3"`).
-                // Try the raw value first, then the pnpm-style
-                // reconstruction.
-                if graph.packages.contains_key(tail) {
-                    stack.push(tail.clone());
-                } else {
-                    let child_key = format!("{name}@{tail}");
-                    if graph.packages.contains_key(&child_key) {
-                        stack.push(child_key);
-                    }
+                // Resolve the edge through every reader convention,
+                // including the git/remote-tarball `name@url+<hash>` form
+                // — otherwise a canonically-keyed git/tarball child (and
+                // its whole subtree) is unreachable here and gets GC'd.
+                if let Some(child) =
+                    aube_lockfile::resolve_dep_edge(name, tail, |k| graph.packages.contains_key(k))
+                {
+                    stack.push(child);
                 }
             }
         }
@@ -363,15 +358,12 @@ pub fn mark_optional_packages(graph: &mut aube_lockfile::LockfileGraph) {
             if pkg.optional_dependencies.contains_key(name) {
                 continue;
             }
-            // Match `filter_graph`'s child-key convention: the pnpm reader
-            // stores the dep_path tail (`"1.2.3"`), npm/yarn/bun store the
-            // full dep_path (`"foo@1.2.3"`).
-            let child = if graph.packages.contains_key(tail) {
-                tail.clone()
-            } else {
-                format!("{name}@{tail}")
-            };
-            if graph.packages.contains_key(&child) {
+            // Match `filter_graph`'s child-key convention (incl. the
+            // git/remote-tarball `name@url+<hash>` form) so a required
+            // git/tarball dep isn't mis-marked optional-only.
+            if let Some(child) =
+                aube_lockfile::resolve_dep_edge(name, tail, |k| graph.packages.contains_key(k))
+            {
                 stack.push(child);
             }
         }
@@ -421,15 +413,12 @@ pub fn mark_transitive_peer_dependencies(graph: &mut aube_lockfile::LockfileGrap
             {
                 continue;
             }
-            // Match `filter_graph`'s child-key convention: the pnpm reader
-            // stores the dep_path tail (`"1.2.3"`), npm/yarn/bun store the
-            // full dep_path (`"foo@1.2.3"`).
-            let child = if graph.packages.contains_key(tail) {
-                tail.clone()
-            } else {
-                format!("{name}@{tail}")
-            };
-            if graph.packages.contains_key(&child) {
+            // Match `filter_graph`'s child-key convention (incl. the
+            // git/remote-tarball `name@url+<hash>` form) so peers bubble
+            // through git/tarball edges too.
+            if let Some(child) =
+                aube_lockfile::resolve_dep_edge(name, tail, |k| graph.packages.contains_key(k))
+            {
                 parents.entry(child).or_default().push(dep_path.clone());
             } else {
                 // Edge points outside the resolved graph (workspace

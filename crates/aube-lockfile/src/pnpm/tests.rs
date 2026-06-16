@@ -594,17 +594,48 @@ snapshots:
 
     let graph = parse(&lockfile_path).unwrap();
     let url = "https://codeload.github.com/astro/node-expat/tar.gz/78e559baa908942097330f7967dfbf623ebc2529";
+    // Transitive remote-tarball deps are keyed under the canonical
+    // `name@url+<hash>` form — the same form `push_direct` uses for
+    // direct deps and a fresh resolve uses for all of them. The raw-URL
+    // key must NOT survive: the linker derives the parent's sibling
+    // symlink target via `shared_local_dep_path` (the canonical form),
+    // so a URL-keyed package would leave that symlink dangling
+    // (`Cannot find module 'node-expat'`).
+    let canonical =
+        crate::shared_local_dep_path("node-expat", url).expect("tarball url canonicalizes");
+    assert!(
+        canonical.starts_with("node-expat@url+"),
+        "unexpected canonical key: {canonical}"
+    );
+    assert!(
+        !graph.packages.contains_key(&format!("node-expat@{url}")),
+        "raw-URL key must be canonicalized away, got keys: {:?}",
+        graph.packages.keys().collect::<Vec<_>>()
+    );
     let pkg = graph
         .packages
-        .get(&format!("node-expat@{url}"))
-        .expect("transitive remote-tarball entry present");
+        .get(&canonical)
+        .expect("transitive remote-tarball entry present under canonical key");
     assert_eq!(pkg.name, "node-expat");
     // pnpm's `version:` field, not the URL.
     assert_eq!(pkg.version, "2.4.1");
-    // The URL drives the fetch path via `tarball_url`; dep-path
-    // still carries the URL so xml2json's snapshot reference
-    // resolves.
+    // The URL drives the fetch path via `tarball_url`.
     assert_eq!(pkg.tarball_url.as_deref(), Some(url));
+    // The parent records the dep by URL; that reference must canonicalize
+    // to the child's key so the sibling symlink resolves.
+    let parent = graph
+        .packages
+        .get("xml2json@0.12.0")
+        .expect("xml2json present");
+    let child_ref = parent
+        .dependencies
+        .get("node-expat")
+        .expect("node-expat dep recorded");
+    assert_eq!(
+        crate::shared_local_dep_path("node-expat", child_ref).as_deref(),
+        Some(canonical.as_str()),
+        "parent reference must canonicalize to the child's key"
+    );
 }
 
 #[test]
@@ -681,12 +712,117 @@ snapshots:
     // makes it all the way back onto `LockedPackage.tarball_url`.
     let reparsed = parse(&out_path).unwrap();
     let url = "https://codeload.github.com/astro/node-expat/tar.gz/78e559baa908942097330f7967dfbf623ebc2529";
+    // The written lockfile carries the URL key (pnpm parity, asserted
+    // above), but on re-parse it canonicalizes back to `name@url+<hash>`.
+    let canonical =
+        crate::shared_local_dep_path("node-expat", url).expect("tarball url canonicalizes");
     let pkg = reparsed
         .packages
-        .get(&format!("node-expat@{url}"))
-        .expect("URL-keyed entry survives round-trip");
+        .get(&canonical)
+        .expect("URL-keyed entry survives round-trip under canonical key");
     assert_eq!(pkg.version, "2.4.1");
     assert_eq!(pkg.tarball_url.as_deref(), Some(url));
+}
+
+/// Regression for the transitive remote-tarball "Cannot find module"
+/// crash. A *transitive* remote-tarball dep is recorded in the pnpm
+/// lockfile by its resolved URL — both as its own `packages:`/`snapshots:`
+/// key and inside its parent's `dependencies:` map. The linker derives
+/// each parent's sibling symlink target, and the graph hasher derives its
+/// child lookups, by canonicalizing that URL via `shared_local_dep_path`
+/// to the FS-safe `name@url+<hash>` form. The reader must therefore key
+/// the package under that same canonical form (mirroring `push_direct`
+/// and a fresh resolve). Before the fix it kept the raw URL key, so the
+/// package materialized at the escaped `https+++…` dir while every
+/// parent's symlink targeted `url+<hash>` — the link dangled and the
+/// child's content/engine taint never reached the parent's GVS hash.
+#[test]
+fn transitive_tarball_child_keyed_canonically_so_parent_symlink_resolves() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let url =
+        "https://codeload.github.com/acme/tardep/tar.gz/9504d1f8f3293df7bfa4de72bd52df615f9f399c";
+    std::fs::write(
+        &lockfile_path,
+        format!(
+            r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      app:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+  app@1.0.0:
+    resolution: {{integrity: sha512-app==}}
+
+  tardep@{url}:
+    resolution: {{gitHosted: true, integrity: sha512-tardep==, tarball: {url}}}
+    version: 2.42.0
+
+snapshots:
+  app@1.0.0:
+    dependencies:
+      tardep: {url}
+
+  tardep@{url}: {{}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&lockfile_path).unwrap();
+
+    // 1. The transitive tarball is keyed under the canonical hashed form,
+    //    and the raw-URL key is gone.
+    let canonical = crate::shared_local_dep_path("tardep", url).expect("url canonicalizes");
+    assert!(canonical.starts_with("tardep@url+"), "got {canonical}");
+    assert!(
+        !graph.packages.contains_key(&format!("tardep@{url}")),
+        "raw-URL key leaked: {:?}",
+        graph.packages.keys().collect::<Vec<_>>()
+    );
+    assert!(graph.packages.contains_key(&canonical));
+
+    // 2. The structural invariant the linker + hasher rely on: every
+    //    child reference that canonicalizes resolves to a real package
+    //    key. Before the fix `app`'s `tardep: <url>` canonicalized to a
+    //    key that didn't exist, so the sibling symlink dangled.
+    for (key, pkg) in &graph.packages {
+        for (alias, tail) in &pkg.dependencies {
+            if let Some(child) = crate::shared_local_dep_path(alias, tail) {
+                assert!(
+                    graph.packages.contains_key(&child),
+                    "{key}'s dep {alias}@{tail} -> {child} is missing from the graph"
+                );
+            }
+        }
+    }
+
+    // 3. The hasher no longer skips the child: a change to the tarball's
+    //    content fingerprint must cascade into the parent's hash. Before
+    //    the fix the URL-keyed child was invisible to `app`'s deps-hash,
+    //    so its fingerprint never moved `app`'s GVS path.
+    let with_fp = crate::graph_hash::compute_graph_hashes_full(
+        &graph,
+        &|_| false,
+        None,
+        &|_, _| None,
+        &|dp| (dp == canonical.as_str()).then(|| "fp".to_string()),
+    );
+    let without_fp = crate::graph_hash::compute_graph_hashes_full(
+        &graph,
+        &|_| false,
+        None,
+        &|_, _| None,
+        &|_| None,
+    );
+    assert_ne!(
+        with_fp.node_hash["app@1.0.0"], without_fp.node_hash["app@1.0.0"],
+        "transitive tarball child fingerprint must cascade into the parent's graph hash"
+    );
 }
 
 /// Fresh-resolve companion to `url_dep_path_round_trips_with_pnpm_version_field`.
@@ -803,12 +939,22 @@ fn fresh_resolved_codeload_tarball_writes_pnpm_version_and_resolution() {
         "parent must reference the codeload URL:\n{written}"
     );
 
-    // And it survives a re-parse onto `tarball_url` (drift-free).
+    // And it survives a re-parse onto `tarball_url` (drift-free). The
+    // written lockfile carries the codeload URL key (asserted above), but
+    // re-parse canonicalizes it back to the hashed `name@url+<hash>` form
+    // the resolver originally produced — so the round-trip graph matches a
+    // fresh resolve and the parent's sibling symlink resolves.
     let reparsed = parse(&lockfile_path).unwrap();
+    let canonical =
+        crate::shared_local_dep_path("node-expat", &codeload).expect("codeload url canonicalizes");
+    assert_eq!(
+        canonical, node_expat_dp,
+        "re-parse must reproduce the resolver's hashed dep_path"
+    );
     let pkg = reparsed
         .packages
-        .get(&format!("node-expat@{codeload}"))
-        .expect("codeload entry survives round-trip");
+        .get(&canonical)
+        .expect("codeload entry survives round-trip under canonical key");
     assert_eq!(pkg.version, "2.4.3");
     assert_eq!(pkg.tarball_url.as_deref(), Some(codeload.as_str()));
 }

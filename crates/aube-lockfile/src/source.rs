@@ -345,6 +345,37 @@ pub fn shared_local_dep_path(dep_name: &str, dep_value: &str) -> Option<String> 
     }
 }
 
+/// Resolve a dependency edge `(name, tail)` to the graph key of the child
+/// package node, honoring every reader's storage convention. Returns the
+/// first candidate that satisfies `contains` (the caller's "is this a real
+/// package key?" predicate), or `None` when the edge points outside the
+/// graph (a pruned optional, an unresolved peer, a `link:` target, …).
+///
+/// Three conventions coexist because the readers disagree on what a
+/// dependency *value* holds, and a graph walker that only knows one of
+/// them silently drops the others:
+///   1. `tail` verbatim — npm/yarn/bun store the full dep_path as the
+///      value (`"foo@1.2.3"`).
+///   2. `name@tail` — the pnpm reader stores only the tail (`"1.2.3"`),
+///      so the key is the name re-joined to it.
+///   3. [`shared_local_dep_path`] — git / remote-tarball deps store the
+///      resolved URL as the tail, but the node is keyed under the short
+///      `name@git+<hash>` / `name@url+<hash>` form. The linker's
+///      `materialize` already bridges the edge this way; reachability /
+///      marking walkers that skip it prune the entire git/tarball subtree
+///      (a content-pinned git/tarball child and everything under it
+///      vanishes from the walk once the node is keyed canonically).
+pub fn resolve_dep_edge(name: &str, tail: &str, contains: impl Fn(&str) -> bool) -> Option<String> {
+    if contains(tail) {
+        return Some(tail.to_string());
+    }
+    let rejoined = format!("{name}@{tail}");
+    if contains(&rejoined) {
+        return Some(rejoined);
+    }
+    shared_local_dep_path(name, tail).filter(|key| contains(key))
+}
+
 /// Parse a git dependency specifier into `(clone_url, committish)`.
 ///
 /// Recognized forms:

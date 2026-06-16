@@ -729,18 +729,44 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         packages.insert(k, v);
     }
 
-    // Normalize peer suffixes that reference a git / remote-tarball peer by
-    // its resolved spec — pnpm (and aube's own writer) emit
-    // `request-promise-core@1.1.4(request@https://codeload.…/tar.gz/<sha>)`,
-    // but aube's internal dep_path keys that peer with the FS-safe hashed
-    // form (`request@url+<hash>`). Re-derive the hashed form here so a
-    // lockfile round-trip produces the same graph a fresh resolve does:
-    // without it every registry package that peers with a git / tarball dep
-    // would re-key on the next install, busting the warm path (and emitting
-    // a churned lockfile). Inverse of the writer's hashed→spec pass.
+    // Normalize git / remote-tarball references so a lockfile round-trip
+    // produces the same graph a fresh resolve does. pnpm (and aube's own
+    // writer) record these deps by their resolved URL, but aube's linker
+    // and graph hasher look them up under the FS-safe hashed form
+    // (`request@url+<hash>` / `request@git+<hash>`) — the same form
+    // `push_direct` already uses for *direct* git/tarball deps. Two
+    // independent rewrites are needed, and both run whenever a git/tarball
+    // dep is present (not only when a peer suffix exists):
+    //
+    //   1. Package keys. A *transitive* git/tarball package keyed by URL
+    //      (`<pkg>@https://codeload.…/<sha>`) has its own virtual-store
+    //      dir materialized at the escaped `https+++…` name, while every
+    //      parent's sibling symlink (and the hasher's child lookup, via
+    //      `shared_local_dep_path`) targets the `url+<hash>` name. The
+    //      symlink then dangles — Node throws `Cannot find module '<dep>'`
+    //      — and the child's content/engine taint never reaches the
+    //      parent's GVS hash. Re-key the head to the canonical hashed form.
+    //   2. Peer suffixes. `request-promise-core@1.1.4(request@https://…/<sha>)`
+    //      → `…(request@url+<hash>)`, the inverse of the writer's
+    //      hashed→spec pass. Without it a registry package that peers with
+    //      a git/tarball dep would re-key on the next install, busting the
+    //      warm path (and emitting a churned lockfile).
     let spec_peer_to_hashed = |head: &str| -> Option<String> {
         let (name, value) = parse_dep_path(head)?;
         crate::shared_local_dep_path(&name, &value)
+    };
+    // Canonicalize a git/remote-tarball package's own `name@<url>` head to
+    // the hashed form, preserving any peer suffix verbatim (URLs aube keys
+    // never contain `(`, so the first `(` always starts the suffix).
+    let canonical_local_head = |key: &str, pkg: &LockedPackage| -> Option<String> {
+        let local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_)) =
+            pkg.local_source.as_ref()?
+        else {
+            return None;
+        };
+        let suffix = key.find('(').map_or("", |i| &key[i..]);
+        let new_key = format!("{}{suffix}", local.dep_path(&pkg.name));
+        (new_key != key).then_some(new_key)
     };
     let has_local_source = packages.values().any(|p| {
         matches!(
@@ -748,11 +774,12 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
         )
     });
-    if has_local_source && packages.keys().any(|k| k.contains('(')) {
+    if has_local_source {
         let rekeyed: BTreeMap<String, LockedPackage> = std::mem::take(&mut packages)
             .into_iter()
             .map(|(key, mut pkg)| {
-                let new_key = rewrite_peer_suffix(&key, &spec_peer_to_hashed);
+                let head = canonical_local_head(&key, &pkg).unwrap_or(key);
+                let new_key = rewrite_peer_suffix(&head, &spec_peer_to_hashed);
                 pkg.dep_path = new_key.clone();
                 pkg.dependencies = pkg
                     .dependencies

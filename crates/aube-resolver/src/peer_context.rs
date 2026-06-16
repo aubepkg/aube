@@ -1186,6 +1186,29 @@ fn propagate_peer_suffixes_to_ancestors(
         let Some(segments) = cumulative.get(key) else {
             continue;
         };
+        // Git / remote-tarball (globally-shareable) packages keep a bare
+        // dep_path keyed solely by their content-pinned URL — pnpm never
+        // appends a `(peer@ver)` suffix to a non-registry depPath. Every
+        // git/tarball key in a real pnpm-lock.yaml is bare even when its
+        // subtree resolves peers: e.g. `<pkg>@<url>` sits bare above a
+        // registry descendant like `<child>@6.5.1(@types/node@…)`.
+        // Absorbing a descendant's `(@types/node@…)` here would (a) diverge
+        // from the lockfile and (b) give the same content-identical tarball
+        // a different dep_path per consuming subtree, splitting the single
+        // shared global-virtual-store entry into duplicates (so one
+        // content-pinned singleton would load twice → "Cannot find
+        // module"). The descendant peers still propagate onto this node's
+        // *registry* ancestors through `cumulative`, so a registry parent
+        // keeps its own `(@types/node@…)` suffix; only the git/tarball node
+        // itself stays bare.
+        if graph
+            .packages
+            .get(key)
+            .and_then(|p| p.local_source.as_ref())
+            .is_some_and(|s| s.is_globally_shareable())
+        {
+            continue;
+        }
         let canonical = canonical_tail(key);
         if is_hashed_peer_suffix(&key[canonical.len()..]) {
             // Original key already carries the hashed suffix `(…)` — see
@@ -1578,6 +1601,23 @@ fn visit_peer_context<'g>(
     // If nothing in the graph holds a version of this peer at all,
     // it's left out of the context entirely — `detect_unmet_peers`
     // will surface it as a warning after the pass.
+    //
+    // Only peers the package actually *declares* in `peerDependencies`
+    // build a dep_path suffix here. A name present solely in
+    // `peerDependenciesMeta` (a meta-only optional peer — the way
+    // `follow-redirects` declares `debug`, for instance) is deliberately
+    // NOT folded in: pnpm treats such a peer as resolvable but then
+    // collapses the binding back out via `dedupe-peer-dependents`
+    // whenever a peer-free path exists, so the realistic lockfile leaves
+    // the whole chain bare even when a distant ancestor carries that peer
+    // as a plain dependency. Eagerly binding the meta-only peer from that
+    // ancestor scope produced `(peer@ver)`-suffixed variants that aube's
+    // dedupe pass (which only collapses *declared*-peer variants) never
+    // merged, so the same subtree hashed differently per install scope
+    // (whole-workspace vs single-member), splitting a shared
+    // global-virtual-store singleton in two and surfacing at runtime as a
+    // duplicate-instance "Cannot find module". Matching pnpm's *deduped*
+    // output — bare — keeps the singleton intact.
     let mut peer_context: Vec<(String, String)> = Vec::new();
     for (peer_name, declared_range) in &pkg.peer_dependencies {
         let satisfies_declared = |v: &str| -> bool {

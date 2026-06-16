@@ -3844,6 +3844,98 @@ fn peer_suffix_stops_at_supplier_of_the_peer() {
     );
 }
 
+// A META-ONLY optional peer (declared in `peerDependenciesMeta` but absent
+// from `peerDependencies`, exactly how `follow-redirects` declares `debug`)
+// must NOT be eagerly bound from a distant ancestor's *regular* dependency.
+// pnpm treats such a peer as resolvable but then collapses the binding back
+// out via `dedupe-peer-dependents` whenever a peer-free path exists, so the
+// realistic lockfile keeps the whole chain bare:
+//   provider        (carries debug@3.2.7 as a plain dep)
+//     mid_a          (bare)
+//       mid_b        (bare)
+//         mid_c      (bare)
+//           axios    (bare)
+//             fr     (bare — follow-redirects; debug stays a transitive peer)
+// Binding `(debug@3.2.7)` onto that chain (as a since-reverted experiment did)
+// produced suffixed variants that aube's dedupe pass — which only collapses
+// *declared*-peer variants — never merged. The same subtree then hashed
+// differently per install scope (whole-workspace vs single-member), splitting
+// a shared global-virtual-store singleton in two and surfacing at runtime as a
+// duplicate-instance "Cannot find module". This test pins the bare shape so
+// the over-binding can't regress.
+#[test]
+fn meta_only_optional_peer_stays_bare_to_keep_singleton_shared() {
+    // provider carries debug as a plain (regular) dependency.
+    let provider = mk_locked(
+        "provider",
+        "1.0.0",
+        &[("mid_a", "1.0.0"), ("debug", "3.2.7")],
+        &[],
+    );
+    let mid_a = mk_locked("mid_a", "1.0.0", &[("mid_b", "1.0.0")], &[]);
+    let mid_b = mk_locked("mid_b", "1.0.0", &[("mid_c", "1.0.0")], &[]);
+    let mid_c = mk_locked("mid_c", "1.0.0", &[("axios", "1.0.0")], &[]);
+    let axios = mk_locked("axios", "1.0.0", &[("fr", "1.0.0")], &[]);
+    // fr = follow-redirects: debug ONLY in meta (optional), NOT in peer_deps.
+    let mut fr = mk_locked("fr", "1.0.0", &[], &[]);
+    fr.peer_dependencies_meta.insert(
+        "debug".to_string(),
+        aube_lockfile::PeerDepMeta { optional: true },
+    );
+    let debug = mk_locked("debug", "3.2.7", &[], &[]);
+
+    let mut packages = BTreeMap::new();
+    for p in [provider, mid_a, mid_b, mid_c, axios, fr, debug] {
+        packages.insert(p.dep_path.clone(), p);
+    }
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "provider".to_string(),
+            dep_path: "provider@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("^1".to_string()),
+        }],
+    );
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default()).expect("should converge");
+    let mut keys: Vec<&String> = out.packages.keys().collect();
+    keys.sort();
+    // Expected: the meta-only optional `debug` peer is NOT folded into any
+    // dep_path, so every node on the chain has a single bare instance and the
+    // subtree hashes identically regardless of install scope.
+    for bare in [
+        "provider@1.0.0",
+        "mid_a@1.0.0",
+        "mid_b@1.0.0",
+        "mid_c@1.0.0",
+        "axios@1.0.0",
+        "fr@1.0.0",
+    ] {
+        assert!(
+            out.packages.contains_key(bare),
+            "{bare} must exist as the single bare instance; got {keys:#?}"
+        );
+    }
+    for suffixed in [
+        "fr@1.0.0(debug@3.2.7)",
+        "axios@1.0.0(debug@3.2.7)",
+        "mid_c@1.0.0(debug@3.2.7)",
+        "mid_b@1.0.0(debug@3.2.7)",
+        "mid_a@1.0.0(debug@3.2.7)",
+    ] {
+        assert!(
+            !out.packages.contains_key(suffixed),
+            "{suffixed} must NOT be created from a meta-only optional peer; got {keys:#?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // direct_dep_info
 // ---------------------------------------------------------------------------

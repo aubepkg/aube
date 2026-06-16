@@ -195,6 +195,18 @@ pub(super) async fn run_gvs_prewarm_materializer(
         }
     }
 
+    // Packages whose graph hash folds in a content fingerprint — every
+    // globally-shareable source dep (git / remote tarball) plus all of
+    // its transitive ancestors. Prewarm runs before fetch and so hashes
+    // them content-less, while the link phase hashes them content-ful;
+    // materializing them here would strand a duplicate content-less
+    // cohort in the global store whose source leaves (skipped at receive
+    // time because their trees aren't fetched yet) dangle — a
+    // duplicate-singleton "Cannot find module" class of bug. Defer the
+    // whole set to the link phase, which materializes every node at its
+    // final content-ful path.
+    let content_affected = aube_lockfile::graph_hash::content_affected_dep_paths(&graph);
+
     let _diag_hash_wait =
         aube_util::diag::Span::new(aube_util::diag::Category::Materialize, "hash_await");
     let graph_hashes = hash_handle
@@ -270,6 +282,9 @@ pub(super) async fn run_gvs_prewarm_materializer(
                 continue;
             };
             if pkg.local_source.is_some() {
+                continue;
+            }
+            if content_affected.contains(&dep_path) {
                 continue;
             }
             let linker = linker.clone();
