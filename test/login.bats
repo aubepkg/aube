@@ -69,6 +69,18 @@ teardown() {
 	assert_file_contains "$HOME/.npmrc" "@myorg:registry=https://myorg.example.com/"
 }
 
+@test "aube login normalizes scope casing" {
+	AUBE_AUTH_TOKEN=scoped run aube login \
+		--registry=https://myorg.example.com/ \
+		--scope=@MyOrg
+	assert_success
+	run cat "$HOME/.npmrc"
+	assert_success
+	assert_output --partial "//myorg.example.com/:@myorg:_authToken=scoped"
+	assert_output --partial "@myorg:registry=https://myorg.example.com/"
+	refute_output --partial "@MyOrg"
+}
+
 @test "aube login replaces an existing token" {
 	printf '%s\n' \
 		'registry=https://r.example.com/' \
@@ -161,6 +173,20 @@ teardown() {
 	assert_success
 	refute_output --partial "_authToken"
 	refute_output --partial "@myorg:registry"
+}
+
+@test "aube logout --scope matches scope casing insensitively" {
+	printf '%s\n' \
+		'@MyOrg:registry=https://myorg.example.com/' \
+		'//myorg.example.com/:@MyOrg:_authToken=tok' >"$HOME/.npmrc"
+
+	run aube logout --scope=@myorg --registry=https://myorg.example.com/
+	assert_success
+
+	run cat "$HOME/.npmrc"
+	assert_success
+	refute_output --partial "_authToken"
+	refute_output --partial "@MyOrg:registry"
 }
 
 @test "aube logout without scope removes scoped tokens for the registry" {

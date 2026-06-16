@@ -63,6 +63,7 @@ pub async fn run(args: LoginArgs) -> miette::Result<()> {
     let path = user_npmrc_path()?;
     let mut edit = NpmrcEdit::load(&path)?;
     if let Some(scope) = &args.scope {
+        let scope = scope.to_ascii_lowercase();
         edit.set(&format!("{host_key}:{scope}:_authToken"), &token);
         edit.set(&format!("{scope}:registry"), &registry);
     } else {
