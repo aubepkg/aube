@@ -170,12 +170,13 @@ pub(crate) fn ensure_registry_auth_for_package(
     if client.has_resolved_auth_for_package(registry_url, package_name) {
         Ok(())
     } else {
+        let login_cmd = aube_util::cmd("login");
         let login_hint = package_name
             .split_once('/')
             .map(|(scope, _)| scope)
             .filter(|scope| scope.starts_with('@'))
-            .map(|scope| format!("aube login --registry {registry_url} --scope {scope}"))
-            .unwrap_or_else(|| format!("aube login --registry {registry_url}"));
+            .map(|scope| format!("{login_cmd} --registry {registry_url} --scope {scope}"))
+            .unwrap_or_else(|| format!("{login_cmd} --registry {registry_url}"));
         Err(miette!(
             "no auth token for {registry_url} package {package_name}. Run `{login_hint}` first."
         ))
