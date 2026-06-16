@@ -60,84 +60,47 @@
 //! example, a sentence whose rewrite would hurt clarity), add it to
 //! [`ALLOWLIST`] below with a comment explaining why — keep that list short.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-/// Real CLI command verbs (and the leading word of multi-word subcommand
-/// chains). A `aube <word>` literal only trips the lint when `<word>` is one of
-/// these — so prose like "aube has no shims" or "let aube do it" never trips
-/// (those words aren't commands), keeping the lint conservative.
-const VERBS: &[&str] = &[
-    "install",
-    "install-test",
-    "it",
-    "test",
-    "i",
-    "ci",
-    "add",
-    "remove",
-    "rm",
-    "update",
-    "up",
-    "run",
-    "exec",
-    "dlx",
-    "import",
-    "dedupe",
-    "patch",
-    "patch-commit",
-    "patch-remove",
-    "approve-builds",
-    "ignored-builds",
-    "store",
-    "outdated",
-    "why",
-    "list",
-    "ls",
-    "ll",
-    "la",
-    "pack",
-    "publish",
-    "init",
-    "create",
-    "setup",
-    "config",
-    "rebuild",
-    "prune",
-    "purge",
-    "link",
-    "unlink",
-    "fetch",
-    "login",
-    "logout",
-    "doctor",
-    "audit",
-    "deprecate",
-    "undeprecate",
-    "view",
-    "node",
-    "runtime",
-    "deploy",
-    "completion",
-    "recursive",
-    "peers",
-    "check",
-    "query",
-    "sbom",
-    "licenses",
-    "token",
-    "owner",
-    "search",
-    "whoami",
-    "root",
-    "bin",
-    "get",
-    "set",
-    "dist-tag",
-    "clean",
-    "stage",
-    "pkg",
-];
+/// The set of real CLI command verbs, **derived from the clap command tree**
+/// (`aube::command()`) rather than hand-maintained. A `aube <word>` literal
+/// only trips the lint when `<word>` is one of these — so prose like "aube has
+/// no shims" or "let aube do it" never trips (those words aren't commands),
+/// keeping the lint conservative.
+///
+/// Deriving from clap is the whole point: the command surface is the single
+/// source of truth, so adding/renaming a verb (or an alias) updates the lint
+/// automatically — no second list to keep in sync. We walk the command tree
+/// recursively, so nested subcommands (`store prune`, `config get`, …) and the
+/// leading word of multi-word chains are all covered, and we include every
+/// subcommand's visible *and* hidden aliases (`i`/`install`, `rm`/`remove`,
+/// `it`/`install-test`, `t`/`test`, …) since a hardcoded `aube <alias>` is just
+/// as much a brand leak as the canonical spelling.
+static VERBS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
+    let mut verbs = BTreeSet::new();
+    collect_verbs(&aube::command(), &mut verbs);
+    verbs
+});
+
+/// Walk the clap command tree, collecting every subcommand name plus all of its
+/// aliases (visible and hidden), recursing into nested subcommands so the whole
+/// surface — top-level verbs, their aliases, and nested chains — is covered.
+/// The `external_subcommand` catch-all has no fixed name and contributes
+/// nothing; names carrying chars the `aube <verb>` matcher can't reach (e.g. the
+/// hidden `__node-gyp-bootstrap`) are harmless — they simply never match a
+/// literal.
+fn collect_verbs(cmd: &clap::Command, out: &mut BTreeSet<String>) {
+    for sub in cmd.get_subcommands() {
+        out.insert(sub.get_name().to_string());
+        for alias in sub.get_all_aliases() {
+            out.insert(alias.to_string());
+        }
+        collect_verbs(sub, out);
+    }
+}
 
 /// Intentional exceptions: `crate/path` substrings or exact source lines where
 /// an `aube <verb>`-shaped literal is deliberately left as-is. Keep this SHORT
@@ -233,7 +196,7 @@ fn is_exempt(line: &str, in_exempt_region: bool) -> bool {
 
 /// Does this line contain a hardcoded `aube <verb>` command reference that
 /// should be `aube_util::cmd(...)`? Returns the offending verb if so.
-fn offending_verb(line: &str) -> Option<&'static str> {
+fn offending_verb(line: &str) -> Option<String> {
     let bytes = line.as_bytes();
     let mut search_from = 0;
     while let Some(rel) = line[search_from..].find("aube ") {
@@ -256,8 +219,8 @@ fn offending_verb(line: &str) -> Option<&'static str> {
             .chars()
             .take_while(|c| c.is_ascii_lowercase() || *c == '-')
             .collect();
-        if let Some(v) = VERBS.iter().find(|&&v| v == word) {
-            return Some(v);
+        if VERBS.contains(&word) {
+            return Some(word);
         }
     }
     None
@@ -333,4 +296,81 @@ fn no_hardcoded_aube_verb_in_user_facing_strings() {
          brand_literal_lint.rs with a justifying comment.\n\n{}",
         hits.join("\n")
     );
+}
+
+/// The clap-derived verb set is non-empty and covers the canonical core verbs.
+/// Guards against a future refactor that silently breaks the derivation (e.g.
+/// `aube::command()` no longer exposing subcommands) and leaves the lint matching
+/// nothing — which would pass vacuously while catching zero real leaks.
+#[test]
+fn derived_verbs_cover_the_core_surface() {
+    assert!(
+        VERBS.len() > 20,
+        "expected the clap-derived verb set to be substantial, got {} — \
+         did `aube::command()` stop exposing subcommands?",
+        VERBS.len()
+    );
+    // Spot-check the verbs jdx specifically flagged (`test`, `install-test`) plus
+    // a representative spread of canonical names, visible aliases, and the
+    // multi-word/nested chains the old hand-list had to track by hand.
+    for expect in [
+        "install",
+        "i",
+        "add",
+        "a",
+        "remove",
+        "rm",
+        "test",
+        "t",
+        "install-test",
+        "it",
+        "run",
+        "patch-commit",
+        "approve-builds",
+        "store",
+        "prune",
+        "config",
+        "get",
+    ] {
+        assert!(
+            VERBS.contains(expect),
+            "clap-derived verb set is missing `{expect}` — the derivation lost a \
+             verb the lint must catch"
+        );
+    }
+}
+
+/// A planted `aube <verb>` literal trips the matcher (positive control), and a
+/// non-command `aube <word>` does not (conservativeness control).
+#[test]
+fn offending_verb_catches_planted_leak() {
+    assert_eq!(
+        offending_verb(r#"bail!("run `aube install` first")"#).as_deref(),
+        Some("install")
+    );
+    // A word that isn't a CLI verb must not trip — keeps the lint low-false-positive.
+    assert_eq!(offending_verb(r#"eprintln!("aube has no shims")"#), None);
+}
+
+/// The payoff of deriving from clap: a real CLI verb that was **never** in the
+/// old hand-maintained list is now caught automatically. `version`, `cache`,
+/// `diag`, and `sponsors` are all genuine subcommands the previous hardcoded
+/// `VERBS` array omitted — under the static list a hardcoded `aube version`
+/// brand leak would have slipped through; the dynamic derivation catches it,
+/// proving the new approach is strictly stronger than the manual one.
+#[test]
+fn derivation_catches_verbs_the_old_hardcoded_list_missed() {
+    for verb in ["version", "cache", "diag", "sponsors"] {
+        assert!(
+            VERBS.contains(verb),
+            "`{verb}` is a real clap subcommand but the derived set lacks it"
+        );
+        let planted = format!(r#"bail!("see `aube {verb}` output")"#);
+        assert_eq!(
+            offending_verb(&planted).as_deref(),
+            Some(verb),
+            "dynamic lint should catch `aube {verb}` — a verb the old hardcoded \
+             VERBS list did not contain"
+        );
+    }
 }
