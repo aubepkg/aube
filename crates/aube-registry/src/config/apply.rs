@@ -146,7 +146,7 @@ impl NpmConfig {
                 .scoped_auth_by_uri
                 .iter()
                 .filter_map(|(prefix, auth_by_scope)| {
-                    if uri_key.starts_with(prefix.as_str()) {
+                    if uri_key_matches_prefix(&uri_key, prefix) {
                         auth_by_scope.get(&scope).map(|auth| (prefix.len(), auth))
                     } else {
                         None
@@ -624,6 +624,15 @@ fn has_credential_material(auth: &AuthConfig) -> bool {
         || auth.auth.is_some()
         || auth.token_helper.is_some()
         || (auth.username.is_some() && auth.password.is_some())
+}
+
+fn uri_key_matches_prefix(uri_key: &str, prefix: &str) -> bool {
+    if uri_key == prefix || (uri_key.starts_with(prefix) && prefix.ends_with('/')) {
+        return true;
+    }
+    uri_key
+        .strip_prefix(prefix)
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn auth_entry_for_uri<'a>(

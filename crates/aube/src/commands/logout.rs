@@ -38,7 +38,14 @@ pub async fn run(args: LogoutArgs) -> miette::Result<()> {
     let mut edit = NpmrcEdit::load(&path)?;
     let removed_token = match &args.scope {
         Some(scope) => edit.remove(&format!("{host_key}:{scope}:_authToken")),
-        None => edit.remove(&format!("{host_key}:_authToken")),
+        None => {
+            let unscoped_token_key = format!("{host_key}:_authToken");
+            let scoped_token_prefix = format!("{host_key}:@");
+            edit.remove_matching(|key| {
+                key == unscoped_token_key.as_str()
+                    || (key.starts_with(&scoped_token_prefix) && key.ends_with(":_authToken"))
+            })
+        }
     };
     let removed_scope = match &args.scope {
         Some(scope) => edit.remove(&format!("{scope}:registry")),

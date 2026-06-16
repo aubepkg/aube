@@ -2116,6 +2116,34 @@ fn scoped_auth_token_honors_path_scoped_registry_prefix() {
 }
 
 #[test]
+fn scoped_auth_token_requires_path_prefix_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".npmrc"),
+        "//registry.example.com/npm:@org-a:_authToken=org-a-token\n\
+         //registry.example.com/:_authToken=root-token\n",
+    )
+    .unwrap();
+
+    let config = NpmConfig::load_isolated(dir.path());
+
+    assert_eq!(
+        config.auth_token_for_package(
+            "https://registry.example.com/npm/@org-a/pkg/-/pkg-1.0.0.tgz",
+            "@org-a/pkg"
+        ),
+        Some("org-a-token")
+    );
+    assert_eq!(
+        config.auth_token_for_package(
+            "https://registry.example.com/npm-release/@org-a/pkg/-/pkg-1.0.0.tgz",
+            "@org-a/pkg"
+        ),
+        Some("root-token")
+    );
+}
+
+#[test]
 fn scoped_auth_lookup_checks_shorter_prefixes_before_unscoped_fallback() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

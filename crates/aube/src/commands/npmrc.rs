@@ -96,9 +96,15 @@ impl NpmrcEdit {
     /// Remove all entries matching `key`. Returns `true` if any were
     /// removed.
     pub fn remove(&mut self, key: &str) -> bool {
+        self.remove_matching(|k| k == key)
+    }
+
+    /// Remove all entries whose key satisfies `predicate`. Returns
+    /// `true` if any were removed.
+    pub fn remove_matching(&mut self, predicate: impl Fn(&str) -> bool) -> bool {
         let before = self.lines.len();
         self.lines.retain(|line| match line {
-            Line::Entry { key: k, .. } => k != key,
+            Line::Entry { key: k, .. } => !predicate(k),
             Line::Raw(_) => true,
         });
         before != self.lines.len()

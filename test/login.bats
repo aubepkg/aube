@@ -163,6 +163,22 @@ teardown() {
 	refute_output --partial "@myorg:registry"
 }
 
+@test "aube logout without scope removes scoped tokens for the registry" {
+	printf '%s\n' \
+		'@myorg:registry=https://myorg.example.com/' \
+		'//myorg.example.com/:@myorg:_authToken=scoped' \
+		'//myorg.example.com/:_authToken=unscoped' >"$HOME/.npmrc"
+
+	run aube logout --registry=https://myorg.example.com/
+	assert_success
+	assert_output --partial "Logged out of https://myorg.example.com/"
+
+	run cat "$HOME/.npmrc"
+	assert_success
+	refute_output --partial "_authToken"
+	assert_output --partial "@myorg:registry=https://myorg.example.com/"
+}
+
 @test "aube logout is a no-op when no credentials exist" {
 	run aube logout --registry=https://r.example.com/
 	assert_success
