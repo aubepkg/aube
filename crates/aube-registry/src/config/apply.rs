@@ -445,35 +445,50 @@ impl NpmConfig {
                     // produces on the lookup side after stripping the
                     // scheme's default port.
                     let uri_key = normalize_npmrc_uri_key(uri);
-                    let entry = if let Some(scope) = scope {
-                        self.scoped_auth_by_uri
-                            .entry(uri_key.clone())
-                            .or_default()
-                            .entry(scope.to_lowercase())
-                            .or_default()
-                    } else {
-                        self.auth_by_uri.entry(uri_key.clone()).or_default()
-                    };
                     match suffix {
                         "_authToken" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.auth_token = Some(value);
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "_authToken"));
                             }
                         }
                         "_auth" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.auth = Some(value);
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "_auth"));
                             }
                         }
                         "username" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.username = Some(value);
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "username"));
                             }
                         }
                         "_password" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.password = Some(value);
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "_password"));
@@ -502,20 +517,54 @@ impl NpmConfig {
                                 );
                                 continue;
                             };
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.token_helper = Some(sanitized);
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "tokenHelper"));
                             }
                         }
-                        "ca" | "ca[]" => entry.tls.ca.push(pem_value(value)),
-                        "cafile" | "caFile" => entry.tls.cafile = Some(PathBuf::from(value)),
+                        "ca" | "ca[]" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
+                            entry.tls.ca.push(pem_value(value));
+                        }
+                        "cafile" | "caFile" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
+                            entry.tls.cafile = Some(PathBuf::from(value));
+                        }
                         "cert" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.tls.cert = Some(pem_value(value));
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "cert"));
                             }
                         }
                         "key" => {
+                            let entry = auth_entry_for_uri(
+                                &mut self.auth_by_uri,
+                                &mut self.scoped_auth_by_uri,
+                                &uri_key,
+                                scope,
+                            );
                             entry.tls.key = Some(pem_value(value));
                             if scope.is_none() {
                                 explicit_uri_fields.insert((uri_key, "key"));
@@ -566,6 +615,26 @@ impl NpmConfig {
             .entry(registry_uri_key(registry))
             .or_default();
         apply(entry);
+    }
+}
+
+fn auth_entry_for_uri<'a>(
+    auth_by_uri: &'a mut std::collections::BTreeMap<String, AuthConfig>,
+    scoped_auth_by_uri: &'a mut std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, AuthConfig>,
+    >,
+    uri_key: &str,
+    scope: Option<&str>,
+) -> &'a mut AuthConfig {
+    if let Some(scope) = scope {
+        scoped_auth_by_uri
+            .entry(uri_key.to_string())
+            .or_default()
+            .entry(scope.to_lowercase())
+            .or_default()
+    } else {
+        auth_by_uri.entry(uri_key.to_string()).or_default()
     }
 }
 

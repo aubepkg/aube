@@ -605,6 +605,37 @@ fn token_helper_from_project_npmrc_is_refused() {
 }
 
 #[test]
+fn untrusted_scoped_token_helper_does_not_shadow_registry_token() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join(".npmrc"),
+        "//npm.pkg.github.com/:_authToken=broad-token\n",
+    )
+    .unwrap();
+
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join(".npmrc"),
+        "//npm.pkg.github.com/:@myorg:tokenHelper=/tmp/evil.sh\n",
+    )
+    .unwrap();
+
+    let mut config = NpmConfig::default();
+    config.apply_tagged(load_npmrc_entries_tagged_with_home(
+        Some(home.path()),
+        None,
+        project.path(),
+        None,
+    ));
+
+    assert_eq!(
+        config.auth_token_for_package("https://npm.pkg.github.com/", "@myorg/pkg"),
+        Some("broad-token"),
+        "ignored project tokenHelper must not create an empty scoped auth entry"
+    );
+}
+
+#[test]
 fn token_helper_from_user_npmrc_is_accepted() {
     // The user's own `~/.npmrc` is the only file trusted to
     // configure subprocess execution. A valid bare absolute
