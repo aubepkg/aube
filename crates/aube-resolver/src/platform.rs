@@ -269,12 +269,16 @@ pub fn filter_graph(
     for pkg in graph.packages.values_mut() {
         let mut removed = Vec::new();
         pkg.optional_dependencies.retain(|name, tail| {
-            let child_key = if package_keys.contains(tail) {
-                tail.clone()
-            } else {
-                format!("{name}@{tail}")
-            };
-            let keep = !ignored.contains(name) && !mismatched_packages.contains(&child_key);
+            // Resolve through every reader convention (incl. the
+            // git/remote-tarball `name@url+<hash>` form) so a
+            // platform-mismatched optional git/tarball child is actually
+            // pruned here rather than surviving until the GC pass below.
+            let child_is_mismatched =
+                match aube_lockfile::resolve_dep_edge(name, tail, |k| package_keys.contains(k)) {
+                    Some(child_key) => mismatched_packages.contains(&child_key),
+                    None => false,
+                };
+            let keep = !ignored.contains(name) && !child_is_mismatched;
             if !keep {
                 removed.push(name.clone());
             }
