@@ -2087,6 +2087,29 @@ fn scoped_tls_config_does_not_shadow_registry_token() {
 }
 
 #[test]
+fn longer_scoped_tls_config_does_not_shadow_shorter_scoped_token() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".npmrc"),
+        "registry=https://registry.example.com/npm/\n\
+         //registry.example.com/:_authToken=registry-token\n\
+         //registry.example.com/:@org-a:_authToken=org-a-token\n\
+         //registry.example.com/npm/:@org-a:cafile=/etc/ssl/org-a.pem\n",
+    )
+    .unwrap();
+
+    let config = NpmConfig::load_isolated(dir.path());
+
+    assert_eq!(
+        config.auth_token_for_package(
+            "https://registry.example.com/npm/@org-a/pkg/-/pkg-1.0.0.tgz",
+            "@org-a/pkg"
+        ),
+        Some("org-a-token")
+    );
+}
+
+#[test]
 fn scoped_auth_token_honors_path_scoped_registry_prefix() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

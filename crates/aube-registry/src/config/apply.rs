@@ -152,8 +152,8 @@ impl NpmConfig {
                         None
                     }
                 })
-                .max_by_key(|(prefix_len, _)| *prefix_len)
                 .filter(|(_, auth)| has_credential_material(auth))
+                .max_by_key(|(prefix_len, _)| *prefix_len)
             {
                 return Some(auth);
             }
