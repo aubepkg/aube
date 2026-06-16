@@ -51,7 +51,7 @@ Examples:
 pub struct AuditArgs {
     /// Only print advisories at or above this severity.
     ///
-    /// One of: `low`, `moderate`, `high`, `critical`. Default: `low`.
+    /// One of: `info`, `low`, `moderate`, `high`, `critical`. Default: `low`.
     #[arg(long, value_enum, default_value_t = Severity::Low)]
     pub audit_level: Severity,
 
@@ -129,6 +129,12 @@ pub struct AuditArgs {
 #[value(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum Severity {
+    // Declaration order IS severity order (`Ord` is derived): `Info` is
+    // the lowest, matching pnpm's `AUDIT_LEVEL_NUMBER` (`info: 0`). npm's
+    // bulk advisory endpoint can return `severity: "info"` advisories, so
+    // the variant must exist for them to count in `metadata` AND appear
+    // in the `advisories` map under `--audit-level info`.
+    Info,
     Low,
     Moderate,
     High,
@@ -1431,6 +1437,67 @@ mod tests {
 
         assert_eq!(report["metadata"]["totalDependencies"], 2);
         assert_eq!(report["metadata"]["dependencies"], 2);
+    }
+
+    #[test]
+    fn build_audit_report_handles_info_severity_consistently() {
+        // npm's bulk endpoint can return `severity: "info"` advisories.
+        // They must (a) count in `metadata.vulnerabilities.info`, (b) be
+        // excluded from the `advisories` map at the default `low`
+        // threshold, and (c) ENTER the map under `--audit-level info` —
+        // i.e. behave like every other severity. (Before `Severity::Info`
+        // existed, info advisories counted in metadata but could never
+        // appear in `advisories`, regardless of threshold.)
+        let raw = serde_json::json!({
+            "dep-a": [{ "id": 300, "severity": "info", "title": "info note" }]
+        });
+        let deps = || DependencyCounts {
+            dependencies: 1,
+            dev_dependencies: 0,
+            optional_dependencies: 0,
+            total: 1,
+        };
+
+        let at_low = build_audit_report(&raw, Severity::Low, deps());
+        assert_eq!(at_low["metadata"]["vulnerabilities"]["info"], 1);
+        assert!(
+            at_low["advisories"].as_object().unwrap().is_empty(),
+            "info advisory must be filtered out at the default `low` threshold"
+        );
+
+        let at_info = build_audit_report(&raw, Severity::Info, deps());
+        assert_eq!(at_info["metadata"]["vulnerabilities"]["info"], 1);
+        assert!(
+            at_info["advisories"]
+                .as_object()
+                .unwrap()
+                .contains_key("300"),
+            "info advisory must appear in the map under `--audit-level info`"
+        );
+    }
+
+    #[test]
+    fn build_audit_report_empty_input_is_well_formed() {
+        // An empty audit (no advisories) still emits the full pnpm shape:
+        // a present-but-empty `advisories` map and zero-filled severity
+        // buckets — never a bare `{}`. This is the user-visible format
+        // contract consumers parse.
+        let deps = DependencyCounts {
+            dependencies: 3,
+            dev_dependencies: 1,
+            optional_dependencies: 0,
+            total: 12,
+        };
+        let report = build_audit_report(&serde_json::json!({}), Severity::Low, deps);
+
+        assert!(report["advisories"].as_object().unwrap().is_empty());
+        let vulns = report["metadata"]["vulnerabilities"].as_object().unwrap();
+        for key in ["info", "low", "moderate", "high", "critical"] {
+            assert_eq!(vulns[key], 0, "severity bucket {key} must be zero-filled");
+        }
+        assert_eq!(report["metadata"]["dependencies"], 3);
+        assert_eq!(report["metadata"]["devDependencies"], 1);
+        assert_eq!(report["metadata"]["totalDependencies"], 12);
     }
 
     #[test]
