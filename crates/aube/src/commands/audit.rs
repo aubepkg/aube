@@ -3,7 +3,14 @@
 //! Walks the lockfile's resolved package set (filtered by `--prod`/`--dev`),
 //! posts `{name: [versions]}` to the registry's
 //! `/-/npm/v1/security/advisories/bulk` endpoint, and prints the matching
-//! advisories. Mirrors `pnpm audit`'s default table layout and `--json` shape.
+//! advisories. Mirrors `pnpm audit`'s default table layout, and its
+//! `--json` shape: `{ "advisories": { "<id>": {advisory…}, … },
+//! "metadata": { "vulnerabilities": {info,low,moderate,high,critical},
+//! dependencies, devDependencies, optionalDependencies, totalDependencies
+//! } }`. The `advisories` map is keyed by the numeric npm advisory `id`
+//! (as a string), so a single advisory affecting several packages
+//! collapses to one entry; `metadata.vulnerabilities` counts one per
+//! unique advisory.
 //!
 //! Read-only unless `--fix` is passed.
 
@@ -164,7 +171,15 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
 
     if pkg_versions.is_empty() {
         if args.json {
-            println!("{{}}");
+            // Same well-formed shape consumers get on a non-empty run,
+            // so `.advisories` / `.metadata` are always present.
+            let report = build_audit_report(
+                &serde_json::json!({}),
+                args.audit_level,
+                count_dependencies(&graph, filter, args.no_optional, &closure),
+            );
+            let out = serde_json::to_string_pretty(&report).into_diagnostic()?;
+            println!("{out}");
         } else {
             println!("No dependencies to audit.");
         }
@@ -272,10 +287,17 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
     }
 
     if args.json {
-        // pnpm/npm audit --json shape is `{ "<pkg>": [ {advisory...}, ... ] }`.
-        // Filter the raw response to the packages/levels we kept.
-        let filtered = filter_json_by_level(&raw, args.audit_level);
-        let out = serde_json::to_string_pretty(&filtered).into_diagnostic()?;
+        // pnpm audit --json shape: `{ advisories: { "<id>": {…} },
+        // metadata: { vulnerabilities, dependencies, … } }`. Built from
+        // the post-ignore `raw`; `metadata.vulnerabilities` counts every
+        // (post-ignore) advisory, while the `advisories` map is
+        // additionally level-filtered.
+        let report = build_audit_report(
+            &raw,
+            args.audit_level,
+            count_dependencies(&graph, filter, args.no_optional, &closure),
+        );
+        let out = serde_json::to_string_pretty(&report).into_diagnostic()?;
         println!("{out}");
     } else {
         render_table(&rows);
@@ -458,8 +480,8 @@ async fn filter_unfixable(
         };
         // Skip the packument fetch if every advisory on this package
         // is below the user's severity threshold — they'd all be
-        // dropped by `flatten_advisories` / `filter_json_by_level`
-        // anyway.
+        // dropped by the level filter in `flatten_advisories` /
+        // `build_audit_report` anyway.
         let has_in_threshold = arr.iter().any(|adv| {
             adv.get("severity")
                 .and_then(|s| s.as_str())
@@ -968,31 +990,138 @@ fn flatten_advisories(v: &serde_json::Value, threshold: Severity) -> Vec<Row> {
     rows
 }
 
-fn filter_json_by_level(v: &serde_json::Value, threshold: Severity) -> serde_json::Value {
-    use serde_json::{Map, Value};
-    let Some(obj) = v.as_object() else {
-        return Value::Object(Map::new());
+/// Direct-dependency counts by category, consistent with the
+/// `filter` / `no_optional` gating used to build the audited closure.
+/// Mirrors pnpm's `metadata.dependencies`/`devDependencies`/
+/// `optionalDependencies`/`totalDependencies`.
+struct DependencyCounts {
+    dependencies: usize,
+    dev_dependencies: usize,
+    optional_dependencies: usize,
+    total: usize,
+}
+
+/// Count root deps by `dep_type`, honoring the SAME gating
+/// `collect_dep_closure` applies (`filter.keeps` + the `no_optional`
+/// drop), so the metadata reflects exactly what was audited. `total`
+/// is the size of the transitive closure.
+fn count_dependencies(
+    graph: &aube_lockfile::LockfileGraph,
+    filter: DepFilter,
+    no_optional: bool,
+    closure: &BTreeMap<String, &aube_lockfile::LockedPackage>,
+) -> DependencyCounts {
+    use aube_lockfile::DepType;
+    let mut counts = DependencyCounts {
+        dependencies: 0,
+        dev_dependencies: 0,
+        optional_dependencies: 0,
+        total: closure.len(),
     };
-    let mut out: Map<String, Value> = Map::new();
-    for (name, advisories) in obj {
-        let Some(arr) = advisories.as_array() else {
+    for dep in graph.root_deps() {
+        if !filter.keeps(dep.dep_type) {
             continue;
-        };
-        let kept: Vec<Value> = arr
-            .iter()
-            .filter(|adv| {
-                adv.get("severity")
-                    .and_then(|s| s.as_str())
-                    .and_then(|s| s.parse::<Severity>().ok())
-                    .is_some_and(|s| s >= threshold)
-            })
-            .cloned()
-            .collect();
-        if !kept.is_empty() {
-            out.insert(name.clone(), Value::Array(kept));
+        }
+        if no_optional && matches!(dep.dep_type, DepType::Optional) {
+            continue;
+        }
+        match dep.dep_type {
+            DepType::Production => counts.dependencies += 1,
+            DepType::Dev => counts.dev_dependencies += 1,
+            DepType::Optional => counts.optional_dependencies += 1,
         }
     }
-    Value::Object(out)
+    counts
+}
+
+/// Build pnpm's `audit --json` report (`{ advisories, metadata }`) from
+/// the post-ignore bulk response `raw` (`{ "<pkg>": [advisory, …] }`).
+///
+/// * `metadata.vulnerabilities` counts ONE per unique advisory `id`,
+///   bucketed by severity into the five always-present, zero-filled
+///   keys. Unknown severities are skipped (matching pnpm's
+///   `isKnownSeverity`). Counted over ALL post-ignore advisories, BEFORE
+///   the audit-level filter.
+/// * `advisories` is keyed by `String(id)` (dedup: same id across
+///   packages collapses to one entry, last write wins) and is
+///   additionally filtered to advisories at or above `threshold`.
+fn build_audit_report(
+    raw: &serde_json::Value,
+    threshold: Severity,
+    deps: DependencyCounts,
+) -> serde_json::Value {
+    use serde_json::{Map, Value};
+
+    let mut vulns: BTreeMap<&str, u64> = BTreeMap::from([
+        ("info", 0),
+        ("low", 0),
+        ("moderate", 0),
+        ("high", 0),
+        ("critical", 0),
+    ]);
+    // De-dup the metadata count by advisory id so an advisory hitting
+    // several packages is counted once, matching the `advisories` map.
+    let mut counted_ids: BTreeSet<String> = BTreeSet::new();
+    let mut advisories: Map<String, Value> = Map::new();
+
+    if let Some(obj) = raw.as_object() {
+        for advisory_list in obj.values() {
+            let Some(arr) = advisory_list.as_array() else {
+                continue;
+            };
+            for adv in arr {
+                let Some(id) = advisory_id(adv) else {
+                    continue;
+                };
+                let severity = adv.get("severity").and_then(|s| s.as_str());
+
+                // metadata.vulnerabilities: one per unique id, known
+                // severities only, BEFORE the level filter.
+                if counted_ids.insert(id.clone())
+                    && let Some(sev) = severity
+                    && let Some(bucket) = vulns.get_mut(sev)
+                {
+                    *bucket += 1;
+                }
+
+                // advisories map: re-keyed by id, level-filtered.
+                if severity
+                    .and_then(|s| s.parse::<Severity>().ok())
+                    .is_some_and(|s| s >= threshold)
+                {
+                    advisories.insert(id, adv.clone());
+                }
+            }
+        }
+    }
+
+    serde_json::json!({
+        "advisories": Value::Object(advisories),
+        "metadata": {
+            "vulnerabilities": {
+                "info": vulns["info"],
+                "low": vulns["low"],
+                "moderate": vulns["moderate"],
+                "high": vulns["high"],
+                "critical": vulns["critical"],
+            },
+            "dependencies": deps.dependencies,
+            "devDependencies": deps.dev_dependencies,
+            "optionalDependencies": deps.optional_dependencies,
+            "totalDependencies": deps.total,
+        },
+    })
+}
+
+/// Extract an advisory's npm `id` as a string. Numbers stringify; an
+/// already-string id passes through. Missing/other → `None` (the
+/// advisory is skipped, since pnpm keys solely on `id`).
+fn advisory_id(adv: &serde_json::Value) -> Option<String> {
+    match adv.get("id") {
+        Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
 }
 
 fn render_table(rows: &[Row]) {
@@ -1252,6 +1381,56 @@ mod tests {
                 "CVE-2099-0001".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn build_audit_report_keys_by_id_dedups_and_level_filters() {
+        // `dep-a` and `dep-b` share advisory 100 (a high CVE): the
+        // `advisories` map must collapse it to one entry keyed by the
+        // id string, and the metadata must count it once. Advisory 200
+        // is low; with a `high` threshold it falls out of the
+        // `advisories` map but still counts in the metadata.
+        let raw = serde_json::json!({
+            "dep-a": [
+                { "id": 100, "severity": "high", "title": "shared high" },
+                { "id": 200, "severity": "low", "title": "a-only low" }
+            ],
+            "dep-b": [
+                { "id": 100, "severity": "high", "title": "shared high" }
+            ]
+        });
+        let deps = DependencyCounts {
+            dependencies: 2,
+            dev_dependencies: 0,
+            optional_dependencies: 0,
+            total: 2,
+        };
+
+        let report = build_audit_report(&raw, Severity::High, deps);
+
+        // (a) advisories keyed by id STRING, not package name.
+        let advisories = report["advisories"].as_object().unwrap();
+        assert!(advisories.contains_key("100"));
+        assert!(!advisories.contains_key("dep-a"));
+        // (c) same id under two packages collapses to one entry.
+        // (d) the below-threshold low advisory is dropped from the map.
+        assert_eq!(advisories.len(), 1);
+        assert!(!advisories.contains_key("200"));
+
+        // (b) metadata.vulnerabilities carries all five severity keys.
+        let vulns = report["metadata"]["vulnerabilities"].as_object().unwrap();
+        for key in ["info", "low", "moderate", "high", "critical"] {
+            assert!(vulns.contains_key(key), "missing severity bucket {key}");
+        }
+        // (c) dedup: advisory 100 counted once despite two occurrences.
+        assert_eq!(vulns["high"], 1);
+        // (d) the low advisory still counts in metadata even though the
+        // level filter dropped it from the advisories map.
+        assert_eq!(vulns["low"], 1);
+        assert_eq!(vulns["info"], 0);
+
+        assert_eq!(report["metadata"]["totalDependencies"], 2);
+        assert_eq!(report["metadata"]["dependencies"], 2);
     }
 
     #[test]
