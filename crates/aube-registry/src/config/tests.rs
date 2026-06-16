@@ -467,6 +467,35 @@ fn auth_token_resolves_for_path_scoped_registry_with_default_port() {
 }
 
 #[test]
+fn scoped_auth_token_resolves_for_full_tarball_url_under_path_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".npmrc"),
+        "registry=https://registry.example.com/\n\
+             //registry.example.com/:_authToken=registry-token\n\
+             //registry.example.com/npm:@myorg:_authToken=scoped-token\n",
+    )
+    .unwrap();
+
+    let config = NpmConfig::load_isolated(dir.path());
+
+    assert_eq!(
+        config.auth_token_for_package(
+            "https://registry.example.com/npm/@myorg/pkg/-/pkg-1.0.0.tgz",
+            "@myorg/pkg",
+        ),
+        Some("scoped-token"),
+    );
+    assert_eq!(
+        config.auth_token_for_package(
+            "https://registry.example.com/npm-release/@myorg/pkg/-/pkg-1.0.0.tgz",
+            "@myorg/pkg",
+        ),
+        Some("registry-token"),
+    );
+}
+
+#[test]
 fn npmrc_key_with_default_port_is_normalized_on_ingest() {
     // User wrote `:443` explicitly in `.npmrc`. Lookups that don't
     // carry the port must still resolve.

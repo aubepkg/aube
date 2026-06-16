@@ -656,4 +656,51 @@ mod tests {
         assert_ne!(org_client, default_client);
         assert_eq!(other_client, default_client);
     }
+
+    #[test]
+    fn tarball_request_uses_scoped_auth_for_path_registry() {
+        let mut config = NpmConfig::default();
+        let mut registry_auth = AuthConfig::default();
+        registry_auth.auth_token = Some("registry-token".to_string());
+        config
+            .auth_by_uri
+            .insert("//registry.example.com/".to_string(), registry_auth);
+
+        let mut scoped_auth = AuthConfig::default();
+        scoped_auth.auth_token = Some("scoped-token".to_string());
+        config
+            .scoped_auth_by_uri
+            .entry("//registry.example.com/npm".to_string())
+            .or_default()
+            .insert("@myorg".to_string(), scoped_auth);
+        let client = RegistryClient::from_config(config);
+
+        let req = client
+            .authed_tarball_get(
+                "https://registry.example.com/npm/@myorg/pkg/-/pkg-1.0.0.tgz",
+                "https://registry.example.com/npm/@myorg/pkg/-/pkg-1.0.0.tgz",
+            )
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.headers().get(reqwest::header::AUTHORIZATION),
+            Some(&reqwest::header::HeaderValue::from_static(
+                "Bearer scoped-token"
+            )),
+        );
+
+        let req = client
+            .authed_tarball_get(
+                "https://registry.example.com/npm-release/@myorg/pkg/-/pkg-1.0.0.tgz",
+                "https://registry.example.com/npm-release/@myorg/pkg/-/pkg-1.0.0.tgz",
+            )
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.headers().get(reqwest::header::AUTHORIZATION),
+            Some(&reqwest::header::HeaderValue::from_static(
+                "Bearer registry-token"
+            )),
+        );
+    }
 }
