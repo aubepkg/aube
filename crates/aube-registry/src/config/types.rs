@@ -119,6 +119,15 @@ pub struct AuthConfig {
     pub tls: TlsConfig,
 }
 
+impl AuthConfig {
+    pub(crate) fn has_tls_material(&self) -> bool {
+        !self.tls.ca.is_empty()
+            || self.tls.cafile.is_some()
+            || self.tls.cert.is_some()
+            || self.tls.key.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TlsConfig {
     pub ca: Vec<String>,

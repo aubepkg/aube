@@ -139,26 +139,56 @@ impl NpmConfig {
         registry_url: &str,
         package_name: &str,
     ) -> Option<&AuthConfig> {
+        if let Some((_, _, auth)) =
+            self.scoped_config_for_package_matching(registry_url, package_name, |auth| {
+                has_credential_material(auth)
+            })
+        {
+            return Some(auth);
+        }
+        self.registry_config_for(registry_url)
+    }
+
+    pub(crate) fn scoped_tls_config_for_package(
+        &self,
+        registry_url: &str,
+        package_name: &str,
+    ) -> Option<(&str, &str, &AuthConfig)> {
+        self.scoped_config_for_package_matching(
+            registry_url,
+            package_name,
+            AuthConfig::has_tls_material,
+        )
+    }
+
+    fn scoped_config_for_package_matching(
+        &self,
+        registry_url: &str,
+        package_name: &str,
+        matches: impl Fn(&AuthConfig) -> bool,
+    ) -> Option<(&str, &str, &AuthConfig)> {
         if let Some(scope) = package_scope(package_name) {
             let scope = scope.to_lowercase();
             let uri_key = registry_uri_key(registry_url);
-            if let Some((_, auth)) = self
+            if let Some((_, prefix, scope, auth)) = self
                 .scoped_auth_by_uri
                 .iter()
                 .filter_map(|(prefix, auth_by_scope)| {
                     if uri_key_matches_prefix(&uri_key, prefix) {
-                        auth_by_scope.get(&scope).map(|auth| (prefix.len(), auth))
+                        auth_by_scope.get_key_value(&scope).map(|(scope, auth)| {
+                            (prefix.len(), prefix.as_str(), scope.as_str(), auth)
+                        })
                     } else {
                         None
                     }
                 })
-                .filter(|(_, auth)| has_credential_material(auth))
-                .max_by_key(|(prefix_len, _)| *prefix_len)
+                .filter(|(_, _, _, auth)| matches(auth))
+                .max_by_key(|(prefix_len, _, _, _)| *prefix_len)
             {
-                return Some(auth);
+                return Some((prefix, scope, auth));
             }
         }
-        self.registry_config_for(registry_url)
+        None
     }
 
     /// Test-only compatibility shim. Production code must go through

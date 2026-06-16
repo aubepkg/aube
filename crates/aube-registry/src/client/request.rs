@@ -72,7 +72,8 @@ impl RegistryClient {
         package_name: &str,
     ) -> reqwest::RequestBuilder {
         self.authed_for_package(
-            self.http_for(registry_url).request(method, url),
+            self.http_for_package(registry_url, package_name)
+                .request(method, url),
             registry_url,
             package_name,
         )
@@ -209,6 +210,24 @@ impl RegistryClient {
         crate::config::lookup_by_uri_prefix(&self.http_by_uri, &uri_key).unwrap_or(&self.http)
     }
 
+    pub(super) fn http_for_package(
+        &self,
+        registry_url: &str,
+        package_name: &str,
+    ) -> &reqwest::Client {
+        if let Some((prefix, scope, _)) = self
+            .config
+            .scoped_tls_config_for_package(registry_url, package_name)
+            && let Some(client) = self
+                .http_by_uri_scope
+                .get(prefix)
+                .and_then(|by_scope| by_scope.get(scope))
+        {
+            return client;
+        }
+        self.http_for(registry_url)
+    }
+
     /// Pick the right HTTP client for tarball body downloads. The
     /// default registry uses the dedicated h1 client. Per-uri
     /// authed registries (corporate Artifactory, GitHub Packages)
@@ -221,6 +240,24 @@ impl RegistryClient {
             .unwrap_or(&self.http_tarball)
     }
 
+    pub(super) fn http_tarball_for_package(
+        &self,
+        registry_url: &str,
+        package_name: &str,
+    ) -> &reqwest::Client {
+        if let Some((prefix, scope, _)) = self
+            .config
+            .scoped_tls_config_for_package(registry_url, package_name)
+            && let Some(client) = self
+                .http_by_uri_scope
+                .get(prefix)
+                .and_then(|by_scope| by_scope.get(scope))
+        {
+            return client;
+        }
+        self.http_tarball_for(registry_url)
+    }
+
     /// Authed RequestBuilder routed through the tarball-specific
     /// client. Mirrors [`Self::authed_get`] but picks
     /// [`Self::http_tarball_for`] instead of [`Self::http_for`].
@@ -229,12 +266,15 @@ impl RegistryClient {
         url: &str,
         registry_url: &str,
     ) -> reqwest::RequestBuilder {
-        let req = self
-            .http_tarball_for(registry_url)
-            .request(reqwest::Method::GET, url);
         if let Some(package_name) = package_name_from_tarball_url(url) {
+            let req = self
+                .http_tarball_for_package(registry_url, &package_name)
+                .request(reqwest::Method::GET, url);
             self.authed_for_package(req, registry_url, &package_name)
         } else {
+            let req = self
+                .http_tarball_for(registry_url)
+                .request(reqwest::Method::GET, url);
             self.authed(req, registry_url)
         }
     }
@@ -556,7 +596,8 @@ fn package_name_from_tarball_url(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::package_name_from_tarball_url;
+    use super::{RegistryClient, package_name_from_tarball_url};
+    use crate::config::{AuthConfig, NpmConfig};
 
     #[test]
     fn package_name_from_tarball_url_handles_scoped_paths() {
@@ -591,5 +632,28 @@ mod tests {
             .as_deref(),
             Some("lodash")
         );
+    }
+
+    #[test]
+    fn http_for_package_uses_scoped_tls_client() {
+        let mut config = NpmConfig::default();
+        config.registry = "https://registry.example.com/".to_string();
+        let mut scoped = AuthConfig::default();
+        scoped.tls.cafile = Some(std::path::PathBuf::from("org-a-ca.pem"));
+        config
+            .scoped_auth_by_uri
+            .entry("//registry.example.com/".to_string())
+            .or_default()
+            .insert("@org-a".to_string(), scoped);
+        let client = RegistryClient::from_config(config);
+
+        let default_client = client.http_for("https://registry.example.com/") as *const _;
+        let org_client =
+            client.http_for_package("https://registry.example.com/", "@org-a/pkg") as *const _;
+        let other_client =
+            client.http_for_package("https://registry.example.com/", "@org-b/pkg") as *const _;
+
+        assert_ne!(org_client, default_client);
+        assert_eq!(other_client, default_client);
     }
 }

@@ -114,7 +114,7 @@ impl RegistryClient {
         let (url, registry_url) = self.packument_url(name);
 
         let mut req = self.authed_for_package(
-            self.http_for(registry_url)
+            self.http_for_package(registry_url, name)
                 .put(&url)
                 .header("Content-Type", "application/json")
                 .json(body),
@@ -193,7 +193,7 @@ impl RegistryClient {
         let body = serde_json::to_string(version).map_err(std::io::Error::other)?;
 
         let mut req = self
-            .http_for(registry_url)
+            .http_for_package(registry_url, name)
             .put(&url)
             .header("Content-Type", "application/json")
             .body(body);
@@ -224,7 +224,7 @@ impl RegistryClient {
     ) -> Result<(), Error> {
         let registry_url = self.registry_url_for(name);
         let url = dist_tag_url(registry_url, name, tag);
-        let mut req = self.http_for(registry_url).delete(&url);
+        let mut req = self.http_for_package(registry_url, name).delete(&url);
         if self.config.is_public_npmjs(name) {
             req = req.header("npm-auth-type", "web");
         }

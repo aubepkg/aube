@@ -39,11 +39,7 @@ impl RegistryClient {
         let http_tarball = build_http_tarball_client(&config, None, &fetch_policy);
         let mut http_by_uri = BTreeMap::new();
         for (uri, registry) in &config.auth_by_uri {
-            if registry.tls.ca.is_empty()
-                && registry.tls.cafile.is_none()
-                && registry.tls.cert.is_none()
-                && registry.tls.key.is_none()
-            {
+            if !registry.has_tls_material() {
                 continue;
             }
             http_by_uri.insert(
@@ -51,10 +47,26 @@ impl RegistryClient {
                 build_http_client(&config, Some(registry), &fetch_policy),
             );
         }
+        let mut http_by_uri_scope = BTreeMap::new();
+        for (uri, by_scope) in &config.scoped_auth_by_uri {
+            for (scope, registry) in by_scope {
+                if !registry.has_tls_material() {
+                    continue;
+                }
+                http_by_uri_scope
+                    .entry(uri.clone())
+                    .or_insert_with(BTreeMap::new)
+                    .insert(
+                        scope.clone(),
+                        build_http_client(&config, Some(registry), &fetch_policy),
+                    );
+            }
+        }
 
         Self {
             http,
             http_by_uri,
+            http_by_uri_scope,
             http_tarball,
             token_helper_cache: Mutex::new(BTreeMap::new()),
             auth_token_by_url: Mutex::new(BTreeMap::new()),

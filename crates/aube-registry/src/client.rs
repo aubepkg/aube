@@ -57,6 +57,7 @@ const AUDIT_BODY_CAP: u64 = 256 << 20;
 pub struct RegistryClient {
     http: reqwest::Client,
     http_by_uri: BTreeMap<String, reqwest::Client>,
+    http_by_uri_scope: BTreeMap<String, BTreeMap<String, reqwest::Client>>,
     /// HTTP/1.1-only client used for tarball body downloads. See
     /// [`build_http_tarball_client`] for the rationale (h2 stream
     /// queueing on a single connection vs h1's parallel TCP per
