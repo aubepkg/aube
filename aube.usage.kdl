@@ -166,9 +166,9 @@ cmd approve-builds help="Approve ignored dependency build scripts" {
 cmd audit help="Check installed packages against the registry advisory DB" {
     after_long_help "Examples:\n\n  $ aube audit\n  Severity  Package    Vulnerable  Title\n  moderate  minimatch  <3.0.5      Regular Expression Denial of Service\n                                   https://github.com/advisories/GHSA-f8q6-p94x\n\n  1 vulnerability found\n\n  # Only fail on high and above\n  $ aube audit --audit-level high\n\n  # Skip optional deps and dev deps\n  $ aube audit --prod --no-optional\n\n  # Pipe into jq\n  $ aube audit --json | jq '.advisories | length'\n\n  # Clean\n  $ aube audit\n  No known vulnerabilities found\n"
     flag --audit-level help="Only print advisories at or above this severity" default=low {
-        long_help "Only print advisories at or above this severity.\n\nOne of: `low`, `moderate`, `high`, `critical`. Default: `low`."
+        long_help "Only print advisories at or above this severity.\n\nOne of: `info`, `low`, `moderate`, `high`, `critical`. Default: `low`."
         arg <AUDIT_LEVEL> {
-            choices low moderate high critical
+            choices info low moderate high critical
         }
     }
     flag "-D --dev" help="Only audit `devDependencies`"
