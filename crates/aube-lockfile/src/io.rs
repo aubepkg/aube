@@ -472,6 +472,8 @@ fn validate_dependency_aliases(path: &Path, graph: &LockfileGraph) -> Result<(),
             .keys()
             .chain(pkg.optional_dependencies.keys())
             .chain(pkg.peer_dependencies.keys())
+            .chain(pkg.peer_dependencies_meta.keys())
+            .chain(pkg.declared_dependencies.keys())
         {
             if !is_safe_package_alias(alias) {
                 return Err(Error::parse(
@@ -539,7 +541,9 @@ fn dep_path_has_registry_version(dep_path: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{dep_path_has_registry_version, validate_dependency_aliases};
-    use crate::{DepType, DirectDep, GitSource, LocalSource, LockedPackage, RemoteTarballSource};
+    use crate::{
+        DepType, DirectDep, GitSource, LocalSource, LockedPackage, PeerDepMeta, RemoteTarballSource,
+    };
     use proptest::prelude::*;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -599,6 +603,9 @@ mod tests {
             "node_modules",
             "@scope/pkg/extra",
             "\\evil",
+            "foo\0bar",
+            "/etc/passwd",
+            "C:pkg",
         ] {
             let mut graph = crate::LockfileGraph::default();
             graph.importers.insert(
@@ -622,9 +629,7 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_package_dependency_aliases() {
-        let mut graph = crate::LockfileGraph::default();
-        graph.packages.insert(
-            "parent@1.0.0".into(),
+        for package in [
             LockedPackage {
                 name: "parent".into(),
                 version: "1.0.0".into(),
@@ -632,15 +637,35 @@ mod tests {
                 dependencies: BTreeMap::from([("../escape".into(), "1.0.0".into())]),
                 ..LockedPackage::default()
             },
-        );
+            LockedPackage {
+                name: "parent".into(),
+                version: "1.0.0".into(),
+                dep_path: "parent@1.0.0".into(),
+                declared_dependencies: BTreeMap::from([("../escape".into(), "^1.0.0".into())]),
+                ..LockedPackage::default()
+            },
+            LockedPackage {
+                name: "parent".into(),
+                version: "1.0.0".into(),
+                dep_path: "parent@1.0.0".into(),
+                peer_dependencies_meta: BTreeMap::from([(
+                    "../escape".into(),
+                    PeerDepMeta { optional: true },
+                )]),
+                ..LockedPackage::default()
+            },
+        ] {
+            let mut graph = crate::LockfileGraph::default();
+            graph.packages.insert("parent@1.0.0".into(), package);
 
-        let err = validate_dependency_aliases(Path::new("pnpm-lock.yaml"), &graph)
-            .expect_err("unsafe alias must be rejected");
-        assert!(
-            err.to_string()
-                .contains("package parent@1.0.0 has unsafe dependency alias `../escape`"),
-            "unexpected error: {err}"
-        );
+            let err = validate_dependency_aliases(Path::new("pnpm-lock.yaml"), &graph)
+                .expect_err("unsafe alias must be rejected");
+            assert!(
+                err.to_string()
+                    .contains("package parent@1.0.0 has unsafe dependency alias `../escape`"),
+                "unexpected error: {err}"
+            );
+        }
     }
 
     #[test]
