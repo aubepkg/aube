@@ -21,9 +21,13 @@ pub(super) fn peerless_dep_path(name: &str, value: &str) -> String {
 /// `consumer@1.0.0(react-dom@18.2.0(react@18.2.0))` yields the single outer
 /// segment `["(react-dom@18.2.0(react@18.2.0))"]` with the inner segment
 /// preserved verbatim. The canonical `name@version` head (everything before
-/// the first `(`) is skipped. Mirrors the resolver's identically-named
-/// helper; duplicated here because the two crates can't share it without a
-/// public surface neither wants to commit to.
+/// the first `(`) is skipped.
+///
+/// Mirrors the resolver's identically-named helper in
+/// `aube-resolver/src/peer_context.rs`; duplicated here because the two
+/// crates can't share it without a public surface neither wants to commit
+/// to. Any change to the paren-balancing algorithm (a new peer-suffix
+/// shape, percent-encoded git URLs, …) must be applied to both copies.
 fn outer_paren_segments(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut segments = Vec::new();
@@ -82,14 +86,35 @@ pub(super) fn rewrite_peer_suffix(s: &str, translate: &impl Fn(&str) -> Option<S
     let Some(head_end) = s.find('(') else {
         return s.to_string();
     };
+    let segments = outer_paren_segments(&s[head_end..]);
+    if segments.is_empty() {
+        // A `(` with no balanced segment is a malformed dep_path tail
+        // (truncated / hand-corrupted lockfile). Preserve the bytes
+        // verbatim instead of silently dropping everything after the `(`.
+        warn_unbalanced_peer_suffix(s);
+        return s.to_string();
+    }
     let mut out = String::with_capacity(s.len());
     out.push_str(&s[..head_end]);
-    for seg in outer_paren_segments(&s[head_end..]) {
+    for seg in segments {
         out.push('(');
         out.push_str(&rewrite_peer_reference(&seg[1..seg.len() - 1], translate));
         out.push(')');
     }
     out
+}
+
+/// Surface a dep_path tail / peer reference that opens a `(` it never
+/// closes — a truncated or hand-corrupted lockfile entry that
+/// [`outer_paren_segments`] returns no segment for. The callers preserve
+/// the bytes verbatim; this warning keeps the corruption diagnosable
+/// instead of letting the shortened key mis-resolve on the next install.
+fn warn_unbalanced_peer_suffix(s: &str) {
+    tracing::warn!(
+        code = aube_codes::warnings::WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX,
+        dep_path = s,
+        "unbalanced parentheses in pnpm dep_path peer suffix; preserving the key verbatim"
+    );
 }
 
 /// Rewrite a single peer reference (the contents between one pair of
@@ -101,9 +126,14 @@ fn rewrite_peer_reference(inner: &str, translate: &impl Fn(&str) -> Option<Strin
     let Some(nested_start) = inner.find('(') else {
         return translate(inner).unwrap_or_else(|| inner.to_string());
     };
+    let segments = outer_paren_segments(&inner[nested_start..]);
+    if segments.is_empty() {
+        warn_unbalanced_peer_suffix(inner);
+        return inner.to_string();
+    }
     let mut out = String::with_capacity(inner.len());
     out.push_str(&inner[..nested_start]);
-    for seg in outer_paren_segments(&inner[nested_start..]) {
+    for seg in segments {
         out.push('(');
         out.push_str(&rewrite_peer_reference(&seg[1..seg.len() - 1], translate));
         out.push(')');
@@ -248,5 +278,18 @@ mod rewrite_peer_suffix_tests {
             ),
             "pkg@1.0.0(react@18.2.0)(request@https://codeload.github.com/owner/request/tar.gz/abc)"
         );
+    }
+
+    #[test]
+    fn unbalanced_parens_preserved_verbatim_not_dropped() {
+        // A truncated / hand-corrupted tail (open `(`, no matching close)
+        // must be preserved byte-for-byte. Silently dropping the suffix
+        // would shorten the key and mis-resolve it against a different
+        // package. A single unclosed paren:
+        let flat = "request-promise-core@1.1.4(request@bad";
+        assert_eq!(rewrite_peer_suffix(flat, &translate), flat);
+        // A nested open paren with one missing close is unbalanced too:
+        let nested = "consumer@1.0.0(request-promise@4.2.6(request@bad)";
+        assert_eq!(rewrite_peer_suffix(nested, &translate), nested);
     }
 }

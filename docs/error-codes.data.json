@@ -753,6 +753,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX",
+      "category": "Lockfile",
+      "description": "A pnpm dep_path peer suffix had unbalanced parentheses (a truncated or hand-corrupted lockfile entry). The key is preserved verbatim instead of silently dropping everything after the `(`, so a later install surfaces the bad entry rather than mis-resolving it.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_PROGRESS_OVERFLOW",
       "category": "Progress UI",
       "description": "Install progress numerator exceeded the resolved-package denominator. Display clamps to total; the warning surfaces the bookkeeping mismatch so the underlying race can be diagnosed.",
