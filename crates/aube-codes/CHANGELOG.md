@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0](https://github.com/jdx/aube/compare/aube-codes-v1.21.0...aube-codes-v1.22.0) - 2026-06-17
+
+### Fixed
+
+- *(install)* close pnpm-lock.yaml parity and re-resolution gaps ([#896](https://github.com/jdx/aube/pull/896))
+
+### Other
+
+- refresh benchmarks for v1.21.0 ([#890](https://github.com/jdx/aube/pull/890))
+
 ## [1.21.0](https://github.com/jdx/aube/compare/aube-codes-v1.20.0...aube-codes-v1.21.0) - 2026-06-13
 
 ### Added

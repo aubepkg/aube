@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0](https://github.com/jdx/aube/compare/v1.21.0...v1.22.0) - 2026-06-17
+
+### Added
+
+- *(registry)* support scope-specific auth tokens ([#899](https://github.com/jdx/aube/pull/899))
+
+### Fixed
+
+- *(install)* verify tarball urls against packuments ([#905](https://github.com/jdx/aube/pull/905))
+- *(embedder)* honor the embedder profile in the install banner and cache/name sites ([#888](https://github.com/jdx/aube/pull/888))
+- *(install)* close pnpm-lock.yaml parity and re-resolution gaps ([#896](https://github.com/jdx/aube/pull/896))
+- *(install)* keep nested pnpm-workspace.yaml as a hard workspace boundary ([#889](https://github.com/jdx/aube/pull/889))
+- *(lockfile)* close pnpm-lock.yaml formatting and field parity gaps ([#893](https://github.com/jdx/aube/pull/893))
+- *(install)* repair member installs under sharedWorkspaceLockfile=false ([#891](https://github.com/jdx/aube/pull/891))
+
+### Other
+
+- *(commands)* return exit codes instead of process::exit (lib-embed safety) ([#897](https://github.com/jdx/aube/pull/897))
+- refresh benchmarks for v1.21.0 ([#890](https://github.com/jdx/aube/pull/890))
+
 ## [1.21.0](https://github.com/jdx/aube/compare/v1.20.0...v1.21.0) - 2026-06-13
 
 ### Added

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0](https://github.com/jdx/aube/compare/aube-resolver-v1.21.0...aube-resolver-v1.22.0) - 2026-06-17
+
+### Fixed
+
+- *(embedder)* honor the embedder profile in the install banner and cache/name sites ([#888](https://github.com/jdx/aube/pull/888))
+- *(install)* close pnpm-lock.yaml parity and re-resolution gaps ([#896](https://github.com/jdx/aube/pull/896))
+- *(lockfile)* close pnpm-lock.yaml formatting and field parity gaps ([#893](https://github.com/jdx/aube/pull/893))
+- *(install)* repair member installs under sharedWorkspaceLockfile=false ([#891](https://github.com/jdx/aube/pull/891))
+- *(lockfile)* only write time: under resolution-mode=time-based ([#892](https://github.com/jdx/aube/pull/892))
+
+### Other
+
+- refresh benchmarks for v1.21.0 ([#890](https://github.com/jdx/aube/pull/890))
+
 ## [1.21.0](https://github.com/jdx/aube/compare/aube-resolver-v1.20.0...aube-resolver-v1.21.0) - 2026-06-13
 
 ### Added
