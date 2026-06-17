@@ -239,11 +239,18 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
     let mut rows = Vec::new();
     let mut matched_any = false;
     for info in packages {
+        if let Some(pattern) = args.pattern.as_deref()
+            && !info.aliases.iter().any(|alias| alias.starts_with(pattern))
+        {
+            continue;
+        }
+
         let manifest = super::load_manifest(&info.install_dir.join("package.json"))?;
         let graph = match aube_lockfile::parse_lockfile(&info.install_dir, &manifest) {
             Ok(g) => g,
             Err(aube_lockfile::Error::NotFound(_)) => {
                 tracing::warn!(
+                    code = aube_codes::warnings::WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE,
                     "global install at {} has no lockfile; skipping outdated check",
                     info.install_dir.display()
                 );

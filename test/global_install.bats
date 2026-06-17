@@ -92,17 +92,20 @@ teardown() {
 	assert_file_not_exists package.json
 
 	run aube outdated -g
-	assert_failure
-	[ "$status" -eq 1 ]
+	assert_failure 1
 	assert_output --partial "Package"
 	assert_output --partial "is-odd"
 	assert_output --partial "0.1.2"
 	assert_output --partial "3.0.1"
 
 	run aube outdated -g is-odd
-	assert_failure
-	[ "$status" -eq 1 ]
+	assert_failure 1
 	assert_output --partial "is-odd"
+
+	run aube outdated -g definitely-not-global
+	assert_success
+	assert_output --partial "(no matching dependencies)"
+	refute_output --partial "is-odd"
 }
 
 @test "aube update -g fails when any named package is missing" {
