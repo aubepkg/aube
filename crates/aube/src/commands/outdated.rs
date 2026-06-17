@@ -129,6 +129,12 @@ pub async fn run(
 ) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     if args.global {
+        if !filter.is_empty() {
+            return Err(miette::miette!(
+                "{}: --global cannot be used with --recursive or --filter",
+                aube_util::cmd("outdated")
+            ));
+        }
         return run_global(args).await;
     }
 
@@ -239,6 +245,8 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
     let mut rows = Vec::new();
     let mut matched_any = false;
     let mut matched_install = false;
+    let mut parsed_install = false;
+    let mut skipped_lockfile = false;
     for info in packages {
         if let Some(pattern) = args.pattern.as_deref()
             && !info.aliases.iter().any(|alias| alias.starts_with(pattern))
@@ -251,6 +259,7 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
         let graph = match aube_lockfile::parse_lockfile(&info.install_dir, &manifest) {
             Ok(g) => g,
             Err(aube_lockfile::Error::NotFound(_)) => {
+                skipped_lockfile = true;
                 tracing::warn!(
                     code = aube_codes::warnings::WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE,
                     "global install at {} has no lockfile; skipping outdated check",
@@ -267,13 +276,11 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
                 });
             }
         };
-        let (mut package_rows, matched) = collect_rows(
-            &info.install_dir,
-            args.clone_for_fanout(),
-            &graph,
-            graph.root_deps(),
-        )
-        .await?;
+        parsed_install = true;
+        let mut collect_args = args.clone_for_fanout();
+        collect_args.pattern = None;
+        let (mut package_rows, matched) =
+            collect_rows(&info.install_dir, collect_args, &graph, graph.root_deps()).await?;
         if matched {
             matched_any = true;
         }
@@ -284,7 +291,7 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
     let has_drift = has_drift(&rows);
     if args.json {
         render_json(&rows)?;
-    } else if rows.is_empty() && matched_install && !matched_any {
+    } else if rows.is_empty() && matched_install && !parsed_install && skipped_lockfile {
         println!("(no checkable global dependencies)");
     } else if rows.is_empty() && !matched_any {
         println!("(no matching dependencies)");

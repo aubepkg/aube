@@ -106,6 +106,11 @@ teardown() {
 	assert_success
 	assert_output --partial "(no matching dependencies)"
 	refute_output --partial "is-odd"
+
+	run aube outdated -g is-odd -D
+	assert_success
+	assert_output --partial "(no matching dependencies)"
+	refute_output --partial "(no checkable global dependencies)"
 }
 
 @test "aube outdated -g reports uncheckable globals without lockfiles" {
@@ -120,6 +125,12 @@ teardown() {
 	assert_success
 	assert_output --partial "(no checkable global dependencies)"
 	refute_output --partial "(no matching dependencies)"
+}
+
+@test "aube outdated -g rejects workspace selectors" {
+	run aube --filter foo outdated -g
+	assert_failure
+	assert_output --partial "--global cannot be used with --recursive or --filter"
 }
 
 @test "aube update -g fails when any named package is missing" {
