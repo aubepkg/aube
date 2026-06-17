@@ -108,6 +108,20 @@ teardown() {
 	refute_output --partial "is-odd"
 }
 
+@test "aube outdated -g reports uncheckable globals without lockfiles" {
+	run aube add -g is-odd@0.1.2
+	assert_success
+
+	pkg_dir="$AUBE_HOME/global-aube"
+	install_dir="$(find "$pkg_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+	rm "$install_dir/aube-lock.yaml"
+
+	run aube outdated -g
+	assert_success
+	assert_output --partial "(no checkable global dependencies)"
+	refute_output --partial "(no matching dependencies)"
+}
+
 @test "aube update -g fails when any named package is missing" {
 	run aube add -g is-positive@1.0.0
 	assert_success

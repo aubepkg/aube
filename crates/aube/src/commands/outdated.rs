@@ -238,12 +238,14 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
 
     let mut rows = Vec::new();
     let mut matched_any = false;
+    let mut matched_install = false;
     for info in packages {
         if let Some(pattern) = args.pattern.as_deref()
             && !info.aliases.iter().any(|alias| alias.starts_with(pattern))
         {
             continue;
         }
+        matched_install = true;
 
         let manifest = super::load_manifest(&info.install_dir.join("package.json"))?;
         let graph = match aube_lockfile::parse_lockfile(&info.install_dir, &manifest) {
@@ -282,6 +284,8 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
     let has_drift = has_drift(&rows);
     if args.json {
         render_json(&rows)?;
+    } else if rows.is_empty() && matched_install && !matched_any {
+        println!("(no checkable global dependencies)");
     } else if rows.is_empty() && !matched_any {
         println!("(no matching dependencies)");
     } else {
