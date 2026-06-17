@@ -248,9 +248,13 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
     let mut parsed_install = false;
     let mut skipped_lockfile = false;
     for info in packages {
-        if let Some(pattern) = args.pattern.as_deref()
-            && !info.aliases.iter().any(|alias| alias.starts_with(pattern))
-        {
+        let matched_aliases: Option<Vec<&str>> = args.pattern.as_deref().map(|pattern| {
+            info.aliases
+                .iter()
+                .filter_map(|alias| alias.starts_with(pattern).then_some(alias.as_str()))
+                .collect()
+        });
+        if matched_aliases.as_ref().is_some_and(Vec::is_empty) {
             continue;
         }
         matched_install = true;
@@ -279,8 +283,20 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
         parsed_install = true;
         let mut collect_args = args.clone_for_fanout();
         collect_args.pattern = None;
+        let selected_roots;
+        let roots = if let Some(aliases) = matched_aliases {
+            selected_roots = graph
+                .root_deps()
+                .iter()
+                .filter(|dep| aliases.iter().any(|alias| dep.name == *alias))
+                .cloned()
+                .collect::<Vec<_>>();
+            selected_roots.as_slice()
+        } else {
+            graph.root_deps()
+        };
         let (mut package_rows, matched) =
-            collect_rows(&info.install_dir, collect_args, &graph, graph.root_deps()).await?;
+            collect_rows(&info.install_dir, collect_args, &graph, roots).await?;
         if matched {
             matched_any = true;
         }

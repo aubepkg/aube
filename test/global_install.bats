@@ -113,6 +113,20 @@ teardown() {
 	refute_output --partial "(no checkable global dependencies)"
 }
 
+@test "aube outdated -g filters multi-package installs by alias" {
+	run aube add -g is-odd@0.1.2 is-even@0.1.2
+	assert_success
+
+	mkdir -p "$TEST_TEMP_DIR/no-project"
+	cd "$TEST_TEMP_DIR/no-project"
+	assert_file_not_exists package.json
+
+	run aube outdated -g is-odd
+	assert_failure 1
+	assert_output --partial "is-odd"
+	refute_output --partial "is-even"
+}
+
 @test "aube outdated -g reports uncheckable globals without lockfiles" {
 	run aube add -g is-odd@0.1.2
 	assert_success
