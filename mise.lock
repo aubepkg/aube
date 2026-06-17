@@ -71,6 +71,38 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.18.1/ca
 checksum = "sha256:89706aa5215c164d8d091597a470fee72308ac87e8553af395ea77db844a888c"
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.18.1/cargo-binstall-x86_64-pc-windows-msvc.zip"
 
+[[tools.cmake]]
+version = "4.3.2"
+backend = "aqua:Kitware/CMake"
+
+[tools.cmake."platforms.linux-arm64"]
+checksum = "sha256:377079ab739f5765176f427609d9a2015b756ea20d5cba908d279c3731a2f481"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-linux-aarch64.tar.gz"
+
+[tools.cmake."platforms.linux-arm64-musl"]
+checksum = "sha256:377079ab739f5765176f427609d9a2015b756ea20d5cba908d279c3731a2f481"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-linux-aarch64.tar.gz"
+
+[tools.cmake."platforms.linux-x64"]
+checksum = "sha256:791ae3604841ca03cb3889a3ad89165346e4b180ae3448efd4b0caa9ef46d245"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-linux-x86_64.tar.gz"
+
+[tools.cmake."platforms.linux-x64-musl"]
+checksum = "sha256:791ae3604841ca03cb3889a3ad89165346e4b180ae3448efd4b0caa9ef46d245"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-linux-x86_64.tar.gz"
+
+[tools.cmake."platforms.macos-arm64"]
+checksum = "sha256:808ab43a0db04c8eec9ed7db12b90d7be1c8e2e75f4a060724d604a2043ccaf7"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-macos-universal.tar.gz"
+
+[tools.cmake."platforms.macos-x64"]
+checksum = "sha256:808ab43a0db04c8eec9ed7db12b90d7be1c8e2e75f4a060724d604a2043ccaf7"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-macos-universal.tar.gz"
+
+[tools.cmake."platforms.windows-x64"]
+checksum = "sha256:83d20c23f5c5f64b3b328785e35b23c532e33057a97ed6294acaca3781b78a01"
+url = "https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2-windows-x86_64.zip"
+
 [[tools.communique]]
 version = "1.1.2"
 backend = "github:jdx/communique"

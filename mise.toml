@@ -4,6 +4,7 @@ _.path = ["./bin"]
 [tools]
 actionlint = "latest"
 cargo-binstall = "latest"
+cmake = "latest"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
 "github:foresterre/cargo-msrv" = "latest"
