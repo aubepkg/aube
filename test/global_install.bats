@@ -83,6 +83,28 @@ teardown() {
 	refute_output --partial "is-positive 1.0.0"
 }
 
+@test "aube outdated -g reports stale global packages outside a project" {
+	run aube add -g is-odd@0.1.2
+	assert_success
+
+	mkdir -p "$TEST_TEMP_DIR/no-project"
+	cd "$TEST_TEMP_DIR/no-project"
+	assert_file_not_exists package.json
+
+	run aube outdated -g
+	assert_failure
+	[ "$status" -eq 1 ]
+	assert_output --partial "Package"
+	assert_output --partial "is-odd"
+	assert_output --partial "0.1.2"
+	assert_output --partial "3.0.1"
+
+	run aube outdated -g is-odd
+	assert_failure
+	[ "$status" -eq 1 ]
+	assert_output --partial "is-odd"
+}
+
 @test "aube update -g fails when any named package is missing" {
 	run aube add -g is-positive@1.0.0
 	assert_success

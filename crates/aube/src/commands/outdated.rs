@@ -62,6 +62,10 @@ pub struct OutdatedArgs {
     #[arg(short = 'D', long, conflicts_with = "prod")]
     pub dev: bool,
 
+    /// Check globally-installed packages instead of the current project.
+    #[arg(short = 'g', long, conflicts_with = "workspace_root")]
+    pub global: bool,
+
     /// Emit a JSON object keyed by package name instead of the default table
     #[arg(long)]
     pub json: bool,
@@ -124,6 +128,10 @@ pub async fn run(
     mut filter: aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
+    if args.global {
+        return run_global(args).await;
+    }
+
     let mut cwd = crate::dirs::project_root()?;
     if !filter.is_empty() {
         // Discussion #602: include the workspace root in `outdated -r`
@@ -214,6 +222,68 @@ async fn run_filtered(
     Ok(None)
 }
 
+async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
+    let layout = super::global::GlobalLayout::resolve()?;
+    let mut packages = super::global::scan_packages(&layout.pkg_dir);
+    packages.sort_by(|a, b| a.aliases.first().cmp(&b.aliases.first()));
+
+    if packages.is_empty() {
+        if args.json {
+            println!("{{}}");
+        } else {
+            println!("(no global packages installed)");
+        }
+        return Ok(None);
+    }
+
+    let mut rows = Vec::new();
+    let mut matched_any = false;
+    for info in packages {
+        let manifest = super::load_manifest(&info.install_dir.join("package.json"))?;
+        let graph = match aube_lockfile::parse_lockfile(&info.install_dir, &manifest) {
+            Ok(g) => g,
+            Err(aube_lockfile::Error::NotFound(_)) => {
+                tracing::warn!(
+                    "global install at {} has no lockfile; skipping outdated check",
+                    info.install_dir.display()
+                );
+                continue;
+            }
+            Err(e) => {
+                return Err(miette::Report::new(e)).wrap_err_with(|| {
+                    format!(
+                        "failed to parse global lockfile in {}",
+                        info.install_dir.display()
+                    )
+                });
+            }
+        };
+        let (mut package_rows, matched) = collect_rows(
+            &info.install_dir,
+            args.clone_for_fanout(),
+            &graph,
+            graph.root_deps(),
+        )
+        .await?;
+        if matched {
+            matched_any = true;
+        }
+        rows.append(&mut package_rows);
+    }
+
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    let has_drift = has_drift(&rows);
+    if args.json {
+        render_json(&rows)?;
+    } else if rows.is_empty() && !matched_any {
+        println!("(no matching dependencies)");
+    } else {
+        render_table(&rows, args.long);
+    }
+
+    if has_drift { Ok(Some(1)) } else { Ok(None) }
+}
+
 async fn run_one(cwd: &Path, args: OutdatedArgs, importer: Option<String>) -> miette::Result<bool> {
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
 
@@ -239,6 +309,35 @@ async fn run_graph(
     roots: &[DirectDep],
     importer: Option<String>,
 ) -> miette::Result<bool> {
+    let (mut rows, matched_any) = collect_rows(cwd, args.clone_for_fanout(), graph, roots).await?;
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    let has_drift = has_drift(&rows);
+    for row in &mut rows {
+        row.importer.clone_from(&importer);
+    }
+
+    if args.json {
+        render_json(&rows)?;
+    } else if rows.is_empty() && !matched_any {
+        println!("(no matching dependencies)");
+    } else {
+        render_table(&rows, args.long);
+    }
+
+    // Return the drift flag to the caller. The single-project caller (`run`)
+    // maps `true` to exit code 1 (pnpm parity: `aube outdated || exit 1`),
+    // and the recursive caller (`run_filtered`) aggregates drift across
+    // importers — the exit decision lives at the top so the command layer
+    // stays embed-safe (no in-place `std::process::exit`).
+    Ok(has_drift)
+}
+
+async fn collect_rows(
+    cwd: &Path,
+    args: OutdatedArgs,
+    graph: &aube_lockfile::LockfileGraph,
+    roots: &[DirectDep],
+) -> miette::Result<(Vec<Row>, bool)> {
     let filter = DepFilter::from_flags(args.prod, args.dev);
     let roots: Vec<&DirectDep> = roots
         .iter()
@@ -250,12 +349,7 @@ async fn run_graph(
         .collect();
 
     if roots.is_empty() {
-        if !args.json {
-            println!("(no matching dependencies)");
-        } else {
-            println!("{{}}");
-        }
-        return Ok(false);
+        return Ok((Vec::new(), false));
     }
     let roots: Vec<&DirectDep> = roots
         .into_iter()
@@ -266,12 +360,7 @@ async fn run_graph(
         })
         .collect();
     if roots.is_empty() {
-        if args.json {
-            println!("{{}}");
-        } else {
-            println!("(no matching dependencies)");
-        }
-        return Ok(false);
+        return Ok((Vec::new(), false));
     }
 
     let client = std::sync::Arc::new(make_client(cwd));
@@ -339,34 +428,22 @@ async fn run_graph(
                 dep_type: dep.dep_type,
                 latest_known,
                 specifier: dep.specifier.clone(),
-                importer: importer.clone(),
+                importer: None,
             });
         }
     }
 
-    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok((rows, true))
+}
 
+fn has_drift(rows: &[Row]) -> bool {
     // Hide "up-to-date but only because --long" rows from the non-empty check
     // so `--long` alone doesn't cause a pnpm CI pipeline to flip to exit 1.
     // A row only counts as drift when its latest is known AND differs from
     // current, or its wanted version diverges from current — a missing
     // `latest` dist-tag must never flip the exit code.
-    let has_drift = rows
-        .iter()
-        .any(|r| (r.latest_known && r.current != r.latest) || r.current != r.wanted);
-
-    if args.json {
-        render_json(&rows)?;
-    } else {
-        render_table(&rows, args.long);
-    }
-
-    // Return the drift flag to the caller. The single-project caller (`run`)
-    // maps `true` to exit code 1 (pnpm parity: `aube outdated || exit 1`),
-    // and the recursive caller (`run_filtered`) aggregates drift across
-    // importers — the exit decision lives at the top so the command layer
-    // stays embed-safe (no in-place `std::process::exit`).
-    Ok(has_drift)
+    rows.iter()
+        .any(|r| (r.latest_known && r.current != r.latest) || r.current != r.wanted)
 }
 
 impl OutdatedArgs {
@@ -374,6 +451,7 @@ impl OutdatedArgs {
         Self {
             pattern: self.pattern.clone(),
             dev: self.dev,
+            global: self.global,
             json: self.json,
             long: self.long,
             prod: self.prod,
