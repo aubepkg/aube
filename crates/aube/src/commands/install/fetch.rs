@@ -6,7 +6,9 @@ use super::settings::{
     resolve_strict_store_integrity, resolve_strict_store_pkg_content_check,
     resolve_verify_store_integrity,
 };
-use crate::commands::{resolve_virtual_store_dir, resolve_virtual_store_dir_max_length};
+use crate::commands::{
+    packument_cache_dir, resolve_virtual_store_dir, resolve_virtual_store_dir_max_length,
+};
 use crate::progress::InstallProgress;
 use aube_lockfile::dep_path_filename::dep_path_to_filename;
 use miette::{Context, IntoDiagnostic, miette};
@@ -986,8 +988,8 @@ async fn verify_lockfile_tarball_url(
     version: &str,
     lockfile_url: &str,
 ) -> miette::Result<()> {
-    let meta = client
-        .fetch_single_version_metadata(registry_name, version)
+    let packument = client
+        .fetch_packument_cached(registry_name, &packument_cache_dir())
         .await
         .map_err(|e| {
             miette!(
@@ -998,6 +1000,15 @@ async fn verify_lockfile_tarball_url(
                 e
             )
         })?;
+    let Some(meta) = packument.versions.get(version) else {
+        return Err(miette!(
+            code = aube_codes::errors::ERR_AUBE_TARBALL_URL_MISMATCH,
+            "{}@{}: registry metadata did not include this version while lockfile pinned {}",
+            registry_name,
+            version,
+            aube_util::url::redact_url(lockfile_url)
+        ));
+    };
     let Some(expected_url) = meta.dist.as_ref().map(|dist| dist.tarball.as_str()) else {
         return Err(miette!(
             code = aube_codes::errors::ERR_AUBE_TARBALL_URL_MISMATCH,

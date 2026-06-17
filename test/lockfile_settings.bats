@@ -6,6 +6,10 @@ setup() {
 }
 
 teardown() {
+	if [ -n "${SPLIT_REGISTRY_PID:-}" ]; then
+		kill "$SPLIT_REGISTRY_PID" 2>/dev/null || true
+		wait "$SPLIT_REGISTRY_PID" 2>/dev/null || true
+	fi
 	_common_teardown
 }
 
@@ -150,6 +154,85 @@ teardown() {
 	assert_failure
 	assert_output --partial "ERR_AUBE_TARBALL_URL_MISMATCH"
 	assert_output --partial "not match registry metadata"
+}
+
+@test "lockfile tarball URLs are verified against packument metadata" {
+	mkdir -p package
+	cat >package/package.json <<-'EOF'
+		{
+		  "name": "split-pkg",
+		  "version": "1.0.0"
+		}
+	EOF
+	tar -czf split-pkg-1.0.0.tgz package
+	integrity="$(node -e "const crypto = require('node:crypto'); const fs = require('node:fs'); console.log('sha512-' + crypto.createHash('sha512').update(fs.readFileSync('split-pkg-1.0.0.tgz')).digest('base64'))")"
+
+	cat >split-registry.mjs <<'NODE'
+import http from 'node:http';
+import fs from 'node:fs';
+
+const integrity = process.env.SPLIT_PKG_INTEGRITY;
+const tarball = fs.readFileSync('split-pkg-1.0.0.tgz');
+const server = http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url === '/split-pkg') {
+    const tarballUrl = `http://${req.headers.host}/split-pkg/-/split-pkg-1.0.0.tgz`;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      name: 'split-pkg',
+      'dist-tags': { latest: '1.0.0' },
+      versions: {
+        '1.0.0': {
+          name: 'split-pkg',
+          version: '1.0.0',
+          dist: { tarball: tarballUrl, integrity }
+        }
+      },
+      time: { '1.0.0': '2024-01-01T00:00:00.000Z' }
+    }));
+    return;
+  }
+  if (req.method === 'GET' && req.url === '/split-pkg/-/split-pkg-1.0.0.tgz') {
+    res.setHeader('content-type', 'application/octet-stream');
+    res.end(tarball);
+    return;
+  }
+  res.statusCode = 404;
+  res.end('{}');
+});
+server.listen(0, '127.0.0.1', () => {
+  fs.writeFileSync('split-registry-port', String(server.address().port));
+});
+NODE
+	SPLIT_PKG_INTEGRITY="$integrity" node split-registry.mjs &
+	SPLIT_REGISTRY_PID=$!
+	for _ in 1 2 3 4 5 6 7 8 9 10; do
+		[ -f split-registry-port ] && break
+		sleep 0.1
+	done
+	registry="http://127.0.0.1:$(cat split-registry-port)"
+
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-packument-tarball-url",
+		  "version": "1.0.0",
+		  "dependencies": { "split-pkg": "1.0.0" }
+		}
+	EOF
+	cat >.npmrc <<-EOF
+		registry=$registry
+		lockfile-include-tarball-url=true
+	EOF
+
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	rm -rf node_modules "$XDG_DATA_HOME/aube/store" "$XDG_CACHE_HOME/aube/packuments-v1"
+
+	run aube install --frozen-lockfile
+	kill "$SPLIT_REGISTRY_PID"
+	wait "$SPLIT_REGISTRY_PID" 2>/dev/null || true
+	unset SPLIT_REGISTRY_PID
+	assert_success
 }
 
 @test "lockfileIncludeTarballUrl=false (default) omits tarball URLs" {

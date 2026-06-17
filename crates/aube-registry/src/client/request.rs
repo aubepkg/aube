@@ -636,8 +636,10 @@ mod tests {
 
     #[test]
     fn http_for_package_uses_scoped_tls_client() {
-        let mut config = NpmConfig::default();
-        config.registry = "https://registry.example.com/".to_string();
+        let mut config = NpmConfig {
+            registry: "https://registry.example.com/".to_string(),
+            ..Default::default()
+        };
         let mut scoped = AuthConfig::default();
         scoped.tls.cafile = Some(std::path::PathBuf::from("org-a-ca.pem"));
         config
@@ -660,14 +662,18 @@ mod tests {
     #[test]
     fn tarball_request_uses_scoped_auth_for_path_registry() {
         let mut config = NpmConfig::default();
-        let mut registry_auth = AuthConfig::default();
-        registry_auth.auth_token = Some("registry-token".to_string());
+        let registry_auth = AuthConfig {
+            auth_token: Some("registry-token".to_string()),
+            ..Default::default()
+        };
         config
             .auth_by_uri
             .insert("//registry.example.com/".to_string(), registry_auth);
 
-        let mut scoped_auth = AuthConfig::default();
-        scoped_auth.auth_token = Some("scoped-token".to_string());
+        let scoped_auth = AuthConfig {
+            auth_token: Some("scoped-token".to_string()),
+            ..Default::default()
+        };
         config
             .scoped_auth_by_uri
             .entry("//registry.example.com/npm".to_string())
