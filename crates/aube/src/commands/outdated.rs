@@ -656,11 +656,24 @@ fn render_table(rows: &[Row], long: bool) {
 
 fn render_json(rows: &[Row]) -> miette::Result<()> {
     // Emit a pnpm-compatible shape: `{ "<name>": { current, wanted, latest } }`.
+    // If malformed global state presents duplicate root names, keep every
+    // row by promoting that one key to an array instead of overwriting.
     use serde_json::{Map, Value};
     let mut map: Map<String, Value> = Map::new();
     for row in rows {
         let v = serde_json::to_value(row).into_diagnostic()?;
-        map.insert(row.name.clone(), v);
+        match map.remove(&row.name) {
+            None => {
+                map.insert(row.name.clone(), v);
+            }
+            Some(Value::Array(mut values)) => {
+                values.push(v);
+                map.insert(row.name.clone(), Value::Array(values));
+            }
+            Some(existing) => {
+                map.insert(row.name.clone(), Value::Array(vec![existing, v]));
+            }
+        }
     }
     let out = serde_json::to_string_pretty(&Value::Object(map)).into_diagnostic()?;
     println!("{out}");
@@ -669,7 +682,8 @@ fn render_json(rows: &[Row]) -> miette::Result<()> {
 
 #[cfg(test)]
 mod colorize_tests {
-    use super::colorize_diff;
+    use super::{Row, colorize_diff};
+    use aube_lockfile::DepType;
 
     fn strip_ansi(s: &str) -> String {
         // Strip CSI sequences for assertion purposes — the renderer
@@ -737,5 +751,49 @@ mod colorize_tests {
         // skip colorization rather than panic. Width still applies.
         let painted = colorize_diff("1.2.3", "latest", 8);
         assert_eq!(painted, "latest  ");
+    }
+
+    #[test]
+    fn json_duplicate_names_promote_to_array() {
+        let rows = vec![
+            Row {
+                name: "same".to_string(),
+                current: "1.0.0".to_string(),
+                wanted: "1.0.1".to_string(),
+                latest: "1.0.1".to_string(),
+                dep_type: DepType::Production,
+                latest_known: true,
+                specifier: Some("^1.0.0".to_string()),
+                importer: None,
+            },
+            Row {
+                name: "same".to_string(),
+                current: "2.0.0".to_string(),
+                wanted: "2.0.1".to_string(),
+                latest: "2.0.1".to_string(),
+                dep_type: DepType::Production,
+                latest_known: true,
+                specifier: Some("^2.0.0".to_string()),
+                importer: None,
+            },
+        ];
+        let mut map = serde_json::Map::new();
+        for row in rows {
+            let value = serde_json::to_value(&row).unwrap();
+            match map.remove(&row.name) {
+                None => {
+                    map.insert(row.name, value);
+                }
+                Some(serde_json::Value::Array(mut values)) => {
+                    values.push(value);
+                    map.insert(row.name, serde_json::Value::Array(values));
+                }
+                Some(existing) => {
+                    map.insert(row.name, serde_json::Value::Array(vec![existing, value]));
+                }
+            }
+        }
+
+        assert_eq!(map["same"].as_array().unwrap().len(), 2);
     }
 }

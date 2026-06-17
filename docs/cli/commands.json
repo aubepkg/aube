@@ -6720,6 +6720,20 @@
             "global": false
           },
           {
+            "name": "global",
+            "usage": "-g --global",
+            "help": "Check globally-installed packages instead of the current project",
+            "help_first_line": "Check globally-installed packages instead of the current project",
+            "short": [
+              "g"
+            ],
+            "long": [
+              "global"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "json",
             "usage": "--json",
             "help": "Emit a JSON object keyed by package name instead of the default table",
