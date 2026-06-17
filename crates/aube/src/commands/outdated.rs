@@ -305,9 +305,15 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
 
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     let has_drift = has_drift(&rows);
+    let no_checkable_global_dependencies =
+        rows.is_empty() && matched_install && !parsed_install && skipped_lockfile;
     if args.json {
-        render_json(&rows)?;
-    } else if rows.is_empty() && matched_install && !parsed_install && skipped_lockfile {
+        if no_checkable_global_dependencies {
+            render_no_checkable_global_json()?;
+        } else {
+            render_json(&rows)?;
+        }
+    } else if no_checkable_global_dependencies {
         println!("(no checkable global dependencies)");
     } else if rows.is_empty() && !matched_any {
         println!("(no matching dependencies)");
@@ -692,6 +698,17 @@ fn render_json(rows: &[Row]) -> miette::Result<()> {
         }
     }
     let out = serde_json::to_string_pretty(&Value::Object(map)).into_diagnostic()?;
+    println!("{out}");
+    Ok(())
+}
+
+fn render_no_checkable_global_json() -> miette::Result<()> {
+    let out = serde_json::to_string_pretty(&serde_json::json!({
+        "checked": false,
+        "code": aube_codes::warnings::WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE,
+        "message": "no checkable global dependencies"
+    }))
+    .into_diagnostic()?;
     println!("{out}");
     Ok(())
 }

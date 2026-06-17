@@ -139,6 +139,12 @@ teardown() {
 	assert_success
 	assert_output --partial "(no checkable global dependencies)"
 	refute_output --partial "(no matching dependencies)"
+
+	run aube outdated -g --json
+	assert_success
+	assert_output --partial '"checked": false'
+	assert_output --partial '"code": "WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE"'
+	refute_output --partial '{}'
 }
 
 @test "aube outdated -g rejects workspace selectors" {
