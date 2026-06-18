@@ -244,11 +244,16 @@ pub async fn run(args: AuditArgs) -> miette::Result<()> {
     };
 
     // `--ignore-unfixable` is expensive (one packument fetch per
-    // vulnerable package) but the request set is already scoped to
-    // packages with at least one advisory at or above the threshold,
-    // and packuments are cached on disk.
+    // vulnerable package), so table output scopes those fetches to the
+    // displayed threshold. JSON metadata counts advisories before the
+    // level filter, so JSON filtering must consider every known severity.
     let raw = if args.ignore_unfixable {
-        filter_unfixable(&raw, &client, args.audit_level).await?
+        filter_unfixable(
+            &raw,
+            &client,
+            unfixable_filter_threshold(args.json, args.audit_level),
+        )
+        .await?
     } else {
         raw
     };
@@ -460,6 +465,10 @@ fn advisory_matches_ignore(adv: &serde_json::Value, needles: &BTreeSet<String>) 
         }
     }
     false
+}
+
+fn unfixable_filter_threshold(json: bool, audit_level: Severity) -> Severity {
+    if json { Severity::Info } else { audit_level }
 }
 
 /// Drop advisories whose `vulnerable_versions` range cannot be
@@ -1386,6 +1395,18 @@ mod tests {
                 "GHSA-aaaa-bbbb-cccc".to_string(),
                 "CVE-2099-0001".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn unfixable_filter_threshold_uses_all_severities_for_json_metadata() {
+        assert_eq!(
+            unfixable_filter_threshold(true, Severity::High),
+            Severity::Info
+        );
+        assert_eq!(
+            unfixable_filter_threshold(false, Severity::High),
+            Severity::High
         );
     }
 
