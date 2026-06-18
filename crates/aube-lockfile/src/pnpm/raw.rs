@@ -34,6 +34,56 @@ pub(super) fn __bench_counts(raw: &RawPnpmLockfile) -> (usize, usize, usize) {
     (raw.packages.len(), raw.snapshots.len(), raw.importers.len())
 }
 
+/// Outcome of comparing the subset fast path against the serde path for
+/// one lockfile. Used only by the differential test harness.
+#[cfg(test)]
+pub(super) enum SubsetDiff {
+    /// Subset parser produced a structurally-identical result.
+    Match,
+    /// Subset parser declined (returned `None`) — an acceptable
+    /// fallback to serde, never a bug.
+    Declined,
+    /// Subset parser accepted but produced a DIFFERENT result than
+    /// serde — a silent wrong parse. This is the only real bug. Carries
+    /// the two `{:#?}` renderings for a self-debugging assert message.
+    Divergence { subset: String, serde: String },
+}
+
+/// Differential check for ONE lockfile: parse it both ways and classify
+/// the outcome. Equality is compared via the `Debug` rendering — the raw
+/// types are `Deserialize`-only (no `PartialEq`), and two structurally
+/// equal values produce byte-identical `{:#?}` output, so this is an
+/// exact structural comparison without an intrusive derive. The serde
+/// path here is the SINGLE-document `yaml_serde::from_str` (not the
+/// scoring multi-doc wrapper): the subset parser declines multi-document
+/// streams up front, so for any input it accepts the two must agree on
+/// the single-document parse.
+#[cfg(test)]
+pub(super) fn diff_subset_vs_serde(content: &str) -> SubsetDiff {
+    let Some(subset) = super::subset::try_parse(content) else {
+        return SubsetDiff::Declined;
+    };
+    let serde: RawPnpmLockfile = match yaml_serde::from_str(content) {
+        Ok(v) => v,
+        // Subset accepted but serde itself errors: the subset path must
+        // never accept input the serde path rejects (it would change the
+        // error surface). Treat as a divergence so the harness flags it.
+        Err(e) => {
+            return SubsetDiff::Divergence {
+                subset: format!("{subset:#?}"),
+                serde: format!("<serde error: {e}>"),
+            };
+        }
+    };
+    let s = format!("{subset:#?}");
+    let d = format!("{serde:#?}");
+    if s == d {
+        SubsetDiff::Match
+    } else {
+        SubsetDiff::Divergence { subset: s, serde: d }
+    }
+}
+
 /// The original serde/`yaml_serde` parse path. Retained verbatim as the
 /// fallback for inputs the subset parser declines, and exercised
 /// directly by the parse benchmark for an old-vs-new comparison.

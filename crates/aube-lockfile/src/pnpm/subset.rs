@@ -297,15 +297,21 @@ impl<'a> Parser<'a> {
             if line.indent != 2 {
                 return None;
             }
-            // `<importerPath>:` header.
+            // `<importerPath>:` header. pnpm writes an empty importer
+            // (a workspace package with no dependencies) as an inline
+            // `{}`; everything else is a block body.
             let (name, rest) = split_key(line.body)?;
-            if rest.is_some() {
-                // Inline importer body — unexpected; bail.
-                return None;
-            }
             let name = scalar_key_string(name)?;
             self.consume_line(&line);
-            let imp = self.parse_importer_body()?;
+            let imp = if let Some(inline) = rest {
+                if inline == b"{}" {
+                    default_importer()
+                } else {
+                    return None;
+                }
+            } else {
+                self.parse_importer_body()?
+            };
             importers.insert(name, imp);
         }
         Some(importers)
@@ -522,6 +528,15 @@ fn default_package_info() -> RawPackageInfo {
     yaml_serde::from_str::<RawPackageInfo>("{}").expect("empty package info parses")
 }
 
+fn default_importer() -> RawImporter {
+    RawImporter {
+        dependencies: None,
+        dev_dependencies: None,
+        optional_dependencies: None,
+        skipped_optional_dependencies: None,
+    }
+}
+
 fn default_snapshot() -> RawSnapshot {
     RawSnapshot {
         dependencies: None,
@@ -664,9 +679,68 @@ fn dedent(block: &str, n: usize) -> Option<String> {
 
 #[cfg(test)]
 mod subset_tests {
+    use super::super::raw::{diff_subset_vs_serde, SubsetDiff};
     use super::*;
 
+    // -- Committed fixtures, run through the differential harness. --
+
     const NATIVE: &str = include_str!("../../tests/fixtures/pnpm-native.yaml");
+    const KITCHEN_SINK: &str = include_str!("../../tests/fixtures/pnpm-kitchen-sink.yaml");
+    const V6: &str = include_str!("../../tests/fixtures/pnpm-v6.yaml");
+    const GIT_RESOLUTION: &str = include_str!("../../tests/fixtures/pnpm-git-resolution.yaml");
+
+    /// The load-bearing invariant: for any input, the subset parser
+    /// either produces a structurally-identical `RawPnpmLockfile` to the
+    /// serde path, or declines (returns `None`). A silent wrong parse —
+    /// the subset path accepting and producing a DIFFERENT result — is
+    /// the only real bug, and `diff_subset_vs_serde` is what catches it.
+    /// Equality is compared via the `{:#?}` rendering (the raw types are
+    /// `Deserialize`-only).
+    fn assert_match_or_declines(name: &str, content: &str) {
+        match diff_subset_vs_serde(content) {
+            SubsetDiff::Match | SubsetDiff::Declined => {}
+            SubsetDiff::Divergence { subset, serde } => {
+                panic!(
+                    "SILENT WRONG PARSE in `{name}`: subset fast path diverged from serde.\n\
+                     --- subset ---\n{subset}\n--- serde ---\n{serde}"
+                );
+            }
+        }
+    }
+
+    /// Like `assert_match_or_declines`, but additionally requires the
+    /// fast path to FIRE (not decline) — used where we want to prove the
+    /// parser models a shape, not merely fall back on it.
+    fn assert_fires_and_matches(name: &str, content: &str) {
+        match diff_subset_vs_serde(content) {
+            SubsetDiff::Match => {}
+            SubsetDiff::Declined => {
+                panic!("`{name}`: expected the subset fast path to fire, but it declined")
+            }
+            SubsetDiff::Divergence { subset, serde } => {
+                panic!(
+                    "SILENT WRONG PARSE in `{name}`: subset diverged from serde.\n\
+                     --- subset ---\n{subset}\n--- serde ---\n{serde}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn differential_committed_fixtures() {
+        // Every fixture must agree with serde or cleanly decline. These
+        // four cover, between them: the simple single-importer case;
+        // catalog:/catalogs:, overrides, patchedDependencies, npm-alias
+        // deps, scoped packages, peerDependencies(+Meta), os/cpu/libc,
+        // deprecated, bundledDependencies, remote-tarball resolutions,
+        // empty importer `{}`, optional snapshots, transitivePeer; the
+        // v6 (`/name@version` keys, no snapshots:) layout; and git/ssh
+        // resolutions with peer-paren and subpath keys.
+        assert_fires_and_matches("pnpm-native", NATIVE);
+        assert_fires_and_matches("pnpm-kitchen-sink", KITCHEN_SINK);
+        assert_match_or_declines("pnpm-v6", V6);
+        assert_fires_and_matches("pnpm-git-resolution", GIT_RESOLUTION);
+    }
 
     #[test]
     fn fast_path_fires_on_native_fixture() {
@@ -675,6 +749,37 @@ mod subset_tests {
         assert_eq!(raw.snapshots.len(), 8);
         assert_eq!(raw.importers.len(), 1);
     }
+
+    #[test]
+    fn kitchen_sink_fires_and_models_every_section() {
+        let raw = try_parse(KITCHEN_SINK).expect("kitchen-sink should be accepted");
+        // Three importers, including one empty (`packages/empty: {}`).
+        assert_eq!(raw.importers.len(), 3);
+        assert!(raw.catalogs.is_some());
+        assert!(raw.overrides.is_some());
+        assert!(raw.patched_dependencies.is_some());
+        assert_eq!(raw.packages.len(), 9);
+        assert_eq!(raw.snapshots.len(), 9);
+    }
+
+    // -- Empty-importer `{}` regression (the fast-path-coverage fix). --
+
+    #[test]
+    fn empty_importer_inline_map_fires_and_matches() {
+        // pnpm writes a workspace package with no dependencies as an
+        // inline `{}`. Before the fix this declined, falling the whole
+        // (often large, multi-package) workspace lockfile back to serde.
+        // The result must be byte-identical to serde's.
+        let lock = "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n  packages/empty: {}\n  packages/also-empty: {}\n";
+        assert_fires_and_matches("empty-importer", lock);
+        let raw = try_parse(lock).unwrap();
+        assert_eq!(raw.importers.len(), 3);
+        let empty = &raw.importers["packages/empty"];
+        assert!(empty.dependencies.is_none());
+        assert!(empty.dev_dependencies.is_none());
+    }
+
+    // -- Fallback (decline) cases — never a wrong parse. --
 
     #[test]
     fn declines_multi_document_stream() {
@@ -692,9 +797,167 @@ mod subset_tests {
     }
 
     #[test]
+    fn declines_tab_indentation_rather_than_misparsing() {
+        // Tab indentation is not pnpm's 2-space dialect; the indent
+        // counter only counts spaces, so a tab-indented child reads as
+        // indent 0 and the parser must decline — never silently treat a
+        // tab-nested value as a sibling top-level key.
+        let tabbed = "lockfileVersion: '9.0'\nimporters:\n\t.:\n\t\tdependencies: {}\n";
+        assert!(try_parse(tabbed).is_none());
+        // And whatever it does, it must not diverge from serde.
+        assert_match_or_declines("tab-indent", tabbed);
+    }
+
+    #[test]
+    fn declines_empty_input() {
+        // No `lockfileVersion` → the final `lockfile_version?` is None.
+        assert!(try_parse("").is_none());
+        assert!(try_parse("\n\n").is_none());
+        assert!(try_parse("# just a comment\n").is_none());
+    }
+
+    #[test]
+    fn importer_only_no_packages_fires() {
+        let lock = "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n";
+        assert_fires_and_matches("importer-only", lock);
+        let raw = try_parse(lock).unwrap();
+        assert!(raw.packages.is_empty());
+        assert!(raw.snapshots.is_empty());
+    }
+
+    // -- Byte-scanner edge cases. --
+
+    #[test]
+    fn crlf_line_endings_parse_identically() {
+        // The scanner strips a trailing `\r`; a CRLF file must produce
+        // the same result as its LF twin (and agree with serde).
+        let lf = "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n";
+        let crlf = lf.replace('\n', "\r\n");
+        assert_fires_and_matches("crlf", &crlf);
+        let a = format!("{:#?}", try_parse(lf).unwrap());
+        let b = format!("{:#?}", try_parse(&crlf).unwrap());
+        assert_eq!(a, b, "CRLF and LF must parse to the same structure");
+    }
+
+    #[test]
+    fn comments_and_blank_lines_are_skipped() {
+        let lock = "lockfileVersion: '9.0'\n\n# a comment\nimporters:\n\n  # importer comment\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n";
+        assert_fires_and_matches("comments", lock);
+    }
+
+    #[test]
+    fn values_containing_colons_keep_the_full_value() {
+        // URLs and git specs contain `:` after the structural separator;
+        // `split_key` must split on the FIRST `: ` only and keep the
+        // rest verbatim. Compared against serde to be sure.
+        let lock = "lockfileVersion: '9.0'\noverrides:\n  pkg: 'git+ssh://git@github.com/foo/bar.git#v1'\n  url: 'https://example.com/path:8080/x'\n";
+        assert_fires_and_matches("colon-values", lock);
+        let raw = try_parse(lock).unwrap();
+        let ov = raw.overrides.unwrap();
+        assert_eq!(ov["pkg"], "git+ssh://git@github.com/foo/bar.git#v1");
+        assert_eq!(ov["url"], "https://example.com/path:8080/x");
+    }
+
+    #[test]
     fn split_key_respects_quoted_colons() {
         let (k, v) = split_key(b"'a:b': value").unwrap();
         assert_eq!(k, b"'a:b'");
         assert_eq!(v, Some(&b"value"[..]));
+    }
+
+    #[test]
+    fn split_key_trailing_colon_has_no_value() {
+        let (k, v) = split_key(b"importers:").unwrap();
+        assert_eq!(k, b"importers");
+        assert_eq!(v, None);
+    }
+
+    #[test]
+    fn split_key_bails_without_structural_colon() {
+        // A line with a `:` not followed by space/EOL (e.g. `a:b`) has no
+        // structural separator and must not be mistaken for a mapping.
+        assert!(split_key(b"justtext").is_none());
+        assert!(split_key(b"a:b").is_none());
+    }
+
+    #[test]
+    fn scalar_string_handles_quote_styles() {
+        assert_eq!(scalar_string(b"plain").unwrap(), "plain");
+        assert_eq!(scalar_string(b"'quoted'").unwrap(), "quoted");
+        assert_eq!(scalar_string(b"\"double\"").unwrap(), "double");
+        // YAML single-quote escape `''` -> `'`.
+        assert_eq!(scalar_string(b"'it''s'").unwrap(), "it's");
+        // Empty value is a valid empty string.
+        assert_eq!(scalar_string(b"").unwrap(), "");
+    }
+
+    #[test]
+    fn scalar_string_bails_on_backslash_escapes_and_flow() {
+        // Double-quoted with a backslash escape: defer to serde.
+        assert!(scalar_string(b"\"a\\tb\"").is_none());
+        // Unterminated quotes.
+        assert!(scalar_string(b"'open").is_none());
+        assert!(scalar_string(b"\"open").is_none());
+        // Flow constructs / anchors / aliases as bare values.
+        assert!(scalar_string(b"{inline: map}").is_none());
+        assert!(scalar_string(b"[a, b]").is_none());
+        assert!(scalar_string(b"&anchor").is_none());
+        assert!(scalar_string(b"*alias").is_none());
+    }
+
+    #[test]
+    fn trailing_whitespace_on_a_value_is_trimmed_consistently() {
+        // pnpm never emits trailing spaces, but if present they must not
+        // change the parsed value vs serde.
+        let lock = "lockfileVersion: '9.0'\noverrides:\n  pkg: ^1.0.0  \n";
+        assert_match_or_declines("trailing-ws", lock);
+    }
+
+    // -- Opt-in differential sweep over an external real-world corpus. --
+    //
+    // Point `AUBE_PNPM_CORPUS` at a directory of real `pnpm-lock.yaml`
+    // files and run with `--ignored --nocapture`. Reports match/decline
+    // counts and FAILS on any divergence. Not run by default (the corpus
+    // is local-only); the committed fixtures above are the CI coverage.
+    #[test]
+    #[ignore]
+    fn differential_real_corpus() {
+        let dir = match std::env::var("AUBE_PNPM_CORPUS") {
+            Ok(d) if !d.is_empty() => d,
+            _ => {
+                eprintln!("AUBE_PNPM_CORPUS not set; skipping");
+                return;
+            }
+        };
+        let (mut total, mut matched, mut declined) = (0usize, 0usize, 0usize);
+        let mut diverged = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("corpus dir readable") {
+            let p = entry.unwrap().path();
+            if !p.is_file() {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            total += 1;
+            match diff_subset_vs_serde(&content) {
+                SubsetDiff::Match => matched += 1,
+                SubsetDiff::Declined => declined += 1,
+                SubsetDiff::Divergence { subset, serde } => {
+                    diverged.push((p.clone(), subset, serde))
+                }
+            }
+        }
+        eprintln!("corpus={total} match={matched} declined={declined} diverge={}", diverged.len());
+        for (p, s, d) in &diverged {
+            eprintln!("=== DIVERGENCE {} ===", p.display());
+            for (i, (a, b)) in s.lines().zip(d.lines()).enumerate() {
+                if a != b {
+                    eprintln!("  first diff at line {i}:\n    subset: {a}\n    serde : {b}");
+                    break;
+                }
+            }
+        }
+        assert!(diverged.is_empty(), "{} divergence(s) found", diverged.len());
     }
 }
