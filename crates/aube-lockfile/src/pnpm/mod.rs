@@ -16,13 +16,16 @@ pub use write::write;
 /// Benchmark-only shims comparing the byte-cursor subset parser against
 /// the general `yaml_serde` parser on raw `pnpm-lock.yaml` content.
 /// Returns `(packages, snapshots, importers)` counts so the bench's
-/// black-box can't be optimized away. Not part of the stable API.
+/// black-box can't be optimized away. Gated behind the `bench` feature
+/// so they are not part of the crate's default public surface.
+#[cfg(feature = "bench")]
 #[doc(hidden)]
 pub fn __bench_parse_subset(content: &str) -> Option<(usize, usize, usize)> {
     subset::try_parse(content).map(|r| raw::__bench_counts(&r))
 }
 
 /// Benchmark-only: parse via the original serde path.
+#[cfg(feature = "bench")]
 #[doc(hidden)]
 pub fn __bench_parse_serde(content: &str) -> Option<(usize, usize, usize)> {
     raw::parse_raw_lockfile_serde(content)

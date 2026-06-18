@@ -99,6 +99,9 @@ packages:
     resolution: {integrity: sha512-ExzQhk8eu9YLqmarK8C14Bl6IhMX9szoZXsKcH7/HEldrTgZdIIwFdOr1P5jIcC2QM6oZVbyHe1a9xhflglMZw==, tarball: https://github.com/socketdev/changelog-parser/archive/f66869831edc8cb7b5b9e472bcdea2c9b482f5c3.tar.gz}
     version: 2.8.1
 
+  # Intentionally not referenced by any importer: present purely to give
+  # the parser a `bundledDependencies:` block seq to cover (packages + the
+  # matching snapshot entry below).
   bundled-pkg@1.0.0:
     resolution: {integrity: sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==}
     bundledDependencies:

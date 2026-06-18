@@ -1,5 +1,10 @@
 //! Purpose-built byte-cursor SUBSET parser for `pnpm-lock.yaml`.
 //!
+//! The byte-cursor design — walking the raw `&[u8]` and scanning for
+//! structural bytes, declining to a full parser the moment the input
+//! leaves the recognized subset — is modeled on jzon-rs (Maciej Hirsz's
+//! `json-rust`/`jzon`): <https://github.com/maciejhirsz/json-rust>.
+//!
 //! pnpm emits a tightly constrained dialect of YAML: 2-space block
 //! indentation, no anchors/aliases, no multi-line scalars, no flow
 //! style except small inline maps (`resolution: {...}`, `engines:
@@ -50,12 +55,20 @@ pub(super) fn try_parse(content: &str) -> Option<RawPnpmLockfile> {
 }
 
 /// `---` on its own line (a YAML document separator) signals a
-/// multi-document stream we don't handle here.
+/// multi-document stream we don't handle here. A bare `---`, or `---`
+/// followed by whitespace (space/tab/CR) or a `#` comment, all open a
+/// document. This is a fast-path HINT only: even if a separator slipped
+/// past it, the actual guarantee is structural — a `---`-prefixed line
+/// has no `key: ` separator, so `split_key` returns `None` and the whole
+/// parse declines to serde. Tightened here only so it isn't misleading.
 fn has_document_separator(content: &str) -> bool {
-    content
-        .as_bytes()
-        .split(|&b| b == b'\n')
-        .any(|line| line == b"---" || line.starts_with(b"--- "))
+    content.as_bytes().split(|&b| b == b'\n').any(|line| {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        match line.strip_prefix(b"---") {
+            None => false,
+            Some(rest) => rest.is_empty() || matches!(rest[0], b' ' | b'\t' | b'#'),
+        }
+    })
 }
 
 struct Parser<'a> {
@@ -150,34 +163,57 @@ impl<'a> Parser<'a> {
                     pnpmfile_checksum = Some(scalar_string(inline?)?);
                 }
                 b"settings" => {
+                    // An inline `settings: {...}` flow map is outside the
+                    // block subset these helpers model — they would scan
+                    // an empty block and drop the inline entries. Decline
+                    // so serde parses it. (Same for every block-bodied key
+                    // below.)
+                    if inline.is_some() {
+                        return None;
+                    }
                     settings = Some(self.parse_via_serde::<RawSettings>(2)?);
                 }
                 b"overrides" => {
-                    overrides = Some(self.parse_string_map(2)?);
+                    overrides = Some(self.parse_string_map(inline, 2)?);
                 }
                 b"catalogs" => {
+                    if inline.is_some() {
+                        return None;
+                    }
                     catalogs = Some(self.parse_catalogs()?);
                 }
                 b"patchedDependencies" => {
+                    if inline.is_some() {
+                        return None;
+                    }
                     patched_dependencies =
                         Some(self.parse_via_serde::<BTreeMap<String, RawPatchedDependency>>(2)?);
                 }
                 b"ignoredOptionalDependencies" => {
                     // Inline `[a, b]` or a block seq — delegate.
                     ignored_optional_dependencies =
-                        Some(self.parse_seq_value(inline, &line, 2)?);
+                        Some(self.parse_seq_value(inline, 2)?);
                 }
                 b"importers" => {
+                    if inline.is_some() {
+                        return None;
+                    }
                     importers = self.parse_importers()?;
                 }
                 b"packages" => {
+                    if inline.is_some() {
+                        return None;
+                    }
                     packages = self.parse_packages()?;
                 }
                 b"snapshots" => {
+                    if inline.is_some() {
+                        return None;
+                    }
                     snapshots = self.parse_snapshots()?;
                 }
                 b"time" => {
-                    time = Some(self.parse_string_map(2)?);
+                    time = Some(self.parse_string_map(inline, 2)?);
                 }
                 // Any top-level key we don't recognize: bail to serde so
                 // we never silently drop a field a future pnpm adds.
@@ -236,8 +272,25 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a simple `key: scalar` block (string→string) at
-    /// `min_indent`. Bails (None) on any nested structure.
-    fn parse_string_map(&mut self, min_indent: usize) -> Option<BTreeMap<String, String>> {
+    /// `min_indent`. `inline` is the value on the header line, if any.
+    ///
+    /// Declines (returns `None`, falling back to serde) in two cases that
+    /// would otherwise be a silent wrong parse:
+    ///   - the value is an INLINE flow map (`{foo: bar}`) — the block
+    ///     scanner would ignore it and produce an empty map, while serde
+    ///     parses the entries;
+    ///   - the block has NO entries — serde reads a missing/null value as
+    ///     `None`, not `Some({})`, so an empty result here is ambiguous
+    ///     and we let serde decide. (pnpm never writes an empty block
+    ///     map; it writes `{}` inline or omits the key.)
+    fn parse_string_map(
+        &mut self,
+        inline: Option<&[u8]>,
+        min_indent: usize,
+    ) -> Option<BTreeMap<String, String>> {
+        if inline.is_some() {
+            return None;
+        }
         let mut map = BTreeMap::new();
         while let Some(line) = self.peek_line() {
             if line.indent < min_indent {
@@ -251,6 +304,9 @@ impl<'a> Parser<'a> {
             self.consume_line(&line);
             map.insert(scalar_key_string(k)?, scalar_string(v)?);
         }
+        if map.is_empty() {
+            return None;
+        }
         Some(map)
     }
 
@@ -260,14 +316,12 @@ impl<'a> Parser<'a> {
     fn parse_seq_value(
         &mut self,
         inline: Option<&[u8]>,
-        header: &Line<'a>,
         min_indent: usize,
     ) -> Option<Vec<String>> {
         if let Some(v) = inline {
             return serde_value_from_fragment(v);
         }
         // Block seq: gather indented `- item` lines.
-        let _ = header;
         let block = self.take_block(min_indent)?;
         let dedented = dedent(&block, min_indent)?;
         yaml_serde::from_str::<Vec<String>>(&dedented).ok()
@@ -487,27 +541,21 @@ impl<'a> Parser<'a> {
             self.consume_line(&line);
             match key {
                 b"dependencies" => {
-                    if rest.is_some() {
-                        return None;
-                    }
-                    dependencies = Some(self.parse_string_map(indent + 2)?);
+                    dependencies = Some(self.parse_string_map(rest, indent + 2)?);
                 }
                 b"optionalDependencies" => {
-                    if rest.is_some() {
-                        return None;
-                    }
-                    optional_dependencies = Some(self.parse_string_map(indent + 2)?);
+                    optional_dependencies = Some(self.parse_string_map(rest, indent + 2)?);
                 }
                 b"optional" => {
                     optional = Some(parse_bool(rest?)?);
                 }
                 b"bundledDependencies" => {
                     bundled_dependencies =
-                        Some(self.parse_seq_value(rest, &line, indent + 2)?);
+                        Some(self.parse_seq_value(rest, indent + 2)?);
                 }
                 b"transitivePeerDependencies" => {
                     transitive_peer_dependencies =
-                        Some(self.parse_seq_value(rest, &line, indent + 2)?);
+                        Some(self.parse_seq_value(rest, indent + 2)?);
                 }
                 _ => return None,
             }
@@ -523,9 +571,13 @@ impl<'a> Parser<'a> {
 }
 
 fn default_package_info() -> RawPackageInfo {
-    // An empty package entry: serde produces this from `{}`. Reuse the
-    // serde path once so the field defaults stay authoritative.
-    yaml_serde::from_str::<RawPackageInfo>("{}").expect("empty package info parses")
+    // An empty package entry (`<depPath>: {}`). `RawPackageInfo`'s
+    // `#[derive(Default)]` produces the exact same value serde reads from
+    // `{}` — every field is `Option`/`Vec`/`bool`/`BTreeMap` defaulting to
+    // none/empty/false — so we build it infallibly here instead of routing
+    // a constant through serde with an `.expect` on each call. A
+    // differential test pins this equivalence to serde's `{}` parse.
+    RawPackageInfo::default()
 }
 
 fn default_importer() -> RawImporter {
@@ -826,6 +878,67 @@ mod subset_tests {
         let empty = &raw.importers["packages/empty"];
         assert!(empty.dependencies.is_none());
         assert!(empty.dev_dependencies.is_none());
+    }
+
+    // -- Inline-flow-map / empty-block regression (Finding 1). A map-
+    //    typed field whose value is an inline `{...}` flow map, or whose
+    //    block is empty (serde reads it as a missing/null `None`, not an
+    //    empty map), must DECLINE — never silently parse as `Some({})`. --
+
+    #[test]
+    fn inline_flow_map_fields_decline_not_misparse() {
+        // overrides / time as inline `{...}`: the block scanner would
+        // ignore the inline entries and produce `Some({})`; serde parses
+        // the entries. Must decline.
+        for content in [
+            "lockfileVersion: '9.0'\noverrides: {foo: bar}\n",
+            "lockfileVersion: '9.0'\ntime: {foo@1.0.0: '2020-01-01'}\n",
+            "lockfileVersion: '9.0'\nsettings: {autoInstallPeers: true}\n",
+            "lockfileVersion: '9.0'\npatchedDependencies: {foo@1.0.0: {path: a, hash: b}}\n",
+            "lockfileVersion: '9.0'\ncatalogs: {default: {react: {specifier: ^18, version: 18.0.0}}}\n",
+            "lockfileVersion: '9.0'\nimporters: {.: {dependencies: {a: {specifier: ^1, version: 1.0.0}}}}\n",
+        ] {
+            assert!(
+                try_parse(content).is_none(),
+                "inline flow map must decline, not misparse: {content:?}"
+            );
+            assert_match_or_declines("inline-flow-map", content);
+        }
+    }
+
+    #[test]
+    fn empty_block_map_declines_to_distinguish_null_from_empty() {
+        // `overrides:` with a null/empty body deserializes to `None` under
+        // serde, not `Some({})`. The subset path must not assert an empty
+        // map; it declines so serde decides.
+        let null_overrides = "lockfileVersion: '9.0'\noverrides:\n";
+        assert!(try_parse(null_overrides).is_none());
+        assert_match_or_declines("null-overrides", null_overrides);
+        // Same for an empty snapshot `dependencies:` block.
+        let snap_empty_deps =
+            "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    dependencies:\n    optional: true\n";
+        assert!(try_parse(snap_empty_deps).is_none());
+        assert_match_or_declines("snap-empty-deps", snap_empty_deps);
+    }
+
+    #[test]
+    fn default_package_info_matches_serde_empty_map() {
+        // The infallible `RawPackageInfo::default()` must be byte-identical
+        // to what serde reads from `{}` (the value pnpm's empty `pkg: {}`
+        // entry produces), so the `<depPath>: {}` fast path stays exact.
+        let by_default = format!("{:#?}", default_package_info());
+        let by_serde = format!(
+            "{:#?}",
+            yaml_serde::from_str::<RawPackageInfo>("{}").unwrap()
+        );
+        assert_eq!(by_default, by_serde);
+    }
+
+    #[test]
+    fn block_string_map_still_fires() {
+        // The normal block form must still take the fast path and match.
+        let block = "lockfileVersion: '9.0'\noverrides:\n  foo: bar\n  baz: '^1.0.0'\n";
+        assert_fires_and_matches("block-overrides", block);
     }
 
     // -- Adversarial structural cases (self-review). Each must MATCH or

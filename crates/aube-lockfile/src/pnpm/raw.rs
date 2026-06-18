@@ -29,7 +29,9 @@ pub(super) fn parse_raw_lockfile(content: &str) -> Result<RawPnpmLockfile, yaml_
 }
 
 /// Benchmark helper: cheap fingerprint of a parsed lockfile so the
-/// bench's black-box has something to consume.
+/// bench's black-box has something to consume. Gated with the bench
+/// shims it feeds.
+#[cfg(feature = "bench")]
 pub(super) fn __bench_counts(raw: &RawPnpmLockfile) -> (usize, usize, usize) {
     (raw.packages.len(), raw.snapshots.len(), raw.importers.len())
 }
@@ -266,7 +268,7 @@ pub(super) struct RawCatalogEntry {
     pub(super) version: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RawPackageInfo {
     pub(super) resolution: Option<Resolution>,
