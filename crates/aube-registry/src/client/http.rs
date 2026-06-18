@@ -336,10 +336,9 @@ mod tests {
     use crate::config::{FetchPolicy, NpmConfig};
     use std::ffi::{OsStr, OsString};
 
-    /// Minimal self-signed certificate used to assert
-    /// `load_node_extra_ca_certs` parses a well-formed PEM bundle. Lives
-    /// in `tests/fixtures/test-ca.pem` so the base64 body stays out of
-    /// the spellchecker dictionary. Regenerate with:
+    /// A minimal self-signed certificate. Lives in
+    /// `tests/fixtures/test-ca.pem` so the base64 body stays out of the
+    /// spellchecker dictionary. Regenerate with:
     ///
     /// ```text
     /// openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
@@ -349,10 +348,8 @@ mod tests {
     ///
     /// The private key is discarded — nothing pins a specific issuer or
     /// fingerprint, the fixture only needs to be a valid X.509 PEM.
-    const TEST_CA_PEM: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/test-ca.pem"
-    ));
+    const TEST_CA_FIXTURE: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/test-ca.pem");
 
     /// RAII guard for `NODE_EXTRA_CA_CERTS`: serializes env-mutating
     /// tests on a process-wide lock and restores the variable's prior
@@ -383,12 +380,6 @@ mod tests {
             // guard-using test mutates the environment concurrently.
             unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", value) };
         }
-
-        fn remove(&self) {
-            // SAFETY: the guard holds the process-wide lock, so no other
-            // guard-using test mutates the environment concurrently.
-            unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
-        }
     }
 
     impl Drop for EnvVarGuard {
@@ -412,36 +403,34 @@ mod tests {
     fn node_extra_ca_certs_is_loaded_and_failures_are_non_fatal() {
         let env = EnvVarGuard::acquire();
 
-        // Unset: nothing to add.
-        env.remove();
+        // Empty value: nothing to add.
+        env.set("");
         assert!(load_node_extra_ca_certs().is_empty());
 
-        // A valid PEM bundle parses into at least one trust root.
-        let mut good = std::env::temp_dir();
-        good.push(format!(
-            "aube-node-extra-ca-good-{}.pem",
-            std::process::id()
+        // A valid PEM bundle parses into one trust root, and a client
+        // built with it succeeds (`build_http_client` ends in
+        // `.expect(...)`, so a build failure would panic the test).
+        env.set(TEST_CA_FIXTURE);
+        let certs = load_node_extra_ca_certs();
+        assert_eq!(certs.len(), 1);
+        drop(build_http_client(
+            &NpmConfig::default(),
+            None,
+            &FetchPolicy::default(),
+            &certs,
         ));
-        std::fs::write(&good, TEST_CA_PEM).expect("write temp ca bundle");
-        env.set(&good);
-        assert_eq!(load_node_extra_ca_certs().len(), 1);
 
         // A readable file that isn't valid PEM: warned, ignored → empty.
-        std::fs::write(&good, b"not a certificate").expect("overwrite temp ca bundle");
+        let bad =
+            std::env::temp_dir().join(format!("aube-node-extra-ca-{}.pem", std::process::id()));
+        std::fs::write(&bad, b"not a certificate").expect("write temp ca bundle");
+        env.set(&bad);
         assert!(load_node_extra_ca_certs().is_empty());
-        let _ = std::fs::remove_file(&good);
+        let _ = std::fs::remove_file(&bad);
 
         // A nonexistent file: unreadable, warned, ignored → empty.
         env.set("/aube/does-not-exist.pem");
         assert!(load_node_extra_ca_certs().is_empty());
-
-        // `build_http_client` accepts the loaded roots and always
-        // returns a usable client (it ends in `.expect(...)`, so a
-        // build failure would panic the test).
-        let config = NpmConfig::default();
-        let policy = FetchPolicy::default();
-        let certs = load_node_extra_ca_certs();
-        drop(build_http_client(&config, None, &policy, &certs));
         // `env` restores NODE_EXTRA_CA_CERTS on drop, even on panic.
     }
 }
