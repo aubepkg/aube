@@ -689,6 +689,20 @@ mod subset_tests {
     const V6: &str = include_str!("../../tests/fixtures/pnpm-v6.yaml");
     const GIT_RESOLUTION: &str = include_str!("../../tests/fixtures/pnpm-git-resolution.yaml");
 
+    // Real cross-version lockfiles harvested from pinned pnpm releases in
+    // containers (pnpm 6 → lv5.3, pnpm 7 → lv5.4, pnpm 8 → lv6.0, pnpm
+    // 9/10 → lv9.0). They pin the version-by-version behavior so CI
+    // covers it without Docker: the pre-v9 formats must DECLINE cleanly
+    // (never misparse), and the v9 shapes — including git/tarball/npm-
+    // alias keys and a workspace+catalog — must FIRE and match serde.
+    const V5_3_PLAIN: &str = include_str!("../../tests/fixtures/pnpm-v5_3-plain.yaml");
+    const V5_4_PLAIN: &str = include_str!("../../tests/fixtures/pnpm-v5_4-plain.yaml");
+    const V6_TOPLEVEL: &str = include_str!("../../tests/fixtures/pnpm-v6-toplevel-deps.yaml");
+    const V6_WORKSPACE: &str = include_str!("../../tests/fixtures/pnpm-v6-workspace.yaml");
+    const V9_EXOTIC: &str = include_str!("../../tests/fixtures/pnpm-v9-exotic.yaml");
+    const V9_WS_CATALOG: &str =
+        include_str!("../../tests/fixtures/pnpm-v9-workspace-catalog.yaml");
+
     /// The load-bearing invariant: for any input, the subset parser
     /// either produces a structurally-identical `RawPnpmLockfile` to the
     /// serde path, or declines (returns `None`). A silent wrong parse —
@@ -743,6 +757,41 @@ mod subset_tests {
     }
 
     #[test]
+    fn cross_version_corpus_matches_or_declines() {
+        // The load-bearing cross-version invariant. None of these may
+        // diverge from serde.
+        assert_match_or_declines("pnpm-v5_3-plain", V5_3_PLAIN);
+        assert_match_or_declines("pnpm-v5_4-plain", V5_4_PLAIN);
+        assert_match_or_declines("pnpm-v6-toplevel-deps", V6_TOPLEVEL);
+        assert_match_or_declines("pnpm-v6-workspace", V6_WORKSPACE);
+        assert_match_or_declines("pnpm-v9-exotic", V9_EXOTIC);
+        assert_match_or_declines("pnpm-v9-workspace-catalog", V9_WS_CATALOG);
+    }
+
+    #[test]
+    fn pre_v9_top_level_dep_formats_decline_never_misparse() {
+        // pnpm <= 8 single-package lockfiles carry `dependencies:` /
+        // `devDependencies:` at the top level (no `importers:`), and v5
+        // omits `snapshots:` entirely. The parser does not model those
+        // top-level keys, so it MUST decline — never silently drop them.
+        assert!(try_parse(V5_3_PLAIN).is_none(), "lv5.3 must decline");
+        assert!(try_parse(V5_4_PLAIN).is_none(), "lv5.4 must decline");
+        assert!(try_parse(V6_TOPLEVEL).is_none(), "lv6 top-level deps must decline");
+    }
+
+    #[test]
+    fn v9_git_tarball_alias_keys_fire_and_match() {
+        // The highest-value v9 case: package/snapshot keys that embed a
+        // `#` fragment and an `@https://…` tarball URL (git/github +
+        // remote-tarball + npm-alias deps). These exercise `split_key`
+        // and `scalar_key_string` on keys full of `:` `/` `#` `@`, and
+        // must produce a byte-identical result to serde.
+        assert_fires_and_matches("pnpm-v9-exotic", V9_EXOTIC);
+        let raw = try_parse(V9_EXOTIC).unwrap();
+        assert!(raw.packages.keys().any(|k| k.contains("codeload.github.com")));
+    }
+
+    #[test]
     fn fast_path_fires_on_native_fixture() {
         let raw = try_parse(NATIVE).expect("subset parser should accept native pnpm fixture");
         assert_eq!(raw.packages.len(), 8);
@@ -777,6 +826,57 @@ mod subset_tests {
         let empty = &raw.importers["packages/empty"];
         assert!(empty.dependencies.is_none());
         assert!(empty.dev_dependencies.is_none());
+    }
+
+    // -- Adversarial structural cases (self-review). Each must MATCH or
+    //    DECLINE; a divergence is a silent wrong parse. --
+
+    #[test]
+    fn snapshot_dep_value_with_peer_parens_keeps_full_value() {
+        // The common real-world snapshot dependency form: the version
+        // value carries a peer-resolution suffix `2.0.0(baz@3.0.0)`. The
+        // `(…)` contains `@` and could trip a naive split; the value must
+        // be kept verbatim and agree with serde.
+        let lock = "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    dependencies:\n      bar: 2.0.0(baz@3.0.0)\n";
+        assert_fires_and_matches("dep-value-peer-parens", lock);
+    }
+
+    #[test]
+    fn scoped_peer_key_fires_and_matches() {
+        // A quoted dep-path key with a scoped peer paren
+        // `@foo/bar@1.0.0(@types/node@20.0.0)` — `@`, `/`, parens, no
+        // structural colon inside.
+        let lock = "lockfileVersion: '9.0'\nsnapshots:\n  '@foo/bar@1.0.0(@types/node@20.0.0)':\n    dependencies:\n      '@types/node': 20.0.0\n";
+        assert_fires_and_matches("scoped-peer-key", lock);
+    }
+
+    #[test]
+    fn numeric_and_bool_looking_string_values_match_serde() {
+        // String-typed fields (specifier/version, overrides, snapshot
+        // deps) receiving scalars that LOOK like numbers/bools/null. The
+        // subset path takes the bytes verbatim; serde coerces the same
+        // token into the String target. They must agree.
+        let lock = "lockfileVersion: '9.0'\noverrides:\n  a: 1.5\n  b: 10\n  c: true\n  d: null\n";
+        assert_fires_and_matches("numeric-string-values", lock);
+    }
+
+    #[test]
+    fn quoted_bool_for_optional_declines_not_misparses() {
+        // `optional` is a typed bool. A quoted `'true'` is a STRING in
+        // YAML, not the bool — `parse_bool` only accepts the bare tokens,
+        // so the parser must decline rather than coerce a string to true.
+        let lock = "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    optional: 'true'\n";
+        assert!(try_parse(lock).is_none());
+        assert_match_or_declines("quoted-optional", lock);
+    }
+
+    #[test]
+    fn multiline_block_scalar_declines() {
+        // The scanner is single-line per logical value; a `|` literal or
+        // `>` folded scalar is outside the subset and must decline.
+        let lock = "lockfileVersion: '9.0'\noverrides:\n  foo: |\n    multi\n    line\n";
+        assert!(try_parse(lock).is_none());
+        assert_match_or_declines("literal-scalar", lock);
     }
 
     // -- Fallback (decline) cases — never a wrong parse. --
@@ -940,10 +1040,18 @@ mod subset_tests {
                 continue;
             };
             total += 1;
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("?");
             match diff_subset_vs_serde(&content) {
-                SubsetDiff::Match => matched += 1,
-                SubsetDiff::Declined => declined += 1,
+                SubsetDiff::Match => {
+                    matched += 1;
+                    eprintln!("MATCH    {name}");
+                }
+                SubsetDiff::Declined => {
+                    declined += 1;
+                    eprintln!("DECLINE  {name}");
+                }
                 SubsetDiff::Divergence { subset, serde } => {
+                    eprintln!("DIVERGE  {name}");
                     diverged.push((p.clone(), subset, serde))
                 }
             }
