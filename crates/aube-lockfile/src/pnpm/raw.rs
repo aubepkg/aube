@@ -16,6 +16,30 @@ use std::collections::BTreeMap;
 /// one document is present (pnpm v9/v10 and older) this reduces to the
 /// previous single-document parse.
 pub(super) fn parse_raw_lockfile(content: &str) -> Result<RawPnpmLockfile, yaml_serde::Error> {
+    // Fast path: the purpose-built subset parser handles the common
+    // single-document pnpm shape directly off the bytes. It returns
+    // `None` for anything outside the recognized subset (multi-doc
+    // streams, flow constructs it doesn't model, unexpected indent),
+    // and we fall through to the general serde parser below — so
+    // behavior is preserved by construction.
+    if let Some(raw) = super::subset::try_parse(content) {
+        return Ok(raw);
+    }
+    parse_raw_lockfile_serde(content)
+}
+
+/// Benchmark helper: cheap fingerprint of a parsed lockfile so the
+/// bench's black-box has something to consume.
+pub(super) fn __bench_counts(raw: &RawPnpmLockfile) -> (usize, usize, usize) {
+    (raw.packages.len(), raw.snapshots.len(), raw.importers.len())
+}
+
+/// The original serde/`yaml_serde` parse path. Retained verbatim as the
+/// fallback for inputs the subset parser declines, and exercised
+/// directly by the parse benchmark for an old-vs-new comparison.
+pub(super) fn parse_raw_lockfile_serde(
+    content: &str,
+) -> Result<RawPnpmLockfile, yaml_serde::Error> {
     // Hard cap on documents inspected. pnpm v11 emits exactly two;
     // anything beyond a handful is pathological. This also guards
     // against malformed YAML that puts
