@@ -25,7 +25,7 @@ impl RegistryClient {
     }
 
     /// Build a client with the default [`FetchPolicy`]. Callers that
-    /// have already resolved a [`ResolveCtx`] should prefer
+    /// have already resolved a `ResolveCtx` should prefer
     /// [`Self::from_config_with_policy`] so env / workspace-yaml /
     /// `.npmrc` overrides to the `fetch*` settings take effect.
     pub fn from_config(config: NpmConfig) -> Self {
