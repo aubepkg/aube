@@ -48,8 +48,57 @@ pub(super) fn build_http_client(
     config: &NpmConfig,
     registry_config: Option<&crate::config::AuthConfig>,
     fetch_policy: &FetchPolicy,
+    extra_ca_certs: &[reqwest::Certificate],
 ) -> reqwest::Client {
-    build_http_client_inner(config, registry_config, fetch_policy, false)
+    build_http_client_inner(config, registry_config, fetch_policy, extra_ca_certs, false)
+}
+
+/// Load the PEM bundle named by `NODE_EXTRA_CA_CERTS` as extra trust
+/// roots, to be added to every client built from one config.
+///
+/// `NODE_EXTRA_CA_CERTS` is the standard Node convention for appending
+/// a CA to the default trust store; npm/pnpm inherit it transitively
+/// because they run on Node, and aube reads it explicitly so native
+/// installs stay compatible with corporate MITM proxies and self-signed
+/// registries configured the Node way.
+///
+/// Loaded once per [`RegistryClient`] construction (see
+/// `from_config_with_policy`) rather than inside each builder — one
+/// `RegistryClient` builds the default client, the tarball client, and
+/// one client per per-registry / scoped override, so reading and
+/// parsing the bundle per builder would repeat the work N times. The
+/// returned certs are additive and lowest-priority: applied before the
+/// `.npmrc` `ca` / `cafile` roots, on top of the OS / webpki roots
+/// (ordering is immaterial — `add_root_certificate` forms a union). A
+/// missing, unreadable, or malformed file is warned and yields an empty
+/// list, never fatal — matching the `.npmrc cafile` handling.
+pub(super) fn load_node_extra_ca_certs() -> Vec<reqwest::Certificate> {
+    let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS").filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(
+                code = aube_codes::warnings::WARN_AUBE_UNREADABLE_CAFILE,
+                "ignoring unreadable NODE_EXTRA_CA_CERTS {}: {e}",
+                Path::new(&path).display()
+            );
+            return Vec::new();
+        }
+    };
+    match reqwest::Certificate::from_pem_bundle(&bytes) {
+        Ok(certs) => certs,
+        Err(e) => {
+            tracing::warn!(
+                code = aube_codes::warnings::WARN_AUBE_INVALID_CAFILE,
+                "ignoring invalid NODE_EXTRA_CA_CERTS {}: {e}",
+                Path::new(&path).display()
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// HTTP/1.1-only variant for tarball downloads. Tarballs are large
@@ -75,14 +124,16 @@ pub(super) fn build_http_tarball_client(
     config: &NpmConfig,
     registry_config: Option<&crate::config::AuthConfig>,
     fetch_policy: &FetchPolicy,
+    extra_ca_certs: &[reqwest::Certificate],
 ) -> reqwest::Client {
-    build_http_client_inner(config, registry_config, fetch_policy, true)
+    build_http_client_inner(config, registry_config, fetch_policy, extra_ca_certs, true)
 }
 
 fn build_http_client_inner(
     config: &NpmConfig,
     registry_config: Option<&crate::config::AuthConfig>,
     fetch_policy: &FetchPolicy,
+    extra_ca_certs: &[reqwest::Certificate],
     for_tarball: bool,
 ) -> reqwest::Client {
     // `maxsockets` (when set) overrides the default pool size. pnpm
@@ -219,22 +270,13 @@ fn build_http_client_inner(
         }
     }
 
-    // `NODE_EXTRA_CA_CERTS` names a PEM bundle that Node appends to its
-    // built-in trust store; npm/pnpm inherit that trust transitively
-    // because they run on Node. aube is a native binary, so it honors
-    // the same env var explicitly to stay compatible with corporate
-    // MITM proxies and self-signed registries configured the Node way.
-    //
-    // Read here rather than folded into `NpmConfig` like the proxy vars:
-    // CA roots are process-global and purely additive, so unlike a proxy
-    // there is no `.npmrc` override or `noproxy` interaction to reconcile
-    // — the union of trust roots is the whole story. Applied before the
-    // `.npmrc` `ca` / `cafile` roots; ordering is immaterial since
-    // `add_root_certificate` forms a union. A missing / unreadable /
-    // invalid file is warned and ignored, never fatal.
-    if let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS").filter(|value| !value.is_empty()) {
-        builder =
-            apply_extra_root_certs(builder, &[], Some(Path::new(&path)), "NODE_EXTRA_CA_CERTS");
+    // `NODE_EXTRA_CA_CERTS` roots, loaded once per `RegistryClient`
+    // construction (see `load_node_extra_ca_certs`) and shared across
+    // every client this config builds. Additive and lowest-priority:
+    // applied before the `.npmrc` `ca` / `cafile` roots; ordering is
+    // immaterial since `add_root_certificate` forms a union.
+    for cert in extra_ca_certs {
+        builder = builder.add_root_certificate(cert.clone());
     }
 
     // Top-level `cafile` / `ca` (unscoped npmrc keys) apply to every
@@ -290,52 +332,116 @@ pub(super) fn force_full_packument() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::build_http_client;
+    use super::{build_http_client, load_node_extra_ca_certs};
     use crate::config::{FetchPolicy, NpmConfig};
+    use std::ffi::{OsStr, OsString};
 
-    /// `NODE_EXTRA_CA_CERTS` is consulted when building the client, and
-    /// an unreadable or malformed bundle is warned-and-skipped rather
-    /// than fatal — `build_http_client` always returns a usable client.
-    #[test]
-    fn node_extra_ca_certs_is_loaded_and_failures_are_non_fatal() {
-        // Serialize env mutation against sibling tests that also build
-        // clients and restore the prior value on exit. The mutation is
-        // harmless to a concurrent build — the var is additive and any
-        // read/parse failure is warned-and-skipped — but restoring it
-        // keeps it from leaking into a developer's shell or another test.
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let prior = std::env::var_os("NODE_EXTRA_CA_CERTS");
+    /// Minimal self-signed certificate used to assert
+    /// `load_node_extra_ca_certs` parses a well-formed PEM bundle. Lives
+    /// in `tests/fixtures/test-ca.pem` so the base64 body stays out of
+    /// the spellchecker dictionary. Regenerate with:
+    ///
+    /// ```text
+    /// openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+    ///     -subj '/CN=aube-test' -keyout /dev/null \
+    ///     -out crates/aube-registry/tests/fixtures/test-ca.pem
+    /// ```
+    ///
+    /// The private key is discarded — nothing pins a specific issuer or
+    /// fingerprint, the fixture only needs to be a valid X.509 PEM.
+    const TEST_CA_PEM: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/test-ca.pem"
+    ));
 
-        let config = NpmConfig::default();
-        let policy = FetchPolicy::default();
-        // `build_http_client` ends in `.expect(...)`, so a client that
-        // failed to build would panic the test — calling it is the
-        // assertion.
-        let build = || drop(build_http_client(&config, None, &policy));
+    /// RAII guard for `NODE_EXTRA_CA_CERTS`: serializes env-mutating
+    /// tests on a process-wide lock and restores the variable's prior
+    /// value (or absence) on drop — *including on panic*. The prior
+    /// value is snapshotted once at acquisition, before any mutation,
+    /// so a `.expect()` failure mid-test can never leak the test's
+    /// value into a sibling test or re-capture a stale value on the
+    /// next run (the failure mode of a manual restore-at-the-end).
+    struct EnvVarGuard {
+        prior: Option<OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
 
-        // Pointing at a nonexistent file: unreadable, warned, ignored.
-        // SAFETY: serialized by `LOCK`; restored before returning.
-        unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", "/aube/does-not-exist.pem") };
-        build();
-
-        // Pointing at a readable file that isn't valid PEM: warned, ignored.
-        let mut bad = std::env::temp_dir();
-        bad.push(format!("aube-node-extra-ca-{}.pem", std::process::id()));
-        std::fs::write(&bad, b"not a certificate").expect("write temp ca bundle");
-        // SAFETY: serialized by `LOCK`; restored before returning.
-        unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", &bad) };
-        build();
-        let _ = std::fs::remove_file(&bad);
-
-        // SAFETY: serialized by `LOCK`.
-        unsafe {
-            match prior {
-                Some(value) => std::env::set_var("NODE_EXTRA_CA_CERTS", value),
-                None => std::env::remove_var("NODE_EXTRA_CA_CERTS"),
+    impl EnvVarGuard {
+        fn acquire() -> Self {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let lock = LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            EnvVarGuard {
+                prior: std::env::var_os("NODE_EXTRA_CA_CERTS"),
+                _lock: lock,
             }
         }
+
+        fn set(&self, value: impl AsRef<OsStr>) {
+            // SAFETY: the guard holds the process-wide lock, so no other
+            // guard-using test mutates the environment concurrently.
+            unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", value) };
+        }
+
+        fn remove(&self) {
+            // SAFETY: the guard holds the process-wide lock, so no other
+            // guard-using test mutates the environment concurrently.
+            unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: the lock is still held; restore the pre-test value
+            // (or remove it if it was unset) even when the test panicked.
+            unsafe {
+                match &self.prior {
+                    Some(value) => std::env::set_var("NODE_EXTRA_CA_CERTS", value),
+                    None => std::env::remove_var("NODE_EXTRA_CA_CERTS"),
+                }
+            }
+        }
+    }
+
+    /// `load_node_extra_ca_certs` parses a valid bundle into trust
+    /// roots, and treats a missing / unreadable / malformed file as an
+    /// empty list (warned, never fatal) so client construction always
+    /// succeeds. `build_http_client` accepts whatever it returns.
+    #[test]
+    fn node_extra_ca_certs_is_loaded_and_failures_are_non_fatal() {
+        let env = EnvVarGuard::acquire();
+
+        // Unset: nothing to add.
+        env.remove();
+        assert!(load_node_extra_ca_certs().is_empty());
+
+        // A valid PEM bundle parses into at least one trust root.
+        let mut good = std::env::temp_dir();
+        good.push(format!(
+            "aube-node-extra-ca-good-{}.pem",
+            std::process::id()
+        ));
+        std::fs::write(&good, TEST_CA_PEM).expect("write temp ca bundle");
+        env.set(&good);
+        assert_eq!(load_node_extra_ca_certs().len(), 1);
+
+        // A readable file that isn't valid PEM: warned, ignored → empty.
+        std::fs::write(&good, b"not a certificate").expect("overwrite temp ca bundle");
+        assert!(load_node_extra_ca_certs().is_empty());
+        let _ = std::fs::remove_file(&good);
+
+        // A nonexistent file: unreadable, warned, ignored → empty.
+        env.set("/aube/does-not-exist.pem");
+        assert!(load_node_extra_ca_certs().is_empty());
+
+        // `build_http_client` accepts the loaded roots and always
+        // returns a usable client (it ends in `.expect(...)`, so a
+        // build failure would panic the test).
+        let config = NpmConfig::default();
+        let policy = FetchPolicy::default();
+        let certs = load_node_extra_ca_certs();
+        drop(build_http_client(&config, None, &policy, &certs));
+        // `env` restores NODE_EXTRA_CA_CERTS on drop, even on panic.
     }
 }
