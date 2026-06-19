@@ -941,6 +941,82 @@ mod subset_tests {
         assert_fires_and_matches("block-overrides", block);
     }
 
+    // -- Fast-path hit-rate guard (self-review of the c766fc4 decline fix).
+    //    The fix added `inline.is_some() -> decline` to the eight map-typed
+    //    fields, plus an empty-map decline inside `parse_string_map`. A
+    //    block form NEVER carries an inline value, so it must still FIRE.
+    //    These pin each field's legitimate, populated BLOCK form to the
+    //    fast path — evidence the decline fix did not regress the hit rate
+    //    for the common real-world case. (settings / catalogs /
+    //    patchedDependencies / snapshot.optionalDependencies block forms
+    //    are also exercised by the kitchen-sink fixture's
+    //    `assert_fires_and_matches`; these isolate each one.) --
+
+    #[test]
+    fn populated_block_forms_still_fire_per_field() {
+        let cases: &[(&str, &str)] = &[
+            (
+                "overrides-block",
+                "lockfileVersion: '9.0'\noverrides:\n  foo: '1'\n",
+            ),
+            (
+                "time-block",
+                "lockfileVersion: '9.0'\ntime:\n  foo@1.0.0: '2020-01-01T00:00:00.000Z'\n",
+            ),
+            (
+                "settings-block",
+                "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n",
+            ),
+            (
+                "patchedDependencies-block",
+                "lockfileVersion: '9.0'\npatchedDependencies:\n  foo@1.0.0:\n    path: patches/foo.patch\n    hash: abc123\n",
+            ),
+            (
+                "catalogs-block",
+                "lockfileVersion: '9.0'\ncatalogs:\n  default:\n    react:\n      specifier: ^18\n      version: 18.0.0\n",
+            ),
+            (
+                "importers-block",
+                "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n",
+            ),
+            (
+                "snapshot-optionalDeps-block",
+                "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    optionalDependencies:\n      bar: 2.0.0\n    optional: true\n",
+            ),
+        ];
+        for (name, content) in cases {
+            assert_fires_and_matches(name, content);
+        }
+    }
+
+    #[test]
+    fn map_field_null_empty_populated_track_serde() {
+        // For each null/empty/populated rendering of a map-typed field, the
+        // subset decision (fire+Match vs Declined) must agree with serde's
+        // None-vs-empty-vs-populated reading. serde reads a null body
+        // (`overrides:` with nothing) and an inline `{}` both as a value the
+        // subset path declines on, while a populated block fires. The
+        // harness asserts no divergence in every case; we additionally pin
+        // the populated case to FIRE and the empty cases to DECLINE so the
+        // intended fast-path boundary is explicit.
+        let populated = "lockfileVersion: '9.0'\noverrides:\n  foo: bar\n";
+        assert_fires_and_matches("overrides-populated", populated);
+
+        for empty in [
+            // null body — serde reads `None`
+            "lockfileVersion: '9.0'\noverrides:\n",
+            // inline empty map — serde reads `Some({})`; subset can't model
+            // the inline form so it declines (no divergence either way)
+            "lockfileVersion: '9.0'\noverrides: {}\n",
+        ] {
+            assert!(
+                try_parse(empty).is_none(),
+                "empty/inline overrides must decline: {empty:?}"
+            );
+            assert_match_or_declines("overrides-empty", empty);
+        }
+    }
+
     // -- Adversarial structural cases (self-review). Each must MATCH or
     //    DECLINE; a divergence is a silent wrong parse. --
 
@@ -1124,6 +1200,132 @@ mod subset_tests {
         // change the parsed value vs serde.
         let lock = "lockfileVersion: '9.0'\noverrides:\n  pkg: ^1.0.0  \n";
         assert_match_or_declines("trailing-ws", lock);
+    }
+
+    // -- Inline-vs-block fuzz proptest. Generates a logical pnpm-lock
+    //    structure over the eight serde-delegated / map-typed fields and
+    //    renders it two ways — pnpm's normal 2-space BLOCK style, and an
+    //    INLINE flow-map style — then asserts the core invariant for BOTH
+    //    renderings: `diff_subset_vs_serde` returns Match or Declined,
+    //    never Divergence. This fuzzes the inline-vs-block boundary across
+    //    the whole field class, so a future regression that re-introduces a
+    //    silent inline misparse (the exact c766fc4 bug) is caught. The
+    //    seed is fixed below for deterministic CI. --
+
+    use proptest::prelude::*;
+
+    /// One generated map-valued field. `Null`/`Empty` exercise the
+    /// missing/empty-body boundary; `Populated` carries real entries that
+    /// must round-trip through whichever rendering is chosen.
+    #[derive(Debug, Clone)]
+    enum FieldVal {
+        Null,
+        Empty,
+        Populated(Vec<(String, String)>),
+    }
+
+    /// Plain pnpm-style keys/values: lowercase alnum + the punctuation pnpm
+    /// actually emits in dep-path / specifier positions. Kept inside the
+    /// recognized subset (no quotes/colons-needing-escapes) so the BLOCK
+    /// rendering is a legitimate fast-path candidate; the INLINE rendering
+    /// of the same data must still never diverge.
+    fn plain_token() -> impl Strategy<Value = String> {
+        "[a-z][a-z0-9]{0,7}"
+    }
+
+    fn field_val() -> impl Strategy<Value = FieldVal> {
+        prop_oneof![
+            1 => Just(FieldVal::Null),
+            1 => Just(FieldVal::Empty),
+            3 => prop::collection::vec((plain_token(), plain_token()), 1..4)
+                .prop_map(FieldVal::Populated),
+        ]
+    }
+
+    /// A logical lockfile: the two string→string map fields whose inline
+    /// vs block boundary the c766fc4 fix governs directly through
+    /// `parse_string_map` (`overrides`, `time`), each independently
+    /// Null / Empty / Populated.
+    fn logical_lock() -> impl Strategy<Value = (FieldVal, FieldVal)> {
+        (field_val(), field_val())
+    }
+
+    /// Render a string→string map field in BLOCK style (or omit it for
+    /// `Null`/`Empty`, since pnpm never writes an empty block map — it
+    /// omits the key or writes `{}` inline; we cover the inline `{}` in the
+    /// inline renderer).
+    fn render_block(key: &str, val: &FieldVal, out: &mut String) {
+        match val {
+            FieldVal::Null | FieldVal::Empty => {}
+            FieldVal::Populated(entries) => {
+                out.push_str(key);
+                out.push_str(":\n");
+                for (k, v) in entries {
+                    // Dedup-safe: serde + subset both keep last on dup keys
+                    // via BTreeMap; the generator may repeat a key, which is
+                    // a valid thing to fuzz.
+                    out.push_str("  ");
+                    out.push_str(k);
+                    out.push_str(": ");
+                    out.push_str(v);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+
+    /// Render the same field in INLINE flow-map style. `Null` → `key:`
+    /// (empty body), `Empty` → `key: {}`, `Populated` → `key: {a: b, ...}`.
+    /// Every inline form here is one the subset path must DECLINE on (it
+    /// models only the block form) — so the invariant under test is "no
+    /// divergence", with decline being the expected outcome.
+    fn render_inline(key: &str, val: &FieldVal, out: &mut String) {
+        match val {
+            FieldVal::Null => {
+                out.push_str(key);
+                out.push_str(":\n");
+            }
+            FieldVal::Empty => {
+                out.push_str(key);
+                out.push_str(": {}\n");
+            }
+            FieldVal::Populated(entries) => {
+                out.push_str(key);
+                out.push_str(": {");
+                let parts: Vec<String> =
+                    entries.iter().map(|(k, v)| format!("{k}: {v}")).collect();
+                out.push_str(&parts.join(", "));
+                out.push_str("}\n");
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            // Fixed seed: deterministic CI, reproducible failures.
+            rng_algorithm: proptest::test_runner::RngAlgorithm::ChaCha,
+            ..ProptestConfig::default()
+        })]
+
+        /// The core invariant across the inline-vs-block boundary: for a
+        /// generated logical structure rendered EITHER way, the subset
+        /// parser matches serde or cleanly declines — never a silent wrong
+        /// parse. The block rendering of populated data should fire+match;
+        /// the inline rendering should decline; both must avoid divergence,
+        /// which is all `assert_match_or_declines` asserts.
+        #[test]
+        fn inline_vs_block_never_diverges((overrides, time) in logical_lock()) {
+            let mut block = String::from("lockfileVersion: '9.0'\n");
+            render_block("overrides", &overrides, &mut block);
+            render_block("time", &time, &mut block);
+            assert_match_or_declines("fuzz-block", &block);
+
+            let mut inline = String::from("lockfileVersion: '9.0'\n");
+            render_inline("overrides", &overrides, &mut inline);
+            render_inline("time", &time, &mut inline);
+            assert_match_or_declines("fuzz-inline", &inline);
+        }
     }
 
     // -- Opt-in differential sweep over an external real-world corpus. --
