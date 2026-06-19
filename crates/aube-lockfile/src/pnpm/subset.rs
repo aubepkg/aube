@@ -2,8 +2,8 @@
 //!
 //! The byte-cursor design — walking the raw `&[u8]` and scanning for
 //! structural bytes, declining to a full parser the moment the input
-//! leaves the recognized subset — is modeled on jzon-rs (Maciej Hirsz's
-//! `json-rust`/`jzon`): <https://github.com/maciejhirsz/json-rust>.
+//! leaves the recognized subset — is modeled on jzon-rs:
+//! <https://github.com/Rajaniraiyn/jzon-rs>.
 //!
 //! pnpm emits a tightly constrained dialect of YAML: 2-space block
 //! indentation, no anchors/aliases, no multi-line scalars, no flow
