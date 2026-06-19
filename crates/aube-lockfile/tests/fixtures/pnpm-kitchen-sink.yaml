@@ -138,3 +138,4 @@ snapshots:
   bundled-pkg@1.0.0:
     bundledDependencies:
       - '@napi-rs/wasm-runtime'
+      - '@emnapi/core'
