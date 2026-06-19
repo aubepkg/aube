@@ -1,9 +1,17 @@
 //! Purpose-built byte-cursor SUBSET parser for `pnpm-lock.yaml`.
 //!
-//! The byte-cursor design — walking the raw `&[u8]` and scanning for
-//! structural bytes, declining to a full parser the moment the input
-//! leaves the recognized subset — is modeled on jzon-rs:
-//! <https://github.com/Rajaniraiyn/jzon-rs>.
+//! The overall approach — walk the raw `&[u8]` with a cursor, scan for
+//! structural bytes, and decline to a full parser the moment the input
+//! leaves the recognized subset — was inspired by jzon-rs:
+//! <https://github.com/Rajaniraiyn/jzon-rs>. We borrow that *shape* (a
+//! byte-cursor with a hard decline-on-doubt boundary), not its specific
+//! kernels: jzon-rs is a SIMD/SWAR JSON parser whose speed comes from
+//! word-at-a-time and hand-vectorized structural scans, none of which is
+//! used here. This parser is a plain byte-cursor line scanner — line
+//! boundaries are found with `memchr` (whose own SIMD does the bulk
+//! scanning), and the single structural `:` separator is matched with a
+//! short scalar pass. The constrained pnpm dialect (short keys, tiny
+//! values) does not justify bringing jzon-rs's vectorized kernels across.
 //!
 //! pnpm emits a tightly constrained dialect of YAML: 2-space block
 //! indentation, no anchors/aliases, no multi-line scalars, no flow
