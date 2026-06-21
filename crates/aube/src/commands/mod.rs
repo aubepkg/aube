@@ -48,6 +48,7 @@ pub mod patch_remove;
 pub mod peers;
 pub mod prune;
 pub mod publish;
+#[cfg(feature = "publish-provenance")]
 pub mod publish_provenance;
 pub mod query;
 pub mod rebuild;

@@ -38,7 +38,9 @@ use aube_registry::config::{NpmConfig, normalize_registry_url_pub};
 use base64::Engine;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
+#[cfg(feature = "publish-provenance")]
 use reqwest::Url;
+#[cfg(feature = "publish-provenance")]
 use serde::Deserialize;
 use sha2::Digest as _;
 use sha2::Sha512;
@@ -441,6 +443,9 @@ async fn publish_one(
         // Rekor round-trip because (a) we don't want to spam the public
         // tlog with throwaway entries and (b) dry-run should be cheap.
         if args.provenance {
+            #[cfg(not(feature = "publish-provenance"))]
+            return Err(provenance_not_compiled());
+            #[cfg(feature = "publish-provenance")]
             crate::commands::publish_provenance::probe_oidc_available()
                 .await
                 .wrap_err("--dry-run --provenance: OIDC probe failed")?;
@@ -501,7 +506,14 @@ async fn publish_one(
     // (Fulcio + Rekor + optional TSA round-trips), so we do it *before*
     // serializing the publish body rather than after — a signing
     // failure should never leave us with a half-built request.
-    let provenance_bundle = if args.provenance {
+    #[cfg(not(feature = "publish-provenance"))]
+    if args.provenance {
+        return Err(provenance_not_compiled());
+    }
+    let provenance_bundle: Option<String> = if args.provenance {
+        #[cfg(not(feature = "publish-provenance"))]
+        unreachable!("handled above when publish-provenance is disabled");
+        #[cfg(feature = "publish-provenance")]
         Some(
             crate::commands::publish_provenance::generate(
                 &archive.tarball,
@@ -627,16 +639,19 @@ fn normalize_publish_version(version: &str) -> String {
         .unwrap_or_else(|_| version.to_string())
 }
 
+#[cfg(feature = "publish-provenance")]
 #[derive(Debug, Deserialize)]
 struct GitHubOidcResponse {
     value: Option<String>,
 }
 
+#[cfg(feature = "publish-provenance")]
 #[derive(Debug, Deserialize)]
 struct NpmOidcExchangeResponse {
     token: Option<String>,
 }
 
+#[cfg(feature = "publish-provenance")]
 /// Try npm Trusted Publishing before falling back to traditional `.npmrc`
 /// auth. npm's OIDC exchange is publish-specific: the CI-issued ID token must
 /// have audience `npm:<registry-host>`, then the registry returns a short-lived
@@ -652,6 +667,16 @@ async fn trusted_publish_token(
     exchange_npm_oidc_token(client, registry_url, package_name, &id_token).await
 }
 
+#[cfg(not(feature = "publish-provenance"))]
+async fn trusted_publish_token(
+    _client: &RegistryClient,
+    _registry_url: &str,
+    _package_name: &str,
+) -> miette::Result<Option<String>> {
+    Ok(None)
+}
+
+#[cfg(feature = "publish-provenance")]
 async fn npm_oidc_id_token(
     client: &RegistryClient,
     registry_url: &str,
@@ -723,6 +748,7 @@ async fn npm_oidc_id_token(
     Ok(body.value.filter(|token| !token.trim().is_empty()))
 }
 
+#[cfg(feature = "publish-provenance")]
 async fn exchange_npm_oidc_token(
     client: &RegistryClient,
     registry_url: &str,
@@ -754,6 +780,11 @@ async fn exchange_npm_oidc_token(
         .into_diagnostic()
         .wrap_err("failed to parse npm OIDC token exchange response")?;
     Ok(body.token.filter(|token| !token.trim().is_empty()))
+}
+
+#[cfg(not(feature = "publish-provenance"))]
+fn provenance_not_compiled() -> miette::Report {
+    miette!("publish provenance support was not compiled into this aube build")
 }
 
 struct PublishHttpFailure {
