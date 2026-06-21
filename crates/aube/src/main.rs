@@ -33,9 +33,17 @@ fn main() {
     // the standalone `aube` invocation reaches it: multicall shims rewrite
     // argv before clap, so their `usage` tokens belong to the wrapped tool.
     if is_usage_invocation() {
-        let mut cmd = aube::command();
-        clap_usage::generate(&mut cmd, embedder.name, &mut std::io::stdout());
-        return;
+        #[cfg(feature = "standalone-usage")]
+        {
+            let mut cmd = aube::command();
+            clap_usage::generate(&mut cmd, embedder.name, &mut std::io::stdout());
+            return;
+        }
+        #[cfg(not(feature = "standalone-usage"))]
+        {
+            eprintln!("`aube usage` was built without the standalone-usage feature");
+            std::process::exit(2);
+        }
     }
 
     // The binary owns the single `std::process::exit`: `cli_main` returns the
