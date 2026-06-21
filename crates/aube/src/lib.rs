@@ -574,6 +574,33 @@ pub fn cli_main_with_defaults(
     embedder: &'static aube_util::Embedder,
     defaults: Vec<(String, String)>,
 ) -> i32 {
+    cli_main_with_defaults_from_args(embedder, defaults, std::env::args_os())
+}
+
+/// Run aube with an explicit argv vector.
+///
+/// This is the embedding entry point for hosts that want in-process execution
+/// without temporarily rewriting the process argv or spawning a child process.
+#[must_use]
+pub fn cli_main_from_args<I, T>(embedder: &'static aube_util::Embedder, args: I) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    cli_main_with_defaults_from_args(embedder, Vec::new(), args)
+}
+
+/// Run aube with explicit argv and embedder-level default settings.
+#[must_use]
+pub fn cli_main_with_defaults_from_args<I, T>(
+    embedder: &'static aube_util::Embedder,
+    defaults: Vec<(String, String)>,
+    args: I,
+) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
     // Register the binary's embedder profile before anything reads branding,
     // and its setting defaults before anything resolves settings. Both are
     // idempotent — a no-op if already set (e.g. a test harness that
@@ -597,7 +624,8 @@ pub fn cli_main_with_defaults(
         aube_util::diag::flush();
         prev_hook(info);
     }));
-    let result = inner_main();
+    let argv = args.into_iter().map(Into::into).collect();
+    let result = inner_main_from(argv);
     aube_util::diag::flush();
     // Drain any in-flight slow-metadata group whose debounce window
     // hasn't fired yet. install pipelines also flush at end-of-resolve
@@ -633,8 +661,7 @@ fn report_exit_code(report: &miette::Report) -> i32 {
     aube_codes::exit::EXIT_GENERIC
 }
 
-fn inner_main() -> miette::Result<i32> {
-    let mut argv: Vec<OsString> = std::env::args_os().collect();
+fn inner_main_from(mut argv: Vec<OsString>) -> miette::Result<i32> {
     // pnpm-compat: pull `--config.<key>[=<value>]` out of argv before
     // clap parses it. Stripping here means the rest of the binary sees
     // a clean argv, and the parsed pairs feed every `ResolveCtx::cli`
@@ -654,11 +681,24 @@ fn inner_main() -> miette::Result<i32> {
     // behavior, matching the previous `parse_from`.
     let cli = {
         use clap::{CommandFactory, FromArgMatches};
-        let matches = Cli::command()
+        let command = Cli::command()
             .name(aube_util::embedder().name)
-            .bin_name(aube_util::command_prefix_display())
-            .get_matches_from(lift_per_subcommand_flags(rewrite_multicall_argv(argv)));
-        Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+            .bin_name(aube_util::command_prefix_display());
+        let matches = match command
+            .try_get_matches_from(lift_per_subcommand_flags(rewrite_multicall_argv(argv)))
+        {
+            Ok(matches) => matches,
+            Err(err) => {
+                let kind = err.kind();
+                err.print().into_diagnostic()?;
+                return Ok(match kind {
+                    clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayVersion => 0,
+                    _ => 2,
+                });
+            }
+        };
+        Cli::from_arg_matches(&matches).into_diagnostic()?
     };
 
     // `--color` / `--no-color` take effect before anything else touches
