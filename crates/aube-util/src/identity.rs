@@ -40,12 +40,22 @@ use std::sync::OnceLock;
 #[derive(Clone, Copy, Debug)]
 pub struct Embedder {
     /// Tool name, lowercase (e.g. `"aube"`). The proper noun users type and
-    /// see in output, and the clap command name driving help/usage/errors.
+    /// see in output, and the command-safe slug used for sidecars.
     /// Must be filesystem- and command-safe (no spaces, slashes, or shell
     /// metacharacters); it is used verbatim in on-disk sidecar paths (e.g.
-    /// `.<name>_patch_state.json`, `.<name>-deploy-injected/`) and in command
-    /// invocations, so the embedder is responsible for supplying a safe slug.
+    /// `.<name>_patch_state.json`, `.<name>-deploy-injected/`), so the
+    /// embedder is responsible for supplying a safe slug.
     pub name: &'static str,
+    /// Words a user types to invoke this tool, used in user-facing command
+    /// references and clap usage/error output. Standalone aube uses
+    /// `["aube"]`; an embedded host can use something like
+    /// `["elide", "aube", "--"]` while keeping [`name`](Self::name) as the
+    /// stable slug.
+    ///
+    /// The first word is display-only when aube recursively invokes itself:
+    /// recursive calls run `std::env::current_exe()` and prepend every
+    /// remaining word before the aube subcommand.
+    pub command_prefix: &'static [&'static str],
     /// High-visibility display name shown in the progress banner (e.g.
     /// `"aube"`). Usually equal to [`name`](Self::name); split out so an
     /// embedder can brand the banner independently of the command name.
@@ -146,6 +156,7 @@ pub struct Embedder {
 /// profile is registered.
 pub const AUBE: Embedder = Embedder {
     name: "aube",
+    command_prefix: &["aube"],
     display_name: "aube",
     vendor: Some("by jdx.dev"),
     version: env!("CARGO_PKG_VERSION"),
@@ -187,6 +198,14 @@ static ACTIVE: OnceLock<&'static Embedder> = OnceLock::new();
 /// `debug_assert!` here — at registration, the single choke point — rather than
 /// misbehaving deep inside `io.rs` / `clean.rs` / `pack.rs`.
 pub fn set_embedder(embedder: &'static Embedder) {
+    debug_assert!(
+        !embedder.command_prefix.is_empty(),
+        "embedder command_prefix must include at least the displayed executable name",
+    );
+    debug_assert!(
+        embedder.command_prefix.iter().all(|part| !part.is_empty()),
+        "embedder command_prefix must not contain empty words",
+    );
     debug_assert!(
         embedder.lockfile_basename.contains('.'),
         "embedder lockfile_basename {:?} must contain a `.` (stem/extension split is load-bearing)",
@@ -239,6 +258,25 @@ pub fn prog() -> &'static str {
     embedder().name
 }
 
+/// The active tool's user-facing invocation prefix as words, e.g. `["aube"]`
+/// for standalone aube or `["elide", "aube", "--"]` for an embedded host.
+pub fn command_prefix() -> &'static [&'static str] {
+    embedder().command_prefix
+}
+
+/// The argument prefix to prepend after `std::env::current_exe()` when aube
+/// recursively invokes itself. The executable word in [`command_prefix`] is a
+/// user-facing display token; recursive calls already have the real executable
+/// path from `current_exe()`.
+pub fn recursive_command_args() -> &'static [&'static str] {
+    command_prefix().get(1..).unwrap_or(&[])
+}
+
+/// The active tool's user-facing invocation prefix as one display string.
+pub fn command_prefix_display() -> String {
+    command_prefix().join(" ")
+}
+
 /// A *user-facing* `"{prog} <verb>"` command reference, e.g. `cmd("install")`
 /// renders `"aube install"` under the default profile and `"nub install"` under
 /// a `nub`-branded embedder.
@@ -256,7 +294,7 @@ pub fn prog() -> &'static str {
 /// text is unchanged. Allocates a `String`; for the bare program name with no
 /// verb use [`prog`], which borrows.
 pub fn cmd(verb: &str) -> String {
-    format!("{} {verb}", prog())
+    format!("{} {verb}", command_prefix_display())
 }
 
 #[cfg(test)]
@@ -276,6 +314,7 @@ mod tests {
     fn embedder_unset_is_aube() {
         let id = embedder();
         assert_eq!(id.name, "aube");
+        assert_eq!(id.command_prefix, &["aube"]);
         assert_eq!(id.display_name, "aube");
         assert_eq!(id.vendor, Some("by jdx.dev"));
         assert_eq!(id.version, env!("CARGO_PKG_VERSION"));
@@ -307,6 +346,9 @@ mod tests {
     #[test]
     fn prog_and_cmd_render_aube_under_default_profile() {
         assert_eq!(prog(), "aube");
+        assert_eq!(command_prefix(), &["aube"]);
+        assert_eq!(recursive_command_args(), &[] as &[&str]);
+        assert_eq!(command_prefix_display(), "aube");
         assert_eq!(cmd("install"), "aube install");
         assert_eq!(cmd("patch-commit"), "aube patch-commit");
         assert_eq!(cmd("store prune"), "aube store prune");

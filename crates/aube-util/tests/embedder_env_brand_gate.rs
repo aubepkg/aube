@@ -19,6 +19,7 @@ use aube_util::env::{config_env, embedder_env};
 /// brand (`config_env_prefix = Some("NUB")`).
 static NUBLIKE: Embedder = Embedder {
     name: "nublike",
+    command_prefix: &["nublike"],
     display_name: "nublike",
     vendor: None,
     version: "1.0.0",

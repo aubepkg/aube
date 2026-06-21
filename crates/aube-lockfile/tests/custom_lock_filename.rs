@@ -13,6 +13,7 @@ use aube_util::Embedder;
 
 static MYTOOL: Embedder = Embedder {
     name: "mytool",
+    command_prefix: &["mytool"],
     display_name: "mytool",
     vendor: None,
     version: "2.1.0",

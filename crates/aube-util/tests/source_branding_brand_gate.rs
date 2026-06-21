@@ -18,6 +18,7 @@ use aube_util::{Embedder, cmd, prog};
 /// helpers.
 static NUBLIKE: Embedder = Embedder {
     name: "nublike",
+    command_prefix: &["nublike"],
     display_name: "nublike",
     vendor: None,
     version: "1.0.0",

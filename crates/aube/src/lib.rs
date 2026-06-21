@@ -656,6 +656,7 @@ fn inner_main() -> miette::Result<i32> {
         use clap::{CommandFactory, FromArgMatches};
         let matches = Cli::command()
             .name(aube_util::embedder().name)
+            .bin_name(aube_util::command_prefix_display())
             .get_matches_from(lift_per_subcommand_flags(rewrite_multicall_argv(argv)));
         Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
     };

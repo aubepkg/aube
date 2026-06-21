@@ -66,6 +66,50 @@ fn primary_binary_name() -> &'static str {
     BINARY_NAMES[0]
 }
 
+fn sh_quote_arg(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('\'');
+    for ch in arg.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn sh_join_args(args: &[&str]) -> String {
+    args.iter()
+        .map(|arg| sh_quote_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn sh_bootstrap_args() -> String {
+    let mut args = sh_join_args(aube_util::recursive_command_args());
+    if !args.is_empty() {
+        args.push(' ');
+    }
+    args.push_str("__node-gyp-bootstrap");
+    args
+}
+
+#[cfg(windows)]
+fn cmd_bootstrap_args() -> String {
+    let mut args = aube_util::recursive_command_args()
+        .iter()
+        .map(|arg| aube_scripts::shell_quote_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !args.is_empty() {
+        args.push(' ');
+    }
+    args.push_str("__node-gyp-bootstrap");
+    args
+}
+
 fn tool_root() -> miette::Result<PathBuf> {
     let cache = aube_store::dirs::cache_dir()
         .ok_or_else(|| miette!("could not resolve cache dir for node-gyp bootstrap"))?;
@@ -146,11 +190,14 @@ pub(crate) async fn print_bootstrapped_binary(project_dir: &Path) -> miette::Res
 }
 
 fn write_lazy_shims(shim_dir: &Path) -> miette::Result<()> {
-    let sh = r#"#!/usr/bin/env sh
+    let bootstrap_args = sh_bootstrap_args();
+    let sh = format!(
+        r#"#!/usr/bin/env sh
 set -eu
-real="$("$AUBE_NODE_GYP_EXE" __node-gyp-bootstrap "$AUBE_NODE_GYP_PROJECT_DIR")"
+real="$("$AUBE_NODE_GYP_EXE" {bootstrap_args} "$AUBE_NODE_GYP_PROJECT_DIR")"
 exec "$real" "$@"
-"#;
+"#
+    );
     let sh_path = shim_dir.join("node-gyp");
     aube_util::fs_atomic::atomic_write(&sh_path, sh.as_bytes()).into_diagnostic()?;
     #[cfg(unix)]
@@ -166,6 +213,8 @@ exec "$real" "$@"
     // same way — via the hidden `__node-gyp-bootstrap` subcommand — then
     // forwards argv. Falls back to a `node-gyp` on PATH when aube's env
     // markers are absent (e.g. a script spawned outside aube's wrappers).
+    let js_args = serde_json::to_string(aube_util::recursive_command_args())
+        .expect("recursive command args are static strings");
     let js = r#"#!/usr/bin/env node
 "use strict";
 // aube lazy node-gyp stand-in for npm_config_node_gyp. Resolves (and
@@ -175,11 +224,12 @@ exec "$real" "$@"
 // so the shim runs under any Node the user drives, including pre-16.
 const { execFileSync, spawnSync } = require("child_process");
 const isWin = process.platform === "win32";
+const aubeArgs = __AUBE_RECURSIVE_ARGS__;
 let real;
 const exe = process.env.AUBE_NODE_GYP_EXE;
 if (exe) {
   const dir = process.env.AUBE_NODE_GYP_PROJECT_DIR || process.cwd();
-  real = execFileSync(exe, ["__node-gyp-bootstrap", dir], { encoding: "utf8" }).trim();
+  real = execFileSync(exe, aubeArgs.concat(["__node-gyp-bootstrap", dir]), { encoding: "utf8" }).trim();
 } else {
   real = isWin ? "node-gyp.cmd" : "node-gyp";
 }
@@ -189,7 +239,8 @@ if (result.error) {
   process.exit(1);
 }
 process.exit(result.status === null ? 1 : result.status);
-"#;
+"#
+    .replace("__AUBE_RECURSIVE_ARGS__", &js_args);
     let js_path = shim_dir.join("node-gyp.js");
     aube_util::fs_atomic::atomic_write(&js_path, js.as_bytes()).into_diagnostic()?;
     #[cfg(unix)]
@@ -201,11 +252,14 @@ process.exit(result.status === null ? 1 : result.status);
 
     #[cfg(windows)]
     {
-        let cmd = r#"@echo off
-for /f "usebackq delims=" %%i in (`"%AUBE_NODE_GYP_EXE%" __node-gyp-bootstrap "%AUBE_NODE_GYP_PROJECT_DIR%"`) do set "AUBE_REAL_NODE_GYP=%%i"
+        let bootstrap_args = cmd_bootstrap_args();
+        let cmd = format!(
+            r#"@echo off
+for /f "usebackq delims=" %%i in (`"%AUBE_NODE_GYP_EXE%" {bootstrap_args} "%AUBE_NODE_GYP_PROJECT_DIR%"`) do set "AUBE_REAL_NODE_GYP=%%i"
 if not defined AUBE_REAL_NODE_GYP exit /b 1
 "%AUBE_REAL_NODE_GYP%" %*
-"#;
+"#
+        );
         aube_util::fs_atomic::atomic_write(&shim_dir.join("node-gyp.cmd"), cmd.as_bytes())
             .into_diagnostic()?;
     }
@@ -279,15 +333,15 @@ fn bootstrap_blocking(
         .into_diagnostic()
         .wrap_err("could not locate current aube executable for node-gyp bootstrap")?;
     tracing::info!("bootstrapping node-gyp {SPEC} into {}", tool_dir.display());
-    let status = std::process::Command::new(&exe)
+    let mut command = std::process::Command::new(&exe);
+    command
+        .args(aube_util::recursive_command_args())
         .args(["install", "--ignore-scripts", "--silent"])
-        .current_dir(tool_dir)
-        .status()
-        .into_diagnostic()
-        .wrap_err(format!(
-            "failed to spawn recursive {} for node-gyp bootstrap",
-            aube_util::cmd("install")
-        ))?;
+        .current_dir(tool_dir);
+    let status = command.status().into_diagnostic().wrap_err(format!(
+        "failed to spawn recursive {} for node-gyp bootstrap",
+        aube_util::cmd("install")
+    ))?;
     if !status.success() {
         return Err(miette!(
             "recursive {} failed while bootstrapping node-gyp (exit {:?}) — \
