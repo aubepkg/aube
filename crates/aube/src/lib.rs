@@ -1785,6 +1785,28 @@ mod cli_ordering_tests {
     use clap::CommandFactory;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn clap_usage_can_display_embedded_command_prefix() {
+        let matches = Cli::command()
+            .bin_name("elide aube --")
+            .try_get_matches_from(["elide", "install", "--ignore-scripts"]);
+        assert!(matches.is_ok(), "install --ignore-scripts should parse");
+
+        let err = Cli::command()
+            .bin_name("elide aube --")
+            .try_get_matches_from(["elide", "install", "--definitely-not-a-real-flag"])
+            .unwrap_err();
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("Usage: elide aube -- install"),
+            "embedded usage prefix should be rendered, got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Usage: elide install"),
+            "argv[0] should not replace the embedded usage prefix, got:\n{rendered}"
+        );
+    }
+
     /// Validate that aube's CLI commands and arguments are ordered:
     /// - Subcommands alphabetical by name
     /// - Short flags alphabetical by short option
