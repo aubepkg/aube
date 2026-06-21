@@ -31,6 +31,7 @@ static MYTOOL: Embedder = Embedder {
     runtime_switching: true,
     self_engines_check: true,
     self_update_enabled: true,
+    progress_renderer_enabled: true,
 };
 
 #[test]

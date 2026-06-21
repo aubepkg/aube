@@ -36,6 +36,8 @@ static NUBLIKE: Embedder = Embedder {
     runtime_switching: false,
     self_engines_check: false,
     self_update_enabled: false,
+    progress_renderer_enabled: true,
+    default_registry: None,
 };
 
 #[test]

@@ -27,6 +27,9 @@ mod render;
 
 pub(crate) use render::format_bytes;
 
+use aube_util::progress::{
+    self as embedded_progress, ProgressOutcome as EmbeddedOutcome, ProgressUnit,
+};
 use ci::{CiState, format_duration};
 use clx::progress::{
     ProgressJob, ProgressJobBuilder, ProgressJobDoneBehavior, ProgressOutput, ProgressStatus,
@@ -206,12 +209,133 @@ enum Mode {
         fetch_state: Arc<Mutex<FetchState>>,
     },
     Ci(Arc<CiState>),
+    Embedded(Arc<EmbeddedState>),
 }
 
 struct FetchState {
     visible: usize,
     overflow: usize,
     overflow_row: Option<Arc<ProgressJob>>,
+}
+
+struct EmbeddedState {
+    root_task: u64,
+    next_task: AtomicU64,
+    finished: AtomicBool,
+    total: AtomicUsize,
+    target_total: AtomicUsize,
+    reused: AtomicUsize,
+    downloaded: AtomicUsize,
+    phase_num: AtomicUsize,
+    downloaded_bytes: AtomicU64,
+    estimated_bytes: AtomicU64,
+}
+
+impl EmbeddedState {
+    fn new() -> Arc<Self> {
+        let state = Arc::new(Self {
+            root_task: 1,
+            next_task: AtomicU64::new(2),
+            finished: AtomicBool::new(false),
+            total: AtomicUsize::new(0),
+            target_total: AtomicUsize::new(0),
+            reused: AtomicUsize::new(0),
+            downloaded: AtomicUsize::new(0),
+            phase_num: AtomicUsize::new(0),
+            downloaded_bytes: AtomicU64::new(0),
+            estimated_bytes: AtomicU64::new(0),
+        });
+        embedded_progress::with_progress_sink(|sink| {
+            sink.start("Installing npm packages", None);
+            sink.start_task(
+                state.root_task,
+                None,
+                "npm packages",
+                None,
+                ProgressUnit::Count,
+            );
+        });
+        state.update();
+        state
+    }
+
+    fn next_task_id(&self) -> u64 {
+        self.next_task.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn phase_label(&self) -> &'static str {
+        match self.phase_num.load(Ordering::Relaxed) {
+            1 => "resolving",
+            2 => "fetching",
+            3 => "linking",
+            _ => "installing",
+        }
+    }
+
+    fn display_total(&self) -> usize {
+        let total = self.total.load(Ordering::Relaxed);
+        if total == 0 {
+            self.target_total.load(Ordering::Relaxed)
+        } else {
+            total
+        }
+    }
+
+    fn completed(&self) -> usize {
+        let total = self.display_total();
+        let completed =
+            self.reused.load(Ordering::Relaxed) + self.downloaded.load(Ordering::Relaxed);
+        if total == 0 {
+            completed
+        } else {
+            completed.min(total)
+        }
+    }
+
+    fn message(&self) -> String {
+        let phase = self.phase_label();
+        let completed = self.completed();
+        let total = self.display_total();
+        let mut message = if total > 0 {
+            format!("{phase} {completed}/{total}")
+        } else {
+            format!("{phase} {completed}")
+        };
+
+        let bytes = self.downloaded_bytes.load(Ordering::Relaxed);
+        let estimated = self.estimated_bytes.load(Ordering::Relaxed);
+        if bytes > 0 {
+            message.push_str(&format!(" · {}", render::format_bytes(bytes)));
+            if estimated > bytes {
+                message.push_str(&format!(" / ~{}", render::format_bytes(estimated)));
+            }
+        } else if estimated > 0 && self.phase_num.load(Ordering::Relaxed) == 2 {
+            message.push_str(&format!(" · ~{}", render::format_bytes(estimated)));
+        }
+
+        message
+    }
+
+    fn update(&self) {
+        let completed = self.completed() as u64;
+        let total = self.display_total();
+        let total = (total > 0).then_some(total as u64);
+        let message = self.message();
+        embedded_progress::with_progress_sink(|sink| {
+            sink.update(Some(completed), total, Some(&message));
+            sink.update_task(self.root_task, Some(completed), total, Some(&message), None);
+        });
+    }
+
+    fn finish(&self, outcome: EmbeddedOutcome, message: &str) {
+        if self.finished.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        embedded_progress::with_progress_sink(|sink| {
+            sink.finish_task(self.root_task, outcome, message);
+            sink.finish(outcome, message);
+        });
+    }
 }
 
 impl Clone for InstallProgress {
@@ -235,6 +359,9 @@ impl InstallProgress {
     /// disabled (clx text mode — i.e. `--silent`, `-v`, or a line-oriented
     /// reporter that owns its own output).
     pub fn try_new() -> Option<Self> {
+        if !aube_util::embedder().progress_renderer_enabled {
+            return embedded_progress::has_progress_sink().then(Self::new_embedded);
+        }
         if clx::progress::output() == ProgressOutput::Text {
             return None;
         }
@@ -247,6 +374,13 @@ impl InstallProgress {
             Some(Self::new_tty())
         } else {
             Some(Self::new_ci())
+        }
+    }
+
+    fn new_embedded() -> Self {
+        Self {
+            mode: Mode::Embedded(EmbeddedState::new()),
+            unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -340,6 +474,10 @@ impl InstallProgress {
             Mode::Ci(s) => {
                 s.target_total.fetch_max(n, Ordering::Relaxed);
             }
+            Mode::Embedded(s) => {
+                s.target_total.fetch_max(n, Ordering::Relaxed);
+                s.update();
+            }
         }
     }
 
@@ -375,6 +513,11 @@ impl InstallProgress {
                 s.resolved.store(total, Ordering::Relaxed);
                 clamp_reused_to(&s.reused, &s.downloaded, total);
             }
+            Mode::Embedded(s) => {
+                s.total.store(total, Ordering::Relaxed);
+                clamp_reused_to(&s.reused, &s.downloaded, total);
+                s.update();
+            }
         }
     }
 
@@ -388,6 +531,10 @@ impl InstallProgress {
             }
             Mode::Ci(s) => {
                 s.resolved.fetch_add(n, Ordering::Relaxed);
+            }
+            Mode::Embedded(s) => {
+                s.total.fetch_add(n, Ordering::Relaxed);
+                s.update();
             }
         }
     }
@@ -435,6 +582,13 @@ impl InstallProgress {
                 }
                 s.estimated_bytes.fetch_add(bytes, Ordering::Relaxed);
             }
+            Mode::Embedded(s) => {
+                if prior > 0 {
+                    s.estimated_bytes.fetch_sub(prior, Ordering::Relaxed);
+                }
+                s.estimated_bytes.fetch_add(bytes, Ordering::Relaxed);
+                s.update();
+            }
         }
     }
 
@@ -466,6 +620,10 @@ impl InstallProgress {
             }
             Mode::Ci(s) => {
                 s.estimated_bytes.store(sum, Ordering::Relaxed);
+            }
+            Mode::Embedded(s) => {
+                s.estimated_bytes.store(sum, Ordering::Relaxed);
+                s.update();
             }
         }
     }
@@ -539,6 +697,16 @@ impl InstallProgress {
                 self.refresh_tty_bar();
             }
             Mode::Ci(s) => s.set_phase(phase),
+            Mode::Embedded(s) => {
+                let n = match phase {
+                    "resolving" => 1,
+                    "fetching" => 2,
+                    "linking" => 3,
+                    _ => 0,
+                };
+                s.phase_num.store(n, Ordering::Relaxed);
+                s.update();
+            }
         }
     }
 
@@ -554,6 +722,10 @@ impl InstallProgress {
             }
             Mode::Ci(s) => {
                 s.reused.fetch_add(n, Ordering::Relaxed);
+            }
+            Mode::Embedded(s) => {
+                s.reused.fetch_add(n, Ordering::Relaxed);
+                s.update();
             }
         }
     }
@@ -584,6 +756,10 @@ impl InstallProgress {
             }
             Mode::Ci(s) => {
                 s.downloaded_bytes.fetch_add(bytes, Ordering::Relaxed);
+            }
+            Mode::Embedded(s) => {
+                s.downloaded_bytes.fetch_add(bytes, Ordering::Relaxed);
+                s.update();
             }
         }
     }
@@ -851,6 +1027,25 @@ impl InstallProgress {
                 inner: FetchRowInner::Ci(Arc::downgrade(s)),
                 completed: false,
             },
+            Mode::Embedded(s) => {
+                let id = s.next_task_id();
+                embedded_progress::with_progress_sink(|sink| {
+                    sink.start_task(
+                        id,
+                        Some(s.root_task),
+                        &format!("{name}@{version}"),
+                        None,
+                        ProgressUnit::Bytes,
+                    );
+                });
+                FetchRow {
+                    inner: FetchRowInner::Embedded {
+                        id,
+                        state: Arc::downgrade(s),
+                    },
+                    completed: false,
+                }
+            }
         }
     }
 
@@ -900,6 +1095,11 @@ impl InstallProgress {
                 clx::progress::stop();
             }
             Mode::Ci(s) => s.stop(print_ci_summary),
+            Mode::Embedded(s) => {
+                s.phase_num.store(4, Ordering::Relaxed);
+                s.update();
+                s.finish(EmbeddedOutcome::Success, "npm packages installed");
+            }
         }
     }
 
@@ -962,6 +1162,7 @@ impl InstallProgress {
         let needs_summary = match &self.mode {
             Mode::Tty { .. } => true,
             Mode::Ci(s) => !s.shown.load(Ordering::Relaxed),
+            Mode::Embedded(_) => false,
         };
         if !needs_summary {
             return;
@@ -1052,6 +1253,11 @@ impl Drop for InstallProgress {
                     s.stop(false);
                 }
             }
+            Mode::Embedded(s) => {
+                if Arc::strong_count(s) == 1 && !s.finished.load(Ordering::Relaxed) {
+                    s.finish(EmbeddedOutcome::Failure, "npm install failed");
+                }
+            }
         }
     }
 }
@@ -1094,6 +1300,10 @@ enum FetchRowInner {
     /// rows shouldn't prevent `CiState` from being dropped after the
     /// last `InstallProgress` clone is gone.
     Ci(Weak<CiState>),
+    Embedded {
+        id: u64,
+        state: Weak<EmbeddedState>,
+    },
 }
 
 impl FetchRow {
@@ -1178,6 +1388,15 @@ impl FetchRow {
                     s.downloaded.fetch_add(1, Ordering::Relaxed);
                 }
             }
+            FetchRowInner::Embedded { id, state } => {
+                if let Some(s) = state.upgrade() {
+                    s.downloaded.fetch_add(1, Ordering::Relaxed);
+                    s.update();
+                    embedded_progress::with_progress_sink(|sink| {
+                        sink.finish_task(*id, EmbeddedOutcome::Success, "fetched");
+                    });
+                }
+            }
         }
     }
 }
@@ -1237,9 +1456,11 @@ pub fn safe_eprintln(msg: &str) {
     }
 }
 
+#[cfg(feature = "install-tracing-subscriber")]
 #[derive(Clone, Copy, Default)]
 pub struct PausingWriter;
 
+#[cfg(feature = "install-tracing-subscriber")]
 impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for PausingWriter {
     type Writer = PausingWriterGuard;
 
@@ -1251,10 +1472,12 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for PausingWriter {
 /// Per-event writer guard returned by [`PausingWriter::make_writer`].
 /// Accumulates into `buf` and flushes once on drop. See `PausingWriter`
 /// for the full pause/write/resume protocol.
+#[cfg(feature = "install-tracing-subscriber")]
 pub struct PausingWriterGuard {
     buf: Vec<u8>,
 }
 
+#[cfg(feature = "install-tracing-subscriber")]
 impl Write for PausingWriterGuard {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         self.buf.extend_from_slice(data);
@@ -1266,6 +1489,7 @@ impl Write for PausingWriterGuard {
     }
 }
 
+#[cfg(feature = "install-tracing-subscriber")]
 impl Drop for PausingWriterGuard {
     fn drop(&mut self) {
         if self.buf.is_empty() {

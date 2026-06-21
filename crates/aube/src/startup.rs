@@ -1,6 +1,7 @@
 use super::{Cli, Commands, LogLevel, ReporterType};
 use miette::{Context, IntoDiagnostic, miette};
 use std::path::PathBuf;
+#[cfg(feature = "install-tracing-subscriber")]
 use tracing_subscriber::prelude::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -272,41 +273,45 @@ pub(crate) fn diag_config_from_flag(cli: &Cli) -> Option<Option<aube_util::diag:
 }
 
 pub(crate) fn init_logging(cli: &Cli, effective_level: LogLevel) {
-    let log_level = effective_level.filter();
-    let env_filter = tracing_subscriber::EnvFilter::try_from_env("AUBE_LOG").unwrap_or_else(|_| {
-        format!(
-            "aube={log_level},aube_cli={log_level},aube_registry={log_level},\
+    #[cfg(feature = "install-tracing-subscriber")]
+    {
+        let log_level = effective_level.filter();
+        let env_filter =
+            tracing_subscriber::EnvFilter::try_from_env("AUBE_LOG").unwrap_or_else(|_| {
+                format!(
+                    "aube={log_level},aube_cli={log_level},aube_registry={log_level},\
              aube_resolver={log_level},aube_lockfile={log_level},aube_store={log_level},\
              aube_linker={log_level},aube_manifest={log_level},aube_scripts={log_level},\
              aube_workspace={log_level},aube_settings={log_level},aube_util={log_level}"
-        )
-        .into()
-    });
+                )
+                .into()
+            });
 
-    let drop_timestamp = !matches!(effective_level, LogLevel::Debug | LogLevel::Trace);
-    let registry = tracing_subscriber::registry().with(env_filter);
-    if matches!(cli.reporter, Some(ReporterType::Ndjson)) {
-        crate::pnpmfile::set_ndjson_reporter(true);
-        registry
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .json()
-                    .flatten_event(true)
-                    .with_writer(crate::progress::PausingWriter),
-            )
-            .init();
-    } else if drop_timestamp {
-        registry
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .without_time()
-                    .with_writer(crate::progress::PausingWriter),
-            )
-            .init();
-    } else {
-        registry
-            .with(tracing_subscriber::fmt::layer().with_writer(crate::progress::PausingWriter))
-            .init();
+        let drop_timestamp = !matches!(effective_level, LogLevel::Debug | LogLevel::Trace);
+        let registry = tracing_subscriber::registry().with(env_filter);
+        if matches!(cli.reporter, Some(ReporterType::Ndjson)) {
+            crate::pnpmfile::set_ndjson_reporter(true);
+            let _ = registry
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .json()
+                        .flatten_event(true)
+                        .with_writer(crate::progress::PausingWriter),
+                )
+                .try_init();
+        } else if drop_timestamp {
+            let _ = registry
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .without_time()
+                        .with_writer(crate::progress::PausingWriter),
+                )
+                .try_init();
+        } else {
+            let _ = registry
+                .with(tracing_subscriber::fmt::layer().with_writer(crate::progress::PausingWriter))
+                .try_init();
+        }
     }
 
     let force_text = matches!(
@@ -315,7 +320,7 @@ pub(crate) fn init_logging(cli: &Cli, effective_level: LogLevel) {
     ) || matches!(
         cli.reporter,
         Some(ReporterType::AppendOnly) | Some(ReporterType::Ndjson)
-    );
+    ) || !aube_util::embedder().progress_renderer_enabled;
     if force_text {
         clx::progress::set_output(clx::progress::ProgressOutput::Text);
     }

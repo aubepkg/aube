@@ -8,6 +8,8 @@ use miette::{Context, IntoDiagnostic, miette};
 
 use super::{CatalogMap, config, install};
 
+const PUBLIC_NPM_REGISTRY: &str = "https://registry.npmjs.org/";
+
 /// Process-wide snapshot of the top-level `--frozen-lockfile` /
 /// `--no-frozen-lockfile` / `--prefer-frozen-lockfile` flags. Set once
 /// by `async_main` before any command runs so downstream helpers
@@ -71,6 +73,10 @@ pub(crate) fn registry_override() -> Option<String> {
         .clone()
 }
 
+fn is_public_npm_registry(url: &str) -> bool {
+    aube_registry::config::normalize_registry_url_pub(url) == PUBLIC_NPM_REGISTRY
+}
+
 /// Load an `NpmConfig` for `dir` and then apply the process-wide
 /// `--registry` override, if any. Use this from any command that
 /// needs config but wants the CLI flag to win.
@@ -78,6 +84,10 @@ pub(crate) fn load_npm_config(dir: &std::path::Path) -> NpmConfig {
     let mut config = NpmConfig::load(dir);
     if let Some(url) = registry_override() {
         config.registry = url;
+    } else if let Some(default_registry) = aube_util::embedder().default_registry
+        && is_public_npm_registry(&config.registry)
+    {
+        config.registry = aube_registry::config::normalize_registry_url_pub(default_registry);
     }
     config
 }
