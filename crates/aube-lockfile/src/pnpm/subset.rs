@@ -199,8 +199,7 @@ impl<'a> Parser<'a> {
                 }
                 b"ignoredOptionalDependencies" => {
                     // Inline `[a, b]` or a block seq — delegate.
-                    ignored_optional_dependencies =
-                        Some(self.parse_seq_value(inline, 2)?);
+                    ignored_optional_dependencies = Some(self.parse_seq_value(inline, 2)?);
                 }
                 b"importers" => {
                     if inline.is_some() {
@@ -321,11 +320,7 @@ impl<'a> Parser<'a> {
     /// Parse a seq value that is either inline (`[a, b]`) on the header
     /// line or a block seq nested below. Delegates to serde via a
     /// reconstructed fragment to keep edge cases exact.
-    fn parse_seq_value(
-        &mut self,
-        inline: Option<&[u8]>,
-        min_indent: usize,
-    ) -> Option<Vec<String>> {
+    fn parse_seq_value(&mut self, inline: Option<&[u8]>, min_indent: usize) -> Option<Vec<String>> {
         if let Some(v) = inline {
             return serde_value_from_fragment(v);
         }
@@ -335,9 +330,7 @@ impl<'a> Parser<'a> {
         yaml_serde::from_str::<Vec<String>>(&dedented).ok()
     }
 
-    fn parse_catalogs(
-        &mut self,
-    ) -> Option<BTreeMap<String, BTreeMap<String, RawCatalogEntry>>> {
+    fn parse_catalogs(&mut self) -> Option<BTreeMap<String, BTreeMap<String, RawCatalogEntry>>> {
         // catalogs:
         //   <catalogName>:
         //     <pkg>:
@@ -415,10 +408,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a block of `<pkg>:` entries each with `specifier:` /
     /// `version:` children at `entry_indent`.
-    fn parse_dep_specs(
-        &mut self,
-        entry_indent: usize,
-    ) -> Option<BTreeMap<String, RawDepSpec>> {
+    fn parse_dep_specs(&mut self, entry_indent: usize) -> Option<BTreeMap<String, RawDepSpec>> {
         let mut map = BTreeMap::new();
         while let Some(line) = self.peek_line() {
             if line.indent < entry_indent {
@@ -558,12 +548,10 @@ impl<'a> Parser<'a> {
                     optional = Some(parse_bool(rest?)?);
                 }
                 b"bundledDependencies" => {
-                    bundled_dependencies =
-                        Some(self.parse_seq_value(rest, indent + 2)?);
+                    bundled_dependencies = Some(self.parse_seq_value(rest, indent + 2)?);
                 }
                 b"transitivePeerDependencies" => {
-                    transitive_peer_dependencies =
-                        Some(self.parse_seq_value(rest, indent + 2)?);
+                    transitive_peer_dependencies = Some(self.parse_seq_value(rest, indent + 2)?);
                 }
                 _ => return None,
             }
@@ -739,7 +727,7 @@ fn dedent(block: &str, n: usize) -> Option<String> {
 
 #[cfg(test)]
 mod subset_tests {
-    use super::super::raw::{diff_subset_vs_serde, SubsetDiff};
+    use super::super::raw::{SubsetDiff, diff_subset_vs_serde};
     use super::*;
 
     // -- Committed fixtures, run through the differential harness. --
@@ -760,8 +748,7 @@ mod subset_tests {
     const V6_TOPLEVEL: &str = include_str!("../../tests/fixtures/pnpm-v6-toplevel-deps.yaml");
     const V6_WORKSPACE: &str = include_str!("../../tests/fixtures/pnpm-v6-workspace.yaml");
     const V9_EXOTIC: &str = include_str!("../../tests/fixtures/pnpm-v9-exotic.yaml");
-    const V9_WS_CATALOG: &str =
-        include_str!("../../tests/fixtures/pnpm-v9-workspace-catalog.yaml");
+    const V9_WS_CATALOG: &str = include_str!("../../tests/fixtures/pnpm-v9-workspace-catalog.yaml");
 
     /// The load-bearing invariant: for any input, the subset parser
     /// either produces a structurally-identical `RawPnpmLockfile` to the
@@ -836,7 +823,10 @@ mod subset_tests {
         // top-level keys, so it MUST decline — never silently drop them.
         assert!(try_parse(V5_3_PLAIN).is_none(), "lv5.3 must decline");
         assert!(try_parse(V5_4_PLAIN).is_none(), "lv5.4 must decline");
-        assert!(try_parse(V6_TOPLEVEL).is_none(), "lv6 top-level deps must decline");
+        assert!(
+            try_parse(V6_TOPLEVEL).is_none(),
+            "lv6 top-level deps must decline"
+        );
     }
 
     #[test]
@@ -848,7 +838,11 @@ mod subset_tests {
         // must produce a byte-identical result to serde.
         assert_fires_and_matches("pnpm-v9-exotic", V9_EXOTIC);
         let raw = try_parse(V9_EXOTIC).unwrap();
-        assert!(raw.packages.keys().any(|k| k.contains("codeload.github.com")));
+        assert!(
+            raw.packages
+                .keys()
+                .any(|k| k.contains("codeload.github.com"))
+        );
     }
 
     #[test]
@@ -923,8 +917,7 @@ mod subset_tests {
         assert!(try_parse(null_overrides).is_none());
         assert_match_or_declines("null-overrides", null_overrides);
         // Same for an empty snapshot `dependencies:` block.
-        let snap_empty_deps =
-            "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    dependencies:\n    optional: true\n";
+        let snap_empty_deps = "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    dependencies:\n    optional: true\n";
         assert!(try_parse(snap_empty_deps).is_none());
         assert_match_or_declines("snap-empty-deps", snap_empty_deps);
     }
@@ -1300,8 +1293,7 @@ mod subset_tests {
             FieldVal::Populated(entries) => {
                 out.push_str(key);
                 out.push_str(": {");
-                let parts: Vec<String> =
-                    entries.iter().map(|(k, v)| format!("{k}: {v}")).collect();
+                let parts: Vec<String> = entries.iter().map(|(k, v)| format!("{k}: {v}")).collect();
                 out.push_str(&parts.join(", "));
                 out.push_str("}\n");
             }
@@ -1379,7 +1371,10 @@ mod subset_tests {
                 }
             }
         }
-        eprintln!("corpus={total} match={matched} declined={declined} diverge={}", diverged.len());
+        eprintln!(
+            "corpus={total} match={matched} declined={declined} diverge={}",
+            diverged.len()
+        );
         for (p, s, d) in &diverged {
             eprintln!("=== DIVERGENCE {} ===", p.display());
             for (i, (a, b)) in s.lines().zip(d.lines()).enumerate() {
@@ -1389,6 +1384,10 @@ mod subset_tests {
                 }
             }
         }
-        assert!(diverged.is_empty(), "{} divergence(s) found", diverged.len());
+        assert!(
+            diverged.is_empty(),
+            "{} divergence(s) found",
+            diverged.len()
+        );
     }
 }

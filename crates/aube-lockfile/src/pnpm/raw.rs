@@ -82,7 +82,10 @@ pub(super) fn diff_subset_vs_serde(content: &str) -> SubsetDiff {
     if s == d {
         SubsetDiff::Match
     } else {
-        SubsetDiff::Divergence { subset: s, serde: d }
+        SubsetDiff::Divergence {
+            subset: s,
+            serde: d,
+        }
     }
 }
 
