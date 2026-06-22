@@ -99,7 +99,7 @@ fn registry_bound_inputs_for_supply_chain(
         // API doesn't index them), so the prompt naturally skips
         // them — no per-name special case needed in the gate.
         inputs.download_names.push(spec.name.clone());
-        if spec.has_explicit_range && node_semver::Version::parse(&spec.range).is_ok() {
+        if spec.has_explicit_range && is_full_exact_version(&spec.range) {
             inputs.exact_advisory_pairs.push((spec.name, spec.range));
         } else {
             inputs.name_only_advisory_names.push(spec.name);
@@ -112,6 +112,28 @@ fn registry_bound_inputs_for_supply_chain(
     inputs.download_names.sort();
     inputs.download_names.dedup();
     inputs
+}
+
+fn is_full_exact_version(range: &str) -> bool {
+    let suffix_start = range.find(['-', '+']).unwrap_or(range.len());
+    let core = &range[..suffix_start];
+    let mut parts = core.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    let Some(patch) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    [major, minor, patch]
+        .into_iter()
+        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        && node_semver::Version::parse(range).is_ok()
 }
 
 #[cfg(test)]
@@ -136,18 +158,47 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let inputs = registry_bound_inputs_for_supply_chain(
             tmp.path(),
-            &["nx@^23".into(), "vite@latest".into(), "react".into()],
+            &[
+                "nx@^23".into(),
+                "pkg-major@4".into(),
+                "pkg-minor@1.2".into(),
+                "react".into(),
+                "vite@latest".into(),
+            ],
         );
 
         assert_eq!(
             inputs.name_only_advisory_names,
-            vec!["nx".to_string(), "react".to_string(), "vite".to_string()],
+            vec![
+                "nx".to_string(),
+                "pkg-major".to_string(),
+                "pkg-minor".to_string(),
+                "react".to_string(),
+                "vite".to_string(),
+            ],
         );
         assert!(inputs.exact_advisory_pairs.is_empty());
         assert_eq!(
             inputs.download_names,
-            vec!["nx".to_string(), "react".to_string(), "vite".to_string()],
+            vec![
+                "nx".to_string(),
+                "pkg-major".to_string(),
+                "pkg-minor".to_string(),
+                "react".to_string(),
+                "vite".to_string(),
+            ],
         );
+    }
+
+    #[test]
+    fn full_exact_version_requires_major_minor_patch() {
+        assert!(is_full_exact_version("1.2.3"));
+        assert!(is_full_exact_version("1.2.3-beta.1"));
+        assert!(is_full_exact_version("1.2.3+build.7"));
+        assert!(!is_full_exact_version("1"));
+        assert!(!is_full_exact_version("1.2"));
+        assert!(!is_full_exact_version("^1.2.3"));
+        assert!(!is_full_exact_version("latest"));
     }
 
     #[test]
