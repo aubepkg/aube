@@ -5,7 +5,7 @@
 //! 1.5 JSON or SPDX 2.3 JSON. Pure read; does not touch `node_modules/` or
 //! take the project lock.
 
-use aube_lockfile::{LockedPackage, LockfileGraph};
+use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use std::collections::BTreeMap;
@@ -56,7 +56,10 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
     let closure = super::collect_dep_closure(&graph, filter, false);
 
     let json = match args.format {
-        SbomFormat::Cyclonedx => render_cyclonedx(&manifest, &closure)?,
+        SbomFormat::Cyclonedx => {
+            let dev_only = collect_dev_only_packages(&graph, graph.root_deps());
+            render_cyclonedx(&manifest, &closure, &dev_only)?
+        }
         SbomFormat::Spdx => render_spdx(&manifest, &graph, filter, &closure)?,
     };
 
@@ -68,6 +71,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
 fn render_cyclonedx(
     manifest: &aube_manifest::PackageJson,
     closure: &BTreeMap<String, &LockedPackage>,
+    dev_only: &BTreeMap<String, bool>,
 ) -> miette::Result<String> {
     let root_name = manifest.name.clone().unwrap_or_else(|| "(unnamed)".into());
     let root_version = manifest.version.clone().unwrap_or_default();
@@ -81,6 +85,16 @@ fn render_cyclonedx(
         c.insert("name".into(), pkg.name.clone().into());
         c.insert("version".into(), pkg.version.clone().into());
         c.insert("purl".into(), purl(&pkg.name, &pkg.version).into());
+        if dev_only.get(dep_path).copied().unwrap_or(false) {
+            c.insert("scope".into(), "excluded".into());
+            c.insert(
+                "properties".into(),
+                serde_json::json!([{
+                    "name": "cdx:npm:package:development",
+                    "value": "true",
+                }]),
+            );
+        }
         components.push(serde_json::Value::Object(c));
     }
 
@@ -122,6 +136,33 @@ fn render_cyclonedx(
     serde_json::to_string_pretty(&bom)
         .into_diagnostic()
         .wrap_err("failed to serialize CycloneDX SBOM")
+}
+
+fn collect_dev_only_packages(graph: &LockfileGraph, roots: &[DirectDep]) -> BTreeMap<String, bool> {
+    let mut out = BTreeMap::new();
+    let mut stack: Vec<(String, bool)> = roots
+        .iter()
+        .map(|d| (d.dep_path.clone(), matches!(d.dep_type, DepType::Dev)))
+        .collect();
+
+    while let Some((dep_path, dev_only)) = stack.pop() {
+        if matches!(out.get(&dep_path), Some(false)) {
+            continue;
+        }
+        let was_runtime = out.insert(dep_path.clone(), dev_only) == Some(false);
+        if was_runtime {
+            continue;
+        }
+
+        let Some(pkg) = graph.get_package(&dep_path) else {
+            continue;
+        };
+        for (name, version) in &pkg.dependencies {
+            stack.push((format!("{name}@{version}"), dev_only));
+        }
+    }
+
+    out
 }
 
 /// SPDX 2.3 JSON. See https://spdx.github.io/spdx-spec/v2.3/.
