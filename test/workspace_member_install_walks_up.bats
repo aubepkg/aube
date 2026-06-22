@@ -39,6 +39,7 @@ _setup_minimal_workspace() {
 	cat >pnpm-workspace.yaml <<-'YAML'
 		packages:
 		  - packages/*
+		trustPolicy: off
 	YAML
 	mkdir -p packages/a
 	cat >packages/a/package.json <<-'JSON'

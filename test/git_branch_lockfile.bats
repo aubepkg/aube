@@ -107,7 +107,6 @@ teardown() {
 	run aube install --no-frozen-lockfile
 	assert_success
 	assert_file_exists aube-lock.main.yaml
-	assert_file_exists node_modules/.aube-state/lockfile
 
 	git checkout -q -b dev
 	rm aube-lock.main.yaml

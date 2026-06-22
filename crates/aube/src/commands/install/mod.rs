@@ -161,7 +161,9 @@ async fn validate_lockfile_trust_policy(
     network_mode: aube_registry::NetworkMode,
     policy: &aube_resolver::DependencyPolicy,
 ) -> miette::Result<()> {
-    if policy.trust_policy != aube_resolver::TrustPolicy::NoDowngrade {
+    if policy.trust_policy != aube_resolver::TrustPolicy::NoDowngrade
+        || matches!(network_mode, aube_registry::NetworkMode::Offline)
+    {
         return Ok(());
     }
 
@@ -173,7 +175,10 @@ async fn validate_lockfile_trust_policy(
     let mut checks: tokio::task::JoinSet<Result<(), aube_resolver::Error>> =
         tokio::task::JoinSet::new();
 
-    for pkg in graph.packages.values() {
+    for dep_path in reachable_package_dep_paths(graph) {
+        let Some(pkg) = graph.packages.get(&dep_path) else {
+            continue;
+        };
         if pkg.local_source.is_some() {
             continue;
         }
@@ -220,6 +225,35 @@ async fn validate_lockfile_trust_policy(
     }
 
     Ok(())
+}
+
+fn reachable_package_dep_paths(
+    graph: &aube_lockfile::LockfileGraph,
+) -> std::collections::BTreeSet<String> {
+    let mut reachable = std::collections::BTreeSet::new();
+    let mut stack = graph
+        .importers
+        .values()
+        .flat_map(|deps| deps.iter().map(|dep| dep.dep_path.clone()))
+        .collect::<Vec<_>>();
+
+    while let Some(dep_path) = stack.pop() {
+        if !reachable.insert(dep_path.clone()) {
+            continue;
+        }
+        let Some(pkg) = graph.packages.get(&dep_path) else {
+            continue;
+        };
+        for (name, tail) in &pkg.dependencies {
+            if let Some(child) =
+                aube_lockfile::resolve_dep_edge(name, tail, |k| graph.packages.contains_key(k))
+            {
+                stack.push(child);
+            }
+        }
+    }
+
+    reachable
 }
 
 pub async fn run(opts: InstallOptions) -> miette::Result<()> {
@@ -645,9 +679,6 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         None;
     let (graph, package_indices, cached_count, fetch_count) = match lockfile_result {
         Ok((mut graph, kind)) => {
-            let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx);
-            validate_lockfile_trust_policy(&cwd, &graph, opts.network_mode, &dependency_policy)
-                .await?;
             // Under `sharedWorkspaceLockfile=false` the project's own
             // lockfile only carries the `.` importer, so the reuse path
             // would hand the linker a root-only graph and never relink
@@ -660,6 +691,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             if !shared_workspace_lockfile && has_workspace {
                 merge_member_lockfile_graphs(&cwd, &mut graph, &manifests);
             }
+            let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx);
             let graph = resolve::apply_lockfile_graph_platform_rules(
                 graph,
                 kind,
@@ -667,6 +699,8 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 &ws_config_shared,
                 &settings_ctx,
             )?;
+            validate_lockfile_trust_policy(&cwd, &graph, opts.network_mode, &dependency_policy)
+                .await?;
             let source_label = resolve::lockfile_source_label(kind);
             tracing::debug!(
                 "{source_label}: {} packages for {project_name}",

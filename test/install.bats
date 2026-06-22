@@ -640,19 +640,16 @@ EOF
 	assert_output --partial "No lockfile found"
 }
 
-@test "aube install --no-frozen-lockfile restores missing lockfile from fresh state" {
+@test "aube install --no-frozen-lockfile re-resolves when lockfile is missing" {
 	_setup_basic_fixture
 	run aube install
 	assert_success
-	cp aube-lock.yaml aube-lock.yaml.expected
-	assert_file_exists node_modules/.aube-state/lockfile
 
 	rm aube-lock.yaml
 	run aube -v install --no-frozen-lockfile
 	assert_success
-	refute_output --partial "No lockfile found"
+	assert_output --partial "No lockfile found"
 	assert_file_exists aube-lock.yaml
-	assert_equal "$(cat aube-lock.yaml)" "$(cat aube-lock.yaml.expected)"
 }
 
 @test "aube install --fix-lockfile is a no-op on a fresh lockfile" {

@@ -48,6 +48,7 @@ _setup_no_shared_workspace() {
 		packages:
 		  - packages/*
 		sharedWorkspaceLockfile: false
+		trustPolicy: off
 	YAML
 	mkdir -p packages/lib-a
 	cat >packages/lib-a/package.json <<-'JSON'
@@ -219,6 +220,7 @@ _setup_no_shared_workspace() {
 		packages:
 		  - packages/*
 		sharedWorkspaceLockfile: false
+		trustPolicy: off
 	YAML
 	mkdir -p packages/svc
 	cat >packages/svc/package.json <<-'JSON'
@@ -321,6 +323,7 @@ _setup_no_shared_workspace() {
 	cat >pnpm-workspace.yaml <<-'YAML'
 		packages:
 		  - packages/*
+		trustPolicy: off
 	YAML
 	mkdir -p packages/a
 	cat >packages/a/package.json <<-'JSON'

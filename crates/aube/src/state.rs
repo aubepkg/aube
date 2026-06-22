@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 const DEFAULT_STATE_DIR: &str = "node_modules";
 const INSTALL_STATE_FILE_NAME: &str = "state.json";
 const FRESH_STATE_FILE_NAME: &str = "fresh.json";
-const LOCKFILE_SNAPSHOT_FILE_NAME: &str = "lockfile";
 
 /// The install-state directory name, `.<name>-state`. Standalone aube:
 /// `.aube-state`.
@@ -405,28 +404,6 @@ fn check_needs_install_compute(
     None
 }
 
-pub fn restore_missing_lockfile_if_fresh(
-    project_dir: &Path,
-    cli_flags: &[(String, String)],
-) -> bool {
-    let (modules_dir, state_path) = resolve_paths(project_dir);
-    let (lockfile_name, lockfile_path) = active_lockfile(project_dir);
-    if lockfile_path.is_some() || !modules_dir.exists() {
-        return false;
-    }
-    let Some(state) = read_or_migrate_fresh_state(&state_path) else {
-        return false;
-    };
-    if package_jsons_stale(project_dir, &state).is_some()
-        || state.section_filtered
-        || verify_install_layout(project_dir, state.layout.as_ref()).is_some()
-        || hash_settings(project_dir, cli_flags) != state.settings_hash
-    {
-        return false;
-    }
-    restore_lockfile_snapshot(project_dir, &state_path, &state, &lockfile_name).is_some()
-}
-
 fn package_jsons_stale(project_dir: &Path, state: &FreshnessState) -> Option<String> {
     for (rel, stored_hash) in &state.package_json_hashes {
         let path = if rel == "." {
@@ -681,18 +658,15 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
 
 fn snapshot_active_lockfile(
     project_dir: &Path,
-    state_path: &Path,
+    _state_path: &Path,
 ) -> Result<(String, Option<String>), std::io::Error> {
     let (name, path) = active_lockfile(project_dir);
     let Some(path) = path else {
-        let _ = std::fs::remove_file(lockfile_snapshot_file(state_path));
         return Ok((String::new(), None));
     };
     let Ok(content) = std::fs::read(&path) else {
-        let _ = std::fs::remove_file(lockfile_snapshot_file(state_path));
         return Ok((String::new(), None));
     };
-    aube_util::fs_atomic::atomic_write(&lockfile_snapshot_file(state_path), &content)?;
     Ok((hash_bytes(&content), Some(name)))
 }
 
@@ -834,10 +808,6 @@ fn fresh_state_file(state_path: &Path) -> PathBuf {
     state_path.join(FRESH_STATE_FILE_NAME)
 }
 
-fn lockfile_snapshot_file(state_path: &Path) -> PathBuf {
-    state_path.join(LOCKFILE_SNAPSHOT_FILE_NAME)
-}
-
 fn read_fresh_state(state_path: &Path) -> Option<FreshnessState> {
     if state_path.is_file() {
         let _ = std::fs::remove_file(state_path);
@@ -859,46 +829,6 @@ fn read_or_migrate_fresh_state(state_path: &Path) -> Option<FreshnessState> {
 fn write_fresh_state(state_path: &Path, state: &FreshnessState) -> Result<(), std::io::Error> {
     let json = serde_json::to_string_pretty(state)?;
     aube_util::fs_atomic::atomic_write(&fresh_state_file(state_path), json.as_bytes())
-}
-
-fn restore_lockfile_snapshot(
-    project_dir: &Path,
-    state_path: &Path,
-    state: &FreshnessState,
-    expected_name: &str,
-) -> Option<PathBuf> {
-    let name = state.lockfile_snapshot_name.as_ref()?;
-    if !is_restorable_lockfile_name(name) {
-        return None;
-    }
-    if is_branch_lockfile_name(name) && name != expected_name {
-        return None;
-    }
-    let content = std::fs::read(lockfile_snapshot_file(state_path)).ok()?;
-    if hash_bytes(&content) != state.lockfile_hash {
-        return None;
-    }
-    let path = project_dir.join(name);
-    aube_util::fs_atomic::atomic_write(&path, &content).ok()?;
-    Some(path)
-}
-
-fn is_restorable_lockfile_name(name: &str) -> bool {
-    let basename = aube_util::embedder().lockfile_basename;
-    matches!(
-        name,
-        "pnpm-lock.yaml" | "bun.lock" | "yarn.lock" | "npm-shrinkwrap.json" | "package-lock.json"
-    ) || name == basename
-        || is_branch_lockfile_name(name)
-}
-
-fn is_branch_lockfile_name(name: &str) -> bool {
-    let basename = aube_util::embedder().lockfile_basename;
-    let stem = basename.rsplit_once('.').map_or(basename, |(s, _)| s);
-    (name.starts_with(&format!("{stem}.")) || name.starts_with("pnpm-lock."))
-        && name.ends_with(".yaml")
-        && name != basename
-        && name != "pnpm-lock.yaml"
 }
 
 fn remove_legacy_state_file(state_path: &Path) -> Result<(), std::io::Error> {
