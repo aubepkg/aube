@@ -113,6 +113,7 @@ pub async fn run(
             resume_from,
             workspace_concurrency,
             reporter_hide_prefix,
+            no_bail: false,
         };
         return run_filtered(&cwd, &bin, &args, shell_mode, parallel, &filter, recursive).await;
     }
