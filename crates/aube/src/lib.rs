@@ -642,7 +642,10 @@ where
     match result {
         Ok(code) => code,
         Err(report) => {
-            eprintln!("{report:?}");
+            let rendered = format!("{report:?}");
+            if aube_util::progress::with_progress_sink(|sink| sink.message(&rendered)).is_none() {
+                eprintln!("{rendered}");
+            }
             report_exit_code(&report)
         }
     }

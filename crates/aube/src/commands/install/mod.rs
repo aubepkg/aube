@@ -2219,10 +2219,10 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     // output across bar frames. Route through safe_eprintln which
     // pauses the bar and holds the terminal lock for atomic output.
     for w in &policy_warnings {
-        crate::progress::safe_eprintln(&format!("warn: {w}"));
+        crate::progress::safe_eprintln(&format!("warning: {w}"));
     }
     for w in &jail_policy_warnings {
-        crate::progress::safe_eprintln(&format!("warn: {w}"));
+        crate::progress::safe_eprintln(&format!("warning: {w}"));
     }
 
     let link::LinkPhaseOutput {

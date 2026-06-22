@@ -146,11 +146,11 @@ pub(super) fn merge_branch_lockfiles_if_needed(
                 );
                 if !report.conflicts.is_empty() {
                     crate::progress::safe_eprintln(&format!(
-                        "warn: {} conflict(s) resolved during branch-lockfile merge:",
+                        "warning: {} conflict(s) resolved during branch-lockfile merge:",
                         report.conflicts.len()
                     ));
                     for c in &report.conflicts {
-                        crate::progress::safe_eprintln(&format!("warn:   {c}"));
+                        crate::progress::safe_eprintln(&format!("warning:   {c}"));
                     }
                 }
             } else {
@@ -166,13 +166,13 @@ pub(super) fn merge_branch_lockfiles_if_needed(
 
 pub(super) fn warn_accepted_noop_install_settings(settings_ctx: &aube_settings::ResolveCtx<'_>) {
     if super::settings::resolve_use_running_store_server(settings_ctx) {
-        eprintln!(
-            "warning: aube has no store server; useRunningStoreServer=true is accepted but has no effect"
+        crate::progress::safe_eprintln(
+            "warning: aube has no store server; useRunningStoreServer=true is accepted but has no effect",
         );
     }
     if !super::settings::resolve_symlink(settings_ctx) {
-        eprintln!(
-            "warning: aube's isolated layout requires symlinks; symlink=false is accepted but has no effect"
+        crate::progress::safe_eprintln(
+            "warning: aube's isolated layout requires symlinks; symlink=false is accepted but has no effect",
         );
     }
 }

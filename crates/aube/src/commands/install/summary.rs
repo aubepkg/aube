@@ -3,17 +3,16 @@ pub(super) fn print_already_up_to_date() {
         return;
     }
     use clx::style;
-    use std::io::Write;
     // Routed through the shared `aube_prefix_line` helper so this
     // site and `print_install_summary`'s no-op branch can't drift —
-    // both produce `aube VERSION by jdx.dev · ✓ Already up to date`.
+    // both produce `✓ Already up to date`.
     let msg = format!(
         "{} {}",
         style::egreen("✓").bold(),
         style::ebold("Already up to date"),
     );
     let line = crate::progress::aube_prefix_line(&msg);
-    let _ = writeln!(std::io::stderr(), "{line}");
+    crate::progress::emit_message(&line);
 }
 
 pub(super) fn print_direct_dependency_summary(
@@ -33,11 +32,11 @@ pub(super) fn print_direct_dependency_summary(
     let show_importer_headers = importers.len() > 1;
     for (idx, (importer, deps)) in importers.iter().enumerate() {
         if idx > 0 {
-            eprintln!();
+            crate::progress::emit_message("");
         }
         if show_importer_headers {
             let label = direct_dependency_importer_label(importer, manifests);
-            eprintln!("{}{}", style::ebold(&label), style::edim(":"));
+            crate::progress::emit_message(&format!("{}{}", style::ebold(&label), style::edim(":")));
         }
         print_direct_dependency_section(
             graph,
@@ -53,7 +52,7 @@ pub(super) fn print_direct_dependency_summary(
         );
         print_direct_dependency_section(graph, deps, aube_lockfile::DepType::Dev, direct_dep_info);
     }
-    eprintln!();
+    crate::progress::emit_message("");
 }
 
 fn direct_dependency_importer_label(
@@ -86,20 +85,20 @@ fn print_direct_dependency_section(
     }
     deps.sort_by(|a, b| a.name.cmp(&b.name));
     let label = aube_lockfile::dep_type_label(dep_type);
-    eprintln!("{}{}", style::ebold(label), style::edim(":"));
+    crate::progress::emit_message(&format!("{}{}", style::ebold(label), style::edim(":")));
     for dep in deps {
         let version = graph
             .get_package(&dep.dep_path)
             .map(|pkg| pkg.version.as_str())
             .unwrap_or("?");
         let badges = render_direct_dep_badges(direct_dep_info.get(&dep.dep_path));
-        eprintln!(
+        crate::progress::emit_message(&format!(
             "{} {}{}{}",
             style::egreen("+").bold(),
             dep.name,
             style::edim(format!("@{version}")),
             badges,
-        );
+        ));
     }
 }
 

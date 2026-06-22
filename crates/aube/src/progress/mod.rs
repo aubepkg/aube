@@ -36,7 +36,7 @@ use clx::progress::{
 };
 use clx::style;
 use std::collections::HashMap;
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
@@ -130,6 +130,18 @@ fn product_banner(suffix: &str) -> String {
 /// embedders should see the same concise success line as other tools.
 pub(crate) fn aube_prefix_line(msg: &str) -> String {
     msg.to_string()
+}
+
+/// Emit a user-facing install message without racing an active progress UI.
+///
+/// Embedders that install a progress sink own the visible output surface, so
+/// hand the message to them. Standalone aube falls back to a terminal-safe
+/// stderr write.
+pub fn emit_message(msg: &str) {
+    if embedded_progress::with_progress_sink(|sink| sink.message(msg)).is_some() {
+        return;
+    }
+    write_terminal_message(msg);
 }
 
 /// Install-time progress UI. Cheap to clone (internally `Arc`).
@@ -1105,9 +1117,8 @@ impl InstallProgress {
     /// Emit the post-install summary line after the progress display has
     /// been torn down. Two shapes:
     ///
-    /// * `linked > 0` — `aube VERSION by jdx.dev · ✓ installed N packages
-    ///   in Xs`, TTY-only (CI mode prints its own framed `✓` summary
-    ///   from the heartbeat's final tick).
+    /// * `linked > 0` — `✓ installed N packages in Xs`, TTY-only (CI mode
+    ///   prints its own framed `✓` summary from the heartbeat's final tick).
     /// * `linked == 0 && top_level_linked == 0` — `Already up to date`
     ///   (matches pnpm), printed in both TTY and CI modes so cache-only
     ///   runs confirm nothing needed doing. Stays silent in reporter
@@ -1142,12 +1153,12 @@ impl InstallProgress {
             };
             // Only the check mark is green so it stays the visual
             // success cue without the whole message bleeding green.
-            // Same single-line `aube VERSION by jdx.dev · ✓ msg` shape
-            // for both TTY and CI modes; CI mode's heartbeat may have
-            // emitted intermediate progress lines above this.
+            // Same single-line `✓ msg` shape for both TTY and CI modes; CI
+            // mode's heartbeat may have emitted intermediate progress lines
+            // above this.
             let msg = format!("{} {}", style::egreen("✓").bold(), style::ebold(&body));
             let line = aube_prefix_line(&msg);
-            let _ = writeln!(std::io::stderr(), "{line}");
+            emit_message(&line);
             return;
         }
         if linked == 0 {
@@ -1175,7 +1186,7 @@ impl InstallProgress {
             style::edim(format_duration(elapsed)),
         );
         let line = aube_prefix_line(&msg);
-        let _ = writeln!(std::io::stderr(), "{line}");
+        emit_message(&line);
     }
 }
 
@@ -1440,6 +1451,13 @@ impl Drop for FetchRow {
 /// that already hold a bar handle can use ProgressJob::println
 /// instead, but this works without one.
 pub fn safe_eprintln(msg: &str) {
+    if embedded_progress::with_progress_sink(|sink| sink.message(msg)).is_some() {
+        return;
+    }
+    write_terminal_message(msg);
+}
+
+fn write_terminal_message(msg: &str) {
     use std::io::Write;
     let was_paused = clx::progress::is_paused();
     if !was_paused {

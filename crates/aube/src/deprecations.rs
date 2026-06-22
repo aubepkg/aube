@@ -14,7 +14,6 @@ use aube_lockfile::LockfileGraph;
 use aube_settings::resolved::DeprecationWarnings;
 use clx::style;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -118,12 +117,12 @@ pub fn render_install_warnings(
 fn write_warn_line(r: &DeprecationRecord) {
     let line = format!(
         "{} {}@{}: {}",
-        style::eyellow("WARN deprecated").bold(),
+        style::eyellow("warning: deprecated").bold(),
         r.name,
         r.version,
         r.message
     );
-    let _ = writeln!(std::io::stderr(), "{line}");
+    crate::progress::emit_message(&line);
 }
 
 fn write_transitive_count_line(count: usize) {
@@ -136,7 +135,7 @@ fn write_transitive_count_line(count: usize) {
     let msg = format!(
         "{pkgs} {verb} deprecation warnings. Run `{product} deprecations --transitive` to see them."
     );
-    let _ = writeln!(std::io::stderr(), "{}", style::edim(msg));
+    crate::progress::emit_message(&style::edim(msg).to_string());
 }
 
 fn write_count_line(count: usize, has_transitive: bool) {
@@ -150,5 +149,5 @@ fn write_count_line(count: usize, has_transitive: bool) {
         format!("{product} deprecations")
     };
     let msg = format!("{pkgs} {verb} deprecation warnings. Run `{cmd}` to see them.");
-    let _ = writeln!(std::io::stderr(), "{}", style::edim(msg));
+    crate::progress::emit_message(&style::edim(msg).to_string());
 }
