@@ -58,11 +58,11 @@ pub(crate) use settings::{ResolverConfigInputs, configure_resolver, finalize_loc
 pub(crate) use side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root};
 
 use settings::{
-    check_unmet_peers, default_streaming_network_concurrency, maybe_cleanup_unused_catalogs,
-    resolve_git_shallow_hosts, resolve_link_concurrency, resolve_network_concurrency,
-    resolve_side_effects_cache, resolve_side_effects_cache_readonly,
-    resolve_strict_peer_dependencies, resolve_strict_store_pkg_content_check,
-    resolve_verify_store_integrity,
+    check_unmet_peers, default_lockfile_network_concurrency, default_streaming_network_concurrency,
+    maybe_cleanup_unused_catalogs, resolve_dependency_policy, resolve_git_shallow_hosts,
+    resolve_link_concurrency, resolve_network_concurrency, resolve_side_effects_cache,
+    resolve_side_effects_cache_readonly, resolve_strict_peer_dependencies,
+    resolve_strict_store_pkg_content_check, resolve_verify_store_integrity,
 };
 use startup::{
     apply_force_state_reset, merge_branch_lockfiles_if_needed, modules_cache_sweep_is_default,
@@ -153,6 +153,73 @@ impl InstallPhaseTimings {
             Err(e) => tracing::debug!("failed to write install phase timings: {e}"),
         }
     }
+}
+
+async fn validate_lockfile_trust_policy(
+    cwd: &std::path::Path,
+    graph: &aube_lockfile::LockfileGraph,
+    network_mode: aube_registry::NetworkMode,
+    policy: &aube_resolver::DependencyPolicy,
+) -> miette::Result<()> {
+    if policy.trust_policy != aube_resolver::TrustPolicy::NoDowngrade {
+        return Ok(());
+    }
+
+    let client = std::sync::Arc::new(make_client(cwd).with_network_mode(network_mode));
+    let full_cache_dir = super::packument_full_cache_dir();
+    let concurrency = default_lockfile_network_concurrency().max(1);
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut seen = std::collections::BTreeSet::new();
+    let mut checks: tokio::task::JoinSet<Result<(), aube_resolver::Error>> =
+        tokio::task::JoinSet::new();
+
+    for pkg in graph.packages.values() {
+        if pkg.local_source.is_some() {
+            continue;
+        }
+        let name = pkg.registry_name().to_string();
+        let version = pkg.version.clone();
+        if !seen.insert((name.clone(), version.clone())) {
+            continue;
+        }
+
+        let client = client.clone();
+        let full_cache_dir = full_cache_dir.clone();
+        let exclude = policy.trust_policy_exclude.clone();
+        let ignore_after = policy.trust_policy_ignore_after;
+        let semaphore = semaphore.clone();
+        checks.spawn(async move {
+            let _permit = semaphore.acquire_owned().await.map_err(|e| {
+                aube_resolver::Error::Registry(name.clone(), format!("trust check cancelled: {e}"))
+            })?;
+            let packument = client
+                .fetch_packument_with_time_cached(&name, &full_cache_dir)
+                .await
+                .map_err(|e| aube_resolver::Error::Registry(name.clone(), e.to_string()))?;
+            let picked = packument.versions.get(&version).ok_or_else(|| {
+                aube_resolver::Error::Registry(
+                    name.clone(),
+                    format!("registry packument has no metadata for {name}@{version}"),
+                )
+            })?;
+            aube_resolver::check_no_downgrade(&packument, &version, picked, &exclude, ignore_after)
+                .map_err(|e| match e {
+                    aube_resolver::TrustCheckError::Downgrade(d) => {
+                        aube_resolver::Error::TrustDowngrade(Box::new(d))
+                    }
+                    aube_resolver::TrustCheckError::MissingTime(d) => {
+                        aube_resolver::Error::TrustCheckMissingTime(Box::new(d))
+                    }
+                })
+        });
+    }
+
+    while let Some(result) = checks.join_next().await {
+        let result = result.map_err(|e| miette!("trust-policy validation task failed: {e}"))?;
+        result.map_err(miette::Report::new)?;
+    }
+
+    Ok(())
 }
 
 pub async fn run(opts: InstallOptions) -> miette::Result<()> {
@@ -578,6 +645,9 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         None;
     let (graph, package_indices, cached_count, fetch_count) = match lockfile_result {
         Ok((mut graph, kind)) => {
+            let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx);
+            validate_lockfile_trust_policy(&cwd, &graph, opts.network_mode, &dependency_policy)
+                .await?;
             // Under `sharedWorkspaceLockfile=false` the project's own
             // lockfile only carries the `.` importer, so the reuse path
             // would hand the linker a root-only graph and never relink

@@ -64,6 +64,9 @@ fn install_fast_path_eligible(
     if !preconditions_met {
         return false;
     }
+    if trust_policy_requires_validation(cwd) {
+        return false;
+    }
     // Surface *why* the warm path was missed at debug level — the state
     // freshness reason is otherwise discarded here (only `.is_none()` is
     // consulted), leaving `aube install -v` silent on repeat-install loops
@@ -92,7 +95,18 @@ fn restore_missing_lockfile_fast_path_eligible(
         && !opts.dangerously_allow_all_builds
         && opts.workspace_filter.is_empty()
         && modules_cache_sweep_default
+        && !trust_policy_requires_validation(cwd)
         && state::restore_missing_lockfile_if_fresh(cwd, &opts.cli_flags)
+}
+
+fn trust_policy_requires_validation(cwd: &Path) -> bool {
+    super::super::with_settings_ctx(cwd, |ctx| {
+        aube_settings::resolved::paranoid(ctx)
+            || matches!(
+                aube_settings::resolved::trust_policy(ctx),
+                aube_settings::resolved::TrustPolicy::NoDowngrade
+            )
+    })
 }
 
 fn emit_up_to_date(cwd: &Path) {

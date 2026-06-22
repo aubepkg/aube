@@ -399,9 +399,7 @@ fn check_needs_install_compute(
     // --node-linker=hoisted` writes a hash with cli_flags set, then
     // bare `aube run` reads without the flag, mismatches, and triggers
     // a spurious auto-install.
-    if lockfile_missing
-        && restore_lockfile_snapshot(project_dir, &state_path, &state, &lockfile_name).is_none()
-    {
+    if lockfile_missing {
         return Some("no lockfile found".into());
     }
     None

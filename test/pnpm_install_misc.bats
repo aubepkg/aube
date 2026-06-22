@@ -392,6 +392,34 @@ JSON
 	assert_file_exists node_modules/@pnpm/e2e.test-provenance/package.json
 }
 
+@test "trustPolicy=no-downgrade: lockfile reuse still validates trust evidence" {
+	cat >.npmrc <<EOF
+registry=${AUBE_TEST_REGISTRY}
+trust-policy=off
+EOF
+	cat >package.json <<'JSON'
+{
+  "name": "pnpm-misc-trust-lockfile-reuse-fail",
+  "version": "1.0.0",
+  "dependencies": {
+    "@pnpm/e2e.test-provenance": "0.0.5"
+  }
+}
+JSON
+
+	aube install
+	assert_file_exists aube-lock.yaml
+	assert_file_exists node_modules/@pnpm/e2e.test-provenance/package.json
+
+	cat >.npmrc <<EOF
+registry=${AUBE_TEST_REGISTRY}
+trust-policy=no-downgrade
+EOF
+	run aube install
+	assert_failure
+	assert_output --partial "trust downgrade for @pnpm/e2e.test-provenance@0.0.5"
+}
+
 @test "trustPolicyExclude with name@version: install succeeds for the listed version" {
 	# Ported from pnpm/test/install/misc.ts:600.
 	# pnpm: --trust-policy-exclude=@pnpm/e2e.test-provenance@0.0.5

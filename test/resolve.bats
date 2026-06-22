@@ -53,6 +53,18 @@ teardown() {
 	assert_output --partial "Lockfile:"
 }
 
+@test "deleting aube-lock.yaml makes install re-resolve instead of restoring stale state" {
+	echo '{"name":"test","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}' >package.json
+	aube install
+	assert_file_exists aube-lock.yaml
+
+	rm aube-lock.yaml
+	run aube -v install
+	assert_success
+	assert_output --partial "No lockfile found"
+	assert_file_exists aube-lock.yaml
+}
+
 @test "generated lockfile contains integrity hashes" {
 	echo '{"name":"test","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}' >package.json
 	aube install
