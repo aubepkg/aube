@@ -822,9 +822,18 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
     // `--reporter=silent` is equivalent to `--silent`; all other reporter
     // values leave the log level alone and only affect output routing.
     if let Some(dir) = &cli.dir {
-        std::env::set_current_dir(dir)
+        let target_dir = if dir.is_absolute() {
+            dir.clone()
+        } else {
+            std::env::current_dir()
+                .into_diagnostic()
+                .wrap_err("failed to read current directory")?
+                .join(dir)
+        };
+        std::env::set_current_dir(&target_dir)
             .into_diagnostic()
-            .wrap_err_with(|| format!("failed to change directory to {}", dir.display()))?;
+            .wrap_err_with(|| format!("failed to change directory to {}", target_dir.display()))?;
+        crate::dirs::set_cwd(&target_dir)?;
     }
 
     if should_print_top_level_version(&cli) {
