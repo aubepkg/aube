@@ -20,7 +20,7 @@
 //! checks because the public-registry signal doesn't apply. Names
 //! whose resolved registry isn't `registry.npmjs.org` (per
 //! `NpmConfig::is_public_npmjs`) are filtered out upstream in
-//! `registry_bound_names_for_supply_chain`.
+//! `registry_bound_inputs_for_supply_chain`.
 
 use aube_codes::errors::{
     ERR_AUBE_ADVISORY_CHECK_FAILED, ERR_AUBE_LOW_DOWNLOAD_PACKAGE, ERR_AUBE_MALICIOUS_PACKAGE,
@@ -104,7 +104,13 @@ pub async fn run_gates(
         }
     };
     osv_gate(&client, name_only_advisory_names, advisory_check).await?;
-    osv_gate_versioned(&client, exact_advisory_pairs, advisory_check).await?;
+    osv_gate_versioned(
+        &client,
+        exact_advisory_pairs,
+        advisory_check,
+        "refusing to add malicious package(s):",
+    )
+    .await?;
     if !allow_low_downloads && low_download_threshold > 0 {
         let patterns = compile_allowed_unpopular(allowed_unpopular_globs);
         let gated: Vec<String> = download_names
@@ -216,7 +222,13 @@ pub async fn run_transitive_osv_gate(
             return Ok(());
         }
     };
-    osv_gate_versioned(&client, &pairs, policy).await
+    osv_gate_versioned(
+        &client,
+        &pairs,
+        policy,
+        "refusing to install malicious package(s):",
+    )
+    .await
 }
 
 /// Mirror-backed transitive OSV `MAL-*` check for plain reinstalls.
@@ -460,8 +472,14 @@ pub async fn run_transitive_osv_gate_via_bloom(
     // `advisoryCheck` — `osv_gate_versioned_with_bypass` threads
     // that setting name through to the `ERR_AUBE_MALICIOUS_PACKAGE`
     // footer and the required-failure message.
-    osv_gate_versioned_with_bypass(&live_client, &bloom_hits, live_policy, "advisoryBloomCheck")
-        .await
+    osv_gate_versioned_with_bypass(
+        &live_client,
+        &bloom_hits,
+        live_policy,
+        "refusing to install malicious package(s):",
+        "advisoryBloomCheck",
+    )
+    .await
 }
 
 /// True when the resolved graph contains at least one
@@ -510,7 +528,7 @@ pub fn lockfile_has_new_picks(
 
 /// Distinct public-npmjs `(registry_name, version)` pairs in
 /// `graph`, filtered to match the CLI-name gate's
-/// `registry_bound_names_for_supply_chain` shape so a scoped
+/// `registry_bound_inputs_for_supply_chain` shape so a scoped
 /// registry override (`@myorg:registry=...`) or a swapped default
 /// registry doesn't ship internal package names to OSV. Workspace /
 /// `link:` / `file:` entries drop out via
@@ -576,8 +594,9 @@ async fn osv_gate_versioned(
     client: &reqwest::Client,
     pairs: &[(String, String)],
     policy: AdvisoryCheck,
+    refusal_header: &str,
 ) -> miette::Result<()> {
-    osv_gate_versioned_with_bypass(client, pairs, policy, "advisoryCheck").await
+    osv_gate_versioned_with_bypass(client, pairs, policy, refusal_header, "advisoryCheck").await
 }
 
 /// Versioned-OSV gate with an overridable bypass-setting name.
@@ -590,6 +609,7 @@ async fn osv_gate_versioned_with_bypass(
     client: &reqwest::Client,
     pairs: &[(String, String)],
     policy: AdvisoryCheck,
+    refusal_header: &str,
     bypass_setting: &str,
 ) -> miette::Result<()> {
     if matches!(policy, AdvisoryCheck::Off) {
@@ -598,7 +618,7 @@ async fn osv_gate_versioned_with_bypass(
     handle_osv_result(
         fetch_malicious_advisories_versioned(client, pairs).await,
         policy,
-        "refusing to install malicious package(s):",
+        refusal_header,
         bypass_setting,
     )
 }
@@ -932,6 +952,25 @@ mod tests {
         assert!(msg.contains("- evil ("), "name-only hit keeps bare name");
         assert!(msg.starts_with("header:"));
         assert!(msg.ends_with("footer."));
+    }
+
+    #[test]
+    fn add_exact_pin_refusal_uses_add_header() {
+        let err = handle_osv_result(
+            Ok(vec![MaliciousAdvisory {
+                package: "nx".to_string(),
+                advisory_id: "MAL-2025-41443".to_string(),
+                version: Some("20.9.0".to_string()),
+            }]),
+            AdvisoryCheck::On,
+            "refusing to add malicious package(s):",
+            "advisoryCheck",
+        )
+        .expect_err("malicious hit should fail");
+        let rendered = err.to_string();
+        assert!(rendered.contains("refusing to add malicious package(s):"));
+        assert!(!rendered.contains("refusing to install malicious package(s):"));
+        assert!(rendered.contains("nx@20.9.0"));
     }
 
     #[test]
