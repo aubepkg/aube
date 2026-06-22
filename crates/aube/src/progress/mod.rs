@@ -125,12 +125,11 @@ fn product_banner(suffix: &str) -> String {
     }
 }
 
-/// Build the standard `<product banner> · <msg>` one-line header used
-/// by the no-op and fast-mode summaries. Centralizes the header shape
-/// so the install-finished, already-up-to-date, and fast-mode-summary
-/// paths all read consistently.
+/// Build the one-line install summary used by no-op and fast-mode
+/// completions. The progress header already identifies standalone aube;
+/// embedders should see the same concise success line as other tools.
 pub(crate) fn aube_prefix_line(msg: &str) -> String {
-    product_banner(&format!(" {} {msg}", style::edim("·")))
+    msg.to_string()
 }
 
 /// Install-time progress UI. Cheap to clone (internally `Arc`).
