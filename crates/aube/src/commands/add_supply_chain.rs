@@ -39,10 +39,12 @@ use aube_settings::resolved::{AdvisoryBloomCheck, AdvisoryCheck, AdvisoryCheckOn
 use miette::miette;
 use std::io::{BufRead, IsTerminal, Write};
 
-/// Run both supply-chain gates against the registry-bound names the
-/// user passed to `aube add`. `names` should already be filtered to
-/// names that resolve via the public npm registry — workspace, git,
-/// and local specs are not in scope.
+/// Run both supply-chain gates against the registry-bound specs the
+/// user passed to `aube add`. Inputs should already be filtered to
+/// packages that resolve via the public npm registry — workspace, git,
+/// and local specs are not in scope. Exact pins can use OSV's
+/// version-aware query; ranges and dist-tags stay on the name-only
+/// query until the resolver picks a concrete version.
 ///
 /// `allow_low_downloads` is the per-invocation `--allow-low-downloads`
 /// override; when `true` the download gate is skipped entirely (the
@@ -51,16 +53,21 @@ use std::io::{BufRead, IsTerminal, Write};
 /// `allowed_unpopular_globs` are the `allowedUnpopularPackages`
 /// setting entries: full-name globs that exempt matching names from
 /// the downloads gate only. The advisory check still runs against
-/// every name regardless — exempting confirmed-malicious advisories
+/// every package regardless — exempting confirmed-malicious advisories
 /// is not what this list is for.
 pub async fn run_gates(
-    names: &[String],
+    name_only_advisory_names: &[String],
+    exact_advisory_pairs: &[(String, String)],
+    download_names: &[String],
     advisory_check: AdvisoryCheck,
     low_download_threshold: u64,
     allow_low_downloads: bool,
     allowed_unpopular_globs: &[String],
 ) -> miette::Result<()> {
-    if names.is_empty() {
+    if name_only_advisory_names.is_empty()
+        && exact_advisory_pairs.is_empty()
+        && download_names.is_empty()
+    {
         return Ok(());
     }
     // One client shared across both gates and every per-package
@@ -96,10 +103,11 @@ pub async fn run_gates(
             return Ok(());
         }
     };
-    osv_gate(&client, names, advisory_check).await?;
+    osv_gate(&client, name_only_advisory_names, advisory_check).await?;
+    osv_gate_versioned(&client, exact_advisory_pairs, advisory_check).await?;
     if !allow_low_downloads && low_download_threshold > 0 {
         let patterns = compile_allowed_unpopular(allowed_unpopular_globs);
-        let gated: Vec<String> = names
+        let gated: Vec<String> = download_names
             .iter()
             .filter(|n| !patterns.iter().any(|p| p.matches(n)))
             .cloned()
@@ -778,7 +786,7 @@ mod tests {
         // registry-name list. The function must be a no-op in that
         // case (no network, no error) so those code paths stay free.
         assert!(
-            run_gates(&[], AdvisoryCheck::Required, 1000, false, &[])
+            run_gates(&[], &[], &[], AdvisoryCheck::Required, 1000, false, &[])
                 .await
                 .is_ok()
         );
