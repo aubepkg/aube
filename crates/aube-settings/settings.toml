@@ -807,7 +807,7 @@ directory only works when Node can still find its deps: set
 running node. The inner dir name is what the walk actually hits, so
 it stays fixed.
 """
-sources.cli = []
+sources.cli = ["modulesDir", "modules-dir"]
 sources.env = ["npm_config_modules_dir", "NPM_CONFIG_MODULES_DIR", "AUBE_MODULES_DIR"]
 sources.npmrc = ["modulesDir", "modules-dir"]
 sources.workspaceYaml = ["modulesDir"]
