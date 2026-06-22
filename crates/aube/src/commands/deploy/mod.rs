@@ -321,6 +321,7 @@ pub async fn run(
             pnpmfile: None,
             global_pnpmfile: None,
             ignore_scripts: false,
+            dry_run: false,
             lockfile_only: false,
             merge_git_branch_lockfiles: false,
             dangerously_allow_all_builds: false,

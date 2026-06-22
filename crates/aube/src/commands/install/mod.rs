@@ -165,8 +165,12 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     aube_util::diag::instant(aube_util::diag::Category::Install, "begin", None);
     let _diag_install = aube_util::diag::Span::new(aube_util::diag::Category::Install, "total");
 
-    apply_force_state_reset(&cwd, &opts)?;
-    if try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd)) {
+    if !opts.dry_run {
+        apply_force_state_reset(&cwd, &opts)?;
+    }
+    if !opts.dry_run
+        && try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))
+    {
         return Ok(());
     }
 
@@ -232,17 +236,19 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         &cwd,
         &manifest,
         &settings_ctx,
-        opts.lockfile_only,
+        opts.lockfile_only || opts.dry_run,
         opts.strict_no_lockfile,
     )?;
 
-    merge_branch_lockfiles_if_needed(
-        &cwd,
-        &manifest,
-        &settings_ctx,
-        lockfile_enabled,
-        opts.merge_git_branch_lockfiles,
-    )?;
+    if !opts.dry_run {
+        merge_branch_lockfiles_if_needed(
+            &cwd,
+            &manifest,
+            &settings_ctx,
+            lockfile_enabled,
+            opts.merge_git_branch_lockfiles,
+        )?;
+    }
 
     // Resolve the install-wide networking / integrity knobs once up
     // front so every downstream fetch site (the lockfile path, the
@@ -335,7 +341,11 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     //     that will be linked, matching pnpm's recursive install
     //     behavior. Runs before the progress UI starts so script output
     //     cannot collide with the progress display.
-    if !opts.ignore_scripts && !lockfile_only_effective && !opts.skip_root_lifecycle {
+    if !opts.dry_run
+        && !opts.ignore_scripts
+        && !lockfile_only_effective
+        && !opts.skip_root_lifecycle
+    {
         let phase_start = std::time::Instant::now();
         for (importer_path, importer_manifest) in &lifecycle_manifests {
             let project_dir = importer_project_dir(&cwd, importer_path);
@@ -456,6 +466,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             minimum_release_age_override: opts.minimum_release_age_override,
             ws_package_versions: &ws_package_versions,
             ignore_scripts: opts.ignore_scripts,
+            write_lockfile: !opts.dry_run,
             prog_ref,
         })
         .await?;
