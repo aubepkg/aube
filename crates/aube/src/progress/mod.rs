@@ -246,11 +246,11 @@ impl EmbeddedState {
             estimated_bytes: AtomicU64::new(0),
         });
         embedded_progress::with_progress_sink(|sink| {
-            sink.start("Installing npm packages", None);
+            sink.start("Installing NPM packages", None);
             sink.start_task(
                 state.root_task,
                 None,
-                "npm packages",
+                "NPM packages",
                 None,
                 ProgressUnit::Count,
             );
@@ -1098,7 +1098,7 @@ impl InstallProgress {
             Mode::Embedded(s) => {
                 s.phase_num.store(4, Ordering::Relaxed);
                 s.update();
-                s.finish(EmbeddedOutcome::Success, "npm packages installed");
+                s.finish(EmbeddedOutcome::Success, "NPM packages installed");
             }
         }
     }
@@ -1255,7 +1255,7 @@ impl Drop for InstallProgress {
             }
             Mode::Embedded(s) => {
                 if Arc::strong_count(s) == 1 && !s.finished.load(Ordering::Relaxed) {
-                    s.finish(EmbeddedOutcome::Failure, "npm install failed");
+                    s.finish(EmbeddedOutcome::Failure, "NPM install failed");
                 }
             }
         }
