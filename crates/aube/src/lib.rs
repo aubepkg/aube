@@ -217,6 +217,27 @@ pub(crate) struct Cli {
     command: Option<Commands>,
 }
 
+struct CwdRestoreGuard {
+    original: PathBuf,
+}
+
+impl CwdRestoreGuard {
+    fn capture() -> miette::Result<Self> {
+        Ok(Self {
+            original: std::env::current_dir()
+                .into_diagnostic()
+                .wrap_err("failed to read current directory")?,
+        })
+    }
+}
+
+impl Drop for CwdRestoreGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.original);
+        let _ = crate::dirs::set_cwd(&self.original);
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 #[clap(rename_all = "lowercase")]
 pub(crate) enum LogLevel {
@@ -824,6 +845,10 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
     // progress UI.
     // `--reporter=silent` is equivalent to `--silent`; all other reporter
     // values leave the log level alone and only affect output routing.
+    let _cwd_restore = (cli.dir.is_some() || cli.workspace_root)
+        .then(CwdRestoreGuard::capture)
+        .transpose()?;
+
     if let Some(dir) = &cli.dir {
         let target_dir = if dir.is_absolute() {
             dir.clone()
@@ -980,7 +1005,13 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Import(args)) => commands::import::run(args).await?,
         Some(Commands::Init(args)) => commands::init::run(args).await?,
         Some(Commands::Install(args)) => {
-            run_install_command(args, effective_filter.clone(), cli.workspace_root).await?;
+            run_install_command(
+                args,
+                effective_filter.clone(),
+                cli.workspace_root,
+                cli.ignore_workspace,
+            )
+            .await?;
         }
         Some(Commands::InstallTest(args)) => {
             if let Some(code) = commands::install_test::run(args).await? {
@@ -1066,7 +1097,13 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     }
                 }
                 Some(Commands::Install(args)) => {
-                    run_install_command(args, nested_filter, nested.workspace_root).await?;
+                    run_install_command(
+                        args,
+                        nested_filter,
+                        nested.workspace_root,
+                        nested.ignore_workspace,
+                    )
+                    .await?;
                 }
                 Some(Commands::List(args)) => commands::list::run(args, nested_filter).await?,
                 Some(Commands::La(mut args)) | Some(Commands::Ll(mut args)) => {
@@ -1284,6 +1321,7 @@ async fn run_install_command(
     args: commands::install::InstallArgs,
     filter: aube_workspace::selector::EffectiveFilter,
     workspace_root_already: bool,
+    ignore_workspace: bool,
 ) -> miette::Result<()> {
     // `-w` on install is a short alias for the global
     // `--workspace-root` flag. Handle the chdir here when the global
@@ -1310,7 +1348,11 @@ async fn run_install_command(
     // means `aube install` from inside a member loads `.npmrc` /
     // workspace yaml from the workspace root, not the member; without
     // this the two diverged when both roots existed.
-    let cwd = crate::dirs::workspace_or_project_root()?;
+    let cwd = if ignore_workspace {
+        crate::dirs::project_root_or_cwd()?
+    } else {
+        crate::dirs::workspace_or_project_root()?
+    };
     let files = commands::FileSources::load(&cwd);
     let raw_ws = aube_manifest::workspace::load_raw(&cwd)
         .into_diagnostic()
@@ -1320,6 +1362,9 @@ async fn run_install_command(
     let ctx = files.ctx(&raw_ws, &env, &cli_flags);
     let yaml_prefer_frozen = aube_settings::resolved::prefer_frozen_lockfile(&ctx);
     let mut opts = args.into_options(global_frozen, yaml_prefer_frozen, cli_flags, env);
+    if ignore_workspace {
+        opts.project_dir = Some(cwd);
+    }
     opts.workspace_filter = filter;
     commands::install::run(opts).await?;
     Ok(())
