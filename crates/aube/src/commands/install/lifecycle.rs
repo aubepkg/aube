@@ -980,7 +980,7 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     sha512.copy_from_slice(&hasher.finalize()[..]);
     let computed_integrity = integrity
         .is_none()
-        .then(|| aube_store::sha512_integrity(&sha512));
+        .then(|| aube_store::sha512_integrity_from_digest(&sha512));
 
     if verify_integrity {
         if let Some(expected) = integrity {

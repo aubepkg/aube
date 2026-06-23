@@ -909,10 +909,10 @@ where
                 }
                 let computed_integrity = integrity
                     .is_none()
-                    .then(|| {
-                        streamed_digest.map(|digest| aube_store::sha512_integrity(&digest))
-                    })
-                    .flatten();
+                    .then(|| match streamed_digest.as_ref() {
+                        Some(digest) => aube_store::sha512_integrity_from_digest(digest),
+                        None => aube_store::sha512_integrity(&bytes),
+                    });
 
                 // Keep the semaphore permit through import, not just
                 // download. `import_tarball` fans out into gzip/tar
@@ -992,7 +992,8 @@ where
                 }
             }
             if let Some(integrity) = computed_integrity {
-                computed_integrities.insert(dep_path.clone(), integrity);
+                computed_integrities
+                    .insert(strip_peer_context_suffix(&dep_path).to_owned(), integrity);
             }
             indices.insert(dep_path, index);
         }
