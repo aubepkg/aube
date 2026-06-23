@@ -1456,18 +1456,29 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                             })
                             .flatten();
                         let (index, _) = run_import_on_blocking(
-                            store,
+                            store.clone(),
                             bytes,
                             streamed_digest,
-                            pkg_display_name,
-                            pkg_registry_name,
-                            pkg_version,
-                            integrity,
+                            pkg_display_name.clone(),
+                            pkg_registry_name.clone(),
+                            pkg_version.clone(),
+                            integrity.clone(),
                             fetch_verify_integrity,
                             fetch_strict_integrity,
                             fetch_strict_pkg_content_check,
                         )
                         .await?;
+                        if let Some(integrity) = computed_integrity.as_deref()
+                            && let Err(e) =
+                                store.save_index(&pkg_registry_name, &pkg_version, Some(integrity), &index)
+                        {
+                            tracing::warn!(
+                                code = aube_codes::warnings::WARN_AUBE_CACHE_WRITE_FAILED,
+                                "Failed to cache index for {}@{} with computed integrity: {e}",
+                                pkg_display_name,
+                                pkg_version
+                            );
+                        }
 
                         Ok::<_, miette::Report>((dep_path, index, computed_integrity))
                     });

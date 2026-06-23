@@ -943,6 +943,15 @@ where
                     strict_pkg_content_check,
                 )
                 .await?;
+                if let Some(integrity) = computed_integrity.as_deref()
+                    && let Err(e) =
+                        store.save_index(&registry_name, &version, Some(integrity), &index)
+                {
+                    tracing::warn!(
+                        code = aube_codes::warnings::WARN_AUBE_CACHE_WRITE_FAILED,
+                        "Failed to cache index for {display_name}@{version} with computed integrity: {e}"
+                    );
+                }
 
                 tracing::trace!(
                     "fetch {display_name}@{version}: wait={:.0?} dl={:.0?} ({} bytes) import={:.0?}",
