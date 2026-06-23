@@ -458,7 +458,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 lockfile_pre_parse: lockfile_pre_parse.as_ref(),
             })? {
                 Ok(_) => {}
-                Err(aube_lockfile::Error::NotFound(_)) => {
+                Err(aube_lockfile::Error::NotFound(_)) if opts.strict_no_lockfile => {
                     return Err(miette!(
                         "no lockfile found and --frozen-lockfile is set\n\
                          help: commit pnpm-lock.yaml to your repository, or run \
@@ -466,6 +466,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                         aube_util::cmd("install")
                     ));
                 }
+                Err(aube_lockfile::Error::NotFound(_)) => {}
                 Err(e) => {
                     return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile");
                 }

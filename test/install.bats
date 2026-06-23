@@ -935,6 +935,15 @@ JSON
 	assert [ ! -e node_modules ]
 }
 
+@test "aube install --dry-run in CI resolves without lockfile" {
+	echo '{"name":"test","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}' >package.json
+	CI=1 run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: resolved"
+	assert [ ! -e aube-lock.yaml ]
+	assert [ ! -e node_modules ]
+}
+
 @test "aube install --lockfile-only is a no-op when lockfile is fresh" {
 	_setup_basic_fixture
 	# Lockfile already exists in fixture; --lockfile-only should detect
