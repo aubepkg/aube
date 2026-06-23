@@ -944,6 +944,21 @@ JSON
 	assert [ ! -e node_modules ]
 }
 
+@test "aube install --dry-run in CI resolves drifted lockfile" {
+	_setup_basic_fixture
+	node -e '
+		const fs = require("fs");
+		const pkg = JSON.parse(fs.readFileSync("package.json"));
+		pkg.dependencies["is-number"] = "^7.0.0";
+		fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+	'
+	CI=1 run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: resolved"
+	refute_output --partial "lockfile is out of date"
+	assert [ ! -e node_modules ]
+}
+
 @test "aube install --dry-run with fresh lockfile still reports skipped fetch and link" {
 	_setup_basic_fixture
 	rm -rf node_modules

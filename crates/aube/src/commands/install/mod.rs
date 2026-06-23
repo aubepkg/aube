@@ -443,7 +443,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     // and report path without writing the lockfile; unlike
     // `--lockfile-only`, explicit frozen mode still validates drift.
     if lockfile_only_effective || opts.dry_run {
-        if opts.dry_run && matches!(mode, FrozenMode::Frozen) {
+        if opts.dry_run && opts.strict_no_lockfile && matches!(mode, FrozenMode::Frozen) {
             match resolve::select_lockfile_result(resolve::SelectLockfileInput {
                 lockfile_enabled,
                 mode,
@@ -458,7 +458,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 lockfile_pre_parse: lockfile_pre_parse.as_ref(),
             })? {
                 Ok(_) => {}
-                Err(aube_lockfile::Error::NotFound(_)) if opts.strict_no_lockfile => {
+                Err(aube_lockfile::Error::NotFound(_)) => {
                     return Err(miette!(
                         "no lockfile found and --frozen-lockfile is set\n\
                          help: commit pnpm-lock.yaml to your repository, or run \
@@ -466,7 +466,6 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                         aube_util::cmd("install")
                     ));
                 }
-                Err(aube_lockfile::Error::NotFound(_)) => {}
                 Err(e) => {
                     return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile");
                 }
