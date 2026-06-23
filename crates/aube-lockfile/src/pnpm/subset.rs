@@ -451,6 +451,13 @@ impl<'a> Parser<'a> {
                 },
             );
         }
+        // A bare `dependencies:` (no children) yields an empty map here,
+        // but serde reads the `Option<BTreeMap<…>>` field as `None`, not
+        // `Some({})`. Decline so serde decides — mirrors the same guard in
+        // `parse_string_map`.
+        if map.is_empty() {
+            return None;
+        }
         Some(map)
     }
 
@@ -920,6 +927,19 @@ mod subset_tests {
         let snap_empty_deps = "lockfileVersion: '9.0'\nsnapshots:\n  foo@1.0.0:\n    dependencies:\n    optional: true\n";
         assert!(try_parse(snap_empty_deps).is_none());
         assert_match_or_declines("snap-empty-deps", snap_empty_deps);
+    }
+
+    #[test]
+    fn empty_importer_dependencies_block_declines_not_misparse() {
+        // An importer with a bare `dependencies:` (no children) and a
+        // populated `devDependencies:`: serde reads the empty
+        // `Option<BTreeMap<…>>` field as `None`, but the subset path would
+        // build an empty map and store `Some({})` — a silent divergence.
+        // The empty-map guard in `parse_dep_specs` makes it decline so
+        // serde decides, exactly as `parse_string_map` does for overrides.
+        let lock = "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n    devDependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n";
+        assert!(try_parse(lock).is_none());
+        assert_match_or_declines("empty-importer-dependencies", lock);
     }
 
     #[test]
