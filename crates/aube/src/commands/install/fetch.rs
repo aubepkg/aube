@@ -821,7 +821,7 @@ where
                         strict_pkg_content_check,
                     )
                     .await;
-                    let (index, bytes_len) = match streamed {
+                    let (index, bytes_len, _) = match streamed {
                         Ok(v) => {
                             permit.record_success();
                             v
@@ -1114,7 +1114,7 @@ pub(super) fn remap_indices_to_contextualized(
 /// coordinate. A `dep_path` with no suffix is returned unchanged — a
 /// bare `_<hex>` tail belongs to a `git+`/`url+`/`file+` source
 /// coordinate and is never a peer marker, so it is preserved.
-fn strip_peer_context_suffix(dep_path: &str) -> &str {
+pub(super) fn strip_peer_context_suffix(dep_path: &str) -> &str {
     dep_path.split('(').next().unwrap_or(dep_path)
 }
 

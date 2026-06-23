@@ -37,7 +37,7 @@ pub use dep_selection::DepSelection;
 pub(super) use fetch::fetch_packages;
 use fetch::{
     fetch_packages_with_root, import_local_source, remap_indices_to_contextualized,
-    version_from_dep_path,
+    strip_peer_context_suffix, version_from_dep_path,
 };
 pub use frozen::{FrozenMode, FrozenOverride, GlobalVirtualStoreFlags};
 pub(crate) use lifecycle::{
@@ -152,6 +152,70 @@ impl InstallPhaseTimings {
             }
             Err(e) => tracing::debug!("failed to write install phase timings: {e}"),
         }
+    }
+}
+
+fn apply_computed_integrities(
+    graph: &mut aube_lockfile::LockfileGraph,
+    computed: &BTreeMap<String, String>,
+) {
+    if computed.is_empty() {
+        return;
+    }
+    for pkg in graph.packages.values_mut() {
+        if pkg.integrity.is_some() || pkg.local_source.is_some() {
+            continue;
+        }
+        let canonical = strip_peer_context_suffix(&pkg.dep_path);
+        if let Some(integrity) = computed.get(canonical) {
+            pkg.integrity = Some(integrity.clone());
+        }
+    }
+}
+
+#[cfg(test)]
+mod computed_integrity_tests {
+    use super::*;
+
+    #[test]
+    fn computed_integrity_updates_peer_variants() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.packages.insert(
+            "consumer@1.0.0(peer@2.0.0)".into(),
+            aube_lockfile::LockedPackage {
+                name: "consumer".into(),
+                version: "1.0.0".into(),
+                dep_path: "consumer@1.0.0(peer@2.0.0)".into(),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "already@1.0.0".into(),
+            aube_lockfile::LockedPackage {
+                name: "already".into(),
+                version: "1.0.0".into(),
+                dep_path: "already@1.0.0".into(),
+                integrity: Some("sha512-existing".into()),
+                ..Default::default()
+            },
+        );
+        let computed = BTreeMap::from([
+            ("consumer@1.0.0".into(), "sha512-computed".into()),
+            ("already@1.0.0".into(), "sha512-new".into()),
+        ]);
+
+        apply_computed_integrities(&mut graph, &computed);
+
+        assert_eq!(
+            graph.packages["consumer@1.0.0(peer@2.0.0)"]
+                .integrity
+                .as_deref(),
+            Some("sha512-computed")
+        );
+        assert_eq!(
+            graph.packages["already@1.0.0"].integrity.as_deref(),
+            Some("sha512-existing")
+        );
     }
 }
 
@@ -1094,7 +1158,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 // JoinSet aborts every outstanding task on drop,
                 // matches the pattern ensure_dep_scripts uses.
                 let mut handles: tokio::task::JoinSet<
-                    miette::Result<(String, aube_store::PackageIndex)>,
+                    miette::Result<(String, aube_store::PackageIndex, Option<String>)>,
                 > = tokio::task::JoinSet::new();
                 let mut indices: BTreeMap<String, aube_store::PackageIndex> = BTreeMap::new();
                 let mut cached_count = 0usize;
@@ -1312,7 +1376,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                                 fetch_strict_pkg_content_check,
                             )
                             .await;
-                            let (index, bytes_len) = match streamed {
+                            let (index, bytes_len, computed_integrity) = match streamed {
                                 Ok(v) => {
                                     permit.record_success();
                                     v
@@ -1329,7 +1393,11 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                             if let Some(p) = bytes_progress.as_ref() {
                                 p.inc_downloaded_bytes(bytes_len);
                             }
-                            return Ok::<_, miette::Report>((dep_path, index));
+                            return Ok::<_, miette::Report>((
+                                dep_path,
+                                index,
+                                computed_integrity,
+                            ));
                         }
 
                         let fetch_outcome = if streaming_sha512_enabled {
@@ -1381,6 +1449,12 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                             p.inc_downloaded_bytes(bytes.len() as u64);
                         }
 
+                        let computed_integrity = integrity
+                            .is_none()
+                            .then(|| {
+                                streamed_digest.map(|digest| aube_store::sha512_integrity(&digest))
+                            })
+                            .flatten();
                         let (index, _) = run_import_on_blocking(
                             store,
                             bytes,
@@ -1395,19 +1469,23 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                         )
                         .await?;
 
-                        Ok::<_, miette::Report>((dep_path, index))
+                        Ok::<_, miette::Report>((dep_path, index, computed_integrity))
                     });
                 }
 
                 // Collect all fetch results via JoinSet. Drop on
                 // error aborts outstanding siblings.
                 let fetch_count = handles.len();
+                let mut computed_integrities: BTreeMap<String, String> = BTreeMap::new();
                 while let Some(joined) = handles.join_next().await {
-                    let (dep_path, index) = joined.into_diagnostic()??;
+                    let (dep_path, index, computed_integrity) = joined.into_diagnostic()??;
                     materialize_tx
                         .send((dep_path.clone(), index.clone()))
                         .await
                         .map_err(|_| miette!("materializer task exited before fetch finished"))?;
+                    if let Some(integrity) = computed_integrity {
+                        computed_integrities.insert(dep_path.clone(), integrity);
+                    }
                     indices.insert(dep_path, index);
                 }
                 // Explicitly drop the materialize sender so the
@@ -1417,7 +1495,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 if let Some(state) = persistent_for_save.as_ref() {
                     semaphore_for_persist.persist(state, "tarball:default");
                 }
-                Ok::<_, miette::Report>((indices, cached_count, fetch_count))
+                Ok::<_, miette::Report>((indices, cached_count, fetch_count, computed_integrities))
             });
 
             // Run resolution (this streams packages to the fetch coordinator).
@@ -1581,7 +1659,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                     return Err(combine_install_pipeline_errors(materialize_handle, e).await);
                 }
             };
-            let (canonical_indices, mut cached, mut fetched) = fetch_result;
+            let (canonical_indices, mut cached, mut fetched, computed_integrities) = fetch_result;
             tracing::debug!(
                 "phase:fetch {:.1?} ({fetched} packages, {cached} cached)",
                 fetch_phase_start.elapsed()
@@ -1623,6 +1701,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             // same canonical package share a single set of files, so
             // cloning the PackageIndex is cheap relative to re-extraction.
             let mut indices = remap_indices_to_contextualized(&canonical_indices, &graph);
+            apply_computed_integrities(&mut graph, &computed_integrities);
 
             // Write the lockfile in whatever format the project was
             // already using. If no lockfile existed, create aube's
