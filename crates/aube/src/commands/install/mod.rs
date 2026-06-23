@@ -214,13 +214,15 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     if opts.network_mode == aube_registry::NetworkMode::Offline {
         runtime_settings.network = aube_runtime::NetworkMode::Offline;
     }
-    crate::runtime::ensure(
-        &cwd,
-        Some(&manifest),
-        runtime_settings,
-        crate::runtime::lockfile_node_pin(&cwd, &manifest).as_ref(),
-    )
-    .await?;
+    if !opts.dry_run {
+        crate::runtime::ensure(
+            &cwd,
+            Some(&manifest),
+            runtime_settings,
+            crate::runtime::lockfile_node_pin(&cwd, &manifest).as_ref(),
+        )
+        .await?;
+    }
     super::configure_script_settings(&settings_ctx, Some("install"));
 
     let layout::InstallLayoutConfig {
@@ -236,7 +238,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         &cwd,
         &manifest,
         &settings_ctx,
-        opts.lockfile_only || opts.dry_run,
+        opts.lockfile_only,
         opts.strict_no_lockfile,
     )?;
 
@@ -431,14 +433,44 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
 
     // `--lockfile-only` short-circuit. Resolves (or reuses a fresh
     // lockfile), writes the new lockfile, and exits before any tarball
-    // fetch / link / lifecycle work. Runs *before* the FrozenMode
-    // match so it bypasses drift hard-errors entirely — pnpm's
-    // `--lockfile-only` regenerates regardless of frozen mode, and
-    // we'd otherwise be preempted by the auto-CI Frozen default.
+    // fetch / link / lifecycle work. Runs *before* the FrozenMode match
+    // so lockfile-only bypasses drift hard-errors entirely — pnpm's
+    // `--lockfile-only` regenerates regardless of frozen mode, and we'd
+    // otherwise be preempted by the auto-CI Frozen default.
     // `enableModulesDir=false` follows the same short-circuit so
     // projects that persistently disable node_modules materialization
-    // share the exact same control flow.
-    if lockfile_only_effective {
+    // share the exact same control flow. `--dry-run` reuses the resolve
+    // and report path without writing the lockfile; unlike
+    // `--lockfile-only`, explicit frozen mode still validates drift.
+    if lockfile_only_effective || opts.dry_run {
+        if opts.dry_run && matches!(mode, FrozenMode::Frozen) {
+            match resolve::select_lockfile_result(resolve::SelectLockfileInput {
+                lockfile_enabled,
+                mode,
+                cwd: &cwd,
+                lockfile_dir: &lockfile_dir,
+                lockfile_importer_key: &lockfile_importer_key,
+                manifest: &manifest,
+                manifests: &manifests,
+                ws_config: &ws_config_shared,
+                workspace_catalogs: &workspace_catalogs,
+                is_workspace_project,
+                lockfile_pre_parse: lockfile_pre_parse.as_ref(),
+            })? {
+                Ok(_) => {}
+                Err(aube_lockfile::Error::NotFound(_)) => {
+                    return Err(miette!(
+                        "no lockfile found and --frozen-lockfile is set\n\
+                         help: commit pnpm-lock.yaml to your repository, or run \
+                         `{} --no-frozen-lockfile` to generate one",
+                        aube_util::cmd("install")
+                    ));
+                }
+                Err(e) => {
+                    return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile");
+                }
+            }
+        }
         resolve::run_lockfile_only(resolve::LockfileOnlyInput {
             cwd: &cwd,
             mode,

@@ -13,6 +13,10 @@ pub struct InstallArgs {
     /// Bypasses the `allowBuilds` allowlist. Do not use in CI.
     #[arg(long)]
     pub dangerously_allow_all_builds: bool,
+    /// Resolve and report what would happen without writing the lockfile
+    /// or linking node_modules.
+    #[arg(long, conflicts_with = "lockfile_only")]
+    pub dry_run: bool,
     /// Re-resolve lockfile entries whose spec drifted from package.json.
     ///
     /// Leaves everything else pinned at its locked version. Unchanged
@@ -28,10 +32,6 @@ pub struct InstallArgs {
     /// pnpm's `install --force`.
     #[arg(long)]
     pub force: bool,
-    /// Resolve and report what would happen without writing the lockfile
-    /// or linking node_modules.
-    #[arg(long, conflicts_with = "lockfile_only")]
-    pub dry_run: bool,
     /// Add a global pnpmfile that runs before the local one.
     ///
     /// Mirrors pnpm's `--global-pnpmfile <path>`. Relative paths

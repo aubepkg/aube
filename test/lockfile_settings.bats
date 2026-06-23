@@ -80,6 +80,28 @@ teardown() {
 	assert_output --partial 'incompatible with lockfile=false'
 }
 
+@test "lockfile=false + --dry-run resolves without lockfile-only conflict" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-dry-run-no-lockfile",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" }
+		}
+	EOF
+	cat >>.npmrc <<-'EOF'
+
+		lockfile=false
+	EOF
+	run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: resolved"
+	refute_output --partial "--lockfile-only is incompatible with lockfile=false"
+	run test -e aube-lock.yaml
+	assert_failure
+	run test -e node_modules
+	assert_failure
+}
+
 # `--frozen-lockfile` ("fail hard if the lockfile doesn't match") makes
 # no sense without a lockfile. Without this check the install falls
 # through to the catch-all Err(NotFound) arm and errors with the
