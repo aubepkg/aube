@@ -57,7 +57,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
 
     let json = match args.format {
         SbomFormat::Cyclonedx => {
-            let dev_only = collect_dev_only_packages(&graph, graph.root_deps());
+            let dev_only = collect_dev_only_packages(&graph, graph.importers.values().flatten());
             render_cyclonedx(&manifest, &closure, &dev_only)?
         }
         SbomFormat::Spdx => render_spdx(&manifest, &graph, filter, &closure)?,
@@ -138,10 +138,13 @@ fn render_cyclonedx(
         .wrap_err("failed to serialize CycloneDX SBOM")
 }
 
-fn collect_dev_only_packages(graph: &LockfileGraph, roots: &[DirectDep]) -> BTreeMap<String, bool> {
+fn collect_dev_only_packages<'a>(
+    graph: &LockfileGraph,
+    roots: impl IntoIterator<Item = &'a DirectDep>,
+) -> BTreeMap<String, bool> {
     let mut out = BTreeMap::new();
     let mut stack: Vec<(String, bool)> = roots
-        .iter()
+        .into_iter()
         .map(|d| (d.dep_path.clone(), matches!(d.dep_type, DepType::Dev)))
         .collect();
 
@@ -435,6 +438,41 @@ mod tests {
         let runtime = collect_dev_only_packages(&graph, &roots);
         assert_eq!(runtime.get("a@1.0.0"), Some(&false));
         assert_eq!(runtime.get("b@1.0.0"), Some(&false));
+    }
+
+    #[test]
+    fn collect_dev_only_packages_uses_all_workspace_importers() {
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "shared@1.0.0".into(),
+            LockedPackage {
+                name: "shared".into(),
+                version: "1.0.0".into(),
+                dep_path: "shared@1.0.0".into(),
+                ..Default::default()
+            },
+        );
+        graph.importers.insert(
+            ".".into(),
+            vec![DirectDep {
+                name: "shared".into(),
+                dep_path: "shared@1.0.0".into(),
+                dep_type: DepType::Dev,
+                specifier: None,
+            }],
+        );
+        graph.importers.insert(
+            "packages/app".into(),
+            vec![DirectDep {
+                name: "shared".into(),
+                dep_path: "shared@1.0.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+
+        let dev_only = collect_dev_only_packages(&graph, graph.importers.values().flatten());
+        assert_eq!(dev_only.get("shared@1.0.0"), Some(&false));
     }
 
     #[test]
