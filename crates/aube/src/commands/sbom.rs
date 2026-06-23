@@ -146,12 +146,12 @@ fn collect_dev_only_packages(graph: &LockfileGraph, roots: &[DirectDep]) -> BTre
         .collect();
 
     while let Some((dep_path, dev_only)) = stack.pop() {
-        if matches!(out.get(&dep_path), Some(false)) {
-            continue;
-        }
-        let was_runtime = out.insert(dep_path.clone(), dev_only) == Some(false);
-        if was_runtime {
-            continue;
+        match out.get(&dep_path).copied() {
+            Some(false) => continue,
+            Some(true) if dev_only => continue,
+            _ => {
+                out.insert(dep_path.clone(), dev_only);
+            }
         }
 
         let Some(pkg) = graph.get_package(&dep_path) else {
@@ -382,6 +382,59 @@ mod tests {
     #[test]
     fn sanitize_spdx_id_strips_unsafe() {
         assert_eq!(sanitize_spdx_id("@babel/core@7.0.0"), "-babel-core-7.0.0");
+    }
+
+    #[test]
+    fn collect_dev_only_packages_handles_cycles_and_runtime_downgrade() {
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "a@1.0.0".into(),
+            LockedPackage {
+                name: "a".into(),
+                version: "1.0.0".into(),
+                dep_path: "a@1.0.0".into(),
+                dependencies: BTreeMap::from([("b".into(), "1.0.0".into())]),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "b@1.0.0".into(),
+            LockedPackage {
+                name: "b".into(),
+                version: "1.0.0".into(),
+                dep_path: "b@1.0.0".into(),
+                dependencies: BTreeMap::from([("a".into(), "1.0.0".into())]),
+                ..Default::default()
+            },
+        );
+
+        let roots = vec![DirectDep {
+            name: "a".into(),
+            dep_path: "a@1.0.0".into(),
+            dep_type: DepType::Dev,
+            specifier: None,
+        }];
+        let dev_only = collect_dev_only_packages(&graph, &roots);
+        assert_eq!(dev_only.get("a@1.0.0"), Some(&true));
+        assert_eq!(dev_only.get("b@1.0.0"), Some(&true));
+
+        let roots = vec![
+            DirectDep {
+                name: "a".into(),
+                dep_path: "a@1.0.0".into(),
+                dep_type: DepType::Dev,
+                specifier: None,
+            },
+            DirectDep {
+                name: "b".into(),
+                dep_path: "b@1.0.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            },
+        ];
+        let runtime = collect_dev_only_packages(&graph, &roots);
+        assert_eq!(runtime.get("a@1.0.0"), Some(&false));
+        assert_eq!(runtime.get("b@1.0.0"), Some(&false));
     }
 
     #[test]
