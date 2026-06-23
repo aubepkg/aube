@@ -1,7 +1,7 @@
 mod driver;
 mod fetch;
 mod seed;
-mod vulnerable;
+pub(crate) mod vulnerable;
 
 use crate::local_source::is_non_registry_specifier;
 use crate::semver_util::version_satisfies;

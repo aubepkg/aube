@@ -1,7 +1,7 @@
 use aube_registry::Packument;
 use std::collections::BTreeMap;
 
-pub(super) fn is_vulnerable(
+pub(crate) fn is_vulnerable(
     package_name: &str,
     version: &str,
     vulnerable_ranges: &BTreeMap<String, Vec<String>>,
