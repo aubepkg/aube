@@ -920,7 +920,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             // closes and it exits naturally. Awaiting first lets a real
             // materializer error (the likely root cause of a generic
             // "materializer task exited..." fetch err) surface instead.
-            let (indices, cached, fetched) = match fetch_result {
+            let (indices, cached, fetched, _) = match fetch_result {
                 Ok(t) => t,
                 Err(e) => {
                     return Err(combine_install_pipeline_errors(lock_materialize_handle, e).await);
@@ -1707,6 +1707,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             // already using. If no lockfile existed, create aube's
             // default `aube-lock.yaml`. Skipped entirely when
             // `lockfile=false`.
+            let write_kind = source_kind_before.unwrap_or(aube_lockfile::LockfileKind::Aube);
             if lockfile_enabled {
                 // When `lockfileIncludeTarballUrl=true`, record the
                 // registry tarball URL on every registry-sourced
@@ -1735,7 +1736,6 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                         }
                     }
                 }
-                let write_kind = source_kind_before.unwrap_or(aube_lockfile::LockfileKind::Aube);
                 // Record/refresh the devEngines runtime pin before the
                 // graph hits disk (pnpm 10.14+ parity).
                 crate::runtime::refresh_lockfile_pin(
@@ -1801,6 +1801,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             } else {
                 tracing::debug!("lockfile=false: skipping lockfile write");
             }
+            let mut lockfile_graph_for_integrity_rewrite = lockfile_enabled.then(|| graph.clone());
 
             // Trim the in-memory graph down to host-installable optionals
             // before it reaches the linker. When the resolver widened its
@@ -1880,31 +1881,57 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 let catchup_start = std::time::Instant::now();
                 let cwd_for_catchup_client = cwd.clone();
                 let catchup_network_mode = opts.network_mode;
-                let (catchup_indices, catchup_cached, catchup_fetched) = fetch_packages_with_root(
-                    &missing_packages,
-                    &store,
-                    || {
-                        std::sync::Arc::new(
-                            make_client(&cwd_for_catchup_client)
-                                .with_network_mode(catchup_network_mode),
-                        )
-                    },
-                    prog_ref,
-                    &cwd,
-                    &aube_dir,
-                    /*materialize_tx=*/ None,
-                    /*skip_already_linked_shortcut=*/ has_workspace,
-                    virtual_store_dir_max_length,
-                    opts.ignore_scripts,
-                    network_concurrency_setting,
-                    verify_store_integrity_setting,
-                    strict_store_integrity_setting,
-                    strict_store_pkg_content_check_setting,
-                    opts.git_prepare_depth,
-                    inherited_build_policy_for_git_prepare.clone(),
-                    resolve_git_shallow_hosts(&settings_ctx),
-                )
-                .await?;
+                let (catchup_indices, catchup_cached, catchup_fetched, catchup_integrities) =
+                    fetch_packages_with_root(
+                        &missing_packages,
+                        &store,
+                        || {
+                            std::sync::Arc::new(
+                                make_client(&cwd_for_catchup_client)
+                                    .with_network_mode(catchup_network_mode),
+                            )
+                        },
+                        prog_ref,
+                        &cwd,
+                        &aube_dir,
+                        /*materialize_tx=*/ None,
+                        /*skip_already_linked_shortcut=*/ has_workspace,
+                        virtual_store_dir_max_length,
+                        opts.ignore_scripts,
+                        network_concurrency_setting,
+                        verify_store_integrity_setting,
+                        strict_store_integrity_setting,
+                        strict_store_pkg_content_check_setting,
+                        opts.git_prepare_depth,
+                        inherited_build_policy_for_git_prepare.clone(),
+                        resolve_git_shallow_hosts(&settings_ctx),
+                    )
+                    .await?;
+                if !catchup_integrities.is_empty() {
+                    apply_computed_integrities(&mut graph, &catchup_integrities);
+                    if let Some(lock_graph) = lockfile_graph_for_integrity_rewrite.as_mut() {
+                        apply_computed_integrities(lock_graph, &catchup_integrities);
+                        if shared_workspace_lockfile || !has_workspace {
+                            write_lockfile_dir_remapped(
+                                &lockfile_dir,
+                                &lockfile_importer_key,
+                                lock_graph,
+                                &manifest,
+                                write_kind,
+                            )
+                            .into_diagnostic()
+                            .wrap_err("failed to write lockfile with computed integrity")?;
+                        } else {
+                            write_per_project_lockfiles(
+                                &cwd,
+                                lock_graph,
+                                &manifests,
+                                write_kind,
+                                per_project_write_selection.as_ref(),
+                            )?;
+                        }
+                    }
+                }
                 indices.extend(catchup_indices);
                 cached += catchup_cached;
                 fetched += catchup_fetched;
