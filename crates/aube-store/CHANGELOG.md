@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0](https://github.com/jdx/aube/compare/aube-store-v1.23.0...aube-store-v1.24.0) - 2026-06-23
+
+### Fixed
+
+- *(install)* persist computed tarball integrity ([#933](https://github.com/jdx/aube/pull/933))
+
+### Other
+
+- refresh benchmarks for v1.23.0 ([#922](https://github.com/jdx/aube/pull/922))
+
 ## [1.23.0](https://github.com/jdx/aube/compare/aube-store-v1.22.0...aube-store-v1.23.0) - 2026-06-21
 
 ### Other

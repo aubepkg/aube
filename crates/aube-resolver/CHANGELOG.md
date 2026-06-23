@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0](https://github.com/jdx/aube/compare/aube-resolver-v1.23.0...aube-resolver-v1.24.0) - 2026-06-23
+
+### Fixed
+
+- *(install)* validate trust policy on lockfile reuse ([#929](https://github.com/jdx/aube/pull/929))
+
+### Other
+
+- refresh benchmarks for v1.23.0 ([#922](https://github.com/jdx/aube/pull/922))
+
 ## [1.23.0](https://github.com/jdx/aube/compare/aube-resolver-v1.22.0...aube-resolver-v1.23.0) - 2026-06-21
 
 ### Other
