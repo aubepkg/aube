@@ -114,7 +114,17 @@ pub(crate) fn load_managed_entries() -> Vec<(String, String)> {
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
     {
-        out.extend(load_entries_at(&path));
+        match path.try_exists() {
+            Ok(true) => out.extend(load_entries_at(&path)),
+            Ok(false) => tracing::warn!(
+                "managed config path from AUBE_MANAGED_CONFIG_PATH does not exist: {}",
+                path.display()
+            ),
+            Err(err) => tracing::warn!(
+                "failed to check managed config path from AUBE_MANAGED_CONFIG_PATH at {}: {err}",
+                path.display()
+            ),
+        }
     }
     out
 }

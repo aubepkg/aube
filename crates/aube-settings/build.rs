@@ -318,6 +318,15 @@ fn generate_resolved_accessors(settings: &BTreeMap<String, SettingDef>) -> Strin
             emit_raw_resolution(&mut out, &source_exprs);
             match &default_expr {
                 Some(default) => {
+                    let default_raw =
+                        parse_toml_string_literal(def.default.trim()).unwrap_or_else(|| {
+                            panic!("{name}: enum default expression exists but raw default did not parse")
+                        });
+                    writeln!(
+                        out,
+                        "    let raw = raw.or_else(|| Some({default_raw:?}.to_string()));"
+                    )
+                    .unwrap();
                     writeln!(
                         out,
                         "    let raw = super::apply_managed_string({name:?}, raw, ctx.managed_aube_config);"
@@ -351,6 +360,7 @@ fn generate_resolved_accessors(settings: &BTreeMap<String, SettingDef>) -> Strin
         };
         match &default_expr {
             Some(default) => {
+                writeln!(out, "    let value = value.or(Some({default}));").unwrap();
                 if default == "vec![]" {
                     writeln!(
                         out,

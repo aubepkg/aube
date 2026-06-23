@@ -78,7 +78,10 @@ pub async fn run(args: CiArgs) -> miette::Result<()> {
         minimum_release_age_override: None,
         strict_no_lockfile: true,
         force: false,
-        cli_flags: Vec::new(),
+        cli_flags: vec![(
+            "dangerously-allow-all-builds".to_string(),
+            "false".to_string(),
+        )],
         env_snapshot: aube_settings::values::capture_env(),
         git_prepare_depth: 0,
         inherited_build_policy: None,

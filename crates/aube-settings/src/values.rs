@@ -677,14 +677,9 @@ pub(crate) fn apply_managed_bool(
     if valid_managed.is_empty() {
         return local;
     }
-    let managed = match policy {
-        "trueWins" => valid_managed.iter().any(|v| *v),
-        "falseWins" => valid_managed.iter().all(|v| *v),
-        _ => return local,
-    };
     let enforced = match policy {
-        "trueWins" => local.unwrap_or(false) || managed,
-        "falseWins" => local.unwrap_or(true) && managed,
+        "trueWins" if valid_managed.iter().any(|v| *v) => true,
+        "falseWins" if valid_managed.iter().any(|v| !*v) => false,
         _ => return local,
     };
     if local.is_some_and(|v| v != enforced) {
@@ -778,7 +773,10 @@ pub(crate) fn apply_managed_string_list(
     for list in managed_lists {
         managed.retain(|item| list.contains(item));
     }
-    if local.as_ref().is_some_and(|v| v != &managed) {
+    if local
+        .as_ref()
+        .is_some_and(|v| v.iter().any(|item| !managed.contains(item)))
+    {
         warn_managed_enforced(setting);
     }
     Some(managed)
@@ -1273,6 +1271,7 @@ mod tests {
     fn managed_bool_policies_keep_stricter_value() {
         let managed_true = entries(&[("minimumReleaseAgeStrict", "true")]);
         let managed_false = entries(&[("dangerouslyAllowAllBuilds", "false")]);
+        let managed_danger_true = entries(&[("dangerouslyAllowAllBuilds", "true")]);
         let local_false = entries(&[("minimumReleaseAgeStrict", "false")]);
         let ws = BTreeMap::new();
         let ctx = ResolveCtx {
@@ -1301,6 +1300,61 @@ mod tests {
             embedder_defaults: &[],
         };
         assert!(!resolved::dangerously_allow_all_builds(&ctx));
+        assert_eq!(
+            apply_managed_bool("dangerouslyAllowAllBuilds", None, &managed_danger_true),
+            None
+        );
+        assert_eq!(
+            apply_managed_raw("dangerouslyAllowAllBuilds", None, &managed_danger_true),
+            None
+        );
+    }
+
+    #[test]
+    fn managed_policies_cannot_weaken_defaults() {
+        let managed_age = entries(&[("minimumReleaseAge", "0")]);
+        let managed_advisory = entries(&[("advisoryCheck", "off")]);
+        let managed_exotic_subdeps = entries(&[("blockExoticSubdeps", "false")]);
+        let ws = BTreeMap::new();
+
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_age,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::minimum_release_age(&ctx), 1440);
+
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_advisory,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::advisory_check(&ctx), resolved::AdvisoryCheck::On);
+
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_exotic_subdeps,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert!(resolved::block_exotic_subdeps(&ctx));
     }
 
     #[test]

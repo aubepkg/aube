@@ -56,15 +56,14 @@ teardown() {
 	cat >managed.toml <<'TOML'
 minimumReleaseAge = 1440
 TOML
-	export AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml"
 	echo "minimumReleaseAge=0" >.npmrc
 
-	run aube config get minimumReleaseAge
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config get minimumReleaseAge
 	assert_success
 	assert_output --partial "1440"
 	assert_output --partial "managed config enforced"
 
-	run aube config list
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config list
 	assert_success
 	assert_output --partial "minimumReleaseAge=1440"
 }
@@ -74,18 +73,17 @@ TOML
 minimumReleaseAgeStrict = true
 advisoryCheck = "required"
 TOML
-	export AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml"
 	cat >.npmrc <<'RC'
 minimumReleaseAgeStrict=false
 advisoryCheck=off
 RC
 
-	run aube config get minimumReleaseAgeStrict
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config get minimumReleaseAgeStrict
 	assert_success
 	assert_output --partial "true"
 	assert_output --partial "managed config enforced"
 
-	run aube config get advisoryCheck
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config get advisoryCheck
 	assert_success
 	assert_output --partial "required"
 	assert_output --partial "managed config enforced"
@@ -95,10 +93,9 @@ RC
 	cat >managed.toml <<'TOML'
 minimumReleaseAgeExclude = ["left-pad"]
 TOML
-	export AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml"
 	echo "minimumReleaseAgeExclude=left-pad,is-odd" >.npmrc
 
-	run aube config get minimumReleaseAgeExclude
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config get minimumReleaseAgeExclude
 	assert_success
 	assert_output --partial "left-pad"
 	refute_output --partial "is-odd"
