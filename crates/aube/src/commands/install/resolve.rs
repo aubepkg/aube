@@ -177,6 +177,12 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         if let Some(p) = prog_ref {
             p.finish(true);
         }
+        if !write_lockfile {
+            eprintln!(
+                "Dry run: lockfile is up to date; fetch/link steps were not run and node_modules were not modified"
+            );
+            return Ok(());
+        }
         eprintln!("Lockfile is up to date, resolution step is skipped");
         return Ok(());
     }

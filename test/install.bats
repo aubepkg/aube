@@ -944,6 +944,17 @@ JSON
 	assert [ ! -e node_modules ]
 }
 
+@test "aube install --dry-run with fresh lockfile still reports skipped fetch and link" {
+	_setup_basic_fixture
+	rm -rf node_modules
+	run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: lockfile is up to date"
+	assert_output --partial "fetch/link steps were not run"
+	refute_output --partial "resolution step is skipped"
+	assert [ ! -e node_modules ]
+}
+
 @test "aube install --lockfile-only is a no-op when lockfile is fresh" {
 	_setup_basic_fixture
 	# Lockfile already exists in fixture; --lockfile-only should detect
