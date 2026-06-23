@@ -37,6 +37,7 @@ pub const WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED: &str =
 pub const WARN_AUBE_INVALID_PEER_PATTERN: &str = "WARN_AUBE_INVALID_PEER_PATTERN";
 pub const WARN_AUBE_INVALID_SAVE_PREFIX: &str = "WARN_AUBE_INVALID_SAVE_PREFIX";
 pub const WARN_AUBE_CONCURRENCY_ENV_INVALID: &str = "WARN_AUBE_CONCURRENCY_ENV_INVALID";
+pub const WARN_AUBE_MANAGED_CONFIG_ENFORCED: &str = "WARN_AUBE_MANAGED_CONFIG_ENFORCED";
 
 // ── update / prerelease ─────────────────────────────────────────────
 pub const WARN_AUBE_PRERELEASE_CHECK_SKIPPED: &str = "WARN_AUBE_PRERELEASE_CHECK_SKIPPED";
@@ -279,6 +280,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_CONCURRENCY_ENV_INVALID,
         category: category::SETTINGS_CONFIG,
         description: "The `AUBE_CONCURRENCY` env var was outside the `[floor, ceiling]` range or non-numeric.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_MANAGED_CONFIG_ENFORCED,
+        category: category::SETTINGS_CONFIG,
+        description: "Managed hardening config enforced a stricter value than local config, env, or CLI requested.",
         exit_code: None,
     },
     // Update / prerelease

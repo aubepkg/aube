@@ -38,6 +38,25 @@ warnings from sibling tools.
 
 [settings-toml]: https://github.com/jdx/aube/blob/main/crates/aube-settings/settings.toml
 
+## Managed hardening config
+
+System administrators can enforce security settings with
+`/etc/aube/managed.toml`. Managed config is not normal precedence: aube first
+resolves CLI, env, project, workspace, and user config, then applies managed
+policy as a final hardening pass. Local config, env vars, and CLI flags can
+make managed settings stricter, but cannot weaken them.
+
+```toml
+minimumReleaseAge = 1440
+minimumReleaseAgeStrict = true
+advisoryCheck = "required"
+dangerouslyAllowAllBuilds = false
+```
+
+For tests and non-root deployments, `AUBE_MANAGED_CONFIG_PATH` points at an
+additional managed TOML file. It is additive with `/etc/aube/managed.toml`: when
+both files set the same managed setting, aube keeps the stricter value.
+
 ## .npmrc
 
 ```ini

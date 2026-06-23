@@ -52,6 +52,59 @@ teardown() {
 	refute_line "auto-install-peers=false"
 }
 
+@test "managed config enforces minimumReleaseAge over local config" {
+	cat >managed.toml <<'TOML'
+minimumReleaseAge = 1440
+TOML
+	export AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml"
+	echo "minimumReleaseAge=0" >.npmrc
+
+	run aube config get minimumReleaseAge
+	assert_success
+	assert_output --partial "1440"
+	assert_output --partial "managed config enforced"
+
+	run aube config list
+	assert_success
+	assert_output --partial "minimumReleaseAge=1440"
+}
+
+@test "managed config enforces strict release age and advisory policy" {
+	cat >managed.toml <<'TOML'
+minimumReleaseAgeStrict = true
+advisoryCheck = "required"
+TOML
+	export AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml"
+	cat >.npmrc <<'RC'
+minimumReleaseAgeStrict=false
+advisoryCheck=off
+RC
+
+	run aube config get minimumReleaseAgeStrict
+	assert_success
+	assert_output --partial "true"
+	assert_output --partial "managed config enforced"
+
+	run aube config get advisoryCheck
+	assert_success
+	assert_output --partial "required"
+	assert_output --partial "managed config enforced"
+}
+
+@test "managed exemption list replaces local additions" {
+	cat >managed.toml <<'TOML'
+minimumReleaseAgeExclude = ["left-pad"]
+TOML
+	export AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml"
+	echo "minimumReleaseAgeExclude=left-pad,is-odd" >.npmrc
+
+	run aube config get minimumReleaseAgeExclude
+	assert_success
+	assert_output --partial "left-pad"
+	refute_output --partial "is-odd"
+	assert_output --partial "managed config enforced"
+}
+
 @test "config get --location project only reads project .npmrc" {
 	mkdir proj
 	echo "autoInstallPeers=true" >"$HOME/.npmrc"

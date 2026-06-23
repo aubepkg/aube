@@ -110,11 +110,12 @@ pub(crate) fn global_output_flags() -> GlobalOutputFlags {
     GLOBAL_OUTPUT.get().copied().unwrap_or_default()
 }
 
-/// Owned bundle of the four file-source slices that feed a
-/// [`aube_settings::ResolveCtx`]: project + user `.npmrc`, and project +
-/// user `~/.config/aube/config.toml`. Construct once with
+/// Owned bundle of the file-source slices that feed a
+/// [`aube_settings::ResolveCtx`]: managed config, project + user `.npmrc`,
+/// and project + user `~/.config/aube/config.toml`. Construct once with
 /// `FileSources::load`, borrow into a `ResolveCtx` via `FileSources::ctx`.
 pub(crate) struct FileSources {
+    pub managed_aube_config: Vec<(String, String)>,
     pub user_npmrc: Vec<(String, String)>,
     pub project_npmrc: Vec<(String, String)>,
     pub user_aube_config: Vec<(String, String)>,
@@ -125,6 +126,7 @@ impl FileSources {
     pub(crate) fn load(cwd: &Path) -> Self {
         let npmrc = aube_registry::config::load_npmrc_entries_split(cwd);
         Self {
+            managed_aube_config: config::load_managed_aube_config_entries(),
             user_npmrc: npmrc.user,
             project_npmrc: npmrc.project,
             user_aube_config: config::load_user_aube_config_entries(),
@@ -139,6 +141,7 @@ impl FileSources {
         cli: &'a [(String, String)],
     ) -> aube_settings::ResolveCtx<'a> {
         aube_settings::ResolveCtx {
+            managed_aube_config: &self.managed_aube_config,
             project_aube_config: &self.project_aube_config,
             project_npmrc: &self.project_npmrc,
             user_aube_config: &self.user_aube_config,
@@ -570,6 +573,7 @@ mod resolve_virtual_store_dir_tests {
         ws: &'a BTreeMap<String, yaml_serde::Value>,
     ) -> ResolveCtx<'a> {
         ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &[],
             user_aube_config: &[],

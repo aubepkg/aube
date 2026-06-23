@@ -98,6 +98,26 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
         let canonical = canonical_list_key(&k);
         seen.insert(canonical, v);
     }
+    if matches!(location, ListLocation::Merged) {
+        let managed_entries = super::aube_config::load_managed_entries();
+        if !managed_entries.is_empty() {
+            for meta in settings_meta::all() {
+                if meta.managed_policy.is_empty() {
+                    continue;
+                }
+                let literals = literal_aliases(meta.npmrc_keys);
+                let Some(primary) = literals.first().cloned() else {
+                    continue;
+                };
+                let local = literals.iter().find_map(|key| seen.get(key).cloned());
+                if let Some(effective) =
+                    aube_settings::values::apply_managed_raw(meta.name, local, &managed_entries)
+                {
+                    seen.insert(primary, effective);
+                }
+            }
+        }
+    }
 
     let mut defaults: std::collections::HashSet<String> = std::collections::HashSet::new();
     if args.all {

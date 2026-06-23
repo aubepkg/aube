@@ -113,6 +113,7 @@ pub enum ListLocation {
 }
 
 pub(crate) use aube_config::{
+    load_managed_entries as load_managed_aube_config_entries,
     load_project_entries as load_project_aube_config_entries,
     load_user_entries as load_user_aube_config_entries,
 };

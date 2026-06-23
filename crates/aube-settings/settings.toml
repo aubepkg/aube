@@ -230,6 +230,7 @@ sources.workspaceYaml = ["minimumReleaseAge"]
 # pnpm v11 documents this as a workspace-level setting, so
 # pnpm-workspace.yaml wins over a stale .npmrc entry.
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "max"
 examples = []
 
 [minimumReleaseAgeExclude]
@@ -246,6 +247,7 @@ sources.env = ["npm_config_minimum_release_age_exclude", "NPM_CONFIG_MINIMUM_REL
 sources.npmrc = ["minimumReleaseAgeExclude"]
 sources.workspaceYaml = ["minimumReleaseAgeExclude"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "managedWins"
 examples = []
 
 [minimumReleaseAgeStrict]
@@ -262,6 +264,7 @@ sources.env = ["npm_config_minimum_release_age_strict", "NPM_CONFIG_MINIMUM_RELE
 sources.npmrc = ["minimumReleaseAgeStrict"]
 sources.workspaceYaml = ["minimumReleaseAgeStrict"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "trueWins"
 examples = []
 
 [securityScanner]
@@ -329,6 +332,7 @@ sources.env = ["npm_config_advisory_check", "NPM_CONFIG_ADVISORY_CHECK", "AUBE_A
 sources.npmrc = ["advisoryCheck"]
 sources.workspaceYaml = ["advisoryCheck"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "ranked:off<on<required"
 examples = []
 
 [advisoryCheckOnInstall]
@@ -371,6 +375,7 @@ sources.env = ["npm_config_advisory_check_on_install", "NPM_CONFIG_ADVISORY_CHEC
 sources.npmrc = ["advisoryCheckOnInstall"]
 sources.workspaceYaml = ["advisoryCheckOnInstall"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "ranked:off<on<required"
 examples = []
 
 [advisoryBloomCheck]
@@ -413,6 +418,7 @@ sources.env = ["npm_config_advisory_bloom_check", "NPM_CONFIG_ADVISORY_BLOOM_CHE
 sources.npmrc = ["advisoryBloomCheck"]
 sources.workspaceYaml = ["advisoryBloomCheck"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "ranked:off<on<required"
 examples = []
 
 [advisoryCheckEveryInstall]
@@ -447,6 +453,7 @@ sources.env = ["npm_config_advisory_check_every_install", "NPM_CONFIG_ADVISORY_C
 sources.npmrc = ["advisoryCheckEveryInstall"]
 sources.workspaceYaml = ["advisoryCheckEveryInstall"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "trueWins"
 examples = []
 
 [lowDownloadThreshold]
@@ -482,6 +489,7 @@ sources.env = ["npm_config_low_download_threshold", "NPM_CONFIG_LOW_DOWNLOAD_THR
 sources.npmrc = ["lowDownloadThreshold"]
 sources.workspaceYaml = ["lowDownloadThreshold"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "max"
 examples = []
 
 [allowedUnpopularPackages]
@@ -516,6 +524,7 @@ sources.env = ["npm_config_allowed_unpopular_packages", "NPM_CONFIG_ALLOWED_UNPO
 sources.npmrc = ["allowedUnpopularPackages"]
 sources.workspaceYaml = ["allowedUnpopularPackages"]
 precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "managedWins"
 examples = []
 
 [paranoid]
@@ -540,6 +549,7 @@ sources.cli = []
 sources.env = ["npm_config_paranoid", "NPM_CONFIG_PARANOID", "AUBE_PARANOID"]
 sources.npmrc = ["paranoid"]
 sources.workspaceYaml = ["paranoid"]
+managedPolicy = "trueWins"
 examples = []
 
 [trustPolicy]
@@ -561,6 +571,7 @@ sources.cli = []
 sources.env = ["npm_config_trust_policy", "NPM_CONFIG_TRUST_POLICY", "AUBE_TRUST_POLICY"]
 sources.npmrc = ["trustPolicy"]
 sources.workspaceYaml = ["trustPolicy"]
+managedPolicy = "ranked:off<no-downgrade"
 examples = []
 
 [trustPolicyExclude]
@@ -577,6 +588,7 @@ sources.cli = []
 sources.env = ["npm_config_trust_policy_exclude", "NPM_CONFIG_TRUST_POLICY_EXCLUDE", "AUBE_TRUST_POLICY_EXCLUDE"]
 sources.npmrc = ["trustPolicyExclude"]
 sources.workspaceYaml = ["trustPolicyExclude"]
+managedPolicy = "managedWins"
 examples = []
 
 [trustPolicyIgnoreAfter]
@@ -606,6 +618,7 @@ sources.cli = []
 sources.env = ["npm_config_block_exotic_subdeps", "NPM_CONFIG_BLOCK_EXOTIC_SUBDEPS", "AUBE_BLOCK_EXOTIC_SUBDEPS"]
 sources.npmrc = ["blockExoticSubdeps"]
 sources.workspaceYaml = ["blockExoticSubdeps"]
+managedPolicy = "trueWins"
 examples = []
 
 [registries]
@@ -1113,6 +1126,7 @@ sources.cli = ["verify-store-integrity"]
 sources.env = ["npm_config_verify_store_integrity", "NPM_CONFIG_VERIFY_STORE_INTEGRITY", "AUBE_VERIFY_STORE_INTEGRITY"]
 sources.npmrc = ["verify-store-integrity", "verifyStoreIntegrity"]
 sources.workspaceYaml = ["verifyStoreIntegrity"]
+managedPolicy = "trueWins"
 examples = [
     "aube install --no-verify-store-integrity",
     "echo 'verify-store-integrity=false' >> .npmrc",
@@ -1135,6 +1149,7 @@ sources.cli = ["strict-store-integrity"]
 sources.env = ["npm_config_strict_store_integrity", "NPM_CONFIG_STRICT_STORE_INTEGRITY", "AUBE_STRICT_STORE_INTEGRITY"]
 sources.npmrc = ["strict-store-integrity", "strictStoreIntegrity"]
 sources.workspaceYaml = ["strictStoreIntegrity"]
+managedPolicy = "trueWins"
 examples = [
     "echo 'strict-store-integrity=true' >> .npmrc",
 ]
@@ -1176,6 +1191,7 @@ against.
 sources.cli = []
 sources.env = ["npm_config_strict_store_pkg_content_check", "NPM_CONFIG_STRICT_STORE_PKG_CONTENT_CHECK", "AUBE_STRICT_STORE_PKG_CONTENT_CHECK"]
 sources.npmrc = ["strict-store-pkg-content-check", "strictStorePkgContentCheck"]
+managedPolicy = "trueWins"
 examples = [
     "echo 'strict-store-pkg-content-check=false' >> .npmrc",
 ]
@@ -1955,6 +1971,7 @@ docs = "When on, an `engines.node` mismatch on the root project or any dependenc
 sources.cli = []
 sources.env = ["npm_config_engine_strict", "NPM_CONFIG_ENGINE_STRICT", "AUBE_ENGINE_STRICT"]
 sources.npmrc = ["engine-strict", "engineStrict"]
+managedPolicy = "trueWins"
 examples = []
 npmShared = true
 
@@ -2122,6 +2139,7 @@ sources.cli = []
 sources.env = ["npm_config_jail_builds", "NPM_CONFIG_JAIL_BUILDS", "AUBE_JAIL_BUILDS"]
 sources.npmrc = ["jail-builds", "jailBuilds"]
 sources.workspaceYaml = ["jailBuilds"]
+managedPolicy = "trueWins"
 examples = [
     "jail-builds=true",
 ]
@@ -2146,6 +2164,7 @@ sources.cli = []
 sources.env = ["npm_config_jail_build_exclusions", "NPM_CONFIG_JAIL_BUILD_EXCLUSIONS", "AUBE_JAIL_BUILD_EXCLUSIONS"]
 sources.npmrc = ["jailBuildExclusions", "jail-build-exclusions"]
 sources.workspaceYaml = ["jailBuildExclusions"]
+managedPolicy = "managedWins"
 examples = ['jailBuildExclusions: ["sharp", "@vendor/*"]']
 
 [jailBuildPermissions]
@@ -2232,6 +2251,7 @@ behavior to skip unreviewed builds.
 sources.cli = []
 sources.env = ["npm_config_strict_dep_builds", "NPM_CONFIG_STRICT_DEP_BUILDS", "AUBE_STRICT_DEP_BUILDS"]
 sources.npmrc = ["strictDepBuilds"]
+managedPolicy = "trueWins"
 examples = []
 
 [allowBuilds]
@@ -2269,12 +2289,8 @@ use in CI.
 sources.cli = ["dangerously-allow-all-builds"]
 sources.env = ["npm_config_dangerously_allow_all_builds", "NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS", "AUBE_DANGEROUSLY_ALLOW_ALL_BUILDS"]
 sources.npmrc = ["dangerouslyAllowAllBuilds"]
+managedPolicy = "falseWins"
 examples = ["aube install --dangerously-allow-all-builds"]
-# Plumbed through `InstallArgs::dangerously_allow_all_builds` (clap)
-# and then into `aube_scripts::policy::BuildPolicy`, which is where the
-# build allowlist actually lives. A typed accessor would add a third
-# spelling without simplifying any call site.
-typedAccessorUnused = true
 
 # ========================================= Node.js =========================================
 

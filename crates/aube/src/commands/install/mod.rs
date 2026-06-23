@@ -417,6 +417,8 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     let ws_package_versions = workspace_plan.ws_package_versions;
     let ws_dirs = workspace_plan.ws_dirs;
     let lifecycle_manifests = workspace_plan.lifecycle_manifests;
+    let dangerously_allow_all_builds =
+        aube_settings::resolved::dangerously_allow_all_builds(&settings_ctx);
     // Importer keys whose per-project lockfiles a filtered install may
     // (re)write. `None` for an unfiltered install (write every importer).
     // Computed once and shared by the `--lockfile-only` short-circuit and
@@ -430,7 +432,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             let (mut build_policy, policy_warnings) = build_policy_from_manifest_sources(
                 lifecycle_manifests.iter().map(|(_, manifest)| manifest),
                 &ws_config_shared,
-                opts.dangerously_allow_all_builds,
+                dangerously_allow_all_builds,
             );
             if let Some(inherited) = opts.inherited_build_policy.as_deref() {
                 build_policy.merge(inherited);

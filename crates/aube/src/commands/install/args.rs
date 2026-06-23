@@ -228,6 +228,12 @@ impl InstallArgs {
         if self.no_side_effects_cache {
             out.push(("side-effects-cache".to_string(), "false".to_string()));
         }
+        if self.dangerously_allow_all_builds {
+            out.push((
+                "dangerously-allow-all-builds".to_string(),
+                "true".to_string(),
+            ));
+        }
         // `--fix-lockfile` is a distinct `FrozenMode::Fix` state, not a
         // `frozen-lockfile=false` shorthand — don't leak it into the
         // settings bag; `into_options` routes it directly.

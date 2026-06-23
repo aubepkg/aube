@@ -473,10 +473,12 @@ dependencies = [
 name = "aube-settings"
 version = "1.23.0"
 dependencies = [
+ "aube-codes",
  "aube-manifest",
  "aube-util",
  "serde",
  "toml",
+ "tracing",
  "yaml_serde",
 ]
 

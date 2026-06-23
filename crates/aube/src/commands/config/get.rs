@@ -1,4 +1,6 @@
-use super::{ListLocation, read_merged, read_single, resolve_aliases, user_npmrc_path};
+use super::{
+    ListLocation, read_merged, read_single, resolve_aliases, setting_for_key, user_npmrc_path,
+};
 use clap::Args;
 
 #[derive(Debug, Args)]
@@ -61,6 +63,27 @@ pub fn run(args: GetArgs) -> miette::Result<()> {
             entries
         }
     };
+
+    if matches!(args.effective_location(), ListLocation::Merged)
+        && let Some(meta) = setting_for_key(&args.key)
+    {
+        let local = entries
+            .iter()
+            .rev()
+            .find_map(|(k, v)| aliases.iter().any(|a| a == k).then(|| v.clone()));
+        if let Some(v) = aube_settings::values::apply_managed_raw(
+            meta.name,
+            local,
+            &super::aube_config::load_managed_entries(),
+        ) {
+            if args.json {
+                println!("{}", serde_json::Value::String(v));
+            } else {
+                println!("{v}");
+            }
+            return Ok(());
+        }
+    }
 
     for (k, v) in entries.iter().rev() {
         if aliases.iter().any(|a| a == k) {
