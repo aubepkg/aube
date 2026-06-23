@@ -2023,7 +2023,7 @@ cmd version help="Bump the version in package.json (and optionally create a git 
 cmd view help="Print package metadata from the registry" {
     alias info show
     alias v hide=#true
-    after_long_help "Examples:\n\n  $ aube view react\n  react@18.3.1 | MIT | deps: 1 | versions: 2037\n  React is a JavaScript library for building user interfaces.\n  https://react.dev/\n\n  keywords: react\n\n  dist\n  .tarball: https://registry.npmjs.org/react/-/react-18.3.1.tgz\n  .shasum:  a0b2eb79...\n  .integrity: sha512-...\n\n  # A specific version\n  $ aube view react@17.0.2\n\n  # A single field\n  $ aube view react version\n  18.3.1\n\n  $ aube view react dist.tarball\n  https://registry.npmjs.org/react/-/react-18.3.1.tgz\n\n  # All versions ever published\n  $ aube view react versions --json\n\n  # Raw JSON for the resolved version\n  $ aube view react@next --json\n"
+    after_long_help "Examples:\n\n  $ aube view\n  my-package@1.0.0 | MIT | deps: 0 | versions: 1\n\n  $ aube view react\n  react@18.3.1 | MIT | deps: 1 | versions: 2037\n  React is a JavaScript library for building user interfaces.\n  https://react.dev/\n\n  keywords: react\n\n  dist\n  .tarball: https://registry.npmjs.org/react/-/react-18.3.1.tgz\n  .shasum:  a0b2eb79...\n  .integrity: sha512-...\n\n  # A specific version\n  $ aube view react@17.0.2\n\n  # A single field\n  $ aube view react version\n  18.3.1\n\n  $ aube view react dist.tarball\n  https://registry.npmjs.org/react/-/react-18.3.1.tgz\n\n  # All versions ever published\n  $ aube view react versions --json\n\n  # Raw JSON for the resolved version\n  $ aube view react@next --json\n"
     flag --json help="Print the full JSON of the selected version instead of the summary" {
         long_help "Print the full JSON of the selected version instead of the summary.\n\nMutually exclusive with `field`."
     }
@@ -2051,7 +2051,7 @@ cmd view help="Print package metadata from the registry" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes."
         arg <URL>
     }
-    arg <PACKAGE> help="Package to view, optionally with a version or dist-tag" help_long="Package to view, optionally with a version or dist-tag.\n\nExamples: `lodash`, `lodash@4.17.21`, `react@next`, `express@^4`."
+    arg "[PACKAGE]" help="Package to view, optionally with a version or dist-tag" help_long="Package to view, optionally with a version or dist-tag.\n\nExamples: `lodash`, `lodash@4.17.21`, `react@next`, `express@^4`." required=#false
     arg "[FIELD]" help="Dotted path into the version metadata to print" help_long="Dotted path into the version metadata to print.\n\nExamples: `version`, `dependencies`, `dist.tarball`, `maintainers.0.name`. When omitted, prints a formatted summary." required=#false
 }
 cmd whoami hide=#true help="Report the current registry user (not implemented — use `npm whoami`)" {

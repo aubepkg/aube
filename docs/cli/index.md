@@ -197,5 +197,5 @@ Run from the workspace root regardless of the current package
 - [`aube unpublish [FLAGS] [SPEC]`](/cli/unpublish.md)
 - [`aube update [FLAGS] [PACKAGES]…`](/cli/update.md)
 - [`aube version [FLAGS] [NEW_VERSION]`](/cli/version.md)
-- [`aube view [FLAGS] <PACKAGE> [FIELD]`](/cli/view.md)
+- [`aube view [FLAGS] [PACKAGE] [FIELD]`](/cli/view.md)
 - [`aube why [FLAGS] <PACKAGE>`](/cli/why.md)

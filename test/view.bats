@@ -38,6 +38,16 @@ JSON
 	assert_output --partial "is-odd@"
 }
 
+@test "aube view without a package errors when package.json has no name" {
+	cat >package.json <<'JSON'
+{"version":"0.0.0"}
+JSON
+
+	run aube view
+	assert_failure
+	assert_output --partial "package name required"
+}
+
 @test "aube view <pkg> <field> prints a single field" {
 	run aube view is-odd version
 	assert_success

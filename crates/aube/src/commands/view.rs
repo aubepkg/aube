@@ -6,7 +6,8 @@
 //! prints either a human-readable summary, a single dotted field, or the
 //! raw JSON.
 //!
-//! This is a read-only command — no project lock, no manifest needed.
+//! This is a read-only command — no project lock needed. When no package is
+//! passed, the target package name is read from the local manifest.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
 use clap::Args;
@@ -72,14 +73,16 @@ pub struct ViewArgs {
 
 pub async fn run(args: ViewArgs) -> miette::Result<()> {
     args.network.install_overrides();
-    let cwd = crate::dirs::project_root_or_cwd().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cwd = crate::dirs::project_root_or_cwd()?;
     let package = match &args.package {
         Some(package) => package.clone(),
         None => {
-            let manifest = super::load_manifest(&cwd.join("package.json"))?;
-            manifest
-                .name
-                .ok_or_else(|| miette!("package name required: package.json has no `name`"))?
+            let manifest = super::load_manifest_or_default(&cwd)?;
+            manifest.name.ok_or_else(|| {
+                miette!(
+                    "package name required: pass a package name or run inside a project with a package.json `name` field"
+                )
+            })?
         }
     };
 
