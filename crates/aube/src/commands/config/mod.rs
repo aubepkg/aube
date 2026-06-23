@@ -375,6 +375,22 @@ mod tests {
     }
 
     #[test]
+    fn canonical_list_key_collapses_workspace_only_alias_to_setting_name() {
+        assert_eq!(
+            list::canonical_list_key("jailBuildPermissions"),
+            "jailBuildPermissions"
+        );
+    }
+
+    #[test]
+    fn canonical_list_key_collapses_workspace_alias_to_npmrc_primary() {
+        assert_eq!(
+            list::canonical_list_key("preferFrozenLockfile"),
+            "prefer-frozen-lockfile"
+        );
+    }
+
+    #[test]
     fn canonical_list_key_passthrough_for_unknown_key() {
         assert_eq!(
             list::canonical_list_key("//registry.example.com/:_authToken"),
