@@ -80,7 +80,7 @@ _setup_yaml_only_workspace() {
 	node -e '
 		const fs = require("fs");
 		for (const name of ["a", "b"]) {
-			const path = `packages/${name}/package.json`;
+			const path = "packages/" + name + "/package.json";
 			const pkg = JSON.parse(fs.readFileSync(path));
 			pkg.scripts.check = name === "a"
 				? "node -e \"console.log(\\\"check-from-a\\\"); process.exit(7)\""
@@ -93,6 +93,7 @@ _setup_yaml_only_workspace() {
 
 	run aube run -r --no-bail check
 	assert_failure
+	assert_equal "$status" 7
 	assert_output --partial "check-from-a"
 	assert_output --partial "check-from-b"
 }

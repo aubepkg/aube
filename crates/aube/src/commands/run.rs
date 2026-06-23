@@ -761,9 +761,9 @@ async fn run_filtered_parallel(
             // signaled `true` (= finished, regardless of outcome).
             // pnpm's default `--no-bail=false` aborts the whole run on
             // first failure anyway, so the "wait for failed dep too"
-            // case only fires under `--no-bail` (parsed but not yet
-            // wired) and degrades to "dependent runs against possibly
-            // stale dep state" — same as pnpm. A `changed()` Err means
+            // case only fires under `--no-bail` and degrades to
+            // "dependent runs against possibly stale dep state" — same
+            // as pnpm. A `changed()` Err means
             // the prereq's sender was dropped without sending (panic
             // or aborted JoinHandle); break so dependents unblock
             // instead of hanging — only reachable because each task
