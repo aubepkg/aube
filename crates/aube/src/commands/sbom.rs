@@ -64,7 +64,12 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
         ));
     }
     let closure = if args.exclude_peers && args.format == SbomFormat::Cyclonedx {
-        exclude_peer_only_packages(&graph, &closure, &manifest.peer_dependencies)
+        exclude_peer_only_packages(
+            &graph,
+            &closure,
+            &manifest.peer_dependencies,
+            &manifest.dependencies,
+        )
     } else {
         closure
     };
@@ -194,13 +199,17 @@ fn exclude_peer_only_packages<'a>(
     graph: &'a LockfileGraph,
     closure: &BTreeMap<String, &'a LockedPackage>,
     root_peer_dependencies: &BTreeMap<String, String>,
+    root_dependencies: &BTreeMap<String, String>,
 ) -> BTreeMap<String, &'a LockedPackage> {
     let mut out = BTreeMap::new();
     let mut stack: Vec<String> = graph
         .root_deps()
         .iter()
         .filter(|dep| closure.contains_key(&dep.dep_path))
-        .filter(|dep| !root_peer_dependencies.contains_key(&dep.name))
+        .filter(|dep| {
+            !root_peer_dependencies.contains_key(&dep.name)
+                || root_dependencies.contains_key(&dep.name)
+        })
         .map(|dep| dep.dep_path.clone())
         .collect();
 
@@ -624,7 +633,8 @@ mod tests {
             .iter()
             .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
             .collect();
-        let pruned = exclude_peer_only_packages(&graph, &closure, &BTreeMap::new());
+        let pruned =
+            exclude_peer_only_packages(&graph, &closure, &BTreeMap::new(), &BTreeMap::new());
 
         assert!(pruned.contains_key("consumer@1.0.0"));
         assert!(pruned.contains_key("runtime@1.0.0"));
@@ -662,9 +672,46 @@ mod tests {
             &graph,
             &closure,
             &BTreeMap::from([("react".into(), "^18".into())]),
+            &BTreeMap::new(),
         );
 
         assert!(pruned.is_empty());
+    }
+
+    #[test]
+    fn exclude_peer_only_packages_keeps_root_prod_peer_deps() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".into(),
+            vec![DirectDep {
+                name: "react".into(),
+                dep_path: "react@18.2.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+        graph.packages.insert(
+            "react@18.2.0".into(),
+            LockedPackage {
+                name: "react".into(),
+                version: "18.2.0".into(),
+                dep_path: "react@18.2.0".into(),
+                ..Default::default()
+            },
+        );
+        let closure: BTreeMap<_, _> = graph
+            .packages
+            .iter()
+            .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
+            .collect();
+        let pruned = exclude_peer_only_packages(
+            &graph,
+            &closure,
+            &BTreeMap::from([("react".into(), "^18".into())]),
+            &BTreeMap::from([("react".into(), "^18".into())]),
+        );
+
+        assert!(pruned.contains_key("react@18.2.0"));
     }
 
     #[test]
