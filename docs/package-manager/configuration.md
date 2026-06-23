@@ -46,16 +46,21 @@ resolves CLI, env, project, workspace, and user config, then applies managed
 policy as a final hardening pass. Local config, env vars, and CLI flags can
 make managed settings stricter, but cannot weaken them.
 
-```toml
-minimumReleaseAge = 1440
-minimumReleaseAgeStrict = true
-advisoryCheck = "required"
-dangerouslyAllowAllBuilds = false
-```
-
 For tests and non-root deployments, `AUBE_MANAGED_CONFIG_PATH` points at an
 additional managed TOML file. It is additive with `/etc/aube/managed.toml`: when
 both files set the same managed setting, aube keeps the stricter value.
+
+The [settings reference](/settings/) is generated from the settings registry
+and marks every enforceable setting with `Managed policy`. The policy names
+describe how multiple managed files and local config combine:
+
+- `max`: the largest integer wins.
+- `trueWins`: `true` wins over `false`.
+- `falseWins`: `false` wins over `true`.
+- `ranked:a<b<c`: later ranked values are stricter.
+- `managedWins`: the managed value replaces the local value; when multiple
+  managed files set a list, aube keeps only entries present in every managed
+  file.
 
 ## .npmrc
 

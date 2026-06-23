@@ -309,6 +309,7 @@ Delay installation of newly published versions (minutes).
 - Environment: `npm_config_minimum_release_age`, `NPM_CONFIG_MINIMUM_RELEASE_AGE`, `AUBE_MINIMUM_RELEASE_AGE`
 - .npmrc keys: `minimumReleaseAge`, `minimum-release-age`
 - Workspace YAML keys: `minimumReleaseAge`
+- Managed policy: `max`
 
 Supply-chain attack mitigation: packages published within the last N
 minutes are skipped by the resolver. By default the resolver falls back
@@ -325,6 +326,7 @@ Packages exempt from the minimumReleaseAge requirement.
 - Environment: `npm_config_minimum_release_age_exclude`, `NPM_CONFIG_MINIMUM_RELEASE_AGE_EXCLUDE`, `AUBE_MINIMUM_RELEASE_AGE_EXCLUDE`
 - .npmrc keys: `minimumReleaseAgeExclude`, `minimum-release-age-exclude`
 - Workspace YAML keys: `minimumReleaseAgeExclude`
+- Managed policy: `managedWins`
 
 Use for trusted internal packages that need to be rolled out immediately
 without waiting for the age gate. `pnpm audit --fix` (when implemented)
@@ -339,6 +341,7 @@ Fail the install when no version satisfies the minimumReleaseAge cutoff.
 - Environment: `npm_config_minimum_release_age_strict`, `NPM_CONFIG_MINIMUM_RELEASE_AGE_STRICT`, `AUBE_MINIMUM_RELEASE_AGE_STRICT`
 - .npmrc keys: `minimumReleaseAgeStrict`, `minimum-release-age-strict`
 - Workspace YAML keys: `minimumReleaseAgeStrict`
+- Managed policy: `trueWins`
 
 By default the resolver falls back to the lowest satisfying version when
 every candidate is younger than `minimumReleaseAge`. With this set, the
@@ -380,6 +383,7 @@ OSV `MAL-*` advisory check during `aube add` and other fresh-resolution installs
 - Environment: `npm_config_advisory_check`, `NPM_CONFIG_ADVISORY_CHECK`, `AUBE_ADVISORY_CHECK`
 - .npmrc keys: `advisoryCheck`, `advisory-check`
 - Workspace YAML keys: `advisoryCheck`
+- Managed policy: `ranked:off<on<required`
 
 Live-API OSV `MAL-*` advisory check. aube batch-queries
 [OSV](https://osv.dev) at three points, all against `api.osv.dev`:
@@ -416,6 +420,7 @@ Local-mirror OSV `MAL-*` advisory check for plain reinstalls.
 - Environment: `npm_config_advisory_check_on_install`, `NPM_CONFIG_ADVISORY_CHECK_ON_INSTALL`, `AUBE_ADVISORY_CHECK_ON_INSTALL`
 - .npmrc keys: `advisoryCheckOnInstall`, `advisory-check-on-install`
 - Workspace YAML keys: `advisoryCheckOnInstall`
+- Managed policy: `ranked:off<on<required`
 
 Fallback OSV `MAL-*` check for installs the live-API gate
 (`advisoryCheck`) didn't fire for — i.e. plain reinstalls where the
@@ -456,6 +461,7 @@ Bloom-filter prefilter for OSV `MAL-*` advisories on lockfile-driven installs.
 - Environment: `npm_config_advisory_bloom_check`, `NPM_CONFIG_ADVISORY_BLOOM_CHECK`, `AUBE_ADVISORY_BLOOM_CHECK`
 - .npmrc keys: `advisoryBloomCheck`, `advisory-bloom-check`
 - Workspace YAML keys: `advisoryBloomCheck`
+- Managed policy: `ranked:off<on<required`
 
 Fast bloom-filter prefilter that aube downloads (~380 KB) from
 `endevco/osv-bloom`. The upstream filter contains one entry per
@@ -496,6 +502,7 @@ Force the live-API OSV `MAL-*` check on every install (including frozen reinstal
 - Environment: `npm_config_advisory_check_every_install`, `NPM_CONFIG_ADVISORY_CHECK_EVERY_INSTALL`, `AUBE_ADVISORY_CHECK_EVERY_INSTALL`
 - .npmrc keys: `advisoryCheckEveryInstall`, `advisory-check-every-install`
 - Workspace YAML keys: `advisoryCheckEveryInstall`
+- Managed policy: `trueWins`
 
 By default, the live-API OSV check (`advisoryCheck`) fires on
 *fresh-resolution* installs only — `aube add`, `aube update`,
@@ -528,6 +535,7 @@ Weekly-download floor for `aube add` (typosquat prompt).
 - Environment: `npm_config_low_download_threshold`, `NPM_CONFIG_LOW_DOWNLOAD_THRESHOLD`, `AUBE_LOW_DOWNLOAD_THRESHOLD`
 - .npmrc keys: `lowDownloadThreshold`, `low-download-threshold`
 - Workspace YAML keys: `lowDownloadThreshold`
+- Managed policy: `max`
 
 `aube add` looks up each candidate's weekly download count via
 `api.npmjs.org/downloads/point/last-week/<pkg>` and prompts for
@@ -561,6 +569,7 @@ Glob patterns exempted from the `lowDownloadThreshold` gate.
 - Environment: `npm_config_allowed_unpopular_packages`, `NPM_CONFIG_ALLOWED_UNPOPULAR_PACKAGES`, `AUBE_ALLOWED_UNPOPULAR_PACKAGES`
 - .npmrc keys: `allowedUnpopularPackages`, `allowed-unpopular-packages`
 - Workspace YAML keys: `allowedUnpopularPackages`
+- Managed policy: `managedWins`
 
 Each pattern is matched against the registry name (`@scope/foo` or
 `bar`) of every candidate the `lowDownloadThreshold` gate would
@@ -593,6 +602,7 @@ Turn on the strict-security setting bundle in one switch.
 - Environment: `npm_config_paranoid`, `NPM_CONFIG_PARANOID`, `AUBE_PARANOID`
 - .npmrc keys: `paranoid`
 - Workspace YAML keys: `paranoid`
+- Managed policy: `trueWins`
 
 When true, aube forces every individual setting in the strict-security
 bundle on, regardless of how each is configured individually:
@@ -616,6 +626,7 @@ Fail install when a package's trust evidence weakens between releases.
 - Environment: `npm_config_trust_policy`, `NPM_CONFIG_TRUST_POLICY`, `AUBE_TRUST_POLICY`
 - .npmrc keys: `trustPolicy`, `trust-policy`
 - Workspace YAML keys: `trustPolicy`
+- Managed policy: `ranked:off<no-downgrade`
 
 When `no-downgrade` (the default), aube rejects a version that carries weaker
 trust evidence than any earlier-published version of the same package.
@@ -636,6 +647,7 @@ Packages exempt from `trustPolicy` checks.
 - Environment: `npm_config_trust_policy_exclude`, `NPM_CONFIG_TRUST_POLICY_EXCLUDE`, `AUBE_TRUST_POLICY_EXCLUDE`
 - .npmrc keys: `trustPolicyExclude`, `trust-policy-exclude`
 - Workspace YAML keys: `trustPolicyExclude`
+- Managed policy: `managedWins`
 
 Patterns: `name`, `name@1.0.0`, `name@1.0.0 || 1.0.1` (exact versions only —
 no `^`/`~`/`>=`), `is-*` (name glob, no version), `@scope/name@1.0.0`.
@@ -664,6 +676,7 @@ Restrict transitive dependencies to trusted sources (registries, not git/tarball
 - Environment: `npm_config_block_exotic_subdeps`, `NPM_CONFIG_BLOCK_EXOTIC_SUBDEPS`, `AUBE_BLOCK_EXOTIC_SUBDEPS`
 - .npmrc keys: `blockExoticSubdeps`, `block-exotic-subdeps`
 - Workspace YAML keys: `blockExoticSubdeps`
+- Managed policy: `trueWins`
 
 When true, transitive deps referenced via `git+`, `file:`, or direct
 tarball URLs are rejected. Helps prevent supply-chain attacks via
@@ -1163,6 +1176,7 @@ Check store file integrity before linking.
 - Environment: `npm_config_verify_store_integrity`, `NPM_CONFIG_VERIFY_STORE_INTEGRITY`, `AUBE_VERIFY_STORE_INTEGRITY`
 - .npmrc keys: `verify-store-integrity`, `verifyStoreIntegrity`
 - Workspace YAML keys: `verifyStoreIntegrity`
+- Managed policy: `trueWins`
 
 aube verifies each package's SRI `integrity` (sha512, or legacy
 sha1/sha256/sha384) against the tarball bytes at import time in
@@ -1186,6 +1200,7 @@ Fail the install when a packument ships no dist.integrity.
 - Environment: `npm_config_strict_store_integrity`, `NPM_CONFIG_STRICT_STORE_INTEGRITY`, `AUBE_STRICT_STORE_INTEGRITY`
 - .npmrc keys: `strict-store-integrity`, `strictStoreIntegrity`
 - Workspace YAML keys: `strictStoreIntegrity`
+- Managed policy: `trueWins`
 
 Companion to `verifyStoreIntegrity`. When both are true and a packument
 comes back without a `dist.integrity` field, aube refuses to import the
@@ -1223,6 +1238,7 @@ Validate package names and versions in the store.
 - Default: `true`
 - Environment: `npm_config_strict_store_pkg_content_check`, `NPM_CONFIG_STRICT_STORE_PKG_CONTENT_CHECK`, `AUBE_STRICT_STORE_PKG_CONTENT_CHECK`
 - .npmrc keys: `strict-store-pkg-content-check`, `strictStorePkgContentCheck`
+- Managed policy: `trueWins`
 
 After each registry tarball is imported, aube reads the freshly stored
 `package.json` and confirms its `name` and `version` match what the
@@ -1970,6 +1986,7 @@ Fail if a package is incompatible with the current Node version.
 - Default: `false`
 - Environment: `npm_config_engine_strict`, `NPM_CONFIG_ENGINE_STRICT`, `AUBE_ENGINE_STRICT`
 - .npmrc keys: `engine-strict`, `engineStrict`
+- Managed policy: `trueWins`
 
 When on, an `engines.node` mismatch on the root project or any dependency fails the install. When off, mismatches are warnings only.
 
@@ -2123,6 +2140,7 @@ Run approved dependency lifecycle scripts in a restricted build jail.
 - Environment: `npm_config_jail_builds`, `NPM_CONFIG_JAIL_BUILDS`, `AUBE_JAIL_BUILDS`
 - .npmrc keys: `jail-builds`, `jailBuilds`
 - Workspace YAML keys: `jailBuilds`
+- Managed policy: `trueWins`
 
 When enabled, dependency lifecycle scripts that pass the active
 `allowBuilds` / `onlyBuiltDependencies` policy run with a scrubbed
@@ -2148,6 +2166,7 @@ Exclude specific dependency packages from jailed builds.
 - Environment: `npm_config_jail_build_exclusions`, `NPM_CONFIG_JAIL_BUILD_EXCLUSIONS`, `AUBE_JAIL_BUILD_EXCLUSIONS`
 - .npmrc keys: `jailBuildExclusions`, `jail-build-exclusions`
 - Workspace YAML keys: `jailBuildExclusions`
+- Managed policy: `managedWins`
 
 Package patterns in this list still follow the active `allowBuilds` /
 `onlyBuiltDependencies` policy, but run outside the build jail when
@@ -2236,6 +2255,7 @@ Exit with an error if dependencies have unreviewed build scripts.
 - Default: `false`
 - Environment: `npm_config_strict_dep_builds`, `NPM_CONFIG_STRICT_DEP_BUILDS`, `AUBE_STRICT_DEP_BUILDS`
 - .npmrc keys: `strictDepBuilds`, `strict-dep-builds`
+- Managed policy: `trueWins`
 
 aube never runs dependency lifecycle scripts unless the package is
 listed in `allowBuilds` or `--dangerously-allow-all-builds` is set.
@@ -2277,6 +2297,7 @@ Allow all dependency build scripts automatically.
 - CLI flags: `dangerously-allow-all-builds`
 - Environment: `npm_config_dangerously_allow_all_builds`, `NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS`, `AUBE_DANGEROUSLY_ALLOW_ALL_BUILDS`
 - .npmrc keys: `dangerouslyAllowAllBuilds`, `dangerously-allow-all-builds`
+- Managed policy: `falseWins`
 
 Opt-out escape hatch for the `allowBuilds` allowlist: when set, every
 dependency's `preinstall` / `install` / `postinstall` / `prepare`
