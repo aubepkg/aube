@@ -128,8 +128,11 @@ log = "0.4"
 # yamlpatch, so adding as a direct dep here is free at compile time.
 regex = "1"
 
-# Archive extraction
-flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
+# Archive extraction. Use the pure-Rust `zlib-rs` backend, not the C `zlib-ng`:
+# the `zip` dep below pulls `flate2/zlib-rs`, and a consumer (Elide) that also
+# selects `zlib-rs` would otherwise link both backends — duplicate `zng_*` /
+# `alloc_deflate` symbols on static targets.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 tar = "0.4"
 zstd = { version = "0.13", default-features = false }
 # Zip reader for the OSV advisory mirror — the bulk dump at
