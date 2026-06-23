@@ -9208,6 +9208,18 @@
             "global": false
           },
           {
+            "name": "exclude-peers",
+            "usage": "--exclude-peers",
+            "help": "Exclude peer dependencies from CycloneDX output",
+            "help_first_line": "Exclude peer dependencies from CycloneDX output",
+            "short": [],
+            "long": [
+              "exclude-peers"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "format",
             "usage": "--format <FORMAT>",
             "help": "Output format: `cyclonedx` (default) or `spdx`",

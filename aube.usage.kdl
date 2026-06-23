@@ -1603,6 +1603,7 @@ cmd runtime subcommand_required=#true help="Manage the project's Node.js runtime
 }
 cmd sbom help="Generate a Software Bill of Materials (CycloneDX or SPDX)" {
     flag "-D --dev" help="Show only devDependencies"
+    flag --exclude-peers help="Exclude peer dependencies from CycloneDX output"
     flag --format help="Output format: `cyclonedx` (default) or `spdx`" default=cyclonedx {
         arg <FORMAT> {
             choices cyclonedx spdx
