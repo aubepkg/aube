@@ -89,6 +89,21 @@ RC
 	assert_output --partial "managed config enforced"
 }
 
+@test "managed config cannot weaken default advisory policy in get or list" {
+	cat >managed.toml <<'TOML'
+advisoryCheck = "off"
+TOML
+
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config get advisoryCheck
+	assert_success
+	assert_output "on"
+
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube config list
+	assert_success
+	assert_output --partial "advisoryCheck=on"
+	refute_output --partial "advisoryCheck=off"
+}
+
 @test "managed exemption list replaces local additions" {
 	cat >managed.toml <<'TOML'
 minimumReleaseAgeExclude = ["left-pad"]

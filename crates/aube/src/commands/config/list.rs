@@ -1,6 +1,6 @@
 use super::{
-    ListLocation, literal_aliases, read_merged, read_single, setting_for_key, settings_meta,
-    user_npmrc_path,
+    ListLocation, literal_aliases, read_merged, read_single, setting_default_value,
+    setting_for_key, settings_meta, user_npmrc_path,
 };
 use aube_settings::meta::SettingMeta;
 use clap::Args;
@@ -107,7 +107,10 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
                     continue;
                 }
                 let primary = primary_list_key(meta);
-                let local = seen.get(&primary).cloned();
+                let local = seen
+                    .get(&primary)
+                    .cloned()
+                    .or_else(|| setting_default_value(meta));
                 if let Some(effective) =
                     aube_settings::values::apply_managed_raw(meta.name, local, &managed_entries)
                 {
