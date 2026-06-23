@@ -4842,6 +4842,18 @@
             "global": false
           },
           {
+            "name": "dry-run",
+            "usage": "--dry-run",
+            "help": "Resolve and report what would happen without writing the lockfile or linking node_modules",
+            "help_first_line": "Resolve and report what would happen without writing the lockfile or linking node_modules",
+            "short": [],
+            "long": [
+              "dry-run"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "fix-lockfile",
             "usage": "--fix-lockfile",
             "help": "Re-resolve lockfile entries whose spec drifted from package.json",

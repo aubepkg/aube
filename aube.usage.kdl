@@ -874,6 +874,7 @@ cmd install help="Install all dependencies" {
     flag --dangerously-allow-all-builds help="Allow every dependency's lifecycle scripts to run" {
         long_help "Allow every dependency's lifecycle scripts to run.\n\nBypasses the `allowBuilds` allowlist. Do not use in CI."
     }
+    flag --dry-run help="Resolve and report what would happen without writing the lockfile or linking node_modules"
     flag --fix-lockfile help="Re-resolve lockfile entries whose spec drifted from package.json" {
         long_help "Re-resolve lockfile entries whose spec drifted from package.json.\n\nLeaves everything else pinned at its locked version. Unchanged specs keep their existing version and integrity hash; only drifted entries (and any new transitives they pull in) get re-resolved."
     }
