@@ -232,9 +232,9 @@ pub struct Linker {
 #[derive(Debug, Clone, Copy)]
 pub enum LinkStrategy {
     /// Copy-on-write (APFS clonefile, btrfs reflink). Selected by
-    /// explicit `packageImportMethod = clone` / `clone-or-copy`;
-    /// `auto` picks [`Hardlink`] because hardlink is measurably
-    /// faster on every benchmarked target.
+    /// explicit `packageImportMethod = clone` / `clone-or-copy`, and by
+    /// `auto` on macOS where APFS clonefile is measurably faster than
+    /// hardlink. (On Linux and other targets `auto` picks [`Hardlink`].)
     Reflink,
     /// Hard link (ext4, NTFS)
     Hardlink,

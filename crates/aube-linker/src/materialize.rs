@@ -21,11 +21,13 @@ impl Linker {
     /// falls back to `fs::copy` per file silently, thousands of
     /// wasted syscalls, user thinks they got hardlinks.
     ///
-    /// Returns `Hardlink` when the probe succeeds, `Copy` otherwise.
-    /// Reflink is reachable only through explicit
-    /// `packageImportMethod = clone` / `clone-or-copy`; `auto` resolves
-    /// to `Hardlink` because hardlink benchmarks faster across every
-    /// target reflink supports (APFS clonefile, btrfs/xfs FICLONE).
+    /// Returns the same-filesystem strategy when the probe succeeds,
+    /// `Copy` otherwise. The same-FS strategy is OS-specific: on macOS
+    /// `auto` resolves to `Reflink` (APFS clonefile benchmarks ~1.91x
+    /// faster than hardlink), on Linux and other targets it resolves to
+    /// `Hardlink` (btrfs/xfs hardlink benchmarks ~2.4-2.6x faster than
+    /// FICLONE reflink). `Reflink` is otherwise reachable only through
+    /// explicit `packageImportMethod = clone` / `clone-or-copy`.
     pub fn detect_strategy(path: &Path) -> LinkStrategy {
         Self::detect_strategy_cross(path, path)
     }
@@ -34,8 +36,20 @@ impl Linker {
     /// store FS), dst is the project modules dir (or any dir on the
     /// destination FS). Probe creates a real cross-mount src file
     /// and tries to hardlink into dst, which catches EXDEV up front.
-    /// Returns `Hardlink` when the probe succeeds, `Copy` otherwise.
+    /// A successful hardlink proves src and dst share a mount, so it
+    /// doubles as the same-FS probe for reflink too (APFS clonefile /
+    /// btrfs FICLONE require the same FS). Returns the OS-specific
+    /// same-FS strategy when the probe succeeds (`Reflink` on macOS,
+    /// `Hardlink` elsewhere), `Copy` otherwise.
     pub fn detect_strategy_cross(src_dir: &Path, dst_dir: &Path) -> LinkStrategy {
+        // Same-FS strategy `auto` resolves to once the probe succeeds.
+        // macOS/APFS clonefile is measurably faster than hardlink there;
+        // Linux btrfs/xfs hardlink is measurably faster than FICLONE.
+        #[cfg(target_os = "macos")]
+        const SAME_FS_STRATEGY: LinkStrategy = LinkStrategy::Reflink;
+        #[cfg(not(target_os = "macos"))]
+        const SAME_FS_STRATEGY: LinkStrategy = LinkStrategy::Hardlink;
+
         // Memoize per (src_dir, dst_dir) for the process lifetime.
         // The probe writes a real test file and tries hardlink,
         // ~2 syscalls + 2 unlinks. Multiple Linker instances within
@@ -56,7 +70,7 @@ impl Linker {
 
         let strategy = if std::fs::write(&test_src, b"test").is_ok() {
             let result = if std::fs::hard_link(&test_src, &test_dst).is_ok() {
-                LinkStrategy::Hardlink
+                SAME_FS_STRATEGY
             } else {
                 LinkStrategy::Copy
             };
@@ -73,7 +87,9 @@ impl Linker {
         // hardlink-ok, the other sees the first writer's leftover and
         // falls back to Copy. `.insert()` would let the wrong Copy
         // result clobber the correct Hardlink for the rest of the
-        // process; `or_insert` keeps whichever value landed first.
+        // process; `or_insert` keeps whichever value landed first. (The
+        // value at stake is the same-FS strategy above, not literally
+        // Hardlink — Reflink on macOS.)
         *cache
             .write()
             .expect("probe cache poisoned")
