@@ -529,18 +529,17 @@ impl<'a> ResolveDriver<'a> {
         // and all picks in Highest mode) picks highest.
         let pick_lowest =
             self.resolver.resolution_mode == ResolutionMode::TimeBased && task.is_root;
-        // Apply the cutoff unless this package is on the
-        // minimumReleaseAge exclude list. The exclude list only
-        // suppresses the *minimumReleaseAge* leg, not the
-        // time-based-mode leg — but since we collapse both
-        // into the same `published_by` string at this point,
-        // we have to skip the cutoff entirely for excluded
-        // names. Acceptable: time-based mode and exclude
-        // lists aren't expected to coexist in the wild.
-        let cutoff_for_pkg = match self.resolver.minimum_release_age.as_ref() {
-            Some(mra) if mra.exclude.contains(&task.name) => None,
-            _ => self.published_by.as_deref(),
-        };
+        // The cutoff itself is uniform; `minimumReleaseAgeExclude` is
+        // applied per-candidate-version inside `pick_version` via the
+        // `is_age_exempt` closure below. A name-only exclude rule
+        // matches every version, so the whole package skips the cutoff
+        // (the old package-level behavior); a `pkg@1.2.3`-style rule
+        // waves only those versions past it. The exclude is meant to
+        // suppress only the minimumReleaseAge leg, not the time-based
+        // leg, but since both collapse into one `published_by` here we
+        // exempt both — acceptable, as the two aren't expected to
+        // coexist in the wild.
+        let cutoff_for_pkg = self.published_by.as_deref();
         // Strict semantics in two cases:
         //   - `minimumReleaseAgeStrict=true` (the user opted in
         //     to hard failures), or
@@ -555,6 +554,24 @@ impl<'a> ResolveDriver<'a> {
             None => true,
         };
         let registry_name = task.registry_name().to_string();
+        // `minimumReleaseAgeExclude` exemption, shared by the version
+        // pick and the vulnerability re-pick below. Reuses an
+        // already-parsed version when the caller has one, falling back to
+        // a name-only match for unparseable versions.
+        let mra_exclude = self
+            .resolver
+            .minimum_release_age
+            .as_ref()
+            .map(|m| &m.exclude);
+        let is_age_exempt = |ver: &str, parsed: Option<&node_semver::Version>| {
+            mra_exclude.is_some_and(|ex| match parsed {
+                Some(v) => ex.matches(&task.name, v),
+                None => match node_semver::Version::parse(ver) {
+                    Ok(v) => ex.matches(&task.name, &v),
+                    Err(_) => ex.matches_name_only(&task.name),
+                },
+            })
+        };
         let selected_pick = loop {
             let packument = self.resolver.cache.get(&registry_name).ok_or_else(|| {
                 Error::Registry(registry_name.clone(), "packument not in cache".to_string())
@@ -566,6 +583,7 @@ impl<'a> ResolveDriver<'a> {
                 pick_lowest,
                 cutoff_for_pkg,
                 strict,
+                is_age_exempt,
             );
             match pick {
                 PickResult::Found(meta) => break meta.clone(),
@@ -641,6 +659,7 @@ impl<'a> ResolveDriver<'a> {
             pick_lowest,
             cutoff_for_pkg,
             &self.resolver.vulnerable_ranges,
+            is_age_exempt,
         );
         // Trust-policy enforcement runs *before* any other
         // post-pick processing (mirrors pnpm's placement

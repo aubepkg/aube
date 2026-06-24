@@ -329,8 +329,11 @@ Packages exempt from the minimumReleaseAge requirement.
 - Managed policy: `managedWins`
 
 Use for trusted internal packages that need to be rolled out immediately
-without waiting for the age gate. `pnpm audit --fix` (when implemented)
-will append patched versions to this list automatically.
+without waiting for the age gate. Each entry is a bare name (`react`), a
+`*` name glob (`@myorg/*`), or a name with an exact-version union
+(`nx@21.6.5`, `webpack@4.47.0 || 5.102.1`); ranges like `^1.0.0` are not
+allowed. `pnpm audit --fix` (when implemented) will append patched
+versions to this list automatically.
 
 ### `minimumReleaseAgeStrict` {#setting-minimumreleaseagestrict}
 

@@ -519,6 +519,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE",
+      "category": "Settings / config validation",
+      "description": "A `minimumReleaseAgeExclude` entry was malformed and skipped.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_OVERRIDE_MISSING_DEP",
       "category": "Settings / config validation",
       "description": "An `overrides` `$ref` pointed at a package not in any of the importer's dependency lists.",

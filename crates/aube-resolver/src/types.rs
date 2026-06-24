@@ -1,5 +1,5 @@
 use aube_lockfile::LocalSource;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -24,22 +24,37 @@ pub trait ReadPackageHook: Send {
     ) -> Pin<Box<dyn Future<Output = Result<aube_registry::VersionMetadata, String>> + Send + 'a>>;
 }
 
-/// Supply-chain mitigation: forbid versions younger than `min_age` for
-/// every package whose name isn't in `exclude`. Mirrors pnpm's
-/// `minimumReleaseAge` / `minimumReleaseAgeExclude` /
+/// Supply-chain mitigation: forbid versions younger than `min_age`
+/// unless the package (or specific version) is exempted by `exclude`.
+/// Mirrors pnpm's `minimumReleaseAge` / `minimumReleaseAgeExclude` /
 /// `minimumReleaseAgeStrict` triplet. Constructed by the install
 /// command, threaded into [`Resolver::with_minimum_release_age`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MinimumReleaseAge {
     /// Minutes a version must have aged in the registry. `0` disables.
     pub minutes: u64,
-    /// Package names skipped by the cutoff filter entirely.
-    pub exclude: HashSet<String>,
+    /// Packages exempt from the cutoff. Supports the same syntax pnpm's
+    /// `minimumReleaseAgeExclude` does: bare names, `*` name globs (e.g.
+    /// `@myorg/*`), and exact-version unions (`pkg@1.2.3 || 1.2.4`).
+    pub exclude: crate::trust::PackageVersionPolicy,
     /// When true, fail the install if no version satisfies the range
     /// without violating the cutoff. When false (the pnpm default), the
     /// resolver falls back to the lowest satisfying version, ignoring
     /// the cutoff for that pick only.
     pub strict: bool,
+}
+
+impl Default for MinimumReleaseAge {
+    fn default() -> Self {
+        // `PackageVersionPolicy::default()` carries the *trust* exclude
+        // list; the age gate must start with no exemptions, so use the
+        // explicitly-empty constructor.
+        Self {
+            minutes: 0,
+            exclude: crate::trust::PackageVersionPolicy::empty(),
+            strict: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

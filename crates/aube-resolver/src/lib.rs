@@ -27,7 +27,7 @@ pub use trust::{
     MissingTimeDetails as MissingTrustTimeDetails, TrustCheckError, TrustDowngradeDetails,
     check_no_downgrade,
 };
-pub use trust::{TrustEvidence, TrustExcludeParseError, TrustExcludeRules};
+pub use trust::{PackageVersionPolicy, TrustEvidence, TrustExcludeParseError, TrustExcludeRules};
 pub use types::{
     DependencyPolicy, MinimumReleaseAge, PackageExtension, ReadPackageHook, ResolutionMode,
     ResolvedPackage, TrustPolicy,

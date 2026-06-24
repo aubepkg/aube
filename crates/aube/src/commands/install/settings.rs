@@ -82,11 +82,19 @@ fn resolve_minimum_release_age(
     if minutes == 0 {
         return None;
     }
-    let exclude: std::collections::HashSet<String> =
-        aube_settings::resolved::minimum_release_age_exclude(ctx)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+    // Parse pattern-by-pattern (bare names, `*` name globs, exact-version
+    // unions) so one malformed entry doesn't silently drop the rest and
+    // weaken the gate. Same engine pnpm uses for both exclude settings.
+    let (exclude, parse_errors) = aube_resolver::PackageVersionPolicy::parse_lossy(
+        aube_settings::resolved::minimum_release_age_exclude(ctx).unwrap_or_default(),
+    );
+    for err in parse_errors {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE,
+            error = %err,
+            "ignoring malformed minimumReleaseAgeExclude entry"
+        );
+    }
     // `paranoid=true` forces the gate to be hard, not advisory.
     let strict = aube_settings::resolved::minimum_release_age_strict(ctx)
         || aube_settings::resolved::paranoid(ctx);
@@ -918,7 +926,7 @@ pub(crate) fn configure_resolver(
         resolve_minimum_release_age(settings_ctx, minimum_release_age_override);
     if let Some(ref mra) = minimum_release_age {
         tracing::debug!(
-            "minimumReleaseAge: {} min, {} excluded, strict={}",
+            "minimumReleaseAge: {} min, {} exclude rules, strict={}",
             mra.minutes,
             mra.exclude.len(),
             mra.strict

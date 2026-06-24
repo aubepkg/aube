@@ -41,6 +41,14 @@ impl<'a> PickResult<'a> {
 /// cutoff. The lowest-satisfying fallback is pnpm's deliberate choice
 /// — the oldest version in the range is least likely to be the freshly
 /// pushed compromise that triggered the filter in the first place.
+///
+/// `is_age_exempt` lets the caller wave a specific version past the
+/// cutoff — used to honor `minimumReleaseAgeExclude` (bare names, name
+/// globs, and exact-version unions). It receives the candidate version
+/// string plus its already-parsed form when the caller has one (every
+/// hot-path call site here does, so the exemption check needn't reparse),
+/// and returns `true` to treat that version as if it cleared the cutoff.
+/// Pass `|_, _| false` when no exemptions apply.
 #[inline]
 pub(crate) fn pick_version<'a>(
     packument: &'a Packument,
@@ -49,6 +57,7 @@ pub(crate) fn pick_version<'a>(
     pick_lowest: bool,
     cutoff: Option<&str>,
     strict: bool,
+    is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
 ) -> PickResult<'a> {
     // Handle dist-tag references. If the requested range is a tag
     // name and the packument has that tag, use the tagged version
@@ -92,8 +101,11 @@ pub(crate) fn pick_version<'a>(
         }
     };
 
-    let passes_cutoff = |ver: &str| -> bool {
+    let passes_cutoff = |ver: &str, parsed: Option<&node_semver::Version>| -> bool {
         let Some(c) = cutoff else { return true };
+        if is_age_exempt(ver, parsed) {
+            return true;
+        }
         match packument.time.get(ver) {
             Some(t) => t.as_str() <= c,
             // Missing time: keep it — we'd rather risk a slightly newer
@@ -106,7 +118,7 @@ pub(crate) fn pick_version<'a>(
     if let Some(locked_ver) = locked
         && let Ok(v) = node_semver::Version::parse(locked_ver)
         && v.satisfies(&range)
-        && passes_cutoff(locked_ver)
+        && passes_cutoff(locked_ver, Some(&v))
         && let Some(meta) = packument.versions.get(locked_ver)
     {
         return PickResult::Found(meta);
@@ -124,7 +136,7 @@ pub(crate) fn pick_version<'a>(
         && let Some(latest_ver) = packument.dist_tags.get("latest")
         && let Ok(v) = node_semver::Version::parse(latest_ver)
         && v.satisfies(&range)
-        && passes_cutoff(latest_ver)
+        && passes_cutoff(latest_ver, Some(&v))
         && let Some(meta) = packument.versions.get(latest_ver)
     {
         return PickResult::Found(meta);
@@ -151,7 +163,7 @@ pub(crate) fn pick_version<'a>(
             fallback_lowest = Some((v.clone(), meta));
         }
 
-        if passes_cutoff(ver_str) {
+        if passes_cutoff(ver_str, Some(&v)) {
             let replace = best
                 .as_ref()
                 .is_none_or(|(cur, _)| if pick_lowest { v < *cur } else { v > *cur });
