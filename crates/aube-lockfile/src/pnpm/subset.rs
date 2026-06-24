@@ -687,7 +687,42 @@ fn scalar_string(raw: &[u8]) -> Option<String> {
     if raw[0] == b'{' || raw[0] == b'[' || raw[0] == b'&' || raw[0] == b'*' {
         return None;
     }
-    std::str::from_utf8(raw).ok().map(|s| s.to_string())
+    // Strip a YAML inline comment. On a PLAIN scalar a `#` starts a comment
+    // when it is at the very start of the value (the structural `: ` already
+    // separates it) or preceded by whitespace (` #` / `\t#`); a `#` with no
+    // leading space inside the value is part of it (`bar#baz`). Quoted scalars
+    // never reach here (handled above), so a literal `#` inside quotes is
+    // preserved. This matches yaml_serde, so hand-edited lockfiles with
+    // trailing comments don't silently misparse instead of deferring to serde.
+    let end = strip_inline_comment(raw);
+    // A value that is ENTIRELY a comment is YAML null. The subset only models
+    // string scalars, so decline and let serde apply its null coercion.
+    if end == 0 {
+        return None;
+    }
+    std::str::from_utf8(&raw[..end]).ok().map(|s| s.to_string())
+}
+
+/// Return the byte offset where a plain-scalar value ends, accounting for a
+/// trailing YAML inline comment. A comment begins at the first `#` that is
+/// either at offset 0 (the structural `: ` already precedes the value) or
+/// preceded by an ASCII space or tab; trailing whitespace before that `#` is
+/// dropped. With no such `#`, returns `raw.len()`. Returns 0 when the value
+/// is entirely a comment.
+fn strip_inline_comment(raw: &[u8]) -> usize {
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'#' && (i == 0 || raw[i - 1] == b' ' || raw[i - 1] == b'\t') {
+            // Back up over the whitespace separating value from comment.
+            let mut end = i;
+            while end > 0 && (raw[end - 1] == b' ' || raw[end - 1] == b'\t') {
+                end -= 1;
+            }
+            return end;
+        }
+        i += 1;
+    }
+    raw.len()
 }
 
 /// Parse `lockfileVersion`-style scalar into a `yaml_serde::Value`,
@@ -1214,6 +1249,45 @@ mod subset_tests {
         assert!(scalar_string(b"[a, b]").is_none());
         assert!(scalar_string(b"&anchor").is_none());
         assert!(scalar_string(b"*alias").is_none());
+    }
+
+    #[test]
+    fn plain_scalar_strips_inline_comment_quoted_keeps_hash() {
+        // Plain scalar: ` #` starts a YAML inline comment — stripped, value
+        // trimmed (matches yaml_serde, see the differential below).
+        assert_eq!(scalar_string(b"bar # keep this").unwrap(), "bar");
+        assert_eq!(scalar_string(b"bar\t# c").unwrap(), "bar");
+        assert_eq!(scalar_string(b"bar baz # c").unwrap(), "bar baz");
+        // `#` not preceded by whitespace is part of the value, not a comment.
+        assert_eq!(scalar_string(b"bar#baz").unwrap(), "bar#baz");
+        // A value that is ENTIRELY a comment is YAML null — decline to serde.
+        assert!(scalar_string(b"# x").is_none());
+        assert!(scalar_string(b" # x").is_none());
+        // Quoted scalars preserve a literal `#` (no comment processing).
+        assert_eq!(
+            scalar_string(b"\"bar # keep this\"").unwrap(),
+            "bar # keep this"
+        );
+        assert_eq!(
+            scalar_string(b"'bar # keep this'").unwrap(),
+            "bar # keep this"
+        );
+
+        // End-to-end: a hand-edited lockfile with an inline comment on a
+        // plain scalar value must parse identically to serde, not misparse
+        // (the bug: the value was returned verbatim as "1.0.0 # pin").
+        let lock = "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      a:\n        specifier: ^1 # range\n        version: 1.0.0 # pin\n";
+        assert!(matches!(
+            diff_subset_vs_serde(lock),
+            SubsetDiff::Match | SubsetDiff::Declined
+        ));
+        // It must actually FIRE (not decline) and carry the stripped value.
+        let parsed = try_parse(lock).expect("subset should accept");
+        let importer = parsed.importers.get(".").expect("root importer");
+        let deps = importer.dependencies.as_ref().expect("dependencies block");
+        let dep = deps.get("a").expect("dep a");
+        assert_eq!(dep.version, "1.0.0");
+        assert_eq!(dep.specifier, "^1");
     }
 
     #[test]
