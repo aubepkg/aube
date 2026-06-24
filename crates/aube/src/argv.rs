@@ -84,13 +84,14 @@ fn rewrite_tool_to_subcommand(mut args: Vec<OsString>, subcommand: &str) -> Vec<
 
 fn rewrite_pnpm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     args[0] = OsString::from("aube");
-    rewrite_pm_help_or_version(args).unwrap_or_else(|| args)
+    rewrite_pm_help_or_version(&mut args);
+    args
 }
 
 fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     args[0] = OsString::from("aube");
-    if let Some(rewritten) = rewrite_pm_help_or_version(args.clone()) {
-        return rewritten;
+    if rewrite_pm_help_or_version(&mut args) {
+        return args;
     }
     let Some(cmd) = args.get(1).and_then(|s| s.to_str()) else {
         return args;
@@ -120,8 +121,8 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 
 fn rewrite_yarn_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     args[0] = OsString::from("aube");
-    if let Some(rewritten) = rewrite_pm_help_or_version(args.clone()) {
-        return rewritten;
+    if rewrite_pm_help_or_version(&mut args) {
+        return args;
     }
     let Some(cmd) = args.get(1).and_then(|s| s.to_str()) else {
         args.insert(1, OsString::from("install"));
@@ -143,17 +144,17 @@ fn replace_arg(args: &mut [OsString], idx: usize, value: &str) -> Vec<OsString> 
     args.to_vec()
 }
 
-fn rewrite_pm_help_or_version(mut args: Vec<OsString>) -> Option<Vec<OsString>> {
+fn rewrite_pm_help_or_version(args: &mut [OsString]) -> bool {
     match args.get(1).and_then(|s| s.to_str()) {
         Some("--help") | Some("-h") if args.len() == 2 => {
             args[1] = OsString::from("--help");
-            Some(args)
+            true
         }
         Some("--version") | Some("-v") | Some("-V") if args.len() == 2 => {
             args[1] = OsString::from("--version");
-            Some(args)
+            true
         }
-        _ => None,
+        _ => false,
     }
 }
 
