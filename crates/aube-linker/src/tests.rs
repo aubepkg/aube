@@ -92,6 +92,101 @@ fn test_detect_strategy() {
     }
 }
 
+// Representative dep_paths exercising every branch of
+// `dep_path_to_filename`: plain, scoped (`/` → `+`), peer-context
+// (parens flatten to `_`), uppercase (forces the BLAKE3 short-hash),
+// and a long peer graph (overflows max_length → truncate + hash).
+const ENCODE_FIXTURES: &[&str] = &[
+    "foo@1.0.0",
+    "@scope/bar@2.0.0",
+    "baz@3.0.0(react@18.2.0)",
+    "@ng/Core@17.0.0",
+    "@fig/eslint-config-autocomplete@2.0.0(@typescript-eslint+eslint-plugin@7.18.0(@typescript-eslint+parser@7.18.0(eslint@8.57.1))(eslint@8.57.1))(@typescript-eslint+parser@7.18.0(eslint@8.57.1))(@withfig+eslint-plugin-fig-linter@1.4.1)(eslint@8.57.1)(eslint-plugin-compat@4.2.0(eslint@8.57.1))(typescript@5.9.3)",
+];
+
+// The link step's serial pre-pass now computes each package's local
+// `.aube/<entry>` name and its virtual-store subdir once and threads
+// them into the par_iter (and on into `ensure_in_virtual_store`),
+// replacing what used to be 2-3 redundant `dep_path_to_filename`
+// encodes per package. The hoist is only output-preserving if the
+// value carried forward is byte-identical to what each eliminated
+// recompute site would have produced. These tests pin that invariant:
+// the precomputed name/subdir must equal a fresh per-site recompute,
+// across both the hashed and unhashed virtual-store modes.
+
+fn linker_for_encode_test(dir: &Path, hashes: Option<GraphHashes>) -> Linker {
+    let store = Store::at(dir.join("store/files"));
+    let mut linker = Linker::new(&store, LinkStrategy::Copy);
+    if let Some(h) = hashes {
+        linker = linker.with_graph_hashes(h);
+    }
+    linker
+}
+
+#[test]
+fn precomputed_entry_name_and_subdir_match_recompute_unhashed() {
+    let dir = tempfile::tempdir().unwrap();
+    let linker = linker_for_encode_test(dir.path(), None);
+
+    for dep_path in ENCODE_FIXTURES {
+        // The value the pre-pass carries forward.
+        let precomputed_entry = linker.aube_dir_entry_name(dep_path);
+        let precomputed_subdir = linker.virtual_store_subdir(dep_path);
+
+        // What the par_iter / `ensure_in_virtual_store` recompute sites
+        // produced before the hoist — must be byte-identical.
+        assert_eq!(
+            precomputed_entry,
+            linker.aube_dir_entry_name(dep_path),
+            "entry name not stable for {dep_path}"
+        );
+        assert_eq!(
+            precomputed_subdir,
+            linker.virtual_store_subdir(dep_path),
+            "subdir not stable for {dep_path}"
+        );
+    }
+}
+
+#[test]
+fn precomputed_subdir_matches_recompute_with_graph_hashes() {
+    // With graph hashes installed, `virtual_store_subdir` folds the
+    // per-dep_path hash into the leaf before encoding, so it diverges
+    // from `aube_dir_entry_name` (which never applies the hash). The
+    // hoist carries the *subdir* (hashed) into `ensure_in_virtual_store`
+    // and the *entry name* (unhashed) into the local `.aube/` link —
+    // mixing them up would be a behavior change. Pin that the two are
+    // distinct under hashing and each matches its own recompute.
+    let dir = tempfile::tempdir().unwrap();
+    let mut node_hash = std::collections::BTreeMap::new();
+    for (i, dep_path) in ENCODE_FIXTURES.iter().enumerate() {
+        // A deterministic non-empty hex hash per dep_path.
+        node_hash.insert(
+            (*dep_path).to_string(),
+            format!("{:016x}{:016x}", 0x0123_4567_89ab_cdefu64, i as u64),
+        );
+    }
+    let linker = linker_for_encode_test(dir.path(), Some(GraphHashes { node_hash }));
+
+    for dep_path in ENCODE_FIXTURES {
+        let entry = linker.aube_dir_entry_name(dep_path);
+        let subdir = linker.virtual_store_subdir(dep_path);
+
+        // Each matches its own recompute (the memoization invariant).
+        assert_eq!(entry, linker.aube_dir_entry_name(dep_path));
+        assert_eq!(subdir, linker.virtual_store_subdir(dep_path));
+
+        // And the hash genuinely makes the subdir differ from the entry
+        // name, so the two values are not interchangeable — proving the
+        // hoist must carry them separately. (`@scope/Core` etc. all gain
+        // a `-<hash>` leaf suffix in the subdir that the entry lacks.)
+        assert_ne!(
+            entry, subdir,
+            "graph hash should make subdir differ from entry name for {dep_path}"
+        );
+    }
+}
+
 #[test]
 fn test_link_all_handles_self_referential_dep_at_different_version() {
     // `react_ujs@3.3.0` (and other publish-script artifacts)

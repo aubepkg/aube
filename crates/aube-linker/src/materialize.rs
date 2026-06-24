@@ -109,6 +109,39 @@ impl Linker {
         // this graph" and the materialize hot path stays unchanged.
         nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
     ) -> Result<(), Error> {
+        // Global-store paths always run through the vstore_key map —
+        // when hashes are installed this folds dep-graph + engine
+        // state into the leaf name, so concurrent builds of the same
+        // package against different toolchains don't collide.
+        let subdir = self.virtual_store_subdir(dep_path);
+        self.ensure_in_virtual_store_with_subdir(
+            dep_path,
+            &subdir,
+            pkg,
+            index,
+            stats,
+            nested_link_targets,
+        )
+    }
+
+    /// `ensure_in_virtual_store` with the virtual-store subdir already
+    /// computed by the caller. The link step's per-package par_iter
+    /// derives `virtual_store_subdir(dep_path)` once to build the
+    /// shared-store entry path, so passing it in here avoids recomputing
+    /// the same `dep_path_to_filename` encode (a `String` alloc plus the
+    /// escape/uppercase scans, and a second alloc + BLAKE3 short-hash on
+    /// long/scoped/peer-context names). `subdir` MUST equal
+    /// `self.virtual_store_subdir(dep_path)`; the public wrapper above
+    /// guarantees that for callers that don't already have it.
+    pub(crate) fn ensure_in_virtual_store_with_subdir(
+        &self,
+        dep_path: &str,
+        subdir: &str,
+        pkg: &LockedPackage,
+        index: &PackageIndex,
+        stats: &mut LinkStats,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<(), Error> {
         let _diag =
             aube_util::diag::Span::new(aube_util::diag::Category::Linker, "ensure_in_vstore")
                 .with_meta_fn(|| {
@@ -118,14 +151,9 @@ impl Linker {
                         index.len()
                     )
                 });
-        // Global-store paths always run through the vstore_key map —
-        // when hashes are installed this folds dep-graph + engine
-        // state into the leaf name, so concurrent builds of the same
-        // package against different toolchains don't collide.
-        let subdir = self.virtual_store_subdir(dep_path);
         let pkg_nm_dir = self
             .virtual_store
-            .join(&subdir)
+            .join(subdir)
             .join("node_modules")
             .join(&pkg.name);
 
@@ -159,8 +187,8 @@ impl Linker {
         }
 
         // Atomically move the dep_path entry from the temp dir to the final location.
-        let tmp_entry = tmp_base.join(&subdir);
-        let final_entry = self.virtual_store.join(&subdir);
+        let tmp_entry = tmp_base.join(subdir);
+        let final_entry = self.virtual_store.join(subdir);
 
         // Ensure the parent of the final entry exists (e.g. for scoped packages).
         if let Some(parent) = final_entry.parent() {

@@ -11,7 +11,7 @@ use crate::sweep::{
     try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
-use aube_lockfile::{LocalSource, LockfileGraph};
+use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
 use aube_store::PackageIndex;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -204,22 +204,43 @@ impl Linker {
             use rayon::prelude::*;
             use rustc_hash::FxHashSet;
 
-            // Pre-create every parent directory (`aube_dir` itself plus
-            // one entry per unique `@scope/`) once so the per-package
-            // par_iter below does not pay 1.4k `create_dir_all` stat
-            // syscalls. The set is tiny (1-5 entries on a typical
-            // graph) so the serial pre-pass is dwarfed by the wins
-            // inside the par_iter that no longer needs the inner
-            // `mkdirp(parent)` call.
+            // Serial pre-pass over every registry package. It already
+            // walks the whole graph to pre-create parent directories, so
+            // fold the two filename encodes each package needs into the
+            // same pass and carry them into the par_iter:
+            //   - `aube_dir_entry_name(dep_path)` for the local
+            //     `.aube/<entry>` symlink, and
+            //   - `virtual_store_subdir(dep_path)` for the shared-store
+            //     target.
+            // Both are pure functions of `dep_path` + builder state
+            // (`hashes`/`virtual_store_dir_max_length` are fixed before
+            // linking), so computing them once here and threading them
+            // through removes the par_iter's recompute of the entry name
+            // and the subdir, plus the subdir's third encode downstream
+            // in `ensure_in_virtual_store`. Each `dep_path_to_filename`
+            // is a `String` alloc + escape/uppercase scans, and a second
+            // alloc + BLAKE3 short-hash on long/scoped/peer-context
+            // names — a per-package CPU/alloc trim on every install.
+            //
+            // Pre-creating the parents (`aube_dir` itself plus one entry
+            // per unique `@scope/`) once also keeps the par_iter off the
+            // 1.4k `create_dir_all` stat syscalls. The parent set is tiny
+            // (1-5 entries on a typical graph), so the serial pre-pass is
+            // dwarfed by the per-package wins inside the par_iter.
             let mut step1_parents: FxHashSet<PathBuf> = FxHashSet::default();
+            let mut step1_prep: Vec<(&String, &LockedPackage, String, String)> =
+                Vec::with_capacity(graph.packages.len());
             for (dep_path, pkg) in &graph.packages {
                 if pkg.local_source.is_some() {
                     continue;
                 }
-                let entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
+                let entry_name = self.aube_dir_entry_name(dep_path);
+                let subdir = self.virtual_store_subdir(dep_path);
+                let entry = aube_dir.join(&entry_name);
                 if let Some(parent) = entry.parent() {
                     step1_parents.insert(parent.to_path_buf());
                 }
+                step1_prep.push((dep_path, pkg, entry_name, subdir));
             }
             for parent in &step1_parents {
                 mkdirp(parent)?;
@@ -229,21 +250,13 @@ impl Linker {
             let step1_timer = std::time::Instant::now();
             let step1_results: Vec<Result<LinkStats, Error>> =
                 with_link_pool(link_parallelism, || {
-                    graph
-                        .packages
+                    step1_prep
                         .par_iter()
-                        .filter_map(|(dep_path, pkg)| {
-                            if pkg.local_source.is_some() {
-                                return None;
-                            }
-                            Some((dep_path, pkg))
-                        })
-                        .map(|(dep_path, pkg)| {
+                        .map(|&(dep_path, pkg, ref entry_name, ref subdir)| {
+                            let dep_path = dep_path.as_str();
                             let mut local_stats = LinkStats::default();
-                            let local_aube_entry =
-                                aube_dir.join(self.aube_dir_entry_name(dep_path));
-                            let global_entry =
-                                self.virtual_store.join(self.virtual_store_subdir(dep_path));
+                            let local_aube_entry = aube_dir.join(entry_name);
+                            let global_entry = self.virtual_store.join(subdir);
 
                             // Single readlink classifies the entry into one of
                             // three states and drives the whole per-package
@@ -285,8 +298,9 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.ensure_in_virtual_store(
+                            self.ensure_in_virtual_store_with_subdir(
                                 dep_path,
+                                subdir,
                                 pkg,
                                 index,
                                 &mut local_stats,
@@ -754,22 +768,27 @@ impl Linker {
             use rayon::prelude::*;
             use rustc_hash::FxHashSet;
 
-            // Pre-create every parent directory (`aube_dir` itself plus
-            // one entry per unique `@scope/`) once so the per-package
-            // par_iter below does not pay 1.4k `create_dir_all` stat
-            // syscalls. The set is tiny (1-5 entries on a typical
-            // graph) so the serial pre-pass is dwarfed by the wins
-            // inside the par_iter that no longer needs the inner
-            // `mkdirp(parent)` call.
+            // Same precompute-once hoist as `link_all`'s step 1: the
+            // serial parent-creation pre-pass already walks every
+            // registry package, so derive each package's entry name and
+            // virtual-store subdir here and thread them into the
+            // par_iter, removing the par_iter's recompute of both and the
+            // subdir's third encode in `ensure_in_virtual_store`. See the
+            // matching block in `link_all` for the full rationale.
             let mut step1_parents: FxHashSet<PathBuf> = FxHashSet::default();
+            let mut step1_prep: Vec<(&String, &LockedPackage, String, String)> =
+                Vec::with_capacity(graph.packages.len());
             for (dep_path, pkg) in &graph.packages {
                 if pkg.local_source.is_some() {
                     continue;
                 }
-                let entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
+                let entry_name = self.aube_dir_entry_name(dep_path);
+                let subdir = self.virtual_store_subdir(dep_path);
+                let entry = aube_dir.join(&entry_name);
                 if let Some(parent) = entry.parent() {
                     step1_parents.insert(parent.to_path_buf());
                 }
+                step1_prep.push((dep_path, pkg, entry_name, subdir));
             }
             for parent in &step1_parents {
                 mkdirp(parent)?;
@@ -779,21 +798,13 @@ impl Linker {
             let step1_timer = std::time::Instant::now();
             let step1_results: Vec<Result<LinkStats, Error>> =
                 with_link_pool(link_parallelism, || {
-                    graph
-                        .packages
+                    step1_prep
                         .par_iter()
-                        .filter_map(|(dep_path, pkg)| {
-                            if pkg.local_source.is_some() {
-                                return None;
-                            }
-                            Some((dep_path, pkg))
-                        })
-                        .map(|(dep_path, pkg)| {
+                        .map(|&(dep_path, pkg, ref entry_name, ref subdir)| {
+                            let dep_path = dep_path.as_str();
                             let mut local_stats = LinkStats::default();
-                            let local_aube_entry =
-                                aube_dir.join(self.aube_dir_entry_name(dep_path));
-                            let global_entry =
-                                self.virtual_store.join(self.virtual_store_subdir(dep_path));
+                            let local_aube_entry = aube_dir.join(entry_name);
+                            let global_entry = self.virtual_store.join(subdir);
 
                             let state = classify_entry_state(&local_aube_entry, &global_entry);
 
@@ -819,8 +830,9 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.ensure_in_virtual_store(
+                            self.ensure_in_virtual_store_with_subdir(
                                 dep_path,
+                                subdir,
                                 pkg,
                                 index,
                                 &mut local_stats,
