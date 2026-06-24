@@ -1,4 +1,7 @@
 use super::*;
+use aube_lockfile::dep_path_filename::{
+    DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, dep_path_to_filename,
+};
 use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
 use aube_store::Store;
 
@@ -110,9 +113,23 @@ const ENCODE_FIXTURES: &[&str] = &[
 // replacing what used to be 2-3 redundant `dep_path_to_filename`
 // encodes per package. The hoist is only output-preserving if the
 // value carried forward is byte-identical to what each eliminated
-// recompute site would have produced. These tests pin that invariant:
-// the precomputed name/subdir must equal a fresh per-site recompute,
-// across both the hashed and unhashed virtual-store modes.
+// recompute site would have produced.
+//
+// The eliminated sites all bottomed out at the SAME primitive
+// composition: the local `.aube/` link name was
+// `dep_path_to_filename(dep_path, max)`, and the shared-store target
+// (the par_iter's `global_entry` and the now-removed `subdir` encode
+// inside the public `ensure_in_virtual_store`) was
+// `dep_path_to_filename(hashes.hashed_dep_path(dep_path), max)`. So the
+// non-vacuous check is to recompute each carried value INDEPENDENTLY
+// from `dep_path_to_filename` (and `GraphHashes::hashed_dep_path`)
+// directly — NOT by re-calling the very wrapper under test — and assert
+// the linker's `aube_dir_entry_name` / `virtual_store_subdir` outputs
+// equal it. A `dep_path_to_filename(dep_path, max)` is what the linker
+// builds at the eliminated `aube_dir.join(self.aube_dir_entry_name(..))`
+// and `self.virtual_store.join(self.virtual_store_subdir(..))` sites, so
+// if the hoist ever carried a value that diverged from that primitive,
+// these fail.
 
 fn linker_for_encode_test(dir: &Path, hashes: Option<GraphHashes>) -> Linker {
     let store = Store::at(dir.join("store/files"));
@@ -129,21 +146,36 @@ fn precomputed_entry_name_and_subdir_match_recompute_unhashed() {
     let linker = linker_for_encode_test(dir.path(), None);
 
     for dep_path in ENCODE_FIXTURES {
-        // The value the pre-pass carries forward.
+        // The values the pre-pass carries forward into the par_iter and
+        // on into `ensure_in_virtual_store_with_subdir`.
         let precomputed_entry = linker.aube_dir_entry_name(dep_path);
         let precomputed_subdir = linker.virtual_store_subdir(dep_path);
 
-        // What the par_iter / `ensure_in_virtual_store` recompute sites
-        // produced before the hoist — must be byte-identical.
+        // Independent recompute of what the eliminated recompute sites
+        // produced: both the `.aube/` link name and (in the unhashed
+        // mode, where `hashed_dep_path` is the identity) the shared-store
+        // subdir bottom out at the same bare-dep_path encode. Built from
+        // the primitive directly, NOT by re-calling the linker wrapper,
+        // so this catches the hoist carrying any value that diverged from
+        // what the original `aube_dir.join(aube_dir_entry_name(..))` /
+        // `virtual_store.join(virtual_store_subdir(..))` sites encoded.
+        let recompute = dep_path_to_filename(dep_path, DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH);
         assert_eq!(
-            precomputed_entry,
-            linker.aube_dir_entry_name(dep_path),
-            "entry name not stable for {dep_path}"
+            precomputed_entry, recompute,
+            "entry name diverged from the bare-dep_path encode for {dep_path}"
         );
         assert_eq!(
-            precomputed_subdir,
-            linker.virtual_store_subdir(dep_path),
-            "subdir not stable for {dep_path}"
+            precomputed_subdir, recompute,
+            "unhashed subdir diverged from the bare-dep_path encode for {dep_path}"
+        );
+
+        // Cross-check: with no hash fold the two carried values must
+        // coincide, so a hoist that swapped entry for subdir (or vice
+        // versa) in the unhashed path would still produce correct output
+        // here — the hashed test below is what pins their separation.
+        assert_eq!(
+            precomputed_entry, precomputed_subdir,
+            "entry name and subdir must coincide in the unhashed mode for {dep_path}"
         );
     }
 }
@@ -155,8 +187,9 @@ fn precomputed_subdir_matches_recompute_with_graph_hashes() {
     // from `aube_dir_entry_name` (which never applies the hash). The
     // hoist carries the *subdir* (hashed) into `ensure_in_virtual_store`
     // and the *entry name* (unhashed) into the local `.aube/` link —
-    // mixing them up would be a behavior change. Pin that the two are
-    // distinct under hashing and each matches its own recompute.
+    // mixing them up would be a behavior change. Pin that each carried
+    // value matches its independent primitive recompute and that the two
+    // are distinct under hashing.
     let dir = tempfile::tempdir().unwrap();
     let mut node_hash = std::collections::BTreeMap::new();
     for (i, dep_path) in ENCODE_FIXTURES.iter().enumerate() {
@@ -166,20 +199,40 @@ fn precomputed_subdir_matches_recompute_with_graph_hashes() {
             format!("{:016x}{:016x}", 0x0123_4567_89ab_cdefu64, i as u64),
         );
     }
-    let linker = linker_for_encode_test(dir.path(), Some(GraphHashes { node_hash }));
+    let hashes = GraphHashes { node_hash };
+    let linker = linker_for_encode_test(dir.path(), Some(hashes.clone()));
 
     for dep_path in ENCODE_FIXTURES {
         let entry = linker.aube_dir_entry_name(dep_path);
         let subdir = linker.virtual_store_subdir(dep_path);
 
-        // Each matches its own recompute (the memoization invariant).
-        assert_eq!(entry, linker.aube_dir_entry_name(dep_path));
-        assert_eq!(subdir, linker.virtual_store_subdir(dep_path));
+        // Independent recompute of the eliminated sites: the `.aube/`
+        // link name is the bare-dep_path encode, while the shared-store
+        // subdir is the encode of the hash-folded dep_path. Both built
+        // from the primitives directly (`dep_path_to_filename` and
+        // `hashed_dep_path`), NOT by re-calling the wrappers under test.
+        let entry_recompute = dep_path_to_filename(dep_path, DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH);
+        let subdir_recompute = dep_path_to_filename(
+            &hashes.hashed_dep_path(dep_path),
+            DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+        );
+        assert_eq!(
+            entry, entry_recompute,
+            "entry name diverged from the bare-dep_path encode for {dep_path}"
+        );
+        assert_eq!(
+            subdir, subdir_recompute,
+            "hashed subdir diverged from the hash-folded encode for {dep_path}"
+        );
 
         // And the hash genuinely makes the subdir differ from the entry
         // name, so the two values are not interchangeable — proving the
-        // hoist must carry them separately. (`@scope/Core` etc. all gain
-        // a `-<hash>` leaf suffix in the subdir that the entry lacks.)
+        // hoist must carry them separately. For short names the subdir
+        // gains a visible `-<hex>` leaf suffix the entry lacks; for the
+        // long peer-graph fixture the suffix is truncated off, but the
+        // entry and subdir still differ because the BLAKE3 short-hash is
+        // computed over different inputs (the hash-folded path vs. the
+        // bare one), so the trailing hash diverges either way.
         assert_ne!(
             entry, subdir,
             "graph hash should make subdir differ from entry name for {dep_path}"
