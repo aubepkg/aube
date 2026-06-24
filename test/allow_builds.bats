@@ -89,6 +89,26 @@ JSON
 	assert_file_exists aube-builds-marker.txt
 }
 
+@test "managed config disables --dangerously-allow-all-builds" {
+	cat >package.json <<'JSON'
+{
+  "name": "allow-builds-managed-dangerous-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "aube-test-builds-marker": "^1.0.0"
+  }
+}
+JSON
+	cat >managed.toml <<'TOML'
+dangerouslyAllowAllBuilds = false
+TOML
+
+	run env AUBE_MANAGED_CONFIG_PATH="$PWD/managed.toml" aube install --dangerously-allow-all-builds
+	assert_success
+	assert_output --partial "managed config enforced"
+	assert_file_not_exists aube-builds-marker.txt
+}
+
 @test "pnpm-workspace.yaml allowBuilds is honored" {
 	cat >package.json <<'JSON'
 {

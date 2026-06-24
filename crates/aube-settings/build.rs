@@ -63,6 +63,12 @@ struct SettingDef {
     /// `["workspaceYaml", "npmrc"]`.
     #[serde(default)]
     precedence: Vec<String>,
+    /// Managed hardening merge policy. Empty means this setting is not
+    /// enforceable through managed config. Supported values are interpreted by
+    /// `values.rs`: `max`, `trueWins`, `falseWins`, `managedWins`, and ranked
+    /// strings such as `ranked:off<on<required`.
+    #[serde(default, rename = "managedPolicy")]
+    managed_policy: String,
     #[serde(default)]
     examples: Vec<String>,
 }
@@ -130,6 +136,7 @@ fn main() {
         )
         .unwrap();
         writeln!(out, "        npm_shared: {},", def.npm_shared).unwrap();
+        writeln!(out, "        managed_policy: {},", lit(&def.managed_policy)).unwrap();
         writeln!(out, "    }},").unwrap();
     }
 
@@ -292,7 +299,8 @@ fn generate_resolved_accessors(settings: &BTreeMap<String, SettingDef>) -> Strin
         // string first preserves "first source with a value wins" and
         // surfaces the parse failure as `None` so the caller's default
         // applies instead of a silently-overridden value.
-        for (i, src) in order.iter().enumerate() {
+        let mut source_exprs = Vec::new();
+        for src in &order {
             let (call, arg) = match src.as_str() {
                 "cli" => (cli_call, "ctx.cli"),
                 "env" => (env_call, "ctx.env"),
@@ -304,54 +312,100 @@ fn generate_resolved_accessors(settings: &BTreeMap<String, SettingDef>) -> Strin
                 "embedderDefaults" => (npmrc_call, "ctx.embedder_defaults"),
                 other => panic!("{name}: unknown source `{other}` in precedence"),
             };
-            let is_last = i + 1 == order.len();
-            let expr = format!("super::{call}({name:?}, {arg})");
-            let suffix = if kind == Kind::Enum && is_last {
-                format!(".and_then(|s| {value_ty}::from_str_normalized(&s))")
-            } else {
-                String::new()
-            };
-            if is_last {
-                let value_expr = format!("{expr}{suffix}");
-                match &default_expr {
-                    Some(default) => {
-                        if default == "vec![]" {
-                            writeln!(out, "    {value_expr}.unwrap_or_default()").unwrap()
-                        } else {
-                            writeln!(out, "    {value_expr}.unwrap_or({default})").unwrap()
-                        }
-                    }
-                    None => writeln!(out, "    {value_expr}").unwrap(),
+            source_exprs.push(format!("super::{call}({name:?}, {arg})"));
+        }
+        if kind == Kind::Enum {
+            emit_raw_resolution(&mut out, &source_exprs);
+            match &default_expr {
+                Some(default) => {
+                    let default_raw =
+                        parse_toml_string_literal(def.default.trim()).unwrap_or_else(|| {
+                            panic!("{name}: enum default expression exists but raw default did not parse")
+                        });
+                    writeln!(
+                        out,
+                        "    let raw = raw.or_else(|| Some({default_raw:?}.to_string()));"
+                    )
+                    .unwrap();
+                    writeln!(
+                        out,
+                        "    let raw = super::apply_managed_string({name:?}, raw, ctx.managed_aube_config);"
+                    )
+                    .unwrap();
+                    writeln!(
+                        out,
+                        "    raw.and_then(|s| {value_ty}::from_str_normalized(&s)).unwrap_or({default})"
+                    )
+                    .unwrap();
                 }
-            } else {
-                writeln!(out, "    if let Some(v) = {expr} {{").unwrap();
-                if kind == Kind::Enum {
-                    match &default_expr {
-                        Some(default) => {
-                            writeln!(
-                                out,
-                                "        return {value_ty}::from_str_normalized(&v).unwrap_or({default});"
-                            )
-                            .unwrap();
-                        }
-                        None => {
-                            writeln!(out, "        return {value_ty}::from_str_normalized(&v);")
-                                .unwrap();
-                        }
-                    }
-                } else {
-                    match &default_expr {
-                        Some(_) => writeln!(out, "        return v;").unwrap(),
-                        None => writeln!(out, "        return Some(v);").unwrap(),
-                    }
+                None => {
+                    writeln!(
+                        out,
+                        "    super::apply_managed_string({name:?}, raw, ctx.managed_aube_config).and_then(|s| {value_ty}::from_str_normalized(&s))"
+                    )
+                    .unwrap();
                 }
-                writeln!(out, "    }}").unwrap();
             }
+            writeln!(out, "}}\n").unwrap();
+            continue;
+        }
+
+        emit_resolution(&mut out, &source_exprs);
+        let finalizer = match kind {
+            Kind::Bool => "apply_managed_bool",
+            Kind::String => "apply_managed_string",
+            Kind::U64 => "apply_managed_u64",
+            Kind::VecString => "apply_managed_string_list",
+            Kind::Enum => unreachable!(),
+        };
+        match &default_expr {
+            Some(default) => {
+                writeln!(out, "    let value = value.or(Some({default}));").unwrap();
+                if default == "vec![]" {
+                    writeln!(
+                        out,
+                        "    super::{finalizer}({name:?}, value, ctx.managed_aube_config).unwrap_or_default()"
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(
+                        out,
+                        "    super::{finalizer}({name:?}, value, ctx.managed_aube_config).unwrap_or({default})"
+                    )
+                    .unwrap();
+                }
+            }
+            None => writeln!(
+                out,
+                "    super::{finalizer}({name:?}, value, ctx.managed_aube_config)"
+            )
+            .unwrap(),
         }
         writeln!(out, "}}\n").unwrap();
     }
 
     out
+}
+
+fn emit_resolution(out: &mut String, source_exprs: &[String]) {
+    writeln!(out, "    let value = (|| {{").unwrap();
+    emit_raw_resolution_body(out, source_exprs);
+    writeln!(out, "    }})();").unwrap();
+}
+
+fn emit_raw_resolution(out: &mut String, source_exprs: &[String]) {
+    writeln!(out, "    let raw = (|| {{").unwrap();
+    emit_raw_resolution_body(out, source_exprs);
+    writeln!(out, "    }})();").unwrap();
+}
+
+fn emit_raw_resolution_body(out: &mut String, source_exprs: &[String]) {
+    for expr in source_exprs {
+        writeln!(out, "        if let Some(v) = {expr} {{").unwrap();
+        writeln!(out, "            return Some(v);").unwrap();
+        writeln!(out, "        }}").unwrap();
+    }
+    writeln!(out, "        None").unwrap();
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

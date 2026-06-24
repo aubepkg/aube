@@ -1,7 +1,8 @@
 use super::{
-    ListLocation, literal_aliases, read_merged, read_single, resolve_aliases, settings_meta,
-    user_npmrc_path,
+    ListLocation, literal_aliases, read_merged, read_single, setting_default_value,
+    setting_for_key, settings_meta, user_npmrc_path,
 };
+use aube_settings::meta::SettingMeta;
 use clap::Args;
 use miette::miette;
 
@@ -98,6 +99,26 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
         let canonical = canonical_list_key(&k);
         seen.insert(canonical, v);
     }
+    if matches!(location, ListLocation::Merged) {
+        let managed_entries = super::aube_config::load_managed_entries();
+        if !managed_entries.is_empty() {
+            for meta in settings_meta::all() {
+                if meta.managed_policy.is_empty() {
+                    continue;
+                }
+                let primary = primary_list_key(meta);
+                let local = seen
+                    .get(&primary)
+                    .cloned()
+                    .or_else(|| setting_default_value(meta));
+                if let Some(effective) =
+                    aube_settings::values::apply_managed_raw(meta.name, local, &managed_entries)
+                {
+                    seen.insert(primary, effective);
+                }
+            }
+        }
+    }
 
     let mut defaults: std::collections::HashSet<String> = std::collections::HashSet::new();
     if args.all {
@@ -144,9 +165,12 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
 }
 
 pub(super) fn canonical_list_key(key: &str) -> String {
-    let aliases = resolve_aliases(key);
-    if aliases.len() == 1 && aliases[0] == key {
-        return key.to_string();
-    }
-    aliases.first().cloned().unwrap_or_else(|| key.to_string())
+    setting_for_key(key).map_or_else(|| key.to_string(), primary_list_key)
+}
+
+fn primary_list_key(meta: &SettingMeta) -> String {
+    literal_aliases(meta.npmrc_keys)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| meta.name.to_string())
 }

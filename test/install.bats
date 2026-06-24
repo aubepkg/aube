@@ -914,6 +914,59 @@ JSON
 	assert [ ! -e node_modules ]
 }
 
+@test "aube install --dry-run resolves without writing lockfile or node_modules" {
+	echo '{"name":"test","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}' >package.json
+	run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: resolved"
+	assert [ ! -e aube-lock.yaml ]
+	assert [ ! -e node_modules ]
+}
+
+@test "aube install --dry-run --frozen-lockfile fails without lockfile" {
+	echo '{"name":"test","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}' >package.json
+	run aube install --dry-run --frozen-lockfile
+	assert_failure
+	assert_output --partial "no lockfile found and --frozen-lockfile is set"
+	assert [ ! -e aube-lock.yaml ]
+	assert [ ! -e node_modules ]
+}
+
+@test "aube install --dry-run in CI resolves without lockfile" {
+	echo '{"name":"test","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}' >package.json
+	CI=1 run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: resolved"
+	assert [ ! -e aube-lock.yaml ]
+	assert [ ! -e node_modules ]
+}
+
+@test "aube install --dry-run in CI resolves drifted lockfile" {
+	_setup_basic_fixture
+	node -e '
+		const fs = require("fs");
+		const pkg = JSON.parse(fs.readFileSync("package.json"));
+		pkg.dependencies["is-number"] = "^7.0.0";
+		fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+	'
+	CI=1 run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: resolved"
+	refute_output --partial "lockfile is out of date"
+	assert [ ! -e node_modules ]
+}
+
+@test "aube install --dry-run with fresh lockfile still reports skipped fetch and link" {
+	_setup_basic_fixture
+	rm -rf node_modules
+	run aube install --dry-run
+	assert_success
+	assert_output --partial "Dry run: lockfile is up to date"
+	assert_output --partial "fetch/link steps were not run"
+	refute_output --partial "resolution step is skipped"
+	assert [ ! -e node_modules ]
+}
+
 @test "aube install --lockfile-only is a no-op when lockfile is fresh" {
 	_setup_basic_fixture
 	# Lockfile already exists in fixture; --lockfile-only should detect

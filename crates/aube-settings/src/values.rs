@@ -57,6 +57,12 @@ fn global_cli_overrides() -> &'static [(String, String)] {
 /// outrank user-scope entries, and within a scope aube's own config
 /// outranks `.npmrc`. See the module-level docs for the full chain.
 pub struct ResolveCtx<'a> {
+    /// Managed hardening config (`/etc/aube/managed.toml` plus any
+    /// additive test/deployment override). This source is not part of
+    /// normal precedence: generated accessors resolve the ordinary
+    /// effective value first, then this managed source can only keep
+    /// or strengthen it for settings with an explicit managed policy.
+    pub managed_aube_config: &'a [(String, String)],
     /// Project-scope aube config (`<cwd>/.config/aube/config.toml`).
     /// Highest-precedence file source by default — a project may pin
     /// settings here as an alternative to committing them into the
@@ -112,6 +118,7 @@ impl<'a> ResolveCtx<'a> {
         workspace_yaml: &'a std::collections::BTreeMap<String, yaml_serde::Value>,
     ) -> Self {
         Self {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: npmrc,
             user_aube_config: &[],
@@ -192,6 +199,10 @@ pub fn process_env() -> &'static [(String, String)] {
 ///     > user_aube_config    (~/.config/aube/config.toml)
 ///     > user_npmrc          (~/.npmrc + pnpm auth.ini)
 /// ```
+///
+/// Managed config is deliberately not listed in this chain. It is a
+/// final hardening pass that can only strengthen settings marked with
+/// a `managedPolicy` in `settings.toml`; unmanaged settings ignore it.
 ///
 /// Two principles drive the file-source ordering:
 ///
@@ -635,6 +646,182 @@ pub(crate) fn string_list_from_cli(setting: &str, cli: &[(String, String)]) -> O
     cli_raw_for(meta, cli, |_| true).map(parse_string_list)
 }
 
+fn managed_raw(setting: &str) -> Option<&'static str> {
+    meta::find(setting)
+        .and_then(|meta| (!meta.managed_policy.is_empty()).then_some(meta.managed_policy))
+}
+
+fn managed_values(setting: &str, entries: &[(String, String)]) -> Vec<String> {
+    let Some(meta) = meta::find(setting) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == meta.name || meta.npmrc_keys.contains(&key.as_str()))
+        .map(|(_, raw)| raw.clone())
+        .collect()
+}
+
+pub(crate) fn apply_managed_bool(
+    setting: &str,
+    local: Option<bool>,
+    managed_entries_: &[(String, String)],
+) -> Option<bool> {
+    let Some(policy) = managed_raw(setting) else {
+        return local;
+    };
+    let valid_managed: Vec<bool> = managed_values(setting, managed_entries_)
+        .into_iter()
+        .filter_map(|raw| parse_bool(&raw))
+        .collect();
+    if valid_managed.is_empty() {
+        return local;
+    }
+    let enforced = match policy {
+        "trueWins" if valid_managed.iter().any(|v| *v) => true,
+        "falseWins" if valid_managed.iter().any(|v| !*v) => false,
+        _ => return local,
+    };
+    if local.is_some_and(|v| v != enforced) {
+        warn_managed_enforced(setting);
+    }
+    Some(enforced)
+}
+
+pub(crate) fn apply_managed_u64(
+    setting: &str,
+    local: Option<u64>,
+    managed_entries_: &[(String, String)],
+) -> Option<u64> {
+    let Some(policy) = managed_raw(setting) else {
+        return local;
+    };
+    let Some(managed) = managed_values(setting, managed_entries_)
+        .into_iter()
+        .filter_map(|raw| raw.trim().parse::<u64>().ok())
+        .max()
+    else {
+        return local;
+    };
+    let enforced = match policy {
+        "max" => local.map_or(managed, |v| v.max(managed)),
+        _ => return local,
+    };
+    if local.is_some_and(|v| v != enforced) {
+        warn_managed_enforced(setting);
+    }
+    Some(enforced)
+}
+
+pub(crate) fn apply_managed_string(
+    setting: &str,
+    local: Option<String>,
+    managed_entries_: &[(String, String)],
+) -> Option<String> {
+    let Some(policy) = managed_raw(setting) else {
+        return local;
+    };
+    let managed_values = managed_values(setting, managed_entries_);
+    if managed_values.is_empty() {
+        return local;
+    }
+    if policy == "managedWins" {
+        let managed = managed_values[0].clone();
+        if local.as_deref().is_some_and(|v| v != managed) {
+            warn_managed_enforced(setting);
+        }
+        return Some(managed);
+    }
+    let Some(rank_spec) = policy.strip_prefix("ranked:") else {
+        return local;
+    };
+    let Some((managed, managed_rank)) = managed_values
+        .into_iter()
+        .filter_map(|raw| ranked_value(rank_spec, &raw).map(|rank| (raw, rank)))
+        .max_by_key(|(_, rank)| *rank)
+    else {
+        return local;
+    };
+    let local_rank = local.as_deref().and_then(|v| ranked_value(rank_spec, v));
+    if local_rank.is_none_or(|rank| managed_rank > rank) {
+        if local.is_some() {
+            warn_managed_enforced(setting);
+        }
+        Some(managed)
+    } else {
+        local
+    }
+}
+
+pub(crate) fn apply_managed_string_list(
+    setting: &str,
+    local: Option<Vec<String>>,
+    managed_entries_: &[(String, String)],
+) -> Option<Vec<String>> {
+    let Some(policy) = managed_raw(setting) else {
+        return local;
+    };
+    if policy != "managedWins" {
+        return local;
+    }
+    let mut managed_lists = managed_values(setting, managed_entries_)
+        .into_iter()
+        .map(|raw| parse_string_list(&raw));
+    let Some(mut managed) = managed_lists.next() else {
+        return local;
+    };
+    for list in managed_lists {
+        managed.retain(|item| list.contains(item));
+    }
+    if local
+        .as_ref()
+        .is_some_and(|v| v.iter().any(|item| !managed.contains(item)))
+    {
+        warn_managed_enforced(setting);
+    }
+    Some(managed)
+}
+
+/// Apply managed hardening to a raw scalar/list setting value for dynamic
+/// callers such as `aube config get/list`.
+pub fn apply_managed_raw(
+    setting: &str,
+    local: Option<String>,
+    managed_entries: &[(String, String)],
+) -> Option<String> {
+    let meta = meta::find(setting)?;
+    match meta.type_ {
+        "bool" => {
+            let local = local.as_deref().and_then(parse_bool);
+            apply_managed_bool(setting, local, managed_entries).map(|v| v.to_string())
+        }
+        "int" => {
+            let local = local.and_then(|raw| raw.trim().parse::<u64>().ok());
+            apply_managed_u64(setting, local, managed_entries).map(|v| v.to_string())
+        }
+        "list<string>" => {
+            let local = local.map(|raw| parse_string_list(&raw));
+            apply_managed_string_list(setting, local, managed_entries).map(|v| v.join(","))
+        }
+        ty if is_stringish(ty) => apply_managed_string(setting, local, managed_entries),
+        _ => local,
+    }
+}
+
+fn ranked_value(rank_spec: &str, raw: &str) -> Option<usize> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    rank_spec
+        .split('<')
+        .position(|value| value.trim() == normalized)
+}
+
+fn warn_managed_enforced(setting: &str) {
+    tracing::warn!(
+        code = aube_codes::warnings::WARN_AUBE_MANAGED_CONFIG_ENFORCED,
+        "managed config enforced `{setting}` and ignored a weaker local/env/CLI value"
+    );
+}
+
 /// Parse a pnpm/npm-style stringified list. Accepts a JSON-ish array
 /// `["a","b"]` or a plain comma-separated list `a,b,c`. Empty entries
 /// and surrounding whitespace/quotes are trimmed.
@@ -988,6 +1175,7 @@ mod tests {
         )];
         let cli = vec![("auto-install-peers".to_string(), "true".to_string())];
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &npmrc,
             user_aube_config: &[],
@@ -1010,6 +1198,7 @@ mod tests {
             "true".to_string(),
         )];
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &aube_config,
             project_npmrc: &npmrc,
             user_aube_config: &aube_config,
@@ -1032,6 +1221,7 @@ mod tests {
         let aube_config = entries(&[("minimumReleaseAge", "2880")]);
         let ws = raw_yaml("minimumReleaseAge: 1440\n");
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &[],
             user_aube_config: &aube_config,
@@ -1045,6 +1235,7 @@ mod tests {
 
         let ws = BTreeMap::new();
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &[],
             user_aube_config: &aube_config,
@@ -1055,6 +1246,162 @@ mod tests {
             embedder_defaults: &[],
         };
         assert_eq!(resolved::minimum_release_age(&ctx), 2880);
+    }
+
+    #[test]
+    fn managed_max_policy_enforces_larger_integer() {
+        let local = entries(&[("minimumReleaseAge", "0")]);
+        let managed = entries(&[("minimumReleaseAge", "1440")]);
+        let ws = BTreeMap::new();
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed,
+            project_aube_config: &local,
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::minimum_release_age(&ctx), 1440);
+    }
+
+    #[test]
+    fn managed_bool_policies_keep_stricter_value() {
+        let managed_true = entries(&[("minimumReleaseAgeStrict", "true")]);
+        let managed_false = entries(&[("dangerouslyAllowAllBuilds", "false")]);
+        let managed_danger_true = entries(&[("dangerouslyAllowAllBuilds", "true")]);
+        let local_false = entries(&[("minimumReleaseAgeStrict", "false")]);
+        let ws = BTreeMap::new();
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_true,
+            project_aube_config: &local_false,
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert!(resolved::minimum_release_age_strict(&ctx));
+
+        let cli = entries(&[("dangerously-allow-all-builds", "true")]);
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_false,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &cli,
+            embedder_defaults: &[],
+        };
+        assert!(!resolved::dangerously_allow_all_builds(&ctx));
+        assert_eq!(
+            apply_managed_bool("dangerouslyAllowAllBuilds", None, &managed_danger_true),
+            None
+        );
+        assert_eq!(
+            apply_managed_raw("dangerouslyAllowAllBuilds", None, &managed_danger_true),
+            None
+        );
+    }
+
+    #[test]
+    fn managed_policies_cannot_weaken_defaults() {
+        let managed_age = entries(&[("minimumReleaseAge", "0")]);
+        let managed_advisory = entries(&[("advisoryCheck", "off")]);
+        let managed_exotic_subdeps = entries(&[("blockExoticSubdeps", "false")]);
+        let ws = BTreeMap::new();
+
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_age,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::minimum_release_age(&ctx), 1440);
+
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_advisory,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::advisory_check(&ctx), resolved::AdvisoryCheck::On);
+
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed_exotic_subdeps,
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert!(resolved::block_exotic_subdeps(&ctx));
+    }
+
+    #[test]
+    fn managed_ranked_policy_picks_strictest_enum() {
+        let local = entries(&[("advisoryCheck", "off")]);
+        let managed = entries(&[("advisoryCheck", "required")]);
+        let ws = BTreeMap::new();
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed,
+            project_aube_config: &local,
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(
+            resolved::advisory_check(&ctx),
+            resolved::AdvisoryCheck::Required
+        );
+    }
+
+    #[test]
+    fn managed_list_policy_replaces_local_and_intersects_managed_sources() {
+        let local = entries(&[("minimumReleaseAgeExclude", "left-pad,is-odd")]);
+        let managed = entries(&[
+            ("minimumReleaseAgeExclude", "left-pad,is-even"),
+            ("minimumReleaseAgeExclude", "left-pad,is-number"),
+        ]);
+        let ws = BTreeMap::new();
+        let ctx = ResolveCtx {
+            managed_aube_config: &managed,
+            project_aube_config: &local,
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(
+            resolved::minimum_release_age_exclude(&ctx),
+            Some(vec!["left-pad".to_string()])
+        );
     }
 
     #[test]
@@ -1069,6 +1416,7 @@ mod tests {
         let user_aube_config = entries(&[("autoInstallPeers", "true")]);
         let ws = BTreeMap::new();
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &[],
             user_aube_config: &user_aube_config,
@@ -1093,6 +1441,7 @@ mod tests {
         let user_aube_config = entries(&[("autoInstallPeers", "true")]);
         let ws = BTreeMap::new();
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &project_npmrc,
             user_aube_config: &user_aube_config,
@@ -1117,6 +1466,7 @@ mod tests {
         let project_aube_config = entries(&[("autoInstallPeers", "true")]);
         let ws = BTreeMap::new();
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &project_aube_config,
             project_npmrc: &project_npmrc,
             user_aube_config: &[],
@@ -1144,6 +1494,7 @@ mod tests {
         let user_aube_config = entries(&[("autoInstallPeers", "true")]);
         let ws = raw_yaml("autoInstallPeers: false\n");
         let ctx = ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &[],
             user_aube_config: &user_aube_config,

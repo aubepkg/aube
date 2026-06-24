@@ -2,7 +2,6 @@ use crate::{Error, FxHashSet, Resolver};
 use aube_registry::Packument;
 use aube_registry::client::RegistryClient;
 use aube_util::adaptive::AdaptiveLimit;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -28,7 +27,7 @@ pub(super) struct FetchScheduler {
     client: Arc<RegistryClient>,
     cache_dir: Option<PathBuf>,
     full_cache_dir: Option<PathBuf>,
-    mra_exclude: HashSet<String>,
+    mra_exclude: crate::trust::PackageVersionPolicy,
     force_metadata_primer: bool,
     needs_time: bool,
 }
@@ -50,7 +49,7 @@ impl FetchScheduler {
                 .minimum_release_age
                 .as_ref()
                 .map(|m| m.exclude.clone())
-                .unwrap_or_default(),
+                .unwrap_or_else(crate::trust::PackageVersionPolicy::empty),
             force_metadata_primer: resolver.force_metadata_primer,
             needs_time,
         }
@@ -70,7 +69,10 @@ impl FetchScheduler {
             return;
         }
         self.in_flight_names.insert(name.to_string());
-        let primer_covers_cutoff = self.mra_exclude.contains(name)
+        // Only a name-only exclude lets us skip the cutoff sight-unseen;
+        // a version-specific rule still needs publish times to tell which
+        // versions are exempt, so it falls through to the cutoff check.
+        let primer_covers_cutoff = self.mra_exclude.matches_name_only(name)
             || published_by.is_none_or(crate::primer::covers_cutoff);
         self.in_flight.spawn(fetch_one_packument(FetchInputs {
             name: name.to_string(),

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0](https://github.com/jdx/aube/compare/v1.23.0...v1.24.0) - 2026-06-23
+
+### Added
+
+- *(config)* add managed hardening config ([#935](https://github.com/jdx/aube/pull/935))
+- *(sbom)* exclude peer-only components ([#934](https://github.com/jdx/aube/pull/934))
+- *(install)* add dry-run resolution preview ([#927](https://github.com/jdx/aube/pull/927))
+- *(sbom)* mark dev-only CycloneDX components ([#926](https://github.com/jdx/aube/pull/926))
+- *(view)* infer package name from manifest ([#925](https://github.com/jdx/aube/pull/925))
+
+### Fixed
+
+- *(install)* persist computed tarball integrity ([#933](https://github.com/jdx/aube/pull/933))
+- *(run)* honor recursive no-bail exits ([#928](https://github.com/jdx/aube/pull/928))
+- *(install)* validate trust policy on lockfile reuse ([#929](https://github.com/jdx/aube/pull/929))
+- *(add)* check exact pins with versioned OSV gate ([#923](https://github.com/jdx/aube/pull/923))
+
+### Other
+
+- refresh benchmarks for v1.23.0 ([#922](https://github.com/jdx/aube/pull/922))
+
 ## [1.23.0](https://github.com/jdx/aube/compare/v1.22.0...v1.23.0) - 2026-06-21
 
 ### Fixed

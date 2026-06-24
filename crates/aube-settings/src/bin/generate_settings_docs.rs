@@ -190,6 +190,14 @@ fn render_setting(out: &mut String, setting: &SettingMeta) {
     source_line(out, "Environment", setting.env_vars);
     source_line(out, ".npmrc keys", setting.npmrc_keys);
     source_line(out, "Workspace YAML keys", setting.workspace_yaml_keys);
+    if !setting.managed_policy.is_empty() {
+        writeln!(
+            out,
+            "- Managed policy: {}",
+            code_span(setting.managed_policy)
+        )
+        .unwrap();
+    }
     writeln!(out).unwrap();
 
     if !setting.docs.trim().is_empty() {

@@ -11,6 +11,10 @@ Generate a Software Bill of Materials (CycloneDX or SPDX)
 
 Show only devDependencies
 
+### `--exclude-peers`
+
+Exclude peer dependencies from CycloneDX output
+
 ### `--format <FORMAT>`
 
 Output format: `cyclonedx` (default) or `spdx`

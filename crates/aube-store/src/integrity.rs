@@ -197,6 +197,14 @@ pub fn sha512_integrity(data: &[u8]) -> String {
         hasher.update(data);
         hasher.finalize_reset()
     });
+    let mut digest_buf = [0u8; 64];
+    digest_buf.copy_from_slice(&digest);
+    sha512_integrity_from_digest(&digest_buf)
+}
+
+/// Return the npm Subresource Integrity string for a precomputed
+/// SHA-512 digest.
+pub fn sha512_integrity_from_digest(digest: &[u8; 64]) -> String {
     use base64::Engine;
     format!(
         "{SHA512_INTEGRITY_PREFIX}{}",

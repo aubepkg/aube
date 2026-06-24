@@ -62,6 +62,7 @@ pub(super) struct LockfileOnlyInput<'a> {
     pub minimum_release_age_override: Option<u64>,
     pub ws_package_versions: &'a HashMap<String, String>,
     pub ignore_scripts: bool,
+    pub write_lockfile: bool,
     pub prog_ref: Option<&'a InstallProgress>,
 }
 
@@ -93,6 +94,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         minimum_release_age_override,
         ws_package_versions,
         ignore_scripts,
+        write_lockfile,
         prog_ref,
     } = input;
 
@@ -174,6 +176,12 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         tracing::debug!("--lockfile-only: lockfile already up to date");
         if let Some(p) = prog_ref {
             p.finish(true);
+        }
+        if !write_lockfile {
+            eprintln!(
+                "Dry run: lockfile is up to date; fetch/link steps were not run and node_modules were not modified"
+            );
+            return Ok(());
         }
         eprintln!("Lockfile is up to date, resolution step is skipped");
         return Ok(());
@@ -292,6 +300,16 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     // (`optional: true`, `transitivePeerDependencies`) so `--lockfile-only`
     // output stays byte-identical to a regular install.
     crate::commands::prepare_resolved_graph_for_lockfile_write(&mut graph);
+    if !write_lockfile {
+        if let Some(p) = prog_ref {
+            p.finish(true);
+        }
+        eprintln!(
+            "Dry run: resolved {} package(s); lockfile and node_modules were not modified",
+            graph.packages.len()
+        );
+        return Ok(());
+    }
     if shared_workspace_lockfile || !has_workspace {
         let lo_written = write_lockfile_dir_remapped(
             lockfile_dir,

@@ -18,6 +18,7 @@ pub(super) fn is_vulnerable(
         .any(|range| version.satisfies(&range))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prefer_non_vulnerable_pick<'a>(
     package_name: &str,
     packument: &'a Packument,
@@ -25,7 +26,9 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
     fallback: &'a aube_registry::VersionMetadata,
     pick_lowest: bool,
     cutoff: Option<&str>,
+    exempt_cutoff: Option<&str>,
     vulnerable_ranges: &BTreeMap<String, Vec<String>>,
+    is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
 ) -> &'a aube_registry::VersionMetadata {
     if !is_vulnerable(package_name, &fallback.version, vulnerable_ranges) {
         return fallback;
@@ -34,8 +37,18 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
     else {
         return fallback;
     };
-    let passes_cutoff = |ver: &str| -> bool {
-        let Some(c) = cutoff else { return true };
+    // Mirror `pick_version`'s cutoff: a `minimumReleaseAgeExclude` match
+    // waves a version past the minimumReleaseAge gate here too (still
+    // subject to `exempt_cutoff`, the time-based wall), otherwise the
+    // re-pick could discard the exempt safe version and keep the
+    // vulnerable one.
+    let passes_cutoff = |ver: &str, parsed: Option<&node_semver::Version>| -> bool {
+        let effective = if is_age_exempt(ver, parsed) {
+            exempt_cutoff
+        } else {
+            cutoff
+        };
+        let Some(c) = effective else { return true };
         match packument.time.get(ver) {
             Some(t) => t.as_str() <= c,
             None => true,
@@ -47,7 +60,7 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
             continue;
         };
         if !version.satisfies(&range)
-            || !passes_cutoff(ver_str)
+            || !passes_cutoff(ver_str, Some(&version))
             || is_vulnerable(package_name, ver_str, vulnerable_ranges)
         {
             continue;

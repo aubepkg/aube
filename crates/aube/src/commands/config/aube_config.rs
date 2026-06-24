@@ -103,6 +103,32 @@ pub(crate) fn project_aube_config_path(project_dir: &Path) -> PathBuf {
     project_dir.join(".config").join("aube").join("config.toml")
 }
 
+pub(crate) fn system_managed_aube_config_path() -> PathBuf {
+    PathBuf::from("/etc").join("aube").join("managed.toml")
+}
+
+pub(crate) fn load_managed_entries() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    out.extend(load_entries_at(&system_managed_aube_config_path()));
+    if let Some(path) = aube_util::env::config_env("MANAGED_CONFIG_PATH")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        match path.try_exists() {
+            Ok(true) => out.extend(load_entries_at(&path)),
+            Ok(false) => tracing::warn!(
+                "managed config path from AUBE_MANAGED_CONFIG_PATH does not exist: {}",
+                path.display()
+            ),
+            Err(err) => tracing::warn!(
+                "failed to check managed config path from AUBE_MANAGED_CONFIG_PATH at {}: {err}",
+                path.display()
+            ),
+        }
+    }
+    out
+}
+
 pub(crate) fn load_user_entries() -> Vec<(String, String)> {
     let Ok(path) = user_aube_config_path() else {
         return Vec::new();

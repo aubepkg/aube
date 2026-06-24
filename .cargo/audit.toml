@@ -4,4 +4,6 @@ ignore = [
     # caching until reqwest can move to hickory-resolver/proto 0.26.x.
     "RUSTSEC-2026-0118",
     "RUSTSEC-2026-0119",
+    # proc-macro-error2 2.0.1 via jiff's defmt dependency.
+    "RUSTSEC-2026-0173",
 ]
