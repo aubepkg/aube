@@ -290,6 +290,53 @@ fn test_link_file_fresh_hardlink_short_circuits_when_source_missing() {
 }
 
 #[test]
+#[cfg(unix)]
+fn test_link_file_fresh_reflink_falls_back_to_hardlink_not_copy() {
+    // jdx/aube#914 review (Greptile P2): macOS resolves same-FS `auto`
+    // to `Reflink`, but `clonefile` is APFS-only. On a non-APFS same-FS
+    // target (HFS+, or any non-reflink FS) the reflink fails and used to
+    // degrade straight to a per-file copy — a silent regression from the
+    // zero-cost hardlink the same FS supports. The fallback must try a
+    // hardlink before copy. We can only assert the hardlink outcome on a
+    // filesystem that actually lacks reflink (where the fallback fires);
+    // on a reflink-capable FS the reflink succeeds and there is nothing
+    // to fall back from, so the inode check is gated on a probe.
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let stored = store.import_bytes(b"hello reflink", false).unwrap();
+    let store_path = stored.store_path.clone();
+
+    let dst_dir = dir.path().join("dst");
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    let dst = dst_dir.join("hello.txt");
+
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Reflink, true);
+    linker
+        .link_file_fresh(&stored, "hello.txt", &dst)
+        .expect("reflink strategy must materialize the file");
+
+    // Data integrity holds regardless of which realized path was taken.
+    assert_eq!(std::fs::read_to_string(&dst).unwrap(), "hello reflink");
+
+    // Probe whether this FS supports reflink at all. If not, the fallback
+    // fired and the result must be a hardlink (same inode as the source),
+    // never a copy (distinct inode).
+    let reflink_probe = dst_dir.join(".reflink-probe");
+    let reflink_supported = reflink_copy::reflink(&store_path, &reflink_probe).is_ok();
+    let _ = std::fs::remove_file(&reflink_probe);
+    if !reflink_supported {
+        let src_ino = std::fs::metadata(&store_path).unwrap().ino();
+        let dst_ino = std::fs::metadata(&dst).unwrap().ino();
+        assert_eq!(
+            src_ino, dst_ino,
+            "reflink-unsupported FS must fall back to a hardlink (same inode), not a copy"
+        );
+    }
+}
+
+#[test]
 fn test_link_all_creates_top_level_entries() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");

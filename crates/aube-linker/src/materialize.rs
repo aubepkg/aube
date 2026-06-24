@@ -28,6 +28,14 @@ impl Linker {
     /// `Hardlink` (btrfs/xfs hardlink benchmarks ~2.4-2.6x faster than
     /// FICLONE reflink). `Reflink` is otherwise reachable only through
     /// explicit `packageImportMethod = clone` / `clone-or-copy`.
+    ///
+    /// The macOS `Reflink` resolution is conservative on non-APFS
+    /// volumes: `clonefile` is APFS-only, so on an HFS+ volume (external
+    /// drives, Fusion/older disks) the same-FS hardlink probe succeeds
+    /// and resolves `Reflink`, but the real `clonefile` then fails.
+    /// `link_file_fresh` handles this by falling the reflink back to a
+    /// hardlink (which HFS+ supports) before copy, so a non-APFS same-FS
+    /// target still gets zero-cost links rather than a per-file copy.
     pub fn detect_strategy(path: &Path) -> LinkStrategy {
         Self::detect_strategy_cross(path, path)
     }
@@ -625,10 +633,23 @@ impl Linker {
                     if !stored.store_path.exists() {
                         return Err(missing_source());
                     }
-                    // Fall back to copy on cross-filesystem errors
-                    trace!("reflink failed, falling back to copy: {e}");
-                    std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
-                    realized = "reflink_fallback_copy";
+                    // Reflink is only the resolved strategy when the same-FS
+                    // probe succeeded, so the target is known same-filesystem.
+                    // `reflink_copy::reflink` uses `clonefile`, which is
+                    // APFS-only: on an HFS+ volume it fails even though the
+                    // volume is same-FS and supports hardlinks. Try a
+                    // hardlink before degrading to a full per-file copy — a
+                    // hardlink is zero-cost and preserves the dedupe the
+                    // probe promised, where copy silently regresses to a byte
+                    // transfer per file.
+                    if std::fs::hard_link(&stored.store_path, dst).is_ok() {
+                        trace!("reflink failed, fell back to hardlink: {e}");
+                        realized = "reflink_fallback_hardlink";
+                    } else {
+                        trace!("reflink and hardlink failed, falling back to copy: {e}");
+                        std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
+                        realized = "reflink_fallback_copy";
+                    }
                 } else {
                     realized = "reflink";
                 }
@@ -657,6 +678,7 @@ impl Linker {
             // O(1) and the static `&str` keeps the JSONL category compact.
             let name = match realized {
                 "reflink" => "link_reflink",
+                "reflink_fallback_hardlink" => "link_reflink_fallback_hardlink",
                 "reflink_fallback_copy" => "link_reflink_fallback",
                 "hardlink" => "link_hardlink",
                 "hardlink_fallback_copy" => "link_hardlink_fallback",
