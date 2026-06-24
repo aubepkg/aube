@@ -344,6 +344,7 @@ dependencies = [
  "blake3",
  "criterion",
  "glob",
+ "memchr",
  "miette",
  "node-semver",
  "proptest",

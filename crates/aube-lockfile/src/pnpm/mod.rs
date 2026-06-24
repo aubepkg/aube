@@ -3,6 +3,7 @@ mod dep_path;
 mod format;
 mod raw;
 mod read;
+mod subset;
 mod write;
 
 #[cfg(test)]
@@ -11,6 +12,26 @@ mod tests;
 pub use checksum::{package_extensions_checksum, pnpmfile_checksum};
 pub use read::parse;
 pub use write::write;
+
+/// Benchmark-only shims comparing the byte-cursor subset parser against
+/// the general `yaml_serde` parser on raw `pnpm-lock.yaml` content.
+/// Returns `(packages, snapshots, importers)` counts so the bench's
+/// black-box can't be optimized away. Gated behind the `bench` feature
+/// so they are not part of the crate's default public surface.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub fn __bench_parse_subset(content: &str) -> Option<(usize, usize, usize)> {
+    subset::try_parse(content).map(|r| raw::__bench_counts(&r))
+}
+
+/// Benchmark-only: parse via the original serde path.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub fn __bench_parse_serde(content: &str) -> Option<(usize, usize, usize)> {
+    raw::parse_raw_lockfile_serde(content)
+        .ok()
+        .map(|r| raw::__bench_counts(&r))
+}
 
 pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {
     let Some((host, path)) = http_url_host_and_path(url) else {
