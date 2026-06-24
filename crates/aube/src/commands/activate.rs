@@ -44,7 +44,7 @@ fn ensure_shims(shim_dir: &Path) -> miette::Result<()> {
         )
     })?;
     for name in crate::tool_shims::TOOL_SHIMS {
-        write_shim(shim_dir, name, &exe)?;
+        write_shim(shim_dir, &crate::tool_shims::shim_file_name(name), &exe)?;
     }
     Ok(())
 }

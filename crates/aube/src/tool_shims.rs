@@ -1,9 +1,17 @@
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub(crate) const SHIM_DIR_ENV: &str = "AUBE_SHIM_DIR";
 
 pub(crate) const TOOL_SHIMS: &[&str] = &["node", "npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"];
+
+pub(crate) fn shim_file_name(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
 
 pub(crate) fn shim_dir() -> Option<PathBuf> {
     let ns = aube_util::embedder().data_namespace;
@@ -36,15 +44,39 @@ fn path_without_shim_dir(path: Option<OsString>) -> Option<OsString> {
 
 fn strip_path_entry(path: OsString, entry_to_remove: &Path) -> Option<OsString> {
     let original: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    let entry_to_remove = comparable_path(entry_to_remove);
     let kept: Vec<PathBuf> = original
         .iter()
-        .filter(|entry| entry.as_path() != entry_to_remove)
+        .filter(|entry| comparable_path(entry) != entry_to_remove)
         .cloned()
         .collect();
     if kept.len() == original.len() {
         return None;
     }
+    if kept.is_empty() {
+        return Some(OsString::new());
+    }
     std::env::join_paths(kept).ok()
+}
+
+fn comparable_path(path: &Path) -> PathBuf {
+    if path.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    std::fs::canonicalize(path)
+        .map(|path| normalize_path_lexically(&path))
+        .unwrap_or_else(|_| normalize_path_lexically(path))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 pub(crate) fn stem_of_argv0(argv0: &OsStr) -> String {
@@ -67,5 +99,33 @@ mod tests {
             strip_path_entry(path, Path::new("/b")),
             Some(OsString::from(format!("/a{sep}/c")))
         );
+    }
+
+    #[test]
+    fn strips_matching_path_entry_with_trailing_separator() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let path = OsString::from(format!("/a{sep}/b/{sep}/c"));
+        assert_eq!(
+            strip_path_entry(path, Path::new("/b")),
+            Some(OsString::from(format!("/a{sep}/c")))
+        );
+    }
+
+    #[test]
+    fn strips_only_path_entry_to_empty_path() {
+        assert_eq!(
+            strip_path_entry(OsString::from("/b"), Path::new("/b")),
+            Some(OsString::new())
+        );
+    }
+
+    #[test]
+    fn shim_file_names_use_exe_suffix_on_windows() {
+        let node = shim_file_name("node");
+        if cfg!(windows) {
+            assert_eq!(node, "node.exe");
+        } else {
+            assert_eq!(node, "node");
+        }
     }
 }

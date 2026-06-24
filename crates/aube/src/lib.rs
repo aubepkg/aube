@@ -1512,6 +1512,14 @@ mod multicall_tests {
             rewrite_multicall_argv(os(&["npm", "install", "--workspace", "app"])),
             os(&["aube", "install", "--workspace", "app"])
         );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--"])),
+            os(&["aube", "install", "--"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--", "vitest"])),
+            os(&["aube", "add", "--", "vitest"])
+        );
     }
 
     #[test]

@@ -15,7 +15,12 @@ pub struct NodeArgs {
 pub async fn run(args: NodeArgs) -> miette::Result<Option<i32>> {
     crate::runtime::ensure_for_cwd(&crate::dirs::cwd()?).await?;
     let node = crate::runtime::node_program();
+
+    #[cfg(unix)]
     let mut cmd = std::process::Command::new(&node);
+    #[cfg(not(unix))]
+    let mut cmd = tokio::process::Command::new(&node);
+
     cmd.args(&args.args);
     let runtime_dirs = crate::runtime::path_entries();
     if !runtime_dirs.is_empty() {
@@ -34,7 +39,7 @@ pub async fn run(args: NodeArgs) -> miette::Result<Option<i32>> {
     }
     #[cfg(not(unix))]
     {
-        let status = cmd.status().into_diagnostic().map_err(|e| {
+        let status = cmd.status().await.into_diagnostic().map_err(|e| {
             miette!(
                 code = aube_codes::errors::ERR_AUBE_SHIM_EXEC_FAILED,
                 "failed to spawn node at {}: {e}",

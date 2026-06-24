@@ -172,7 +172,11 @@ fn rewrite_pm_help_or_version(args: &mut [OsString]) -> bool {
 
 fn npm_install_has_package_specs(args: &[OsString]) -> bool {
     let mut skip_value = false;
+    let mut after_separator = false;
     for arg in args {
+        if after_separator {
+            return true;
+        }
         let Some(s) = arg.to_str() else {
             continue;
         };
@@ -181,7 +185,8 @@ fn npm_install_has_package_specs(args: &[OsString]) -> bool {
             continue;
         }
         if s == "--" {
-            return true;
+            after_separator = true;
+            continue;
         }
         if let Some(flag) = s.strip_prefix("--") {
             let (name, has_inline_value) = match flag.split_once('=') {
