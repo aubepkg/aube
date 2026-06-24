@@ -314,15 +314,18 @@ struct GlobMatcher {
     trailing_wildcard: bool,
 }
 
+// Shared by both `trustPolicyExclude` and `minimumReleaseAgeExclude`, so
+// the message text stays setting-neutral — the caller's log line names
+// the specific setting the bad entry came from.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum TrustExcludeParseError {
     #[error(
-        "invalid trustPolicyExclude pattern `{pattern}`: only exact versions are allowed in version unions, ranges (^/~/>=) are not supported"
+        "invalid exclude pattern `{pattern}`: only exact versions are allowed in version unions, ranges (^/~/>=) are not supported"
     )]
     #[diagnostic(code(ERR_AUBE_TRUST_EXCLUDE_INVALID_VERSION_UNION))]
     InvalidVersionUnion { pattern: String },
     #[error(
-        "invalid trustPolicyExclude pattern `{pattern}`: name patterns (`*`) cannot be combined with version unions"
+        "invalid exclude pattern `{pattern}`: name patterns (`*`) cannot be combined with version unions"
     )]
     #[diagnostic(code(ERR_AUBE_TRUST_EXCLUDE_NAME_GLOB_WITH_VERSIONS))]
     NameGlobWithVersions { pattern: String },
