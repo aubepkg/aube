@@ -173,52 +173,6 @@ fn apply_computed_integrities(
     }
 }
 
-#[cfg(test)]
-mod computed_integrity_tests {
-    use super::*;
-
-    #[test]
-    fn computed_integrity_updates_peer_variants() {
-        let mut graph = aube_lockfile::LockfileGraph::default();
-        graph.packages.insert(
-            "consumer@1.0.0(peer@2.0.0)".into(),
-            aube_lockfile::LockedPackage {
-                name: "consumer".into(),
-                version: "1.0.0".into(),
-                dep_path: "consumer@1.0.0(peer@2.0.0)".into(),
-                ..Default::default()
-            },
-        );
-        graph.packages.insert(
-            "already@1.0.0".into(),
-            aube_lockfile::LockedPackage {
-                name: "already".into(),
-                version: "1.0.0".into(),
-                dep_path: "already@1.0.0".into(),
-                integrity: Some("sha512-existing".into()),
-                ..Default::default()
-            },
-        );
-        let computed = BTreeMap::from([
-            ("consumer@1.0.0".into(), "sha512-computed".into()),
-            ("already@1.0.0".into(), "sha512-new".into()),
-        ]);
-
-        apply_computed_integrities(&mut graph, &computed);
-
-        assert_eq!(
-            graph.packages["consumer@1.0.0(peer@2.0.0)"]
-                .integrity
-                .as_deref(),
-            Some("sha512-computed")
-        );
-        assert_eq!(
-            graph.packages["already@1.0.0"].integrity.as_deref(),
-            Some("sha512-existing")
-        );
-    }
-}
-
 async fn validate_lockfile_trust_policy(
     cwd: &std::path::Path,
     graph: &aube_lockfile::LockfileGraph,
@@ -2161,4 +2115,50 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     })
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod computed_integrity_tests {
+    use super::*;
+
+    #[test]
+    fn computed_integrity_updates_peer_variants() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.packages.insert(
+            "consumer@1.0.0(peer@2.0.0)".into(),
+            aube_lockfile::LockedPackage {
+                name: "consumer".into(),
+                version: "1.0.0".into(),
+                dep_path: "consumer@1.0.0(peer@2.0.0)".into(),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "already@1.0.0".into(),
+            aube_lockfile::LockedPackage {
+                name: "already".into(),
+                version: "1.0.0".into(),
+                dep_path: "already@1.0.0".into(),
+                integrity: Some("sha512-existing".into()),
+                ..Default::default()
+            },
+        );
+        let computed = BTreeMap::from([
+            ("consumer@1.0.0".into(), "sha512-computed".into()),
+            ("already@1.0.0".into(), "sha512-new".into()),
+        ]);
+
+        apply_computed_integrities(&mut graph, &computed);
+
+        assert_eq!(
+            graph.packages["consumer@1.0.0(peer@2.0.0)"]
+                .integrity
+                .as_deref(),
+            Some("sha512-computed")
+        );
+        assert_eq!(
+            graph.packages["already@1.0.0"].integrity.as_deref(),
+            Some("sha512-existing")
+        );
+    }
 }
