@@ -263,6 +263,24 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     "vite",
 ];
 
+/// A parsed package-version policy: a set of `<name>[@<exact-version>…]`
+/// rules with `*` name globs. pnpm backs both `trustPolicyExclude` and
+/// `minimumReleaseAgeExclude` with the same `createPackageVersionPolicy`
+/// engine, so we do too — `TrustExcludeRules` is the neutral
+/// [`PackageVersionPolicy`] type seeded with the trust defaults, while
+/// `minimumReleaseAgeExclude` builds an empty one from user rules only.
+///
+/// # Warning
+///
+/// Because this is an alias for [`TrustExcludeRules`],
+/// `PackageVersionPolicy::default()` runs that type's [`Default`] impl,
+/// which seeds [`DEFAULT_TRUST_POLICY_EXCLUDES`] (40+ well-known
+/// packages). For the age gate that is wrong — it would silently exempt
+/// those packages from `minimumReleaseAge`. Age-gate call sites must use
+/// [`TrustExcludeRules::empty`]; never `default()`, `#[derive(Default)]`
+/// on a containing struct, or `unwrap_or_default()`.
+pub type PackageVersionPolicy = TrustExcludeRules;
+
 #[derive(Debug, Clone)]
 pub struct TrustExcludeRules {
     rules: Vec<TrustExcludeRule>,
@@ -296,21 +314,40 @@ struct GlobMatcher {
     trailing_wildcard: bool,
 }
 
+// Shared by both `trustPolicyExclude` and `minimumReleaseAgeExclude`, so
+// the message text stays setting-neutral — the caller's log line names
+// the specific setting the bad entry came from.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum TrustExcludeParseError {
     #[error(
-        "invalid trustPolicyExclude pattern `{pattern}`: only exact versions are allowed in version unions, ranges (^/~/>=) are not supported"
+        "invalid exclude pattern `{pattern}`: only exact versions are allowed in version unions, ranges (^/~/>=) are not supported"
     )]
     #[diagnostic(code(ERR_AUBE_TRUST_EXCLUDE_INVALID_VERSION_UNION))]
     InvalidVersionUnion { pattern: String },
     #[error(
-        "invalid trustPolicyExclude pattern `{pattern}`: name patterns (`*`) cannot be combined with version unions"
+        "invalid exclude pattern `{pattern}`: name patterns (`*`) cannot be combined with version unions"
     )]
     #[diagnostic(code(ERR_AUBE_TRUST_EXCLUDE_NAME_GLOB_WITH_VERSIONS))]
     NameGlobWithVersions { pattern: String },
 }
 
 impl TrustExcludeRules {
+    /// A policy that matches nothing. Used as the
+    /// `minimumReleaseAgeExclude` default — unlike [`Default`], which
+    /// seeds the trust-specific exclude list, the age gate must start
+    /// with no exemptions.
+    pub fn empty() -> Self {
+        Self { rules: Vec::new() }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rules.len()
+    }
+
     fn from_name_excludes(names: &[&str]) -> Self {
         Self {
             rules: names
@@ -371,7 +408,7 @@ impl TrustExcludeRules {
         (Self { rules }, errors)
     }
 
-    fn matches(&self, name: &str, version: &node_semver::Version) -> bool {
+    pub(crate) fn matches(&self, name: &str, version: &node_semver::Version) -> bool {
         for rule in &self.rules {
             if !rule.name_matcher.matches(name) {
                 continue;
@@ -392,7 +429,7 @@ impl TrustExcludeRules {
     /// no-version rule can match in that case (pnpm behavior:
     /// `evaluateVersionPolicy` returns `true` for name-only rules
     /// before the version array branch is taken).
-    fn matches_name_only(&self, name: &str) -> bool {
+    pub(crate) fn matches_name_only(&self, name: &str) -> bool {
         self.rules
             .iter()
             .any(|r| r.exact_versions.is_none() && r.name_matcher.matches(name))

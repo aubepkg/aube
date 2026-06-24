@@ -329,8 +329,11 @@ Packages exempt from the minimumReleaseAge requirement.
 - Managed policy: `managedWins`
 
 Use for trusted internal packages that need to be rolled out immediately
-without waiting for the age gate. `pnpm audit --fix` (when implemented)
-will append patched versions to this list automatically.
+without waiting for the age gate. Each entry is a bare name (`react`), a
+`*` name glob (`@myorg/*`), or a name with an exact-version union
+(`nx@21.6.5`, `webpack@4.47.0 || 5.102.1`); ranges like `^1.0.0` are not
+allowed. Once `aube audit --fix` learns to record patched versions, it
+will append them to this list automatically.
 
 ### `minimumReleaseAgeStrict` {#setting-minimumreleaseagestrict}
 
@@ -1012,11 +1015,21 @@ Method for importing packages from the store into node_modules.
 Controls how aube materializes files from the global content-addressable
 store into the virtual store.
 
-- `auto` (default) probes the destination filesystem and picks
-  `hardlink` with a `copy` fallback on cross-filesystem boundaries.
-  Hardlink benchmarks faster than reflink across every target reflink
-  supports (APFS clonefile, btrfs/xfs FICLONE), so `auto` skips the
-  reflink probe.
+- `auto` (default) probes the destination filesystem and picks a
+  same-filesystem strategy, with a `copy` fallback when no link
+  primitive applies (cross-filesystem boundaries). The
+  same-filesystem strategy is OS-specific: reflink (clonefile) on
+  macOS, where APFS clonefile benchmarks ~1.91x faster than hardlink,
+  and `hardlink` on Linux and other targets, where btrfs/xfs hardlink
+  benchmarks ~2.4-2.6x faster than FICLONE reflink. On a macOS
+  same-filesystem target that is not APFS (HFS+), reflink is
+  unsupported, so `auto` falls back to a hardlink before copy, so a
+  same-filesystem volume keeps a zero-cost link rather than degrading
+  to a per-file copy. (One exception on macOS: files of 16 KiB or
+  less are copied directly, since the clonefile syscall costs more
+  than copying so few bytes.) This auto-only hardlink fallback does
+  not apply to the explicit `clone` / `clone-or-copy` selections
+  below, which keep their documented copy fallback.
 - `hardlink` hard-links from the store, with a copy fallback on
   cross-filesystem errors.
 - `copy` always writes a full copy.

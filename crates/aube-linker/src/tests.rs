@@ -83,12 +83,28 @@ fn make_graph() -> LockfileGraph {
 fn test_detect_strategy() {
     let dir = tempfile::tempdir().unwrap();
     let strategy = Linker::detect_strategy(dir.path());
-    // Probe returns `Hardlink` or `Copy`; `Reflink` is only
-    // reachable through explicit `packageImportMethod =
-    // clone`/`clone-or-copy`, so the match guards that contract.
+    // The probe resolves a same-FS success to the OS-specific `auto`
+    // strategy and a cross-FS failure to `Copy`. On macOS the same-FS
+    // strategy is `ReflinkAuto` (APFS clonefile, with the auto-only
+    // hardlink-before-copy fallback), elsewhere `Hardlink`. Whether the
+    // tempdir's FS supports the same-mount link depends on the runner, so
+    // accept the same-FS strategy or `Copy`, but reject the *other* OS's
+    // same-FS strategy — that would mean the cfg gate resolved on the
+    // wrong target. The probe must never yield the plain `Reflink`
+    // explicit selections use.
     match strategy {
-        LinkStrategy::Hardlink | LinkStrategy::Copy => {}
-        LinkStrategy::Reflink => panic!("detect_strategy must not return Reflink"),
+        LinkStrategy::Copy => {}
+        LinkStrategy::Reflink => {
+            panic!("`auto` probe must resolve same-FS to ReflinkAuto, never plain Reflink")
+        }
+        #[cfg(target_os = "macos")]
+        LinkStrategy::ReflinkAuto => {}
+        #[cfg(target_os = "macos")]
+        LinkStrategy::Hardlink => panic!("macOS `auto` must resolve same-FS to ReflinkAuto"),
+        #[cfg(not(target_os = "macos"))]
+        LinkStrategy::Hardlink => {}
+        #[cfg(not(target_os = "macos"))]
+        LinkStrategy::ReflinkAuto => panic!("non-macOS `auto` must resolve same-FS to Hardlink"),
     }
 }
 
@@ -275,6 +291,104 @@ fn test_link_file_fresh_hardlink_short_circuits_when_source_missing() {
             Error::MissingStoreFile { store_path: p, rel_path } if p == &store_path && rel_path == "hello.txt"
         ),
         "expected MissingStoreFile from Hardlink branch, got {err:?}"
+    );
+}
+
+/// RAII guard that serializes `FORCE_REFLINK_FAILURE` across the parallel
+/// test runner and always restores the flag — even if the body panics.
+///
+/// `FORCE_REFLINK_FAILURE` is a process-wide `AtomicBool`, so two reflink
+/// fallback tests running concurrently could otherwise observe each other's
+/// `store(false)` mid-`link_file_fresh` (a reflink-capable FS would then take
+/// the real clonefile path and skew the inode assertion), and a bare manual
+/// reset would leak the `true` state to the next test on a panic. Holding the
+/// `Mutex` for the whole forced-failure window mutually excludes the tests; the
+/// `Drop` impl makes the reset panic-safe.
+#[cfg(unix)]
+struct ForcedReflinkFailure {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(unix)]
+impl ForcedReflinkFailure {
+    fn engage() -> Self {
+        use std::sync::atomic::Ordering;
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // Recover from a poisoned lock: a prior test panicking inside the guard
+        // is exactly the case this exists for, and the `Drop` reset still ran.
+        let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::materialize::FORCE_REFLINK_FAILURE.store(true, Ordering::Relaxed);
+        Self { _guard: guard }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ForcedReflinkFailure {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        crate::materialize::FORCE_REFLINK_FAILURE.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Materialize one file under `strategy` with the reflink attempt forced
+/// to fail, then report whether the result is a hardlink (same inode as
+/// the source) or a copy (distinct inode). Isolates the clonefile-failure
+/// fallback so the split between `ReflinkAuto` and explicit `Reflink` is
+/// observable on any filesystem, including reflink-capable APFS/btrfs CI.
+#[cfg(unix)]
+fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    // >16 KiB so the macOS small-file copy shortcut does not pre-empt the
+    // reflink path under test.
+    let content = vec![b'x'; 32 * 1024];
+    let stored = store.import_bytes(&content, false).unwrap();
+    let store_path = stored.store_path.clone();
+
+    let dst_dir = dir.path().join("dst");
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    let dst = dst_dir.join("payload.bin");
+
+    let linker = Linker::new_with_gvs(&store, strategy, true);
+    let result = {
+        // Hold the guard across the materialize so a sibling test can't flip
+        // the global flag mid-call; the flag is restored on drop, panic-safe.
+        let _forced = ForcedReflinkFailure::engage();
+        linker.link_file_fresh(&stored, "payload.bin", &dst)
+    };
+    result.expect("a reflink strategy must still materialize the file via its fallback");
+
+    // Data integrity holds whichever fallback fired.
+    assert_eq!(std::fs::read(&dst).unwrap(), content);
+
+    std::fs::metadata(&store_path).unwrap().ino() == std::fs::metadata(&dst).unwrap().ino()
+}
+
+#[test]
+#[cfg(unix)]
+fn test_reflink_auto_falls_back_to_hardlink_not_copy() {
+    // `auto` on a same-FS macOS target resolves to `ReflinkAuto`; the
+    // probe already proved the target shares a mount, so a clonefile
+    // failure (non-APFS same-FS volume, e.g. HFS+) must degrade to a
+    // zero-cost hardlink before a per-file copy.
+    assert!(
+        realized_inode_matches_source_on_reflink_failure(LinkStrategy::ReflinkAuto),
+        "ReflinkAuto must fall back to a hardlink (same inode), not a copy, on reflink failure"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_explicit_reflink_falls_back_to_copy_not_hardlink() {
+    // Explicit `clone` / `clone-or-copy` map to `Reflink`, whose
+    // documented contract is reflink with a plain *copy* fallback. They
+    // must NOT take the auto-only hardlink step on a clonefile failure —
+    // the result is a distinct inode (copy), never the source's inode.
+    assert!(
+        !realized_inode_matches_source_on_reflink_failure(LinkStrategy::Reflink),
+        "explicit Reflink must fall back to a copy (distinct inode), not a hardlink"
     );
 }
 

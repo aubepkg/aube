@@ -231,11 +231,27 @@ pub struct Linker {
 /// Strategy for linking files from the store to node_modules.
 #[derive(Debug, Clone, Copy)]
 pub enum LinkStrategy {
-    /// Copy-on-write (APFS clonefile, btrfs reflink). Selected by
-    /// explicit `packageImportMethod = clone` / `clone-or-copy`;
-    /// `auto` picks [`Hardlink`] because hardlink is measurably
-    /// faster on every benchmarked target.
+    /// Copy-on-write (APFS clonefile, btrfs reflink). Selected only by
+    /// explicit `packageImportMethod = clone` / `clone-or-copy`, whose
+    /// documented contract is reflink with a plain **copy** fallback.
     Reflink,
+    /// Copy-on-write chosen by `auto` on a same-filesystem macOS target,
+    /// where APFS clonefile benchmarks faster than hardlink. (On Linux
+    /// and other targets `auto` picks [`Hardlink`].) Distinct from
+    /// [`Reflink`] because `auto` owns a stronger reflink-failure fallback:
+    /// the same-FS probe already proved the target shares a mount, so on a
+    /// non-APFS same-FS volume (HFS+) — where `clonefile` is unsupported but
+    /// hardlinks are not — `auto` degrades to a hardlink before copy,
+    /// keeping the link zero-cost where explicit `clone` / `clone-or-copy`
+    /// would copy. (Small macOS files copy outright before any reflink or
+    /// hardlink attempt; the hardlink step is the reflink-*failure* fallback,
+    /// not an unconditional same-FS guarantee.) Explicit `clone` /
+    /// `clone-or-copy` keep their documented copy fallback and never take
+    /// this hardlink step.
+    ///
+    /// [`Reflink`]: LinkStrategy::Reflink
+    /// [`Hardlink`]: LinkStrategy::Hardlink
+    ReflinkAuto,
     /// Hard link (ext4, NTFS)
     Hardlink,
     /// Full copy (fallback)

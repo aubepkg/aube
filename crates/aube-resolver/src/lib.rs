@@ -3,6 +3,13 @@ mod catalog;
 mod direct_dep_info;
 mod error;
 mod local_source;
+// `locked_index` is an internal lockfile-reuse index. It is only `pub` under
+// the `bench` feature so the `locked_lookup` bench can reach `LockedIndex`;
+// the default build keeps it `pub(crate)`, off the public surface.
+#[cfg(feature = "bench")]
+pub mod locked_index;
+#[cfg(not(feature = "bench"))]
+pub(crate) mod locked_index;
 pub mod override_rule;
 mod package_ext;
 mod peer_context;
@@ -27,7 +34,7 @@ pub use trust::{
     MissingTimeDetails as MissingTrustTimeDetails, TrustCheckError, TrustDowngradeDetails,
     check_no_downgrade,
 };
-pub use trust::{TrustEvidence, TrustExcludeParseError, TrustExcludeRules};
+pub use trust::{PackageVersionPolicy, TrustEvidence, TrustExcludeParseError, TrustExcludeRules};
 pub use types::{
     DependencyPolicy, MinimumReleaseAge, PackageExtension, ReadPackageHook, ResolutionMode,
     ResolvedPackage, TrustPolicy,

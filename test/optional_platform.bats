@@ -9,6 +9,50 @@ teardown() {
 	_common_teardown
 }
 
+assert_npm_lock_captures_cross_platform_optionals() {
+	local lockfile="$1"
+
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT)
+		skip "win32 host would install the win32 optional dependency"
+		;;
+	esac
+
+	cat >package.json <<-'JSON'
+		{
+		  "name": "npm-lock-cross-platform",
+		  "version": "0.0.0",
+		  "optionalDependencies": {
+		    "aube-test-optional-win32": "1.0.0"
+		  }
+		}
+	JSON
+	cat >"$lockfile" <<-'JSON'
+		{
+		  "name": "npm-lock-cross-platform",
+		  "version": "0.0.0",
+		  "lockfileVersion": 3,
+		  "requires": true,
+		  "packages": {
+		    "": {
+		      "name": "npm-lock-cross-platform",
+		      "version": "0.0.0"
+		    }
+		  }
+		}
+	JSON
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_exists "$lockfile"
+	assert_not_exists aube-lock.yaml
+	assert_not_exists node_modules/aube-test-optional-win32
+	run grep -F '"node_modules/aube-test-optional-win32"' "$lockfile"
+	assert_success
+	run grep -A8 -F '"node_modules/aube-test-optional-win32"' "$lockfile"
+	assert_output --partial '"optional": true'
+}
+
 # The fixture `aube-test-optional-win32` declares `os: ["win32"]` so on
 # Linux and macOS CI it must be skipped silently rather than failing
 # the install. This mirrors pnpm's "graceful failure" for optional deps
@@ -58,6 +102,14 @@ teardown() {
 	# `optional: true` in the snapshots block, exactly as pnpm marks it.
 	run grep -A1 -F 'aube-test-optional-win32@1.0.0:' aube-lock.yaml
 	assert_output --partial 'optional: true'
+}
+
+@test "package-lock.json captures cross-platform optionals like npm does" {
+	assert_npm_lock_captures_cross_platform_optionals package-lock.json
+}
+
+@test "npm-shrinkwrap.json captures cross-platform optionals like npm does" {
+	assert_npm_lock_captures_cross_platform_optionals npm-shrinkwrap.json
 }
 
 @test "required platform-mismatched dep still gets fetched and linked" {

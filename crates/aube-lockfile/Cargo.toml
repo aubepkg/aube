@@ -28,7 +28,20 @@ blake3 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 smallvec = { workspace = true }
+memchr = "2"
+
+[features]
+# Exposes the `__bench_parse_*` shims used by the `pnpm_lock_parse`
+# bench. Off by default so the bench helpers stay out of the crate's
+# public API surface.
+bench = []
 
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "pnpm_lock_parse"
+harness = false
+required-features = ["bench"]
