@@ -1067,6 +1067,35 @@ fn test_pick_version_age_exempt_time_cutoff_age_gates_in_strict_mode() {
 }
 
 #[test]
+fn test_pick_version_lenient_fallback_respects_time_cutoff() {
+    // The lenient (non-strict) fallback bypasses the minimumReleaseAge
+    // gate but must NOT bypass the time-based wall. With every
+    // satisfying version past `exempt_cutoff`, even non-strict mode
+    // age-gates instead of silently returning a walled-off version
+    // through the fallback path.
+    let mut packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    packument
+        .time
+        .insert("1.0.0".into(), "2024-01-01T00:00:00.000Z".into());
+    packument
+        .time
+        .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
+    let cutoff = "2020-01-01T00:00:00.000Z";
+    let exempt_cutoff = "2023-01-01T00:00:00.000Z";
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        Some(exempt_cutoff),
+        false,
+        |_, _| true,
+    );
+    assert!(matches!(result, PickResult::AgeGated));
+}
+
+#[test]
 fn test_minimum_release_age_cutoff_format() {
     let mra = MinimumReleaseAge {
         minutes: 60,
