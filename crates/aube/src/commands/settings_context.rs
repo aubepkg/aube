@@ -364,9 +364,9 @@ pub(crate) fn build_resolver(
     let ctx = files.ctx(&raw_workspace, env, &[]);
     // `aube update` and friends always rewrite a lockfile, so pick a
     // target kind. Detect the existing format to match install's
-    // cross-platform widening rules — a project on `pnpm-lock.yaml`
-    // keeps pnpm's host-only optional set, `aube-lock.yaml` gets the
-    // wide aube default.
+    // cross-platform widening rules — native package-manager lockfiles
+    // that record per-package platform metadata keep optional natives for
+    // every platform, while formats without that metadata stay host-only.
     let target_lockfile_kind = Some(
         aube_lockfile::detect_existing_lockfile_kind(cwd)
             .unwrap_or(aube_lockfile::LockfileKind::Aube),
