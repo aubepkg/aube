@@ -234,6 +234,46 @@ _basic_project() {
 	refute_output --partial "v0.99.1"
 }
 
+@test "activate bash exposes node shim that uses switched runtime" {
+	_basic_project
+	_fab_node "$(_aube_runtime_dir)" "0.99.1"
+	echo "0.99" >.nvmrc
+	run aube activate bash
+	assert_success
+	eval "$output"
+	run node --version
+	assert_success
+	assert_output --partial "v0.99.1"
+}
+
+@test "activated node shim falls through to real PATH node without runtime config" {
+	_basic_project
+	mkdir -p "$TEST_TEMP_DIR/real-node"
+	printf '#!/bin/sh\necho "v1.2.3"\n' >"$TEST_TEMP_DIR/real-node/node"
+	chmod +x "$TEST_TEMP_DIR/real-node/node"
+	export PATH="$TEST_TEMP_DIR/real-node:$PATH"
+	run aube activate bash
+	assert_success
+	eval "$output"
+	run node --version
+	assert_success
+	assert_output --partial "v1.2.3"
+}
+
+@test "pnpm shim routes install through aube without changing lockfile kind" {
+	_basic_project
+	cat >yarn.lock <<-'YAML'
+		# yarn lockfile v1
+	YAML
+	run aube activate bash
+	assert_success
+	eval "$output"
+	run pnpm install
+	assert_success
+	assert_file_exists yarn.lock
+	refute [ -e pnpm-lock.yaml ]
+}
+
 @test "pnpm-11 lockfile with a runtime pin installs without fetching node from the registry" {
 	# Compat: the synthetic `node` importer dep must be routed into the
 	# runtime-pin table, not resolved as an npm package. The pinned

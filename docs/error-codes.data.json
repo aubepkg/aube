@@ -331,6 +331,18 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_SHIM_CREATE_FAILED",
+      "category": "Engine / CLI",
+      "description": "`aube activate <shell>` couldn't create or refresh an executable shim in aube's shim directory.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_SHIM_EXEC_FAILED",
+      "category": "Engine / CLI",
+      "description": "A runtime tool shim resolved its target but couldn't exec or spawn the selected tool.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_RUNTIME_VERSION_UNSATISFIED",
       "category": "Engine / CLI",
       "description": "The project requires a Node.js version that isn't available and policy forbids fetching it (`devEngines.runtime` with `onFail: \"error\"`, `runtimeOnFail=error`, or offline mode with nothing installed).",

@@ -88,6 +88,8 @@ pub const ERR_AUBE_COMPLETION_FAILED: &str = "ERR_AUBE_COMPLETION_FAILED";
 pub const ERR_AUBE_REMOVE_PRIOR_INSTALL_DIR: &str = "ERR_AUBE_REMOVE_PRIOR_INSTALL_DIR";
 pub const ERR_AUBE_CONFIG_NESTED_AUBE_KEY: &str = "ERR_AUBE_CONFIG_NESTED_AUBE_KEY";
 pub const ERR_AUBE_CONFLICTING_BUILD_FLAGS: &str = "ERR_AUBE_CONFLICTING_BUILD_FLAGS";
+pub const ERR_AUBE_SHIM_CREATE_FAILED: &str = "ERR_AUBE_SHIM_CREATE_FAILED";
+pub const ERR_AUBE_SHIM_EXEC_FAILED: &str = "ERR_AUBE_SHIM_EXEC_FAILED";
 
 // ── node runtime (devEngines.runtime / .node-version / .nvmrc) ──────
 #[rustfmt::skip] pub const ERR_AUBE_RUNTIME_VERSION_UNSATISFIED: &str = "ERR_AUBE_RUNTIME_VERSION_UNSATISFIED";
@@ -462,6 +464,18 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_CONFLICTING_BUILD_FLAGS,
         category: category::ENGINE_CLI,
         description: "`aube add` was passed the same package name in both `--allow-build` and `--deny-build`.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_SHIM_CREATE_FAILED,
+        category: category::ENGINE_CLI,
+        description: "`aube activate <shell>` couldn't create or refresh an executable shim in aube's shim directory.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_SHIM_EXEC_FAILED,
+        category: category::ENGINE_CLI,
+        description: "A runtime tool shim resolved its target but couldn't exec or spawn the selected tool.",
         exit_code: None,
     },
     // Node runtime (devEngines.runtime / .node-version / .nvmrc)

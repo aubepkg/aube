@@ -52,7 +52,10 @@ mise use -g aube
 aube switches [Node.js versions](https://aube.jdx.dev/package-manager/node-runtime)
 itself: if a project pins Node through `package.json`
 (`devEngines.runtime`), `.nvmrc`, or `.node-version`, every script and
-binary run through aube gets that version — no shims or shell hooks.
+binary run through aube gets that version. If you want plain `node`,
+`pnpm`, `yarn`, and npm-family commands to go through the same resolver,
+opt into shell activation with `eval "$(aube activate zsh)"`,
+`eval "$(aube activate bash)"`, or `aube activate fish | source`.
 When a pinned version is missing, aube delegates the install to mise if
 you have it (one shared Node store on disk) and downloads from
 nodejs.org otherwise.
@@ -164,6 +167,15 @@ that should be installed for a one-off command.
 The release archives ship all three binaries side by side; no extra
 setup is needed when you install aube via mise or the tarball.
 
+### Shell activation
+
+`aube activate bash`, `aube activate zsh`, and `aube activate fish`
+create an aube-owned shim directory and print the shell code to put it
+on PATH. Activated shells route `node`, `npm`, `npx`, `pnpm`, `pnpx`,
+`yarn`, and `yarnpkg` through aube. `node` uses the resolved project
+runtime; package-manager shims route to aube commands so the existing
+project lockfile kind stays authoritative.
+
 ## CI
 
 Use `aube ci` when the lockfile must be treated as the source of truth:
@@ -259,7 +271,7 @@ aube store path
 aube store prune
 ```
 
-aube also matches pnpm 11's runtime surface: `aube runtime set node <version>` pins a Node version in `devEngines.runtime` and the lockfile, and `aube runtime list` shows what a project resolves to. Some pnpm commands are intentionally out of scope: `setup` and `self-update` belong in tools like mise, and registry account helpers such as `whoami`, `token`, `owner`, `search`, `pkg`, and `set-script` are compatibility stubs that point you to the npm command instead.
+aube also matches pnpm 11's runtime surface: `aube runtime set node <version>` pins a Node version in `devEngines.runtime` and the lockfile, and `aube runtime list` shows what a project resolves to. `aube node` runs Node through that resolver, and shell activation can expose compatible tool shims. Some pnpm commands are intentionally out of scope: `setup` and `self-update` belong in tools like mise, and registry account helpers such as `whoami`, `token`, `owner`, `search`, `pkg`, and `set-script` are compatibility stubs that point you to the npm command instead.
 
 ## Learn More
 

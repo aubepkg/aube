@@ -48,16 +48,20 @@ pub(crate) fn rewrite_multicall_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     let Some(argv0) = args.first() else {
         return args;
     };
-    let stem = std::path::Path::new(argv0)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("aube")
-        .to_ascii_lowercase();
-    let subcommand = match stem.as_str() {
-        "aubr" => "run",
-        "aubx" => "dlx",
+    let stem = crate::tool_shims::stem_of_argv0(argv0);
+    match stem.as_str() {
+        "aubr" => rewrite_simple_multicall(args, "run"),
+        "aubx" => rewrite_simple_multicall(args, "dlx"),
+        "node" => rewrite_tool_to_subcommand(args, "node"),
+        "npx" | "pnpx" => rewrite_tool_to_subcommand(args, "dlx"),
+        "npm" => rewrite_npm_argv(args),
+        "pnpm" => rewrite_pnpm_argv(args),
+        "yarn" | "yarnpkg" => rewrite_yarn_argv(args),
         _ => return args,
-    };
+    }
+}
+
+fn rewrite_simple_multicall(mut args: Vec<OsString>, subcommand: &str) -> Vec<OsString> {
     args[0] = OsString::from("aube");
     // `--version` / `-V` belong to the top-level `aube` command; `run` and
     // `dlx` don't accept them, and for `dlx` the bare word would be parsed
@@ -70,6 +74,154 @@ pub(crate) fn rewrite_multicall_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     }
     args.insert(1, OsString::from(subcommand));
     args
+}
+
+fn rewrite_tool_to_subcommand(mut args: Vec<OsString>, subcommand: &str) -> Vec<OsString> {
+    args[0] = OsString::from("aube");
+    args.insert(1, OsString::from(subcommand));
+    args
+}
+
+fn rewrite_pnpm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
+    args[0] = OsString::from("aube");
+    rewrite_pm_help_or_version(args).unwrap_or_else(|| args)
+}
+
+fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
+    args[0] = OsString::from("aube");
+    if let Some(rewritten) = rewrite_pm_help_or_version(args.clone()) {
+        return rewritten;
+    }
+    let Some(cmd) = args.get(1).and_then(|s| s.to_str()) else {
+        return args;
+    };
+    match cmd {
+        "i" | "install" => {
+            args.remove(1);
+            let subcommand = if npm_install_has_package_specs(&args[1..]) {
+                "add"
+            } else {
+                "install"
+            };
+            args.insert(1, OsString::from(subcommand));
+            args
+        }
+        "ci" => replace_arg(&mut args, 1, "ci"),
+        "exec" => replace_arg(&mut args, 1, "exec"),
+        "remove" | "rm" | "uninstall" | "un" => replace_arg(&mut args, 1, "remove"),
+        "run" => replace_arg(&mut args, 1, "run"),
+        "restart" => replace_arg(&mut args, 1, "restart"),
+        "start" => replace_arg(&mut args, 1, "start"),
+        "stop" => replace_arg(&mut args, 1, "stop"),
+        "test" | "t" => replace_arg(&mut args, 1, "test"),
+        _ => args,
+    }
+}
+
+fn rewrite_yarn_argv(mut args: Vec<OsString>) -> Vec<OsString> {
+    args[0] = OsString::from("aube");
+    if let Some(rewritten) = rewrite_pm_help_or_version(args.clone()) {
+        return rewritten;
+    }
+    let Some(cmd) = args.get(1).and_then(|s| s.to_str()) else {
+        args.insert(1, OsString::from("install"));
+        return args;
+    };
+    match cmd {
+        "add" => replace_arg(&mut args, 1, "add"),
+        "dlx" => replace_arg(&mut args, 1, "dlx"),
+        "exec" => replace_arg(&mut args, 1, "exec"),
+        "install" => replace_arg(&mut args, 1, "install"),
+        "remove" => replace_arg(&mut args, 1, "remove"),
+        "run" => replace_arg(&mut args, 1, "run"),
+        _ => args,
+    }
+}
+
+fn replace_arg(args: &mut [OsString], idx: usize, value: &str) -> Vec<OsString> {
+    args[idx] = OsString::from(value);
+    args.to_vec()
+}
+
+fn rewrite_pm_help_or_version(mut args: Vec<OsString>) -> Option<Vec<OsString>> {
+    match args.get(1).and_then(|s| s.to_str()) {
+        Some("--help") | Some("-h") if args.len() == 2 => {
+            args[1] = OsString::from("--help");
+            Some(args)
+        }
+        Some("--version") | Some("-v") | Some("-V") if args.len() == 2 => {
+            args[1] = OsString::from("--version");
+            Some(args)
+        }
+        _ => None,
+    }
+}
+
+fn npm_install_has_package_specs(args: &[OsString]) -> bool {
+    let mut skip_value = false;
+    for arg in args {
+        let Some(s) = arg.to_str() else {
+            continue;
+        };
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        if s == "--" {
+            return true;
+        }
+        if let Some(flag) = s.strip_prefix("--") {
+            let (name, has_inline_value) = match flag.split_once('=') {
+                Some((name, _)) => (name, true),
+                None => (flag, false),
+            };
+            if !has_inline_value && npm_install_flag_takes_value(name) {
+                skip_value = true;
+            }
+            continue;
+        }
+        if s.starts_with('-') && s != "-" {
+            if matches!(s, "-C" | "-F" | "-w") {
+                skip_value = true;
+            }
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+fn npm_install_flag_takes_value(name: &str) -> bool {
+    matches!(
+        name,
+        "config"
+            | "before"
+            | "cache"
+            | "cpu"
+            | "dir"
+            | "filter"
+            | "filter-prod"
+            | "fetch-retries"
+            | "fetch-retry-factor"
+            | "fetch-retry-maxtimeout"
+            | "fetch-retry-mintimeout"
+            | "fetch-timeout"
+            | "lockfile-dir"
+            | "loglevel"
+            | "network-concurrency"
+            | "node-linker"
+            | "omit"
+            | "os"
+            | "package-import-method"
+            | "prefix"
+            | "public-hoist-pattern"
+            | "registry"
+            | "reporter"
+            | "resolution-mode"
+            | "tag"
+            | "userconfig"
+            | "workspace"
+    ) || name.starts_with("config.")
 }
 
 /// npm's Windows `.cmd` shim can only execute extensioned native binaries.

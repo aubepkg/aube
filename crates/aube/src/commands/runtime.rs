@@ -139,8 +139,8 @@ async fn run_set(args: RuntimeSetArgs) -> miette::Result<()> {
 
 /// `-g`: hand the install to mise when it manages runtimes (one Node
 /// store on disk, and mise's activation puts it on PATH globally).
-/// Under `runtimeInstaller=aube` there are no shims by design, so the
-/// install lands in aube's runtime dir and the user wires PATH.
+/// Under `runtimeInstaller=aube` the install lands in aube's runtime
+/// dir; shell activation is the opt-in path for command shims.
 async fn run_set_global(
     settings: &crate::runtime::RuntimeSettings,
     resolved: &str,
@@ -175,8 +175,7 @@ async fn run_set_global(
     }
 
     // aube-managed global install: fetch into the runtime dir and tell
-    // the user how to reach it — aube deliberately ships no shims or
-    // shell activation.
+    // the user how to reach it directly or through opt-in activation.
     let version: node_semver::Version = resolved.parse().into_diagnostic()?;
     let cfg = aube_runtime::RuntimeConfig {
         installer: aube_runtime::InstallerMode::Aube,
@@ -223,11 +222,11 @@ async fn run_set_global(
     }
     if let Some(bin_dir) = &resolution.bin_dir {
         println!(
-            "{} has no shims — projects running through {} pick it up automatically;\n\
-             to use it outside {}, add it to PATH: export PATH=\"{}:$PATH\"",
+            "projects running through {} pick it up automatically;\n\
+             to use shims, run `{} <shell>` for your shell;\n\
+             to use this install directly, add it to PATH: export PATH=\"{}:$PATH\"",
             aube_util::prog(),
-            aube_util::prog(),
-            aube_util::prog(),
+            aube_util::cmd("activate"),
             bin_dir.display()
         );
     }

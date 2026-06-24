@@ -3,9 +3,8 @@
 aube switches Node.js versions per project. When a project pins a Node
 version, every command that spawns node — `aube run` / `aubr`,
 `aube exec`, `aubx` / `aube dlx`, and lifecycle/build scripts — runs on
-the pinned version. There are no shims and no shell activation to set
-up: running through aube *is* the switch, and `node` outside aube is
-untouched.
+the pinned version. Running through aube *is* the switch, and `node`
+outside aube is untouched unless you opt into shell activation.
 
 ## Pinning a version
 
@@ -65,6 +64,23 @@ setting decides who fetches it:
 Self-downloads are verified against Node's published `SHASUMS256.txt`
 (or the lockfile's recorded checksum) before extraction. Corporate
 mirrors are supported via [`nodeDownloadMirrors`](/settings/#nodedownloadmirrors).
+
+## Shell activation
+
+Use activation when you want ordinary tool names to go through aube:
+
+```sh
+eval "$(aube activate bash)"
+eval "$(aube activate zsh)"
+aube activate fish | source
+```
+
+Activation creates shims under aube's data directory and prepends that
+directory to PATH for the current shell. The `node` shim resolves the
+project runtime and execs the selected Node. The `npm`, `npx`, `pnpm`,
+`pnpx`, `yarn`, and `yarnpkg` shims route common package-manager
+commands to aube, so an accidental `pnpm install` in a project with a
+different existing lockfile still lets aube preserve that lockfile kind.
 
 ## `onFail` policy
 

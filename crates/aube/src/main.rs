@@ -30,9 +30,8 @@ fn main() {
     // part of the embeddable command layer — a downstream embedder ships its
     // own top-level usage/completions — so it's intercepted here in the binary
     // before `cli_main` rather than carried as a subcommand in the lib. Only
-    // the standalone `aube` invocation reaches it: the `aubr`/`aubx` multicall
-    // shims rewrite their argv to `run`/`dlx`, so a `usage` token there is
-    // never a top-level command.
+    // the standalone `aube` invocation reaches it: multicall shims rewrite
+    // argv before clap, so their `usage` tokens belong to the wrapped tool.
     if is_usage_invocation() {
         let mut cmd = aube::command();
         clap_usage::generate(&mut cmd, embedder.name, &mut std::io::stdout());
@@ -46,7 +45,7 @@ fn main() {
 }
 
 /// True for a standalone `aube usage` invocation: argv[0] resolves to the
-/// `aube` binary (not the `aubr`/`aubx` multicall shims) and the first
+/// `aube` binary (not one of the multicall/tool shims) and the first
 /// argument is `usage`.
 fn is_usage_invocation() -> bool {
     let mut args = std::env::args_os();
@@ -56,7 +55,12 @@ fn is_usage_invocation() -> bool {
         .map(std::path::Path::new)
         .and_then(|p| p.file_stem())
         .and_then(|s| s.to_str())
-        .map(|stem| !matches!(stem.to_ascii_lowercase().as_str(), "aubr" | "aubx"))
+        .map(|stem| {
+            !matches!(
+                stem.to_ascii_lowercase().as_str(),
+                "aubr" | "aubx" | "node" | "npm" | "npx" | "pnpm" | "pnpx" | "yarn" | "yarnpkg"
+            )
+        })
         .unwrap_or(true);
     invoked_as_aube && args.next().as_deref() == Some(std::ffi::OsStr::new("usage"))
 }

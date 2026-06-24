@@ -29,6 +29,7 @@ mod runtime;
 mod self_version;
 mod startup;
 mod state;
+mod tool_shims;
 mod update_check;
 mod version;
 
@@ -303,6 +304,8 @@ enum Commands {
     /// Bootstrap aube's cached node-gyp and print the executable path.
     #[command(name = "__node-gyp-bootstrap", hide = true)]
     NodeGypBootstrap { project_dir: PathBuf },
+    /// Emit shell activation code for runtime tool shims
+    Activate(commands::activate::ActivateArgs),
     /// Add a dependency
     #[command(visible_alias = "a")]
     Add(commands::add::AddArgs),
@@ -410,6 +413,9 @@ enum Commands {
     Login(commands::login::LoginArgs),
     /// Remove a registry auth token from the user's ~/.npmrc
     Logout(commands::logout::LogoutArgs),
+    /// Run Node.js through aube's project runtime resolver
+    #[command(disable_help_flag = true, disable_version_flag = true)]
+    Node(commands::node::NodeArgs),
     /// Report dependencies whose installed version lags behind the registry
     #[command(after_long_help = commands::outdated::AFTER_LONG_HELP)]
     Outdated(commands::outdated::OutdatedArgs),
@@ -635,6 +641,11 @@ fn inner_main() -> miette::Result<i32> {
     // through the process-global slot in `aube_settings`.
     let config_overrides = extract_config_overrides(&mut argv);
     aube_settings::set_global_cli_overrides(config_overrides);
+    // Shell activation prepends aube's shim dir so `node` / `pnpm` /
+    // `yarn` resolve to this binary. Once aube is running, scrub that
+    // directory before any runtime probe or child spawn can recursively
+    // rediscover the shim as the "real" tool.
+    tool_shims::sanitize_process_path();
     // Override the clap command name at runtime with the active embedder's
     // name. The `#[command(name = "aube")]` attribute is a compile-time
     // constant and can't read `embedder()`, so help/usage/error output would
@@ -850,6 +861,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::NodeGypBootstrap { project_dir }) => {
             commands::install::node_gyp_bootstrap::print_bootstrapped_binary(&project_dir).await?
         }
+        Some(Commands::Activate(args)) => commands::activate::run(args)?,
         Some(Commands::Add(args)) => {
             commands::add::run(args, effective_filter.clone()).await?;
         }
@@ -931,6 +943,11 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::List(args)) => commands::list::run(args, effective_filter.clone()).await?,
         Some(Commands::Login(args)) => commands::login::run(args).await?,
         Some(Commands::Logout(args)) => commands::logout::run(args).await?,
+        Some(Commands::Node(args)) => {
+            if let Some(code) = commands::node::run(args).await? {
+                return Ok(Some(code));
+            }
+        }
         Some(Commands::Outdated(args)) => {
             if let Some(code) = commands::outdated::run(args, effective_filter.clone()).await? {
                 return Ok(Some(code));
@@ -1368,6 +1385,26 @@ mod cli_spec_tests {
         let cli = Cli::try_parse_from(["aube", "w", "react"]).expect("w should parse as why");
         assert!(matches!(cli.command, Some(Commands::Why(_))));
     }
+
+    #[test]
+    fn node_subcommand_forwards_version_flag() {
+        let cli =
+            Cli::try_parse_from(["aube", "node", "--version"]).expect("node --version parses");
+        assert!(!cli.version);
+        let Some(Commands::Node(args)) = cli.command else {
+            panic!("expected node subcommand");
+        };
+        assert_eq!(args.args, vec![OsString::from("--version")]);
+    }
+
+    #[test]
+    fn node_subcommand_forwards_help_flag() {
+        let cli = Cli::try_parse_from(["aube", "node", "--help"]).expect("node --help parses");
+        let Some(Commands::Node(args)) = cli.command else {
+            panic!("expected node subcommand");
+        };
+        assert_eq!(args.args, vec![OsString::from("--help")]);
+    }
 }
 
 #[cfg(test)]
@@ -1405,6 +1442,94 @@ mod multicall_tests {
         assert_eq!(
             rewrite_multicall_argv(os(&["aubx", "cowsay", "hi"])),
             os(&["aube", "dlx", "cowsay", "hi"])
+        );
+    }
+
+    #[test]
+    fn node_shim_rewrites_to_node_subcommand() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["node", "--version"])),
+            os(&["aube", "node", "--version"])
+        );
+    }
+
+    #[test]
+    fn package_manager_version_flags_rewrite_to_aube_version() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["pnpm", "--version"])),
+            os(&["aube", "--version"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "-v"])),
+            os(&["aube", "--version"])
+        );
+    }
+
+    #[test]
+    fn pnpm_and_pnpx_shims_rewrite_to_aube_surfaces() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["pnpm", "install", "--frozen-lockfile"])),
+            os(&["aube", "install", "--frozen-lockfile"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["pnpx", "cowsay", "hi"])),
+            os(&["aube", "dlx", "cowsay", "hi"])
+        );
+    }
+
+    #[test]
+    fn npm_install_rewrites_to_install_or_add() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install"])),
+            os(&["aube", "install"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "i", "-D", "vitest"])),
+            os(&["aube", "add", "-D", "vitest"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--registry", "https://r.test"])),
+            os(&["aube", "install", "--registry", "https://r.test"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--workspace", "app"])),
+            os(&["aube", "install", "--workspace", "app"])
+        );
+    }
+
+    #[test]
+    fn npm_common_commands_rewrite_to_aube() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "ci"])),
+            os(&["aube", "ci"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "run", "build"])),
+            os(&["aube", "run", "build"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "rm", "react"])),
+            os(&["aube", "remove", "react"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npx", "vite", "--version"])),
+            os(&["aube", "dlx", "vite", "--version"])
+        );
+    }
+
+    #[test]
+    fn yarn_common_commands_rewrite_to_aube() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["yarn"])),
+            os(&["aube", "install"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["yarn", "add", "react"])),
+            os(&["aube", "add", "react"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["yarnpkg", "remove", "react"])),
+            os(&["aube", "remove", "react"])
         );
     }
 

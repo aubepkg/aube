@@ -1,3 +1,4 @@
+pub mod activate;
 pub mod add;
 pub mod add_supply_chain;
 pub mod approve_builds;
@@ -36,6 +37,7 @@ pub mod link;
 pub mod list;
 pub mod login;
 pub mod logout;
+pub mod node;
 pub mod npm_fallback;
 pub mod npmrc;
 pub mod outdated;
