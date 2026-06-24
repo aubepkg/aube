@@ -872,14 +872,15 @@ mod subset_tests {
         assert_eq!(raw.snapshots.len(), 9);
     }
 
-    // -- Empty-importer `{}` regression (the fast-path-coverage fix). --
+    // -- Empty-importer `{}` fast-path coverage. --
 
     #[test]
     fn empty_importer_inline_map_fires_and_matches() {
         // pnpm writes a workspace package with no dependencies as an
-        // inline `{}`. Before the fix this declined, falling the whole
-        // (often large, multi-package) workspace lockfile back to serde.
-        // The result must be byte-identical to serde's.
+        // inline `{}`. The fast path must handle this directly rather than
+        // declining and falling the whole (often large, multi-package)
+        // workspace lockfile back to serde. The result must be
+        // byte-identical to serde's.
         let lock = "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      a:\n        specifier: ^1\n        version: 1.0.0\n  packages/empty: {}\n  packages/also-empty: {}\n";
         assert_fires_and_matches("empty-importer", lock);
         let raw = try_parse(lock).unwrap();
@@ -889,10 +890,10 @@ mod subset_tests {
         assert!(empty.dev_dependencies.is_none());
     }
 
-    // -- Inline-flow-map / empty-block regression (Finding 1). A map-
-    //    typed field whose value is an inline `{...}` flow map, or whose
-    //    block is empty (serde reads it as a missing/null `None`, not an
-    //    empty map), must DECLINE — never silently parse as `Some({})`. --
+    // -- Inline-flow-map / empty-block handling. A map-typed field whose
+    //    value is an inline `{...}` flow map, or whose block is empty
+    //    (serde reads it as a missing/null `None`, not an empty map), must
+    //    DECLINE — never silently parse as `Some({})`. --
 
     #[test]
     fn inline_flow_map_fields_decline_not_misparse() {
@@ -962,13 +963,13 @@ mod subset_tests {
         assert_fires_and_matches("block-overrides", block);
     }
 
-    // -- Fast-path hit-rate guard (self-review of the c766fc4 decline fix).
-    //    The fix added `inline.is_some() -> decline` to the eight map-typed
-    //    fields, plus an empty-map decline inside `parse_string_map`. A
-    //    block form NEVER carries an inline value, so it must still FIRE.
-    //    These pin each field's legitimate, populated BLOCK form to the
-    //    fast path — evidence the decline fix did not regress the hit rate
-    //    for the common real-world case. (settings / catalogs /
+    // -- Fast-path hit-rate guard. The decline logic (`inline.is_some() ->
+    //    decline` on the eight map-typed fields, plus an empty-map decline
+    //    inside `parse_string_map`) must not over-trigger: a block form
+    //    NEVER carries an inline value, so it must still FIRE. These pin
+    //    each field's legitimate, populated BLOCK form to the fast path —
+    //    evidence the inline/empty declines do not eat the hit rate for the
+    //    common real-world case. (settings / catalogs /
     //    patchedDependencies / snapshot.optionalDependencies block forms
     //    are also exercised by the kitchen-sink fixture's
     //    `assert_fires_and_matches`; these isolate each one.) --
@@ -1229,9 +1230,9 @@ mod subset_tests {
     //    INLINE flow-map style — then asserts the core invariant for BOTH
     //    renderings: `diff_subset_vs_serde` returns Match or Declined,
     //    never Divergence. This fuzzes the inline-vs-block boundary across
-    //    the whole field class, so a future regression that re-introduces a
-    //    silent inline misparse (the exact c766fc4 bug) is caught. The
-    //    seed is fixed below for deterministic CI. --
+    //    the whole field class, so any regression that re-introduces a
+    //    silent inline misparse is caught. The seed is fixed below for
+    //    deterministic CI. --
 
     use proptest::prelude::*;
 
@@ -1264,9 +1265,8 @@ mod subset_tests {
     }
 
     /// A logical lockfile: the two string→string map fields whose inline
-    /// vs block boundary the c766fc4 fix governs directly through
-    /// `parse_string_map` (`overrides`, `time`), each independently
-    /// Null / Empty / Populated.
+    /// vs block boundary `parse_string_map` governs directly
+    /// (`overrides`, `time`), each independently Null / Empty / Populated.
     fn logical_lock() -> impl Strategy<Value = (FieldVal, FieldVal)> {
         (field_val(), field_val())
     }
