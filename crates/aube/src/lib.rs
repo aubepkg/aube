@@ -786,7 +786,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             .wrap_err_with(|| format!("failed to change directory to {}", dir.display()))?;
     }
 
-    if cli.version {
+    if should_print_top_level_version(&cli) {
         println!("{}", crate::version::VERSION_LONG.as_str());
         let cwd =
             crate::dirs::project_root_or_cwd().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -1204,6 +1204,10 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
     Ok(None)
 }
 
+fn should_print_top_level_version(cli: &Cli) -> bool {
+    cli.version && !matches!(cli.command, Some(Commands::Node(_)))
+}
+
 /// Run a lifecycle script (`start` / `stop` / `test` / `restart`).
 ///
 /// `ScriptArgs` carries the moved-off-global `LockfileArgs` /
@@ -1390,7 +1394,7 @@ mod cli_spec_tests {
     fn node_subcommand_forwards_version_flag() {
         let cli =
             Cli::try_parse_from(["aube", "node", "--version"]).expect("node --version parses");
-        assert!(!cli.version);
+        assert!(!should_print_top_level_version(&cli));
         let Some(Commands::Node(args)) = cli.command else {
             panic!("expected node subcommand");
         };
