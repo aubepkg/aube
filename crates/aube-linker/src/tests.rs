@@ -292,15 +292,15 @@ fn test_link_file_fresh_hardlink_short_circuits_when_source_missing() {
 #[test]
 #[cfg(unix)]
 fn test_link_file_fresh_reflink_falls_back_to_hardlink_not_copy() {
-    // jdx/aube#914 review (Greptile P2): macOS resolves same-FS `auto`
-    // to `Reflink`, but `clonefile` is APFS-only. On a non-APFS same-FS
-    // target (HFS+, or any non-reflink FS) the reflink fails and used to
-    // degrade straight to a per-file copy — a silent regression from the
-    // zero-cost hardlink the same FS supports. The fallback must try a
-    // hardlink before copy. We can only assert the hardlink outcome on a
-    // filesystem that actually lacks reflink (where the fallback fires);
-    // on a reflink-capable FS the reflink succeeds and there is nothing
-    // to fall back from, so the inode check is gated on a probe.
+    // macOS resolves same-FS `auto` to `Reflink`, but `clonefile` is
+    // APFS-only. On a non-APFS same-FS target (HFS+, or any non-reflink
+    // FS) the reflink fails, and degrading straight to a per-file copy
+    // would forfeit the zero-cost hardlink the same FS supports. The
+    // fallback must try a hardlink before copy. We can only assert the
+    // hardlink outcome on a filesystem that actually lacks reflink
+    // (where the fallback fires); on a reflink-capable FS the reflink
+    // succeeds and there is nothing to fall back from, so the inode
+    // check is gated on a probe.
     use std::os::unix::fs::MetadataExt;
 
     let dir = tempfile::tempdir().unwrap();
