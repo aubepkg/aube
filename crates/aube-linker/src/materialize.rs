@@ -686,11 +686,35 @@ impl Linker {
                     // silently regresses to a byte transfer per file.
                     // Explicit `clone` / `clone-or-copy` (Reflink) keep
                     // their documented copy fallback and skip this step.
-                    if auto && std::fs::hard_link(&stored.store_path, dst).is_ok() {
-                        trace!("reflink failed, fell back to hardlink: {e}");
+                    //
+                    // Surface the hardlink attempt's OWN error in the copy
+                    // trace: if the auto hardlink itself fails (a cross-mount
+                    // edge the probe missed, a transient permission error), it
+                    // — not the original reflink error — is the proximate
+                    // cause of the copy, so reporting only `e` would point at
+                    // the wrong failure.
+                    let hardlinked = if auto {
+                        match std::fs::hard_link(&stored.store_path, dst) {
+                            Ok(()) => {
+                                trace!("reflink failed, fell back to hardlink: {e}");
+                                true
+                            }
+                            Err(he) => {
+                                trace!(
+                                    "reflink failed ({e}); hardlink fallback also failed ({he}); falling back to copy"
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    };
+                    if hardlinked {
                         realized = "reflink_fallback_hardlink";
                     } else {
-                        trace!("reflink failed, falling back to copy: {e}");
+                        if !auto {
+                            trace!("reflink failed, falling back to copy: {e}");
+                        }
                         std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
                         realized = "reflink_fallback_copy";
                     }

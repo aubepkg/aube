@@ -294,6 +294,42 @@ fn test_link_file_fresh_hardlink_short_circuits_when_source_missing() {
     );
 }
 
+/// RAII guard that serializes `FORCE_REFLINK_FAILURE` across the parallel
+/// test runner and always restores the flag — even if the body panics.
+///
+/// `FORCE_REFLINK_FAILURE` is a process-wide `AtomicBool`, so two reflink
+/// fallback tests running concurrently could otherwise observe each other's
+/// `store(false)` mid-`link_file_fresh` (a reflink-capable FS would then take
+/// the real clonefile path and skew the inode assertion), and a bare manual
+/// reset would leak the `true` state to the next test on a panic. Holding the
+/// `Mutex` for the whole forced-failure window mutually excludes the tests; the
+/// `Drop` impl makes the reset panic-safe.
+#[cfg(unix)]
+struct ForcedReflinkFailure {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(unix)]
+impl ForcedReflinkFailure {
+    fn engage() -> Self {
+        use std::sync::atomic::Ordering;
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // Recover from a poisoned lock: a prior test panicking inside the guard
+        // is exactly the case this exists for, and the `Drop` reset still ran.
+        let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::materialize::FORCE_REFLINK_FAILURE.store(true, Ordering::Relaxed);
+        Self { _guard: guard }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ForcedReflinkFailure {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        crate::materialize::FORCE_REFLINK_FAILURE.store(false, Ordering::Relaxed);
+    }
+}
+
 /// Materialize one file under `strategy` with the reflink attempt forced
 /// to fail, then report whether the result is a hardlink (same inode as
 /// the source) or a copy (distinct inode). Isolates the clonefile-failure
@@ -302,7 +338,6 @@ fn test_link_file_fresh_hardlink_short_circuits_when_source_missing() {
 #[cfg(unix)]
 fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy) -> bool {
     use std::os::unix::fs::MetadataExt;
-    use std::sync::atomic::Ordering;
 
     let dir = tempfile::tempdir().unwrap();
     let store = Store::at(dir.path().join("store/files"));
@@ -317,9 +352,12 @@ fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy) -> b
     let dst = dst_dir.join("payload.bin");
 
     let linker = Linker::new_with_gvs(&store, strategy, true);
-    crate::materialize::FORCE_REFLINK_FAILURE.store(true, Ordering::Relaxed);
-    let result = linker.link_file_fresh(&stored, "payload.bin", &dst);
-    crate::materialize::FORCE_REFLINK_FAILURE.store(false, Ordering::Relaxed);
+    let result = {
+        // Hold the guard across the materialize so a sibling test can't flip
+        // the global flag mid-call; the flag is restored on drop, panic-safe.
+        let _forced = ForcedReflinkFailure::engage();
+        linker.link_file_fresh(&stored, "payload.bin", &dst)
+    };
     result.expect("a reflink strategy must still materialize the file via its fallback");
 
     // Data integrity holds whichever fallback fired.
