@@ -5,7 +5,7 @@
 //! 1.5 JSON or SPDX 2.3 JSON. Pure read; does not touch `node_modules/` or
 //! take the project lock.
 
-use aube_lockfile::{LockedPackage, LockfileGraph};
+use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use std::collections::BTreeMap;
@@ -17,6 +17,10 @@ pub struct SbomArgs {
     /// Show only devDependencies
     #[arg(short = 'D', long, conflicts_with = "prod")]
     pub dev: bool,
+
+    /// Exclude peer dependencies from CycloneDX output
+    #[arg(long)]
+    pub exclude_peers: bool,
 
     /// Output format: `cyclonedx` (default) or `spdx`
     #[arg(long, value_enum, default_value_t = SbomFormat::Cyclonedx)]
@@ -54,9 +58,27 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
 
     let filter = DepFilter::from_flags(args.prod, args.dev);
     let closure = super::collect_dep_closure(&graph, filter, false);
+    if args.exclude_peers && args.format != SbomFormat::Cyclonedx {
+        return Err(miette::miette!(
+            "--exclude-peers is only supported with --format cyclonedx"
+        ));
+    }
+    let closure = if args.exclude_peers && args.format == SbomFormat::Cyclonedx {
+        exclude_peer_only_packages(
+            &graph,
+            &closure,
+            &manifest.peer_dependencies,
+            &manifest.dependencies,
+        )
+    } else {
+        closure
+    };
 
     let json = match args.format {
-        SbomFormat::Cyclonedx => render_cyclonedx(&manifest, &closure)?,
+        SbomFormat::Cyclonedx => {
+            let dev_only = collect_dev_only_packages(&graph, graph.importers.values().flatten());
+            render_cyclonedx(&manifest, &closure, &dev_only, args.exclude_peers)?
+        }
         SbomFormat::Spdx => render_spdx(&manifest, &graph, filter, &closure)?,
     };
 
@@ -68,6 +90,8 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
 fn render_cyclonedx(
     manifest: &aube_manifest::PackageJson,
     closure: &BTreeMap<String, &LockedPackage>,
+    dev_only: &BTreeMap<String, bool>,
+    exclude_peers: bool,
 ) -> miette::Result<String> {
     let root_name = manifest.name.clone().unwrap_or_else(|| "(unnamed)".into());
     let root_version = manifest.version.clone().unwrap_or_default();
@@ -81,6 +105,19 @@ fn render_cyclonedx(
         c.insert("name".into(), pkg.name.clone().into());
         c.insert("version".into(), pkg.version.clone().into());
         c.insert("purl".into(), purl(&pkg.name, &pkg.version).into());
+        if let Some(bugs_url) = bugs_url_from_extra(&pkg.extra_meta) {
+            c.insert("externalReferences".into(), external_references(bugs_url));
+        }
+        if dev_only.get(dep_path).copied().unwrap_or(false) {
+            c.insert("scope".into(), "excluded".into());
+            c.insert(
+                "properties".into(),
+                serde_json::json!([{
+                    "name": "cdx:npm:package:development",
+                    "value": "true",
+                }]),
+            );
+        }
         components.push(serde_json::Value::Object(c));
     }
 
@@ -90,6 +127,9 @@ fn render_cyclonedx(
     root_component.insert("name".into(), root_name.into());
     if !root_version.is_empty() {
         root_component.insert("version".into(), root_version.clone().into());
+    }
+    if let Some(bugs_url) = bugs_url_from_extra(&manifest.extra) {
+        root_component.insert("externalReferences".into(), external_references(bugs_url));
     }
 
     let mut metadata = serde_json::Map::new();
@@ -111,17 +151,118 @@ fn render_cyclonedx(
         serde_json::Value::Object(root_component),
     );
 
-    let bom = serde_json::json!({
-        "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
-        "version": 1,
-        "metadata": metadata,
-        "components": components,
-    });
+    let mut bom = serde_json::Map::new();
+    bom.insert("bomFormat".into(), "CycloneDX".into());
+    bom.insert("specVersion".into(), "1.5".into());
+    bom.insert("version".into(), 1.into());
+    bom.insert("metadata".into(), metadata.into());
+    bom.insert("components".into(), components.into());
+    if exclude_peers {
+        bom.insert("properties".into(), cyclonedx_exclude_peers_property());
+    }
 
-    serde_json::to_string_pretty(&bom)
+    serde_json::to_string_pretty(&serde_json::Value::Object(bom))
         .into_diagnostic()
         .wrap_err("failed to serialize CycloneDX SBOM")
+}
+
+fn cyclonedx_exclude_peers_property() -> serde_json::Value {
+    serde_json::json!([{
+        "name": "cdx:npm:package:excludePeers",
+        "value": "true",
+    }])
+}
+
+fn external_references(url: &str) -> serde_json::Value {
+    serde_json::json!([{
+        "type": "issue-tracker",
+        "url": url,
+    }])
+}
+
+fn bugs_url_from_extra(extra: &BTreeMap<String, serde_json::Value>) -> Option<&str> {
+    match extra.get("bugs")? {
+        serde_json::Value::String(url) => url_is_http(url).then_some(url.as_str()),
+        serde_json::Value::Object(map) => map
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .filter(|url| url_is_http(url)),
+        _ => None,
+    }
+}
+
+fn url_is_http(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
+fn exclude_peer_only_packages<'a>(
+    graph: &'a LockfileGraph,
+    closure: &BTreeMap<String, &'a LockedPackage>,
+    root_peer_dependencies: &BTreeMap<String, String>,
+    root_dependencies: &BTreeMap<String, String>,
+) -> BTreeMap<String, &'a LockedPackage> {
+    let mut out = BTreeMap::new();
+    let mut stack: Vec<String> = graph
+        .root_deps()
+        .iter()
+        .filter(|dep| closure.contains_key(&dep.dep_path))
+        .filter(|dep| {
+            !root_peer_dependencies.contains_key(&dep.name)
+                || root_dependencies.contains_key(&dep.name)
+        })
+        .map(|dep| dep.dep_path.clone())
+        .collect();
+
+    while let Some(dep_path) = stack.pop() {
+        let Some(pkg) = closure.get(&dep_path).copied() else {
+            continue;
+        };
+        if out.insert(dep_path.clone(), pkg).is_some() {
+            continue;
+        }
+        let peer_names = pkg.peer_dependencies_with_meta_defaults();
+        for (name, version) in &pkg.dependencies {
+            if peer_names.contains_key(name) {
+                continue;
+            }
+            let child_path = format!("{name}@{version}");
+            if closure.contains_key(&child_path) {
+                stack.push(child_path);
+            }
+        }
+    }
+
+    out
+}
+
+fn collect_dev_only_packages<'a>(
+    graph: &LockfileGraph,
+    roots: impl IntoIterator<Item = &'a DirectDep>,
+) -> BTreeMap<String, bool> {
+    let mut out = BTreeMap::new();
+    let mut stack: Vec<(String, bool)> = roots
+        .into_iter()
+        .map(|d| (d.dep_path.clone(), matches!(d.dep_type, DepType::Dev)))
+        .collect();
+
+    while let Some((dep_path, dev_only)) = stack.pop() {
+        match out.get(&dep_path).copied() {
+            Some(false) => continue,
+            Some(true) if dev_only => continue,
+            _ => {
+                out.insert(dep_path.clone(), dev_only);
+            }
+        }
+
+        let Some(pkg) = graph.get_package(&dep_path) else {
+            continue;
+        };
+        for (name, version) in &pkg.dependencies {
+            stack.push((format!("{name}@{version}"), dev_only));
+        }
+    }
+
+    out
 }
 
 /// SPDX 2.3 JSON. See https://spdx.github.io/spdx-spec/v2.3/.
@@ -341,6 +482,254 @@ mod tests {
     #[test]
     fn sanitize_spdx_id_strips_unsafe() {
         assert_eq!(sanitize_spdx_id("@babel/core@7.0.0"), "-babel-core-7.0.0");
+    }
+
+    #[test]
+    fn collect_dev_only_packages_handles_cycles_and_runtime_downgrade() {
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "a@1.0.0".into(),
+            LockedPackage {
+                name: "a".into(),
+                version: "1.0.0".into(),
+                dep_path: "a@1.0.0".into(),
+                dependencies: BTreeMap::from([("b".into(), "1.0.0".into())]),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "b@1.0.0".into(),
+            LockedPackage {
+                name: "b".into(),
+                version: "1.0.0".into(),
+                dep_path: "b@1.0.0".into(),
+                dependencies: BTreeMap::from([("a".into(), "1.0.0".into())]),
+                ..Default::default()
+            },
+        );
+
+        let roots = vec![DirectDep {
+            name: "a".into(),
+            dep_path: "a@1.0.0".into(),
+            dep_type: DepType::Dev,
+            specifier: None,
+        }];
+        let dev_only = collect_dev_only_packages(&graph, &roots);
+        assert_eq!(dev_only.get("a@1.0.0"), Some(&true));
+        assert_eq!(dev_only.get("b@1.0.0"), Some(&true));
+
+        let roots = vec![
+            DirectDep {
+                name: "a".into(),
+                dep_path: "a@1.0.0".into(),
+                dep_type: DepType::Dev,
+                specifier: None,
+            },
+            DirectDep {
+                name: "b".into(),
+                dep_path: "b@1.0.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            },
+        ];
+        let runtime = collect_dev_only_packages(&graph, &roots);
+        assert_eq!(runtime.get("a@1.0.0"), Some(&false));
+        assert_eq!(runtime.get("b@1.0.0"), Some(&false));
+    }
+
+    #[test]
+    fn collect_dev_only_packages_uses_all_workspace_importers() {
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "shared@1.0.0".into(),
+            LockedPackage {
+                name: "shared".into(),
+                version: "1.0.0".into(),
+                dep_path: "shared@1.0.0".into(),
+                ..Default::default()
+            },
+        );
+        graph.importers.insert(
+            ".".into(),
+            vec![DirectDep {
+                name: "shared".into(),
+                dep_path: "shared@1.0.0".into(),
+                dep_type: DepType::Dev,
+                specifier: None,
+            }],
+        );
+        graph.importers.insert(
+            "packages/app".into(),
+            vec![DirectDep {
+                name: "shared".into(),
+                dep_path: "shared@1.0.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+
+        let dev_only = collect_dev_only_packages(&graph, graph.importers.values().flatten());
+        assert_eq!(dev_only.get("shared@1.0.0"), Some(&false));
+    }
+
+    #[test]
+    fn exclude_peer_only_packages_prunes_exclusive_peer_subtree() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".into(),
+            vec![DirectDep {
+                name: "consumer".into(),
+                dep_path: "consumer@1.0.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+        graph.packages.insert(
+            "consumer@1.0.0".into(),
+            LockedPackage {
+                name: "consumer".into(),
+                version: "1.0.0".into(),
+                dep_path: "consumer@1.0.0".into(),
+                dependencies: BTreeMap::from([
+                    ("peer".into(), "1.0.0".into()),
+                    ("runtime".into(), "1.0.0".into()),
+                ]),
+                peer_dependencies: BTreeMap::from([("peer".into(), "^1".into())]),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "peer@1.0.0".into(),
+            LockedPackage {
+                name: "peer".into(),
+                version: "1.0.0".into(),
+                dep_path: "peer@1.0.0".into(),
+                dependencies: BTreeMap::from([("peer-child".into(), "1.0.0".into())]),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "peer-child@1.0.0".into(),
+            LockedPackage {
+                name: "peer-child".into(),
+                version: "1.0.0".into(),
+                dep_path: "peer-child@1.0.0".into(),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "runtime@1.0.0".into(),
+            LockedPackage {
+                name: "runtime".into(),
+                version: "1.0.0".into(),
+                dep_path: "runtime@1.0.0".into(),
+                dependencies: BTreeMap::from([("peer-child".into(), "1.0.0".into())]),
+                ..Default::default()
+            },
+        );
+
+        let closure: BTreeMap<_, _> = graph
+            .packages
+            .iter()
+            .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
+            .collect();
+        let pruned =
+            exclude_peer_only_packages(&graph, &closure, &BTreeMap::new(), &BTreeMap::new());
+
+        assert!(pruned.contains_key("consumer@1.0.0"));
+        assert!(pruned.contains_key("runtime@1.0.0"));
+        assert!(pruned.contains_key("peer-child@1.0.0"));
+        assert!(!pruned.contains_key("peer@1.0.0"));
+    }
+
+    #[test]
+    fn exclude_peer_only_packages_prunes_root_peer_deps() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".into(),
+            vec![DirectDep {
+                name: "react".into(),
+                dep_path: "react@18.2.0".into(),
+                dep_type: DepType::Dev,
+                specifier: None,
+            }],
+        );
+        graph.packages.insert(
+            "react@18.2.0".into(),
+            LockedPackage {
+                name: "react".into(),
+                version: "18.2.0".into(),
+                dep_path: "react@18.2.0".into(),
+                ..Default::default()
+            },
+        );
+        let closure: BTreeMap<_, _> = graph
+            .packages
+            .iter()
+            .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
+            .collect();
+        let pruned = exclude_peer_only_packages(
+            &graph,
+            &closure,
+            &BTreeMap::from([("react".into(), "^18".into())]),
+            &BTreeMap::new(),
+        );
+
+        assert!(pruned.is_empty());
+    }
+
+    #[test]
+    fn exclude_peer_only_packages_keeps_root_prod_peer_deps() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".into(),
+            vec![DirectDep {
+                name: "react".into(),
+                dep_path: "react@18.2.0".into(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+        graph.packages.insert(
+            "react@18.2.0".into(),
+            LockedPackage {
+                name: "react".into(),
+                version: "18.2.0".into(),
+                dep_path: "react@18.2.0".into(),
+                ..Default::default()
+            },
+        );
+        let closure: BTreeMap<_, _> = graph
+            .packages
+            .iter()
+            .map(|(dep_path, pkg)| (dep_path.clone(), pkg))
+            .collect();
+        let pruned = exclude_peer_only_packages(
+            &graph,
+            &closure,
+            &BTreeMap::from([("react".into(), "^18".into())]),
+            &BTreeMap::from([("react".into(), "^18".into())]),
+        );
+
+        assert!(pruned.contains_key("react@18.2.0"));
+    }
+
+    #[test]
+    fn bugs_url_from_extra_accepts_url_shape_only() {
+        let object = BTreeMap::from([(
+            "bugs".into(),
+            serde_json::json!({"url": "https://github.com/acme/pkg/issues"}),
+        )]);
+        assert_eq!(
+            bugs_url_from_extra(&object),
+            Some("https://github.com/acme/pkg/issues")
+        );
+
+        let email = BTreeMap::from([(
+            "bugs".into(),
+            serde_json::json!({"email": "bugs@acme.test"}),
+        )]);
+        assert_eq!(bugs_url_from_extra(&email), None);
     }
 
     #[test]

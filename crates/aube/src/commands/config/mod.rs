@@ -113,6 +113,7 @@ pub enum ListLocation {
 }
 
 pub(crate) use aube_config::{
+    load_managed_entries as load_managed_aube_config_entries,
     load_project_entries as load_project_aube_config_entries,
     load_user_entries as load_user_aube_config_entries,
 };
@@ -263,6 +264,32 @@ pub(super) fn setting_for_key(key: &str) -> Option<&'static settings_meta::Setti
     })
 }
 
+pub(super) fn setting_default_value(meta: &settings_meta::SettingMeta) -> Option<String> {
+    if meta.default == "undefined" || meta.default == "null" {
+        return None;
+    }
+    let doc = format!("value = {}", meta.default);
+    let value = toml::from_str::<toml::Table>(&doc).ok()?.remove("value")?;
+    match value {
+        toml::Value::String(s) => Some(s),
+        toml::Value::Integer(n) => Some(n.to_string()),
+        toml::Value::Boolean(b) => Some(b.to_string()),
+        toml::Value::Array(items) => {
+            let out: Vec<String> = items
+                .into_iter()
+                .filter_map(|item| match item {
+                    toml::Value::String(s) => Some(s),
+                    toml::Value::Integer(n) => Some(n.to_string()),
+                    toml::Value::Boolean(b) => Some(b.to_string()),
+                    _ => None,
+                })
+                .collect();
+            Some(out.join(","))
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn setting_search_score(meta: &settings_meta::SettingMeta, terms: &[String]) -> usize {
     let names = setting_search_text(&[
         &[meta.name],
@@ -370,6 +397,22 @@ mod tests {
         assert_eq!(
             list::canonical_list_key("auto-install-peers"),
             "auto-install-peers"
+        );
+    }
+
+    #[test]
+    fn canonical_list_key_collapses_workspace_only_alias_to_setting_name() {
+        assert_eq!(
+            list::canonical_list_key("jailBuildPermissions"),
+            "jailBuildPermissions"
+        );
+    }
+
+    #[test]
+    fn canonical_list_key_collapses_workspace_alias_to_npmrc_primary() {
+        assert_eq!(
+            list::canonical_list_key("preferFrozenLockfile"),
+            "prefer-frozen-lockfile"
         );
     }
 

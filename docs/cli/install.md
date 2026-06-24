@@ -21,6 +21,10 @@ Allow every dependency's lifecycle scripts to run.
 
 Bypasses the `allowBuilds` allowlist. Do not use in CI.
 
+### `--dry-run`
+
+Resolve and report what would happen without writing the lockfile or linking node_modules
+
 ### `--fix-lockfile`
 
 Re-resolve lockfile entries whose spec drifted from package.json.

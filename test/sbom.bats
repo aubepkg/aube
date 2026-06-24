@@ -63,7 +63,19 @@ JSON
 	run aube sbom --dev
 	assert_success
 	assert_output --partial '"pkg:npm/is-number@7.0.0"'
+	assert_output --partial '"scope": "excluded"'
+	assert_output --partial '"cdx:npm:package:development"'
 	refute_output --partial 'is-odd@3.0.1'
+}
+
+@test "aube sbom marks only dev-only CycloneDX components as excluded" {
+	_setup_mixed_fixture
+	run bash -c 'aube sbom | jq -e "
+	  any(.components[]; .name == \"is-number\" and .scope == \"excluded\" and any(.properties[]?; .name == \"cdx:npm:package:development\" and .value == \"true\"))
+	  and
+	  any(.components[]; .name == \"is-odd\" and (.scope // \"required\") == \"required\")
+	"'
+	assert_success
 }
 
 @test "aube sbom without a lockfile errors out" {

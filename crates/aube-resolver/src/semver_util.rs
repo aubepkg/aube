@@ -41,14 +41,31 @@ impl<'a> PickResult<'a> {
 /// cutoff. The lowest-satisfying fallback is pnpm's deliberate choice
 /// — the oldest version in the range is least likely to be the freshly
 /// pushed compromise that triggered the filter in the first place.
+///
+/// `is_age_exempt` lets the caller wave a specific version past the
+/// cutoff — used to honor `minimumReleaseAgeExclude` (bare names, name
+/// globs, and exact-version unions). It receives the candidate version
+/// string plus its already-parsed form when the caller has one (every
+/// hot-path call site here does, so the exemption check needn't reparse),
+/// and returns `true` to treat that version as if it cleared the cutoff.
+/// Pass `|_, _| false` when no exemptions apply.
+///
+/// `exempt_cutoff` is the time-based hard wall applied to exempt
+/// versions: a version waved past the age-gate by `is_age_exempt` must
+/// still clear `exempt_cutoff` (the time-based resolution cutoff). Pass
+/// `None` to fully bypass the cutoff for exempt versions (no time-based
+/// wall in effect).
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn pick_version<'a>(
     packument: &'a Packument,
     range_str: &str,
     locked: Option<&str>,
     pick_lowest: bool,
     cutoff: Option<&str>,
+    exempt_cutoff: Option<&str>,
     strict: bool,
+    is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
 ) -> PickResult<'a> {
     // Handle dist-tag references. If the requested range is a tag
     // name and the packument has that tag, use the tagged version
@@ -92,21 +109,35 @@ pub(crate) fn pick_version<'a>(
         }
     };
 
-    let passes_cutoff = |ver: &str| -> bool {
-        let Some(c) = cutoff else { return true };
+    // Does `ver` clear `effective` (the cutoff that applies to it)?
+    // `None` => no wall, keep the version. Missing time => keep it: we'd
+    // rather risk a slightly newer transitive than fail to resolve the
+    // range entirely.
+    let passes_effective_cutoff = |ver: &str, effective: Option<&str>| -> bool {
+        let Some(c) = effective else { return true };
         match packument.time.get(ver) {
             Some(t) => t.as_str() <= c,
-            // Missing time: keep it — we'd rather risk a slightly newer
-            // transitive than fail to resolve the range entirely.
             None => true,
         }
+    };
+
+    // A version's effective cutoff: exempt versions answer to the
+    // time-based wall (`exempt_cutoff`) only; everyone else answers to
+    // the merged `cutoff`.
+    let passes_cutoff = |ver: &str, parsed: Option<&node_semver::Version>| -> bool {
+        let effective = if is_age_exempt(ver, parsed) {
+            exempt_cutoff
+        } else {
+            cutoff
+        };
+        passes_effective_cutoff(ver, effective)
     };
 
     // Prefer locked version if it satisfies and clears the cutoff.
     if let Some(locked_ver) = locked
         && let Ok(v) = node_semver::Version::parse(locked_ver)
         && v.satisfies(&range)
-        && passes_cutoff(locked_ver)
+        && passes_cutoff(locked_ver, Some(&v))
         && let Some(meta) = packument.versions.get(locked_ver)
     {
         return PickResult::Found(meta);
@@ -124,7 +155,7 @@ pub(crate) fn pick_version<'a>(
         && let Some(latest_ver) = packument.dist_tags.get("latest")
         && let Ok(v) = node_semver::Version::parse(latest_ver)
         && v.satisfies(&range)
-        && passes_cutoff(latest_ver)
+        && passes_cutoff(latest_ver, Some(&v))
         && let Some(meta) = packument.versions.get(latest_ver)
     {
         return PickResult::Found(meta);
@@ -147,11 +178,17 @@ pub(crate) fn pick_version<'a>(
             continue;
         }
 
-        if fallback_lowest.as_ref().is_none_or(|(cur, _)| v < *cur) {
+        // The lenient fallback drops the minimumReleaseAge gate but never
+        // the time-based hard wall, so only versions that clear
+        // `exempt_cutoff` are eligible (a no-op `None` when time-based
+        // mode is off).
+        if passes_effective_cutoff(ver_str, exempt_cutoff)
+            && fallback_lowest.as_ref().is_none_or(|(cur, _)| v < *cur)
+        {
             fallback_lowest = Some((v.clone(), meta));
         }
 
-        if passes_cutoff(ver_str) {
+        if passes_cutoff(ver_str, Some(&v)) {
             let replace = best
                 .as_ref()
                 .is_none_or(|(cur, _)| if pick_lowest { v < *cur } else { v > *cur });
@@ -178,12 +215,21 @@ pub(crate) fn pick_version<'a>(
         };
     }
 
-    // Lenient fallback: pnpm's `pickPackageFromMetaUsingTime` ignores
-    // the cutoff and picks the *lowest* satisfying version.
+    // Lenient fallback: pnpm's `pickPackageFromMetaUsingTime` bypasses
+    // the minimumReleaseAge gate and picks the *lowest* satisfying
+    // version — the candidate already cleared the time-based wall above.
     if let Some((_, meta)) = fallback_lowest {
         return PickResult::Found(meta);
     }
-    PickResult::NoMatch
+    // Nothing left: either the range was unsatisfiable, or the
+    // time-based wall excluded every satisfying version. Report the age
+    // gate in the latter case so the caller surfaces a meaningful error
+    // rather than a bogus "no matching version".
+    if had_satisfying_but_age_gated {
+        PickResult::AgeGated
+    } else {
+        PickResult::NoMatch
+    }
 }
 
 /// Walk the packument's versions and return the highest non

@@ -82,11 +82,19 @@ fn resolve_minimum_release_age(
     if minutes == 0 {
         return None;
     }
-    let exclude: std::collections::HashSet<String> =
-        aube_settings::resolved::minimum_release_age_exclude(ctx)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+    // Parse pattern-by-pattern (bare names, `*` name globs, exact-version
+    // unions) so one malformed entry doesn't silently drop the rest and
+    // weaken the gate. Same engine pnpm uses for both exclude settings.
+    let (exclude, parse_errors) = aube_resolver::PackageVersionPolicy::parse_lossy(
+        aube_settings::resolved::minimum_release_age_exclude(ctx).unwrap_or_default(),
+    );
+    for err in parse_errors {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE,
+            error = %err,
+            "ignoring malformed minimumReleaseAgeExclude entry"
+        );
+    }
     // `paranoid=true` forces the gate to be hard, not advisory.
     let strict = aube_settings::resolved::minimum_release_age_strict(ctx)
         || aube_settings::resolved::paranoid(ctx);
@@ -833,21 +841,22 @@ pub(crate) fn configure_resolver(
     let force_metadata_primer = resolve_force_metadata_primer(settings_ctx);
     let (sup_os, sup_cpu, sup_libc) =
         aube_manifest::effective_supported_architectures(manifest, workspace_config);
-    // pnpm-lock.yaml, aube-lock.yaml, and bun.lock are all committed,
-    // cross-platform artifacts that carry per-package os/cpu metadata.
+    // pnpm-lock.yaml, aube-lock.yaml, bun.lock, package-lock.json, and
+    // npm-shrinkwrap.json are committed, cross-platform artifacts that
+    // carry per-package os/cpu metadata.
     // When the user hasn't declared `pnpm.supportedArchitectures`, record
     // EVERY optional-dep variant a package declares (`accept_all`) so the
     // committed lockfile installs cleanly on every contributor's platform
     // — withholding variants leaves teammates with "Cannot find native
-    // binding". This matches what pnpm AND bun both write verbatim (all 26
-    // `@esbuild/*` / `@rollup/rollup-*` natives, freebsd/ppc64/s390x and
-    // all), so a lockfile aube regenerates stays diff-clean against the
+    // binding". This matches what npm, pnpm, and bun write verbatim (all
+    // 26 `@esbuild/*` / `@rollup/rollup-*` natives, freebsd/ppc64/s390x
+    // and all), so a lockfile aube regenerates stays diff-clean against the
     // native tool. Install-time filtering (`filter_graph`) and the
     // streaming-fetch gate run against the unmodified host triple, so
     // `node_modules` and tarball downloads stay trimmed to the host — the
-    // wider lockfile costs only bytes, never extra installs. Yarn / npm
-    // lockfiles don't carry the same per-package os/cpu metadata, so
-    // widening there would only bloat them — keep pnpm's host-only default.
+    // wider lockfile costs only bytes, never extra installs. Yarn lockfiles
+    // don't carry the same per-package os/cpu metadata, so widening there
+    // would only bloat them — keep the host-only default.
     let manifest_set_supported_arch =
         !(sup_os.is_empty() && sup_cpu.is_empty() && sup_libc.is_empty());
     let writes_cross_platform_lock = matches!(
@@ -856,6 +865,8 @@ pub(crate) fn configure_resolver(
             aube_lockfile::LockfileKind::Pnpm
                 | aube_lockfile::LockfileKind::Aube
                 | aube_lockfile::LockfileKind::Bun
+                | aube_lockfile::LockfileKind::Npm
+                | aube_lockfile::LockfileKind::NpmShrinkwrap
         )
     );
     let supported_architectures = if manifest_set_supported_arch {
@@ -918,7 +929,7 @@ pub(crate) fn configure_resolver(
         resolve_minimum_release_age(settings_ctx, minimum_release_age_override);
     if let Some(ref mra) = minimum_release_age {
         tracing::debug!(
-            "minimumReleaseAge: {} min, {} excluded, strict={}",
+            "minimumReleaseAge: {} min, {} exclude rules, strict={}",
             mra.minutes,
             mra.exclude.len(),
             mra.strict

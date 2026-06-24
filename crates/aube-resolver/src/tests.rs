@@ -678,7 +678,17 @@ fn test_pick_version_highest_match() {
     // dist-tag preference doesn't apply and we fall through to the
     // strictly-highest version inside the range — 1.2.0.
     let packument = make_packument("foo", &["1.0.0", "1.1.0", "1.2.0", "2.0.0"], "2.0.0");
-    let result = pick_version(&packument, "^1.0.0", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.2.0");
 }
 
@@ -695,7 +705,17 @@ fn test_pick_version_prefers_dist_tag_latest_when_in_range() {
     // -> aube add foo@^100.0.0` flow, which expects the lockfile to
     // pin 100.0.0 even though 100.1.0 is available.
     let packument = make_packument("foo", &["1.0.0", "1.1.0", "1.2.0"], "1.0.0");
-    let result = pick_version(&packument, "^1.0.0", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
@@ -705,7 +725,17 @@ fn test_pick_version_falls_through_when_latest_outside_range() {
     // preference is a no-op; the strictly-highest matching version
     // (1.1.0) wins.
     let packument = make_packument("foo", &["1.0.0", "1.1.0", "2.0.0"], "2.0.0");
-    let result = pick_version(&packument, "^1.0.0", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.1.0");
 }
 
@@ -715,21 +745,50 @@ fn test_pick_version_lowest_ignores_dist_tag_preference() {
     // range, not whatever the publisher tagged latest. Confirm the
     // dist-tag preference is suppressed when pick_lowest is set.
     let packument = make_packument("foo", &["1.0.0", "1.1.0", "1.2.0"], "1.2.0");
-    let result = pick_version(&packument, "^1.0.0", None, true, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        true,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
 #[test]
 fn test_pick_version_exact() {
     let packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
-    let result = pick_version(&packument, "1.0.0", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "1.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
 #[test]
 fn test_pick_version_no_match() {
     let packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
-    let result = pick_version(&packument, "^2.0.0", None, false, None, false);
+    let result = pick_version(
+        &packument,
+        "^2.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    );
     assert!(matches!(result, PickResult::NoMatch));
 }
 
@@ -746,19 +805,47 @@ fn test_pick_version_strict_distinguishes_age_gate_from_no_match() {
         .time
         .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
     let cutoff = "2020-01-01T00:00:00.000Z";
-    let result = pick_version(&packument, "^1.0.0", None, false, Some(cutoff), true);
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        true,
+        |_, _| false,
+    );
     assert!(matches!(result, PickResult::AgeGated));
 
     // No version satisfies the range at all → still NoMatch even
     // in strict mode.
-    let result = pick_version(&packument, "^9.0.0", None, false, Some(cutoff), true);
+    let result = pick_version(
+        &packument,
+        "^9.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        true,
+        |_, _| false,
+    );
     assert!(matches!(result, PickResult::NoMatch));
 }
 
 #[test]
 fn test_pick_version_prefers_locked() {
     let packument = make_packument("foo", &["1.0.0", "1.1.0", "1.2.0"], "1.2.0");
-    let result = pick_version(&packument, "^1.0.0", Some("1.1.0"), false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        Some("1.1.0"),
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.1.0");
 }
 
@@ -766,21 +853,51 @@ fn test_pick_version_prefers_locked() {
 fn test_pick_version_locked_out_of_range() {
     let packument = make_packument("foo", &["1.0.0", "2.0.0"], "2.0.0");
     // Locked version doesn't satisfy range, should pick highest match
-    let result = pick_version(&packument, "^2.0.0", Some("1.0.0"), false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^2.0.0",
+        Some("1.0.0"),
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "2.0.0");
 }
 
 #[test]
 fn test_pick_version_dist_tag() {
     let packument = make_packument("foo", &["1.0.0", "2.0.0-beta.1"], "1.0.0");
-    let result = pick_version(&packument, "latest", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "latest",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
 #[test]
 fn test_pick_version_lowest_picks_smallest_satisfying() {
     let packument = make_packument("foo", &["1.0.0", "1.1.0", "1.2.0", "2.0.0"], "2.0.0");
-    let result = pick_version(&packument, "^1.0.0", None, true, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        true,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
@@ -798,7 +915,17 @@ fn test_pick_version_cutoff_filters_future_versions() {
         .insert("1.2.0".into(), "2023-01-01T00:00:00.000Z".into());
     // Highest pick, but cutoff forbids 1.2.0 → fall back to 1.1.0.
     let cutoff = "2022-06-01T00:00:00.000Z";
-    let result = pick_version(&packument, "^1.0.0", None, false, Some(cutoff), false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.1.0");
 }
 
@@ -818,7 +945,17 @@ fn test_pick_version_lenient_falls_back_to_lowest_when_cutoff_excludes_all() {
         .time
         .insert("1.2.0".into(), "2025-01-01T00:00:00.000Z".into());
     let cutoff = "2020-01-01T00:00:00.000Z";
-    let result = pick_version(&packument, "^1.0.0", None, false, Some(cutoff), false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
@@ -832,7 +969,129 @@ fn test_pick_version_strict_returns_age_gated_when_cutoff_excludes_all() {
         .time
         .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
     let cutoff = "2020-01-01T00:00:00.000Z";
-    let result = pick_version(&packument, "^1.0.0", None, false, Some(cutoff), true);
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        true,
+        |_, _| false,
+    );
+    assert!(matches!(result, PickResult::AgeGated));
+}
+
+#[test]
+fn test_pick_version_age_exempt_waves_version_past_cutoff() {
+    let mut packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    packument
+        .time
+        .insert("1.0.0".into(), "2024-01-01T00:00:00.000Z".into());
+    packument
+        .time
+        .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
+    let cutoff = "2020-01-01T00:00:00.000Z";
+    // Exempting every version (as a name-only / glob rule does) lets the
+    // otherwise age-gated highest version through instead of failing.
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        true,
+        |_, _| true,
+    );
+    assert_eq!(result.unwrap().version, "1.1.0");
+}
+
+#[test]
+fn test_pick_version_age_exempt_still_blocked_by_time_cutoff() {
+    // `minimumReleaseAgeExclude` relaxes only the minimumReleaseAge
+    // age-gate, never the time-based resolution wall. Even with every
+    // version exempt, the time-based `exempt_cutoff` still forbids
+    // versions published after it — 1.1.0 (2024-06) is past the wall,
+    // so the pick falls back to 1.0.0 (2024-01).
+    let mut packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    packument
+        .time
+        .insert("1.0.0".into(), "2024-01-01T00:00:00.000Z".into());
+    packument
+        .time
+        .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
+    // `cutoff` is the merged min(minimumReleaseAge, time-based); the
+    // exclude relaxes the minimumReleaseAge leg, but the time-based wall
+    // (`exempt_cutoff`) stays in force for exempt versions.
+    let cutoff = "2020-01-01T00:00:00.000Z";
+    let exempt_cutoff = "2024-03-01T00:00:00.000Z";
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        Some(exempt_cutoff),
+        false,
+        |_, _| true,
+    );
+    assert_eq!(result.unwrap().version, "1.0.0");
+}
+
+#[test]
+fn test_pick_version_age_exempt_time_cutoff_age_gates_in_strict_mode() {
+    // When the time-based wall excludes every satisfying version, even a
+    // fully-exempt package hard-fails in strict mode — the exclude
+    // cannot punch through the time-based wall.
+    let mut packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    packument
+        .time
+        .insert("1.0.0".into(), "2024-01-01T00:00:00.000Z".into());
+    packument
+        .time
+        .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
+    let cutoff = "2020-01-01T00:00:00.000Z";
+    let exempt_cutoff = "2023-01-01T00:00:00.000Z";
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        Some(exempt_cutoff),
+        true,
+        |_, _| true,
+    );
+    assert!(matches!(result, PickResult::AgeGated));
+}
+
+#[test]
+fn test_pick_version_lenient_fallback_respects_time_cutoff() {
+    // The lenient (non-strict) fallback bypasses the minimumReleaseAge
+    // gate but must NOT bypass the time-based wall. With every
+    // satisfying version past `exempt_cutoff`, even non-strict mode
+    // age-gates instead of silently returning a walled-off version
+    // through the fallback path.
+    let mut packument = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    packument
+        .time
+        .insert("1.0.0".into(), "2024-01-01T00:00:00.000Z".into());
+    packument
+        .time
+        .insert("1.1.0".into(), "2024-06-01T00:00:00.000Z".into());
+    let cutoff = "2020-01-01T00:00:00.000Z";
+    let exempt_cutoff = "2023-01-01T00:00:00.000Z";
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        Some(exempt_cutoff),
+        false,
+        |_, _| true,
+    );
     assert!(matches!(result, PickResult::AgeGated));
 }
 
@@ -1152,7 +1411,17 @@ fn test_pick_version_cutoff_allows_missing_time_entries() {
     // remove every candidate, or the resolver can never make
     // progress on abbreviated-packument registries.
     let cutoff = "2000-01-01T00:00:00.000Z";
-    let result = pick_version(&packument, "^1.0.0", None, false, Some(cutoff), false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        Some(cutoff),
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.1.0");
 }
 
@@ -1166,7 +1435,17 @@ fn test_pick_version_with_deps() {
         .dependencies
         .insert("bar".to_string(), "^2.0.0".to_string());
 
-    let result = pick_version(&packument, "^1.0.0", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "^1.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.dependencies.get("bar").unwrap(), "^2.0.0");
 }
 
@@ -3571,7 +3850,17 @@ fn pick_version_exact_pin_not_hijacked_by_dist_tag() {
     packument
         .dist_tags
         .insert("1.0.0".to_string(), "1.5.0".to_string());
-    let result = pick_version(&packument, "1.0.0", None, false, None, false).unwrap();
+    let result = pick_version(
+        &packument,
+        "1.0.0",
+        None,
+        false,
+        None,
+        None,
+        false,
+        |_, _| false,
+    )
+    .unwrap();
     assert_eq!(result.version, "1.0.0");
 }
 
@@ -3580,7 +3869,9 @@ fn assert_protocol_hijack_blocked(spec: &str) {
     packument
         .dist_tags
         .insert(spec.to_string(), "1.0.0".to_string());
-    let result = pick_version(&packument, spec, None, false, None, false);
+    let result = pick_version(&packument, spec, None, false, None, None, false, |_, _| {
+        false
+    });
     assert!(
         matches!(result, super::semver_util::PickResult::NoMatch),
         "protocol-prefixed range {spec:?} reached dist-tag fallback",

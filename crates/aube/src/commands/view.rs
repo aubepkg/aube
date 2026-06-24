@@ -1,4 +1,4 @@
-//! `aube view <pkg>[@version] [field]` — print package info from the registry.
+//! `aube view [<pkg>[@version]] [field]` — print package info from the registry.
 //!
 //! Mirrors `npm view` / `pnpm view`. Aliases: `info`, `show`. Fetches the
 //! *full* packument (no corgi header, so description/repo/license/etc. are
@@ -6,7 +6,8 @@
 //! prints either a human-readable summary, a single dotted field, or the
 //! raw JSON.
 //!
-//! This is a read-only command — no project lock, no manifest needed.
+//! This is a read-only command — no project lock needed. When no package is
+//! passed, the target package name is read from the local manifest.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
 use clap::Args;
@@ -15,6 +16,9 @@ use serde_json::Value;
 
 pub const AFTER_LONG_HELP: &str = "\
 Examples:
+
+  $ aube view
+  my-package@1.0.0 | MIT | deps: 0 | versions: 1
 
   $ aube view react
   react@18.3.1 | MIT | deps: 1 | versions: 2037
@@ -50,7 +54,7 @@ pub struct ViewArgs {
     /// Package to view, optionally with a version or dist-tag.
     ///
     /// Examples: `lodash`, `lodash@4.17.21`, `react@next`, `express@^4`.
-    pub package: String,
+    pub package: Option<String>,
 
     /// Dotted path into the version metadata to print.
     ///
@@ -69,10 +73,22 @@ pub struct ViewArgs {
 
 pub async fn run(args: ViewArgs) -> miette::Result<()> {
     args.network.install_overrides();
-    let (name, version_spec) = split_name_spec(&args.package);
+    let cwd = crate::dirs::project_root_or_cwd()?;
+    let package = match &args.package {
+        Some(package) => package.clone(),
+        None => {
+            let manifest = super::load_manifest_or_default(&cwd)?;
+            manifest.name.ok_or_else(|| {
+                miette!(
+                    "package name required: pass a package name or run inside a project with a package.json `name` field"
+                )
+            })?
+        }
+    };
+
+    let (name, version_spec) = split_name_spec(&package);
     let name = name.to_string();
 
-    let cwd = crate::dirs::project_root_or_cwd().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let client = make_client(&cwd);
 
     // Disk-backed cache with ETag/Last-Modified revalidation so repeated

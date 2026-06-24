@@ -4842,6 +4842,18 @@
             "global": false
           },
           {
+            "name": "dry-run",
+            "usage": "--dry-run",
+            "help": "Resolve and report what would happen without writing the lockfile or linking node_modules",
+            "help_first_line": "Resolve and report what would happen without writing the lockfile or linking node_modules",
+            "short": [],
+            "long": [
+              "dry-run"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "fix-lockfile",
             "usage": "--fix-lockfile",
             "help": "Re-resolve lockfile entries whose spec drifted from package.json",
@@ -9196,6 +9208,18 @@
             "global": false
           },
           {
+            "name": "exclude-peers",
+            "usage": "--exclude-peers",
+            "help": "Exclude peer dependencies from CycloneDX output",
+            "help_first_line": "Exclude peer dependencies from CycloneDX output",
+            "short": [],
+            "long": [
+              "exclude-peers"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "format",
             "usage": "--format <FORMAT>",
             "help": "Output format: `cyclonedx` (default) or `spdx`",
@@ -11712,16 +11736,16 @@
         "full_cmd": [
           "view"
         ],
-        "usage": "view [FLAGS] <PACKAGE> [FIELD]",
+        "usage": "view [FLAGS] [PACKAGE] [FIELD]",
         "subcommands": {},
         "args": [
           {
             "name": "PACKAGE",
-            "usage": "<PACKAGE>",
+            "usage": "[PACKAGE]",
             "help": "Package to view, optionally with a version or dist-tag",
             "help_long": "Package to view, optionally with a version or dist-tag.\n\nExamples: `lodash`, `lodash@4.17.21`, `react@next`, `express@^4`.",
             "help_first_line": "Package to view, optionally with a version or dist-tag",
-            "required": true,
+            "required": false,
             "double_dash": "Optional",
             "hide": false
           },
@@ -11882,7 +11906,7 @@
         "hidden_aliases": [
           "v"
         ],
-        "after_help_long": "Examples:\n\n  $ aube view react\n  react@18.3.1 | MIT | deps: 1 | versions: 2037\n  React is a JavaScript library for building user interfaces.\n  https://react.dev/\n\n  keywords: react\n\n  dist\n  .tarball: https://registry.npmjs.org/react/-/react-18.3.1.tgz\n  .shasum:  a0b2eb79...\n  .integrity: sha512-...\n\n  # A specific version\n  $ aube view react@17.0.2\n\n  # A single field\n  $ aube view react version\n  18.3.1\n\n  $ aube view react dist.tarball\n  https://registry.npmjs.org/react/-/react-18.3.1.tgz\n\n  # All versions ever published\n  $ aube view react versions --json\n\n  # Raw JSON for the resolved version\n  $ aube view react@next --json\n",
+        "after_help_long": "Examples:\n\n  $ aube view\n  my-package@1.0.0 | MIT | deps: 0 | versions: 1\n\n  $ aube view react\n  react@18.3.1 | MIT | deps: 1 | versions: 2037\n  React is a JavaScript library for building user interfaces.\n  https://react.dev/\n\n  keywords: react\n\n  dist\n  .tarball: https://registry.npmjs.org/react/-/react-18.3.1.tgz\n  .shasum:  a0b2eb79...\n  .integrity: sha512-...\n\n  # A specific version\n  $ aube view react@17.0.2\n\n  # A single field\n  $ aube view react version\n  18.3.1\n\n  $ aube view react dist.tarball\n  https://registry.npmjs.org/react/-/react-18.3.1.tgz\n\n  # All versions ever published\n  $ aube view react versions --json\n\n  # Raw JSON for the resolved version\n  $ aube view react@next --json\n",
         "examples": []
       },
       "whoami": {
@@ -12524,7 +12548,7 @@
   "config": {
     "props": {}
   },
-  "version": "1.23.0",
+  "version": "1.24.0",
   "usage": "Usage: aube [OPTIONS] [COMMAND]",
   "complete": {},
   "about": "A fast Node.js package manager"

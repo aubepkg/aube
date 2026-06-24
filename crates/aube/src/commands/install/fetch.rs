@@ -417,7 +417,7 @@ pub(in crate::commands) async fn fetch_packages(
     let strict_pkg_content_check = resolve_strict_store_pkg_content_check(&ctx);
     let virtual_store_dir_max_length = resolve_virtual_store_dir_max_length(&ctx);
     let aube_dir = resolve_virtual_store_dir(&ctx, &cwd);
-    fetch_packages_with_root(
+    let (indices, cached, fetched, _) = fetch_packages_with_root(
         packages,
         store,
         || client,
@@ -436,7 +436,8 @@ pub(in crate::commands) async fn fetch_packages(
         None,
         git_shallow_hosts,
     )
-    .await
+    .await?;
+    Ok((indices, cached, fetched))
 }
 
 // `network_concurrency`: override for the tarball-fetch semaphore.
@@ -490,7 +491,12 @@ pub(super) async fn fetch_packages_with_root<F>(
     git_prepare_depth: u32,
     inherited_build_policy: Option<std::sync::Arc<aube_scripts::BuildPolicy>>,
     git_shallow_hosts: Vec<String>,
-) -> miette::Result<(BTreeMap<String, aube_store::PackageIndex>, usize, usize)>
+) -> miette::Result<(
+    BTreeMap<String, aube_store::PackageIndex>,
+    usize,
+    usize,
+    BTreeMap<String, String>,
+)>
 where
     F: FnOnce() -> std::sync::Arc<aube_registry::client::RegistryClient>,
 {
@@ -700,6 +706,7 @@ where
     if let Some(p) = progress {
         p.inc_reused(cached_count);
     }
+    let mut computed_integrities: BTreeMap<String, String> = BTreeMap::new();
 
     // Critical-path fetch order: float likely-native-build packages
     // (sharp, esbuild, @swc/*, sqlite3, lmdb, bcrypt, etc) to the
@@ -767,8 +774,9 @@ where
         // instead of detaching them into the background. Detached
         // tasks keep writing to the CAS after the install command
         // has already errored out.
-        let mut handles: tokio::task::JoinSet<miette::Result<(String, aube_store::PackageIndex)>> =
-            tokio::task::JoinSet::new();
+        let mut handles: tokio::task::JoinSet<
+            miette::Result<(String, aube_store::PackageIndex, Option<String>)>,
+        > = tokio::task::JoinSet::new();
 
         for (dep_path, display_name, registry_name, version, tarball_url_override, integrity) in
             to_fetch
@@ -821,7 +829,7 @@ where
                         strict_pkg_content_check,
                     )
                     .await;
-                    let (index, bytes_len) = match streamed {
+                    let (index, bytes_len, computed_integrity) = match streamed {
                         Ok(v) => {
                             permit.record_success();
                             v
@@ -845,7 +853,7 @@ where
                         dl_time,
                         bytes_len
                     );
-                    return Ok::<_, miette::Report>((dep_path, index));
+                    return Ok::<_, miette::Report>((dep_path, index, computed_integrity));
                 }
 
                 // Buffered SHA-512 path. Streaming SHA-512 hashes
@@ -899,6 +907,12 @@ where
                 if let Some(p) = bytes_progress.as_ref() {
                     p.inc_downloaded_bytes(bytes.len() as u64);
                 }
+                let computed_integrity = integrity
+                    .is_none()
+                    .then(|| match streamed_digest.as_ref() {
+                        Some(digest) => aube_store::sha512_integrity_from_digest(digest),
+                        None => aube_store::sha512_integrity(&bytes),
+                    });
 
                 // Keep the semaphore permit through import, not just
                 // download. `import_tarball` fans out into gzip/tar
@@ -929,6 +943,15 @@ where
                     strict_pkg_content_check,
                 )
                 .await?;
+                if let Some(integrity) = computed_integrity.as_deref()
+                    && let Err(e) =
+                        store.save_index(&registry_name, &version, Some(integrity), &index)
+                {
+                    tracing::warn!(
+                        code = aube_codes::warnings::WARN_AUBE_CACHE_WRITE_FAILED,
+                        "Failed to cache index for {display_name}@{version} with computed integrity: {e}"
+                    );
+                }
 
                 tracing::trace!(
                     "fetch {display_name}@{version}: wait={:.0?} dl={:.0?} ({} bytes) import={:.0?}",
@@ -938,12 +961,12 @@ where
                     import_time
                 );
 
-                Ok::<_, miette::Report>((dep_path, index))
+                Ok::<_, miette::Report>((dep_path, index, computed_integrity))
             });
         }
 
         while let Some(joined) = handles.join_next().await {
-            let (dep_path, index) = joined.into_diagnostic()??;
+            let (dep_path, index, computed_integrity) = joined.into_diagnostic()??;
             if let Some(tx) = materialize_tx.as_ref() {
                 // Time channel send so back-pressure events show up in
                 // the trace. The materialize channel is bounded; if the
@@ -968,6 +991,10 @@ where
                     }
                 }
             }
+            if let Some(integrity) = computed_integrity {
+                computed_integrities
+                    .insert(strip_peer_context_suffix(&dep_path).to_owned(), integrity);
+            }
             indices.insert(dep_path, index);
         }
     }
@@ -979,7 +1006,7 @@ where
         sem.persist(&state, "tarball:default");
     }
 
-    Ok((indices, cached_count, fetch_count))
+    Ok((indices, cached_count, fetch_count, computed_integrities))
 }
 
 async fn verify_lockfile_tarball_url(
@@ -1114,7 +1141,7 @@ pub(super) fn remap_indices_to_contextualized(
 /// coordinate. A `dep_path` with no suffix is returned unchanged — a
 /// bare `_<hex>` tail belongs to a `git+`/`url+`/`file+` source
 /// coordinate and is never a peer marker, so it is preserved.
-fn strip_peer_context_suffix(dep_path: &str) -> &str {
+pub(super) fn strip_peer_context_suffix(dep_path: &str) -> &str {
     dep_path.split('(').next().unwrap_or(dep_path)
 }
 

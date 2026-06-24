@@ -602,6 +602,7 @@ mod tests {
         let empty_workspace = std::collections::BTreeMap::new();
         let empty_env = Vec::new();
         let ctx = aube_settings::ResolveCtx {
+            managed_aube_config: &[],
             project_aube_config: &[],
             project_npmrc: &[],
             user_aube_config: &[],

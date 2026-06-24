@@ -519,6 +519,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE",
+      "category": "Settings / config validation",
+      "description": "A `minimumReleaseAgeExclude` entry was malformed and skipped.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_OVERRIDE_MISSING_DEP",
       "category": "Settings / config validation",
       "description": "An `overrides` `$ref` pointed at a package not in any of the importer's dependency lists.",
@@ -546,6 +552,12 @@
       "name": "WARN_AUBE_CONCURRENCY_ENV_INVALID",
       "category": "Settings / config validation",
       "description": "The `AUBE_CONCURRENCY` env var was outside the `[floor, ceiling]` range or non-numeric.",
+      "exit_code": null
+    },
+    {
+      "name": "WARN_AUBE_MANAGED_CONFIG_ENFORCED",
+      "category": "Settings / config validation",
+      "description": "Managed hardening config enforced a stricter value than local config, env, or CLI requested.",
       "exit_code": null
     },
     {

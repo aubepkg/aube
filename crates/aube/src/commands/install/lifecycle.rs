@@ -861,7 +861,7 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     verify_integrity: bool,
     strict_integrity: bool,
     strict_pkg_content_check: bool,
-) -> Result<(aube_store::PackageIndex, u64), TarballStreamErr> {
+) -> Result<(aube_store::PackageIndex, u64, Option<String>), TarballStreamErr> {
     use sha2::Digest;
 
     // Local-error helper. Anything we observe past the response
@@ -978,6 +978,9 @@ pub(super) async fn fetch_and_import_tarball_streaming(
 
     let mut sha512 = [0u8; 64];
     sha512.copy_from_slice(&hasher.finalize()[..]);
+    let computed_integrity = integrity
+        .is_none()
+        .then(|| aube_store::sha512_integrity_from_digest(&sha512));
 
     if verify_integrity {
         if let Some(expected) = integrity {
@@ -1020,14 +1023,15 @@ pub(super) async fn fetch_and_import_tarball_streaming(
         })?;
     }
 
-    if let Err(e) = store.save_index(registry_name, version, integrity, &index) {
+    let cache_integrity = integrity.or(computed_integrity.as_deref());
+    if let Err(e) = store.save_index(registry_name, version, cache_integrity, &index) {
         tracing::warn!(
             code = aube_codes::warnings::WARN_AUBE_CACHE_WRITE_FAILED,
             "Failed to cache index for {display_name}@{version}: {e}"
         );
     }
 
-    Ok((index, total))
+    Ok((index, total, computed_integrity))
 }
 
 pub(super) fn validate_required_scripts(
