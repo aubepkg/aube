@@ -8,6 +8,15 @@ use aube_store::{PackageIndex, StoredFile};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Test-only switch that forces the reflink attempt in
+/// [`Linker::link_file_fresh`] to be treated as failed, so the
+/// clonefile-failure fallback path can be exercised deterministically on
+/// any filesystem (CI runs on reflink-capable APFS/btrfs where a real
+/// `clonefile` would otherwise succeed). Compiled out of release builds.
+#[cfg(test)]
+pub(crate) static FORCE_REFLINK_FAILURE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 impl Linker {
     /// Detect the best linking strategy for the filesystem at the given path.
     ///
@@ -21,21 +30,23 @@ impl Linker {
     /// falls back to `fs::copy` per file silently, thousands of
     /// wasted syscalls, user thinks they got hardlinks.
     ///
-    /// Returns the same-filesystem strategy when the probe succeeds,
-    /// `Copy` otherwise. The same-FS strategy is OS-specific: on macOS
-    /// `auto` resolves to `Reflink` (APFS clonefile benchmarks ~1.91x
-    /// faster than hardlink), on Linux and other targets it resolves to
-    /// `Hardlink` (btrfs/xfs hardlink benchmarks ~2.4-2.6x faster than
-    /// FICLONE reflink). `Reflink` is otherwise reachable only through
-    /// explicit `packageImportMethod = clone` / `clone-or-copy`.
+    /// Returns the same-filesystem strategy `auto` resolves to when the
+    /// probe succeeds, `Copy` otherwise. The same-FS strategy is
+    /// OS-specific: on macOS `auto` resolves to `ReflinkAuto` (APFS
+    /// clonefile benchmarks ~1.91x faster than hardlink), on Linux and
+    /// other targets it resolves to `Hardlink` (btrfs/xfs hardlink
+    /// benchmarks ~2.4-2.6x faster than FICLONE reflink).
     ///
-    /// The macOS `Reflink` resolution is conservative on non-APFS
-    /// volumes: `clonefile` is APFS-only, so on an HFS+ volume (external
-    /// drives, Fusion/older disks) the same-FS hardlink probe succeeds
-    /// and resolves `Reflink`, but the real `clonefile` then fails.
+    /// The macOS `auto` resolution is conservative on non-APFS volumes:
+    /// `clonefile` is APFS-only, so on an HFS+ volume (external drives,
+    /// Fusion/older disks) the same-FS hardlink probe succeeds and
+    /// resolves `ReflinkAuto`, but the real `clonefile` then fails.
     /// `link_file_fresh` handles this by falling the reflink back to a
     /// hardlink (which HFS+ supports) before copy, so a non-APFS same-FS
     /// target still gets zero-cost links rather than a per-file copy.
+    /// This probe never yields the plain `Reflink` strategy — that is
+    /// reachable only through explicit `packageImportMethod = clone` /
+    /// `clone-or-copy`, which keep a plain copy fallback.
     pub fn detect_strategy(path: &Path) -> LinkStrategy {
         Self::detect_strategy_cross(path, path)
     }
@@ -47,14 +58,16 @@ impl Linker {
     /// A successful hardlink proves src and dst share a mount, so it
     /// doubles as the same-FS probe for reflink too (APFS clonefile /
     /// btrfs FICLONE require the same FS). Returns the OS-specific
-    /// same-FS strategy when the probe succeeds (`Reflink` on macOS,
+    /// same-FS strategy when the probe succeeds (`ReflinkAuto` on macOS,
     /// `Hardlink` elsewhere), `Copy` otherwise.
     pub fn detect_strategy_cross(src_dir: &Path, dst_dir: &Path) -> LinkStrategy {
         // Same-FS strategy `auto` resolves to once the probe succeeds.
         // macOS/APFS clonefile is measurably faster than hardlink there;
         // Linux btrfs/xfs hardlink is measurably faster than FICLONE.
+        // `ReflinkAuto` (not the plain `Reflink` explicit selections use)
+        // carries the non-APFS hardlink-before-copy fallback.
         #[cfg(target_os = "macos")]
-        const SAME_FS_STRATEGY: LinkStrategy = LinkStrategy::Reflink;
+        const SAME_FS_STRATEGY: LinkStrategy = LinkStrategy::ReflinkAuto;
         #[cfg(not(target_os = "macos"))]
         const SAME_FS_STRATEGY: LinkStrategy = LinkStrategy::Hardlink;
 
@@ -97,7 +110,7 @@ impl Linker {
         // result clobber the correct Hardlink for the rest of the
         // process; `or_insert` keeps whichever value landed first. (The
         // value at stake is the same-FS strategy above, not literally
-        // Hardlink — Reflink on macOS.)
+        // Hardlink — ReflinkAuto on macOS.)
         *cache
             .write()
             .expect("probe cache poisoned")
@@ -612,7 +625,19 @@ impl Linker {
         let diag_t0 = aube_util::diag::enabled().then(std::time::Instant::now);
         let realized: &'static str;
         match self.strategy {
-            LinkStrategy::Reflink => {
+            // Two reflink strategies share the clonefile attempt and the
+            // macOS small-file copy shortcut, but differ in fallback:
+            //   * `Reflink` (explicit `clone` / `clone-or-copy`) — the
+            //     documented contract is reflink with a plain copy
+            //     fallback, so a clonefile failure degrades straight to
+            //     copy.
+            //   * `ReflinkAuto` (`auto` on a same-FS macOS target) — the
+            //     probe already proved the target shares a mount, so on a
+            //     non-APFS same-FS volume (HFS+, where `clonefile` is
+            //     unsupported but hardlinks are not) it tries a zero-cost
+            //     hardlink before copy.
+            LinkStrategy::Reflink | LinkStrategy::ReflinkAuto => {
+                let auto = matches!(self.strategy, LinkStrategy::ReflinkAuto);
                 #[cfg(target_os = "macos")]
                 if matches!(stored.size, Some(size) if size <= SMALL_FILE_COPY_MAX) {
                     std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
@@ -626,27 +651,46 @@ impl Linker {
                     }
                     return Ok(());
                 }
-                if let Err(e) = reflink_copy::reflink(&stored.store_path, dst) {
+                let reflink_result = {
+                    #[cfg(test)]
+                    {
+                        if FORCE_REFLINK_FAILURE.load(std::sync::atomic::Ordering::Relaxed) {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::Unsupported,
+                                "forced reflink failure (test)",
+                            ))
+                        } else {
+                            reflink_copy::reflink(&stored.store_path, dst)
+                        }
+                    }
+                    #[cfg(not(test))]
+                    {
+                        reflink_copy::reflink(&stored.store_path, dst)
+                    }
+                };
+                if let Err(e) = reflink_result {
                     // Source-missing short-circuit avoids the misleading
                     // "fell back to copy" trace and the redundant copy
                     // attempt that would just ENOENT for the same reason.
                     if !stored.store_path.exists() {
                         return Err(missing_source());
                     }
-                    // Reflink is only the resolved strategy when the same-FS
-                    // probe succeeded, so the target is known same-filesystem.
-                    // `reflink_copy::reflink` uses `clonefile`, which is
-                    // APFS-only: on an HFS+ volume it fails even though the
-                    // volume is same-FS and supports hardlinks. Try a
-                    // hardlink before degrading to a full per-file copy — a
-                    // hardlink is zero-cost and preserves the dedupe the
-                    // probe promised, where copy silently regresses to a byte
-                    // transfer per file.
-                    if std::fs::hard_link(&stored.store_path, dst).is_ok() {
+                    // `auto` (ReflinkAuto) is the resolved strategy only
+                    // when the same-FS probe succeeded, so the target is
+                    // known same-filesystem. `reflink_copy::reflink` uses
+                    // `clonefile`, which is APFS-only: on an HFS+ volume it
+                    // fails even though the volume is same-FS and supports
+                    // hardlinks. There, try a hardlink before degrading to
+                    // a full per-file copy — a hardlink is zero-cost and
+                    // preserves the dedupe the probe promised, where copy
+                    // silently regresses to a byte transfer per file.
+                    // Explicit `clone` / `clone-or-copy` (Reflink) keep
+                    // their documented copy fallback and skip this step.
+                    if auto && std::fs::hard_link(&stored.store_path, dst).is_ok() {
                         trace!("reflink failed, fell back to hardlink: {e}");
                         realized = "reflink_fallback_hardlink";
                     } else {
-                        trace!("reflink and hardlink failed, falling back to copy: {e}");
+                        trace!("reflink failed, falling back to copy: {e}");
                         std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
                         realized = "reflink_fallback_copy";
                     }

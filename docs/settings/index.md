@@ -1018,13 +1018,18 @@ store into the virtual store.
 - `auto` (default) probes the destination filesystem and picks a
   same-filesystem strategy, with a `copy` fallback when no link
   primitive applies (cross-filesystem boundaries). The
-  same-filesystem strategy is OS-specific: `clone` (reflink) on macOS,
-  where APFS clonefile benchmarks ~1.91x faster than hardlink, and
-  `hardlink` on Linux and other targets, where btrfs/xfs hardlink
+  same-filesystem strategy is OS-specific: reflink (clonefile) on
+  macOS, where APFS clonefile benchmarks ~1.91x faster than hardlink,
+  and `hardlink` on Linux and other targets, where btrfs/xfs hardlink
   benchmarks ~2.4-2.6x faster than FICLONE reflink. On a macOS
   same-filesystem target that is not APFS (HFS+), reflink is
-  unsupported, so `auto` falls back to a hardlink before copy —
-  same-filesystem volumes always get zero-cost links.
+  unsupported, so `auto` falls back to a hardlink before copy, so a
+  same-filesystem volume keeps a zero-cost link rather than degrading
+  to a per-file copy. (One exception on macOS: files of 16 KiB or
+  less are copied directly, since the clonefile syscall costs more
+  than copying so few bytes.) This auto-only hardlink fallback does
+  not apply to the explicit `clone` / `clone-or-copy` selections
+  below, which keep their documented copy fallback.
 - `hardlink` hard-links from the store, with a copy fallback on
   cross-filesystem errors.
 - `copy` always writes a full copy.
