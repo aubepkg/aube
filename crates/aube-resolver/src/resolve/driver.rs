@@ -54,7 +54,7 @@ pub(crate) struct ResolveDriver<'a> {
     /// reuse, the `locked_version` hint, local-source integrity) from
     /// `O(lockfile)` to a single name-bucket lookup. Buckets preserve
     /// `BTreeMap::values()` order so the first match is identical to
-    /// what the linear scan returned. Empty when `existing` is `None`.
+    /// what a linear scan returns. Empty when `existing` is `None`.
     locked_index: LockedIndex<'a>,
     /// Per-importer set of declared dep names (`dependencies` ∪
     /// `devDependencies` ∪ `optionalDependencies`). Consulted by the
@@ -524,7 +524,7 @@ impl<'a> ResolveDriver<'a> {
         // Find locked version. The vulnerability check is a *post*
         // filter on the single name+range match (a vulnerable match is
         // dropped, not skipped past), so look up the first in-range
-        // candidate and apply `.filter(..)` exactly as before.
+        // candidate and apply `.filter(..)` to it.
         let locked_version = self
             .locked_index
             .find_first_in_range(&task.name, &task.range)

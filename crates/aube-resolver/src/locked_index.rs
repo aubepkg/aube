@@ -9,11 +9,11 @@
 //!   3. `existing_local_source_integrity` — the integrity of a locked
 //!      package matching a name + version + local source.
 //!
-//! Each of those was a `graph.packages.values().find(..)` linear scan
-//! over the whole `BTreeMap`, so the warm path cost `O(tasks ×
-//! lockfile)`. Building a `name → candidates` index once collapses
-//! every lookup to the (almost always single-entry) bucket for the
-//! task's name.
+//! Each of those is otherwise a `graph.packages.values().find(..)`
+//! linear scan over the whole `BTreeMap`, which costs the warm path
+//! `O(tasks × lockfile)`. Building a `name → candidates` index once
+//! collapses every lookup to the (almost always single-entry) bucket
+//! for the task's name.
 //!
 //! Output identity is the bar: `packages` is a `BTreeMap` keyed by
 //! dep_path, so `.values()` yields packages in dep_path order and
@@ -47,8 +47,8 @@ pub struct LockedIndex<'a> {
 impl<'a> LockedIndex<'a> {
     /// Build the index from an optional existing graph. Returns an
     /// empty index when there is no existing lockfile (the cold path),
-    /// matching the `existing.and_then(..)` short-circuit the scan
-    /// sites had.
+    /// matching the `existing.and_then(..)` short-circuit at the scan
+    /// sites.
     pub fn new(existing: Option<&'a LockfileGraph>) -> Self {
         let mut by_name: FxHashMap<&'a str, SmallVec<[&'a LockedPackage; 1]>> =
             FxHashMap::default();
@@ -170,7 +170,7 @@ mod tests {
         let vuln = BTreeMap::new();
         let index = LockedIndex::new(Some(&graph));
 
-        // Reference: the exact linear scan the resolver used to run.
+        // Reference: the exact linear scan the index replaces.
         let linear = |name: &str, range: &str| {
             graph
                 .packages
@@ -199,7 +199,7 @@ mod tests {
     /// `find_satisfying` skips a vulnerable first match and continues;
     /// `find_first_in_range` does not (the caller post-filters and so
     /// drops it). This difference is load-bearing — the two scan sites
-    /// historically behaved differently here.
+    /// behave differently here.
     #[test]
     fn vulnerable_first_match_skipped_only_by_find_satisfying() {
         let graph = LockfileGraph {

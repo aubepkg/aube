@@ -1,6 +1,6 @@
-//! Benchmarks the lockfile-reuse scan over an existing graph: the old
+//! Benchmarks the lockfile-reuse scan over an existing graph: a
 //! per-task linear `graph.packages.values().find(..)` vs the
-//! `LockedIndex` name-bucket lookup this crate now uses.
+//! `LockedIndex` name-bucket lookup.
 //!
 //! Run with:
 //!   cargo bench -p aube-resolver --bench locked_lookup
@@ -79,8 +79,8 @@ fn build_tasks(graph: &LockfileGraph) -> Vec<(String, String)> {
     tasks
 }
 
-/// The old per-task scan: a fresh linear `.values().find(..)` over the
-/// whole graph for every task.
+/// The per-task scan baseline: a fresh linear `.values().find(..)` over
+/// the whole graph for every task.
 fn linear_scan(
     graph: &LockfileGraph,
     tasks: &[(String, String)],
