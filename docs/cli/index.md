@@ -111,6 +111,7 @@ Run from the workspace root regardless of the current package
 
 ## Subcommands
 
+- [`aube activate <SHELL>`](/cli/activate.md)
 - [`aube add [FLAGS] [PACKAGES]…`](/cli/add.md)
 - [`aube approve-builds [--all] [-g --global] [PKG]…`](/cli/approve-builds.md)
 - [`aube audit [FLAGS]`](/cli/audit.md)
@@ -161,6 +162,7 @@ Run from the workspace root regardless of the current package
 - [`aube list [FLAGS] [PATTERN]`](/cli/list.md)
 - [`aube login [FLAGS]`](/cli/login.md)
 - [`aube logout [FLAGS]`](/cli/logout.md)
+- [`aube node [ARGS]…`](/cli/node.md)
 - [`aube outdated [FLAGS] [PATTERN]`](/cli/outdated.md)
 - [`aube pack [FLAGS]`](/cli/pack.md)
 - [`aube patch [--edit-dir <DIR>] [--ignore-existing] <PACKAGE>`](/cli/patch.md)

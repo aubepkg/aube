@@ -29,6 +29,39 @@
         "hidden_aliases": [],
         "examples": []
       },
+      "activate": {
+        "full_cmd": [
+          "activate"
+        ],
+        "usage": "activate <SHELL>",
+        "subcommands": {},
+        "args": [
+          {
+            "name": "SHELL",
+            "usage": "<SHELL>",
+            "help": "Shell to emit activation code for",
+            "help_first_line": "Shell to emit activation code for",
+            "required": true,
+            "double_dash": "Optional",
+            "hide": false,
+            "choices": {
+              "choices": [
+                "bash",
+                "fish",
+                "zsh"
+              ]
+            }
+          }
+        ],
+        "flags": [],
+        "mounts": [],
+        "hide": false,
+        "help": "Emit shell activation code for runtime tool shims",
+        "name": "activate",
+        "aliases": [],
+        "hidden_aliases": [],
+        "examples": []
+      },
       "add": {
         "full_cmd": [
           "add"
@@ -6696,6 +6729,33 @@
         "hide": false,
         "help": "Remove a registry auth token from the user's ~/.npmrc",
         "name": "logout",
+        "aliases": [],
+        "hidden_aliases": [],
+        "examples": []
+      },
+      "node": {
+        "full_cmd": [
+          "node"
+        ],
+        "usage": "node [ARGS]…",
+        "subcommands": {},
+        "args": [
+          {
+            "name": "ARGS",
+            "usage": "[ARGS]…",
+            "help": "Arguments to pass to Node.js",
+            "help_first_line": "Arguments to pass to Node.js",
+            "required": false,
+            "double_dash": "Automatic",
+            "var": true,
+            "hide": false
+          }
+        ],
+        "flags": [],
+        "mounts": [],
+        "hide": false,
+        "help": "Run Node.js through aube's project runtime resolver",
+        "name": "node",
         "aliases": [],
         "hidden_aliases": [],
         "examples": []
