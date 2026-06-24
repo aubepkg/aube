@@ -49,7 +49,7 @@ pub(crate) fn rewrite_multicall_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         return args;
     };
     let stem = crate::tool_shims::stem_of_argv0(argv0);
-    match stem.as_str() {
+    let rewritten = match stem.as_str() {
         "aubr" => rewrite_simple_multicall(args, "run"),
         "aubx" => rewrite_simple_multicall(args, "dlx"),
         "node" => rewrite_tool_to_subcommand(args, "node"),
@@ -57,8 +57,9 @@ pub(crate) fn rewrite_multicall_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         "npm" => rewrite_npm_argv(args),
         "pnpm" => rewrite_pnpm_argv(args),
         "yarn" | "yarnpkg" => rewrite_yarn_argv(args),
-        _ => return args,
-    }
+        _ => args,
+    };
+    protect_node_subcommand_args(rewritten)
 }
 
 fn rewrite_simple_multicall(mut args: Vec<OsString>, subcommand: &str) -> Vec<OsString> {
@@ -79,6 +80,17 @@ fn rewrite_simple_multicall(mut args: Vec<OsString>, subcommand: &str) -> Vec<Os
 fn rewrite_tool_to_subcommand(mut args: Vec<OsString>, subcommand: &str) -> Vec<OsString> {
     args[0] = OsString::from("aube");
     args.insert(1, OsString::from(subcommand));
+    args
+}
+
+fn protect_node_subcommand_args(mut args: Vec<OsString>) -> Vec<OsString> {
+    if args.get(1).and_then(|s| s.to_str()) != Some("node") {
+        return args;
+    }
+    if args.len() <= 2 || args.get(2).and_then(|s| s.to_str()) == Some("--") {
+        return args;
+    }
+    args.insert(2, OsString::from("--"));
     args
 }
 

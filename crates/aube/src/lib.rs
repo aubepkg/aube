@@ -1392,8 +1392,12 @@ mod cli_spec_tests {
 
     #[test]
     fn node_subcommand_forwards_version_flag() {
-        let cli =
-            Cli::try_parse_from(["aube", "node", "--version"]).expect("node --version parses");
+        let cli = Cli::try_parse_from(rewrite_multicall_argv(vec![
+            OsString::from("aube"),
+            OsString::from("node"),
+            OsString::from("--version"),
+        ]))
+        .expect("node --version parses");
         assert!(!should_print_top_level_version(&cli));
         let Some(Commands::Node(args)) = cli.command else {
             panic!("expected node subcommand");
@@ -1403,7 +1407,12 @@ mod cli_spec_tests {
 
     #[test]
     fn node_subcommand_forwards_help_flag() {
-        let cli = Cli::try_parse_from(["aube", "node", "--help"]).expect("node --help parses");
+        let cli = Cli::try_parse_from(rewrite_multicall_argv(vec![
+            OsString::from("aube"),
+            OsString::from("node"),
+            OsString::from("--help"),
+        ]))
+        .expect("node --help parses");
         let Some(Commands::Node(args)) = cli.command else {
             panic!("expected node subcommand");
         };
@@ -1453,7 +1462,11 @@ mod multicall_tests {
     fn node_shim_rewrites_to_node_subcommand() {
         assert_eq!(
             rewrite_multicall_argv(os(&["node", "--version"])),
-            os(&["aube", "node", "--version"])
+            os(&["aube", "node", "--", "--version"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["aube", "node", "--version"])),
+            os(&["aube", "node", "--", "--version"])
         );
     }
 
