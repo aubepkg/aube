@@ -1015,11 +1015,16 @@ Method for importing packages from the store into node_modules.
 Controls how aube materializes files from the global content-addressable
 store into the virtual store.
 
-- `auto` (default) probes the destination filesystem and picks
-  `hardlink` with a `copy` fallback on cross-filesystem boundaries.
-  Hardlink benchmarks faster than reflink across every target reflink
-  supports (APFS clonefile, btrfs/xfs FICLONE), so `auto` skips the
-  reflink probe.
+- `auto` (default) probes the destination filesystem and picks a
+  same-filesystem strategy, with a `copy` fallback when no link
+  primitive applies (cross-filesystem boundaries). The
+  same-filesystem strategy is OS-specific: `clone` (reflink) on macOS,
+  where APFS clonefile benchmarks ~1.91x faster than hardlink, and
+  `hardlink` on Linux and other targets, where btrfs/xfs hardlink
+  benchmarks ~2.4-2.6x faster than FICLONE reflink. On a macOS
+  same-filesystem target that is not APFS (HFS+), reflink is
+  unsupported, so `auto` falls back to a hardlink before copy —
+  same-filesystem volumes always get zero-cost links.
 - `hardlink` hard-links from the store, with a copy fallback on
   cross-filesystem errors.
 - `copy` always writes a full copy.
