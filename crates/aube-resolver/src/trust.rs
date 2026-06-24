@@ -269,6 +269,16 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
 /// engine, so we do too — `TrustExcludeRules` is the neutral
 /// [`PackageVersionPolicy`] type seeded with the trust defaults, while
 /// `minimumReleaseAgeExclude` builds an empty one from user rules only.
+///
+/// # Warning
+///
+/// Because this is an alias for [`TrustExcludeRules`],
+/// `PackageVersionPolicy::default()` runs that type's [`Default`] impl,
+/// which seeds [`DEFAULT_TRUST_POLICY_EXCLUDES`] (40+ well-known
+/// packages). For the age gate that is wrong — it would silently exempt
+/// those packages from `minimumReleaseAge`. Age-gate call sites must use
+/// [`TrustExcludeRules::empty`]; never `default()`, `#[derive(Default)]`
+/// on a containing struct, or `unwrap_or_default()`.
 pub type PackageVersionPolicy = TrustExcludeRules;
 
 #[derive(Debug, Clone)]

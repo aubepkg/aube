@@ -101,6 +101,13 @@ pub(crate) struct ResolveDriver<'a> {
     /// from `minimum_release_age` for supply-chain mitigation;
     /// extended by the TimeBased cutoff once wave 0 resolves.
     published_by: Option<String>,
+    /// The TimeBased-resolution component of the cutoff, kept separate
+    /// from the merged `published_by`. `None` until wave 0 fires the
+    /// time-based wall (and stays `None` when time-based mode is off).
+    /// Acts as a hard floor that even `minimumReleaseAgeExclude`-exempt
+    /// versions must clear — the exclude relaxes only the
+    /// minimumReleaseAge age-gate, never the time-based wall.
+    time_cutoff: Option<String>,
     /// Direct deps still awaiting a terminal outcome (resolved,
     /// dropped, or filtered). Drops to zero once wave 0 completes and
     /// triggers the TimeBased cutoff computation.
@@ -223,6 +230,7 @@ impl<'a> ResolveDriver<'a> {
             catalog_picks: BTreeMap::new(),
             deferred_transitives: Vec::new(),
             published_by,
+            time_cutoff: None,
             direct_deps_pending,
             cutoff_pending,
             needs_time,
@@ -356,6 +364,7 @@ impl<'a> ResolveDriver<'a> {
                 }
                 if let Some(m) = max_time {
                     tracing::debug!("time-based resolution cutoff: {}", m);
+                    self.time_cutoff = Some(m.clone());
                     self.published_by = Some(match self.published_by.take() {
                         Some(existing) if existing.as_str() < m.as_str() => existing,
                         _ => m.clone(),
@@ -529,17 +538,19 @@ impl<'a> ResolveDriver<'a> {
         // and all picks in Highest mode) picks highest.
         let pick_lowest =
             self.resolver.resolution_mode == ResolutionMode::TimeBased && task.is_root;
-        // The cutoff itself is uniform; `minimumReleaseAgeExclude` is
-        // applied per-candidate-version inside `pick_version` via the
-        // `is_age_exempt` closure below. A name-only exclude rule
-        // matches every version, so the whole package skips the cutoff
-        // (the old package-level behavior); a `pkg@1.2.3`-style rule
-        // waves only those versions past it. The exclude is meant to
-        // suppress only the minimumReleaseAge leg, not the time-based
-        // leg, but since both collapse into one `published_by` here we
-        // exempt both — acceptable, as the two aren't expected to
-        // coexist in the wild.
+        // `minimumReleaseAgeExclude` is applied per-candidate-version
+        // inside `pick_version` via the `is_age_exempt` closure below. A
+        // name-only exclude rule matches every version; a `pkg@1.2.3`
+        // rule waves only those versions. The exclude relaxes ONLY the
+        // minimumReleaseAge age-gate — never the time-based hard wall —
+        // so exempt versions are still checked against `exempt_cutoff`
+        // (the time-based component alone) instead of being fully waved
+        // through. Non-exempt versions are checked against the merged
+        // `cutoff_for_pkg` = min(minimumReleaseAge, time-based). When
+        // time-based mode is off, `exempt_cutoff` is `None`, so exempt
+        // versions bypass the cutoff entirely (the prior behavior).
         let cutoff_for_pkg = self.published_by.as_deref();
+        let exempt_cutoff = self.time_cutoff.as_deref();
         // Strict semantics in two cases:
         //   - `minimumReleaseAgeStrict=true` (the user opted in
         //     to hard failures), or
@@ -555,9 +566,13 @@ impl<'a> ResolveDriver<'a> {
         };
         let registry_name = task.registry_name().to_string();
         // `minimumReleaseAgeExclude` exemption, shared by the version
-        // pick and the vulnerability re-pick below. Reuses an
-        // already-parsed version when the caller has one, falling back to
-        // a name-only match for unparseable versions.
+        // pick and the vulnerability re-pick below. Matches against the
+        // registry name (not `task.name`, the user-facing alias) so an
+        // `npm:real-pkg`-aliased dep is exempted by its real name — the
+        // same identity the age/publish-time data and the trust-policy
+        // sibling (`check_no_downgrade`) key on. Reuses an already-parsed
+        // version when the caller has one, falling back to a name-only
+        // match for unparseable versions.
         let mra_exclude = self
             .resolver
             .minimum_release_age
@@ -565,10 +580,10 @@ impl<'a> ResolveDriver<'a> {
             .map(|m| &m.exclude);
         let is_age_exempt = |ver: &str, parsed: Option<&node_semver::Version>| {
             mra_exclude.is_some_and(|ex| match parsed {
-                Some(v) => ex.matches(&task.name, v),
+                Some(v) => ex.matches(&registry_name, v),
                 None => match node_semver::Version::parse(ver) {
-                    Ok(v) => ex.matches(&task.name, &v),
-                    Err(_) => ex.matches_name_only(&task.name),
+                    Ok(v) => ex.matches(&registry_name, &v),
+                    Err(_) => ex.matches_name_only(&registry_name),
                 },
             })
         };
@@ -582,6 +597,7 @@ impl<'a> ResolveDriver<'a> {
                 locked_version,
                 pick_lowest,
                 cutoff_for_pkg,
+                exempt_cutoff,
                 strict,
                 is_age_exempt,
             );
@@ -658,6 +674,7 @@ impl<'a> ResolveDriver<'a> {
             &selected_pick,
             pick_lowest,
             cutoff_for_pkg,
+            exempt_cutoff,
             &self.resolver.vulnerable_ranges,
             is_age_exempt,
         );

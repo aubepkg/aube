@@ -49,13 +49,21 @@ impl<'a> PickResult<'a> {
 /// hot-path call site here does, so the exemption check needn't reparse),
 /// and returns `true` to treat that version as if it cleared the cutoff.
 /// Pass `|_, _| false` when no exemptions apply.
+///
+/// `exempt_cutoff` is the time-based hard wall applied to exempt
+/// versions: a version waved past the age-gate by `is_age_exempt` must
+/// still clear `exempt_cutoff` (the time-based resolution cutoff). Pass
+/// `None` to fully bypass the cutoff for exempt versions (no time-based
+/// wall in effect).
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn pick_version<'a>(
     packument: &'a Packument,
     range_str: &str,
     locked: Option<&str>,
     pick_lowest: bool,
     cutoff: Option<&str>,
+    exempt_cutoff: Option<&str>,
     strict: bool,
     is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
 ) -> PickResult<'a> {
@@ -101,11 +109,16 @@ pub(crate) fn pick_version<'a>(
         }
     };
 
+    // A version's effective cutoff: exempt versions answer to the
+    // time-based wall (`exempt_cutoff`) only; everyone else answers to
+    // the merged `cutoff`. `None` => no wall, keep the version.
     let passes_cutoff = |ver: &str, parsed: Option<&node_semver::Version>| -> bool {
-        let Some(c) = cutoff else { return true };
-        if is_age_exempt(ver, parsed) {
-            return true;
-        }
+        let effective = if is_age_exempt(ver, parsed) {
+            exempt_cutoff
+        } else {
+            cutoff
+        };
+        let Some(c) = effective else { return true };
         match packument.time.get(ver) {
             Some(t) => t.as_str() <= c,
             // Missing time: keep it — we'd rather risk a slightly newer
