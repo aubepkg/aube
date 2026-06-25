@@ -185,6 +185,7 @@ impl Linker {
 
         let result = self.materialize_into(
             &tmp_base,
+            &self.virtual_store,
             dep_path,
             pkg,
             index,
@@ -338,6 +339,7 @@ impl Linker {
         let tmp_base = aube_dir.join(&tmp_name);
         let result = self.materialize_into(
             &tmp_base,
+            aube_dir,
             dep_path,
             pkg,
             index,
@@ -386,6 +388,12 @@ impl Linker {
 
     /// Materialize a package's files and transitive dep symlinks into a base directory.
     ///
+    /// `base_dir` is where files are written during materialization.
+    /// `final_base_dir` is where those files will live after any
+    /// wrapper rename. These differ for `.tmp-*` staging dirs; Windows
+    /// junctions need the final root because they persist absolute
+    /// targets at creation time.
+    ///
     /// `apply_hashes` controls whether per-dep subdir names are run
     /// through `vstore_key` (the content-addressed name) or used as
     /// raw `dep_path` strings. Global-store callers pass `true` so
@@ -397,6 +405,7 @@ impl Linker {
     pub(crate) fn materialize_into(
         &self,
         base_dir: &Path,
+        final_base_dir: &Path,
         dep_path: &str,
         pkg: &LockedPackage,
         index: &PackageIndex,
@@ -413,6 +422,9 @@ impl Linker {
         // this graph", which is the common case.
         nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
     ) -> Result<(), Error> {
+        #[cfg(not(windows))]
+        let _ = final_base_dir;
+
         validate_package_link_name(&pkg.name)?;
         for dep_name in pkg.dependencies.keys() {
             validate_package_link_name(dep_name)?;
@@ -610,27 +622,20 @@ impl Linker {
             let target = pathdiff::diff_paths(&sibling_abs, link_parent)
                 .unwrap_or_else(|| sibling_abs.clone());
 
-            // GVS materialize writes into `.tmp-<pid>-<id>/`, then
-            // atomic-renames into `self.virtual_store/<subdir>/`. POSIX
-            // symlinks store the relative offset verbatim. Offset stays
-            // invariant under the wrapper rename, so the link resolves
-            // correctly after the move. Windows junctions resolve the
-            // target against `link.parent()` at create time and persist
-            // an absolute path, which binds the junction to the tmp
-            // wrapper. After rename every sibling link dangles into a
-            // gone `.tmp-<pid>-...` path. Fix: on Windows GVS path
-            // (`apply_hashes = true`) rewrite the target to point at
-            // the final virtual store root so the stored absolute path
-            // survives the rename.
+            // Staged materialization writes into `.tmp-<pid>-<id>/`,
+            // then atomic-renames into `final_base_dir/<subdir>/`.
+            // POSIX symlinks store the relative offset verbatim.
+            // Offset stays invariant under the wrapper rename, so the
+            // link resolves correctly after the move. Windows junctions
+            // resolve the target against `link.parent()` at create time
+            // and persist an absolute path, which binds the junction to
+            // the tmp wrapper. Point Windows at the final root up front
+            // so the stored absolute path survives the rename.
             #[cfg(windows)]
-            let target = if apply_hashes {
-                self.virtual_store
-                    .join(&sibling_subdir)
-                    .join("node_modules")
-                    .join(dep_name)
-            } else {
-                target
-            };
+            let target = final_base_dir
+                .join(&sibling_subdir)
+                .join("node_modules")
+                .join(dep_name);
 
             sys::create_dir_link(&target, &symlink_path)
                 .map_err(|e| Error::Io(symlink_path.clone(), e))?;

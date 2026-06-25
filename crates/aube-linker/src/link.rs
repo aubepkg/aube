@@ -188,6 +188,7 @@ impl Linker {
             if !aube_entry.exists() {
                 self.materialize_into(
                     &aube_dir,
+                    &aube_dir,
                     dep_path,
                     pkg,
                     index,
@@ -379,6 +380,7 @@ impl Linker {
                                 }
                             };
                             self.materialize_into(
+                                &aube_dir,
                                 &aube_dir,
                                 dep_path,
                                 pkg,
@@ -737,6 +739,7 @@ impl Linker {
             }
             self.materialize_into(
                 &aube_dir,
+                &aube_dir,
                 dep_path,
                 pkg,
                 index,
@@ -890,6 +893,7 @@ impl Linker {
                                 }
                             };
                             self.materialize_into(
+                                &aube_dir,
                                 &aube_dir,
                                 dep_path,
                                 pkg,
