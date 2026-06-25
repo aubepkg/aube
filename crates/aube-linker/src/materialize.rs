@@ -29,7 +29,7 @@ fn place_materialized_entry(src: &Path, dst: &Path) -> io::Result<MaterializePla
     for attempt in 0..MAX_ATTEMPTS {
         match std::fs::rename(src, dst) {
             Ok(()) => return Ok(MaterializePlacement::Placed),
-            Err(err) if dst.exists() => return Ok(MaterializePlacement::LostRace),
+            Err(_) if dst.exists() => return Ok(MaterializePlacement::LostRace),
             Err(err) if is_transient_rename_error(&err) && attempt < MAX_ATTEMPTS - 1 => {
                 thread::sleep(Duration::from_millis(backoff_ms));
                 backoff_ms = backoff_ms.saturating_mul(2);
