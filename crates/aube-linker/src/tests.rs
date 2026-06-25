@@ -165,6 +165,92 @@ fn test_link_all_handles_self_referential_dep_at_different_version() {
 }
 
 #[test]
+fn test_ensure_in_aube_dir_handles_concurrent_same_dep_path() {
+    const THREADS: usize = 16;
+
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let aube_dir = project_dir.join("node_modules/.aube");
+    std::fs::create_dir_all(&aube_dir).unwrap();
+
+    let store = Store::at(dir.path().join("store/files"));
+    let mut index = PackageIndex::default();
+    let pkg_json = store
+        .import_bytes(b"{\"name\":\"debug\",\"version\":\"4.4.0\"}", false)
+        .unwrap();
+    index.insert("package.json".to_string(), pkg_json);
+    for i in 0..128 {
+        let stored = store
+            .import_bytes(format!("module.exports = {i};").as_bytes(), false)
+            .unwrap();
+        index.insert(format!("files/{i}.js"), stored);
+    }
+
+    let pkg = LockedPackage {
+        name: "debug".to_string(),
+        version: "4.4.0".to_string(),
+        integrity: None,
+        dependencies: BTreeMap::new(),
+        dep_path: "debug@4.4.0".to_string(),
+        ..Default::default()
+    };
+
+    let linker = std::sync::Arc::new(Linker::new_with_gvs(&store, LinkStrategy::Copy, false));
+    let index = std::sync::Arc::new(index);
+    let pkg = std::sync::Arc::new(pkg);
+    let aube_dir = std::sync::Arc::new(aube_dir);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let linker = linker.clone();
+            let index = index.clone();
+            let pkg = pkg.clone();
+            let aube_dir = aube_dir.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let mut stats = LinkStats::default();
+                linker
+                    .ensure_in_aube_dir(&aube_dir, "debug@4.4.0", &pkg, &index, &mut stats, None)
+                    .expect("duplicate materialization should be idempotent");
+                stats
+            })
+        })
+        .collect();
+
+    let stats = handles.into_iter().map(|h| h.join().unwrap()).fold(
+        LinkStats::default(),
+        |mut total, stats| {
+            total.packages_linked += stats.packages_linked;
+            total.packages_cached += stats.packages_cached;
+            total.files_linked += stats.files_linked;
+            total
+        },
+    );
+
+    assert_eq!(stats.packages_linked, 1);
+    assert_eq!(stats.packages_cached, THREADS - 1);
+    assert_eq!(stats.files_linked, index.len());
+    assert!(
+        aube_dir
+            .join("debug@4.4.0/node_modules/debug/files/127.js")
+            .exists(),
+        "winning materialization must be usable"
+    );
+    assert!(
+        std::fs::read_dir(aube_dir.as_ref())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp-")),
+        "losing staging directories must be cleaned up"
+    );
+}
+
+#[test]
 fn test_link_all_creates_pnpm_virtual_store() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
