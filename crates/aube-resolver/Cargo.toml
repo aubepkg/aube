@@ -52,6 +52,7 @@ required-features = ["bench"]
 [[bench]]
 name = "ancestor_chain"
 harness = false
+required-features = ["bench"]
 
 [build-dependencies]
 rkyv = { workspace = true }
