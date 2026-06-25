@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.1](https://github.com/jdx/aube/compare/aube-linker-v1.25.0...aube-linker-v1.25.1) - 2026-06-25
+
+### Fixed
+
+- *(linker)* make aube dir materialization atomic ([#950](https://github.com/jdx/aube/pull/950))
+
+### Other
+
+- refresh benchmarks for v1.25.0 ([#947](https://github.com/jdx/aube/pull/947))
+
 ## [1.25.0](https://github.com/jdx/aube/compare/aube-linker-v1.24.0...aube-linker-v1.25.0) - 2026-06-25
 
 ### Added

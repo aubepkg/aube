@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.1](https://github.com/jdx/aube/compare/aube-resolver-v1.25.0...aube-resolver-v1.25.1) - 2026-06-25
+
+### Other
+
+- *(resolver)* share ancestor chains via Arc instead of per-dep deep clone ([#949](https://github.com/jdx/aube/pull/949))
+- refresh benchmarks for v1.25.0 ([#947](https://github.com/jdx/aube/pull/947))
+
 ## [1.25.0](https://github.com/jdx/aube/compare/aube-resolver-v1.24.0...aube-resolver-v1.25.0) - 2026-06-25
 
 ### Added
