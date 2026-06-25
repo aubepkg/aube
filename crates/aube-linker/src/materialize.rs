@@ -17,29 +17,28 @@ enum MaterializePlacement {
     LostRace,
 }
 
-fn materialize_tmp_name(subdir: &str) -> String {
+fn materialize_tmp_name() -> String {
     static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
-    format!(".tmp-{}-{id}-{subdir}", std::process::id())
+    format!(".tmp-{}-{id}", std::process::id())
 }
 
 fn place_materialized_entry(src: &Path, dst: &Path) -> io::Result<MaterializePlacement> {
     const MAX_ATTEMPTS: u32 = 5;
     let mut backoff_ms = 20u64;
-    for attempt in 0..MAX_ATTEMPTS {
+    let mut attempt = 0;
+    loop {
         match std::fs::rename(src, dst) {
             Ok(()) => return Ok(MaterializePlacement::Placed),
             Err(_) if dst.exists() => return Ok(MaterializePlacement::LostRace),
             Err(err) if is_transient_rename_error(&err) && attempt < MAX_ATTEMPTS - 1 => {
                 thread::sleep(Duration::from_millis(backoff_ms));
                 backoff_ms = backoff_ms.saturating_mul(2);
+                attempt += 1;
             }
             Err(err) => return Err(err),
         }
     }
-    Err(io::Error::other(
-        "materialized entry rename exhausted attempts",
-    ))
 }
 
 fn is_transient_rename_error(err: &io::Error) -> bool {
@@ -181,10 +180,7 @@ impl Linker {
 
         // Materialize into a temp directory, then atomically rename into place
         // to avoid TOCTOU races between concurrent `aube install` processes.
-        // `subdir` already comes from `dep_path_to_filename`, which
-        // flattens `/` to `+` as part of its escape pass, so it's
-        // already safe to splice into a single path component.
-        let tmp_name = materialize_tmp_name(subdir.as_str());
+        let tmp_name = materialize_tmp_name();
         let tmp_base = self.virtual_store.join(&tmp_name);
 
         let result = self.materialize_into(
@@ -207,8 +203,11 @@ impl Linker {
         let final_entry = self.virtual_store.join(&subdir);
 
         // Ensure the parent of the final entry exists (e.g. for scoped packages).
-        if let Some(parent) = final_entry.parent() {
-            mkdirp(parent)?;
+        if let Some(parent) = final_entry.parent()
+            && let Err(e) = mkdirp(parent)
+        {
+            let _ = std::fs::remove_dir_all(&tmp_base);
+            return Err(e);
         }
 
         match place_materialized_entry(&tmp_entry, &final_entry) {
@@ -335,7 +334,7 @@ impl Linker {
             return Ok(());
         }
 
-        let tmp_name = materialize_tmp_name(subdir.as_str());
+        let tmp_name = materialize_tmp_name();
         let tmp_base = aube_dir.join(&tmp_name);
         let result = self.materialize_into(
             &tmp_base,
@@ -353,8 +352,11 @@ impl Linker {
         }
 
         let tmp_entry = tmp_base.join(&subdir);
-        if let Some(parent) = final_entry.parent() {
-            mkdirp(parent)?;
+        if let Some(parent) = final_entry.parent()
+            && let Err(e) = mkdirp(parent)
+        {
+            let _ = std::fs::remove_dir_all(&tmp_base);
+            return Err(e);
         }
 
         match place_materialized_entry(&tmp_entry, &final_entry) {
@@ -608,7 +610,7 @@ impl Linker {
             let target = pathdiff::diff_paths(&sibling_abs, link_parent)
                 .unwrap_or_else(|| sibling_abs.clone());
 
-            // GVS materialize writes into `.tmp-<pid>-<subdir>/`, then
+            // GVS materialize writes into `.tmp-<pid>-<id>/`, then
             // atomic-renames into `self.virtual_store/<subdir>/`. POSIX
             // symlinks store the relative offset verbatim. Offset stays
             // invariant under the wrapper rename, so the link resolves

@@ -3,7 +3,7 @@ use std::path::Path;
 
 /// Sweep orphan `.tmp-<pid>-*` directories in the virtual store.
 ///
-/// Linker materializes each package into `.tmp-<pid>-<subdir>/`
+/// Linker materializes each package into `.tmp-<pid>-<id>/`
 /// then atomic-renames into `.aube/<subdir>/`. Crash or Ctrl-C
 /// between materialize and rename leaves the tmp dir behind.
 /// Nothing else cleans these up so they accumulate on every aborted
@@ -20,7 +20,7 @@ pub fn sweep_stale_tmp_dirs(virtual_store: &Path) {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        // Match our exact prefix. Format: `.tmp-<pid>-<subdir>`
+        // Match our exact prefix. Format: `.tmp-<pid>-<id>`
         // where pid is numeric.
         if !name.starts_with(".tmp-") {
             continue;
