@@ -1480,6 +1480,14 @@ mod multicall_tests {
             rewrite_multicall_argv(os(&["npm", "-v"])),
             os(&["aube", "--version"])
         );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npx", "-v"])),
+            os(&["aube", "--version"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["pnpx", "--version"])),
+            os(&["aube", "--version"])
+        );
     }
 
     #[test]

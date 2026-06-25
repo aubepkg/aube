@@ -53,7 +53,7 @@ pub(crate) fn rewrite_multicall_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         "aubr" => rewrite_simple_multicall(args, "run"),
         "aubx" => rewrite_simple_multicall(args, "dlx"),
         "node" => rewrite_tool_to_subcommand(args, "node"),
-        "npx" | "pnpx" => rewrite_tool_to_subcommand(args, "dlx"),
+        "npx" | "pnpx" => rewrite_dlx_tool_argv(args),
         "npm" => rewrite_npm_argv(args),
         "pnpm" => rewrite_pnpm_argv(args),
         "yarn" | "yarnpkg" => rewrite_yarn_argv(args),
@@ -80,6 +80,15 @@ fn rewrite_simple_multicall(mut args: Vec<OsString>, subcommand: &str) -> Vec<Os
 fn rewrite_tool_to_subcommand(mut args: Vec<OsString>, subcommand: &str) -> Vec<OsString> {
     args[0] = OsString::from("aube");
     args.insert(1, OsString::from(subcommand));
+    args
+}
+
+fn rewrite_dlx_tool_argv(mut args: Vec<OsString>) -> Vec<OsString> {
+    args[0] = OsString::from("aube");
+    if rewrite_pm_help_or_version(&mut args) {
+        return args;
+    }
+    args.insert(1, OsString::from("dlx"));
     args
 }
 
