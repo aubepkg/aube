@@ -79,6 +79,21 @@ jobs:
           mkdir -p dist
           ./packaging/homebrew/render-formula.sh > dist/aube.rb
 
+      - name: Check tap token access
+        env:
+          GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::AUBE_GH_TOKEN is required to push ${TAP_REPO}"
+            exit 1
+          fi
+
+          CAN_PUSH=$(gh api "repos/${TAP_REPO}" --jq '.permissions.push // false' 2>/dev/null || echo "api-error")
+          if [ "$CAN_PUSH" != "true" ]; then
+            echo "::error::AUBE_GH_TOKEN must have Contents write access to ${TAP_REPO}; GitHub reported push permission: ${CAN_PUSH}"
+            exit 1
+          fi
+
       - name: Publish to tap
         env:
           GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}

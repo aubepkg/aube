@@ -10,9 +10,9 @@ on:
         required: true
         type: string
       chroots:
-        description: "COPR chroots to target (space-separated)"
+        description: "COPR chroots to target (space-separated; empty uses project defaults)"
         required: false
-        default: "fedora-rawhide-aarch64 fedora-rawhide-x86_64 fedora-44-aarch64 fedora-44-x86_64 fedora-43-aarch64 fedora-43-x86_64 fedora-42-aarch64 fedora-42-x86_64 epel-10-aarch64 epel-10-x86_64"
+        default: ""
         type: string
 
 permissions: {}
@@ -97,9 +97,8 @@ jobs:
         run: |
           VERSION="${TAG#v}"
 
-          if [ "$EVENT_NAME" = "release" ]; then
-            CHROOTS="fedora-rawhide-aarch64 fedora-rawhide-x86_64 fedora-44-aarch64 fedora-44-x86_64 fedora-43-aarch64 fedora-43-x86_64 fedora-42-aarch64 fedora-42-x86_64 epel-10-aarch64 epel-10-x86_64"
-          else
+          CHROOTS=""
+          if [ "$EVENT_NAME" != "release" ]; then
             CHROOTS="$INPUT_CHROOTS"
           fi
 

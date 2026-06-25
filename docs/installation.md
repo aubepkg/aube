@@ -90,8 +90,8 @@ sudo apt update && sudo apt install --only-upgrade aube
 
 ## Fedora / RHEL (COPR)
 
-**Supported:** Fedora 42, Fedora 43, Fedora Rawhide, EPEL 9, EPEL 10
-(RHEL / Rocky / Alma 9 and 10), both `x86_64` and `aarch64`.
+**Supported:** Fedora 43, Fedora 44, Fedora Rawhide, EPEL 10
+(RHEL / Rocky / Alma 10), both `x86_64` and `aarch64`.
 
 Aube publishes RPMs to the COPR project
 [`jdxcode/aube`](https://copr.fedorainfracloud.org/coprs/jdxcode/aube/):
