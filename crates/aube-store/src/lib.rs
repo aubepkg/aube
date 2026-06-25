@@ -1128,6 +1128,23 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_pkg_content_tolerates_tarball_build_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        let index = index_with_manifest(&store, "@trpc/react-query", "11.0.0-rc.747+64714681c");
+        assert!(validate_pkg_content(&index, "@trpc/react-query", "11.0.0-rc.747").is_ok());
+    }
+
+    #[test]
+    fn test_validate_pkg_content_build_metadata_keeps_base_version_strict() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        let index = index_with_manifest(&store, "@trpc/react-query", "11.0.0-rc.748+64714681c");
+        let err = validate_pkg_content(&index, "@trpc/react-query", "11.0.0-rc.747").unwrap_err();
+        assert!(err.to_string().contains("content mismatch"), "{err}");
+    }
+
+    #[test]
     fn test_validate_pkg_content_skips_version_for_url_shaped_expected() {
         // pnpm v9 lockfiles key github-hosted deps by the codeload
         // tarball URL in the version slot; the tarball's real semver
