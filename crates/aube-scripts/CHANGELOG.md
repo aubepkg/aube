@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0](https://github.com/jdx/aube/compare/aube-scripts-v1.24.0...aube-scripts-v1.25.0) - 2026-06-25
+
+### Added
+
+- *(runtime)* add shell-activated tool shims ([#945](https://github.com/jdx/aube/pull/945))
+
+### Other
+
+- refresh benchmarks for v1.24.0 ([#937](https://github.com/jdx/aube/pull/937))
+
 ## [1.24.0](https://github.com/jdx/aube/compare/aube-scripts-v1.23.0...aube-scripts-v1.24.0) - 2026-06-23
 
 ### Other
