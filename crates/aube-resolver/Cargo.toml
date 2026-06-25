@@ -49,6 +49,10 @@ name = "locked_lookup"
 harness = false
 required-features = ["bench"]
 
+[[bench]]
+name = "ancestor_chain"
+harness = false
+
 [build-dependencies]
 rkyv = { workspace = true }
 serde = { workspace = true }

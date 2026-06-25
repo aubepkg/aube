@@ -1114,9 +1114,12 @@ impl<'a> ResolveDriver<'a> {
         // Compute the child ancestor chain once — the same
         // frame (this package's name + resolved version)
         // applies to every dep / optionalDep / peer we enqueue
-        // below.
-        let mut child_ancestors = task.ancestors.clone();
+        // below. Build it as a `Vec` (one allocation per package),
+        // then freeze to an `Arc<[_]>` so each per-dep enqueue below
+        // is a refcount bump rather than a deep clone of the chain.
+        let mut child_ancestors = task.ancestors.to_vec();
         child_ancestors.push((task.name.clone(), version.clone()));
+        let child_ancestors: Arc<[(String, String)]> = child_ancestors.into();
 
         for (dep_name, dep_range) in &version_meta.dependencies {
             if bundled_names.contains(dep_name) {
@@ -1330,7 +1333,7 @@ impl<'a> ResolveDriver<'a> {
                     .parent
                     .clone()
                     .unwrap_or_else(|| "<unknown>".to_string()),
-                ancestors: task.ancestors.clone(),
+                ancestors: task.ancestors.to_vec(),
                 importer: task.importer.clone(),
             })));
         }
@@ -1566,8 +1569,9 @@ impl<'a> ResolveDriver<'a> {
             // (directories, tarballs, portals, and exec outputs —
             // `link:` deps are fully the target's responsibility).
             if !matches!(local, LocalSource::Link(_)) {
-                let mut child_ancestors = task.ancestors.clone();
+                let mut child_ancestors = task.ancestors.to_vec();
                 child_ancestors.push((linked_name.clone(), real_version.clone()));
+                let child_ancestors: Arc<[(String, String)]> = child_ancestors.into();
                 for (child_name, child_range) in target_deps {
                     self.queue.push_back(ResolveTask::transitive(
                         child_name,
@@ -2014,8 +2018,9 @@ impl<'a> ResolveDriver<'a> {
             // `"is-number@6.0.0"`, which doesn't parse as semver. The
             // lockfile already omitted bundled dep edges on write, so
             // iterating `locked_pkg.dependencies` naturally skips them.
-            let mut child_ancestors = task.ancestors.clone();
+            let mut child_ancestors = task.ancestors.to_vec();
             child_ancestors.push((task.name.clone(), version.clone()));
+            let child_ancestors: Arc<[(String, String)]> = child_ancestors.into();
             for (dep_name, dep_version) in &locked_pkg.dependencies {
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);

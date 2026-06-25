@@ -200,7 +200,7 @@ pub(crate) fn build_no_match(task: &ResolveTask, packument: &Packument) -> NoMat
         name: task.name.clone(),
         range: task.range.clone(),
         importer: task.importer.clone(),
-        ancestors: task.ancestors.clone(),
+        ancestors: task.ancestors.to_vec(),
         original_spec: task.original_specifier.clone(),
         available,
         total_versions: packument.versions.len(),
@@ -261,7 +261,7 @@ pub(crate) fn build_age_gate(
         range: task.range.clone(),
         minutes,
         importer: task.importer.clone(),
-        ancestors: task.ancestors.clone(),
+        ancestors: task.ancestors.to_vec(),
         gated: gated.into_iter().map(|(_, s)| s).collect(),
     }
 }

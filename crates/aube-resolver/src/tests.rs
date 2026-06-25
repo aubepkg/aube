@@ -69,7 +69,7 @@ fn build_age_gate_resolves_dist_tag_range() {
         importer: ".".into(),
         original_specifier: None,
         real_name: None,
-        ancestors: Vec::new(),
+        ancestors: Arc::from([]),
         range_from_override: false,
     };
     let d = build_age_gate(&task, &packument, 60);
@@ -93,7 +93,7 @@ fn build_no_match_falls_back_to_prereleases() {
         importer: ".".into(),
         original_specifier: None,
         real_name: None,
-        ancestors: Vec::new(),
+        ancestors: Arc::from([]),
         range_from_override: false,
     };
     let d = build_no_match(&task, &packument);
@@ -339,7 +339,7 @@ fn exotic_subdeps_from_local_parents_are_allowed() {
         importer: ".".to_string(),
         original_specifier: None,
         real_name: None,
-        ancestors: Vec::new(),
+        ancestors: Arc::from([]),
         range_from_override: false,
     };
     let mut resolved = BTreeMap::new();
@@ -368,7 +368,7 @@ fn exotic_subdeps_from_unknown_parents_stay_blocked() {
         importer: ".".to_string(),
         original_specifier: None,
         real_name: None,
-        ancestors: Vec::new(),
+        ancestors: Arc::from([]),
         range_from_override: false,
     };
 
@@ -386,7 +386,7 @@ fn exotic_subdeps_from_registry_parents_stay_blocked() {
         importer: ".".to_string(),
         original_specifier: None,
         real_name: None,
-        ancestors: Vec::new(),
+        ancestors: Arc::from([]),
         range_from_override: false,
     };
     let mut resolved = BTreeMap::new();

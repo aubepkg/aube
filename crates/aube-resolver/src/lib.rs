@@ -273,7 +273,14 @@ pub(crate) struct ResolveTask {
     /// selectors. Empty for root/importer deps. Each child-enqueue
     /// site is responsible for extending its parent's chain with the
     /// parent's own `(name, version)` frame.
-    pub(crate) ancestors: Vec<(String, String)>,
+    ///
+    /// `Arc<[_]>` rather than `Vec` because the chain is immutable once
+    /// built and is shared, unmodified, by every dependency a package
+    /// enqueues: the child chain is materialized into a `Vec` once per
+    /// package, frozen here, and each per-dep enqueue is then a refcount
+    /// bump instead of a full deep clone (clone cost scaled with graph
+    /// edges × depth before this).
+    pub(crate) ancestors: Arc<[(String, String)]>,
     /// `true` when an override rewrote `range` to a `link:`/`file:`
     /// path. Override paths are anchored at the project root (where the
     /// override is declared), not at the consuming workspace package or
@@ -308,7 +315,7 @@ impl ResolveTask {
             importer,
             original_specifier: Some(original),
             real_name: None,
-            ancestors: Vec::new(),
+            ancestors: Arc::from([]),
             range_from_override: false,
         }
     }
@@ -322,7 +329,7 @@ impl ResolveTask {
         dep_type: DepType,
         parent: String,
         importer: String,
-        ancestors: Vec<(String, String)>,
+        ancestors: Arc<[(String, String)]>,
     ) -> Self {
         Self {
             name,
