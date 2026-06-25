@@ -184,7 +184,7 @@ impl Linker {
         // `subdir` already comes from `dep_path_to_filename`, which
         // flattens `/` to `+` as part of its escape pass, so it's
         // already safe to splice into a single path component.
-        let tmp_name = materialize_tmp_name(&subdir);
+        let tmp_name = materialize_tmp_name(subdir.as_str());
         let tmp_base = self.virtual_store.join(&tmp_name);
 
         let result = self.materialize_into(
@@ -335,7 +335,7 @@ impl Linker {
             return Ok(());
         }
 
-        let tmp_name = materialize_tmp_name(&subdir);
+        let tmp_name = materialize_tmp_name(subdir.as_str());
         let tmp_base = aube_dir.join(&tmp_name);
         let result = self.materialize_into(
             &tmp_base,
