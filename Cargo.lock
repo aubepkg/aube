@@ -295,7 +295,7 @@ dependencies = [
  "sha2 0.11.0",
  "sigstore-oidc",
  "sigstore-sign",
- "sigstore-types",
+ "sigstore-types 0.9.0",
  "strum",
  "tar",
  "tempfile",
@@ -4306,7 +4306,7 @@ dependencies = [
  "sigstore-merkle",
  "sigstore-rekor",
  "sigstore-tsa",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
 ]
 
@@ -4325,7 +4325,7 @@ dependencies = [
  "rand_core 0.9.5",
  "sha2 0.10.9",
  "signature",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "spki",
  "thiserror 2.0.18",
  "tracing",
@@ -4344,7 +4344,7 @@ dependencies = [
  "serde_json",
  "sigstore-crypto",
  "sigstore-oidc",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
  "url",
 ]
@@ -4358,7 +4358,7 @@ dependencies = [
  "base64",
  "hex",
  "sigstore-crypto",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
 ]
 
@@ -4376,7 +4376,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sigstore-crypto",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
  "tokio",
  "url",
@@ -4395,7 +4395,7 @@ dependencies = [
  "serde_json",
  "sigstore-crypto",
  "sigstore-merkle",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
  "url",
 ]
@@ -4415,7 +4415,7 @@ dependencies = [
  "sigstore-rekor",
  "sigstore-trust-root",
  "sigstore-tsa",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
  "x509-cert",
 ]
@@ -4433,7 +4433,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sigstore-crypto",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
  "x509-cert",
 ]
@@ -4457,7 +4457,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
  "sigstore-crypto",
- "sigstore-types",
+ "sigstore-types 0.8.0",
  "thiserror 2.0.18",
  "tracing",
  "x509-cert",
@@ -4469,6 +4469,20 @@ name = "sigstore-types"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fb0334b69834c1f29757e57ade7e9bdbc42f5383cc22d003256d4d2df47af13"
+dependencies = [
+ "base64",
+ "hex",
+ "pem",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sigstore-types"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a48661f5c7a4f7496de80865e5b258adac0bc514164e6c944b93b65ba5de334b"
 dependencies = [
  "base64",
  "hex",
