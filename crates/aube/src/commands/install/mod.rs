@@ -19,6 +19,7 @@ mod layout;
 mod lifecycle;
 mod link;
 mod lockfile_dir;
+mod lockfile_write_overlap;
 mod materialize;
 pub(crate) mod node_gyp_bootstrap;
 mod resolve;
@@ -889,6 +890,14 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     // frozen-lockfile path or when the prewarm short-circuits.
     let mut prewarm_graph_hashes: Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>> =
         None;
+    // The cold-install lockfile write runs on a `spawn_blocking` task so it
+    // overlaps `filter_graph` + the link phase (see
+    // `lockfile_write_overlap`). The handle escapes the resolve match arm
+    // and is joined before `run_finalize_phase` re-reads the graph, so a
+    // write error still surfaces. `None` on every path that wrote inline
+    // (lockfile-matched fast path, killswitch disabled, `lockfile=false`,
+    // or after the rare catch-up integrity rewrite joined it early).
+    let mut lockfile_write_handle: Option<lockfile_write_overlap::LockfileWriteHandle> = None;
     let (graph, package_indices, cached_count, fetch_count) = match lockfile_result {
         Ok((mut graph, kind)) => {
             // Under `sharedWorkspaceLockfile=false` the project's own
@@ -1887,31 +1896,40 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 // snapshot metadata (`optional: true`, `transitivePeerDependencies`)
                 // before the write and before the host-only `filter_graph` below.
                 crate::commands::prepare_resolved_graph_for_lockfile_write(&mut graph);
-                if shared_workspace_lockfile || !has_workspace {
-                    let written_path = write_lockfile_dir_remapped(
-                        &lockfile_dir,
-                        &lockfile_importer_key,
+                // The serialize + reformat + atomic write is the slowest
+                // serial span before the linker (10-55 ms on large trees).
+                // When the overlap is on, hand it a clone of the prepared
+                // graph and run it on a blocking thread so it overlaps
+                // `filter_graph` + the link phase; the handle is joined
+                // before `run_finalize_phase`.
+                // `AUBE_DISABLE_LOCKFILE_WRITE_OVERLAP=1` reverts to the
+                // inline serial write — byte-identical output, same error
+                // point, and no graph clone (exactly the pre-overlap cost).
+                if lockfile_write_overlap::overlap_enabled() {
+                    let write_inputs = lockfile_write_overlap::LockfileWriteInputs {
+                        graph: graph.clone(),
+                        manifest: manifest.clone(),
+                        manifests: manifests.clone(),
+                        lockfile_dir: lockfile_dir.clone(),
+                        lockfile_importer_key: lockfile_importer_key.clone(),
+                        cwd: cwd.clone(),
+                        write_kind,
+                        shared_workspace_lockfile,
+                        has_workspace,
+                        per_project_write_selection: per_project_write_selection.clone(),
+                    };
+                    lockfile_write_handle = Some(lockfile_write_overlap::spawn(write_inputs));
+                } else {
+                    lockfile_write_overlap::write_inline(
                         &graph,
                         &manifest,
-                        write_kind,
-                    )
-                    .into_diagnostic()
-                    .wrap_err("failed to write lockfile")?;
-                    // Log the basename (matches the format resolve.bats and
-                    // similar tests assert against — e.g. "Wrote aube-lock.yaml").
-                    tracing::debug!(
-                        "Wrote {}",
-                        written_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| written_path.display().to_string())
-                    );
-                } else {
-                    write_per_project_lockfiles(
-                        &cwd,
-                        &graph,
                         &manifests,
+                        &lockfile_dir,
+                        &lockfile_importer_key,
+                        &cwd,
                         write_kind,
+                        shared_workspace_lockfile,
+                        has_workspace,
                         per_project_write_selection.as_ref(),
                     )?;
                 }
@@ -2028,6 +2046,16 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                     apply_computed_integrities(&mut graph, &catchup_integrities);
                     if let Some(lock_graph) = lockfile_graph_for_integrity_rewrite.as_mut() {
                         apply_computed_integrities(lock_graph, &catchup_integrities);
+                        // The integrity rewrite overwrites the lockfile the
+                        // overlapped write produced. Join the in-flight write
+                        // first so the two never race the same atomic-write
+                        // rename and the on-disk result is the rewrite (the
+                        // serial ordering the inline path had: write, then
+                        // catch-up rewrite). Consumes the handle so the
+                        // post-match join is a no-op.
+                        if let Some(handle) = lockfile_write_handle.take() {
+                            lockfile_write_overlap::join(handle).await?;
+                        }
                         if shared_workspace_lockfile || !has_workspace {
                             write_lockfile_dir_remapped(
                                 &lockfile_dir,
@@ -2226,6 +2254,13 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         prog_ref,
         phase_timings: &mut phase_timings,
     })?;
+    // Join the overlapped lockfile write before finalize re-reads the
+    // graph. The write ran concurrently with the link phase above; a write
+    // error surfaces here (it is not dropped). `None` on every inline-write
+    // path, so this is a no-op there.
+    if let Some(handle) = lockfile_write_handle.take() {
+        lockfile_write_overlap::join(handle).await?;
+    }
     finalize::run_finalize_phase(finalize::FinalizePhaseInput {
         cwd: &cwd,
         settings_ctx: &settings_ctx,

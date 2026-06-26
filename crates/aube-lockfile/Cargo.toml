@@ -49,3 +49,8 @@ harness = false
 name = "pnpm_lock_parse"
 harness = false
 required-features = ["bench"]
+
+[[bench]]
+name = "pnpm_lock_write"
+harness = false
+required-features = ["bench"]

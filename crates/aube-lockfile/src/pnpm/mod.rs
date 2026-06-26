@@ -33,6 +33,21 @@ pub fn __bench_parse_serde(content: &str) -> Option<(usize, usize, usize)> {
         .map(|r| raw::__bench_counts(&r))
 }
 
+/// Benchmark-only: the full serialize + reformat + atomic-write path —
+/// exactly the work the lockfile-write-overlap optimization moves onto a
+/// background thread. Measured against `LockfileGraph::clone()` (the
+/// offsetting cost the spawned task pays) to decide whether overlapping
+/// the write with the link tail is a net win.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub fn __bench_write_to(
+    path: &std::path::Path,
+    graph: &crate::LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
+) {
+    write::write(path, graph, manifest).expect("bench write");
+}
+
 pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {
     let Some((host, path)) = http_url_host_and_path(url) else {
         return false;
