@@ -59,11 +59,12 @@ pub(super) fn overlap_enabled() -> bool {
 
 /// The serialize + reformat + atomic write, with the lockfile graph and
 /// every parameter borrowed. Both the overlapped path (via the owned
-/// `LockfileWriteInputs`) and the killswitch-disabled inline path call
-/// this with the SAME values, so the two produce byte-identical output.
-/// This is the exact body the pre-overlap inline write ran.
+/// `LockfileWriteInputs`) and the killswitch-disabled inline call site in
+/// `mod.rs` call this with the SAME values, so the two produce
+/// byte-identical output. This is the exact body the pre-overlap inline
+/// write ran.
 #[allow(clippy::too_many_arguments)]
-fn write_one(
+pub(super) fn write_one(
     graph: &aube_lockfile::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
     manifests: &[(String, aube_manifest::PackageJson)],
@@ -131,36 +132,6 @@ pub(super) fn spawn(inputs: LockfileWriteInputs) -> LockfileWriteHandle {
     })
 }
 
-/// Write inline on the calling thread — the killswitch-disabled path.
-/// Borrows the call-site values directly (no graph clone — the inline
-/// path pays exactly the pre-overlap cost), with identical error ordering.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn write_inline(
-    graph: &aube_lockfile::LockfileGraph,
-    manifest: &aube_manifest::PackageJson,
-    manifests: &[(String, aube_manifest::PackageJson)],
-    lockfile_dir: &std::path::Path,
-    lockfile_importer_key: &str,
-    cwd: &std::path::Path,
-    write_kind: aube_lockfile::LockfileKind,
-    shared_workspace_lockfile: bool,
-    has_workspace: bool,
-    per_project_write_selection: Option<&BTreeSet<String>>,
-) -> miette::Result<()> {
-    write_one(
-        graph,
-        manifest,
-        manifests,
-        lockfile_dir,
-        lockfile_importer_key,
-        cwd,
-        write_kind,
-        shared_workspace_lockfile,
-        has_workspace,
-        per_project_write_selection,
-    )
-}
-
 /// Join a spawned write handle, mapping a task panic to a diagnostic. A
 /// write error surfaces here (at the join point, before finalize) rather
 /// than being dropped. Returns the write's own `Result` unchanged so the
@@ -169,9 +140,11 @@ pub(super) fn write_inline(
 pub(super) async fn join(handle: LockfileWriteHandle) -> miette::Result<()> {
     match handle.await {
         Ok(write_result) => write_result,
-        Err(join_err) => Err(Err::<(), _>(join_err)
+        // `JoinError` is a plain `std::error::Error` (not a miette
+        // `Diagnostic`), so the bridge to a `Report` is `into_diagnostic()`
+        // on the `Result`.
+        Err(join_err) => Result::<(), _>::Err(join_err)
             .into_diagnostic()
-            .unwrap_err()
-            .wrap_err("lockfile write task panicked")),
+            .wrap_err("lockfile write task panicked"),
     }
 }

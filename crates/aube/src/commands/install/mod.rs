@@ -1920,7 +1920,10 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                     };
                     lockfile_write_handle = Some(lockfile_write_overlap::spawn(write_inputs));
                 } else {
-                    lockfile_write_overlap::write_inline(
+                    // Killswitch-disabled inline write: borrow the call-site
+                    // values directly (no graph clone — exactly the pre-overlap
+                    // cost), same error point.
+                    lockfile_write_overlap::write_one(
                         &graph,
                         &manifest,
                         &manifests,
