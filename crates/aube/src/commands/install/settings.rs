@@ -798,6 +798,7 @@ pub(crate) struct ResolverConfigInputs<'a> {
     /// resolutions. Callers compute this as
     /// `lockfile_enabled.then(|| source_kind_before.unwrap_or(Aube))`.
     pub(crate) target_lockfile_kind: Option<aube_lockfile::LockfileKind>,
+    pub(crate) dependency_policy: Option<aube_resolver::DependencyPolicy>,
     /// When `true`, the resolver caches full (non-corgi) packuments on
     /// disk so the next install/update can reuse them without a
     /// round-trip. Install opts in (`true`) to amortize the cost of
@@ -828,6 +829,7 @@ pub(crate) fn configure_resolver(
         workspace_catalogs,
         minimum_release_age_override,
         target_lockfile_kind,
+        dependency_policy,
         cache_full_packuments,
         ignore_scripts,
     } = inputs;
@@ -909,7 +911,8 @@ pub(crate) fn configure_resolver(
     if !effective_overrides.is_empty() {
         tracing::debug!("applying {} overrides", effective_overrides.len());
     }
-    let dependency_policy = resolve_dependency_policy(manifest, settings_ctx);
+    let dependency_policy =
+        dependency_policy.unwrap_or_else(|| resolve_dependency_policy(manifest, settings_ctx));
     if !dependency_policy.package_extensions.is_empty() {
         tracing::debug!(
             "applying {} packageExtensions",

@@ -46,6 +46,7 @@ pub(super) struct LockfileOnlyInput<'a> {
     pub ws_config: &'a aube_manifest::workspace::WorkspaceConfig,
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
     pub settings_ctx: &'a aube_settings::ResolveCtx<'a>,
+    pub dependency_policy: &'a aube_resolver::DependencyPolicy,
     pub lockfile_pre_parse: Option<&'a (LockfileGraph, LockfileKind)>,
     pub lockfile_conflict_marker_warning_emitted: bool,
     pub existing_for_resolver: Option<&'a LockfileGraph>,
@@ -78,6 +79,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         ws_config,
         workspace_catalogs,
         settings_ctx,
+        dependency_policy,
         lockfile_pre_parse,
         lockfile_conflict_marker_warning_emitted,
         existing_for_resolver,
@@ -228,6 +230,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             // applies.
             target_lockfile_kind: lockfile_enabled
                 .then(|| source_kind_before.unwrap_or(LockfileKind::Aube)),
+            dependency_policy: Some(dependency_policy.clone()),
             cache_full_packuments: true,
             ignore_scripts,
         },

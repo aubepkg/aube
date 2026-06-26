@@ -381,6 +381,7 @@ pub(crate) fn build_resolver(
             workspace_catalogs: &catalogs,
             minimum_release_age_override: None,
             target_lockfile_kind,
+            dependency_policy: None,
             // Update / add / dedupe / audit deliberately skip the
             // full-packument disk cache install populates: the cache's
             // freshness window can outlive a registry dist-tag bump,
