@@ -465,9 +465,9 @@ fn test_parse_berry_skips_builtin_patch_protocol() {
   version: 8
   cacheKey: 10c0
 
-"glob@patch:glob@npm%3A8.1.0#~builtin<compat/glob>":
+"glob@patch:glob@npm%3A8.1.0#builtin<compat/glob>":
   version: 8.1.0
-  resolution: "glob@patch:glob@npm%3A8.1.0#~builtin<compat/glob>"
+  resolution: "glob@patch:glob@npm%3A8.1.0#builtin<compat/glob>"
   checksum: 10c0/patched
   languageName: node
   linkType: hard
@@ -479,6 +479,216 @@ fn test_parse_berry_skips_builtin_patch_protocol() {
     assert!(graph.packages.is_empty());
     assert!(graph.patched_dependencies.is_empty());
     assert!(graph.importers["."].is_empty());
+}
+
+/// `optional!builtin<…>` is the canonical compat-patch spelling in real
+/// yarn 4 lockfiles; it must be skipped like a bare `builtin<…>`.
+#[test]
+fn test_parse_berry_skips_optional_builtin_patch_protocol() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"fsevents@patch:fsevents@npm%3A2.3.2#optional!builtin<compat/fsevents>::version=2.3.2&hash=df0bf1":
+  version: 2.3.2
+  resolution: "fsevents@patch:fsevents@npm%3A2.3.2#optional!builtin<compat/fsevents>::version=2.3.2&hash=df0bf1"
+  checksum: 10c0/patched
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("fsevents", "^2.3.2")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    assert!(graph.packages.is_empty());
+    assert!(graph.patched_dependencies.is_empty());
+    assert!(graph.importers["."].is_empty());
+}
+
+/// A `&`-joined selector can mix a real project patch with a builtin
+/// compat patch; keep the real file, ignore the builtin segment.
+#[test]
+fn test_parse_berry_composed_patch_keeps_real_file() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@patch:foo@npm%3A1.0.0#./.yarn/patches/foo.patch&optional!builtin<compat/foo>::version=1.0.0&hash=abc123":
+  version: 1.0.0
+  resolution: "foo@patch:foo@npm%3A1.0.0#./.yarn/patches/foo.patch&optional!builtin<compat/foo>::version=1.0.0&hash=abc123"
+  checksum: 10c0/patched
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    assert!(graph.packages.contains_key("foo@1.0.0"));
+    assert_eq!(
+        graph
+            .patched_dependencies
+            .get("foo@1.0.0")
+            .map(String::as_str),
+        Some("./.yarn/patches/foo.patch")
+    );
+}
+
+/// Composed selectors are order-independent: builtin segment first, real patch still kept.
+#[test]
+fn test_parse_berry_composed_patch_builtin_first_keeps_real_file() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@patch:foo@npm%3A1.0.0#optional!builtin<compat/foo>&./.yarn/patches/foo.patch::version=1.0.0&hash=abc123":
+  version: 1.0.0
+  resolution: "foo@patch:foo@npm%3A1.0.0#optional!builtin<compat/foo>&./.yarn/patches/foo.patch::version=1.0.0&hash=abc123"
+  checksum: 10c0/patched
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    assert!(graph.packages.contains_key("foo@1.0.0"));
+    assert_eq!(
+        graph
+            .patched_dependencies
+            .get("foo@1.0.0")
+            .map(String::as_str),
+        Some("./.yarn/patches/foo.patch")
+    );
+}
+
+/// Yarn writes project-root-relative patch paths with a `~/` prefix
+/// (the default form, e.g. `#~/.yarn/patches/foo.patch`). The `~/` must
+/// be stripped or the materializer looks for a literal `~` dir and fails.
+#[test]
+fn test_parse_berry_patch_protocol_project_root_tilde() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"ink@patch:ink@npm%3A3.2.0#~/.yarn/patches/ink-npm-3.2.0-2f1df5b094.patch":
+  version: 3.2.0
+  resolution: "ink@patch:ink@npm%3A3.2.0#~/.yarn/patches/ink-npm-3.2.0-2f1df5b094.patch::version=3.2.0&hash=b7953f"
+  checksum: 10c0/patched
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("ink", "^3.2.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    assert!(graph.packages.contains_key("ink@3.2.0"));
+    // The `~/` project-root prefix is stripped (Yarn `onProject`), so the
+    // path resolves against the project root just like a `./` path.
+    assert_eq!(
+        graph
+            .patched_dependencies
+            .get("ink@3.2.0")
+            .map(String::as_str),
+        Some(".yarn/patches/ink-npm-3.2.0-2f1df5b094.patch")
+    );
+}
+
+/// Builtin compat patches coexist with the plain `name@npm:…` block, and
+/// transitive consumers reference the npm spec — skipping the builtin
+/// patch must leave that edge resolving cleanly, never strand the package.
+#[test]
+fn test_parse_berry_builtin_skip_keeps_transitive_npm_edge() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"consumer@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "consumer@npm:1.0.0"
+  dependencies:
+    resolve: "npm:^1.20.0"
+  checksum: 10c0/consumer
+  languageName: node
+  linkType: hard
+
+"resolve@npm:1.22.2, resolve@npm:^1.20.0":
+  version: 1.22.2
+  resolution: "resolve@npm:1.22.2"
+  checksum: 10c0/resolvereal
+  languageName: node
+  linkType: hard
+
+"resolve@patch:resolve@npm%3A1.22.2#optional!builtin<compat/resolve>, resolve@patch:resolve@npm%3A^1.20.0#optional!builtin<compat/resolve>":
+  version: 1.22.2
+  resolution: "resolve@patch:resolve@npm%3A1.22.2#optional!builtin<compat/resolve>::version=1.22.2&hash=c3c19d"
+  checksum: 10c0/resolvepatched
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("consumer", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    // The builtin patch block is skipped: no bogus patch entry, only the
+    // consumer and the real npm resolve survive.
+    assert!(graph.patched_dependencies.is_empty());
+    assert_eq!(graph.packages.len(), 2);
+    assert!(graph.packages.contains_key("consumer@1.0.0"));
+    assert!(graph.packages.contains_key("resolve@1.22.2"));
+
+    // The transitive edge still resolves to the real npm package — the
+    // skip didn't strand it.
+    assert_eq!(
+        graph.packages["consumer@1.0.0"]
+            .dependencies
+            .get("resolve")
+            .map(String::as_str),
+        Some("resolve@1.22.2")
+    );
+}
+
+/// The compat-builtin skip must be identical across every
+/// `__metadata.version` and every spelling Yarn has emitted:
+///   `builtin<…>`           yarn 2.0     (pre-flag)
+///   `~builtin<…>`          yarn 2.4–3.1 (leading-`~` optional flag)
+///   `optional!builtin<…>`  yarn 3.2+/4  (`!`-delimited flag)
+#[test]
+fn test_parse_berry_builtin_skip_is_meta_version_independent() {
+    for v in [3u64, 6, 8] {
+        for sel in [
+            "builtin<compat/fsevents>",
+            "~builtin<compat/fsevents>",
+            "optional!builtin<compat/fsevents>",
+        ] {
+            let res =
+                format!("fsevents@patch:fsevents@npm%3A2.3.2#{sel}::version=2.3.2&hash=df0bf1");
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            let content = format!(
+                "__metadata:\n  version: {v}\n  cacheKey: 10c0\n\n\"{res}\":\n  version: 2.3.2\n  resolution: \"{res}\"\n  checksum: 10c0/patched\n  languageName: node\n  linkType: hard\n"
+            );
+            std::fs::write(tmp.path(), &content).unwrap();
+            let manifest = make_manifest(&[("fsevents", "^2.3.2")], &[]);
+            let graph = parse(tmp.path(), &manifest).unwrap();
+            assert!(
+                graph.packages.is_empty(),
+                "v{v} sel={sel}: package not skipped"
+            );
+            assert!(
+                graph.patched_dependencies.is_empty(),
+                "v{v} sel={sel}: bogus patch recorded"
+            );
+            assert!(
+                graph.importers["."].is_empty(),
+                "v{v} sel={sel}: importer not empty"
+            );
+        }
+    }
 }
 
 /// Scoped package names (`@types/node`) and the `, `-joined

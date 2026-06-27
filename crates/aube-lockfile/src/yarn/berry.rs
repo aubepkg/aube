@@ -451,19 +451,39 @@ fn file_protocol_source(body: &str) -> LocalSource {
 /// Extract the local patch file from Yarn's `patch:` protocol body.
 ///
 /// Berry encodes patched npm packages as
-/// `name@patch:name@npm%3Aversion#./.yarn/patches/name.patch::version=...`.
+/// `name@patch:name@npm%3Aversion#<selector>::version=...&hash=...`.
 /// Aube applies the patch through its existing git-diff materializer, so
-/// the only part needed here is the project-relative path after `#`.
+/// the only part needed here is the project-relative file in `<selector>`.
+///
+/// The selector is a `&`-joined list of patch paths (Yarn's
+/// `patchUtils.ts` grammar). `builtin<…>` segments are Yarn's internal
+/// compat shims with no project file to apply — aube ignores them (the
+/// package still resolves via its plain `npm:` block). `::`-params are
+/// split off first because they contain their own `&`. Returns the first
+/// real patch file (aube holds one patch path per package, so multiple real
+/// patches in one selector keep only the first), or `None` if all builtin.
 fn patch_protocol_path(body: &str) -> Option<String> {
     let (_, after_hash) = body.split_once('#')?;
-    let path = after_hash
+    let selector = after_hash
         .split_once("::")
         .map(|(p, _)| p)
         .unwrap_or(after_hash);
-    if path.is_empty() || path.starts_with("builtin<") || path.starts_with("~builtin<") {
-        return None;
-    }
-    Some(path.to_string())
+    selector.split('&').find_map(|path| {
+        // Strip `!`-delimited flags up to the last `!` (Yarn ≥3.2).
+        let path = path.rsplit_once('!').map_or(path, |(_, p)| p);
+        // Strip the `~/` project-root prefix (Yarn ≥3.2 `onProject`), or the
+        // legacy bare-`~` optional flag (Yarn 2.4–3.1, `~builtin<…>`). They
+        // never collide: a project path is `~/…` (slash), the flag is `~`+non-slash.
+        let path = if let Some(rest) = path.strip_prefix("~/") {
+            rest
+        } else if let Some(rest) = path.strip_prefix('~') {
+            rest
+        } else {
+            path
+        };
+        let is_builtin = path.starts_with("builtin<") && path.ends_with('>');
+        (!path.is_empty() && !is_builtin).then(|| path.to_string())
+    })
 }
 
 fn patch_spec_path(spec: &str) -> Option<String> {
