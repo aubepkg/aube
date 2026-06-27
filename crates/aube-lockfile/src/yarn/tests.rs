@@ -588,7 +588,13 @@ fn test_parse_berry_multiple_real_patches_errors() {
 "#;
     std::fs::write(tmp.path(), content).unwrap();
     let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
-    assert!(parse(tmp.path(), &manifest).is_err());
+    // Pin the failure to the multi-patch guard, not an unrelated parse error,
+    // so this can't pass for the wrong reason.
+    let err = parse(tmp.path(), &manifest).expect_err("multi-patch selector must fail");
+    assert!(
+        err.to_string().contains("multiple patch files"),
+        "expected the multi-patch guard to fire, got: {err}"
+    );
 }
 
 /// Yarn writes project-root-relative patch paths with a `~/` prefix
@@ -681,9 +687,9 @@ fn test_parse_berry_builtin_skip_keeps_transitive_npm_edge() {
 
 /// The compat-builtin skip must be identical across every
 /// `__metadata.version` and every spelling Yarn has emitted:
-///   `builtin<…>`           yarn 2.0     (pre-flag)
-///   `~builtin<…>`          yarn 2.4–3.1 (leading-`~` optional flag)
-///   `optional!builtin<…>`  yarn 3.2+/4  (`!`-delimited flag)
+///   `builtin<…>`           yarn 2.x      (pre-flag)
+///   `~builtin<…>`          yarn 3.0–3.6  (leading-`~` optional flag)
+///   `optional!builtin<…>`  yarn 4.0+     (`!`-delimited flag)
 #[test]
 fn test_parse_berry_builtin_skip_is_meta_version_independent() {
     for v in [3u64, 6, 8] {
@@ -715,6 +721,31 @@ fn test_parse_berry_builtin_skip_is_meta_version_independent() {
             );
         }
     }
+}
+
+/// All-builtin multi-segment selectors (two compat shims joined with `&`) have
+/// no real file to apply, so they classify as `Skip`, never `Multiple`. The
+/// `Multiple` guard counts real paths *after* the builtin filter, so this
+/// guards against a regression that miscounts builtins toward the limit and
+/// wrongly hard-errors a perfectly normal two-builtin block.
+#[test]
+fn test_patch_protocol_all_builtin_multi_is_skip() {
+    let body = "fsevents@npm%3A2.3.2#builtin<compat/a>&optional!builtin<compat/b>::version=2.3.2&hash=df0bf1";
+    assert!(matches!(patch_protocol_path(body), PatchSelector::Skip));
+}
+
+/// Yarn's `optional` flag can prefix a *real* patch, not just a builtin. aube
+/// strips the `!`-delimited flags and keeps the path (it does not yet preserve
+/// the optionality: Yarn tolerates a failed apply, aube treats it as required;
+/// see the investigation's known limitations). Every other `!` test path is a
+/// builtin that gets filtered, so this pins the `!`-strip on a *kept* path.
+#[test]
+fn test_patch_protocol_optional_flag_on_real_patch_keeps_path() {
+    let body = "foo@npm%3A1.0.0#optional!./.yarn/patches/a.patch::version=1.0.0&hash=abc123";
+    assert!(matches!(
+        patch_protocol_path(body),
+        PatchSelector::Single(p) if p == "./.yarn/patches/a.patch"
+    ));
 }
 
 /// One Yarn-shaped patch-selector segment (every form the grammar emits).

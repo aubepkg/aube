@@ -494,11 +494,11 @@ pub(super) fn patch_protocol_path(body: &str) -> PatchSelector {
         .map(|(p, _)| p)
         .unwrap_or(after_hash);
     let mut reals = selector.split('&').filter_map(|path| {
-        // Strip `!`-delimited flags up to the last `!` (Yarn ≥3.2).
+        // Strip `!`-delimited flags up to the last `!` (Yarn 4.0+).
         let path = path.rsplit_once('!').map_or(path, |(_, p)| p);
-        // Strip the `~/` project-root prefix (Yarn ≥3.2 `onProject`), or the
-        // legacy bare-`~` optional flag (Yarn 2.4–3.1, `~builtin<…>`). They
-        // never collide: a project path is `~/…` (slash), the flag is `~`+non-slash.
+        // Strip the `~/` project-root prefix (Yarn 4.0+ `onProject`), or the
+        // legacy bare-`~` optional flag (Yarn 3.x, `~builtin<…>`). They never
+        // collide: a project path is `~/…` (slash), the flag is `~`+non-slash.
         let path = if let Some(rest) = path.strip_prefix("~/") {
             rest
         } else if let Some(rest) = path.strip_prefix('~') {
