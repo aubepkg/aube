@@ -1,7 +1,8 @@
-use super::berry::{parse_berry_spec, range_has_protocol, split_berry_header};
+use super::berry::{parse_berry_spec, patch_protocol_path, range_has_protocol, split_berry_header};
 use super::classic::{parse_npm_alias_real_name, parse_spec_name};
 use super::*;
 use crate::{DepType, LocalSource, LockedPackage};
+use proptest::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -687,6 +688,53 @@ fn test_parse_berry_builtin_skip_is_meta_version_independent() {
                 graph.importers["."].is_empty(),
                 "v{v} sel={sel}: importer not empty"
             );
+        }
+    }
+}
+
+/// One Yarn-shaped patch-selector segment (every form the grammar emits).
+fn berry_patch_segment() -> impl Strategy<Value = String> {
+    let name = "[a-z][a-z0-9._/-]{0,12}";
+    prop_oneof![
+        name.prop_map(|n| format!("builtin<compat/{n}>")),
+        name.prop_map(|n| format!("~builtin<compat/{n}>")),
+        name.prop_map(|n| format!("optional!builtin<compat/{n}>")),
+        name.prop_map(|n| format!("~/.yarn/patches/{n}.patch")),
+        name.prop_map(|n| format!("./.yarn/patches/{n}.patch")),
+        name.prop_map(|n| format!(".yarn/patches/{n}.patch")),
+        name.prop_map(|n| format!("optional!~/.yarn/patches/{n}.patch")),
+    ]
+}
+
+proptest! {
+    /// The bug-class invariant: for any `&`-joined selector of Yarn-shaped
+    /// segments, `patch_protocol_path` returns either `None` or a clean
+    /// project-relative path — never a leftover `~` prefix and never a
+    /// `builtin<…>` marker (the exact forms that broke installs). Must hold
+    /// across arbitrary combinations, with or without `::`-params.
+    #[test]
+    fn prop_patch_protocol_path_never_leaks_builtin_or_tilde(
+        segments in prop::collection::vec(berry_patch_segment(), 1..4),
+        with_params in any::<bool>(),
+    ) {
+        let params = if with_params { "::version=1.0.0&hash=deadbeef" } else { "" };
+        let body = format!("foo@npm%3A1.0.0#{}{params}", segments.join("&"));
+        if let Some(p) = patch_protocol_path(&body) {
+            prop_assert!(!p.is_empty(), "empty path from {body}");
+            prop_assert!(!p.starts_with('~'), "leaked ~ prefix {p:?} from {body}");
+            prop_assert!(
+                !(p.starts_with("builtin<") && p.ends_with('>')),
+                "leaked builtin marker {p:?} from {body}"
+            );
+        }
+    }
+
+    /// Robustness: arbitrary garbage after `#` must never panic, and a
+    /// returned path is never empty.
+    #[test]
+    fn prop_patch_protocol_path_no_panic_on_arbitrary_input(selector in ".*") {
+        if let Some(p) = patch_protocol_path(&format!("foo#{selector}")) {
+            prop_assert!(!p.is_empty());
         }
     }
 }

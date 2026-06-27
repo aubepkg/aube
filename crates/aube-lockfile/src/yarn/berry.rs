@@ -462,7 +462,7 @@ fn file_protocol_source(body: &str) -> LocalSource {
 /// split off first because they contain their own `&`. Returns the first
 /// real patch file (aube holds one patch path per package, so multiple real
 /// patches in one selector keep only the first), or `None` if all builtin.
-fn patch_protocol_path(body: &str) -> Option<String> {
+pub(super) fn patch_protocol_path(body: &str) -> Option<String> {
     let (_, after_hash) = body.split_once('#')?;
     let selector = after_hash
         .split_once("::")
