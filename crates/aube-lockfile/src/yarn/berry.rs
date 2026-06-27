@@ -460,15 +460,16 @@ fn file_protocol_source(body: &str) -> LocalSource {
 /// compat shims with no project file to apply — aube ignores them (the
 /// package still resolves via its plain `npm:` block). `::`-params are
 /// split off first because they contain their own `&`. Returns the first
-/// real patch file (aube holds one patch path per package, so multiple real
-/// patches in one selector keep only the first), or `None` if all builtin.
+/// real patch file, or `None` if all builtin. aube holds one patch path per
+/// package, so a selector listing multiple real patches keeps the first and
+/// warns (Yarn permits this but its CLI never emits it).
 pub(super) fn patch_protocol_path(body: &str) -> Option<String> {
     let (_, after_hash) = body.split_once('#')?;
     let selector = after_hash
         .split_once("::")
         .map(|(p, _)| p)
         .unwrap_or(after_hash);
-    selector.split('&').find_map(|path| {
+    let mut reals = selector.split('&').filter_map(|path| {
         // Strip `!`-delimited flags up to the last `!` (Yarn ≥3.2).
         let path = path.rsplit_once('!').map_or(path, |(_, p)| p);
         // Strip the `~/` project-root prefix (Yarn ≥3.2 `onProject`), or the
@@ -482,8 +483,20 @@ pub(super) fn patch_protocol_path(body: &str) -> Option<String> {
             path
         };
         let is_builtin = path.starts_with("builtin<") && path.ends_with('>');
-        (!path.is_empty() && !is_builtin).then(|| path.to_string())
-    })
+        (!path.is_empty() && !is_builtin).then_some(path)
+    });
+    let first = reals.next()?;
+    // aube stores one patch path per package. Yarn's grammar allows multiple
+    // real patches in one selector (its CLI never emits this); warn rather
+    // than silently dropping the rest.
+    if reals.next().is_some() {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_YARN_BERRY_UNSUPPORTED,
+            "yarn berry patch selector lists multiple patch files; applying only the first ('{}')",
+            first,
+        );
+    }
+    Some(first.to_string())
 }
 
 fn patch_spec_path(spec: &str) -> Option<String> {

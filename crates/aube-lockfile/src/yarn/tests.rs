@@ -566,6 +566,35 @@ fn test_parse_berry_composed_patch_builtin_first_keeps_real_file() {
     );
 }
 
+/// A selector listing two real patch files (Yarn permits it; its CLI never
+/// emits it) keeps the first — aube stores one patch path per package.
+#[test]
+fn test_parse_berry_multiple_real_patches_keeps_first() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@patch:foo@npm%3A1.0.0#./.yarn/patches/a.patch&./.yarn/patches/b.patch::version=1.0.0&hash=abc123":
+  version: 1.0.0
+  resolution: "foo@patch:foo@npm%3A1.0.0#./.yarn/patches/a.patch&./.yarn/patches/b.patch::version=1.0.0&hash=abc123"
+  checksum: 10c0/patched
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    assert_eq!(
+        graph
+            .patched_dependencies
+            .get("foo@1.0.0")
+            .map(String::as_str),
+        Some("./.yarn/patches/a.patch")
+    );
+}
+
 /// Yarn writes project-root-relative patch paths with a `~/` prefix
 /// (the default form, e.g. `#~/.yarn/patches/foo.patch`). The `~/` must
 /// be stripped or the materializer looks for a literal `~` dir and fails.
