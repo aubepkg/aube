@@ -508,6 +508,7 @@ dependencies = [
  "aube-util",
  "base64",
  "blake3",
+ "decmpfs",
  "flate2",
  "hex",
  "libc",
@@ -523,6 +524,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "xx",
+ "zstd",
 ]
 
 [[package]]
@@ -1328,6 +1330,16 @@ name = "deadpool-runtime"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
+
+[[package]]
+name = "decmpfs"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "sha2 0.10.9",
+ "windows-sys 0.59.0",
+ "zstd",
+]
 
 [[package]]
 name = "defmt"
@@ -5755,6 +5767,15 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+dependencies = [
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]

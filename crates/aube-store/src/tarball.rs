@@ -52,12 +52,12 @@ impl Store {
             };
             #[cfg(not(unix))]
             let executable = false;
-            let stored = self.import_bytes(&content, executable)?;
             let rel = path
                 .strip_prefix(base)
                 .map_err(|e| Error::Tar(format!("strip_prefix: {e}")))?
                 .to_string_lossy()
                 .replace('\\', "/");
+            let stored = self.import_bytes_gated(&rel, &content, executable)?;
             index.insert(rel, stored);
         }
         Ok(())
@@ -151,7 +151,7 @@ impl Store {
             let chunk_t0 = std::time::Instant::now();
             if parallel_disabled || chunk.len() < PARALLEL_IMPORT_THRESHOLD {
                 for (rel_path, content, executable) in chunk {
-                    let stored = self.import_bytes(&content, executable)?;
+                    let stored = self.import_bytes_gated(&rel_path, &content, executable)?;
                     index.insert(rel_path, stored);
                 }
             } else {
@@ -172,7 +172,7 @@ impl Store {
                     .into_par_iter()
                     .with_min_len(RAYON_TASK_MIN_LEN)
                     .map(|(rel_path, content, executable)| {
-                        self.import_bytes(&content, executable)
+                        self.import_bytes_gated(&rel_path, &content, executable)
                             .map(|stored| (rel_path, stored))
                     })
                     .collect();
