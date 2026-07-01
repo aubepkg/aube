@@ -1,7 +1,10 @@
 use super::layout::package_name_from_install_path;
 use super::source::local_git_source_from_resolved;
 use super::*;
-use crate::{DepType, DirectDep, Error, GitSource, LocalSource, LockedPackage, LockfileGraph};
+use crate::{
+    DepType, DirectDep, DriftStatus, Error, GitSource, LocalSource, LockedPackage, LockfileGraph,
+    LockfileKind,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -76,13 +79,57 @@ fn test_parse_simple() {
 
     let root = graph.importers.get(".").unwrap();
     assert_eq!(root.len(), 2);
-    assert!(
-        root.iter()
-            .any(|d| d.name == "foo" && d.dep_type == DepType::Production)
-    );
-    assert!(
-        root.iter()
-            .any(|d| d.name == "bar" && d.dep_type == DepType::Dev)
+    let foo_direct = root.iter().find(|d| d.name == "foo").unwrap();
+    assert_eq!(foo_direct.dep_type, DepType::Production);
+    assert_eq!(foo_direct.specifier.as_deref(), Some("^1.0.0"));
+    let bar_direct = root.iter().find(|d| d.name == "bar").unwrap();
+    assert_eq!(bar_direct.dep_type, DepType::Dev);
+    assert_eq!(bar_direct.specifier.as_deref(), Some("^2.0.0"));
+}
+
+#[test]
+fn test_parse_root_specifiers_drive_drift() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "test",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {
+                    "name": "test",
+                    "version": "1.0.0",
+                    "dependencies": { "@raycast/api": "^1.104.13" }
+                },
+                "node_modules/@raycast/api": {
+                    "version": "1.104.20",
+                    "integrity": "sha512-aaa"
+                }
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let graph = parse(tmp.path()).unwrap();
+    let root = &graph.importers["."];
+    let raycast = root.iter().find(|d| d.name == "@raycast/api").unwrap();
+    assert_eq!(raycast.specifier.as_deref(), Some("^1.104.13"));
+
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("@vicinae/api".to_string(), "^0.21.5".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    assert_eq!(
+        graph.check_drift_for_kind(
+            &manifest,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            LockfileKind::Npm,
+        ),
+        DriftStatus::Stale {
+            reason: "manifest adds @vicinae/api@^0.21.5".to_string()
+        }
     );
 }
 
@@ -1671,7 +1718,7 @@ fn test_parse_workspace_links() {
     assert_eq!(importer[0].name, "@scope/app");
     assert_eq!(importer[0].dep_path, dep_path);
     assert!(matches!(importer[0].dep_type, DepType::Production));
-    assert!(importer[0].specifier.is_none());
+    assert_eq!(importer[0].specifier.as_deref(), Some("file:packages/app"));
 
     let app = &graph.packages[&importer[0].dep_path];
     assert_eq!(app.version, "0.68.1");

@@ -279,8 +279,8 @@ pub struct DirectDep {
     pub dep_type: DepType,
     /// The specifier as written in package.json at the time the lockfile was
     /// generated (e.g., `"^4.17.0"`). Used by drift detection to compare against
-    /// the current manifest. Only populated by formats that record it
-    /// (pnpm-lock.yaml v9). `None` for npm/yarn/bun lockfiles.
+    /// the current manifest. Populated by formats that record it
+    /// (pnpm importers and npm root/workspace package entries).
     pub specifier: Option<String>,
 }
 

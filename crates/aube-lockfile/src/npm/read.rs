@@ -305,25 +305,26 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     let root = raw.packages.get("").cloned().unwrap_or_default();
 
     let mut direct: Vec<DirectDep> = Vec::new();
-    let push_direct = |dep_name: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
-        let root_path = format!("node_modules/{dep_name}");
-        if let Some(info) = install_path_info.get(&root_path) {
-            direct.push(DirectDep {
-                name: info.name.clone(),
-                dep_path: info.dep_path.clone(),
-                dep_type,
-                specifier: None,
-            });
-        }
-    };
-    for dep_name in root.dependencies.keys() {
-        push_direct(dep_name, DepType::Production, &mut direct);
+    let push_direct =
+        |dep_name: &str, specifier: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
+            let root_path = format!("node_modules/{dep_name}");
+            if let Some(info) = install_path_info.get(&root_path) {
+                direct.push(DirectDep {
+                    name: info.name.clone(),
+                    dep_path: info.dep_path.clone(),
+                    dep_type,
+                    specifier: Some(specifier.to_string()),
+                });
+            }
+        };
+    for (dep_name, specifier) in &root.dependencies {
+        push_direct(dep_name, specifier, DepType::Production, &mut direct);
     }
-    for dep_name in root.dev_dependencies.keys() {
-        push_direct(dep_name, DepType::Dev, &mut direct);
+    for (dep_name, specifier) in &root.dev_dependencies {
+        push_direct(dep_name, specifier, DepType::Dev, &mut direct);
     }
-    for dep_name in root.optional_dependencies.keys() {
-        push_direct(dep_name, DepType::Optional, &mut direct);
+    for (dep_name, specifier) in &root.optional_dependencies {
+        push_direct(dep_name, specifier, DepType::Optional, &mut direct);
     }
 
     // npm symlinks every workspace member (and any other top-level
