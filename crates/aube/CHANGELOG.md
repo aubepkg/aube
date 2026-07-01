@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.2](https://github.com/jdx/aube/compare/v1.25.1...v1.25.2) - 2026-07-01
+
+### Other
+
+- refresh benchmarks for v1.25.1 ([#962](https://github.com/jdx/aube/pull/962))
+- *(install)* overlap cold-install lockfile write with the link tail ([#961](https://github.com/jdx/aube/pull/961))
+
 ## [1.25.1](https://github.com/jdx/aube/compare/v1.25.0...v1.25.1) - 2026-06-25
 
 ### Other

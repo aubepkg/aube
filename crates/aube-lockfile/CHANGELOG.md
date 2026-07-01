@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.2](https://github.com/jdx/aube/compare/aube-lockfile-v1.25.1...aube-lockfile-v1.25.2) - 2026-07-01
+
+### Fixed
+
+- *(lockfile)* handle yarn berry builtin compat flags & ~/ patch paths ([#963](https://github.com/jdx/aube/pull/963))
+- *(lockfile)* detect npm package-lock root drift ([#974](https://github.com/jdx/aube/pull/974))
+
+### Other
+
+- refresh benchmarks for v1.25.1 ([#962](https://github.com/jdx/aube/pull/962))
+- *(install)* overlap cold-install lockfile write with the link tail ([#961](https://github.com/jdx/aube/pull/961))
+- *(deps)* update rust crate criterion to 0.8 ([#955](https://github.com/jdx/aube/pull/955))
+
 ## [1.25.1](https://github.com/jdx/aube/compare/aube-lockfile-v1.25.0...aube-lockfile-v1.25.1) - 2026-06-25
 
 ### Other

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.2](https://github.com/jdx/aube/compare/aube-registry-v1.25.1...aube-registry-v1.25.2) - 2026-07-01
+
+### Other
+
+- refresh benchmarks for v1.25.1 ([#962](https://github.com/jdx/aube/pull/962))
+
 ## [1.25.1](https://github.com/jdx/aube/compare/aube-registry-v1.25.0...aube-registry-v1.25.1) - 2026-06-25
 
 ### Other
