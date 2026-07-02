@@ -482,7 +482,7 @@ enum Commands {
     /// Set a `package.json` script (not implemented — use `npm set-script`)
     #[command(hide = true, name = "set-script")]
     SetScript(commands::npm_fallback::FallbackArgs),
-    /// Show the companies sponsoring aube and the jdx.dev project family
+    /// Show the companies sponsoring aube and the jdx.dev open source tools
     Sponsors(commands::sponsors::SponsorsArgs),
     /// Stage packages for publishing (not implemented — use `npm stage`)
     Stage(commands::npm_fallback::FallbackArgs),

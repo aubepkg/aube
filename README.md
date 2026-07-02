@@ -23,8 +23,8 @@
 </p>
 
 <p align="center">
-  Sponsored by <a href="https://37signals.com">37signals</a>.<br>
-  <a href="https://en.dev/sponsors.html">View all sponsors</a>.
+  Sponsored by <a href="https://entire.io">entire.io</a>, <a href="https://37signals.com">37signals</a>, <a href="https://coderabbit.link/mise">CodeRabbit</a>, and <a href="https://supabase.com">Supabase</a>.<br>
+  <a href="https://jdx.dev/sponsors.html">View all sponsors</a>.
 </p>
 
 ## Why Try It

@@ -197,9 +197,9 @@ jobs:
 
           ## 💚 Sponsor aube
 
-          aube is part of [**jdx.dev**](https://jdx.dev) — an independent developer-tooling studio run by [@jdx](https://github.com/jdx), also behind [mise](https://mise.jdx.dev/). Work on aube is funded entirely by sponsors.
+          aube is maintained by [@jdx](https://github.com/jdx), an open source developer for [**entire.io**](https://entire.io), the title sponsor of the [jdx.dev](https://jdx.dev) open source tools including [mise](https://mise.jdx.dev/). Work on aube is funded by sponsors.
 
-          If aube is saving your team install time or CI minutes, please consider [sponsoring at jdx.dev](https://jdx.dev). Individual and company sponsorships are what keep the project fast, free, and independent.
+          If aube is saving your team install time or CI minutes, please consider [sponsoring at jdx.dev](https://jdx.dev/sponsors.html). Individual and company sponsorships are what keep the project fast, free, and independent.
           EOF
           } > /tmp/release-notes.md
           gh release edit "$TAG" --notes-file /tmp/release-notes.md

@@ -9715,7 +9715,7 @@
         "flags": [],
         "mounts": [],
         "hide": false,
-        "help": "Show the companies sponsoring aube and the jdx.dev project family",
+        "help": "Show the companies sponsoring aube and the jdx.dev open source tools",
         "name": "sponsors",
         "aliases": [],
         "hidden_aliases": [],
