@@ -124,6 +124,33 @@ pub(crate) fn parse_compress_store_gate(spec: &str) -> Option<Gate> {
     }
 }
 
+#[cfg(test)]
+mod compress_gate_tests {
+    use super::parse_compress_store_gate;
+
+    #[test]
+    fn affirmative_and_directives_yield_a_gate() {
+        // Bare/affirmative or unrecognized values → the fleet default gate.
+        for spec in ["", "1", "true", "on", "yes", "whatever"] {
+            assert!(
+                parse_compress_store_gate(spec).is_some(),
+                "spec {spec:?} should produce a gate"
+            );
+        }
+        // Explicit glob / size directives parse into a gate.
+        assert!(parse_compress_store_gate("glob:**/*.so").is_some());
+        assert!(parse_compress_store_gate("size:>= 1MB").is_some());
+        assert!(parse_compress_store_gate("glob:**/*.node;size:>= 512KB").is_some());
+    }
+
+    #[test]
+    fn malformed_size_predicate_fails_closed() {
+        // A bad size predicate disables compression (None) rather than
+        // silently widening the gate — the addon still lands plain.
+        assert!(parse_compress_store_gate("size:banana").is_none());
+    }
+}
+
 /// Outcome of `create_cas_file`. `Created` means we wrote the bytes
 /// at the final path; `AlreadyExisted` means another writer (or a
 /// previous import) had already committed bit-identical content. The

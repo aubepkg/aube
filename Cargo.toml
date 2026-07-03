@@ -68,8 +68,8 @@ reflink-copy = "0.1"
 # OS-level transparent per-file compression (APFS decmpfs / btrfs / NTFS)
 # applied to native addons as they land in the CAS. The `addon` feature
 # unwraps a napi `--compress` hybrid back to the raw `.node` before the
-# kernel re-compresses it transparently. Path dep — local to the fleet.
-decmpfs = { path = "../decmpfs", features = ["addon"] }
+# kernel re-compresses it transparently.
+decmpfs = { version = "0.1", features = ["addon"] }
 glob = "0.3"
 # BurntSushi's gitignore matcher (from ripgrep). Used by `aube pack` /
 # `aube publish` to honor `.npmignore` / `.gitignore` with full

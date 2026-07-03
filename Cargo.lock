@@ -1334,6 +1334,8 @@ checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 [[package]]
 name = "decmpfs"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "651715809b4119e14ba1ba88650756d8a7012686473a32ec14c0e602e90fc47f"
 dependencies = [
  "libc",
  "sha2 0.10.9",
