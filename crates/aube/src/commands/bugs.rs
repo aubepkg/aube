@@ -126,7 +126,7 @@ fn repository_issues_url(value: &Value) -> Option<String> {
 
 fn clean_url(raw: &str) -> Option<String> {
     let raw = raw.trim();
-    if raw.starts_with("http://") || raw.starts_with("https://") {
+    if is_safe_browser_url(raw) {
         Some(raw.to_string())
     } else {
         None
@@ -141,6 +141,12 @@ fn normalize_repository_url(raw: &str) -> Option<String> {
     let raw = raw.split_once('#').map_or(raw, |(base, _)| base);
     let mut url = if let Some(rest) = raw.strip_prefix("git@") {
         let (host, path) = rest.split_once(':')?;
+        format!("https://{host}/{path}")
+    } else if let Some(rest) = raw
+        .strip_prefix("ssh://git@")
+        .or_else(|| raw.strip_prefix("git://"))
+    {
+        let (host, path) = rest.split_once('/')?;
         format!("https://{host}/{path}")
     } else if raw.starts_with("http://") || raw.starts_with("https://") {
         raw.to_string()
@@ -165,11 +171,16 @@ fn open_url(url: &str) {
     if std::env::var_os("AUBE_NO_OPEN").is_some() {
         return;
     }
+    if !is_safe_browser_url(url) {
+        tracing::debug!("refusing to open unsafe URL: {url:?}");
+        return;
+    }
     let result = if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).status()
     } else if cfg!(target_os = "windows") {
+        let escaped = url.replace('%', "%%");
         std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
+            .args(["/C", "start", "", &escaped])
             .status()
     } else {
         std::process::Command::new("xdg-open").arg(url).status()
@@ -177,6 +188,28 @@ fn open_url(url: &str) {
     if let Err(e) = result {
         tracing::debug!("failed to open {url}: {e}");
     }
+}
+
+fn is_safe_browser_url(url: &str) -> bool {
+    let rest = match url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    {
+        Some(r) => r,
+        None => return false,
+    };
+    if rest.is_empty() || rest.len() > 2048 {
+        return false;
+    }
+    rest.chars().all(|c| {
+        matches!(c,
+            'a'..='z' | 'A'..='Z' | '0'..='9'
+            | '-' | '_' | '.' | '~'
+            | ':' | '/' | '?' | '#' | '[' | ']' | '@'
+            | '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ','
+            | ';' | '=' | '%'
+        )
+    })
 }
 
 #[cfg(test)]
@@ -219,6 +252,14 @@ mod tests {
                 "git@gitlab.com:acme/pkg.git",
                 "https://gitlab.com/acme/pkg/issues",
             ),
+            (
+                "git+ssh://git@github.com/acme/pkg.git",
+                "https://github.com/acme/pkg/issues",
+            ),
+            (
+                "git://github.com/acme/pkg.git",
+                "https://github.com/acme/pkg/issues",
+            ),
         ] {
             let value = serde_json::json!({ "repository": repo });
             assert_eq!(bug_url_from_value(&value).as_deref(), Some(expected));
@@ -231,5 +272,18 @@ mod tests {
             "bugs": { "email": "bugs@example.com" }
         });
         assert_eq!(bug_url_from_value(&value), None);
+    }
+
+    #[test]
+    fn bug_url_rejects_unsafe_browser_urls() {
+        for url in [
+            "javascript:alert(1)",
+            "https://example.com/bug|calc.exe",
+            "https://example.com/bug^calc.exe",
+            "https://example.com/bug with space",
+        ] {
+            let value = serde_json::json!({ "bugs": { "url": url } });
+            assert_eq!(bug_url_from_value(&value), None, "{url} should be rejected");
+        }
     }
 }
