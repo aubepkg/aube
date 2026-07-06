@@ -10,11 +10,12 @@ jobs:
   merge:
     if: github.repository == 'jdx/aube'
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Merge release into main
         run: |
-          PR_NUMBER=$(gh pr list -R jdx/aube --base main --state open --json number,headRefName,title \
-            --jq '[.[] | select(.headRefName | startswith("release-plz-")) | select(.title | startswith("chore: release "))][0].number // empty')
+          PR_NUMBER=$(gh pr list -R jdx/aube --base main --state open --json number,headRefName,title,updatedAt \
+            --jq '[.[] | select(.headRefName | startswith("release-plz-")) | select(.title | startswith("chore: release "))] | sort_by(.updatedAt) | reverse | .[0].number // empty')
           if [ -z "$PR_NUMBER" ]; then
             echo "No open release-plz release PR to main"
             exit 0
@@ -23,7 +24,7 @@ jobs:
           BODY=$(gh pr view "$PR_NUMBER" -R jdx/aube --json body --jq '.body // ""')
           TRIMMED_BODY=$(echo "$BODY" | tr -d '[:space:]')
           if [ -z "$TRIMMED_BODY" ]; then
-            echo "PR #$PR_NUMBER has no description, never merging"
+            echo "Skipping merge: PR #$PR_NUMBER has an empty body; will retry on the next scheduled run"
             exit 0
           fi
 
