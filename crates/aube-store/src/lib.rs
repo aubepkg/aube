@@ -27,8 +27,8 @@ use git::{
 pub use index::{PackageIndex, StoredFile, index_content_fingerprint};
 pub use integrity::{
     SHA512_INTEGRITY_PREFIX, integrity_to_hex, sha512_integrity, sha512_integrity_from_digest,
-    validate_and_encode_name, validate_pkg_content, validate_version, verify_integrity,
-    verify_precomputed_sha512,
+    shasum_to_sri, validate_and_encode_name, validate_pkg_content, validate_version,
+    verify_integrity, verify_precomputed_sha512,
 };
 #[cfg(test)]
 pub(crate) use tarball::normalize_tar_entry_path;

@@ -913,7 +913,18 @@ impl<'a> ResolveDriver<'a> {
             .or_default()
             .push(version.clone());
 
-        let integrity = version_meta.dist.as_ref().and_then(|d| d.integrity.clone());
+        // Prefer the modern SRI `dist.integrity`; fall back to the
+        // legacy hex `dist.shasum` (as `sha1-<base64>`) the way npm's
+        // classic client does. Scoped/private registries that predate —
+        // or proxy without regenerating — `dist.integrity` still ship
+        // `dist.shasum`, and deriving a verifiable integrity here keeps
+        // them off the unverifiable tarball-only path, whose lockfile
+        // entry the parser then rejects with no bypass.
+        let integrity = version_meta.dist.as_ref().and_then(|d| {
+            d.integrity
+                .clone()
+                .or_else(|| d.shasum.as_deref().and_then(aube_store::shasum_to_sri))
+        });
         // Always stash the registry tarball URL on the locked
         // package. pnpm / yarn writers gate emission on
         // `lockfile_include_tarball_url` (so the pnpm
