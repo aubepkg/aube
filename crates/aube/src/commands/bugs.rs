@@ -90,12 +90,19 @@ async fn registry_urls(packages: &[String]) -> miette::Result<Vec<String>> {
 }
 
 fn bug_url_from_map(extra: &std::collections::BTreeMap<String, Value>) -> Option<String> {
-    let obj: serde_json::Map<String, Value> = extra.clone().into_iter().collect();
-    bug_url_from_value(&Value::Object(obj))
+    bugs_url_from_extra(extra).or_else(|| repository_issues_url_from_extra(extra))
 }
 
 fn bug_url_from_value(value: &Value) -> Option<String> {
     bugs_url(value).or_else(|| repository_issues_url(value))
+}
+
+fn bugs_url_from_extra(extra: &std::collections::BTreeMap<String, Value>) -> Option<String> {
+    match extra.get("bugs")? {
+        Value::String(s) => clean_url(s),
+        Value::Object(map) => map.get("url").and_then(Value::as_str).and_then(clean_url),
+        _ => None,
+    }
 }
 
 fn bugs_url(value: &Value) -> Option<String> {
@@ -112,8 +119,23 @@ fn repository_issues_url(value: &Value) -> Option<String> {
         Value::Object(map) => map.get("url")?.as_str()?,
         _ => return None,
     };
+    issues_url_for_repo(repo)
+}
+
+fn repository_issues_url_from_extra(
+    extra: &std::collections::BTreeMap<String, Value>,
+) -> Option<String> {
+    let repo = match extra.get("repository")? {
+        Value::String(s) => s.as_str(),
+        Value::Object(map) => map.get("url")?.as_str()?,
+        _ => return None,
+    };
+    issues_url_for_repo(repo)
+}
+
+fn issues_url_for_repo(repo: &str) -> Option<String> {
     let mut url = normalize_repository_url(repo)?;
-    if url.ends_with("/issues") || url.contains("/issues/") {
+    if is_complete_issues_url(&url) {
         return Some(url);
     }
     if url.ends_with('/') {
@@ -122,6 +144,23 @@ fn repository_issues_url(value: &Value) -> Option<String> {
         url.push_str("/issues");
     }
     Some(url)
+}
+
+fn is_complete_issues_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let Some((_, path)) = rest.split_once('/') else {
+        return false;
+    };
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    segments
+        .iter()
+        .position(|segment| *segment == "issues")
+        .is_some_and(|idx| idx >= 2)
 }
 
 fn clean_url(raw: &str) -> Option<String> {
@@ -244,6 +283,18 @@ mod tests {
         for (repo, expected) in [
             ("github:acme/pkg.git", "https://github.com/acme/pkg/issues"),
             ("acme/pkg", "https://github.com/acme/pkg/issues"),
+            (
+                "https://github.com/acme/issues",
+                "https://github.com/acme/issues/issues",
+            ),
+            (
+                "https://github.com/acme/pkg/issues",
+                "https://github.com/acme/pkg/issues",
+            ),
+            (
+                "https://github.com/acme/pkg/issues/123",
+                "https://github.com/acme/pkg/issues/123",
+            ),
             (
                 "git+https://github.com/acme/pkg.git#main",
                 "https://github.com/acme/pkg/issues",

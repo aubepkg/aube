@@ -116,6 +116,7 @@ Run from the workspace root regardless of the current package
 - [`aube approve-builds [--all] [-g --global] [PKG]…`](/cli/approve-builds.md)
 - [`aube audit [FLAGS]`](/cli/audit.md)
 - [`aube bin [-g --global]`](/cli/bin.md)
+- [`aube bugs [FLAGS] [PACKAGES]…`](/cli/bugs.md)
 - [`aube cache <SUBCOMMAND>`](/cli/cache.md)
 - [`aube cache delete <PATTERNS>…`](/cli/cache/delete.md)
 - [`aube cache list [PATTERNS]…`](/cli/cache/list.md)
