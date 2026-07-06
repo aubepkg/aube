@@ -3744,7 +3744,7 @@ fn writer_omits_derivable_registry_tarball_url_with_query() {
                 integrity: Some("sha512-private".to_string()),
                 dep_path: "@scope/pkg@1.0.0".to_string(),
                 tarball_url: Some(
-                    "https://registry.example.test/@scope/pkg/-/pkg-1.0.0.tgz?signature=abc#sha"
+                    "https://registry.npmjs.org/@scope/pkg/-/pkg-1.0.0.tgz?signature=abc#sha"
                         .to_string(),
                 ),
                 ..Default::default()

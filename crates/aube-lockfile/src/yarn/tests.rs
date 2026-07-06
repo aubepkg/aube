@@ -71,6 +71,10 @@ bar@^2.0.0:
     let foo = &graph.packages["foo@1.2.3"];
     assert_eq!(foo.integrity.as_deref(), Some("sha512-aaa"));
     assert_eq!(
+        foo.tarball_url.as_deref(),
+        Some("https://example.com/foo-1.2.3.tgz")
+    );
+    assert_eq!(
         foo.dependencies.get("bar").map(String::as_str),
         Some("2.5.0")
     );
@@ -79,6 +83,37 @@ bar@^2.0.0:
     assert_eq!(root.len(), 1);
     assert_eq!(root[0].name, "foo");
     assert_eq!(root[0].dep_path, "foo@1.2.3");
+}
+
+#[test]
+fn classic_import_preserves_custom_registry_tarball_url() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"# yarn lockfile v1
+
+"@scope/pkg@^1.0.0":
+  version "1.0.0"
+  resolved "https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz#0123456789abcdef0123456789abcdef01234567"
+  integrity sha512-private
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("@scope/pkg", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let pkg = graph
+        .packages
+        .get("@scope/pkg@1.0.0")
+        .expect("scoped package");
+    assert_eq!(
+        pkg.tarball_url.as_deref(),
+        Some("https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz")
+    );
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    crate::pnpm::write(out.path(), &graph, &manifest).unwrap();
+    let yaml = std::fs::read_to_string(out.path()).unwrap();
+    assert!(
+        yaml.contains("tarball: https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz"),
+        "{yaml}"
+    );
 }
 
 #[test]

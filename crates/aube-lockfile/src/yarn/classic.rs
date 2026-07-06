@@ -1,4 +1,4 @@
-use crate::{DepType, DirectDep, Error, LockedPackage, LockfileGraph};
+use crate::{DepType, DirectDep, Error, LocalSource, LockedPackage, LockfileGraph};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -70,12 +70,17 @@ pub(super) fn parse_classic_str(
                 .iter()
                 .map(|(n, r)| (n.clone(), r.clone()))
                 .collect();
+            let tarball_url = block
+                .fields
+                .get("resolved")
+                .and_then(|url| yarn_resolved_tarball_url(url));
             packages.insert(
                 dep_path.clone(),
                 LockedPackage {
                     name: name.clone(),
                     version: version.clone(),
                     integrity: block.fields.get("integrity").cloned(),
+                    tarball_url,
                     // Store raw "name@range" pairs for now; resolve below.
                     dependencies: block
                         .dependencies
@@ -277,6 +282,11 @@ fn unquote_yarn_scalar(value: &str) -> &str {
     } else {
         value
     }
+}
+
+fn yarn_resolved_tarball_url(resolved: &str) -> Option<String> {
+    let url = resolved.split_once('#').map_or(resolved, |(url, _)| url);
+    LocalSource::looks_like_remote_tarball_url(url).then(|| url.to_string())
 }
 
 /// Extract the package name from a spec like `foo@^1.0.0` or `@scope/pkg@^1.0.0`.
