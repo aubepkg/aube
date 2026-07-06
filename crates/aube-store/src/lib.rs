@@ -16,10 +16,10 @@ pub use git::{
 
 #[cfg(test)]
 pub(crate) use cas::blake3_hex;
-#[cfg(test)]
-pub(crate) use cas::parse_compress_store_gate;
 pub(crate) use cas::cas_file_matches_len;
 use cas::copy_dir_recursive;
+#[cfg(test)]
+pub(crate) use cas::parse_compress_store_gate;
 #[cfg(test)]
 use git::{
     codeload_cache_paths, extract_codeload_tarball_at, git_commit_matches, validate_git_positional,

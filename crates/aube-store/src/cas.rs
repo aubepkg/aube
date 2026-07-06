@@ -63,6 +63,13 @@ pub(crate) fn cas_file_matches_len(path: &Path, expected_len: u64) -> bool {
         .unwrap_or(false)
 }
 
+fn wait_for_cas_file_len(path: &Path, expected_len: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    while !cas_file_matches_len(path, expected_len) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_micros(250));
+    }
+}
+
 /// The opt-in store-compression gate, resolved once from the
 /// environment. Returns `Some(gate)` only when `AUBE_COMPRESS_STORE` is
 /// set; otherwise `None` and the CAS write path is byte-for-byte the
@@ -509,12 +516,7 @@ impl Store {
             // the partial file to settle. If it stays mismatched past
             // the deadline, treat it as (a) and recover.
             if !cas_file_matches_len(&store_path, content.len() as u64) {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
-                while !cas_file_matches_len(&store_path, content.len() as u64)
-                    && std::time::Instant::now() < deadline
-                {
-                    std::thread::sleep(std::time::Duration::from_micros(250));
-                }
+                wait_for_cas_file_len(&store_path, content.len() as u64);
             }
             if !cas_file_matches_len(&store_path, content.len() as u64) {
                 let _ = xx::file::remove_file(&store_path);
@@ -679,6 +681,9 @@ impl Store {
         // for a compressed Outcome, but a fail-soft plain fallback inside
         // `compress_bytes` could still race a concurrent writer.
         if !cas_file_matches_len(&store_path, stored_bytes.len() as u64) {
+            wait_for_cas_file_len(&store_path, stored_bytes.len() as u64);
+        }
+        if !cas_file_matches_len(&store_path, stored_bytes.len() as u64) {
             let _ = xx::file::remove_file(&store_path);
             return self.import_bytes(stored_bytes, executable);
         }
@@ -693,9 +698,6 @@ impl Store {
         self.finish_gated(hex_hash, store_path, executable, stored_bytes.len())
     }
 
-    /// Shared tail of `import_bytes_gated`: write the executable marker
-    /// (if any) and build the `StoredFile`. Mirrors the marker handling
-    /// in `import_bytes`.
     /// Write the sidecar `<store_path>-exec` marker that records a CAS entry
     /// as executable. Shared by `import_bytes` and `finish_gated`.
     fn write_exec_marker(&self, store_path: &Path) -> Result<(), Error> {
@@ -704,6 +706,9 @@ impl Store {
         Ok(())
     }
 
+    /// Shared tail of `import_bytes_gated`: write the executable marker
+    /// (if any) and build the `StoredFile`. Mirrors the marker handling
+    /// in `import_bytes`.
     fn finish_gated(
         &self,
         hex_hash: String,
