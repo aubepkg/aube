@@ -591,10 +591,19 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         // pnpm records a registry `deprecated:` reason on package
         // entries; stash it on the generic meta map so the writer can
         // re-emit it (matching how bun round-trips the same field).
-        let extra_meta = pkg_info
+        let mut extra_meta = pkg_info
             .and_then(|p| p.deprecated.clone())
             .map(|msg| BTreeMap::from([("deprecated".to_string(), serde_json::Value::String(msg))]))
             .unwrap_or_default();
+        if tarball_url
+            .as_deref()
+            .is_some_and(tarball_url_needs_preserve)
+        {
+            extra_meta.insert(
+                crate::EXTRA_PRESERVE_TARBALL_URL.to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
         // pnpm's lockfile only stores `hasBin: true/false` (no paths);
         // reconstruct an opaque single-entry map on parse so
         // `!bin.is_empty()` stays equivalent to `hasBin`, then let
@@ -894,6 +903,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         extra_fields: BTreeMap::new(),
         workspace_extra_fields: BTreeMap::new(),
     })
+}
+
+fn tarball_url_needs_preserve(url: &str) -> bool {
+    let Some((host, _)) = super::http_url_host_and_path(url) else {
+        return false;
+    };
+    !matches!(host.as_str(), "registry.npmjs.org" | "registry.yarnpkg.com")
 }
 
 /// Convert a raw `variations` variant into the typed graph shape.

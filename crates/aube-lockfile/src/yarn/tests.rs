@@ -114,6 +114,15 @@ fn classic_import_preserves_custom_registry_tarball_url() {
         yaml.contains("tarball: https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz"),
         "{yaml}"
     );
+
+    let round_trip_graph = crate::pnpm::parse(out.path()).unwrap();
+    let second_out = tempfile::NamedTempFile::new().unwrap();
+    crate::pnpm::write(second_out.path(), &round_trip_graph, &manifest).unwrap();
+    let second_yaml = std::fs::read_to_string(second_out.path()).unwrap();
+    assert!(
+        second_yaml.contains("tarball: https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz"),
+        "{second_yaml}"
+    );
 }
 
 #[test]
