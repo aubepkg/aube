@@ -49,7 +49,7 @@ jobs:
       # baselines routinely look like false regressions.
       - name: Benchmark PR base
         run: |
-          if [ -n "$BASE_SHA" ] && git show "$BASE_SHA:benchmarks/results.json" > /tmp/aube-bench-base.json 2>/dev/null; then
+          if [ -n "$BASE_SHA" ]; then
             git checkout --detach "$BASE_SHA"
             cargo build --release
             RESULTS_JSON=/tmp/aube-bench-base.json \
