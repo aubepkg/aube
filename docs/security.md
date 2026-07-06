@@ -151,11 +151,11 @@ Exempt specific packages or versions when needed:
 trustPolicyExclude:
   - "@vendor/legacy-pkg"       # every version of one package
   - "old-thing@1.0.0"          # one exact version
-  - "things@1.0.0 || 1.0.1"    # union of exact versions
+  - "things@^1.0.0 || >=2 <3"  # union of semver ranges
   - "is-*"                     # name glob (globs take no version)
 ```
 
-Versions must be exact — `^`/`~`/`>=` ranges are not accepted.
+Version selectors are npm-style semver ranges.
 
 Default: `no-downgrade`. Set `trustPolicy: off` to disable, or use
 `trustPolicyExclude` for per-package opt-outs.

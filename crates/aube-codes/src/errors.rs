@@ -211,7 +211,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_TRUST_EXCLUDE_INVALID_VERSION_UNION,
         category: category::RESOLVER,
-        description: "A `trustPolicyExclude` pattern had a non-exact version.",
+        description: "A `trustPolicyExclude` pattern had an invalid semver range.",
         exit_code: None,
     },
     CodeMeta {
