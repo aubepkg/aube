@@ -12,10 +12,11 @@ pub mod yarn;
 
 pub use drift::DriftStatus;
 pub use io::{
-    Error, LockfileKind, active_lockfile_has_conflict_markers, aube_lock_filename,
+    Error, LockfileKind, ParseOptions, active_lockfile_has_conflict_markers, aube_lock_filename,
     build_canonical_map, detect_existing_lockfile_kind, parse_for_import, parse_json,
-    parse_lockfile, parse_lockfile_with_kind, pnpm_lock_filename, read_lockfile, write_lockfile,
-    write_lockfile_as, write_lockfile_preserving_existing,
+    parse_lockfile, parse_lockfile_with_kind, parse_lockfile_with_kind_and_options,
+    pnpm_lock_filename, read_lockfile, write_lockfile, write_lockfile_as,
+    write_lockfile_preserving_existing,
 };
 pub(crate) use io::{atomic_write_lockfile, current_git_branch};
 pub use merge::{MergeReport, merge_branch_lockfiles};

@@ -7,7 +7,7 @@ use super::raw::{
 };
 use crate::{
     CatalogEntry, DepType, DirectDep, Error, LocalSource, LockedPackage, LockfileGraph,
-    PeerDepMeta, RuntimePin, RuntimeTarget, RuntimeVariant, git_commits_match,
+    ParseOptions, PeerDepMeta, RuntimePin, RuntimeTarget, RuntimeVariant, git_commits_match,
 };
 use aube_util::path::normalize_lexical;
 use std::collections::BTreeMap;
@@ -34,6 +34,10 @@ fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource
 
 /// Parse a pnpm-lock.yaml file into a LockfileGraph.
 pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
+    parse_with_options(path, ParseOptions::default())
+}
+
+pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<LockfileGraph, Error> {
     let content = crate::read_lockfile(path)?;
     let raw = parse_raw_lockfile(&content)
         .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
@@ -638,7 +642,8 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             Some(LocalSource::RemoteTarball(_)) if !version_is_http_url => None,
             other => other,
         };
-        if integrity.is_none()
+        if options.strict_store_integrity
+            && integrity.is_none()
             && resolution_requires_integrity(
                 pkg_info.and_then(|p| p.resolution.as_ref()),
                 &local_source,

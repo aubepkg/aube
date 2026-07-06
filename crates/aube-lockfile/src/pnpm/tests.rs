@@ -1,9 +1,10 @@
 use super::{
     dep_path::{parse_dep_path, version_to_dep_path},
-    parse, write,
+    parse, parse_with_options, write,
 };
 use crate::{
     CatalogEntry, DepType, DirectDep, GitSource, LocalSource, LockedPackage, LockfileGraph,
+    ParseOptions,
 };
 use aube_manifest::PackageJson;
 use std::collections::BTreeMap;
@@ -3440,6 +3441,44 @@ snapshots:
             "{scheme}: {err}"
         );
     }
+}
+
+#[test]
+fn parser_allows_remote_tarball_resolution_without_integrity_when_not_strict() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        r#"
+lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      demo:
+        specifier: 1.0.0
+        version: 1.0.0
+packages:
+  demo@1.0.0:
+    resolution: {tarball: https://registry.npmjs.org/demo/-/demo-1.0.0.tgz}
+snapshots:
+  demo@1.0.0: {}
+"#,
+    )
+    .unwrap();
+
+    let graph = parse_with_options(
+        &path,
+        ParseOptions {
+            strict_store_integrity: false,
+        },
+    )
+    .unwrap();
+    let pkg = graph.packages.get("demo@1.0.0").expect("demo package");
+    assert!(pkg.integrity.is_none());
+    assert_eq!(
+        pkg.tarball_url.as_deref(),
+        Some("https://registry.npmjs.org/demo/-/demo-1.0.0.tgz")
+    );
 }
 
 #[test]

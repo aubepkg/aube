@@ -10,7 +10,7 @@ mod write;
 mod tests;
 
 pub use checksum::{package_extensions_checksum, pnpmfile_checksum};
-pub use read::parse;
+pub use read::{parse, parse_with_options};
 pub use write::write;
 
 /// Benchmark-only shims comparing the byte-cursor subset parser against

@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::frozen::FrozenMode;
-use super::lockfile_dir::{parse_lockfile_dir_remapped_with_kind, write_lockfile_dir_remapped};
+use super::lockfile_dir::{
+    parse_lockfile_dir_remapped_with_kind_and_options, write_lockfile_dir_remapped,
+};
 use super::settings::{
     ResolverConfigInputs, configure_resolver, maybe_cleanup_unused_catalogs,
     stamp_pnpm_config_checksums,
@@ -20,11 +22,17 @@ pub(super) fn pre_parse_lockfile(
     lockfile_dir: &Path,
     lockfile_importer_key: &str,
     manifest: &aube_manifest::PackageJson,
+    parse_options: aube_lockfile::ParseOptions,
 ) -> miette::Result<ParsedLockfile> {
     if !lockfile_enabled || !matches!(mode, FrozenMode::Fix | FrozenMode::Prefer) {
         return Ok(None);
     }
-    match parse_lockfile_dir_remapped_with_kind(lockfile_dir, lockfile_importer_key, manifest) {
+    match parse_lockfile_dir_remapped_with_kind_and_options(
+        lockfile_dir,
+        lockfile_importer_key,
+        manifest,
+        parse_options,
+    ) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(aube_lockfile::Error::NotFound(_)) => Ok(None),
         Err(e) if active_lockfile_has_conflict_markers(lockfile_dir) => {
@@ -41,6 +49,7 @@ pub(super) struct LockfileOnlyInput<'a> {
     pub lockfile_dir: &'a Path,
     pub lockfile_importer_key: &'a str,
     pub manifest: &'a aube_manifest::PackageJson,
+    pub parse_options: aube_lockfile::ParseOptions,
     pub manifests: &'a [(String, aube_manifest::PackageJson)],
     pub per_project_write_selection: Option<&'a std::collections::BTreeSet<String>>,
     pub ws_config: &'a aube_manifest::workspace::WorkspaceConfig,
@@ -74,6 +83,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         lockfile_dir,
         lockfile_importer_key,
         manifest,
+        parse_options,
         manifests,
         per_project_write_selection,
         ws_config,
@@ -115,10 +125,11 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         if let Some((g, k)) = lockfile_pre_parse {
             Ok((g, *k))
         } else {
-            parsed_owned = parse_lockfile_dir_remapped_with_kind(
+            parsed_owned = parse_lockfile_dir_remapped_with_kind_and_options(
                 lockfile_dir,
                 lockfile_importer_key,
                 manifest,
+                parse_options,
             );
             match &parsed_owned {
                 Ok((g, k)) => Ok((g, *k)),
@@ -140,10 +151,11 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             // about to abort anyway so speed does not matter here.
             // What matters: keeping the source span and miette help
             // text instead of flattening to one line via `{e}`.
-            match parse_lockfile_dir_remapped_with_kind(
+            match parse_lockfile_dir_remapped_with_kind_and_options(
                 lockfile_dir,
                 lockfile_importer_key,
                 manifest,
+                parse_options,
             ) {
                 Ok(_) => {
                     // Race: second parse succeeded while first failed.
@@ -361,6 +373,7 @@ pub(super) struct SelectLockfileInput<'a> {
     pub lockfile_dir: &'a Path,
     pub lockfile_importer_key: &'a str,
     pub manifest: &'a aube_manifest::PackageJson,
+    pub parse_options: aube_lockfile::ParseOptions,
     pub manifests: &'a [(String, aube_manifest::PackageJson)],
     pub ws_config: &'a aube_manifest::workspace::WorkspaceConfig,
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
@@ -378,6 +391,7 @@ pub(super) fn select_lockfile_result(
         lockfile_dir,
         lockfile_importer_key,
         manifest,
+        parse_options,
         manifests,
         ws_config,
         workspace_catalogs,
@@ -398,10 +412,11 @@ pub(super) fn select_lockfile_result(
         FrozenMode::Fix => Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf()))),
         FrozenMode::Frozen => {
             // Use the lockfile, but error out on any drift across all workspace importers.
-            let parsed = parse_lockfile_dir_remapped_with_kind(
+            let parsed = parse_lockfile_dir_remapped_with_kind_and_options(
                 lockfile_dir,
                 lockfile_importer_key,
                 manifest,
+                parse_options,
             );
             if let Ok((ref graph, kind)) = parsed {
                 if let DriftStatus::Stale { reason } =

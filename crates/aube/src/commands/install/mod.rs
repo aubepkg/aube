@@ -49,7 +49,7 @@ use lifecycle::{
     resolve_link_strategy, run_import_on_blocking, run_root_lifecycle, validate_required_scripts,
 };
 use lockfile_dir::{
-    parse_lockfile_dir_remapped, parse_lockfile_dir_remapped_with_kind, write_lockfile_dir_remapped,
+    parse_lockfile_dir_remapped_with_kind_and_options, write_lockfile_dir_remapped,
 };
 use materialize::{
     GvsPrewarmInputs, combine_install_pipeline_errors, materialize_channel, spawn_gvs_prewarm,
@@ -536,6 +536,9 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     let link_concurrency_setting = resolve_link_concurrency(&settings_ctx);
     let verify_store_integrity_setting = resolve_verify_store_integrity(&settings_ctx);
     let strict_store_integrity_setting = settings::resolve_strict_store_integrity(&settings_ctx);
+    let lockfile_parse_options = aube_lockfile::ParseOptions {
+        strict_store_integrity: strict_store_integrity_setting,
+    };
     let strict_store_pkg_content_check_setting =
         resolve_strict_store_pkg_content_check(&settings_ctx);
     let side_effects_cache_setting = resolve_side_effects_cache(&settings_ctx);
@@ -693,6 +696,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         &lockfile_dir,
         &lockfile_importer_key,
         &manifest,
+        lockfile_parse_options,
     )?;
     let lockfile_conflict_marker_warning_emitted = lockfile_pre_parse.is_none()
         && lockfile_enabled
@@ -721,6 +725,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 lockfile_dir: &lockfile_dir,
                 lockfile_importer_key: &lockfile_importer_key,
                 manifest: &manifest,
+                parse_options: lockfile_parse_options,
                 manifests: &manifests,
                 ws_config: &ws_config_shared,
                 workspace_catalogs: &workspace_catalogs,
@@ -747,6 +752,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             lockfile_dir: &lockfile_dir,
             lockfile_importer_key: &lockfile_importer_key,
             manifest: &manifest,
+            parse_options: lockfile_parse_options,
             manifests: &manifests,
             per_project_write_selection: per_project_write_selection.as_ref(),
             ws_config: &ws_config_shared,
@@ -860,6 +866,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         lockfile_dir: &lockfile_dir,
         lockfile_importer_key: &lockfile_importer_key,
         manifest: &manifest,
+        parse_options: lockfile_parse_options,
         manifests: &manifests,
         ws_config: &ws_config_shared,
         workspace_catalogs: &workspace_catalogs,
@@ -1068,10 +1075,11 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                 // empty placeholder.
                 let lockfile_estimate =
                     existing_for_resolver.map(|g| g.packages.len()).or_else(|| {
-                        parse_lockfile_dir_remapped_with_kind(
+                        parse_lockfile_dir_remapped_with_kind_and_options(
                             &lockfile_dir,
                             &lockfile_importer_key,
                             &manifest,
+                            lockfile_parse_options,
                         )
                         .ok()
                         .map(|(g, _)| g.packages.len())
@@ -1678,9 +1686,12 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             // YAML parse pass over the same 5-50 KB file.
             if let Some((prior, _)) = lockfile_pre_parse.as_ref() {
                 graph.overlay_metadata_from(prior);
-            } else if let Ok(prior) =
-                parse_lockfile_dir_remapped(&lockfile_dir, &lockfile_importer_key, &manifest)
-            {
+            } else if let Ok((prior, _)) = parse_lockfile_dir_remapped_with_kind_and_options(
+                &lockfile_dir,
+                &lockfile_importer_key,
+                &manifest,
+                lockfile_parse_options,
+            ) {
                 graph.overlay_metadata_from(&prior);
             }
             tracing::debug!("Resolved {} packages", graph.packages.len());
