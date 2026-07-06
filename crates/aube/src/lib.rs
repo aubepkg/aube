@@ -1391,6 +1391,29 @@ mod cli_spec_tests {
     }
 
     #[test]
+    fn bin_accepts_workspace_root_flag() {
+        // pnpm parity: `aube bin -w` / `--workspace-root` prints the
+        // workspace-root bin dir. See discussion #988.
+        for flag in ["-w", "--workspace-root", "--workspace"] {
+            let cli = Cli::try_parse_from(["aube", "bin", flag])
+                .unwrap_or_else(|e| panic!("`aube bin {flag}` should parse: {e}"));
+            let Some(Commands::Bin(args)) = cli.command else {
+                panic!("`aube bin {flag}` should dispatch to bin");
+            };
+            assert!(args.workspace_root, "{flag} should set workspace_root");
+            assert!(!args.global);
+        }
+    }
+
+    #[test]
+    fn bin_global_conflicts_with_workspace_root() {
+        assert!(
+            Cli::try_parse_from(["aube", "bin", "-g", "-w"]).is_err(),
+            "`aube bin -g -w` should be rejected as conflicting"
+        );
+    }
+
+    #[test]
     fn node_subcommand_forwards_version_flag() {
         let cli = Cli::try_parse_from(rewrite_multicall_argv(vec![
             OsString::from("aube"),

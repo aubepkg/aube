@@ -223,8 +223,11 @@ cmd audit help="Check installed packages against the registry advisory DB" {
     }
 }
 cmd bin help="Print the path to `node_modules/.bin`" {
-    after_long_help "Examples:\n\n  $ aube bin\n  /home/user/project/node_modules/.bin\n\n  $ aube bin -g\n  /home/user/.local/share/aube/global/node_modules/.bin\n\n  # Extend PATH with the project bin directory\n  $ export PATH=\"$(aube bin):$PATH\"\n"
+    after_long_help "Examples:\n\n  $ aube bin\n  /home/user/project/node_modules/.bin\n\n  $ aube bin -g\n  /home/user/.local/share/aube/global/node_modules/.bin\n\n  # From a workspace package, print the workspace-root bin directory\n  $ aube bin -w\n  /home/user/project/node_modules/.bin\n\n  # Extend PATH with the project bin directory\n  $ export PATH=\"$(aube bin):$PATH\"\n"
     flag "-g --global" help="Print the global bin directory instead of the project's"
+    flag "-w --workspace-root --workspace" help="Print the workspace-root bin directory instead of the current package's" {
+        long_help "Print the workspace-root bin directory instead of the current package's.\n\nMirrors `pnpm bin -w`: from a sub-package, resolves the enclosing workspace root and prints its `node_modules/.bin`. No-op when no workspace root exists above cwd (single-project install), so the flag is safe to leave in shell aliases."
+    }
 }
 cmd cache subcommand_required=#true help="Inspect and manage the packument metadata cache" {
     cmd delete help="Delete metadata cache for the specified package(s)" {
