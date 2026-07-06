@@ -2169,9 +2169,9 @@ install scripts need network access, shared caches, or filesystem
 writes outside the restricted jail profile.
 
 Patterns use the same forms as `neverBuiltDependencies`: bare package
-names, `name@version` pins, semver range unions, and `*` wildcards such
-as `@scope/*`. Explicit jail exclusions win over the global
-`jailBuilds=true` setting.
+names, exact `name@version` pins, exact version unions, and `*`
+wildcards such as `@scope/*`. Explicit jail exclusions win over the
+global `jailBuilds=true` setting.
 """
 sources.cli = []
 sources.env = ["npm_config_jail_build_exclusions", "NPM_CONFIG_JAIL_BUILD_EXCLUSIONS", "AUBE_JAIL_BUILD_EXCLUSIONS"]
