@@ -320,6 +320,9 @@ enum Commands {
     /// Print the path to `node_modules/.bin`
     #[command(after_long_help = commands::bin::AFTER_LONG_HELP)]
     Bin(commands::bin::BinArgs),
+    /// Open package bug tracker URLs
+    #[command(visible_alias = "issues", after_long_help = commands::bugs::AFTER_LONG_HELP)]
+    Bugs(commands::bugs::BugsArgs),
     /// Inspect and manage the packument metadata cache
     Cache(commands::cache::CacheArgs),
     /// Print a file from the global store by integrity or hex hash
@@ -872,6 +875,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             }
         }
         Some(Commands::Bin(args)) => commands::bin::run(args).await?,
+        Some(Commands::Bugs(args)) => commands::bugs::run(args).await?,
         Some(Commands::Cache(args)) => commands::cache::run(args).await?,
         Some(Commands::CatFile(args)) => commands::cat_file::run(args).await?,
         Some(Commands::CatIndex(args)) => commands::cat_index::run(args).await?,

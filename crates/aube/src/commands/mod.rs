@@ -4,6 +4,7 @@ pub mod add_supply_chain;
 pub mod approve_builds;
 pub mod audit;
 pub mod bin;
+pub mod bugs;
 pub mod cache;
 pub mod cat_file;
 pub mod cat_index;
