@@ -1,4 +1,7 @@
-use crate::{DepType, DirectDep, Error, LocalSource, LockedPackage, LockfileGraph};
+use crate::{
+    DepType, DirectDep, EXTRA_PRESERVE_TARBALL_URL, Error, LocalSource, LockedPackage,
+    LockfileGraph,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -74,6 +77,16 @@ pub(super) fn parse_classic_str(
                 .fields
                 .get("resolved")
                 .and_then(|url| yarn_resolved_tarball_url(url));
+            let extra_meta = tarball_url
+                .as_deref()
+                .filter(|url| yarn_resolved_tarball_url_needs_preserve(url))
+                .map(|_| {
+                    BTreeMap::from([(
+                        EXTRA_PRESERVE_TARBALL_URL.to_string(),
+                        serde_json::Value::Bool(true),
+                    )])
+                })
+                .unwrap_or_default();
             packages.insert(
                 dep_path.clone(),
                 LockedPackage {
@@ -90,6 +103,7 @@ pub(super) fn parse_classic_str(
                     dep_path,
                     declared_dependencies: declared,
                     alias_of: alias_of.clone(),
+                    extra_meta,
                     ..Default::default()
                 },
             );
@@ -286,7 +300,38 @@ fn unquote_yarn_scalar(value: &str) -> &str {
 
 fn yarn_resolved_tarball_url(resolved: &str) -> Option<String> {
     let url = resolved.split_once('#').map_or(resolved, |(url, _)| url);
+    if crate::parse_git_spec(url).is_some() {
+        return None;
+    }
+    if !yarn_resolved_tarball_url_needs_preserve(url) {
+        return None;
+    }
     LocalSource::looks_like_remote_tarball_url(url).then(|| url.to_string())
+}
+
+fn yarn_resolved_tarball_url_needs_preserve(url: &str) -> bool {
+    let Some(host) = http_url_host(url) else {
+        return false;
+    };
+    !matches!(host.as_str(), "registry.npmjs.org" | "registry.yarnpkg.com")
+}
+
+fn http_url_host(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let authority = rest
+        .split_once('/')
+        .map_or(rest, |(authority, _)| authority);
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    Some(
+        host_port
+            .split_once(':')
+            .map_or(host_port, |(host, _)| host)
+            .to_ascii_lowercase(),
+    )
 }
 
 /// Extract the package name from a spec like `foo@^1.0.0` or `@scope/pkg@^1.0.0`.

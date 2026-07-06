@@ -25,6 +25,8 @@ pub use source::{
     parse_git_spec, parse_hosted_git, resolve_dep_edge, shared_local_dep_path,
 };
 
+pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url";
+
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 

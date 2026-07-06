@@ -262,6 +262,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         let is_jsr_registry_pkg = pkg.registry_name().starts_with("@jsr/");
         let preserve_tarball_url = graph.settings.lockfile_include_tarball_url
             || is_jsr_registry_pkg
+            || pkg
+                .extra_meta
+                .get(crate::EXTRA_PRESERVE_TARBALL_URL)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
             || registry_tarball_url_is_not_derivable(
                 pkg.registry_name(),
                 &pkg.version,
@@ -706,15 +711,13 @@ fn registry_tarball_url_is_not_derivable(
     let Some(url) = tarball_url else {
         return false;
     };
-    let Some((host, path)) = super::http_url_host_and_path(url) else {
-        return true;
-    };
-    if !matches!(host.as_str(), "registry.npmjs.org" | "registry.yarnpkg.com") {
-        return true;
-    }
     let basename = name.rsplit('/').next().unwrap_or(name);
     let expected_suffix = format!("/-/{basename}-{version}.tgz");
-    !path.ends_with(&expected_suffix)
+    let path_only = url.split_once('?').map_or(url, |(path, _)| path);
+    let path_only = path_only
+        .split_once('#')
+        .map_or(path_only, |(path, _)| path);
+    !path_only.ends_with(&expected_suffix)
 }
 
 fn pruned_time_entries(

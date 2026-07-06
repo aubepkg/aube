@@ -117,6 +117,25 @@ fn classic_import_preserves_custom_registry_tarball_url() {
 }
 
 #[test]
+fn classic_parse_does_not_treat_git_resolved_url_as_tarball_url() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"# yarn lockfile v1
+
+"git-pkg@git+https://github.com/acme/git-pkg.git#main":
+  version "1.0.0"
+  resolved "https://github.com/acme/git-pkg.git#abcdef0123456789abcdef0123456789abcdef01"
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(
+        &[("git-pkg", "git+https://github.com/acme/git-pkg.git#main")],
+        &[],
+    );
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let pkg = graph.packages.get("git-pkg@1.0.0").expect("git package");
+    assert!(pkg.tarball_url.is_none());
+}
+
+#[test]
 fn test_parse_scoped_and_multi_spec() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let content = r#"# yarn lockfile v1
