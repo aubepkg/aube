@@ -170,6 +170,7 @@ Run from the workspace root regardless of the current package
 - [`aube patch-remove [PACKAGES]…`](/cli/patch-remove.md)
 - [`aube peers <SUBCOMMAND>`](/cli/peers.md)
 - [`aube peers check [--json]`](/cli/peers/check.md)
+- [`aube prefix [-g --global]`](/cli/prefix.md)
 - [`aube prune [-P --prod] [--no-optional]`](/cli/prune.md)
 - [`aube publish [FLAGS]`](/cli/publish.md)
 - [`aube purge [-l --lockfile]`](/cli/purge.md)

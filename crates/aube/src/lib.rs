@@ -435,6 +435,9 @@ enum Commands {
     /// Manage package.json entries (not implemented — use `npm pkg`)
     #[command(hide = true)]
     Pkg(commands::npm_fallback::FallbackArgs),
+    /// Print the current package prefix directory
+    #[command(after_long_help = commands::prefix::AFTER_LONG_HELP)]
+    Prefix(commands::prefix::PrefixArgs),
     /// Remove extraneous packages from project `node_modules`.
     ///
     /// Reads the lockfile, computes the packages still reachable from each
@@ -968,6 +971,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Pkg(args)) => {
             return Ok(Some(commands::npm_fallback::run("pkg", &args)?));
         }
+        Some(Commands::Prefix(args)) => commands::prefix::run(args).await?,
         Some(Commands::Prune(args)) => commands::prune::run(args).await?,
         Some(Commands::Publish(args)) => {
             commands::publish::run(args, effective_filter.clone()).await?
@@ -1738,6 +1742,12 @@ mod package_manager_guard_tests {
             package_manager_guard_mode(cli.command.as_ref()),
             PackageManagerGuardMode::Error
         );
+    }
+
+    #[test]
+    fn prefix_skips_package_manager_guard() {
+        let cli = Cli::try_parse_from(["aube", "prefix"]).expect("prefix should parse");
+        assert!(!command_needs_package_manager_guard(cli.command.as_ref()));
     }
 
     #[test]

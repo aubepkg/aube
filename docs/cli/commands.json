@@ -7669,6 +7669,38 @@
         "hidden_aliases": [],
         "examples": []
       },
+      "prefix": {
+        "full_cmd": [
+          "prefix"
+        ],
+        "usage": "prefix [-g --global]",
+        "subcommands": {},
+        "args": [],
+        "flags": [
+          {
+            "name": "global",
+            "usage": "-g --global",
+            "help": "Print the global prefix directory instead of the project's root",
+            "help_first_line": "Print the global prefix directory instead of the project's root",
+            "short": [
+              "g"
+            ],
+            "long": [
+              "global"
+            ],
+            "hide": false,
+            "global": false
+          }
+        ],
+        "mounts": [],
+        "hide": false,
+        "help": "Print the current package prefix directory",
+        "name": "prefix",
+        "aliases": [],
+        "hidden_aliases": [],
+        "after_help_long": "Examples:\n\n  $ aube prefix\n  /home/user/project\n\n  $ aube prefix -g\n  /home/user/.local/share/pnpm\n",
+        "examples": []
+      },
       "prune": {
         "full_cmd": [
           "prune"

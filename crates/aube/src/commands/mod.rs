@@ -46,6 +46,7 @@ pub mod patch;
 pub mod patch_commit;
 pub mod patch_remove;
 pub mod peers;
+pub mod prefix;
 pub mod prune;
 pub mod publish;
 pub mod publish_provenance;

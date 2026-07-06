@@ -1350,6 +1350,10 @@ cmd pkg hide=#true help="Manage package.json entries (not implemented — use `n
     }
     arg "[ARGS]…" help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints" required=#false double_dash=automatic var=#true hide=#true
 }
+cmd prefix help="Print the current package prefix directory" {
+    after_long_help "Examples:\n\n  $ aube prefix\n  /home/user/project\n\n  $ aube prefix -g\n  /home/user/.local/share/pnpm\n"
+    flag "-g --global" help="Print the global prefix directory instead of the project's root"
+}
 cmd prune help="Remove extraneous packages from project `node_modules`" {
     long_help "Remove extraneous packages from project `node_modules`.\n\nReads the lockfile, computes the packages still reachable from each importer, and removes stale top-level links, stale virtual-store entries, and dangling .bin links. Does not modify package.json or the lockfile."
     after_long_help "Global store cleanup: use `aube store prune` to clean unreferenced files from the global\ncontent-addressable store."

@@ -27,6 +27,24 @@ teardown() {
 	assert_output "$AUBE_HOME/global-aube"
 }
 
+@test "aube prefix -g prints the global prefix directory" {
+	run aube prefix -g
+	assert_success
+	assert_output "$AUBE_HOME"
+}
+
+@test "aube prefix -g stays on AUBE_HOME when globalBinDir is customized" {
+	echo "globalBinDir=$TEST_TEMP_DIR/custom-bin" >.npmrc
+
+	run aube bin -g
+	assert_success
+	assert_output "$TEST_TEMP_DIR/custom-bin"
+
+	run aube prefix -g
+	assert_success
+	assert_output "$AUBE_HOME"
+}
+
 @test "aube bin -g honors PNPM_HOME when AUBE_HOME is unset" {
 	unset AUBE_HOME
 	PNPM_HOME="$TEST_TEMP_DIR/pnpm-home" run aube bin -g
