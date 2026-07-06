@@ -89,9 +89,10 @@ fn store_compression_gate() -> Option<&'static Gate> {
 
 /// Pure parse of an `AUBE_COMPRESS_STORE` value into a `Gate`. Split out
 /// so the directive grammar is unit-testable without the process-global
-/// env `OnceLock`. `None` means "no gate" (compression off): an empty
-/// value never reaches here (the env var being unset is handled by the
-/// caller), and a malformed size predicate fails closed.
+/// env `OnceLock`. `None` means "no gate" (compression off): the env var
+/// being *unset* short-circuits in the caller, but a set-but-empty value
+/// (`AUBE_COMPRESS_STORE=`) reaches here and is treated as affirmative
+/// (the default `**/*.node` gate). A malformed size predicate fails closed.
 pub(crate) fn parse_compress_store_gate(spec: &str) -> Option<Gate> {
     let trimmed = spec.trim();
     // A bare/affirmative value means "use the fleet default gate".
@@ -554,8 +555,7 @@ impl Store {
             // that's carried in `StoredFile.executable`, threaded
             // through the `PackageIndex` and the linker. So flipping
             // a marker-absent-to-present for a shared hash is safe.
-            let exec_marker = PathBuf::from(format!("{}-exec", store_path.display()));
-            self.create_cas_file(&exec_marker, None)?;
+            self.write_exec_marker(&store_path)?;
         }
 
         Ok(StoredFile {
@@ -622,13 +622,27 @@ impl Store {
             return self.import_bytes(stored_bytes, executable);
         }
 
+        let hash_t0 = std::time::Instant::now();
         let hex_hash = blake3_hex(stored_bytes);
+        if aube_util::diag::enabled() {
+            aube_util::diag::event_lazy(
+                aube_util::diag::Category::Store,
+                "blake3_hash",
+                hash_t0.elapsed(),
+                || format!(r#"{{"size":{}}}"#, stored_bytes.len()),
+            );
+        }
         let store_path = self.file_path_from_hex(&hex_hash);
 
         // If a prior import already committed this content, reuse it —
         // the file is already stored (compressed or not) and the kernel
         // reads it back identically. Matches `import_bytes`'s CAS-dedupe.
         if cas_file_matches_len(&store_path, stored_bytes.len() as u64) {
+            if aube_util::diag::enabled() {
+                aube_util::diag::instant_lazy(aube_util::diag::Category::Store, "cas_hit", || {
+                    format!(r#"{{"size":{}}}"#, stored_bytes.len())
+                });
+            }
             return self.finish_gated(hex_hash, store_path, executable, stored_bytes.len());
         }
 
@@ -669,12 +683,27 @@ impl Store {
             return self.import_bytes(stored_bytes, executable);
         }
 
+        // New content just landed (compressed, or fail-soft plain) — mirror
+        // `import_bytes`'s `cas_miss` so gated installs classify identically.
+        if aube_util::diag::enabled() {
+            aube_util::diag::instant_lazy(aube_util::diag::Category::Store, "cas_miss", || {
+                format!(r#"{{"size":{}}}"#, stored_bytes.len())
+            });
+        }
         self.finish_gated(hex_hash, store_path, executable, stored_bytes.len())
     }
 
     /// Shared tail of `import_bytes_gated`: write the executable marker
     /// (if any) and build the `StoredFile`. Mirrors the marker handling
     /// in `import_bytes`.
+    /// Write the sidecar `<store_path>-exec` marker that records a CAS entry
+    /// as executable. Shared by `import_bytes` and `finish_gated`.
+    fn write_exec_marker(&self, store_path: &Path) -> Result<(), Error> {
+        let exec_marker = PathBuf::from(format!("{}-exec", store_path.display()));
+        self.create_cas_file(&exec_marker, None)?;
+        Ok(())
+    }
+
     fn finish_gated(
         &self,
         hex_hash: String,
@@ -683,8 +712,7 @@ impl Store {
         len: usize,
     ) -> Result<StoredFile, Error> {
         if executable {
-            let exec_marker = PathBuf::from(format!("{}-exec", store_path.display()));
-            self.create_cas_file(&exec_marker, None)?;
+            self.write_exec_marker(&store_path)?;
         }
         Ok(StoredFile {
             hex_hash,
