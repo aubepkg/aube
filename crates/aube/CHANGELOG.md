@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0](https://github.com/jdx/aube/compare/v1.25.2...v1.26.0) - 2026-07-06
+
+### Added
+
+- *(scripts)* pass resolved proxy to lifecycle scripts ([#996](https://github.com/jdx/aube/pull/996))
+- *(bin)* accept pnpm's -w/--workspace-root flag ([#993](https://github.com/jdx/aube/pull/993))
+- add bugs command ([#992](https://github.com/jdx/aube/pull/992))
+- add prefix command ([#991](https://github.com/jdx/aube/pull/991))
+
+### Fixed
+
+- *(lockfile)* gate tarball integrity parse errors on strict mode ([#995](https://github.com/jdx/aube/pull/995))
+- *(resolver)* reject malformed jsr package names ([#990](https://github.com/jdx/aube/pull/990))
+
+### Other
+
+- Update sponsor references for jdx.dev ([#978](https://github.com/jdx/aube/pull/978))
+- refresh benchmarks for v1.25.2 ([#975](https://github.com/jdx/aube/pull/975))
+
 ## [1.25.2](https://github.com/jdx/aube/compare/v1.25.1...v1.25.2) - 2026-07-01
 
 ### Other

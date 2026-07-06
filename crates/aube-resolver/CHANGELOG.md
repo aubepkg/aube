@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0](https://github.com/jdx/aube/compare/aube-resolver-v1.25.2...aube-resolver-v1.26.0) - 2026-07-06
+
+### Added
+
+- *(resolver)* allow trust exclude version ranges ([#989](https://github.com/jdx/aube/pull/989))
+
+### Fixed
+
+- *(resolver)* derive integrity from dist.shasum when dist.integrity is absent ([#994](https://github.com/jdx/aube/pull/994))
+
+### Other
+
+- Update sponsor references for jdx.dev ([#978](https://github.com/jdx/aube/pull/978))
+- refresh benchmarks for v1.25.2 ([#975](https://github.com/jdx/aube/pull/975))
+
 ## [1.25.2](https://github.com/jdx/aube/compare/aube-resolver-v1.25.1...aube-resolver-v1.25.2) - 2026-07-01
 
 ### Fixed
