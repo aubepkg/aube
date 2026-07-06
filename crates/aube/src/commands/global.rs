@@ -87,6 +87,13 @@ fn resolve_home() -> miette::Result<PathBuf> {
     platform_default()
 }
 
+/// Resolve the global prefix root. This is distinct from `globalBinDir`:
+/// users may point global bin symlinks somewhere else while the prefix
+/// itself still comes from `AUBE_HOME` / `PNPM_HOME` / the platform default.
+pub fn prefix_dir() -> miette::Result<PathBuf> {
+    resolve_home()
+}
+
 #[cfg(target_os = "linux")]
 fn platform_default() -> miette::Result<PathBuf> {
     if let Some(xdg) = aube_util::env::xdg_data_home() {

@@ -25,7 +25,10 @@ Examples:
   $ aube bin -g
   /home/user/.local/share/aube/global/node_modules/.bin
 
-  # From a workspace package, print the workspace-root bin directory
+  # From a workspace package, -w prints the workspace-root bin directory
+  $ cd packages/app
+  $ aube bin
+  /home/user/project/packages/app/node_modules/.bin
   $ aube bin -w
   /home/user/project/node_modules/.bin
 
