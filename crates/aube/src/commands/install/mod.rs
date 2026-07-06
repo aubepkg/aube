@@ -482,12 +482,16 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     if opts.network_mode == aube_registry::NetworkMode::Offline {
         runtime_settings.network = aube_runtime::NetworkMode::Offline;
     }
+    let strict_store_integrity_setting = settings::resolve_strict_store_integrity(&settings_ctx);
+    let lockfile_parse_options = aube_lockfile::ParseOptions {
+        strict_store_integrity: strict_store_integrity_setting,
+    };
     if !opts.dry_run {
         crate::runtime::ensure(
             &cwd,
             Some(&manifest),
             runtime_settings,
-            crate::runtime::lockfile_node_pin(&cwd, &manifest).as_ref(),
+            crate::runtime::lockfile_node_pin(&cwd, &manifest, lockfile_parse_options).as_ref(),
         )
         .await?;
     }
@@ -535,10 +539,6 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     let network_concurrency_setting = resolve_network_concurrency(&settings_ctx);
     let link_concurrency_setting = resolve_link_concurrency(&settings_ctx);
     let verify_store_integrity_setting = resolve_verify_store_integrity(&settings_ctx);
-    let strict_store_integrity_setting = settings::resolve_strict_store_integrity(&settings_ctx);
-    let lockfile_parse_options = aube_lockfile::ParseOptions {
-        strict_store_integrity: strict_store_integrity_setting,
-    };
     let strict_store_pkg_content_check_setting =
         resolve_strict_store_pkg_content_check(&settings_ctx);
     let side_effects_cache_setting = resolve_side_effects_cache(&settings_ctx);

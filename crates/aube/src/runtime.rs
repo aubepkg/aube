@@ -191,6 +191,7 @@ impl RuntimeSettings {
 pub(crate) fn lockfile_node_pin(
     project_dir: &Path,
     manifest: &PackageJson,
+    parse_options: aube_lockfile::ParseOptions,
 ) -> Option<aube_lockfile::RuntimePin> {
     let pinned = [aube_util::embedder().lockfile_basename, "pnpm-lock.yaml"]
         .iter()
@@ -202,7 +203,9 @@ pub(crate) fn lockfile_node_pin(
     if !pinned {
         return None;
     }
-    let graph = aube_lockfile::parse_lockfile(project_dir, manifest).ok()?;
+    let (graph, _) =
+        aube_lockfile::parse_lockfile_with_kind_and_options(project_dir, manifest, parse_options)
+            .ok()?;
     graph.runtimes.get("node").cloned()
 }
 
@@ -217,9 +220,14 @@ pub async fn ensure_for_cwd(cwd: &Path) -> miette::Result<&'static RuntimeContex
     let manifest =
         aube_manifest::PackageJson::from_path_cached(&project_dir.join("package.json")).ok();
     let settings = crate::commands::with_settings_ctx(&project_dir, RuntimeSettings::from_ctx);
+    let parse_options =
+        crate::commands::with_settings_ctx(&project_dir, |ctx| aube_lockfile::ParseOptions {
+            strict_store_integrity: aube_settings::resolved::strict_store_integrity(ctx)
+                || aube_settings::resolved::paranoid(ctx),
+        });
     let pin = manifest
         .as_deref()
-        .and_then(|m| lockfile_node_pin(&project_dir, m));
+        .and_then(|m| lockfile_node_pin(&project_dir, m, parse_options));
     ensure(&project_dir, manifest.as_deref(), settings, pin.as_ref()).await
 }
 
