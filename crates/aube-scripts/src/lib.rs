@@ -56,6 +56,17 @@ pub struct ScriptSettings {
     /// first use) the real node-gyp and forwards argv. `None` leaves
     /// `npm_config_node_gyp` unset.
     pub node_gyp_js: Option<PathBuf>,
+    /// The proxy aube resolved for its own registry traffic, re-exported
+    /// to lifecycle scripts as the standard `HTTPS_PROXY` / `HTTP_PROXY`
+    /// / `NO_PROXY` env vars (plus `NODE_USE_ENV_PROXY=1`) so a script's
+    /// own `fetch()` / `http` calls honor the same proxy. aube reaches
+    /// scripts as `npm_config_proxy`, which Node ignores — only these
+    /// vars work. `None` on each leaves the corresponding var unset; the
+    /// proxy block is skipped entirely when both `http_proxy` and
+    /// `https_proxy` are `None`.
+    pub http_proxy: Option<String>,
+    pub https_proxy: Option<String>,
+    pub no_proxy: Option<String>,
 }
 
 /// Native build jail applied to dependency lifecycle scripts.
@@ -553,6 +564,32 @@ fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &Scrip
     }
     if settings.shell_emulator {
         cmd.env("npm_config_shell_emulator", "true");
+    }
+    // Proxy passthrough. aube already resolved a proxy for its own
+    // registry traffic and forwards it to scripts as `npm_config_proxy`,
+    // but Node's built-in `fetch`/`http`/`https` only read the standard
+    // `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` vars, and only when
+    // `NODE_USE_ENV_PROXY=1` is set (Node 24+). Stamp all four so a
+    // dependency's install script hits the same proxy aube does. A proxy
+    // URL is not a secret, so this is safe to leak past the jail. Skip
+    // the whole block when no proxy is configured — no reason to flip
+    // Node's experimental env-proxy flag (which warns on Node 24) for a
+    // direct connection. Use the plain env var, never
+    // `NODE_OPTIONS=--use-env-proxy`: Node < 24 rejects that unknown
+    // flag and refuses to start, breaking installs; the plain var is
+    // silently ignored there instead. Set after `env_clear` (like `NODE`
+    // above) so it survives the jail.
+    if settings.http_proxy.is_some() || settings.https_proxy.is_some() {
+        if let Some(https) = settings.https_proxy.as_deref() {
+            cmd.env("HTTPS_PROXY", https);
+        }
+        if let Some(http) = settings.http_proxy.as_deref() {
+            cmd.env("HTTP_PROXY", http);
+        }
+        if let Some(no_proxy) = settings.no_proxy.as_deref() {
+            cmd.env("NO_PROXY", no_proxy);
+        }
+        cmd.env("NODE_USE_ENV_PROXY", "1");
     }
 }
 
@@ -1329,6 +1366,72 @@ mod jail_tests {
         assert_eq!(env("npm_lifecycle_event"), Some("postinstall"));
         assert_eq!(env("npm_package_name"), Some("pkg"));
         assert_eq!(env("npm_package_version"), Some("1.2.3"));
+    }
+
+    fn proxy_env(settings: ScriptSettings) -> impl Fn(&str) -> Option<String> {
+        let mut cmd = tokio::process::Command::new("node");
+        apply_script_settings_env(&mut cmd, &settings);
+        let envs: Vec<_> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        move |name: &str| {
+            envs.iter()
+                .find(|(k, _)| k == name)
+                .and_then(|(_, v)| v.clone())
+        }
+    }
+
+    #[test]
+    fn proxy_vars_stamped_when_proxy_configured() {
+        let env = proxy_env(ScriptSettings {
+            https_proxy: Some("http://proxy.example:8080".to_string()),
+            http_proxy: Some("http://proxy.example:8080".to_string()),
+            no_proxy: Some("localhost,127.0.0.1".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            env("HTTPS_PROXY").as_deref(),
+            Some("http://proxy.example:8080")
+        );
+        assert_eq!(
+            env("HTTP_PROXY").as_deref(),
+            Some("http://proxy.example:8080")
+        );
+        assert_eq!(env("NO_PROXY").as_deref(), Some("localhost,127.0.0.1"));
+        // Node ignores the proxy vars unless this flag is set (Node 24+);
+        // it must be the plain env var, not `--use-env-proxy`.
+        assert_eq!(env("NODE_USE_ENV_PROXY").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn proxy_block_skipped_when_no_proxy_configured() {
+        // With no proxy resolved, none of the passthrough vars — and
+        // crucially not the experimental `NODE_USE_ENV_PROXY` flag —
+        // should be stamped onto the script env.
+        let env = proxy_env(ScriptSettings::default());
+        assert_eq!(env("HTTPS_PROXY"), None);
+        assert_eq!(env("HTTP_PROXY"), None);
+        assert_eq!(env("NO_PROXY"), None);
+        assert_eq!(env("NODE_USE_ENV_PROXY"), None);
+    }
+
+    #[test]
+    fn no_proxy_alone_does_not_trigger_passthrough() {
+        // `NO_PROXY` without an actual proxy URL is meaningless, and we
+        // must not flip Node's env-proxy flag for a direct connection.
+        let env = proxy_env(ScriptSettings {
+            no_proxy: Some("example.com".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(env("NO_PROXY"), None);
+        assert_eq!(env("NODE_USE_ENV_PROXY"), None);
     }
 }
 

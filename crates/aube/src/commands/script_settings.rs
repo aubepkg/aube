@@ -21,6 +21,17 @@ pub(crate) fn configure_script_settings(
     // falls back to the ambient `node` on PATH so `npm_node_execpath` /
     // `NODE` are populated for lifecycle scripts the way pnpm/npm do.
     let runtime = crate::runtime::current();
+    // Resolve the proxy the same way the registry client does, so a
+    // dependency's install script honors it too. `httpProxy` inherits
+    // from the resolved `httpsProxy` (npm/pnpm parity: a lone
+    // `https-proxy=` line configures both schemes) — replicate that
+    // fallback here, since the generated accessors only walk each
+    // setting's own sources. `noProxy` has no cross-setting inheritance.
+    let https_proxy = aube_settings::resolved::https_proxy(ctx).and_then(non_empty_string);
+    let http_proxy = aube_settings::resolved::http_proxy(ctx)
+        .and_then(non_empty_string)
+        .or_else(|| https_proxy.clone());
+    let no_proxy = aube_settings::resolved::no_proxy(ctx).and_then(non_empty_string);
     aube_scripts::set_script_settings(aube_scripts::ScriptSettings {
         node_options,
         script_shell,
@@ -36,6 +47,9 @@ pub(crate) fn configure_script_settings(
         // aube's cache; a write failure here is non-fatal (the var just
         // stays unset, matching pre-parity behavior).
         node_gyp_js: super::install::node_gyp_bootstrap::lazy_js_shim_path().ok(),
+        http_proxy,
+        https_proxy,
+        no_proxy,
     });
 }
 
