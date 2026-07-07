@@ -137,12 +137,20 @@ function cloneFile(src, dest) {
 // Time one `require()` of the addon in a fresh Node process. Returns
 // milliseconds, or undefined for an addon that can't load standalone.
 function loadMs(file) {
+  // Force the child to exit after timing: a native addon that keeps the event
+  // loop alive (thread pools, timers — common in napi-rs addons like
+  // @rspack/binding) would otherwise never exit and hang spawnSync forever.
+  // writeSync(1, …) flushes synchronously before the exit, so the value can't
+  // be lost the way an async stdout write + process.exit() can. The timeout is
+  // a backstop for anything that still wedges.
   const probe =
     'const s = process.hrtime.bigint();' +
     `require(${JSON.stringify(file)});` +
-    'process.stdout.write(String(Number(process.hrtime.bigint() - s) / 1e6))'
+    'require("node:fs").writeSync(1, String(Number(process.hrtime.bigint() - s) / 1e6));' +
+    'process.exit(0)'
   const result = spawnSync(process.execPath, ['-e', probe], {
     encoding: 'utf8',
+    timeout: 30_000,
   })
   return result.status === 0 ? Number(result.stdout) : undefined
 }
