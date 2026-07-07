@@ -100,7 +100,12 @@ function walkSizes(dir, root = dir, files = []) {
   return files
 }
 
-const median = values => [...values].sort((a, b) => a - b)[values.length >> 1]
+const median = values => {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  // Even-length: average the two middle samples; odd-length: the middle one.
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
 
 // Clone (copy-on-write) a file, preserving the filesystem-compression
 // attribute — a plain copy would silently write the data back out
@@ -115,7 +120,18 @@ function cloneFile(src, dest) {
     }
     return
   }
-  copyFileSync(src, dest, fsConstants.COPYFILE_FICLONE_FORCE)
+  try {
+    copyFileSync(src, dest, fsConstants.COPYFILE_FICLONE_FORCE)
+  } catch (e) {
+    // FICLONE_FORCE throws (ENOTSUP/EINVAL) on filesystems without reflink
+    // support (ext4, most NFS, overlayfs). A plain copy would silently strip
+    // the compression attribute and skew the timings, so fail loud with why.
+    throw new Error(
+      `clonefile (reflink) failed for ${src}: ${e.message}\n` +
+        'This benchmark needs a reflink + transparent-compression filesystem ' +
+        '(APFS on macOS, btrfs on Linux); ext4/NFS/overlayfs are not supported.',
+    )
+  }
 }
 
 // Time one `require()` of the addon in a fresh Node process. Returns
@@ -202,9 +218,11 @@ function runInstall(name, pkg, gate) {
   // legitimately vary run to run and would fail the transparency assert.
   const cas = path.join(store, 'v1', 'files')
   const files = walkSizes(existsSync(cas) ? cas : store)
+  const logicalBytes = files.reduce((s, f) => s + f.logical, 0)
   return {
     files,
-    logicalKb: kb(files.reduce((s, f) => s + f.logical, 0)),
+    logicalBytes,
+    logicalKb: kb(logicalBytes),
     physicalKb: kb(files.reduce((s, f) => s + f.physical, 0)),
   }
 }
@@ -240,9 +258,10 @@ for (const pkg of packages) {
       )
       continue
     }
-    if (run.logicalKb !== off.logicalKb) {
+    if (run.logicalBytes !== off.logicalBytes) {
       console.error(
-        '  ERROR: logical sizes differ across modes — compression must be\n' +
+        '  ERROR: logical sizes differ across modes (raw bytes:\n' +
+          `  ${run.logicalBytes} vs ${off.logicalBytes}) — compression must be\n` +
           '  byte-transparent; investigate before trusting these numbers.',
       )
       process.exit(1)
