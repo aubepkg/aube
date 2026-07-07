@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-  schedule:
-    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,44 +13,6 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  pending-release:
-    runs-on: ubuntu-latest
-    outputs:
-      has_release_commits: ${{ steps.commits.outputs.has_release_commits }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-      - name: Check release age and fix/feat commits
-        id: commits
-        run: |
-          set -euo pipefail
-
-          latest_tag=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1 || true)
-          if [ -n "$latest_tag" ]; then
-            range="${latest_tag}..HEAD"
-            echo "Checking pending commits since ${latest_tag}"
-            tag_time=$(git log -1 --format=%ct "$latest_tag")
-            now=$(date +%s)
-            min_age=$((7 * 24 * 60 * 60))
-            age=$((now - tag_time))
-            if [ "$age" -lt "$min_age" ]; then
-              echo "Latest release ${latest_tag} is less than 7 days old; skipping autorelease."
-              echo "has_release_commits=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          else
-            range="HEAD"
-            echo "No v* release tag found; checking all commits"
-          fi
-
-          if git log --format=%s "$range" | grep -Eq '^(fix|feat)(\([^)]+\))?!?: '; then
-            echo "has_release_commits=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No pending fix/feat commits; skipping autorelease."
-            echo "has_release_commits=false" >> "$GITHUB_OUTPUT"
-          fi
-
   # On every push to main: run `release-plz release`. If the current
   # workspace version has no tag yet (because the release PR was just
   # merged), this tags `aube` as `v<version>`, opens a draft GitHub
@@ -61,8 +21,6 @@ jobs:
   # no-op.
   release-plz-release:
     name: release-plz release
-    needs: pending-release
-    if: needs.pending-release.outputs.has_release_commits == 'true'
     runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
     # Two commits landing on main in quick succession must not double-publish.
     concurrency:
@@ -261,8 +219,6 @@ jobs:
   # an out-of-date `aube.usage.kdl`.
   release-plz-pr:
     name: release-plz PR
-    needs: pending-release
-    if: needs.pending-release.outputs.has_release_commits == 'true'
     runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
     permissions:
       contents: write
