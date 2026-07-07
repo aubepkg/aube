@@ -155,36 +155,60 @@ function loadMs(file) {
   return result.status === 0 ? Number(result.stdout) : undefined
 }
 
-// First-load vs steady-state timings for one on-disk variant of an addon.
-// First load: clone → load → delete, x5 — clonefile mints a fresh vnode while
-// preserving the compression attribute, so both variants pay the same
-// fresh-file costs (on macOS, dominated by code-signature validation).
-// Steady state: one clone loaded x7 in fresh processes, first sample dropped.
+// How many clean-room (cold) first-load samples to take per variant.
+const COLD_SAMPLES = Math.max(1, Number(process.env.SAMPLES) || 5)
+
+// Evict the OS page cache so the NEXT read is genuinely cold. A fresh clone
+// alone is not enough — clonefile shares blocks with the source, which is
+// already warm, so a "first load" would really time a warm cache. macOS: sync
+// then `purge`. purge needs privileges; if it is denied the sample is merely
+// warm (not wrong), and the caller reports that. Returns true only when a real
+// eviction happened.
+function dropCaches() {
+  if (process.platform !== 'darwin') {
+    return false
+  }
+  spawnSync('sync')
+  return spawnSync('purge').status === 0
+}
+
+// Cold first-load vs warm second-load (steady-state) timings for one on-disk
+// variant of an addon.
+// Cold (clean room): a FRESH clone AND an evicted page cache before each of
+// COLD_SAMPLES samples, so every sample is a real first touch, not a warm
+// re-read of shared blocks; median of the samples. `evicted` is false if purge
+// was denied (the samples were warm, not truly cold).
+// Warm (second load): one clone loaded x7 in fresh processes with the cache
+// warm, first (still-cold) sample dropped.
 function timeVariant(src, dir, tag) {
-  const first = []
-  for (let i = 0; i < 5; i += 1) {
-    const clone = path.join(dir, `${tag}-first-${i}.node`)
+  const cold = []
+  let evicted = true
+  for (let i = 0; i < COLD_SAMPLES; i += 1) {
+    const clone = path.join(dir, `${tag}-cold-${i}.node`)
     cloneFile(src, clone)
+    if (!dropCaches()) {
+      evicted = false
+    }
     const ms = loadMs(clone)
     rmSync(clone)
     if (ms === undefined) {
       return undefined
     }
-    first.push(ms)
+    cold.push(ms)
   }
-  const steadyClone = path.join(dir, `${tag}-steady.node`)
-  cloneFile(src, steadyClone)
-  const steady = []
+  const warmClone = path.join(dir, `${tag}-warm.node`)
+  cloneFile(src, warmClone)
+  const warm = []
   for (let i = 0; i < 7; i += 1) {
-    const ms = loadMs(steadyClone)
+    const ms = loadMs(warmClone)
     if (ms === undefined) {
-      rmSync(steadyClone)
+      rmSync(warmClone)
       return undefined
     }
-    steady.push(ms)
+    warm.push(ms)
   }
-  rmSync(steadyClone)
-  return { first: median(first), steady: median(steady.slice(1)) }
+  rmSync(warmClone)
+  return { cold: median(cold), warm: median(warm.slice(1)), evicted }
 }
 
 // One isolated install. `gate` is the AUBE_COMPRESS_STORE value ('' = off).
@@ -250,6 +274,11 @@ const MODES = [
 const loadDir = path.join(scratch, 'load')
 mkdirSync(loadDir, { recursive: true })
 
+// Per-addon load-timing rows, emitted as JSON at the end for the charts.
+const loadResults = []
+// Cleared if purge is ever denied, so the methodology note can say so.
+let coldEvicted = true
+
 for (const pkg of packages) {
   const safe = pkg.replace(/[^a-zA-Z0-9]/g, '-')
   const pad = n => String(n).padStart(8)
@@ -294,9 +323,22 @@ for (const pkg of packages) {
     const noff = plain && timeVariant(plain.full, loadDir, 'off')
     let timing = 'does not load standalone — timing skipped'
     if (on && noff) {
+      if (!on.evicted || !noff.evicted) {
+        coldEvicted = false
+      }
       timing =
-        `first load ${on.first.toFixed(0)}ms vs ${noff.first.toFixed(0)}ms, ` +
-        `steady ${on.steady.toFixed(1)}ms vs ${noff.steady.toFixed(1)}ms`
+        `cold ${on.cold.toFixed(0)}ms vs ${noff.cold.toFixed(0)}ms, ` +
+        `warm ${on.warm.toFixed(1)}ms vs ${noff.warm.toFixed(1)}ms`
+      loadResults.push({
+        package: pkg,
+        addon: path.basename(f.rel),
+        onDiskKb: kb(f.physical),
+        logicalKb: kb(f.logical),
+        coldOnMs: on.cold,
+        coldOffMs: noff.cold,
+        warmOnMs: on.warm,
+        warmOffMs: noff.warm,
+      })
     }
     console.log(
       `    ${pad(kb(f.logical))}KB → ${pad(kb(f.physical))}KB (−${pct}%)  ${timing}`,
@@ -306,8 +348,15 @@ for (const pkg of packages) {
 }
 
 console.log(
-  'first load = fresh file (clonefile per iteration; both variants pay the\n' +
-    "OS's freshly-created-binary validation, which dominates). steady = same\n" +
-    'inode, fresh process per load, median of 6. Disk caches are warm in both\n' +
-    'scenarios — flushing them needs privileges (`purge`) and is not attempted.',
+  `cold = clean-room first load: a fresh clonefile + the page cache evicted\n` +
+    `(purge) before each of ${COLD_SAMPLES} samples, so every sample is a real\n` +
+    'first touch; median. warm = second load onward: same inode, fresh process\n' +
+    'per load, median of 6 (cache warm).' +
+    (coldEvicted
+      ? ''
+      : '\nWARNING: purge was denied, so the cold samples were NOT truly cold —\n' +
+        'run with purge access (e.g. sudo) for real clean-room first-load numbers.'),
 )
+
+// Machine-readable rows for the load-perf charts (first-load + second-load).
+console.log(`\nLOAD_RESULTS_JSON ${JSON.stringify(loadResults)}`)
