@@ -31,9 +31,9 @@
 //
 // Environment variables:
 //   PACKAGES — space-separated npm package names to measure
-//              (default: "vite @rspack/core" — vite 8.x ships the rolldown +
-//              lightningcss native addons; @rspack/core ships the ~40MB
-//              @rspack/binding addon)
+//              (default: "@rspack/core vite" — @rspack/core ships the ~40MB
+//              @rspack/binding addon; vite 8.x ships the rolldown +
+//              lightningcss native addons)
 //   AUBE_BIN — aube binary to exercise (default: target/release/aube)
 //   KEEP=1   — keep the scratch dir for inspection instead of deleting it
 
@@ -54,7 +54,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const packages = (process.env.PACKAGES ?? 'vite @rspack/core')
+const packages = (process.env.PACKAGES ?? '@rspack/core vite')
   .split(/\s+/)
   .filter(Boolean)
 const aubeBin = path.resolve(
@@ -152,7 +152,12 @@ function timeVariant(src, dir, tag) {
   cloneFile(src, steadyClone)
   const steady = []
   for (let i = 0; i < 7; i += 1) {
-    steady.push(loadMs(steadyClone))
+    const ms = loadMs(steadyClone)
+    if (ms === undefined) {
+      rmSync(steadyClone)
+      return undefined
+    }
+    steady.push(ms)
   }
   rmSync(steadyClone)
   return { first: median(first), steady: median(steady.slice(1)) }
