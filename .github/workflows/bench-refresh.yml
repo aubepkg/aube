@@ -103,9 +103,9 @@ jobs:
       - name: Refresh benchmarks
         run: mise run bench:bump
       - name: Validate benchmark claims
-        run: node benchmarks/validate-results.mjs
+        run: node benchmarks/validate-results.mts
       - name: Summarize benchmark changes
-        run: node benchmarks/summarize-results-change.mjs /tmp/bench-results-before.json benchmarks/results.json > /tmp/bench_summary.md
+        run: node benchmarks/summarize-results-change.mts /tmp/bench-results-before.json benchmarks/results.json > /tmp/bench_summary.md
 
       # Guard against a bench run that produced no diff — e.g. the version
       # moved but the numbers are byte-identical. No diff, no PR churn.

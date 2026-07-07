@@ -82,7 +82,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: false
-      - run: node benchmarks/validate-results.mjs
+      - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
       - run: cargo-machete

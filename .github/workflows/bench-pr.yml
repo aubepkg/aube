@@ -93,7 +93,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Summarize change
-        run: node benchmarks/summarize-results-change.mjs /tmp/aube-bench-base.json /tmp/aube-bench-head.json > /tmp/aube-bench-summary.md
+        run: node benchmarks/summarize-results-change.mts /tmp/aube-bench-base.json /tmp/aube-bench-head.json > /tmp/aube-bench-summary.md
 
       - name: Write benchmark summary
         if: github.event_name == 'pull_request'

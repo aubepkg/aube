@@ -94,7 +94,7 @@ env = {
 run = [
   "cargo build --release",
   "mise x aqua:sharkdp/hyperfine@latest github:pnpm/pnpm@latest npm:@yarnpkg/cli-dist@latest bun@latest deno@latest npm:vlt@latest node@24 -- bash benchmarks/bench.sh",
-  "node benchmarks/update-readme.mjs",
+  "node benchmarks/update-readme.mts",
 ]
 
 [tasks."build:pgo"]

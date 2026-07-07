@@ -27,7 +27,7 @@
 //     plain writes and off/on report the same physical size.
 //
 // Usage:
-//   node benchmarks/fs-compress-size.mjs
+//   node benchmarks/fs-compress-size.mts
 //
 // Environment variables:
 //   PACKAGES — space-separated npm package names to measure
@@ -53,6 +53,37 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+interface FileSize {
+  full: string
+  rel: string
+  logical: number
+  physical: number
+}
+
+interface InstallResult {
+  files: FileSize[]
+  logicalBytes: number
+  logicalKb: number
+  physicalKb: number
+}
+
+interface VariantTiming {
+  cold: number
+  warm: number
+  evicted: boolean
+}
+
+interface LoadResult {
+  package: string
+  addon: string
+  onDiskKb: number
+  logicalKb: number
+  coldOnMs: number
+  coldOffMs: number
+  warmOnMs: number
+  warmOffMs: number
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const packages = (process.env.PACKAGES ?? '@rspack/core vite')
   .split(/\s+/)
@@ -77,12 +108,12 @@ process.on('exit', () => {
   }
 })
 
-const kb = bytes => Math.floor(bytes / 1024)
+const kb = (bytes: number): number => Math.floor(bytes / 1024)
 
 // Walk a tree collecting every file's path plus logical (apparent) and
 // physical (allocated) size. `blocks` is always 512-byte units in Node, so
 // this is portable across APFS / btrfs / NTFS.
-function walkSizes(dir, root = dir, files = []) {
+function walkSizes(dir: string, root: string = dir, files: FileSize[] = []): FileSize[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
@@ -100,7 +131,7 @@ function walkSizes(dir, root = dir, files = []) {
   return files
 }
 
-const median = values => {
+const median = (values: number[]): number => {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = sorted.length >> 1
   // Even-length: average the two middle samples; odd-length: the middle one.
@@ -112,7 +143,7 @@ const median = values => {
 // uncompressed. On macOS Node's COPYFILE_FICLONE_FORCE can fail with ENOSYS
 // for decmpfs-compressed sources, so shell out to `cp -c` (raw clonefile);
 // on Linux FICLONE_FORCE is the btrfs reflink path.
-function cloneFile(src, dest) {
+function cloneFile(src: string, dest: string): void {
   if (process.platform === 'darwin') {
     const result = spawnSync('cp', ['-c', src, dest])
     if (result.status !== 0) {
@@ -136,7 +167,7 @@ function cloneFile(src, dest) {
 
 // Time one `require()` of the addon in a fresh Node process. Returns
 // milliseconds, or undefined for an addon that can't load standalone.
-function loadMs(file) {
+function loadMs(file: string): number | undefined {
   // Force the child to exit after timing: a native addon that keeps the event
   // loop alive (thread pools, timers — common in napi-rs addons like
   // @rspack/binding) would otherwise never exit and hang spawnSync forever.
@@ -164,7 +195,7 @@ const COLD_SAMPLES = Math.max(1, Number(process.env.SAMPLES) || 5)
 // then `purge`. purge needs privileges; if it is denied the sample is merely
 // warm (not wrong), and the caller reports that. Returns true only when a real
 // eviction happened.
-function dropCaches() {
+function dropCaches(): boolean {
   if (process.platform !== 'darwin') {
     return false
   }
@@ -180,8 +211,8 @@ function dropCaches() {
 // was denied (the samples were warm, not truly cold).
 // Warm (second load): one clone loaded x7 in fresh processes with the cache
 // warm, first (still-cold) sample dropped.
-function timeVariant(src, dir, tag) {
-  const cold = []
+function timeVariant(src: string, dir: string, tag: string): VariantTiming | undefined {
+  const cold: number[] = []
   let evicted = true
   for (let i = 0; i < COLD_SAMPLES; i += 1) {
     const clone = path.join(dir, `${tag}-cold-${i}.node`)
@@ -198,7 +229,7 @@ function timeVariant(src, dir, tag) {
   }
   const warmClone = path.join(dir, `${tag}-warm.node`)
   cloneFile(src, warmClone)
-  const warm = []
+  const warm: number[] = []
   for (let i = 0; i < 7; i += 1) {
     const ms = loadMs(warmClone)
     if (ms === undefined) {
@@ -213,7 +244,7 @@ function timeVariant(src, dir, tag) {
 
 // One isolated install. `gate` is the AUBE_COMPRESS_STORE value ('' = off).
 // Returns the store's summed sizes.
-function runInstall(name, pkg, gate) {
+function runInstall(name: string, pkg: string, gate: string): InstallResult {
   const home = path.join(scratch, name)
   const project = path.join(home, 'project')
   mkdirSync(project, { recursive: true })
@@ -250,12 +281,12 @@ function runInstall(name, pkg, gate) {
   // legitimately vary run to run and would fail the transparency assert.
   const cas = path.join(store, 'v1', 'files')
   const files = walkSizes(existsSync(cas) ? cas : store)
-  const logicalBytes = files.reduce((s, f) => s + f.logical, 0)
+  const logicalBytes = files.reduce((s: number, f) => s + f.logical, 0)
   return {
     files,
     logicalBytes,
     logicalKb: kb(logicalBytes),
-    physicalKb: kb(files.reduce((s, f) => s + f.physical, 0)),
+    physicalKb: kb(files.reduce((s: number, f) => s + f.physical, 0)),
   }
 }
 
@@ -265,7 +296,7 @@ console.log(
 )
 
 // The three modes measured per package: gate value, scratch key, label.
-const MODES = [
+const MODES: Array<[string, string, string]> = [
   ['', 'off', 'compression off       '],
   ['1', 'node-gate', 'default gate (*.node) '],
   ['glob:**/*', 'all-gate', "gate 'glob:**/*'      "],
@@ -275,16 +306,16 @@ const loadDir = path.join(scratch, 'load')
 mkdirSync(loadDir, { recursive: true })
 
 // Per-addon load-timing rows, emitted as JSON at the end for the charts.
-const loadResults = []
+const loadResults: LoadResult[] = []
 // Cleared if purge is ever denied, so the methodology note can say so.
 let coldEvicted = true
 
 for (const pkg of packages) {
   const safe = pkg.replace(/[^a-zA-Z0-9]/g, '-')
-  const pad = n => String(n).padStart(8)
+  const pad = (n: number): string => String(n).padStart(8)
   console.log(`── ${pkg} (latest) ──────────────────────────────────────────`)
 
-  const runs = {}
+  const runs: Record<string, InstallResult> = {}
   for (const [gate, key, label] of MODES) {
     const run = runInstall(`${safe}-${key}`, pkg, gate)
     runs[gate] = run
