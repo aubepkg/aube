@@ -472,9 +472,10 @@ async fn publish_one(
             });
         }
         return Err(miette!(
-            "{}: {name}@{version} is already on {registry_url}\n\
+            "{}: {name}@{version} is already on {}\n\
              help: pass --force to republish (the registry must allow it; npm's public registry does not)",
-            aube_util::cmd("publish")
+            aube_util::cmd("publish"),
+            aube_util::url::redact_url(&registry_url),
         ));
     }
 
@@ -740,7 +741,12 @@ async fn exchange_npm_oidc_token(
         .send()
         .await
         .into_diagnostic()
-        .wrap_err_with(|| format!("failed to exchange npm OIDC token at {endpoint}"))?;
+        .wrap_err_with(|| {
+            format!(
+                "failed to exchange npm OIDC token at {}",
+                aube_util::url::redact_url(&endpoint)
+            )
+        })?;
     if !resp.status().is_success() {
         tracing::debug!(
             status = %resp.status(),
@@ -932,7 +938,7 @@ fn emit_outcome_line(outcome: &PublishOutcome) {
                 "+ {}@{} (dry run, would PUT to {})",
                 outcome.name,
                 outcome.version,
-                put_url(&outcome.registry_url, &outcome.name)
+                aube_util::url::redact_url(&put_url(&outcome.registry_url, &outcome.name))
             );
             if let Some(archive) = &outcome.archive {
                 for f in &archive.files {
@@ -1608,6 +1614,16 @@ mod tests {
         assert_eq!(
             registry_uri_key_pub("https://registry.npmjs.org/"),
             "//registry.npmjs.org/"
+        );
+    }
+
+    #[test]
+    fn publish_target_display_redacts_inline_registry_credentials() {
+        let target = put_url("https://user:secret@registry.example/", "@scope/pkg");
+
+        assert_eq!(
+            aube_util::url::redact_url(&target),
+            "https://***@registry.example/%40scope%2fpkg"
         );
     }
 }
