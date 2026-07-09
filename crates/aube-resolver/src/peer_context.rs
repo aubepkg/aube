@@ -1994,4 +1994,72 @@ mod tests {
             "a required peer should still resolve through the graph-wide scan"
         );
     }
+
+    #[test]
+    fn self_contained_subtree_peer_does_not_bind_to_root_version() {
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            ".".to_string(),
+            vec![
+                DirectDep {
+                    name: "closure-plugins".to_string(),
+                    dep_path: "closure-plugins@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                },
+                DirectDep {
+                    name: "closure-peer-x".to_string(),
+                    dep_path: "closure-peer-x@2.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("2.0.0".to_string()),
+                },
+            ],
+        );
+
+        let closure = locked(
+            "closure-plugins",
+            &[
+                ("closure-lib-a", "1.0.0"),
+                ("closure-lib-b", "1.0.0"),
+                ("closure-peer-x", "1.0.0"),
+            ],
+        );
+        let mut lib_a = locked("closure-lib-a", &[]);
+        lib_a
+            .peer_dependencies
+            .insert("closure-peer-x".to_string(), "^1.0.0".to_string());
+        let mut lib_b = locked("closure-lib-b", &[]);
+        lib_b
+            .peer_dependencies
+            .insert("closure-peer-x".to_string(), "^1.0.0".to_string());
+        let inner_peer = locked("closure-peer-x", &[]);
+        let mut root_peer = locked("closure-peer-x", &[]);
+        root_peer.version = "2.0.0".to_string();
+        root_peer.dep_path = "closure-peer-x@2.0.0".to_string();
+
+        for pkg in [closure, lib_a, lib_b, inner_peer, root_peer] {
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        for package in ["closure-lib-a", "closure-lib-b"] {
+            assert!(
+                out.packages
+                    .contains_key(&format!("{package}@1.0.0(closure-peer-x@1.0.0)")),
+                "{package} must use the subtree's peer provider"
+            );
+            assert!(
+                !out.packages
+                    .contains_key(&format!("{package}@1.0.0(closure-peer-x@2.0.0)")),
+                "{package} must not use the root's incompatible peer provider"
+            );
+        }
+        assert!(
+            out.importers["."]
+                .iter()
+                .any(|dep| dep.dep_path == "closure-peer-x@2.0.0"),
+            "the root keeps its explicitly declared peer version"
+        );
+    }
 }
