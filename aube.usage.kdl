@@ -77,6 +77,66 @@ flag "-y --yes" help="Automatically answer yes to prompts" hide=#true global=#tr
 cmd __node-gyp-bootstrap hide=#true help="Bootstrap aube's cached node-gyp and print the executable path" {
     arg <PROJECT_DIR>
 }
+cmd access subcommand_required=#true help="Manage package access and visibility on the registry" {
+    flag --json help="Emit registry responses as JSON when the subcommand has a result"
+    flag --otp help="One-time password from a 2FA authenticator; sent as `npm-otp`" {
+        arg <OTP>
+    }
+    flag --fetch-retries help="Number of retry attempts for failed registry fetches" {
+        long_help "Number of retry attempts for failed registry fetches.\n\nOverrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs."
+        arg <N>
+    }
+    flag --fetch-retry-factor help="Exponential backoff factor between retry attempts" {
+        long_help "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap."
+        arg <N>
+    }
+    flag --fetch-retry-maxtimeout help="Upper bound (ms) on the computed retry backoff" {
+        long_help "Upper bound (ms) on the computed retry backoff.\n\nOverrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set."
+        arg <MS>
+    }
+    flag --fetch-retry-mintimeout help="Lower bound (ms) on the computed retry backoff" {
+        long_help "Lower bound (ms) on the computed retry backoff.\n\nOverrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set."
+        arg <MS>
+    }
+    flag --fetch-timeout help="Per-request HTTP timeout in milliseconds" {
+        long_help "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together."
+        arg <MS>
+    }
+    flag --registry help="Override the default registry URL for this invocation" {
+        long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes."
+        arg <URL>
+    }
+    cmd get subcommand_required=#true help="Get package visibility status" {
+        cmd status help="Get a package's public or restricted status" {
+            arg <PACKAGE> help="Package name"
+        }
+    }
+    cmd grant help="Grant a team read-only or read-write access to a package" {
+        arg <PERMISSIONS> help="`read-only` or `read-write`"
+        arg <TEAM> help="Team in `@scope:team` form"
+        arg <PACKAGE> help="Package name"
+    }
+    cmd list subcommand_required=#true help="List packages visible to a user, organization, or team" {
+        cmd collaborators help="List collaborators for a package, optionally filtering to one user" {
+            arg <PACKAGE> help="Package name"
+            arg "[USER]" help="Optional user name" required=#false
+        }
+        cmd packages help="List packages visible to the current user or an optional entity" {
+            arg "[ENTITY]" help="User, `@organization`, or `@scope:team`" required=#false
+        }
+    }
+    cmd ls help="Alias for `list packages`" {
+        arg "[ENTITIES]…" help="User, `@organization`, or `@scope:team`. Also accepts pnpm's `packages [ENTITY]` compatibility form" required=#false var=#true
+    }
+    cmd revoke help="Revoke a team's access to a package" {
+        arg <TEAM> help="Team in `@scope:team` form"
+        arg <PACKAGE> help="Package name"
+    }
+    cmd set help="Set package visibility or a publish MFA requirement" {
+        arg <SETTING> help="`status=public|private|restricted` or `mfa=none|publish|automation`"
+        arg <PACKAGE> help="Package name"
+    }
+}
 cmd activate help="Emit shell activation code for runtime tool shims" {
     arg <SHELL> help="Shell to emit activation code for" {
         choices bash fish zsh

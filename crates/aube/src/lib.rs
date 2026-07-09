@@ -304,6 +304,8 @@ enum Commands {
     /// Bootstrap aube's cached node-gyp and print the executable path.
     #[command(name = "__node-gyp-bootstrap", hide = true)]
     NodeGypBootstrap { project_dir: PathBuf },
+    /// Manage package access and visibility on the registry
+    Access(commands::access::AccessArgs),
     /// Emit shell activation code for runtime tool shims
     Activate(commands::activate::ActivateArgs),
     /// Add a dependency
@@ -867,6 +869,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::NodeGypBootstrap { project_dir }) => {
             commands::install::node_gyp_bootstrap::print_bootstrapped_binary(&project_dir).await?
         }
+        Some(Commands::Access(args)) => commands::access::run(args).await?,
         Some(Commands::Activate(args)) => commands::activate::run(args)?,
         Some(Commands::Add(args)) => {
             commands::add::run(args, effective_filter.clone()).await?;

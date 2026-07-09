@@ -331,6 +331,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_ACCESS_INVALID_ARGUMENT",
+      "category": "Engine / CLI",
+      "description": "`aube access` received an invalid access setting, permission level, team, or package argument.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_SHIM_CREATE_FAILED",
       "category": "Engine / CLI",
       "description": "`aube activate <shell>` couldn't create or refresh an executable shim in aube's shim directory.",
