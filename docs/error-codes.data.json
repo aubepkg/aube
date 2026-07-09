@@ -391,6 +391,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_RUNTIME_NOT_RUNNABLE",
+      "category": "Engine / CLI",
+      "description": "A downloaded Node.js binary extracted cleanly but failed a post-install `node --version` check, so the install was discarded instead of published. Typically missing shared libraries — musl builds require the host's libstdc++/libgcc (e.g. `apk add libstdc++`).",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_UNSAFE_INDEX_KEY",
       "category": "Misc / safety",
       "description": "A package index key tried to escape its directory (path traversal defense in depth).",

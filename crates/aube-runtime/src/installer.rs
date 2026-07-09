@@ -135,6 +135,23 @@ async fn download_verify_extract(
         return Err(e);
     }
 
+    // Prove the extracted node can actually run on this host before
+    // publishing it; a broken binary (e.g. missing shared libraries)
+    // must fail the install here, not lifecycle scripts later.
+    let staged_node = crate::discover::node_paths_in(&staging).1;
+    let verify_result = tokio::task::spawn_blocking(move || verify_runnable(&staged_node))
+        .await
+        .map_err(|e| {
+            Error::io(
+                "verify installed node",
+                std::io::Error::other(e.to_string()),
+            )
+        })?;
+    if let Err(e) = verify_result {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(e);
+    }
+
     match std::fs::rename(&staging, dest) {
         Ok(()) => {}
         Err(rename_err) => {
@@ -160,6 +177,48 @@ async fn download_verify_extract(
             ),
         }
     })
+}
+
+/// Run the freshly extracted `node` once (`node --version`) before
+/// publishing it, so a binary the host cannot execute fails the
+/// install loudly instead of surfacing as loader errors mid-install
+/// later (elide-dev/WHIPLASH#1254: dynamically-linked musl builds
+/// need the host's libstdc++/libgcc).
+///
+/// # Errors
+/// [`Error::NotRunnable`] when the binary cannot be spawned or exits
+/// non-zero; the message carries the loader/stderr output.
+fn verify_runnable(node_bin: &Path) -> Result<(), Error> {
+    let not_runnable = |reason: String| Error::NotRunnable {
+        path: node_bin.display().to_string(),
+        reason,
+        // A musl host that can't run the unofficial musl build is
+        // almost always missing its shared C++ runtime.
+        hint: if aube_util::libc::detect_linux_libc() == "musl" {
+            "\nhint: musl builds of Node.js need the host's libstdc++/libgcc \
+             (e.g. `apk add libstdc++ libgcc`)"
+                .to_string()
+        } else {
+            String::new()
+        },
+    };
+    let output = std::process::Command::new(node_bin)
+        .arg("--version")
+        .output()
+        .map_err(|e| not_runnable(e.to_string()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    // Loader failures (the interesting case) spam one line per missing
+    // symbol; the first few lines carry the signal.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let excerpt: Vec<&str> = stderr.trim().lines().take(3).collect();
+    let reason = if excerpt.is_empty() {
+        format!("`node --version` exited with {}", output.status)
+    } else {
+        excerpt.join("\n")
+    };
+    Err(not_runnable(reason))
 }
 
 /// Stream `url` to `path`, returning the SHA-256 of the bytes
@@ -236,5 +295,56 @@ fn gc_stale_temp_dirs() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    fn fake_node(dir: &Path, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("node");
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_runnable_accepts_a_working_node() {
+        let tmp = tempfile::tempdir().unwrap();
+        let node = fake_node(tmp.path(), "#!/bin/sh\necho v25.2.0\n");
+        assert!(verify_runnable(&node).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_runnable_rejects_a_binary_that_fails_to_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Mimics musl's loader on a host missing libstdc++ (WHIPLASH#1254).
+        let node = fake_node(
+            tmp.path(),
+            "#!/bin/sh\necho 'Error loading shared library libstdc++.so.6: No such file or directory' >&2\nexit 127\n",
+        );
+        let err = verify_runnable(&node).unwrap_err();
+        match err {
+            Error::NotRunnable { ref reason, .. } => {
+                assert!(reason.contains("libstdc++"), "reason: {reason}");
+            }
+            other => panic!("expected NotRunnable, got: {other}"),
+        }
+        assert_eq!(
+            err.code(),
+            aube_codes::errors::ERR_AUBE_RUNTIME_NOT_RUNNABLE
+        );
+    }
+
+    #[test]
+    fn verify_runnable_rejects_a_missing_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = verify_runnable(&tmp.path().join("node")).unwrap_err();
+        assert!(matches!(err, Error::NotRunnable { .. }));
     }
 }

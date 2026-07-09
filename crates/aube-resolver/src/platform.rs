@@ -101,69 +101,9 @@ pub fn host_triple() -> (&'static str, &'static str, &'static str) {
     // binary built against musl and shipped to glibc users reported
     // libc=musl everywhere, and the glibc-built distro reported
     // glibc everywhere. Wrong prebuilts got installed, runtime
-    // ld.so errors. Probe /lib/ld-musl-* vs /lib*/ld-linux-*.
-    let libc = if std::env::consts::OS == "linux" {
-        detect_linux_libc()
-    } else {
-        ""
-    };
-    (os, cpu, libc)
-}
-
-/// Probe the active dynamic linker to tell musl from glibc at runtime.
-/// Authoritative signal is `/proc/self/maps`: the dynamic linker that
-/// loaded the running aube binary is always mmap'd into the process,
-/// so whichever of `ld-musl-*` or `ld-linux-*` shows up there is the
-/// libc the host actually runs. Cached once via OnceLock.
-///
-/// The previous /lib-scan heuristic broke on Ubuntu glibc hosts that
-/// `apt install musl` for cross-compile tooling: the musl package
-/// drops `/lib/ld-musl-<arch>.so.1` alongside the system glibc loader,
-/// and a first-match scan returned "musl", causing aube to install
-/// `*-linux-x64-musl` native bindings that node (linked against
-/// glibc) cannot load. /proc/self/maps cuts straight to which loader
-/// actually runs and ignores the partial-install noise. The /lib
-/// fallback is kept for non-Linux containers / stripped rootfs that
-/// expose no procfs, but checks glibc *first* so a dual-loader system
-/// still resolves correctly there.
-fn detect_linux_libc() -> &'static str {
-    use std::sync::OnceLock;
-    static CACHE: OnceLock<&'static str> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
-            if maps.contains("/ld-musl-") {
-                return "musl";
-            }
-            if maps.contains("/ld-linux") {
-                return "glibc";
-            }
-        }
-        let glibc_dirs = [
-            "/lib",
-            "/lib64",
-            "/lib/x86_64-linux-gnu",
-            "/lib/aarch64-linux-gnu",
-        ];
-        for dir in glibc_dirs {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    if name.to_string_lossy().starts_with("ld-linux") {
-                        return "glibc";
-                    }
-                }
-            }
-        }
-        if let Ok(entries) = std::fs::read_dir("/lib") {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                if name.to_string_lossy().starts_with("ld-musl-") {
-                    return "musl";
-                }
-            }
-        }
-        "glibc"
-    })
+    // ld.so errors. The shared probe reads /proc/self/maps (glibc-first
+    // /lib scan fallback); see `aube_util::libc`.
+    (os, cpu, aube_util::libc::detect_linux_libc())
 }
 
 /// Apply npm's `os`/`cpu`/`libc` rules to a single (pkg_field, host)

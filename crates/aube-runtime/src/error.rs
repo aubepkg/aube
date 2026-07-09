@@ -33,6 +33,15 @@ pub enum Error {
     #[error("failed to extract Node.js archive: {reason}")]
     ExtractFailed { reason: String },
 
+    /// The extracted binary failed its post-install `node --version`
+    /// check; `hint` is empty or a `\n`-prefixed remediation line.
+    #[error("installed Node.js binary at {path} cannot run: {reason}{hint}")]
+    NotRunnable {
+        path: String,
+        reason: String,
+        hint: String,
+    },
+
     /// `version` carries the full tool spec (`node@22.1.0`,
     /// `aube@1.18.2`).
     #[error("mise failed to install {version}: {reason}")]
@@ -63,6 +72,7 @@ impl Error {
             Error::DownloadFailed { .. } => errors::ERR_AUBE_RUNTIME_DOWNLOAD_FAILED,
             Error::ChecksumMismatch { .. } => errors::ERR_AUBE_RUNTIME_CHECKSUM_MISMATCH,
             Error::ExtractFailed { .. } => errors::ERR_AUBE_RUNTIME_EXTRACT_FAILED,
+            Error::NotRunnable { .. } => errors::ERR_AUBE_RUNTIME_NOT_RUNNABLE,
             Error::MiseInstallFailed { .. } => errors::ERR_AUBE_RUNTIME_MISE_INSTALL_FAILED,
             Error::UnsupportedPlatform { .. } => errors::ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM,
             Error::Offline { .. } => errors::ERR_AUBE_OFFLINE,

@@ -16,6 +16,7 @@ pub mod hash;
 pub mod http;
 pub mod identity;
 pub mod io;
+pub mod libc;
 pub mod progress;
 
 // Convenience re-exports so consumers can reference `aube_util::Embedder`

@@ -25,9 +25,14 @@ impl Platform {
     ///
     /// musl detection is a *runtime* check: aube ships static-musl
     /// Linux binaries, so `cfg!(target_env = "musl")` is true even on
-    /// glibc hosts and cannot be trusted. The presence of musl's
-    /// dynamic loader (`/lib/ld-musl-<arch>.so.1`) is the signal mise
-    /// uses for the same decision.
+    /// glibc hosts and cannot be trusted. Nor is the mere presence of
+    /// musl's loader on disk a signal — Debian/Ubuntu's `musl` package
+    /// drops `/lib/ld-musl-<arch>.so.1` alongside glibc, and probing
+    /// it here downloaded unrunnable `linux-*-musl` Node builds on
+    /// glibc hosts (elide-dev/WHIPLASH#1254). The shared probe in
+    /// [`aube_util::libc`] reads `/proc/self/maps` with a glibc-first
+    /// loader scan fallback — the same detection the resolver uses for
+    /// native bindings.
     pub fn current() -> Result<Platform, Error> {
         let os = match std::env::consts::OS {
             "macos" => "darwin",
@@ -47,7 +52,7 @@ impl Platform {
             "s390x" => "s390x",
             other => other,
         };
-        let libc = (os == "linux" && detect_musl()).then(|| "musl".to_string());
+        let libc = (aube_util::libc::detect_linux_libc() == "musl").then(|| "musl".to_string());
         Ok(Platform {
             os: os.to_string(),
             cpu: cpu.to_string(),
@@ -100,19 +105,6 @@ impl Platform {
             None => format!("{}-{}", self.os, self.cpu),
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn detect_musl() -> bool {
-    // Rust's arch names match musl's loader names for every
-    // architecture Node ships (x86_64, aarch64), so the constant is
-    // used verbatim.
-    std::path::Path::new(&format!("/lib/ld-musl-{}.so.1", std::env::consts::ARCH)).exists()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn detect_musl() -> bool {
-    false
 }
 
 /// The artifact filename for `version` on `platform`:
