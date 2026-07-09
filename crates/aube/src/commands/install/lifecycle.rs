@@ -155,10 +155,21 @@ impl JailBuildPolicy {
         )
     }
 
-    fn should_jail(&self, name: &str, version: &str, source_key: Option<&str>) -> bool {
+    fn should_jail(
+        &self,
+        name: &str,
+        version: &str,
+        source_key: Option<&str>,
+        git_repository_key: Option<&str>,
+    ) -> bool {
         self.enabled
             && !matches!(
-                self.denylist.decide_package(name, version, source_key),
+                self.denylist.decide_package_with_git_repository(
+                    name,
+                    version,
+                    source_key,
+                    git_repository_key,
+                ),
                 aube_scripts::AllowDecision::Deny
             )
     }
@@ -168,10 +179,11 @@ impl JailBuildPolicy {
         name: &str,
         version: &str,
         source_key: Option<&str>,
+        git_repository_key: Option<&str>,
         package_dir: &std::path::Path,
         project_dir: &std::path::Path,
     ) -> Option<aube_scripts::ScriptJail> {
-        if !self.should_jail(name, version, source_key) {
+        if !self.should_jail(name, version, source_key, git_repository_key) {
             return None;
         }
         let mut env = Vec::new();
@@ -392,6 +404,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
         registry_name: String,
         version: String,
         source_key: Option<String>,
+        git_repository_key: Option<String>,
         package_dir: std::path::PathBuf,
         /// Directory containing the dep package and its sibling
         /// symlinks — i.e. `package_dir`'s enclosing `node_modules/`.
@@ -421,7 +434,13 @@ pub(crate) async fn run_dep_lifecycle_scripts(
             // through the allowlist. registry_name() strips alias back to
             // real name.
             let source_key = pkg.source_approval_key();
-            match policy.decide_package(pkg.registry_name(), &pkg.version, source_key.as_deref()) {
+            let git_repository_key = pkg.git_repository_approval_key();
+            match policy.decide_package_with_git_repository(
+                pkg.registry_name(),
+                &pkg.version,
+                source_key.as_deref(),
+                git_repository_key.as_deref(),
+            ) {
                 aube_scripts::AllowDecision::Allow => {}
                 aube_scripts::AllowDecision::Deny | aube_scripts::AllowDecision::Unspecified => {
                     continue;
@@ -500,6 +519,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
             registry_name: pkg.registry_name().to_string(),
             version: pkg.version.clone(),
             source_key: pkg.source_approval_key(),
+            git_repository_key: pkg.git_repository_approval_key(),
             package_dir,
             dep_modules_dir,
             manifest: dep_manifest,
@@ -582,6 +602,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                 &job.registry_name,
                 &job.version,
                 job.source_key.as_deref(),
+                job.git_repository_key.as_deref(),
                 &job.package_dir,
                 &project_dir,
             );
@@ -1113,8 +1134,14 @@ pub(super) fn unreviewed_dep_builds(
     let mut unreviewed = Vec::new();
     for (dep_path, pkg) in &graph.packages {
         let source_key = pkg.source_approval_key();
+        let git_repository_key = pkg.git_repository_approval_key();
         if !matches!(
-            policy.decide_package(pkg.registry_name(), &pkg.version, source_key.as_deref()),
+            policy.decide_package_with_git_repository(
+                pkg.registry_name(),
+                &pkg.version,
+                source_key.as_deref(),
+                git_repository_key.as_deref(),
+            ),
             aube_scripts::AllowDecision::Unspecified
         ) {
             continue;

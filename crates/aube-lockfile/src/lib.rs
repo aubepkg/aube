@@ -499,6 +499,18 @@ impl LockedPackage {
             .map(|source| format!("{}@{}", self.registry_name(), source.specifier()))
     }
 
+    /// Repository-wide approval key for a Git-backed package source.
+    ///
+    /// Unlike [`Self::source_approval_key`], this deliberately omits the
+    /// resolved commit. It is only used for an explicit `allowBuilds`
+    /// `git+<repository>` rule, never for package-name approval.
+    pub fn git_repository_approval_key(&self) -> Option<String> {
+        let LocalSource::Git(git) = self.local_source.as_ref()? else {
+            return None;
+        };
+        Some(format!("{}@git+{}", self.registry_name(), git.url))
+    }
+
     /// Declared peer ranges with pnpm's meta-only peers folded in as `*`.
     ///
     /// pnpm records a `peerDependencies: { x: '*' }` entry for every
@@ -586,6 +598,23 @@ mod locked_package_tests {
         assert_eq!(
             pkg.source_approval_key(),
             Some("pkg@https://example.com/pkg.tgz".to_string())
+        );
+    }
+
+    #[test]
+    fn git_repository_approval_key_omits_resolved_commit() {
+        let mut pkg = pkg();
+        pkg.local_source = Some(LocalSource::Git(GitSource {
+            url: "https://github.com/acme/pkg.git".to_string(),
+            committish: Some("main".to_string()),
+            resolved: "0123456789012345678901234567890123456789".to_string(),
+            integrity: None,
+            subpath: None,
+        }));
+
+        assert_eq!(
+            pkg.git_repository_approval_key(),
+            Some("pkg@git+https://github.com/acme/pkg.git".to_string())
         );
     }
 }

@@ -158,8 +158,14 @@ pub(super) fn collect_ignored(project_dir: &std::path::Path) -> miette::Result<V
         // real pkg name. npm: alias would sneak past otherwise. Same
         // fix as every other policy.decide callsite.
         let source_key = pkg.source_approval_key();
+        let git_repository_key = pkg.git_repository_approval_key();
         if matches!(
-            policy.decide_package(pkg.registry_name(), &pkg.version, source_key.as_deref()),
+            policy.decide_package_with_git_repository(
+                pkg.registry_name(),
+                &pkg.version,
+                source_key.as_deref(),
+                git_repository_key.as_deref(),
+            ),
             aube_scripts::AllowDecision::Allow
         ) {
             continue;

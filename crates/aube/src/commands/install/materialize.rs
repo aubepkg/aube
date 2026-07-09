@@ -148,11 +148,14 @@ pub(super) async fn run_gvs_prewarm_materializer(
             "graph_hash_compute",
         );
         let allow = |pkg: &aube_lockfile::LockedPackage| {
+            let source_key = pkg.source_approval_key();
+            let git_repository_key = pkg.git_repository_approval_key();
             matches!(
-                build_policy_for_hash.decide_package(
+                build_policy_for_hash.decide_package_with_git_repository(
                     pkg.registry_name(),
                     &pkg.version,
-                    pkg.source_approval_key().as_deref(),
+                    source_key.as_deref(),
+                    git_repository_key.as_deref(),
                 ),
                 aube_scripts::AllowDecision::Allow
             )

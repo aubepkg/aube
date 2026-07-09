@@ -55,6 +55,15 @@ aube approve-builds
 Root-package lifecycle scripts (your own project's) still run normally; only
 dependency scripts need approval.
 
+For a Git dependency that tracks a branch, approve the package and repository
+URL rather than a resolved commit. The rule remains limited to that repository;
+a package-name-only rule never approves Git-sourced code:
+
+```yaml
+allowBuilds:
+  native-addon@git+https://github.com/acme/native-addon.git: true
+```
+
 Settings: [`allowBuilds`](/settings/#setting-allowbuilds). Install adds
 unreviewed build packages to `aube-workspace.yaml` (or `pnpm-workspace.yaml`
 if one already exists) as `false`; approving them flips the entry to `true`.

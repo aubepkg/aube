@@ -266,11 +266,14 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         } else {
             let engine = node_version.map(aube_lockfile::graph_hash::engine_name_default);
             let allow = |pkg: &aube_lockfile::LockedPackage| {
+                let source_key = pkg.source_approval_key();
+                let git_repository_key = pkg.git_repository_approval_key();
                 matches!(
-                    build_policy.decide_package(
+                    build_policy.decide_package_with_git_repository(
                         pkg.registry_name(),
                         &pkg.version,
-                        pkg.source_approval_key().as_deref(),
+                        source_key.as_deref(),
+                        git_repository_key.as_deref(),
                     ),
                     aube_scripts::AllowDecision::Allow
                 )
