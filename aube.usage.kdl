@@ -101,7 +101,7 @@ cmd add help="Add a dependency" {
         long_help "Allow every dependency's lifecycle scripts to run.\n\nBypasses the `allowBuilds` allowlist for this invocation. Do not use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`."
     }
     flag --deny-build help="Mark a dependency's lifecycle scripts as reviewed and denied" var=#true {
-        long_help "Mark a dependency's lifecycle scripts as reviewed and denied.\n\nWrites `allowBuilds: { <pkg>: false }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's lifecycle scripts stay skipped without tripping `strictDepBuilds=true`. Repeatable — pass the flag once per package.\n\nConflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned denial in the workspace yaml on restore. Also conflicts with `--allow-build` for the same package name."
+        long_help "Mark a dependency's lifecycle scripts as reviewed and denied.\n\nWrites `allowBuilds: { <pkg>: false }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's lifecycle scripts stay skipped without tripping `strictDepBuilds=true`. Repeatable — pass the flag once per package.\n\nConflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned denial in the workspace yaml on restore. Also conflicts with `--allow-build` for the same package name and with `--dangerously-allow-all-builds`."
         arg <PKG>
     }
     flag --ignore-scripts help="Skip lifecycle scripts (no-op; aube already skips by default)" hide=#true

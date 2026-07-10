@@ -1376,6 +1376,27 @@ mod cli_spec_tests {
     }
 
     #[test]
+    fn add_rejects_deny_build_with_dangerously_allow_all_builds() {
+        let err = match Cli::try_parse_from([
+            "aube",
+            "add",
+            "some-package",
+            "--deny-build=some-package",
+            "--dangerously-allow-all-builds",
+        ]) {
+            Ok(_) => panic!("deny-build should conflict with dangerously-allow-all-builds"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string().contains(
+                "'--deny-build=<PKG>' cannot be used with '--dangerously-allow-all-builds'"
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn lifter_does_not_eat_lifted_flag_as_kept_flag_value() {
         // Regression: `aube --dir /tmp --frozen-lockfile install` would
         // previously lose `--frozen-lockfile` if `--dir`'s value was

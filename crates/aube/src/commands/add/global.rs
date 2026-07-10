@@ -2,6 +2,13 @@ use super::{AddArgs, run};
 use miette::{Context, IntoDiagnostic};
 use std::collections::BTreeMap;
 
+pub(super) struct GlobalAddOptions {
+    pub(super) allow_build: Vec<String>,
+    pub(super) allow_low_downloads: bool,
+    pub(super) dangerously_allow_all_builds: bool,
+    pub(super) deny_build: Vec<String>,
+}
+
 /// `aube add -g <pkg>...` — install into an isolated global install dir
 /// and symlink the resulting binaries into the global bin dir.
 ///
@@ -18,13 +25,9 @@ use std::collections::BTreeMap;
 /// bin linking. Without this guard every failed `add -g` would leak a
 /// subdir that `scan_packages` ignores (no hash symlink) but disk space
 /// keeps.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_global(
     packages: &[String],
-    allow_build: Vec<String>,
-    allow_low_downloads: bool,
-    dangerously_allow_all_builds: bool,
-    deny_build: Vec<String>,
+    options: GlobalAddOptions,
     lockfile: crate::cli_args::LockfileArgs,
     network: crate::cli_args::NetworkArgs,
     virtual_store: crate::cli_args::VirtualStoreArgs,
@@ -75,10 +78,7 @@ pub(super) async fn run_global(
         .collect();
     let result = run_global_inner(
         packages,
-        allow_build,
-        allow_low_downloads,
-        dangerously_allow_all_builds,
-        deny_build,
+        options,
         &layout,
         &install_dir,
         lockfile,
@@ -114,13 +114,9 @@ pub(super) async fn run_global(
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_global_inner(
     packages: &[String],
-    allow_build: Vec<String>,
-    allow_low_downloads: bool,
-    dangerously_allow_all_builds: bool,
-    deny_build: Vec<String>,
+    options: GlobalAddOptions,
     layout: &crate::commands::global::GlobalLayout,
     install_dir: &std::path::Path,
     lockfile: crate::cli_args::LockfileArgs,
@@ -128,6 +124,12 @@ async fn run_global_inner(
     virtual_store: crate::cli_args::VirtualStoreArgs,
 ) -> miette::Result<()> {
     use crate::commands::global;
+    let GlobalAddOptions {
+        allow_build,
+        allow_low_downloads,
+        dangerously_allow_all_builds,
+        deny_build,
+    } = options;
 
     // Seed a minimal package.json so the resolver has a project to work
     // against. We never persist metadata beyond this; the install dir is

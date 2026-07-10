@@ -86,11 +86,11 @@ pub struct AddArgs {
     /// Conflicts with `--no-save`, which only snapshots `package.json`
     /// and the lockfile and would leave an orphaned denial in the
     /// workspace yaml on restore. Also conflicts with `--allow-build` for
-    /// the same package name.
+    /// the same package name and with `--dangerously-allow-all-builds`.
     #[arg(
         long = "deny-build",
         value_name = "PKG",
-        conflicts_with = "no_save",
+        conflicts_with_all = ["no_save", "dangerously_allow_all_builds"],
         require_equals = true,
         value_parser = parse_deny_build_value,
     )]
@@ -243,10 +243,12 @@ pub async fn run(
     if global {
         return global::run_global(
             packages,
-            allow_build,
-            allow_low_downloads,
-            dangerously_allow_all_builds,
-            deny_build,
+            global::GlobalAddOptions {
+                allow_build,
+                allow_low_downloads,
+                dangerously_allow_all_builds,
+                deny_build,
+            },
             lockfile,
             network,
             virtual_store,
