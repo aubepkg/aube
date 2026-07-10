@@ -318,6 +318,19 @@ teardown() {
 	assert_success
 }
 
+@test "aube add -g --dangerously-allow-all-builds runs unreviewed builds" {
+	AUBE_STRICT_DEP_BUILDS=true run aube add -g \
+		aube-test-builds-marker@1.0.0 \
+		--dangerously-allow-all-builds
+	assert_success
+	refute_output --partial "must be reviewed before install"
+	refute_output --partial "ignored build scripts"
+
+	pkg_dir="$AUBE_HOME/global-aube"
+	install_dir="$(find "$pkg_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+	assert_file_exists "$install_dir/aube-builds-marker.txt"
+}
+
 @test "aube add -g --deny-build=<pkg> marks a global dep's build scripts reviewed" {
 	AUBE_STRICT_DEP_BUILDS=true run aube add -g \
 		--deny-build=aube-test-builds-marker \

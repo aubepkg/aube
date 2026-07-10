@@ -1357,6 +1357,25 @@ mod cli_spec_tests {
     }
 
     #[test]
+    fn add_accepts_dangerously_allow_all_builds_after_package() {
+        let cli = Cli::try_parse_from([
+            "aube",
+            "add",
+            "--global",
+            "opencode-ai@1.17.13",
+            "--dangerously-allow-all-builds",
+        ])
+        .expect("add --dangerously-allow-all-builds should parse after a package");
+
+        let Some(Commands::Add(add_args)) = cli.command else {
+            panic!("expected add subcommand");
+        };
+        assert!(add_args.global);
+        assert!(add_args.dangerously_allow_all_builds);
+        assert_eq!(add_args.packages, ["opencode-ai@1.17.13"]);
+    }
+
+    #[test]
     fn lifter_does_not_eat_lifted_flag_as_kept_flag_value() {
         // Regression: `aube --dir /tmp --frozen-lockfile install` would
         // previously lose `--frozen-lockfile` if `--dir`'s value was

@@ -46,6 +46,12 @@ Bypass the [`lowDownloadThreshold`] confirm prompt / refusal for this invocation
 
 `aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below [`lowDownloadThreshold`]. The flag is intended for the cases where you've already verified the package out-of-band — adding a brand-new niche tool, a fresh fork, an internal scratch package — and don't want the prompt to interrupt scripted workflows. Does not affect the OSV malicious-package check, which remains a hard block.
 
+### `--dangerously-allow-all-builds`
+
+Allow every dependency's lifecycle scripts to run.
+
+Bypasses the `allowBuilds` allowlist for this invocation. Do not use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.
+
 ### `--deny-build… <PKG>`
 
 Mark a dependency's lifecycle scripts as reviewed and denied.
