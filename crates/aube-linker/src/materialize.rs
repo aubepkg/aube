@@ -561,6 +561,7 @@ impl Linker {
             let target = pkg_nm_dir.join(rel_path);
 
             if let Err(e) = self.link_file_fresh(stored, rel_path, &target) {
+                core::hint::cold_path();
                 if let Error::MissingStoreFile { .. } = &e {
                     invalidate_stale_index_for_package(&self.store, pkg);
                 }
@@ -785,6 +786,7 @@ impl Linker {
                     }
                 };
                 if let Err(e) = reflink_result {
+                    core::hint::cold_path();
                     // Source-missing short-circuit avoids the misleading
                     // "fell back to copy" trace and the redundant copy
                     // attempt that would just ENOENT for the same reason.
@@ -840,6 +842,7 @@ impl Linker {
             }
             LinkStrategy::Hardlink => {
                 if let Err(e) = std::fs::hard_link(&stored.store_path, dst) {
+                    core::hint::cold_path();
                     if !stored.store_path.exists() {
                         return Err(missing_source());
                     }
