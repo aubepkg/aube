@@ -72,6 +72,12 @@ jobs:
       contents: read
     env:
       RUSTFLAGS: "-D warnings"
+      # Socket credentials: the SOCKET_SECURITY_KEY repo secret feeds both
+      # names sfw reads (SOCKET_API_KEY primary, SOCKET_API_TOKEN
+      # forward-canonical). Until the secret lands these are empty and sfw
+      # runs in its keyless free tier — the firewall is active either way.
+      SOCKET_API_KEY: ${{ secrets.SOCKET_SECURITY_KEY }}
+      SOCKET_API_TOKEN: ${{ secrets.SOCKET_SECURITY_KEY }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -82,6 +88,14 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: false
+      - name: soak + external-tool pin gates
+        run: |
+          node scripts/soak/soak.mts --check
+          node scripts/soak/external-tools.mts --check
+      - name: socket firewall shims
+        run: |
+          node scripts/soak/external-tools.mts --install sfw --shims
+          echo "$HOME/.socket/_wheelhouse/bin" >> "$GITHUB_PATH"
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
