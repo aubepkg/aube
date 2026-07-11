@@ -29,6 +29,7 @@ import {
   SOAK_MINUTES,
   VERSION_PIN_RE,
   addDaysIso,
+  isValidIsoDate,
   todayIso,
 } from './constants.mts'
 import { REPO_ROOT, SURFACES } from './paths.mts'
@@ -135,6 +136,16 @@ export function checkExcludeAnnotations(body: string, file: string): Finding[] {
       continue
     }
     const { published, removable } = entry.annotation
+    if (!isValidIsoDate(published) || !isValidIsoDate(removable)) {
+      out.push({
+        file,
+        what: `soak exclude '${entry.name}' annotation dates`,
+        saw: `${published} | ${removable}`,
+        wanted: 'real YYYY-MM-DD calendar dates',
+        fix: 'correct the annotation to the real registry publish date',
+      })
+      continue
+    }
     const expected = addDaysIso(published, SOAK_DAYS)
     if (removable !== expected) {
       out.push({

@@ -30,6 +30,9 @@ run = "cargo test"
 [tasks.soak]
 run = "node scripts/soak/soak.mts --check"
 
+[tasks."test:scripts"]
+run = "node --test scripts/soak/*.test.mts"
+
 [tasks."soak:fix"]
 run = "node scripts/soak/soak.mts --fix"
 

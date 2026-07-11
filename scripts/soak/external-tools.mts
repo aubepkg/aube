@@ -38,7 +38,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
-import { ANNOTATION_RE, SOAK_DAYS, addDaysIso } from './constants.mts'
+import { SOAK_DAYS, addDaysIso, isValidIsoDate, todayIso } from './constants.mts'
 import {
   BIN_DIR,
   DOCKER_PREBAKE,
@@ -105,12 +105,19 @@ export function checkPins(tools: Record<string, ToolPin>): string[] {
     }
     if (pin.soakBypass) {
       const { published, removable } = pin.soakBypass
+      if (!isValidIsoDate(published) || !isValidIsoDate(removable)) {
+        out.push(`${name}: soakBypass dates are not real YYYY-MM-DD calendar dates`)
+        continue
+      }
       const expected = addDaysIso(published, SOAK_DAYS)
       if (removable !== expected) {
         out.push(`${name}: soakBypass removable ${removable}, wanted ${expected} (published + ${SOAK_DAYS}d)`)
       }
-      if (!ANNOTATION_RE.test(`# published: ${published} | removable: ${removable}`)) {
-        out.push(`${name}: soakBypass dates are not YYYY-MM-DD`)
+      // A bypass whose window has passed is dead weight: the version has
+      // soaked, so the annotation must come off (same rule the workspace
+      // yaml excludes live under).
+      if (removable < todayIso()) {
+        out.push(`${name}: soakBypass expired (removable ${removable}) — the pin has soaked, remove the annotation`)
       }
     }
   }
@@ -216,9 +223,9 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   }
   const repo = pin.repository!.replace(/^github:/, '')
   const url = `https://github.com/${repo}/releases/download/v${pin.version}/${plat.asset}`
-  const binName = pin.binaryName ?? name
+  let binName = pin.binaryName ?? name
   const destDir = path.join(RACK_DIR, name, pin.version!)
-  const destBin = path.join(destDir, binName)
+  let destBin = path.join(destDir, binName)
   if (existsSync(destBin)) {
     linkHandle(destBin, binName)
     console.log(`[external-tools] ${name}@${pin.version} already installed`)
@@ -237,7 +244,14 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
     if (res.status !== 0) {
       throw new Error(`${name}: archive extract failed`)
     }
+    // Windows archives ship `<bin>.exe`; resolve it before giving up, and
+    // clean the partial dir so a retry re-extracts instead of wedging.
+    if (!existsSync(destBin) && existsSync(`${destBin}.exe`)) {
+      destBin = `${destBin}.exe`
+      binName = `${binName}.exe`
+    }
     if (!existsSync(destBin)) {
+      rmSync(destDir, { recursive: true, force: true })
       throw new Error(`${name}: ${binName} not found in extracted archive`)
     }
   } else {
@@ -417,6 +431,10 @@ fi
 export ${sentinel}=1
 exec sfw '${cmd}' "$@"
 `
+    // Remove the handle before writing: writeFileSync FOLLOWS a symlink, so
+    // writing through a rack handle would overwrite the pinned binary itself
+    // with the shim body (which then execs itself forever).
+    rmSync(handle, { force: true })
     writeFileSync(handle, body)
     chmodSync(handle, 0o755)
   }

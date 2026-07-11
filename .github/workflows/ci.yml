@@ -90,6 +90,7 @@ jobs:
         run: |
           node scripts/soak/soak.mts --check
           node scripts/soak/external-tools.mts --check
+          node --test scripts/soak/*.test.mts
       - name: pinned package managers + socket firewall
         run: |
           node scripts/soak/external-tools.mts --install pnpm --install npm --install sfw --shims

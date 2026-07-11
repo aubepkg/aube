@@ -35,6 +35,14 @@ export function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+// Shape-valid but impossible dates (2026-13-45) round-trip differently (or
+// produce Invalid Date), so callers can reject them with a finding instead
+// of crashing on Invalid Date arithmetic.
+export function isValidIsoDate(iso: string): boolean {
+  const d = new Date(`${iso}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso
+}
+
 export function addDaysIso(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() + days)
