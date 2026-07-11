@@ -244,11 +244,11 @@ soak:
   window: SOAK_DAYS=7 in scripts/soak/constants.mts — the ONE source; every surface derives or is parity-checked against it
   surfaces[5]:
     - .cargo/config.toml global-min-publish-age ("7 days")
-    - rust-toolchain.toml dated nightly (adopt only nightlies >= 7 days old)
+    - rust-toolchain.toml dated nightly (channel date vs the machine-read `# adopted:` line — soak.mts enforces adopted >= channel + SOAK_DAYS)
     - docs/pnpm-workspace.yaml minimumReleaseAge (10080 minutes; also the taze catalog: home — aube reads this file for docs installs, and a ROOT pnpm-workspace.yaml would re-anchor the docs install at repo root, so it must stay in docs/)
     - docs/.npmrc min-release-age (7 days, npm >= 11.17 parity)
     - docs/taze.config.mts maturityPeriod (imports SOAK_DAYS)
-  manager: mise run soak (check, CI-gated in test-linux) / soak:fix (syncs windows, prunes expired excludes) / deps:update (taze + cargo update, both soaked)
+  manager: .claude/skills/soak/SKILL.md is the how-to; mise run soak (check, CI-gated in test-linux) / soak:fix (syncs windows, prunes expired excludes) / deps:update (taze + cargo update, both soaked)
   excludes: version-pinned minimumReleaseAgeExclude entries REQUIRE `# published: YYYY-MM-DD | removable: YYYY-MM-DD` on the line above (removable = published + 7d); bare names/globs are standing trust and need no annotation; expired pins are pruned by soak:fix
   socket_firewall: CI installs sfw (free tier keyless; enterprise auto-selected when the SOCKET_SECURITY_KEY repo secret lands — the one env var every Socket product reads, no aliasing) and shims npm/yarn/pnpm/pip/pip3/uv/cargo via scripts/soak/external-tools.mts --shims; the buildkite agent image pre-bakes the same binary + shims
 

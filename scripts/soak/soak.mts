@@ -253,6 +253,53 @@ export function checkCatalogParity(
   return out
 }
 
+/**
+ * The toolchain pin obeys the same soak: a dated nightly must have been at
+ * least SOAK_DAYS old on its recorded adoption date (`# adopted:` line,
+ * machine-read here). Stable channel pins carry no date and pass freely.
+ */
+export function checkToolchainSoak(body: string, file: string): Finding[] {
+  const channelDate = /^channel\s*=\s*"nightly-(\d{4}-\d{2}-\d{2})"/m.exec(body)?.[1]
+  if (!channelDate) {
+    return []
+  }
+  const adopted = /^#\s*adopted:\s*(\d{4}-\d{2}-\d{2})\s*$/m.exec(body)?.[1]
+  if (!adopted) {
+    return [
+      {
+        file,
+        what: 'toolchain adoption date',
+        saw: '(no `# adopted: YYYY-MM-DD` line)',
+        wanted: 'a recorded adoption date so the nightly soak is checkable',
+        fix: 'add `# adopted: <date the pin was chosen>` above [toolchain]',
+      },
+    ]
+  }
+  if (!isValidIsoDate(channelDate) || !isValidIsoDate(adopted)) {
+    return [
+      {
+        file,
+        what: 'toolchain soak dates',
+        saw: `${channelDate} | ${adopted}`,
+        wanted: 'real YYYY-MM-DD calendar dates',
+        fix: 'correct the nightly channel / adopted dates',
+      },
+    ]
+  }
+  if (addDaysIso(channelDate, SOAK_DAYS) > adopted) {
+    return [
+      {
+        file,
+        what: 'toolchain nightly soak',
+        saw: `nightly-${channelDate} adopted ${adopted}`,
+        wanted: `a nightly at least ${SOAK_DAYS} days old at adoption`,
+        fix: 'pin the newest nightly that had cleared the window on the adoption date',
+      },
+    ]
+  }
+  return []
+}
+
 export function checkTazeConfig(body: string, file: string): Finding[] {
   const out: Finding[] = []
   if (!body.includes('maturityPeriod')) {
@@ -339,6 +386,7 @@ export function main(argv: string[] = process.argv.slice(2)): number {
     { rel: SURFACES.npmrc, check: checkNpmrc, fixer: fixNpmrc },
     { rel: SURFACES.workspaceYaml, check: checkWorkspaceYaml, fixer: fixWorkspaceYaml },
     { rel: SURFACES.tazeConfig, check: checkTazeConfig },
+    { rel: SURFACES.toolchainToml, check: checkToolchainSoak },
   ]
 
   for (const s of surfaces) {

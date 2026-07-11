@@ -5,6 +5,10 @@
 /scratch/
 /sandbox/
 /bench-install.sh
-/.claude/
+# Local agent state stays untracked, but committed skills are allowed:
+# git cannot re-include children of an excluded DIRECTORY, so exclude the
+# dir's contents (/*) and negate the skills subtree.
+/.claude/*
+!/.claude/skills/
 /crates/aube-resolver/data/primer-top*.json
 /crates/aube-resolver/data/primer-top*.rkyv.zst

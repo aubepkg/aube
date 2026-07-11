@@ -22,6 +22,7 @@ export const SURFACES = {
   npmrc: 'docs/.npmrc',
   workspaceYaml: 'docs/pnpm-workspace.yaml',
   tazeConfig: 'docs/taze.config.mts',
+  toolchainToml: 'rust-toolchain.toml',
 }
 
 // The directory holding the npm package the soak governs (taze runs here,

@@ -8,6 +8,7 @@ import {
   checkExcludeAnnotations,
   checkNpmrc,
   checkTazeConfig,
+  checkToolchainSoak,
   checkWorkspaceYaml,
   fixNpmrc,
   fixWorkspaceYaml,
@@ -114,4 +115,15 @@ test('taze config: window must be imported, not hand-copied', () => {
   assert.equal(checkTazeConfig(good, 't').length, 0)
   assert.equal(checkTazeConfig('export default { maturityPeriod: 7 }\n', 't').length, 1)
   assert.equal(checkTazeConfig('export default {}\n', 't').length, 2)
+})
+
+test('toolchain soak: nightly must be SOAK_DAYS old at adoption; stable passes', () => {
+  const good = '# adopted: 2026-07-11\n[toolchain]\nchannel = "nightly-2026-07-04"\n'
+  assert.equal(checkToolchainSoak(good, 't').length, 0)
+  const tooFresh = '# adopted: 2026-07-11\n[toolchain]\nchannel = "nightly-2026-07-08"\n'
+  assert.match(checkToolchainSoak(tooFresh, 't')[0]!.what, /nightly soak/)
+  const noDate = '[toolchain]\nchannel = "nightly-2026-07-04"\n'
+  assert.match(checkToolchainSoak(noDate, 't')[0]!.what, /adoption date/)
+  const stable = '[toolchain]\nchannel = "1.95.0"\n'
+  assert.equal(checkToolchainSoak(stable, 't').length, 0)
 })
