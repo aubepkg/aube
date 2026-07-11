@@ -1,5 +1,65 @@
 {
   "tools": {
+    "pnpm": {
+      "description": "pnpm — the fleet's package manager.",
+      "version": "11.8.0",
+      "packageManager": "pnpm",
+      "repository": "github:pnpm/pnpm",
+      "release": "asset",
+      "notes": [
+        "Latest soaked pnpm — CI downloads + SRI-verifies (sha512) the pinned asset",
+        "darwin-x64 has no SEA asset upstream; its pin is the npm registry tarball"
+      ],
+      "platforms": {
+        "darwin-arm64": {
+          "asset": "pnpm-darwin-arm64.tar.gz",
+          "integrity": "sha512-kgYcLu653+Gx7l7qEtM2zMNLBvb96ABcRSkzOrbfvkndb+veMt6lHJK5r3wTfuRYlDb8Lnk/h0wUD6sP3taJ9g=="
+        },
+        "darwin-x64": {
+          "asset": "pnpm-11.8.0.tgz",
+          "integrity": "sha512-wfXnxMskHI8XS3Q4UdgvQrgCMkr8iw8Ra5atsVqgZmSUjd42lgo7oQebpbSyndAUATW5S1tfUmNZIknWjlVfJg=="
+        },
+        "linux-arm64": {
+          "asset": "pnpm-linux-arm64.tar.gz",
+          "integrity": "sha512-p1IcVUlwYf3OJQYmdHGFr08d1BOSatHEmLJSBSdoNPGqOqfslFHjSqiuZ/3yuQxxypqp8OfnM3ci3Jh7ZEBlSw=="
+        },
+        "linux-arm64-musl": {
+          "asset": "pnpm-linux-arm64-musl.tar.gz",
+          "integrity": "sha512-u5Do3diwK7FL5vk+i/x2I4q4ujdZ5gSoLNgmlt1w2C7NOjAZOpDK0CJYM4gDa5BetEwzdNpuN/gaMqzJk6I5NA=="
+        },
+        "linux-x64": {
+          "asset": "pnpm-linux-x64.tar.gz",
+          "integrity": "sha512-Sn7hG4Xsq6pmi8TE8lpIkwRzAYzf5qtFk8zSsZWkSJFcmv5FlsrO8UP3lLRI+ppcRNYS10FMCTwXe3Nt66A0Pg=="
+        },
+        "linux-x64-musl": {
+          "asset": "pnpm-linux-x64-musl.tar.gz",
+          "integrity": "sha512-5WXlo2yCDmoBIue5iHRK3zNSPVAmzci+5RhuxwUA4hnH9W3TFjDnQHyAzDVnkY878mfTXE35THZeEc1OKYPmag=="
+        },
+        "win-arm64": {
+          "asset": "pnpm-win32-arm64.zip",
+          "integrity": "sha512-iv1hJEj9FUiVFae2cmCYjbRK0Xn27Uh+kpglT2LWvQyl4WeIOgs1ouKrptVxk3X3t7DB5vuYKbsmE+9BnoQ4FA=="
+        },
+        "win-x64": {
+          "asset": "pnpm-win32-x64.zip",
+          "integrity": "sha512-jyqMgedndbck/xJjXPem5Lw7V0YtDfiUJIB81e/hmnrg3yLKPoyCKO5ILegYkLPIr945IJRcVoJZwjtog8FCqg=="
+        }
+      }
+    },
+    "npm": {
+      "notes": [
+        "npm 12 (min-release-age support). ONE platform-agnostic registry tarball, single integrity",
+        "Installed from the pinned tarball only — never npm install -g npm, no self-update path"
+      ],
+      "description": "npm — pinned, SRI-verified registry tarball; installed without self-update",
+      "repository": "npm:npm",
+      "version": "12.0.0",
+      "soakBypass": {
+        "version": "12.0.0",
+        "published": "2026-07-09",
+        "removable": "2026-07-16"
+      },
+      "integrity": "sha512-qzvPQfNSY7louiM6rv7dL0hi5esBGLn1lLwxbdyL5XOIssWzoYMwn8xqvWhYcZL6onTkenYSxrtKxsFrFbUFyw=="
+    },
     "sfw-free": {
       "description": "Socket Firewall (free tier) — malware gate on dep installs.",
       "version": "1.13.1",

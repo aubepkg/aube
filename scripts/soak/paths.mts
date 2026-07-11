@@ -61,3 +61,12 @@ export function assertRepoRoot(): void {
     throw new Error(`repo root not found at ${REPO_ROOT}`)
   }
 }
+
+// Candidates (tried in order) for installing an extracted external tool's
+// runtime deps — the repo's own package manager first, of course.
+export const PM_DEP_INSTALLERS: string[][] = [
+  [path.join(REPO_ROOT, 'target/debug/aube'), 'install', '--prod'],
+  ['aube', 'install', '--prod'],
+  ['pnpm', 'install', '--prod', '--ignore-scripts'],
+  ['npm', 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'],
+]

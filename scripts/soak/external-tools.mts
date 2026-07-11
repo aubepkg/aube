@@ -28,6 +28,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -42,6 +43,7 @@ import {
   BIN_DIR,
   DOCKER_PREBAKE,
   EXTERNAL_TOOLS_JSON,
+  PM_DEP_INSTALLERS,
   RACK_DIR,
   REPO_ROOT,
   RUST_TOOLCHAIN_TOML,
@@ -206,6 +208,12 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   if (!plat) {
     throw new Error(`${name}: no pinned asset for ${platformKey()}`)
   }
+  // A platform pinned to a registry .tgz (pnpm has no darwin-x64 SEA
+  // upstream) routes through the npm-tarball path instead.
+  if (plat.asset.endsWith('.tgz')) {
+    await installNpmTarball(name, name, pin.version!, plat.integrity)
+    return
+  }
   const repo = pin.repository!.replace(/^github:/, '')
   const url = `https://github.com/${repo}/releases/download/v${pin.version}/${plat.asset}`
   const binName = pin.binaryName ?? name
@@ -240,6 +248,80 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   console.log(`[external-tools] installed ${name}@${pin.version} -> ${destBin}`)
 }
 
+/**
+ * Registry-tarball install: verify against the pinned SRI, extract into the
+ * rack, materialize runtime deps with the repo's own package manager (this
+ * repo IS one — dogfood it, with pnpm/npm as last-resort fallbacks), and
+ * link a node wrapper for the package's bin. Tarballs that bundle their
+ * node_modules (npm does) skip the dependency install.
+ */
+async function installNpmTarball(
+  name: string,
+  pkg: string,
+  version: string,
+  integrity: string,
+): Promise<void> {
+  const base = pkg.split('/').pop()
+  const url = `https://registry.npmjs.org/${pkg}/-/${base}-${version}.tgz`
+  const destDir = path.join(RACK_DIR, name, version)
+  const pkgDir = path.join(destDir, 'package')
+  // Completion marker is the extracted manifest, not the directory: a
+  // failed/interrupted extract leaves the dir behind and would otherwise
+  // wedge every later install. Reset and redo instead.
+  const manifest = path.join(pkgDir, 'package.json')
+  if (!existsSync(manifest)) {
+    rmSync(destDir, { recursive: true, force: true })
+    console.log(`[external-tools] downloading ${name}@${version} (npm registry)`)
+    const buf = await download(url, integrity)
+    mkdirSync(destDir, { recursive: true })
+    const archive = path.join(destDir, 'package.tgz')
+    writeFileSync(archive, buf)
+    const res = spawnSync('tar', ['-xzf', archive, '-C', destDir], { stdio: 'inherit' })
+    rmSync(archive)
+    if (res.status !== 0) {
+      throw new Error(`${name}: tar extract failed`)
+    }
+    const pkgJson = JSON.parse(readFileSync(manifest, 'utf8'))
+    const hasDeps = Object.keys(pkgJson.dependencies ?? {}).length > 0
+    if (hasDeps && !existsSync(path.join(pkgDir, 'node_modules'))) {
+      if (installDeps(name, pkgDir) !== 0) {
+        rmSync(destDir, { recursive: true, force: true })
+        throw new Error(`${name}: dependency install failed`)
+      }
+    }
+  }
+  const pkgJson = JSON.parse(readFileSync(manifest, 'utf8'))
+  const bins =
+    typeof pkgJson.bin === 'string' ? { [name]: pkgJson.bin } : (pkgJson.bin ?? {})
+  const binRel = bins[name] ?? Object.values(bins)[0]
+  if (binRel) {
+    const wrapper = path.join(RACK_DIR, name, `${name}-wrapper`)
+    writeFileSync(
+      wrapper,
+      `#!/usr/bin/env bash\nexec node '${path.join(pkgDir, binRel as string)}' "$@"\n`,
+    )
+    chmodSync(wrapper, 0o755)
+    linkHandle(wrapper, name)
+  }
+  console.log(`[external-tools] installed ${name}@${version}`)
+}
+
+function installDeps(name: string, pkgDir: string): number {
+  for (const [cmd, ...args] of PM_DEP_INSTALLERS) {
+    if (cmd!.includes('/') && !existsSync(cmd!)) {
+      continue
+    }
+    console.log(`[external-tools] ${name}: installing deps via ${path.basename(cmd!)}`)
+    const res = spawnSync(cmd!, args, { cwd: pkgDir, stdio: 'inherit' })
+    if (res.error) {
+      continue
+    }
+    return res.status ?? 1
+  }
+  console.error(`[external-tools] ${name}: no package manager available for deps`)
+  return 1
+}
+
 function hasSocketToken(): boolean {
   return Boolean(process.env.SOCKET_SECURITY_KEY)
 }
@@ -271,39 +353,14 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
     if (!m) {
       throw new Error(`${name}: unsupported purl ${pin.purl}`)
     }
-    const [, pkg, version] = m
-    const base = pkg!.split('/').pop()
-    const url = `https://registry.npmjs.org/${pkg}/-/${base}-${version}.tgz`
-    const destDir = path.join(RACK_DIR, name, version!)
-    // Completion marker is the extracted manifest, not the directory: a
-    // failed/interrupted extract leaves the dir behind and would otherwise
-    // wedge every later install. Reset and redo instead.
-    const manifest = path.join(destDir, 'package/package.json')
-    if (!existsSync(manifest)) {
-      rmSync(destDir, { recursive: true, force: true })
-      console.log(`[external-tools] downloading ${name}@${version} (npm)`)
-      const buf = await download(url, pin.integrity!)
-      mkdirSync(destDir, { recursive: true })
-      const archive = path.join(destDir, 'package.tgz')
-      writeFileSync(archive, buf)
-      const res = spawnSync('tar', ['-xzf', archive, '-C', destDir], { stdio: 'inherit' })
-      rmSync(archive)
-      if (res.status !== 0) {
-        throw new Error(`${name}: tar extract failed`)
-      }
-    }
-    const pkgJson = JSON.parse(readFileSync(manifest, 'utf8'))
-    const binRel = typeof pkgJson.bin === 'string' ? pkgJson.bin : Object.values(pkgJson.bin ?? {})[0]
-    if (binRel) {
-      const wrapper = path.join(RACK_DIR, name, `${name}-wrapper`)
-      writeFileSync(
-        wrapper,
-        `#!/usr/bin/env bash\nexec node '${path.join(destDir, 'package', binRel as string)}' "$@"\n`,
-      )
-      chmodSync(wrapper, 0o755)
-      linkHandle(wrapper, name)
-    }
-    console.log(`[external-tools] installed ${name}@${version}`)
+    await installNpmTarball(name, m[1]!, m[2]!, pin.integrity!)
+    return
+  }
+  if (pin.repository?.startsWith('npm:')) {
+    // Platform-agnostic registry tarball (npm itself ships this way): one
+    // tarball, one integrity, pure JS run through node. Never installed
+    // via `npm install -g npm` — no self-update path.
+    await installNpmTarball(name, pin.repository.slice('npm:'.length), pin.version!, pin.integrity!)
     return
   }
   if (pin.release === 'uv-project') {
@@ -331,11 +388,28 @@ function writeShims(): void {
   mkdirSync(BIN_DIR, { recursive: true })
   for (const cmd of SFW_ECOSYSTEMS) {
     const sentinel = `SFW_SHIM_ACTIVE_${cmd.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
+    // When the command itself is rack-pinned (pnpm/npm), the shim wraps the
+    // PINNED binary — the shim replaces its bin handle, so resolve the rack
+    // target now and embed it. Unpinned commands resolve at run time by
+    // stripping the shim dir out of PATH.
+    const handle = path.join(BIN_DIR, cmd)
+    let rackReal = ''
+    try {
+      const target = readlinkSync(handle)
+      if (target.startsWith(RACK_DIR)) {
+        rackReal = target
+      }
+    } catch {
+      // not a symlink or absent — no rack pin for this command
+    }
+    const resolveReal = rackReal
+      ? `REAL='${rackReal}'`
+      : `CLEAN_PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vFx '${BIN_DIR}' | paste -sd ':' -)
+REAL=$(PATH="$CLEAN_PATH" command -v '${cmd}' || true)`
     const body = `#!/usr/bin/env bash
 # sfw shim for ${cmd} — managed by scripts/soak/external-tools.mts --shims
 set -euo pipefail
-CLEAN_PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vFx '${BIN_DIR}' | paste -sd ':' -)
-REAL=$(PATH="$CLEAN_PATH" command -v '${cmd}' || true)
+${resolveReal}
 if [ -n "\${${sentinel}:-}" ] || [ -z "$REAL" ] || ! command -v sfw >/dev/null 2>&1; then
   [ -n "$REAL" ] && exec "$REAL" "$@"
   echo "${cmd}: not found" >&2; exit 127
@@ -343,9 +417,8 @@ fi
 export ${sentinel}=1
 exec sfw '${cmd}' "$@"
 `
-    const shim = path.join(BIN_DIR, cmd)
-    writeFileSync(shim, body)
-    chmodSync(shim, 0o755)
+    writeFileSync(handle, body)
+    chmodSync(handle, 0o755)
   }
   console.log(`[external-tools] wrote sfw shims for ${SFW_ECOSYSTEMS.join(', ')} in ${BIN_DIR}`)
   console.log(`[external-tools] prepend ${BIN_DIR} to PATH to activate`)
@@ -380,9 +453,10 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
     }
     return problems.length === 0 ? 0 : 1
   }
-  const installIdx = argv.indexOf('--install')
-  if (installIdx !== -1) {
-    await installTool(argv[installIdx + 1]!, tools)
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--install') {
+      await installTool(argv[++i]!, tools)
+    }
   }
   if (argv.includes('--install-all')) {
     for (const name of Object.keys(tools)) {
