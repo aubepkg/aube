@@ -21,7 +21,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
 
 import {
   ANNOTATION_RE,
@@ -31,18 +30,7 @@ import {
   addDaysIso,
   todayIso,
 } from './constants.mts'
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-
-// Per-repo surface map — the only block that differs between repos
-// carrying this script (aube keeps its npm surfaces in docs/, where the
-// package.json lives and aube itself reads workspace yaml + npmrc).
-export const SURFACES = {
-  cargoConfig: '.cargo/config.toml',
-  npmrc: 'docs/.npmrc',
-  workspaceYaml: 'docs/pnpm-workspace.yaml',
-  tazeConfig: 'docs/taze.config.mts',
-}
+import { REPO_ROOT, SURFACES } from './paths.mts'
 
 export interface Finding {
   file: string

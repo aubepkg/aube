@@ -95,7 +95,7 @@ jobs:
       - name: socket firewall shims
         run: |
           node scripts/soak/external-tools.mts --install sfw --shims
-          echo "$HOME/.socket/_wheelhouse/bin" >> "$GITHUB_PATH"
+          node scripts/soak/external-tools.mts --print-bin >> "$GITHUB_PATH"
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint

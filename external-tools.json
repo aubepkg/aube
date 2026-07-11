@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/SocketDev/socket-wheelhouse/main/packages/build-infra/lib/external-tools-schema.json",
   "tools": {
     "sfw-free": {
       "description": "Socket Firewall (free tier) — malware gate on dep installs.",

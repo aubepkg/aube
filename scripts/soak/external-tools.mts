@@ -2,19 +2,18 @@
 /**
  * @file Pinned external security tooling — download, verify, shim.
  *   `external-tools.json` (repo root) pins every tool to an exact version
- *   with a sha512 SRI integrity per platform asset (same schema as
- *   socket-wheelhouse). This script is the only way those tools reach a
- *   machine: nothing here trusts "latest".
+ *   with a sha512 SRI integrity per platform asset. This script is the only
+ *   way those tools reach a machine: nothing here trusts "latest".
  *
  *   - `--check`            validate every pin (shape, SRI prefix, soak
  *                          annotations on any soakBypass) — CI gate, no network
- *   - `--install <name>`   download + SRI-verify + install into the shared
- *                          rack `~/.socket/_wheelhouse/rack/<tool>/<version>/`
- *                          with a PATH handle in `~/.socket/_wheelhouse/bin/`
+ *   - `--install <name>`   download + SRI-verify + install into the local
+ *                          tool rack (see paths.mts RACK_DIR) with a PATH
+ *                          handle in BIN_DIR
  *   - `--install-all`      every installable pin
  *   - `--shims`            write sfw shims (npm/yarn/pnpm/pip/pip3/uv/cargo)
- *                          into the wheelhouse bin dir so installs route
- *                          through the firewall
+ *                          into BIN_DIR so installs route through the firewall
+ *   - `--print-bin`        print BIN_DIR (for `>> $GITHUB_PATH` in CI)
  *
  *   `sfw` resolves to sfw-enterprise when SOCKET_API_KEY or SOCKET_API_TOKEN
  *   is set (either may be fed from a repo secret such as
@@ -34,18 +33,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
 
 import { ANNOTATION_RE, SOAK_DAYS, addDaysIso } from './constants.mts'
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const TOOLS_JSON = path.join(REPO_ROOT, 'external-tools.json')
-const WHEELHOUSE = path.join(os.homedir(), '.socket', '_wheelhouse')
-const RACK = path.join(WHEELHOUSE, 'rack')
-const BIN = path.join(WHEELHOUSE, 'bin')
+import { BIN_DIR, EXTERNAL_TOOLS_JSON, RACK_DIR } from './paths.mts'
 
 const SFW_ECOSYSTEMS = ['npm', 'yarn', 'pnpm', 'pip', 'pip3', 'uv', 'cargo']
 
@@ -67,7 +59,7 @@ interface ToolPin {
 }
 
 function loadTools(): Record<string, ToolPin> {
-  return JSON.parse(readFileSync(TOOLS_JSON, 'utf8')).tools
+  return JSON.parse(readFileSync(EXTERNAL_TOOLS_JSON, 'utf8')).tools
 }
 
 function platformKey(): string {
@@ -133,8 +125,8 @@ async function download(url: string, expectedSri: string): Promise<Buffer> {
 }
 
 function linkHandle(target: string, name: string): void {
-  mkdirSync(BIN, { recursive: true })
-  const handle = path.join(BIN, name)
+  mkdirSync(BIN_DIR, { recursive: true })
+  const handle = path.join(BIN_DIR, name)
   if (existsSync(handle)) {
     unlinkSync(handle)
   }
@@ -149,7 +141,7 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   const repo = pin.repository!.replace(/^github:/, '')
   const url = `https://github.com/${repo}/releases/download/v${pin.version}/${plat.asset}`
   const binName = pin.binaryName ?? name
-  const destDir = path.join(RACK, name, pin.version!)
+  const destDir = path.join(RACK_DIR, name, pin.version!)
   const destBin = path.join(destDir, binName)
   if (existsSync(destBin)) {
     linkHandle(destBin, binName)
@@ -203,7 +195,7 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
     const [, pkg, version] = m
     const base = pkg!.split('/').pop()
     const url = `https://registry.npmjs.org/${pkg}/-/${base}-${version}.tgz`
-    const destDir = path.join(RACK, name, version!)
+    const destDir = path.join(RACK_DIR, name, version!)
     if (!existsSync(destDir)) {
       console.log(`[external-tools] downloading ${name}@${version} (npm)`)
       const buf = await download(url, pin.integrity!)
@@ -219,7 +211,7 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
     const pkgJson = JSON.parse(readFileSync(path.join(destDir, 'package/package.json'), 'utf8'))
     const binRel = typeof pkgJson.bin === 'string' ? pkgJson.bin : Object.values(pkgJson.bin ?? {})[0]
     if (binRel) {
-      const wrapper = path.join(RACK, name, `${name}-wrapper`)
+      const wrapper = path.join(RACK_DIR, name, `${name}-wrapper`)
       writeFileSync(
         wrapper,
         `#!/usr/bin/env bash\nexec node '${path.join(destDir, 'package', binRel as string)}' "$@"\n`,
@@ -245,16 +237,16 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
  * sfw shims: tiny wrappers named after each package manager that route the
  * real invocation through the firewall. A sentinel env var breaks the
  * recursion when sfw itself re-invokes the tool; the real binary is found
- * by stripping the wheelhouse bin dir out of PATH.
+ * by stripping the rack's bin dir out of PATH.
  */
 function writeShims(): void {
-  mkdirSync(BIN, { recursive: true })
+  mkdirSync(BIN_DIR, { recursive: true })
   for (const cmd of SFW_ECOSYSTEMS) {
-    const sentinel = `SOCKET_SHIM_ACTIVE_${cmd.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
+    const sentinel = `SFW_SHIM_ACTIVE_${cmd.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
     const body = `#!/usr/bin/env bash
 # sfw shim for ${cmd} — managed by scripts/soak/external-tools.mts --shims
 set -euo pipefail
-CLEAN_PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vFx '${BIN}' | paste -sd ':' -)
+CLEAN_PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vFx '${BIN_DIR}' | paste -sd ':' -)
 REAL=$(PATH="$CLEAN_PATH" command -v '${cmd}' || true)
 if [ -n "\${${sentinel}:-}" ] || [ -z "$REAL" ] || ! command -v sfw >/dev/null 2>&1; then
   [ -n "$REAL" ] && exec "$REAL" "$@"
@@ -263,15 +255,19 @@ fi
 export ${sentinel}=1
 exec sfw '${cmd}' "$@"
 `
-    const shim = path.join(BIN, cmd)
+    const shim = path.join(BIN_DIR, cmd)
     writeFileSync(shim, body)
     chmodSync(shim, 0o755)
   }
-  console.log(`[external-tools] wrote sfw shims for ${SFW_ECOSYSTEMS.join(', ')} in ${BIN}`)
-  console.log(`[external-tools] prepend ${BIN} to PATH to activate`)
+  console.log(`[external-tools] wrote sfw shims for ${SFW_ECOSYSTEMS.join(', ')} in ${BIN_DIR}`)
+  console.log(`[external-tools] prepend ${BIN_DIR} to PATH to activate`)
 }
 
 async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  if (argv.includes('--print-bin')) {
+    console.log(BIN_DIR)
+    return 0
+  }
   const tools = loadTools()
   if (argv.includes('--check') || argv.length === 0) {
     const problems = checkPins(tools)

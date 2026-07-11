@@ -43,18 +43,18 @@ RUN set -eux; \
     aarch64) asset=sfw-free-linux-arm64;  sha=158458479d922fe28a165756e288183949d31f9392aafb57c331857968b45b6c7eef929970f886cd605b84c9a1d1fe50b6060b57ee2a75112098a08111ac8db4 ;; \
     *) echo "unsupported arch $arch" >&2; exit 1 ;; \
   esac; \
-  mkdir -p /root/.socket/_wheelhouse/rack/sfw-free/1.13.1 /root/.socket/_wheelhouse/bin; \
-  curl -fsSL -o /root/.socket/_wheelhouse/rack/sfw-free/1.13.1/sfw \
+  mkdir -p /root/.local/share/aube/dev-tools/rack/sfw-free/1.13.1 /root/.local/share/aube/dev-tools/bin; \
+  curl -fsSL -o /root/.local/share/aube/dev-tools/rack/sfw-free/1.13.1/sfw \
     "https://github.com/SocketDev/sfw-free/releases/download/v1.13.1/$asset"; \
-  echo "$sha  /root/.socket/_wheelhouse/rack/sfw-free/1.13.1/sfw" | sha512sum -c -; \
-  chmod 0755 /root/.socket/_wheelhouse/rack/sfw-free/1.13.1/sfw; \
-  ln -sf /root/.socket/_wheelhouse/rack/sfw-free/1.13.1/sfw /root/.socket/_wheelhouse/bin/sfw; \
+  echo "$sha  /root/.local/share/aube/dev-tools/rack/sfw-free/1.13.1/sfw" | sha512sum -c -; \
+  chmod 0755 /root/.local/share/aube/dev-tools/rack/sfw-free/1.13.1/sfw; \
+  ln -sf /root/.local/share/aube/dev-tools/rack/sfw-free/1.13.1/sfw /root/.local/share/aube/dev-tools/bin/sfw; \
   for cmd in npm yarn pnpm pip pip3 uv cargo; do \
-    sentinel="SOCKET_SHIM_ACTIVE_$(printf '%s' "$cmd" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')"; \
+    sentinel="SFW_SHIM_ACTIVE_$(printf '%s' "$cmd" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')"; \
     sed -e "s/__CMD__/$cmd/g" -e "s/__SENTINEL__/$sentinel/g" \
-      /tmp/sfw-shim-template.sh > "/root/.socket/_wheelhouse/bin/$cmd"; \
-    chmod 0755 "/root/.socket/_wheelhouse/bin/$cmd"; \
+      /tmp/sfw-shim-template.sh > "/root/.local/share/aube/dev-tools/bin/$cmd"; \
+    chmod 0755 "/root/.local/share/aube/dev-tools/bin/$cmd"; \
   done; \
   rm /tmp/sfw-shim-template.sh
 
-ENV PATH="/root/.socket/_wheelhouse/bin:/root/.cargo/bin:/root/.local/bin:/root/.local/share/mise/shims:${PATH}"
+ENV PATH="/root/.local/share/aube/dev-tools/bin:/root/.cargo/bin:/root/.local/bin:/root/.local/share/mise/shims:${PATH}"
