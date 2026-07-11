@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { SOAK_DAYS, addDaysIso, todayIso } from './constants.mts'
-import { checkDockerPrebake, checkPins } from './external-tools.mts'
+import {
+  checkDockerPrebake,
+  checkPins,
+  download,
+  extractArchive,
+  installTool,
+  main,
+} from './external-tools.mts'
 import { DOCKER_PREBAKE, EXTERNAL_TOOLS_JSON, REPO_ROOT, RUST_TOOLCHAIN_TOML } from './paths.mts'
 
 const GOOD_SRI =
@@ -57,4 +68,150 @@ test('the repo Dockerfile prebake (when present) matches the tracked pins', t =>
     checkDockerPrebake(docker, tools, toolchain.replace(/channel = ".*"/, 'channel = "nightly-1999-01-01"')).length >
       0,
   )
+})
+
+const sriOf = (buf: Buffer) => `sha512-${createHash('sha512').update(buf).digest('base64')}`
+
+function withEnv(name: string, value: string | undefined, fn: () => Promise<void>): Promise<void> {
+  const saved = process.env[name]
+  if (value === undefined) {
+    delete process.env[name]
+  } else {
+    process.env[name] = value
+  }
+  return fn().finally(() => {
+    if (saved === undefined) {
+      delete process.env[name]
+    } else {
+      process.env[name] = saved
+    }
+  })
+}
+
+// Hermetic fixture: one line per drift class, so every checkDockerPrebake
+// failure branch is exercised even in a repo with no prebake image.
+test('checkDockerPrebake flags every drift class (synthetic image)', () => {
+  const tools = {
+    'sfw-free': {
+      version: '1.0.0',
+      platforms: { 'linux-arm64': { asset: 'sfw-linux-arm64', integrity: GOOD_SRI } },
+    },
+  }
+  const wrongHex = 'ab'.repeat(64)
+  const body = [
+    'for cmd in npm yarn; do make_shim "$cmd"; done',
+    'RUN curl -o /x https://github.com/SocketDev/sfw-free/releases/download/v0.9.9/sfw-linux-arm64',
+    'COPY rack/sfw-free/0.9.9/sfw /usr/local/bin/sfw',
+    `RUN asset=ghost-asset; sha=${wrongHex} verify`,
+    `RUN asset=sfw-linux-arm64; sha=${wrongHex} verify`,
+  ].join('\n')
+  const problems = checkDockerPrebake(body, tools, 'channel = "nightly-2026-07-04"\n', '9.9.9')
+  for (const needle of [
+    /shim list/,
+    /msrv toolchain/,
+    /version 0\.9\.9/,
+    /download url v0\.9\.9/,
+    /ghost-asset has no pin/,
+    /sha for sfw-linux-arm64/,
+    /pinned toolchain nightly-2026-07-04/,
+  ]) {
+    assert.ok(problems.some(p => needle.test(p)), `expected a finding matching ${needle}`)
+  }
+  assert.ok(
+    checkDockerPrebake('nothing pinned here', tools, '').some(p =>
+      /no asset\/sha pin pairs/.test(p),
+    ),
+  )
+})
+
+test('download sends the GitHub token to github.com only', async t => {
+  const payload = Buffer.from('pinned-bytes')
+  const seen: Array<{ host: string; auth: string | undefined }> = []
+  t.mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) => {
+    seen.push({
+      host: new URL(String(url)).hostname,
+      auth: (init?.headers as Record<string, string> | undefined)?.authorization,
+    })
+    return new Response(payload)
+  })
+  await withEnv('GITHUB_TOKEN', 'ghs_test_token', async () => {
+    await download('https://github.com/o/r/releases/download/v1/a.tgz', sriOf(payload))
+    await download('https://registry.npmjs.org/x/-/x-1.0.0.tgz', sriOf(payload))
+  })
+  assert.equal(seen[0]!.auth, 'Bearer ghs_test_token')
+  assert.equal(seen[1]!.auth, undefined)
+})
+
+test('download rejects http errors and integrity mismatches', async t => {
+  const payload = Buffer.from('served-bytes')
+  let status = 503
+  t.mock.method(globalThis, 'fetch', async () => new Response(payload, { status }))
+  await assert.rejects(download('https://example.com/a', sriOf(payload)), /download failed 503/)
+  status = 200
+  await assert.rejects(download('https://example.com/a', 'sha512-AAAA'), /integrity mismatch/)
+  assert.deepEqual(await download('https://example.com/a', sriOf(payload)), payload)
+})
+
+test('extractArchive unpacks a tar.gz, removes the archive, throws on junk', t => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'soak-extract-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  writeFileSync(path.join(dir, 'hello.txt'), 'hi\n')
+  spawnSync('tar', ['-czf', path.join(dir, 'a.tar.gz'), '-C', dir, 'hello.txt'])
+  const buf = readFileSync(path.join(dir, 'a.tar.gz'))
+  const dest = mkdtempSync(path.join(os.tmpdir(), 'soak-extract-dest-'))
+  t.after(() => rmSync(dest, { recursive: true, force: true }))
+  extractArchive('t', dest, 'a.tar.gz', buf)
+  assert.ok(existsSync(path.join(dest, 'hello.txt')))
+  assert.ok(!existsSync(path.join(dest, 'a.tar.gz')))
+  assert.throws(() => extractArchive('t', dest, 'bad.tgz', Buffer.from('junk')), /extract failed/)
+})
+
+test('installTool rejects unknown tools, foreign purls, and shapeless pins', async () => {
+  await assert.rejects(installTool('ghost', {}), /unknown tool/)
+  await assert.rejects(
+    installTool('x', { x: { purl: 'pkg:pypi/foo@1.0.0', integrity: GOOD_SRI } }),
+    /unsupported purl/,
+  )
+  await assert.rejects(installTool('y', { y: { version: '1.0.0' } }), /no installable shape/)
+  await assert.rejects(
+    installTool('z', { z: { release: 'asset', version: '1.0.0', platforms: {} } }),
+    /no pinned asset for/,
+  )
+})
+
+test('installTool resolves the sfw flavor from SOCKET_SECURITY_KEY', async t => {
+  if (process.platform === 'win32') {
+    t.skip('sfw shims are POSIX-only')
+    return
+  }
+  // An empty tools record makes the resolved flavor observable in the
+  // rejection message — no download is ever attempted.
+  await withEnv('SOCKET_SECURITY_KEY', undefined, () =>
+    assert.rejects(installTool('sfw', {}), /unknown tool sfw-free/),
+  )
+  await withEnv('SOCKET_SECURITY_KEY', 'sk_test', () =>
+    assert.rejects(installTool('sfw', {}), /unknown tool sfw-enterprise/),
+  )
+})
+
+test('installTool prints the uvx line for uv-project pins without installing', async () => {
+  const tools = JSON.parse(readFileSync(EXTERNAL_TOOLS_JSON, 'utf8')).tools
+  const uv = Object.keys(tools).find(name => tools[name].release === 'uv-project')
+  assert.ok(uv, 'the manifest is expected to pin at least one uv project')
+  await installTool(uv!, tools)
+})
+
+// Glue: main's read-only CLI paths against the tracked manifest — the same
+// gate CI runs, exercised in-process so main() itself stays covered.
+test('main --print-bin and --check are read-only and exit 0', async () => {
+  assert.equal(await main(['--print-bin']), 0)
+  assert.equal(await main(['--check']), 0)
+})
+
+// End to end through the entrypoint guard: the CLI must resolve as main
+// (realpath + file URL) and exit 0 on the tracked manifest.
+test('CLI: node external-tools.mts --check exits 0', () => {
+  const script = fileURLToPath(new URL('./external-tools.mts', import.meta.url))
+  const res = spawnSync(process.execPath, [script, '--check'], { encoding: 'utf8' })
+  assert.equal(res.status, 0, res.stderr)
 })

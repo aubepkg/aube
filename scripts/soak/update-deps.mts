@@ -66,16 +66,22 @@ function updateCargo(dryRun: boolean): number {
   return run(RUSTUP_CARGO, dryRun ? ['update', '--dry-run'] : ['update'], REPO_ROOT)
 }
 
-function main(argv: string[] = process.argv.slice(2)): number {
-  const dryRun = argv.includes('--dry-run')
+// No flag = both; naming both explicitly also means both — a naive
+// "flag present = only that one" reading once made `--npm --cargo` run
+// NEITHER, so this rule lives in one exported, regression-tested place.
+export function selectEcosystems(argv: string[]): { npm: boolean; cargo: boolean } {
   const npmFlag = argv.includes('--npm')
   const cargoFlag = argv.includes('--cargo')
-  // No flag = both; naming both explicitly also means both. Run every
-  // requested ecosystem even if an earlier one fails, then aggregate.
-  const wantNpm = npmFlag || !cargoFlag
-  const wantCargo = cargoFlag || !npmFlag
-  const npmStatus = wantNpm ? updateNpm(dryRun) : 0
-  const cargoStatus = wantCargo ? updateCargo(dryRun) : 0
+  return { npm: npmFlag || !cargoFlag, cargo: cargoFlag || !npmFlag }
+}
+
+function main(argv: string[] = process.argv.slice(2)): number {
+  const dryRun = argv.includes('--dry-run')
+  const { npm, cargo } = selectEcosystems(argv)
+  // Run every requested ecosystem even if an earlier one fails, then
+  // aggregate, so one broken ecosystem can't hide the other's drift.
+  const npmStatus = npm ? updateNpm(dryRun) : 0
+  const cargoStatus = cargo ? updateCargo(dryRun) : 0
   return npmStatus || cargoStatus
 }
 

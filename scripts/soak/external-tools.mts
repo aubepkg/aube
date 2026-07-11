@@ -182,7 +182,7 @@ export function checkDockerPrebake(
   return out
 }
 
-async function download(url: string, expectedSri: string): Promise<Buffer> {
+export async function download(url: string, expectedSri: string): Promise<Buffer> {
   const headers: Record<string, string> = {}
   // Only GitHub gets the token (private release assets); sending it to any
   // other host (e.g. the npm registry for purl tools) would leak the
@@ -208,7 +208,7 @@ async function download(url: string, expectedSri: string): Promise<Buffer> {
   return buf
 }
 
-function extractArchive(name: string, destDir: string, asset: string, buf: Buffer): void {
+export function extractArchive(name: string, destDir: string, asset: string, buf: Buffer): void {
   const archive = path.join(destDir, asset)
   writeFileSync(archive, buf)
   // bsdtar (macOS + Windows runners) extracts zip via plain -xf too.
@@ -340,7 +340,7 @@ function installDeps(name: string, pkgDir: string): number {
   return 1
 }
 
-async function installTool(name: string, tools: Record<string, ToolPin>): Promise<void> {
+export async function installTool(name: string, tools: Record<string, ToolPin>): Promise<void> {
   // `sfw` is a flavor pair: the enterprise binary when a Socket token is
   // present (repo secret), the keyless free tier otherwise. The firewall
   // shim mechanism is POSIX (bash shims, extension-less symlink handles) —
@@ -451,7 +451,7 @@ exec sfw '${cmd}' "$@"
   console.log(`[external-tools] prepend ${BIN_DIR} to PATH to activate`)
 }
 
-async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   if (argv.includes('--print-bin')) {
     console.log(BIN_DIR)
     return 0

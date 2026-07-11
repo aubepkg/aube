@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { SOAK_DAYS, addDaysIso, todayIso } from './constants.mts'
 import {
@@ -10,8 +12,10 @@ import {
   checkTazeConfig,
   checkToolchainSoak,
   checkWorkspaceYaml,
+  fixCargoConfig,
   fixNpmrc,
   fixWorkspaceYaml,
+  main,
   parseExcludeEntries,
 } from './soak.mts'
 
@@ -126,4 +130,40 @@ test('toolchain soak: nightly must be SOAK_DAYS old at adoption; stable passes',
   assert.match(checkToolchainSoak(noDate, 't')[0]!.what, /adoption date/)
   const stable = '[toolchain]\nchannel = "1.95.0"\n'
   assert.equal(checkToolchainSoak(stable, 't').length, 0)
+})
+
+test('toolchain soak: impossible calendar dates are findings, not crashes', () => {
+  const bad = '# adopted: 2026-13-45\n[toolchain]\nchannel = "nightly-2026-07-04"\n'
+  assert.match(checkToolchainSoak(bad, 't')[0]!.what, /soak dates/)
+})
+
+test('parser: a column-0 line ends the exclude block', () => {
+  const yaml = 'minimumReleaseAgeExclude:\n  - react\nonlyBuiltDependencies:\n  - esbuild\n'
+  assert.deepEqual(parseExcludeEntries(yaml).map(e => e.name), ['react'])
+})
+
+test('parser: items at a different indent are not exclude entries', () => {
+  const yaml = 'minimumReleaseAgeExclude:\n  - react\n    - not-an-entry\n  - vue\n'
+  assert.deepEqual(parseExcludeEntries(yaml).map(e => e.name), ['react', 'vue'])
+})
+
+test('fix rewrites a drifted cargo window and leaves a clean one alone', () => {
+  const fixed = fixCargoConfig('[registry]\nglobal-min-publish-age = "3 days"\n')
+  assert.ok(fixed.includes(`"${SOAK_DAYS} days"`))
+  assert.equal(fixCargoConfig(fixed), fixed)
+})
+
+// Glue: the tracked surfaces of THIS repo must satisfy the gate — the same
+// check CI runs, exercised in-process so main() itself stays covered.
+test('main --check passes against the tracked repo surfaces', () => {
+  assert.equal(main([]), 0)
+  assert.equal(main(['--quiet']), 0)
+})
+
+// End to end through the entrypoint guard: the CLI must resolve as main
+// (realpath + file URL) and exit 0 on a clean tree.
+test('CLI: node soak.mts --check --quiet exits 0', () => {
+  const script = fileURLToPath(new URL('./soak.mts', import.meta.url))
+  const res = spawnSync(process.execPath, [script, '--check', '--quiet'], { encoding: 'utf8' })
+  assert.equal(res.status, 0, res.stderr)
 })
