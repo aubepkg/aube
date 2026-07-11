@@ -191,6 +191,44 @@ export function parseExcludeEntries(body: string): ExcludeEntry[] {
   return out
 }
 
+/**
+ * Catalog-shadowed pins stay in lockstep: when a package.json next to the
+ * workspace yaml pins a cataloged package to an exact version instead of
+ * `catalog:` (npm-cli compat — npm can't parse the protocol), the two
+ * versions must match. `catalog:` references no-op here.
+ */
+export function checkCatalogParity(
+  yamlBody: string,
+  pkgJson: string,
+  yamlFile: string,
+): Finding[] {
+  const out: Finding[] = []
+  const catalog: Record<string, string> = {}
+  const block = /^catalog:\s*\n((?:[ \t]+\S.*\n?)*)/m.exec(yamlBody)?.[1] ?? ''
+  for (const m of block.matchAll(/^[ \t]+['"]?([^'":\s]+)['"]?:\s*['"]?([^'"\s]+)['"]?\s*$/gm)) {
+    catalog[m[1]!] = m[2]!
+  }
+  const pkg = JSON.parse(pkgJson)
+  const declared: Record<string, string> = {
+    ...pkg.dependencies,
+    ...pkg.devDependencies,
+  }
+  for (const [name, version] of Object.entries(catalog)) {
+    const spec = declared[name]
+    if (spec === undefined || spec === 'catalog:' || spec === version) {
+      continue
+    }
+    out.push({
+      file: yamlFile,
+      what: `catalog-shadowed pin '${name}' out of lockstep`,
+      saw: `catalog ${version} vs package.json ${spec}`,
+      wanted: 'identical versions (or a catalog: reference)',
+      fix: `bump both together — the catalog entry is the reference`,
+    })
+  }
+  return out
+}
+
 export function checkTazeConfig(body: string, file: string): Finding[] {
   const out: Finding[] = []
   if (!body.includes('maturityPeriod')) {
@@ -304,6 +342,19 @@ export function main(argv: string[] = process.argv.slice(2)): number {
       }
     }
     findings.push(...s.check(body, s.rel))
+  }
+
+  // Catalog <-> package.json lockstep for the package next to the yaml.
+  const yamlAbs = path.join(REPO_ROOT, SURFACES.workspaceYaml)
+  const pkgAbs = path.join(path.dirname(yamlAbs), 'package.json')
+  if (existsSync(yamlAbs) && existsSync(pkgAbs)) {
+    findings.push(
+      ...checkCatalogParity(
+        readFileSync(yamlAbs, 'utf8'),
+        readFileSync(pkgAbs, 'utf8'),
+        SURFACES.workspaceYaml,
+      ),
+    )
   }
 
   report(findings, quiet)
