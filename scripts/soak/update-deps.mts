@@ -33,7 +33,9 @@ function updateNpm(dryRun: boolean): number {
     console.error(`[update-deps] taze not installed — run the installer in ${NPM_PKG_DIR} first`)
     return 1
   }
-  const args = dryRun ? [] : ['--write']
+  // The taze config sets `write: true`; a dry run must override it
+  // explicitly or "dry" would still rewrite package.json.
+  const args = dryRun ? ['--no-write', '--no-install'] : ['--write']
   const status = run(taze, args, NPM_PKG_DIR)
   if (status !== 0 || dryRun) {
     return status
