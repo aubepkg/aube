@@ -112,7 +112,13 @@ async function download(url: string, expectedSri: string): Promise<Buffer> {
   if (process.env.GITHUB_TOKEN) {
     headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`
   }
-  const res = await fetch(url, { headers, redirect: 'follow' })
+  // Fail fast on a stalled release/registry response instead of hanging
+  // CI; 120s is generous for the largest pinned binary on a slow runner.
+  const res = await fetch(url, {
+    headers,
+    redirect: 'follow',
+    signal: AbortSignal.timeout(120_000),
+  })
   if (!res.ok) {
     throw new Error(`download failed ${res.status} ${url}`)
   }
