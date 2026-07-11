@@ -1,8 +1,11 @@
-# Pinned STABLE, exact. cold_path() needs 1.95+; the pin is exact so the
-# whole PGO/BOLT flow (mise run build:pgo, release upload-assets-pgo)
-# instruments and optimizes with one toolchain and the collected profile
-# matches the LLVM version that consumes it. llvm-tools-preview ships the
-# llvm-profdata that benchmarks/pgo.bash otherwise requires by hand.
+# Pinned dated NIGHTLY, adopted under a 7-day soak: the pin is the newest
+# nightly at least 7 days old on the adoption date (2026-07-11), and bumps
+# follow the same rule. The pin is exact so the whole PGO/BOLT flow
+# (mise run build:pgo, release upload-assets-pgo) instruments and optimizes
+# with one toolchain and the collected profile matches the LLVM version
+# that consumes it. llvm-tools-preview ships the llvm-profdata that
+# benchmarks/pgo.bash otherwise requires by hand. rust-version in
+# Cargo.toml stays the STABLE msrv floor (1.95, core::hint::cold_path).
 [toolchain]
-channel = "1.95.0"
+channel = "nightly-2026-07-04"
 components = ["rustfmt", "clippy", "llvm-tools-preview"]
