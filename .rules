@@ -3,7 +3,7 @@ project:
   kind: Node.js package manager, Rust workspace
   binary_surface: drop-in for pnpm CLI
   language: Rust 2024
-  msrv: 1.93
+  msrv: 1.95 (pinned exact via rust-toolchain.toml so PGO instrument+use share one LLVM)
   async_runtime: tokio (multi-thread for install, current-thread for nested islands)
   errors: miette (user-facing, top-level), thiserror (per-library crate)
   error_codes: every error/warning carries a stable ERR_AUBE_*/WARN_AUBE_* identifier from aube-codes crate; bespoke exit codes for a curated subset; see error_codes section below for conventions
@@ -187,7 +187,7 @@ testing:
 
 rust:
   critical[5]:
-    - edition 2024, latest stable toolchain, msrv 1.93 (rust 1.90 default-LLD-on-Linux + workspace cargo publish available)
+    - edition 2024, toolchain pinned to the exact stable in rust-toolchain.toml, msrv 1.95 (core::hint::cold_path stable; rust 1.90 default-LLD-on-Linux + workspace cargo publish available)
     - no .unwrap()/.expect() in public library APIs or cross-crate boundaries. local-invariant unwraps where panic is genuinely impossible are ok, annotate with WHY
     - crates/aube-*/ (libraries) use tracing (info!/warn!/error!/debug!/trace!). crates/aube/src/commands/*.rs CLI command impls may print to stdout via println!/writeln! when the whole point is CLI output (view, list, outdated, why, cat-index, etc.)
     - cargo clippy -- -D warnings must pass with zero warnings
@@ -202,7 +202,7 @@ rust:
     - shared reqwest::Client with pool, never one per request (aube-registry/src/client.rs does this right)
     - DashMap for concurrent maps, OnceLock/LazyLock for init-once globals, rayon par_iter for CPU-bound parallel passes off the tokio runtime (never spawn tokio tasks for pure CPU)
     - pre-size Vec/HashMap when bounds are known; SmallVec<[T; N]> for hot paths with known-small size; Arc<str>/Box<str> over String when immutable
-    - aube already adopts mimalloc (global allocator), sonic_rs (packument decode), BLAKE3 (non-crypto hashing). these are settled; don't re-propose them
+    - aube already adopts mimalloc (global allocator), sonic_rs (packument decode), BLAKE3 (non-crypto hashing), core::hint::cold_path() on rare arms of hot install loops (linker materialize, pnpm subset parser, semver caches, tar walk). these are settled; don't re-propose them
   async[7]:
     - tokio multi-thread runtime for install (main.rs:586), nested current_thread islands inside spawn_blocking are fine
     - never block in async fn, offload via spawn_blocking (IO that can't be async, tarball decode, tar extract)

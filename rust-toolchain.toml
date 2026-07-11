@@ -1,0 +1,8 @@
+# Pinned STABLE, exact. cold_path() needs 1.95+; the pin is exact so the
+# whole PGO/BOLT flow (mise run build:pgo, release upload-assets-pgo)
+# instruments and optimizes with one toolchain and the collected profile
+# matches the LLVM version that consumes it. llvm-tools-preview ships the
+# llvm-profdata that benchmarks/pgo.bash otherwise requires by hand.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]
