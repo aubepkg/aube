@@ -234,9 +234,10 @@ deps:
   policy: minimize, prefer std over external, every added dep must justify >=20 LOC saved
   tls: rustls (no OpenSSL / native-tls)
   reqwest_features: minimal (rustls-tls + http2 + json + stream + charset + system-proxy)
-  supply_chain[2]:
+  supply_chain[3]:
     - cargo audit: CVE database scan (RustSec advisories) before every release, required in CI
     - cargo deny: license policy, banned crates, duplicate detection, approved sources. deny.toml checked in
+    - cargo min-publish-age: 7-day soak on new crate versions (.cargo/config.toml [registry] global-min-publish-age; unstable feature, active via the pinned nightly). resolver skips versions younger than the window unless already locked
 
 git:
   forbidden[2]:
