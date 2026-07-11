@@ -49,7 +49,6 @@ export const EXTERNAL_TOOLS_JSON = path.join(REPO_ROOT, 'external-tools.json')
 // alone, so the Dockerfile can't COPY the tracked pin sources — it embeds
 // copies, and external-tools.mts --check asserts they haven't drifted.
 export const DOCKER_PREBAKE: string | null = '.buildkite/linux-agent.Dockerfile'
-export const RUST_TOOLCHAIN_TOML = 'rust-toolchain.toml'
 
 // .dockerignore managed by `untracked` (null when the repo has no
 // repo-context docker builds — aube's agent image never copies the repo).

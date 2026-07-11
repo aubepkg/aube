@@ -45,7 +45,7 @@ import {
   PM_DEP_INSTALLERS,
   RACK_DIR,
   REPO_ROOT,
-  RUST_TOOLCHAIN_TOML,
+  SURFACES,
 } from './paths.mts'
 
 const SFW_ECOSYSTEMS = ['npm', 'yarn', 'pnpm', 'pip', 'pip3', 'uv', 'cargo']
@@ -461,7 +461,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     const problems = checkPins(tools)
     if (DOCKER_PREBAKE) {
       const dockerAbs = path.join(REPO_ROOT, DOCKER_PREBAKE)
-      const toolchainAbs = path.join(REPO_ROOT, RUST_TOOLCHAIN_TOML)
+      const toolchainAbs = path.join(REPO_ROOT, SURFACES.toolchainToml)
       if (existsSync(dockerAbs)) {
         problems.push(
           ...checkDockerPrebake(

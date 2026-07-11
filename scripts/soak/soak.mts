@@ -6,6 +6,7 @@
  *   valid, unexpired `# published: | removable:` annotation:
  *
  *   - `.cargo/config.toml`        `global-min-publish-age` + `[unstable] min-publish-age`
+ *   - `rust-toolchain.toml`       nightly channel vs `# adopted:` (dated-nightly soak)
  *   - `docs/pnpm-workspace.yaml`  `minimumReleaseAge` (minutes) + annotated excludes
  *   - `docs/.npmrc`               `min-release-age` (days)
  *   - `docs/taze.config.mts`      imports SOAK_DAYS (existence + import check)

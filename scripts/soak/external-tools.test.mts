@@ -16,7 +16,7 @@ import {
   installTool,
   main,
 } from './external-tools.mts'
-import { DOCKER_PREBAKE, EXTERNAL_TOOLS_JSON, REPO_ROOT, RUST_TOOLCHAIN_TOML } from './paths.mts'
+import { DOCKER_PREBAKE, EXTERNAL_TOOLS_JSON, REPO_ROOT, SURFACES } from './paths.mts'
 
 const GOOD_SRI =
   'sha512-waLrsPG2a7EOv0XuvXDQZGgCZ4MTtOfZh8TmGbM6gn2B6Nh6HI+15jaoKdAS9wgdTyIqTuqU+O+NtVYd+kuFaA=='
@@ -60,7 +60,7 @@ test('the repo Dockerfile prebake (when present) matches the tracked pins', t =>
   }
   const tools = JSON.parse(readFileSync(EXTERNAL_TOOLS_JSON, 'utf8')).tools
   const docker = readFileSync(path.join(REPO_ROOT, DOCKER_PREBAKE), 'utf8')
-  const toolchain = readFileSync(path.join(REPO_ROOT, RUST_TOOLCHAIN_TOML), 'utf8')
+  const toolchain = readFileSync(path.join(REPO_ROOT, SURFACES.toolchainToml), 'utf8')
   assert.deepEqual(checkDockerPrebake(docker, tools, toolchain), [])
   // and drift in any direction is caught
   assert.ok(checkDockerPrebake(docker.replace(/sha=[0-9a-f]{8}/, 'sha=deadbeef'), tools, toolchain).length > 0)
