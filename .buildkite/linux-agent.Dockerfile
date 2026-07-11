@@ -17,7 +17,14 @@ RUN apt-get update \
     xz-utils \
   && rm -rf /var/lib/apt/lists/*
 
-RUN curl https://mise.run | sh
+# -f + explicit installer file: a piped `curl | sh` with no -f would let a
+# network-level curl failure produce an empty script and a silently
+# mise-less image; verifying the binary afterwards fails the layer loudly.
+RUN set -eux; \
+  curl --proto '=https' --tlsv1.2 -fsSL https://mise.run -o /tmp/mise-install.sh; \
+  sh /tmp/mise-install.sh; \
+  rm /tmp/mise-install.sh; \
+  /root/.local/bin/mise --version
 # Pre-bake the repo's toolchains with MINIMAL profiles + only the components
 # jobs use (the default profile ships rust-docs, ~600 MB per toolchain):
 #   - nightly-2026-07-04: the rust-toolchain.toml pin (rustfmt/clippy for

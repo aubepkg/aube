@@ -250,7 +250,7 @@ soak:
     - docs/taze.config.mts maturityPeriod (imports SOAK_DAYS)
   manager: mise run soak (check, CI-gated in test-linux) / soak:fix (syncs windows, prunes expired excludes) / deps:update (taze + cargo update, both soaked)
   excludes: version-pinned minimumReleaseAgeExclude entries REQUIRE `# published: YYYY-MM-DD | removable: YYYY-MM-DD` on the line above (removable = published + 7d); bare names/globs are standing trust and need no annotation; expired pins are pruned by soak:fix
-  socket_firewall: CI installs sfw (free tier keyless; enterprise auto-selected when the SOCKET_SECURITY_KEY repo secret lands, fed to SOCKET_API_KEY/SOCKET_API_TOKEN) and shims npm/yarn/pnpm/pip/uv/cargo via scripts/soak/external-tools.mts --shims; the buildkite agent image pre-bakes the same binary + shims
+  socket_firewall: CI installs sfw (free tier keyless; enterprise auto-selected when the SOCKET_SECURITY_KEY repo secret lands — the one env var every Socket product reads, no aliasing) and shims npm/yarn/pnpm/pip/uv/cargo via scripts/soak/external-tools.mts --shims; the buildkite agent image pre-bakes the same binary + shims
 
 git:
   forbidden[2]:

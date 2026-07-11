@@ -15,10 +15,10 @@
  *                          into BIN_DIR so installs route through the firewall
  *   - `--print-bin`        print BIN_DIR (for `>> $GITHUB_PATH` in CI)
  *
- *   `sfw` resolves to sfw-enterprise when SOCKET_API_KEY or SOCKET_API_TOKEN
- *   is set (either may be fed from a repo secret such as
- *   SOCKET_SECURITY_KEY), else sfw-free — free tier needs no key, so CI is
- *   firewalled from day one and upgrades itself when the secret lands.
+ *   `sfw` resolves to sfw-enterprise when SOCKET_SECURITY_KEY is set (the
+ *   one env var every Socket product reads), else sfw-free — free tier
+ *   needs no key, so CI is firewalled from day one and upgrades itself
+ *   when the repo secret lands.
  */
 
 import { createHash } from 'node:crypto'
@@ -28,13 +28,14 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 import { ANNOTATION_RE, SOAK_DAYS, addDaysIso } from './constants.mts'
 import { BIN_DIR, EXTERNAL_TOOLS_JSON, RACK_DIR } from './paths.mts'
@@ -109,7 +110,10 @@ export function checkPins(tools: Record<string, ToolPin>): string[] {
 
 async function download(url: string, expectedSri: string): Promise<Buffer> {
   const headers: Record<string, string> = {}
-  if (process.env.GITHUB_TOKEN) {
+  // Only GitHub gets the token (private release assets); sending it to any
+  // other host (e.g. the npm registry for purl tools) would leak the
+  // credential. Cross-origin redirects strip the header automatically.
+  if (process.env.GITHUB_TOKEN && new URL(url).hostname === 'github.com') {
     headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`
   }
   // Fail fast on a stalled release/registry response instead of hanging
@@ -133,9 +137,9 @@ async function download(url: string, expectedSri: string): Promise<Buffer> {
 function linkHandle(target: string, name: string): void {
   mkdirSync(BIN_DIR, { recursive: true })
   const handle = path.join(BIN_DIR, name)
-  if (existsSync(handle)) {
-    unlinkSync(handle)
-  }
+  // force also removes a DANGLING handle (existsSync would report false
+  // for one and a bare symlink would then throw EEXIST).
+  rmSync(handle, { force: true })
   symlinkSync(target, handle)
 }
 
@@ -157,13 +161,18 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   console.log(`[external-tools] downloading ${name}@${pin.version} (${plat.asset})`)
   const buf = await download(url, plat.integrity)
   mkdirSync(destDir, { recursive: true })
-  if (plat.asset.endsWith('.tar.gz')) {
+  if (plat.asset.endsWith('.tar.gz') || plat.asset.endsWith('.zip')) {
     const archive = path.join(destDir, plat.asset)
     writeFileSync(archive, buf)
-    const res = spawnSync('tar', ['-xzf', archive, '-C', destDir], { stdio: 'inherit' })
+    // bsdtar (macOS + Windows runners) extracts zip via plain -xf too.
+    const args = plat.asset.endsWith('.zip') ? ['-xf', archive, '-C', destDir] : ['-xzf', archive, '-C', destDir]
+    const res = spawnSync('tar', args, { stdio: 'inherit' })
     rmSync(archive)
     if (res.status !== 0) {
-      throw new Error(`${name}: tar extract failed`)
+      throw new Error(`${name}: archive extract failed`)
+    }
+    if (!existsSync(destBin)) {
+      throw new Error(`${name}: ${binName} not found in extracted archive`)
     }
   } else {
     writeFileSync(destBin, buf)
@@ -174,13 +183,19 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
 }
 
 function hasSocketToken(): boolean {
-  return Boolean(process.env.SOCKET_API_KEY || process.env.SOCKET_API_TOKEN)
+  return Boolean(process.env.SOCKET_SECURITY_KEY)
 }
 
 async function installTool(name: string, tools: Record<string, ToolPin>): Promise<void> {
   // `sfw` is a flavor pair: the enterprise binary when a Socket token is
-  // present (repo secret), the keyless free tier otherwise.
+  // present (repo secret), the keyless free tier otherwise. The firewall
+  // shim mechanism is POSIX (bash shims, extension-less symlink handles) —
+  // skip cleanly on Windows rather than install something unusable.
   if (name === 'sfw') {
+    if (process.platform === 'win32') {
+      console.log('[external-tools] sfw shims are POSIX-only — skipping on windows')
+      return
+    }
     name = hasSocketToken() ? 'sfw-enterprise' : 'sfw-free'
   }
   const pin = tools[name]
@@ -202,7 +217,12 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
     const base = pkg!.split('/').pop()
     const url = `https://registry.npmjs.org/${pkg}/-/${base}-${version}.tgz`
     const destDir = path.join(RACK_DIR, name, version!)
-    if (!existsSync(destDir)) {
+    // Completion marker is the extracted manifest, not the directory: a
+    // failed/interrupted extract leaves the dir behind and would otherwise
+    // wedge every later install. Reset and redo instead.
+    const manifest = path.join(destDir, 'package/package.json')
+    if (!existsSync(manifest)) {
+      rmSync(destDir, { recursive: true, force: true })
       console.log(`[external-tools] downloading ${name}@${version} (npm)`)
       const buf = await download(url, pin.integrity!)
       mkdirSync(destDir, { recursive: true })
@@ -214,7 +234,7 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
         throw new Error(`${name}: tar extract failed`)
       }
     }
-    const pkgJson = JSON.parse(readFileSync(path.join(destDir, 'package/package.json'), 'utf8'))
+    const pkgJson = JSON.parse(readFileSync(manifest, 'utf8'))
     const binRel = typeof pkgJson.bin === 'string' ? pkgJson.bin : Object.values(pkgJson.bin ?? {})[0]
     if (binRel) {
       const wrapper = path.join(RACK_DIR, name, `${name}-wrapper`)
@@ -246,6 +266,10 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
  * by stripping the rack's bin dir out of PATH.
  */
 function writeShims(): void {
+  if (process.platform === 'win32') {
+    console.log('[external-tools] sfw shims are POSIX-only — skipping on windows')
+    return
+  }
   mkdirSync(BIN_DIR, { recursive: true })
   for (const cmd of SFW_ECOSYSTEMS) {
     const sentinel = `SFW_SHIM_ACTIVE_${cmd.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
@@ -304,7 +328,10 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   return 0
 }
 
-const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+// realpath + pathToFileURL so symlinked checkouts and paths needing URL
+// encoding still register as the entrypoint (ESM realpaths import.meta.url).
+const isMain =
+  process.argv[1] && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url
 if (isMain) {
   main().then(
     code => {

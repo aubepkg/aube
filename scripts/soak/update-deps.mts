@@ -15,15 +15,19 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 import { NPM_INSTALLERS, NPM_PKG_DIR, REPO_ROOT, RUSTUP_CARGO } from './paths.mts'
 
 function run(cmd: string, args: string[], cwd: string): number {
   console.log(`[update-deps] ${cmd} ${args.join(' ')} (in ${path.relative(REPO_ROOT, cwd) || '.'})`)
   const res = spawnSync(cmd, args, { cwd, stdio: 'inherit' })
+  if (res.error) {
+    console.error(`[update-deps] ${cmd}: ${res.error.message}`)
+  }
   return res.status ?? 1
 }
 
@@ -64,19 +68,21 @@ function updateCargo(dryRun: boolean): number {
 
 function main(argv: string[] = process.argv.slice(2)): number {
   const dryRun = argv.includes('--dry-run')
-  const onlyNpm = argv.includes('--npm')
-  const onlyCargo = argv.includes('--cargo')
-  let status = 0
-  if (!onlyCargo) {
-    status ||= updateNpm(dryRun)
-  }
-  if (!onlyNpm) {
-    status ||= updateCargo(dryRun)
-  }
-  return status
+  const npmFlag = argv.includes('--npm')
+  const cargoFlag = argv.includes('--cargo')
+  // No flag = both; naming both explicitly also means both. Run every
+  // requested ecosystem even if an earlier one fails, then aggregate.
+  const wantNpm = npmFlag || !cargoFlag
+  const wantCargo = cargoFlag || !npmFlag
+  const npmStatus = wantNpm ? updateNpm(dryRun) : 0
+  const cargoStatus = wantCargo ? updateCargo(dryRun) : 0
+  return npmStatus || cargoStatus
 }
 
-const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+// realpath + pathToFileURL so symlinked checkouts and paths needing URL
+// encoding still register as the entrypoint (ESM realpaths import.meta.url).
+const isMain =
+  process.argv[1] && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url
 if (isMain) {
   process.exitCode = main()
 }

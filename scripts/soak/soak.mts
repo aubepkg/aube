@@ -18,9 +18,10 @@
  *   Usage: node scripts/soak/soak.mts [--check|--fix] [--quiet]
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 import {
   ANNOTATION_RE,
@@ -107,6 +108,18 @@ export function checkWorkspaceYaml(body: string, file: string): Finding[] {
 export function checkExcludeAnnotations(body: string, file: string): Finding[] {
   const out: Finding[] = []
   const today = todayIso()
+  // Flow style would be invisible to the block parser below — an
+  // unvalidated, never-expiring bypass. One canonical shape only.
+  if (/^minimumReleaseAgeExclude:\s*\[/m.test(body)) {
+    out.push({
+      file,
+      what: 'minimumReleaseAgeExclude flow style',
+      saw: 'inline [...] list',
+      wanted: 'a block list (one annotated `- entry` per line)',
+      fix: 'rewrite as a block list so every pin can carry its annotation',
+    })
+    return out
+  }
   for (const entry of parseExcludeEntries(body)) {
     if (!VERSION_PIN_RE.test(entry.name)) {
       continue
@@ -166,7 +179,7 @@ export function parseExcludeEntries(body: string): ExcludeEntry[] {
     if (!inBlock) {
       continue
     }
-    const item = /^(\s+)-\s*['"]?([^'"#\s]+)['"]?\s*$/.exec(line)
+    const item = /^(\s+)-\s*['"]?([^'"#\s]+)['"]?\s*(?:#.*)?$/.exec(line)
     if (!item) {
       // Comments stay inside the block; anything else at column 0 ends it.
       if (/^\S/.test(line)) {
@@ -204,7 +217,7 @@ export function checkCatalogParity(
 ): Finding[] {
   const out: Finding[] = []
   const catalog: Record<string, string> = {}
-  const block = /^catalog:\s*\n((?:[ \t]+\S.*\n?)*)/m.exec(yamlBody)?.[1] ?? ''
+  const block = /^catalog:\s*\n((?:[ \t]+\S.*\n?|\s*\n)*)/m.exec(yamlBody)?.[1] ?? ''
   for (const m of block.matchAll(/^[ \t]+['"]?([^'":\s]+)['"]?:\s*['"]?([^'"\s]+)['"]?\s*$/gm)) {
     catalog[m[1]!] = m[2]!
   }
@@ -361,7 +374,10 @@ export function main(argv: string[] = process.argv.slice(2)): number {
   return findings.length === 0 ? 0 : 1
 }
 
-const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+// realpath + pathToFileURL so symlinked checkouts and paths needing URL
+// encoding still register as the entrypoint (ESM realpaths import.meta.url).
+const isMain =
+  process.argv[1] && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url
 if (isMain) {
   process.exitCode = main()
 }

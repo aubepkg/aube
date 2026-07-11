@@ -72,12 +72,10 @@ jobs:
       contents: read
     env:
       RUSTFLAGS: "-D warnings"
-      # Socket credentials: the SOCKET_SECURITY_KEY repo secret feeds both
-      # names sfw reads (SOCKET_API_KEY primary, SOCKET_API_TOKEN
-      # forward-canonical). Until the secret lands these are empty and sfw
-      # runs in its keyless free tier — the firewall is active either way.
-      SOCKET_API_KEY: ${{ secrets.SOCKET_SECURITY_KEY }}
-      SOCKET_API_TOKEN: ${{ secrets.SOCKET_SECURITY_KEY }}
+      # Until the SOCKET_SECURITY_KEY repo secret lands this is empty and
+      # sfw runs in its keyless free tier — the firewall is active either
+      # way and upgrades itself to enterprise when the secret appears.
+      SOCKET_SECURITY_KEY: ${{ secrets.SOCKET_SECURITY_KEY }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
