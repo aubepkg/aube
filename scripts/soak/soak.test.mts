@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { addDaysIso, todayIso } from './constants.mts'
+import { SOAK_DAYS, addDaysIso, todayIso } from './constants.mts'
 import {
   checkCargoConfig,
   checkCatalogParity,
@@ -17,7 +17,7 @@ import {
 // A pin published yesterday is inside its window; one published long ago
 // has expired. Built relative to today so the tests never go stale.
 const FRESH_PUB = addDaysIso(todayIso(), -1)
-const FRESH_REM = addDaysIso(FRESH_PUB, 7)
+const FRESH_REM = addDaysIso(FRESH_PUB, SOAK_DAYS)
 
 const CLEAN_YAML = `catalog:
   taze: 19.14.1

@@ -67,7 +67,7 @@
       "release": "asset",
       "binaryName": "sfw",
       "notes": [
-        "Used when neither SOCKET_API_KEY (primary) nor SOCKET_API_TOKEN (forward-canonical) is set",
+        "Used when SOCKET_SECURITY_KEY is not set",
         "Shims npm/yarn/pnpm so every install call passes through the firewall"
       ],
       "platforms": {
@@ -94,13 +94,13 @@
       }
     },
     "sfw-enterprise": {
-      "description": "Socket Firewall (enterprise tier) — selected when SOCKET_API_KEY (or SOCKET_API_TOKEN) is set.",
+      "description": "Socket Firewall (enterprise tier) — selected when SOCKET_SECURITY_KEY is set.",
       "version": "1.13.1",
       "repository": "github:SocketDev/firewall-release",
       "release": "asset",
       "binaryName": "sfw",
       "notes": [
-        "Used when SOCKET_API_KEY is set (primary, universally supported). SOCKET_API_TOKEN is accepted as the forward-canonical secondary read.",
+        "Used when SOCKET_SECURITY_KEY is set (the one env var every Socket product reads)",
         "Same shims as sfw-free, broader ecosystem support (Ruby, .NET, Go on Linux)"
       ],
       "platforms": {

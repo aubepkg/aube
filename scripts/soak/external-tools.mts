@@ -28,7 +28,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -139,8 +138,16 @@ export function checkDockerPrebake(
   dockerBody: string,
   tools: Record<string, ToolPin>,
   toolchainToml: string,
+  rustVersion = '',
 ): string[] {
   const out: string[] = []
+  const shimList = /for cmd in ([^;]+);/.exec(dockerBody)?.[1]?.trim().split(/\s+/)
+  if (shimList && shimList.join(' ') !== SFW_ECOSYSTEMS.join(' ')) {
+    out.push(`docker prebake: shim list [${shimList.join(' ')}] != SFW_ECOSYSTEMS [${SFW_ECOSYSTEMS.join(' ')}]`)
+  }
+  if (rustVersion && !dockerBody.includes(`toolchain install ${rustVersion}`)) {
+    out.push(`docker prebake: image does not pre-install the ${rustVersion} msrv toolchain`)
+  }
   const sfw = tools['sfw-free']
   const version = /rack\/sfw-free\/([^/\s]+)\//.exec(dockerBody)?.[1]
   if (version !== sfw?.version) {
@@ -201,7 +208,19 @@ async function download(url: string, expectedSri: string): Promise<Buffer> {
   return buf
 }
 
-function linkHandle(target: string, name: string): void {
+function extractArchive(name: string, destDir: string, asset: string, buf: Buffer): void {
+  const archive = path.join(destDir, asset)
+  writeFileSync(archive, buf)
+  // bsdtar (macOS + Windows runners) extracts zip via plain -xf too.
+  const flags = asset.endsWith('.zip') ? '-xf' : '-xzf'
+  const res = spawnSync('tar', [flags, archive, '-C', destDir], { stdio: 'inherit' })
+  rmSync(archive)
+  if (res.status !== 0) {
+    throw new Error(`${name}: archive extract failed`)
+  }
+}
+
+export function linkHandle(target: string, name: string): void {
   mkdirSync(BIN_DIR, { recursive: true })
   const handle = path.join(BIN_DIR, name)
   // force also removes a DANGLING handle (existsSync would report false
@@ -235,15 +254,7 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   const buf = await download(url, plat.integrity)
   mkdirSync(destDir, { recursive: true })
   if (plat.asset.endsWith('.tar.gz') || plat.asset.endsWith('.zip')) {
-    const archive = path.join(destDir, plat.asset)
-    writeFileSync(archive, buf)
-    // bsdtar (macOS + Windows runners) extracts zip via plain -xf too.
-    const args = plat.asset.endsWith('.zip') ? ['-xf', archive, '-C', destDir] : ['-xzf', archive, '-C', destDir]
-    const res = spawnSync('tar', args, { stdio: 'inherit' })
-    rmSync(archive)
-    if (res.status !== 0) {
-      throw new Error(`${name}: archive extract failed`)
-    }
+    extractArchive(name, destDir, plat.asset, buf)
     // Windows archives ship `<bin>.exe`; resolve it before giving up, and
     // clean the partial dir so a retry re-extracts instead of wedging.
     if (!existsSync(destBin) && existsSync(`${destBin}.exe`)) {
@@ -288,23 +299,16 @@ async function installNpmTarball(
     console.log(`[external-tools] downloading ${name}@${version} (npm registry)`)
     const buf = await download(url, integrity)
     mkdirSync(destDir, { recursive: true })
-    const archive = path.join(destDir, 'package.tgz')
-    writeFileSync(archive, buf)
-    const res = spawnSync('tar', ['-xzf', archive, '-C', destDir], { stdio: 'inherit' })
-    rmSync(archive)
-    if (res.status !== 0) {
-      throw new Error(`${name}: tar extract failed`)
-    }
-    const pkgJson = JSON.parse(readFileSync(manifest, 'utf8'))
-    const hasDeps = Object.keys(pkgJson.dependencies ?? {}).length > 0
-    if (hasDeps && !existsSync(path.join(pkgDir, 'node_modules'))) {
-      if (installDeps(name, pkgDir) !== 0) {
-        rmSync(destDir, { recursive: true, force: true })
-        throw new Error(`${name}: dependency install failed`)
-      }
-    }
+    extractArchive(name, destDir, 'package.tgz', buf)
   }
   const pkgJson = JSON.parse(readFileSync(manifest, 'utf8'))
+  const hasDeps = Object.keys(pkgJson.dependencies ?? {}).length > 0
+  if (hasDeps && !existsSync(path.join(pkgDir, 'node_modules'))) {
+    if (installDeps(name, pkgDir) !== 0) {
+      rmSync(destDir, { recursive: true, force: true })
+      throw new Error(`${name}: dependency install failed`)
+    }
+  }
   const bins =
     typeof pkgJson.bin === 'string' ? { [name]: pkgJson.bin } : (pkgJson.bin ?? {})
   const binRel = bins[name] ?? Object.values(bins)[0]
@@ -336,10 +340,6 @@ function installDeps(name: string, pkgDir: string): number {
   return 1
 }
 
-function hasSocketToken(): boolean {
-  return Boolean(process.env.SOCKET_SECURITY_KEY)
-}
-
 async function installTool(name: string, tools: Record<string, ToolPin>): Promise<void> {
   // `sfw` is a flavor pair: the enterprise binary when a Socket token is
   // present (repo secret), the keyless free tier otherwise. The firewall
@@ -350,7 +350,7 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
       console.log('[external-tools] sfw shims are POSIX-only — skipping on windows')
       return
     }
-    name = hasSocketToken() ? 'sfw-enterprise' : 'sfw-free'
+    name = process.env.SOCKET_SECURITY_KEY ? 'sfw-enterprise' : 'sfw-free'
   }
   const pin = tools[name]
   if (!pin) {
@@ -389,12 +389,30 @@ async function installTool(name: string, tools: Record<string, ToolPin>): Promis
 }
 
 /**
+ * The rack location of a pinned command's runnable entry, or '' when the
+ * command isn't rack-pinned/installed. Resolved from the manifest + rack
+ * contents (never from the bin handle: after a --shims run the handle is
+ * the shim itself, and resolving through it wouldn't survive a re-run).
+ */
+export function rackRealFor(cmd: string, tools: Record<string, ToolPin>): string {
+  const pin = tools[cmd]
+  if (!pin) {
+    return ''
+  }
+  const candidates = [
+    path.join(RACK_DIR, cmd, `${cmd}-wrapper`),
+    ...(pin.version ? [path.join(RACK_DIR, cmd, pin.version, pin.binaryName ?? cmd)] : []),
+  ]
+  return candidates.find(c => existsSync(c)) ?? ''
+}
+
+/**
  * sfw shims: tiny wrappers named after each package manager that route the
  * real invocation through the firewall. A sentinel env var breaks the
  * recursion when sfw itself re-invokes the tool; the real binary is found
  * by stripping the rack's bin dir out of PATH.
  */
-function writeShims(): void {
+export function writeShims(tools: Record<string, ToolPin>): void {
   if (process.platform === 'win32') {
     console.log('[external-tools] sfw shims are POSIX-only — skipping on windows')
     return
@@ -403,19 +421,10 @@ function writeShims(): void {
   for (const cmd of SFW_ECOSYSTEMS) {
     const sentinel = `SFW_SHIM_ACTIVE_${cmd.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
     // When the command itself is rack-pinned (pnpm/npm), the shim wraps the
-    // PINNED binary — the shim replaces its bin handle, so resolve the rack
-    // target now and embed it. Unpinned commands resolve at run time by
-    // stripping the shim dir out of PATH.
+    // PINNED binary; unpinned commands resolve at run time by stripping the
+    // shim dir out of PATH.
     const handle = path.join(BIN_DIR, cmd)
-    let rackReal = ''
-    try {
-      const target = readlinkSync(handle)
-      if (target.startsWith(RACK_DIR)) {
-        rackReal = target
-      }
-    } catch {
-      // not a symlink or absent — no rack pin for this command
-    }
+    const rackReal = rackRealFor(cmd, tools)
     const resolveReal = rackReal
       ? `REAL='${rackReal}'`
       : `CLEAN_PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vFx '${BIN_DIR}' | paste -sd ':' -)
@@ -459,6 +468,9 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
             readFileSync(dockerAbs, 'utf8'),
             tools,
             existsSync(toolchainAbs) ? readFileSync(toolchainAbs, 'utf8') : '',
+            /^rust-version\s*=\s*"([^"]+)"/m.exec(
+              readFileSync(path.join(REPO_ROOT, 'Cargo.toml'), 'utf8'),
+            )?.[1] ?? '',
           ),
         )
       }
@@ -486,7 +498,7 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
     await installTool('sfw', tools)
   }
   if (argv.includes('--shims')) {
-    writeShims()
+    writeShims(tools)
   }
   return 0
 }

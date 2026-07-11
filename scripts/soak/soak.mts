@@ -334,26 +334,23 @@ export function main(argv: string[] = process.argv.slice(2)): number {
     rel: string
     check: (body: string, file: string) => Finding[]
     fixer?: (body: string) => string
-    required: boolean
   }> = [
-    { rel: SURFACES.cargoConfig, check: checkCargoConfig, fixer: fixCargoConfig, required: true },
-    { rel: SURFACES.npmrc, check: checkNpmrc, fixer: fixNpmrc, required: true },
-    { rel: SURFACES.workspaceYaml, check: checkWorkspaceYaml, fixer: fixWorkspaceYaml, required: true },
-    { rel: SURFACES.tazeConfig, check: checkTazeConfig, required: true },
+    { rel: SURFACES.cargoConfig, check: checkCargoConfig, fixer: fixCargoConfig },
+    { rel: SURFACES.npmrc, check: checkNpmrc, fixer: fixNpmrc },
+    { rel: SURFACES.workspaceYaml, check: checkWorkspaceYaml, fixer: fixWorkspaceYaml },
+    { rel: SURFACES.tazeConfig, check: checkTazeConfig },
   ]
 
   for (const s of surfaces) {
     const abs = path.join(REPO_ROOT, s.rel)
     if (!existsSync(abs)) {
-      if (s.required) {
-        findings.push({
-          file: s.rel,
-          what: 'soak surface missing',
-          saw: '(file absent)',
-          wanted: 'file present and carrying the soak window',
-          fix: `create ${s.rel} — see scripts/soak/constants.mts header for the expected key`,
-        })
-      }
+      findings.push({
+        file: s.rel,
+        what: 'soak surface missing',
+        saw: '(file absent)',
+        wanted: 'file present and carrying the soak window',
+        fix: `create ${s.rel} — see scripts/soak/constants.mts header for the expected key`,
+      })
       continue
     }
     let body = readFileSync(abs, 'utf8')

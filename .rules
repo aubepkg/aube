@@ -238,7 +238,7 @@ deps:
     - cargo audit: CVE database scan (RustSec advisories) before every release, required in CI
     - cargo deny: license policy, banned crates, duplicate detection, approved sources. deny.toml checked in
     - cargo min-publish-age: 7-day soak on new crate versions (.cargo/config.toml [registry] global-min-publish-age; unstable feature, active via the pinned nightly). resolver skips versions younger than the window unless already locked
-    - external tools: sfw/zizmor/agentshield/skillspector pinned exact with sha512 SRI in external-tools.json; installed/verified only via scripts/soak/external-tools.mts (mise run tools:install / tools:check)
+    - external tools: pnpm/npm/sfw/zizmor/agentshield/skillspector pinned exact with sha512 SRI in external-tools.json; installed/verified only via scripts/soak/external-tools.mts (mise run tools:install / tools:check)
 
 soak:
   window: SOAK_DAYS=7 in scripts/soak/constants.mts — the ONE source; every surface derives or is parity-checked against it
@@ -250,7 +250,7 @@ soak:
     - docs/taze.config.mts maturityPeriod (imports SOAK_DAYS)
   manager: mise run soak (check, CI-gated in test-linux) / soak:fix (syncs windows, prunes expired excludes) / deps:update (taze + cargo update, both soaked)
   excludes: version-pinned minimumReleaseAgeExclude entries REQUIRE `# published: YYYY-MM-DD | removable: YYYY-MM-DD` on the line above (removable = published + 7d); bare names/globs are standing trust and need no annotation; expired pins are pruned by soak:fix
-  socket_firewall: CI installs sfw (free tier keyless; enterprise auto-selected when the SOCKET_SECURITY_KEY repo secret lands — the one env var every Socket product reads, no aliasing) and shims npm/yarn/pnpm/pip/uv/cargo via scripts/soak/external-tools.mts --shims; the buildkite agent image pre-bakes the same binary + shims
+  socket_firewall: CI installs sfw (free tier keyless; enterprise auto-selected when the SOCKET_SECURITY_KEY repo secret lands — the one env var every Socket product reads, no aliasing) and shims npm/yarn/pnpm/pip/pip3/uv/cargo via scripts/soak/external-tools.mts --shims; the buildkite agent image pre-bakes the same binary + shims
 
 git:
   forbidden[2]:

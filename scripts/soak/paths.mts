@@ -6,7 +6,6 @@
  *   change.
  */
 
-import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
@@ -51,16 +50,15 @@ export const EXTERNAL_TOOLS_JSON = path.join(REPO_ROOT, 'external-tools.json')
 export const DOCKER_PREBAKE: string | null = '.buildkite/linux-agent.Dockerfile'
 export const RUST_TOOLCHAIN_TOML = 'rust-toolchain.toml'
 
+// .dockerignore managed by `untracked` (null when the repo has no
+// repo-context docker builds — aube's agent image never copies the repo).
+export const DOCKERIGNORE: string | null = null
+
 const XDG_DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share')
 export const DEV_TOOLS_DIR = path.join(XDG_DATA_HOME, 'aube/dev-tools')
 export const RACK_DIR = path.join(DEV_TOOLS_DIR, 'rack')
 export const BIN_DIR = path.join(DEV_TOOLS_DIR, 'bin')
 
-export function assertRepoRoot(): void {
-  if (!existsSync(path.join(REPO_ROOT, 'external-tools.json'))) {
-    throw new Error(`repo root not found at ${REPO_ROOT}`)
-  }
-}
 
 // Candidates (tried in order) for installing an extracted external tool's
 // runtime deps — the repo's own package manager first, of course.

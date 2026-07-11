@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 
-import { addDaysIso, todayIso } from './constants.mts'
+import { SOAK_DAYS, addDaysIso, todayIso } from './constants.mts'
 import { checkDockerPrebake, checkPins } from './external-tools.mts'
 import { DOCKER_PREBAKE, EXTERNAL_TOOLS_JSON, REPO_ROOT, RUST_TOOLCHAIN_TOML } from './paths.mts'
 
@@ -27,7 +27,7 @@ test('checkPins validates soakBypass dates, arithmetic, and expiry', () => {
     a: {
       version: '1.0.0',
       integrity: GOOD_SRI,
-      soakBypass: { version: '1.0.0', published: pub, removable: addDaysIso(pub, 7) },
+      soakBypass: { version: '1.0.0', published: pub, removable: addDaysIso(pub, SOAK_DAYS) },
     },
   }
   assert.deepEqual(checkPins(good), [])
