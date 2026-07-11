@@ -44,6 +44,13 @@ export const RUSTUP_CARGO = path.join(os.homedir(), '.cargo/bin/cargo')
 // exact versions under rack/<tool>/<version>/, flat PATH handles in bin/.
 export const EXTERNAL_TOOLS_JSON = path.join(REPO_ROOT, 'external-tools.json')
 
+// CI agent image that pre-bakes the pinned toolchain + sfw (null when the
+// repo has no such image). The image builder's context is .buildkite/
+// alone, so the Dockerfile can't COPY the tracked pin sources — it embeds
+// copies, and external-tools.mts --check asserts they haven't drifted.
+export const DOCKER_PREBAKE: string | null = '.buildkite/linux-agent.Dockerfile'
+export const RUST_TOOLCHAIN_TOML = 'rust-toolchain.toml'
+
 const XDG_DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share')
 export const DEV_TOOLS_DIR = path.join(XDG_DATA_HOME, 'aube/dev-tools')
 export const RACK_DIR = path.join(DEV_TOOLS_DIR, 'rack')

@@ -8,6 +8,7 @@
 
 catalog:
   taze: 19.14.1
+  untracked: 1.6.4
 
 # Wait 7 days (10080 minutes) before installing newly published packages.
 minimumReleaseAge: 10080

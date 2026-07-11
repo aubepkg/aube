@@ -38,7 +38,14 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 import { ANNOTATION_RE, SOAK_DAYS, addDaysIso } from './constants.mts'
-import { BIN_DIR, EXTERNAL_TOOLS_JSON, RACK_DIR } from './paths.mts'
+import {
+  BIN_DIR,
+  DOCKER_PREBAKE,
+  EXTERNAL_TOOLS_JSON,
+  RACK_DIR,
+  REPO_ROOT,
+  RUST_TOOLCHAIN_TOML,
+} from './paths.mts'
 
 const SFW_ECOSYSTEMS = ['npm', 'yarn', 'pnpm', 'pip', 'pip3', 'uv', 'cargo']
 
@@ -104,6 +111,57 @@ export function checkPins(tools: Record<string, ToolPin>): string[] {
         out.push(`${name}: soakBypass dates are not YYYY-MM-DD`)
       }
     }
+  }
+  return out
+}
+
+function sriToHex(sri: string): string {
+  return Buffer.from(sri.slice('sha512-'.length), 'base64').toString('hex')
+}
+
+/**
+ * Parity gate for the CI agent image: its build context can't reach the
+ * tracked pin sources, so the Dockerfile embeds copies of the sfw pin
+ * (version + per-arch sha512 hex) and the toolchain channels. Assert the
+ * copies match external-tools.json / rust-toolchain.toml so a pin bump
+ * can't silently strand the image on old bits.
+ */
+export function checkDockerPrebake(
+  dockerBody: string,
+  tools: Record<string, ToolPin>,
+  toolchainToml: string,
+): string[] {
+  const out: string[] = []
+  const sfw = tools['sfw-free']
+  const version = /rack\/sfw-free\/([^/\s]+)\//.exec(dockerBody)?.[1]
+  if (version !== sfw?.version) {
+    out.push(
+      `docker prebake: sfw-free version ${version ?? '(missing)'} != external-tools.json ${sfw?.version}`,
+    )
+  }
+  const urlVersion = /sfw-free\/releases\/download\/v([^/\s]+)\//.exec(dockerBody)?.[1]
+  if (urlVersion !== sfw?.version) {
+    out.push(
+      `docker prebake: sfw-free download url v${urlVersion ?? '(missing)'} != external-tools.json ${sfw?.version}`,
+    )
+  }
+  const pairs = [...dockerBody.matchAll(/asset=(\S+);\s*sha=([0-9a-f]{128})/g)]
+  if (pairs.length === 0) {
+    out.push('docker prebake: no asset/sha pin pairs found in the Dockerfile')
+  }
+  for (const [, asset, hex] of pairs) {
+    const plat = Object.values(sfw?.platforms ?? {}).find(p => p.asset === asset)
+    if (!plat) {
+      out.push(`docker prebake: asset ${asset} has no pin in external-tools.json`)
+      continue
+    }
+    if (sriToHex(plat.integrity) !== hex) {
+      out.push(`docker prebake: sha for ${asset} != hex of external-tools.json SRI`)
+    }
+  }
+  const channel = /^channel\s*=\s*"([^"]+)"/m.exec(toolchainToml)?.[1]
+  if (channel && !dockerBody.includes(`toolchain install ${channel} `)) {
+    out.push(`docker prebake: image does not pre-install the pinned toolchain ${channel}`)
   }
   return out
 }
@@ -301,6 +359,19 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const tools = loadTools()
   if (argv.includes('--check') || argv.length === 0) {
     const problems = checkPins(tools)
+    if (DOCKER_PREBAKE) {
+      const dockerAbs = path.join(REPO_ROOT, DOCKER_PREBAKE)
+      const toolchainAbs = path.join(REPO_ROOT, RUST_TOOLCHAIN_TOML)
+      if (existsSync(dockerAbs)) {
+        problems.push(
+          ...checkDockerPrebake(
+            readFileSync(dockerAbs, 'utf8'),
+            tools,
+            existsSync(toolchainAbs) ? readFileSync(toolchainAbs, 'utf8') : '',
+          ),
+        )
+      }
+    }
     for (const p of problems) {
       console.error(`[external-tools] ${p}`)
     }
