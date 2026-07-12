@@ -235,6 +235,27 @@ export function linkHandle(target: string, name: string): void {
   // force also removes a DANGLING handle (existsSync would report false
   // for one and a bare symlink would then throw EEXIST).
   rmSync(handle, { force: true })
+  if (process.platform === 'win32') {
+    // A symlinked/copied handle breaks Windows SEA binaries: pnpm.exe
+    // resolves its dist/ siblings from the handle's OWN directory, not the
+    // rack. Forward to the absolute rack target instead — a .cmd for
+    // cmd/pwsh and an extensionless bash shim for Git Bash. Non-.exe
+    // targets are node entry scripts (registry-tarball tools).
+    const viaExe = target.endsWith('.exe')
+    rmSync(`${handle}.cmd`, { force: true })
+    writeFileSync(
+      `${handle}.cmd`,
+      viaExe ? `@echo off\r\n"${target}" %*\r\n` : `@echo off\r\nnode "${target}" %*\r\n`,
+    )
+    writeFileSync(
+      handle,
+      viaExe
+        ? `#!/usr/bin/env bash\nexec "${target}" "$@"\n`
+        : `#!/usr/bin/env bash\nexec node "${target}" "$@"\n`,
+    )
+    chmodSync(handle, 0o755)
+    return
+  }
   symlinkSync(target, handle)
 }
 
@@ -322,13 +343,17 @@ async function installNpmTarball(
     typeof pkgJson.bin === 'string' ? { [name]: pkgJson.bin } : (pkgJson.bin ?? {})
   const binRel = bins[name] ?? Object.values(bins)[0]
   if (binRel) {
-    const wrapper = path.join(RACK_DIR, name, `${name}-wrapper`)
-    writeFileSync(
-      wrapper,
-      `#!/usr/bin/env bash\nexec node '${path.join(pkgDir, binRel as string)}' "$@"\n`,
-    )
-    chmodSync(wrapper, 0o755)
-    linkHandle(wrapper, name)
+    const binAbs = path.join(pkgDir, binRel as string)
+    if (process.platform === 'win32') {
+      // linkHandle writes node-invoking .cmd + bash forwarders for a
+      // non-.exe target — no bash-only wrapper to strand under pwsh.
+      linkHandle(binAbs, name)
+    } else {
+      const wrapper = path.join(RACK_DIR, name, `${name}-wrapper`)
+      writeFileSync(wrapper, `#!/usr/bin/env bash\nexec node '${binAbs}' "$@"\n`)
+      chmodSync(wrapper, 0o755)
+      linkHandle(wrapper, name)
+    }
   }
   console.log(`[external-tools] installed ${name}@${version}`)
 }
