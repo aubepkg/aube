@@ -934,12 +934,7 @@ fn emit_outcome(outcome: &PublishOutcome, as_json: bool) -> miette::Result<()> {
 fn emit_outcome_line(outcome: &PublishOutcome) {
     match outcome.status {
         PublishStatus::DryRun => {
-            println!(
-                "+ {}@{} (dry run, would PUT to {})",
-                outcome.name,
-                outcome.version,
-                aube_util::url::redact_url(&put_url(&outcome.registry_url, &outcome.name))
-            );
+            println!("{}", dry_run_outcome_line(outcome));
             if let Some(archive) = &outcome.archive {
                 for f in &archive.files {
                     println!("  {f}");
@@ -956,6 +951,15 @@ fn emit_outcome_line(outcome: &PublishOutcome) {
             );
         }
     }
+}
+
+fn dry_run_outcome_line(outcome: &PublishOutcome) -> String {
+    format!(
+        "+ {}@{} (dry run, would PUT to {})",
+        outcome.name,
+        outcome.version,
+        aube_util::url::redact_url(&put_url(&outcome.registry_url, &outcome.name))
+    )
 }
 
 fn emit_json_outcomes(outcomes: &[PublishOutcome]) -> miette::Result<()> {
@@ -1619,11 +1623,17 @@ mod tests {
 
     #[test]
     fn publish_target_display_redacts_inline_registry_credentials() {
-        let target = put_url("https://user:secret@registry.example/", "@scope/pkg");
+        let outcome = PublishOutcome {
+            name: "@scope/pkg".to_string(),
+            version: "1.0.0".to_string(),
+            registry_url: "https://user:secret@registry.example/".to_string(),
+            archive: None,
+            status: PublishStatus::DryRun,
+        };
 
         assert_eq!(
-            aube_util::url::redact_url(&target),
-            "https://***@registry.example/%40scope%2fpkg"
+            dry_run_outcome_line(&outcome),
+            "+ @scope/pkg@1.0.0 (dry run, would PUT to https://***@registry.example/@scope%2Fpkg)"
         );
     }
 }
