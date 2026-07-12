@@ -42,6 +42,12 @@ run = "node scripts/soak/update-deps.mts"
 [tasks."tools:check"]
 run = "node scripts/soak/external-tools.mts --check"
 
+[tasks."remotes:check"]
+run = "node scripts/soak/remotes.mts --check"
+
+[tasks."remotes:fix"]
+run = "node scripts/soak/remotes.mts --fix"
+
 [tasks."tools:install"]
 run = "node scripts/soak/external-tools.mts --install-all --shims"
 
