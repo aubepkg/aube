@@ -114,3 +114,107 @@ EOF
 	assert_failure
 	assert_output --partial "is not installed"
 }
+
+@test "non-frozen install ignores stale pnpm lockfile patch entries" {
+	cat >package.json <<'EOF'
+{
+  "name": "stale-patch-test",
+  "version": "1.0.0",
+  "dependencies": { "is-odd": "3.0.1" }
+}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - .
+patchedDependencies:
+  is-odd@3.0.1: patches/is-odd@3.0.1.patch
+EOF
+	mkdir patches
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	cat >pnpm-lock.yaml <<'EOF'
+lockfileVersion: '9.0'
+patchedDependencies:
+  is-odd@3.0.0:
+    hash: stale
+    path: patches/is-odd@3.0.0.patch
+importers:
+  .:
+    dependencies:
+      is-odd:
+        specifier: 3.0.0
+        version: 3.0.0
+packages:
+  is-odd@3.0.0:
+    resolution: {integrity: sha512-stale}
+snapshots:
+  is-odd@3.0.0: {}
+EOF
+
+	run aube install --no-frozen-lockfile --ignore-scripts
+	assert_success
+	run node -e 'const odd = require("is-odd"); if (!odd.patched) process.exit(1)'
+	assert_success
+	run grep -q 'is-odd@3.0.0' pnpm-lock.yaml
+	assert_failure
+	run grep -q 'is-odd@3.0.1:' pnpm-lock.yaml
+	assert_success
+}
+
+@test "non-frozen install ignores stale pnpm hash-only patch entries" {
+	cat >package.json <<'EOF'
+{
+  "name": "stale-hash-patch-test",
+  "version": "1.0.0",
+  "dependencies": { "is-odd": "3.0.1" }
+}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - .
+patchedDependencies:
+  is-odd@3.0.1: patches/is-odd@3.0.1.patch
+EOF
+	mkdir patches
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	cat >pnpm-lock.yaml <<'EOF'
+lockfileVersion: '9.0'
+patchedDependencies:
+  is-odd@3.0.0: 02efb892c0aa62e77ab535074021159d4eb5764f187cecb6b759227dcc9ebfec
+importers:
+  .:
+    dependencies:
+      is-odd:
+        specifier: 3.0.0
+        version: 3.0.0
+packages:
+  is-odd@3.0.0:
+    resolution: {integrity: sha512-stale}
+snapshots:
+  is-odd@3.0.0: {}
+EOF
+
+	run aube install --no-frozen-lockfile --ignore-scripts
+	assert_success
+	run node -e 'const odd = require("is-odd"); if (!odd.patched) process.exit(1)'
+	assert_success
+	run grep -q 'is-odd@3.0.0' pnpm-lock.yaml
+	assert_failure
+	run grep -q 'is-odd@3.0.1:' pnpm-lock.yaml
+	assert_success
+}

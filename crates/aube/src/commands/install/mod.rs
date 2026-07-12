@@ -1694,6 +1694,16 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
             ) {
                 graph.overlay_metadata_from(&prior);
             }
+            // A pnpm lockfile's patchedDependencies block describes the
+            // resolution that produced that lockfile; it is not authoritative
+            // after manifest/workspace drift forced a fresh resolve. Replace
+            // the metadata overlaid above with the current declarations so a
+            // deleted patch from the stale lockfile is neither read during
+            // materialization nor written back. This also prevents pnpm 11's
+            // hash-only scalar entries from being mistaken for file paths.
+            if matches!(source_kind_before, Some(aube_lockfile::LockfileKind::Pnpm)) {
+                graph.patched_dependencies = crate::patches::read_patched_dependencies(&cwd)?;
+            }
             tracing::debug!("Resolved {} packages", graph.packages.len());
             // Seed the chain index for diagnostic enrichment. Any
             // post-resolver error wrapping `(name, version)` via
