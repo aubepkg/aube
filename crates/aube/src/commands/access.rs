@@ -294,6 +294,10 @@ fn access_registry_error(error: aube_registry::Error) -> miette::Report {
             code = aube_codes::errors::ERR_AUBE_PACKAGE_NOT_FOUND,
             "package not found: {name}"
         ),
+        aube_registry::Error::AccessEntityNotFound(entity) => miette!(
+            code = aube_codes::errors::ERR_AUBE_ACCESS_ENTITY_NOT_FOUND,
+            "access entity not found: {entity}"
+        ),
         aube_registry::Error::Unauthorized => miette!(
             code = aube_codes::errors::ERR_AUBE_UNAUTHORIZED,
             "authentication required\nhelp: run `{}` first, then retry",
@@ -338,35 +342,28 @@ fn emit_collaborators(value: &serde_json::Value, json: bool) -> miette::Result<(
     if json {
         return emit_json(value);
     }
-    let collaborators = value.as_array().ok_or_else(|| {
+    for line in format_collaborators(value)? {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn format_collaborators(value: &serde_json::Value) -> miette::Result<Vec<String>> {
+    let collaborators = value.as_object().ok_or_else(|| {
         miette!(
             code = aube_codes::errors::ERR_AUBE_REGISTRY_ERROR,
             "registry returned an invalid collaborator list"
         )
     })?;
-    let mut lines = Vec::with_capacity(collaborators.len());
-    for collaborator in collaborators {
-        let user = collaborator
-            .get("user")
-            .or_else(|| collaborator.get("username"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown");
-        let email = collaborator
-            .get("email")
-            .and_then(serde_json::Value::as_str)
-            .map(|email| format!(" <{email}>"))
-            .unwrap_or_default();
-        let permissions = collaborator
-            .get("permissions")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("read-only");
-        lines.push(format!("{user}{email}: {permissions}"));
-    }
+    let mut lines: Vec<String> = collaborators
+        .iter()
+        .map(|(user, permissions)| match permissions.as_str() {
+            Some(permissions) => format!("{user}: {permissions}"),
+            None => user.clone(),
+        })
+        .collect();
     lines.sort();
-    for line in lines {
-        println!("{line}");
-    }
-    Ok(())
+    Ok(lines)
 }
 
 fn emit_status(package: &str, value: &serde_json::Value, json: bool) -> miette::Result<()> {
@@ -398,7 +395,7 @@ fn emit_json(value: &serde_json::Value) -> miette::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessArgs, AccessCommand, bare_package, split_team};
+    use super::{AccessArgs, AccessCommand, bare_package, format_collaborators, split_team};
     use clap::Parser;
 
     #[test]
@@ -432,5 +429,17 @@ mod tests {
             panic!("expected access ls command");
         };
         assert_eq!(entities, ["packages", "@scope"]);
+    }
+
+    #[test]
+    fn collaborator_map_formats_sorted_permissions() {
+        let collaborators = serde_json::json!({
+            "zoe": "read-only",
+            "amy": "read-write",
+        });
+        assert_eq!(
+            format_collaborators(&collaborators).unwrap(),
+            ["amy: read-write", "zoe: read-only"]
+        );
     }
 }

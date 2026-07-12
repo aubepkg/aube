@@ -133,6 +133,12 @@
       "exit_code": 40
     },
     {
+      "name": "ERR_AUBE_ACCESS_ENTITY_NOT_FOUND",
+      "category": "Registry / network",
+      "description": "Registry returned 404 for an access user, organization, or team.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_VERSION_NOT_FOUND",
       "category": "Registry / network",
       "description": "Package exists but the requested version doesn't.",

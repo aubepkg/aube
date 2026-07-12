@@ -730,6 +730,9 @@ pub enum Error {
     #[error("package not found: {0}")]
     #[diagnostic(code(ERR_AUBE_PACKAGE_NOT_FOUND))]
     NotFound(String),
+    #[error("access entity not found: {0}")]
+    #[diagnostic(code(ERR_AUBE_ACCESS_ENTITY_NOT_FOUND))]
+    AccessEntityNotFound(String),
     #[error("version not found: {0}@{1}")]
     #[diagnostic(code(ERR_AUBE_VERSION_NOT_FOUND))]
     VersionNotFound(String, String),

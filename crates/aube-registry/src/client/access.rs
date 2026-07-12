@@ -5,7 +5,12 @@ use crate::Error;
 struct AccessTarget<'a> {
     registry_url: &'a str,
     auth_package_name: Option<&'a str>,
-    not_found_name: Option<&'a str>,
+    not_found: Option<AccessNotFound<'a>>,
+}
+
+enum AccessNotFound<'a> {
+    Entity(&'a str),
+    Package(&'a str),
 }
 
 impl RegistryClient {
@@ -56,7 +61,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: scope_package.as_deref(),
-                not_found_name: entity,
+                not_found: entity.map(AccessNotFound::Entity),
             },
             None,
             None,
@@ -86,7 +91,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: Some(name),
-                not_found_name: Some(name),
+                not_found: Some(AccessNotFound::Package(name)),
             },
             None,
             None,
@@ -104,7 +109,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: Some(name),
-                not_found_name: Some(name),
+                not_found: Some(AccessNotFound::Package(name)),
             },
             None,
             None,
@@ -127,7 +132,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: Some(name),
-                not_found_name: Some(name),
+                not_found: Some(AccessNotFound::Package(name)),
             },
             Some(serde_json::json!({ "access": access })),
             otp,
@@ -151,7 +156,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: Some(name),
-                not_found_name: Some(name),
+                not_found: Some(AccessNotFound::Package(name)),
             },
             Some(serde_json::json!({ "publish_requires_tfa": publish_requires_tfa })),
             otp,
@@ -221,7 +226,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: Some(name),
-                not_found_name: Some(name),
+                not_found: Some(AccessNotFound::Package(name)),
             },
             body,
             otp,
@@ -254,8 +259,13 @@ impl RegistryClient {
         let resp = request.send().await?;
         match resp.status() {
             reqwest::StatusCode::NOT_FOUND => {
-                if let Some(name) = target.not_found_name {
-                    return Err(Error::NotFound(name.to_string()));
+                if let Some(not_found) = target.not_found {
+                    return Err(match not_found {
+                        AccessNotFound::Entity(name) => {
+                            Error::AccessEntityNotFound(name.to_string())
+                        }
+                        AccessNotFound::Package(name) => Error::NotFound(name.to_string()),
+                    });
                 }
                 let status = resp.status().as_u16();
                 let body =
@@ -405,8 +415,10 @@ mod tests {
             registry: format!("{}/", server.uri()),
             ..Default::default()
         });
-        let Err(Error::NotFound(name)) = client.access_list_packages(Some("@scope")).await else {
-            panic!("expected organization lookup to return NotFound");
+        let Err(Error::AccessEntityNotFound(name)) =
+            client.access_list_packages(Some("@scope")).await
+        else {
+            panic!("expected organization lookup to return AccessEntityNotFound");
         };
         assert_eq!(name, "@scope");
     }

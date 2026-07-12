@@ -35,6 +35,7 @@ pub const ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED: &str = "ERR_AUBE_PEER_CONTEXT_NOT
 
 // ── registry / network ──────────────────────────────────────────────
 pub const ERR_AUBE_PACKAGE_NOT_FOUND: &str = "ERR_AUBE_PACKAGE_NOT_FOUND";
+pub const ERR_AUBE_ACCESS_ENTITY_NOT_FOUND: &str = "ERR_AUBE_ACCESS_ENTITY_NOT_FOUND";
 pub const ERR_AUBE_VERSION_NOT_FOUND: &str = "ERR_AUBE_VERSION_NOT_FOUND";
 pub const ERR_AUBE_UNAUTHORIZED: &str = "ERR_AUBE_UNAUTHORIZED";
 pub const ERR_AUBE_OFFLINE: &str = "ERR_AUBE_OFFLINE";
@@ -264,6 +265,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::REGISTRY_NETWORK,
         description: "Registry returned 404 for the package name.",
         exit_code: Some(40),
+    },
+    CodeMeta {
+        name: ERR_AUBE_ACCESS_ENTITY_NOT_FOUND,
+        category: category::REGISTRY_NETWORK,
+        description: "Registry returned 404 for an access user, organization, or team.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_VERSION_NOT_FOUND,
