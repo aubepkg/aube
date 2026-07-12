@@ -211,12 +211,18 @@ export async function download(url: string, expectedSri: string): Promise<Buffer
 export function extractArchive(name: string, destDir: string, asset: string, buf: Buffer): void {
   const archive = path.join(destDir, asset)
   writeFileSync(archive, buf)
-  // bsdtar (macOS + Windows runners) extracts zip via plain -xf too. The
-  // archive is addressed RELATIVE to a cwd instead of absolutely: on Windows
-  // tar parses `C:\...` as a remote `host:path` archive ("Cannot connect to
-  // C"), so absolute paths must never reach its argv.
+  // bsdtar extracts zip via plain -xf too (macOS runners ship it as `tar`).
+  // Windows needs BOTH quirks handled: Git Bash's PATH shadows System32's
+  // bsdtar with GNU tar (which can't read zip — "does not look like a tar
+  // archive"), so address the System32 binary explicitly; and tar parses an
+  // absolute `C:\...` archive path as a remote `host:path` ("Cannot connect
+  // to C"), so the archive is addressed RELATIVE to a cwd.
+  const tarBin =
+    process.platform === 'win32'
+      ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+      : 'tar'
   const flags = asset.endsWith('.zip') ? '-xf' : '-xzf'
-  const res = spawnSync('tar', [flags, asset], { cwd: destDir, stdio: 'inherit' })
+  const res = spawnSync(tarBin, [flags, asset], { cwd: destDir, stdio: 'inherit' })
   rmSync(archive)
   if (res.status !== 0) {
     throw new Error(`${name}: archive extract failed`)
