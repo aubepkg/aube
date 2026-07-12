@@ -154,7 +154,7 @@ fn ensure_no_symlink_in_chain(pkg_dir: &Path, rel: &str) -> Result<(), String> {
 pub(crate) fn apply_multi_file_patch(pkg_dir: &Path, patch_text: &str) -> Result<(), String> {
     let sections = split_patch_sections(patch_text);
     if sections.is_empty() {
-        return Err("patch contained no `diff --git` sections".to_string());
+        return Err("patch contained no parseable file sections".to_string());
     }
     for section in sections {
         let rel = section
@@ -360,9 +360,12 @@ fn unified_header_path(header: &str) -> Option<String> {
     if path == "/dev/null" {
         return None;
     }
-    path.strip_prefix("a/")
-        .or_else(|| path.strip_prefix("b/"))
-        .map(str::to_string)
+    Some(
+        path.strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .unwrap_or(path)
+            .to_string(),
+    )
 }
 
 fn hunk_line_counts(header: &str) -> Option<(usize, usize)> {
@@ -450,7 +453,7 @@ fn split_patch_sections(text: &str) -> Vec<PatchSection> {
         body.push_str(stripped);
         body.push('\n');
         if let Some(counts) = hunk_line_counts(stripped) {
-            hunk_remaining = Some(counts);
+            hunk_remaining = (counts != (0, 0)).then_some(counts);
         } else if let Some((old, new)) = hunk_remaining.as_mut() {
             match stripped.as_bytes().first() {
                 Some(b' ') => {
@@ -560,6 +563,47 @@ mod tests {
     }
 
     #[test]
+    fn applies_plain_unified_patch_with_bare_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("index.js"), "old\n").unwrap();
+
+        let patch = "--- index.js\t2026-07-11 00:00:00\n\
+                     +++ index.js\t2026-07-11 00:00:01\n\
+                     @@ -1 +1 @@\n\
+                     -old\n\
+                     +new\n";
+        apply_multi_file_patch(&pkg, patch).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("index.js")).unwrap(),
+            "new\n"
+        );
+    }
+
+    #[test]
+    fn applies_multi_hunk_plain_unified_patch() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("index.js"), "one\ntwo\nthree\nfour\n").unwrap();
+
+        let patch = "--- a/index.js\n\
+                     +++ b/index.js\n\
+                     @@ -1 +1 @@\n\
+                     -one\n\
+                     +ONE\n\
+                     @@ -4 +4 @@\n\
+                     -four\n\
+                     +FOUR\n";
+        apply_multi_file_patch(&pkg, patch).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("index.js")).unwrap(),
+            "ONE\ntwo\nthree\nFOUR\n"
+        );
+    }
+
+    #[test]
     fn applies_multi_file_plain_unified_patch() {
         let dir = tempfile::tempdir().unwrap();
         let pkg = dir.path().join("pkg");
@@ -618,6 +662,23 @@ mod tests {
         let result = apply_multi_file_patch(&pkg, patch);
         assert!(result.is_err());
         assert!(!dir.path().join("outside.js").exists());
+    }
+
+    #[test]
+    fn zero_count_hunk_does_not_hide_next_file_boundary() {
+        let patch = "--- a/empty.js\n\
+                     +++ b/empty.js\n\
+                     @@ -0,0 +0,0 @@\n\
+                     --- a/index.js\n\
+                     +++ b/index.js\n\
+                     @@ -1 +1 @@\n\
+                     -old\n\
+                     +new\n";
+
+        let sections = split_patch_sections(patch);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].rel_path.as_deref(), Some("empty.js"));
+        assert_eq!(sections[1].rel_path.as_deref(), Some("index.js"));
     }
 
     #[test]
