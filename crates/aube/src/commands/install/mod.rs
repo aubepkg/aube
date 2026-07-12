@@ -80,6 +80,23 @@ const TRUST_POLICY_VALIDATION_CACHE_DIR: &str = "trust-policy-v1";
 const TRUST_POLICY_VALIDATION_CACHE_TTL: std::time::Duration =
     std::time::Duration::from_secs(5 * 60);
 
+pub(crate) fn package_build_is_allowed(
+    policy: &aube_scripts::BuildPolicy,
+    pkg: &aube_lockfile::LockedPackage,
+) -> bool {
+    let source_key = pkg.source_approval_key();
+    let git_repository_key = pkg.git_repository_approval_key();
+    matches!(
+        policy.decide_package_with_git_repository(
+            pkg.registry_name(),
+            &pkg.version,
+            source_key.as_deref(),
+            git_repository_key.as_deref(),
+        ),
+        aube_scripts::AllowDecision::Allow
+    )
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 struct TrustPolicyValidationStamp {
     key: String,

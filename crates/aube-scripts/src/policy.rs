@@ -510,9 +510,15 @@ fn is_source_key(key: &str) -> bool {
 fn is_git_repository_key(key: &str) -> bool {
     let (_, source) = split_name_and_versions(key);
     !source.contains('#')
-        && ["git+https://", "git+http://", "git+ssh://", "git+file://"]
-            .iter()
-            .any(|prefix| source.starts_with(prefix))
+        && [
+            "git+https://",
+            "git+http://",
+            "git+ssh://",
+            "git+file://",
+            "git+git://",
+        ]
+        .iter()
+        .any(|prefix| source.starts_with(prefix))
 }
 
 fn is_source_version(version: &str) -> bool {
@@ -671,6 +677,21 @@ mod tests {
                 Some("gitdep@git+https://github.com/acme/other.git"),
             ),
             AllowDecision::Unspecified
+        );
+    }
+
+    #[test]
+    fn git_repository_rule_accepts_native_git_transport() {
+        let p = policy(&[("gitdep@git+git://github.com/acme/gitdep.git", true)]);
+
+        assert_eq!(
+            p.decide_package_with_git_repository(
+                "gitdep",
+                "1.0.0",
+                Some("gitdep@git://github.com/acme/gitdep.git#0123456789012345678901234567890123456789"),
+                Some("gitdep@git+git://github.com/acme/gitdep.git"),
+            ),
+            AllowDecision::Allow
         );
     }
 

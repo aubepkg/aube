@@ -508,7 +508,11 @@ impl LockedPackage {
         let LocalSource::Git(git) = self.local_source.as_ref()? else {
             return None;
         };
-        Some(format!("{}@git+{}", self.registry_name(), git.url))
+        Some(format!(
+            "{}@git+{}",
+            self.registry_name(),
+            git.url.strip_prefix("git+").unwrap_or(&git.url)
+        ))
     }
 
     /// Declared peer ranges with pnpm's meta-only peers folded in as `*`.
@@ -615,6 +619,23 @@ mod locked_package_tests {
         assert_eq!(
             pkg.git_repository_approval_key(),
             Some("pkg@git+https://github.com/acme/pkg.git".to_string())
+        );
+    }
+
+    #[test]
+    fn git_repository_approval_key_normalizes_an_existing_git_prefix() {
+        let mut pkg = pkg();
+        pkg.local_source = Some(LocalSource::Git(GitSource {
+            url: "git+ssh://git@github.com/acme/pkg.git".to_string(),
+            committish: None,
+            resolved: "0123456789012345678901234567890123456789".to_string(),
+            integrity: None,
+            subpath: None,
+        }));
+
+        assert_eq!(
+            pkg.git_repository_approval_key(),
+            Some("pkg@git+ssh://git@github.com/acme/pkg.git".to_string())
         );
     }
 }
