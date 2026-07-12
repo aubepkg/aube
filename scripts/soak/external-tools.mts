@@ -240,20 +240,26 @@ export function linkHandle(target: string, name: string): void {
     // resolves its dist/ siblings from the handle's OWN directory, not the
     // rack. Forward to the absolute rack target instead — a .cmd for
     // cmd/pwsh and an extensionless bash shim for Git Bash. Non-.exe
-    // targets are node entry scripts (registry-tarball tools).
+    // targets are node entry scripts (registry-tarball tools). The handle
+    // BASE must not keep a caller-supplied .exe suffix: pwsh resolves
+    // `pnpm` to `pnpm.exe` first, and a bash text file wearing that name
+    // is "not a valid application for this OS platform".
+    const base = path.join(BIN_DIR, name.replace(/\.exe$/, ''))
     const viaExe = target.endsWith('.exe')
-    rmSync(`${handle}.cmd`, { force: true })
+    rmSync(base, { force: true })
+    rmSync(`${base}.cmd`, { force: true })
+    rmSync(`${base}.exe`, { force: true })
     writeFileSync(
-      `${handle}.cmd`,
+      `${base}.cmd`,
       viaExe ? `@echo off\r\n"${target}" %*\r\n` : `@echo off\r\nnode "${target}" %*\r\n`,
     )
     writeFileSync(
-      handle,
+      base,
       viaExe
         ? `#!/usr/bin/env bash\nexec "${target}" "$@"\n`
         : `#!/usr/bin/env bash\nexec node "${target}" "$@"\n`,
     )
-    chmodSync(handle, 0o755)
+    chmodSync(base, 0o755)
     return
   }
   symlinkSync(target, handle)
