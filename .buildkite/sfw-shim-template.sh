@@ -8,9 +8,9 @@ set -euo pipefail
 CLEAN_PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vFx '/root/.local/share/aube/dev-tools/bin' | paste -sd ':' -)
 REAL=$(PATH="$CLEAN_PATH" command -v '__CMD__' || true)
 if [ -n "${__SENTINEL__:-}" ] || [ -z "$REAL" ] || ! command -v sfw >/dev/null 2>&1; then
-  [ -n "$REAL" ] && exec "$REAL" "$@"
-  echo "__CMD__: not found" >&2
-  exit 127
+	[ -n "$REAL" ] && exec "$REAL" "$@"
+	echo "__CMD__: not found" >&2
+	exit 127
 fi
 export __SENTINEL__=1
 exec sfw '__CMD__' "$@"
