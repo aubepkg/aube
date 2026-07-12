@@ -26,6 +26,7 @@ pub enum AccessCommand {
         command: AccessGetCommand,
     },
     /// Grant a team read-only or read-write access to a package.
+    #[command(override_usage = "access grant <PERMISSIONS> <TEAM> <PACKAGE>")]
     Grant {
         /// `read-only` or `read-write`.
         permissions: String,
@@ -40,9 +41,11 @@ pub enum AccessCommand {
         command: AccessListCommand,
     },
     /// Alias for `list packages`.
+    #[command(override_usage = "access ls [ENTITY]\n       access ls packages [ENTITY]")]
     Ls {
         /// User, `@organization`, or `@scope:team`. Also accepts pnpm's
-        /// `packages [ENTITY]` compatibility form.
+        /// `packages [ENTITY]` compatibility form. Accepted forms are
+        /// `aube access ls [ENTITY]` and `aube access ls packages [ENTITY]`.
         #[arg(num_args = 0..=2)]
         entities: Vec<String>,
     },
@@ -167,7 +170,7 @@ pub async fn run(args: AccessArgs) -> miette::Result<()> {
                         _ => {
                             return Err(miette!(
                                 code = aube_codes::errors::ERR_AUBE_ACCESS_INVALID_ARGUMENT,
-                                "invalid access status {value:?}; expected `public` or `private`"
+                                "invalid access status {value:?}; expected `public`, `private`, or `restricted`"
                             ));
                         }
                     };
@@ -271,7 +274,12 @@ fn split_team(raw: &str) -> miette::Result<(&str, &str)> {
             "expected team in `@scope:team` form, got {raw:?}"
         ));
     };
-    if scope.trim_start_matches('@').is_empty() || team.is_empty() || team.contains(':') {
+    if scope
+        .strip_prefix('@')
+        .is_none_or(|scope| scope.is_empty() || scope.contains('@'))
+        || team.is_empty()
+        || team.contains(':')
+    {
         return Err(miette!(
             code = aube_codes::errors::ERR_AUBE_ACCESS_INVALID_ARGUMENT,
             "expected team in `@scope:team` form, got {raw:?}"
@@ -408,6 +416,8 @@ mod tests {
         );
         assert!(split_team("@scope").is_err());
         assert!(split_team("@scope:dev:ops").is_err());
+        assert!(split_team("scope:developers").is_err());
+        assert!(split_team("@@scope:developers").is_err());
     }
 
     #[test]

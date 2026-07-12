@@ -2,6 +2,12 @@ use super::body::{check_body_cap, read_body_capped};
 use super::{RegistryClient, encoded_name};
 use crate::Error;
 
+struct AccessTarget<'a> {
+    registry_url: &'a str,
+    auth_package_name: Option<&'a str>,
+    not_found_name: Option<&'a str>,
+}
+
 impl RegistryClient {
     /// List packages visible to the current user or a requested user,
     /// organization, or `scope:team` entity.
@@ -9,34 +15,53 @@ impl RegistryClient {
         &self,
         entity: Option<&str>,
     ) -> Result<serde_json::Value, Error> {
-        let registry_url = &self.config.registry;
+        let scope_package = entity
+            .filter(|entity| entity.starts_with('@'))
+            .map(|entity| {
+                let scope = entity.split_once(':').map_or(entity, |(scope, _)| scope);
+                format!("{scope}/access")
+            });
+        let registry_url = scope_package
+            .as_deref()
+            .map_or(self.config.registry.as_str(), |package| {
+                self.registry_url_for(package)
+            });
         let url = match entity {
             None => format!(
                 "{}/-/package?format=cli",
                 registry_url.trim_end_matches('/')
             ),
-            Some(entity) if entity.contains(':') => {
-                let (scope, team) = entity.split_once(':').expect("contains colon");
-                format!(
+            Some(entity) => match entity.split_once(':') {
+                Some((scope, team)) => format!(
                     "{}/-/team/{}/{}/package?format=cli",
                     registry_url.trim_end_matches('/'),
                     encode_access_component(scope.trim_start_matches('@')),
                     encode_access_component(team),
-                )
-            }
-            Some(entity) if entity.starts_with('@') => format!(
-                "{}/-/org/{}/package?format=cli",
-                registry_url.trim_end_matches('/'),
-                encode_access_component(entity.trim_start_matches('@')),
-            ),
-            Some(entity) => format!(
-                "{}/-/user/{}/package?format=cli",
-                registry_url.trim_end_matches('/'),
-                encode_access_component(entity),
-            ),
+                ),
+                None if entity.starts_with('@') => format!(
+                    "{}/-/org/{}/package?format=cli",
+                    registry_url.trim_end_matches('/'),
+                    encode_access_component(entity.trim_start_matches('@')),
+                ),
+                None => format!(
+                    "{}/-/user/{}/package?format=cli",
+                    registry_url.trim_end_matches('/'),
+                    encode_access_component(entity),
+                ),
+            },
         };
-        self.access_request(reqwest::Method::GET, &url, registry_url, None, None, None)
-            .await
+        self.access_request(
+            reqwest::Method::GET,
+            &url,
+            AccessTarget {
+                registry_url,
+                auth_package_name: scope_package.as_deref(),
+                not_found_name: entity,
+            },
+            None,
+            None,
+        )
+        .await
     }
 
     /// List package collaborators, optionally restricted to one user.
@@ -58,8 +83,11 @@ impl RegistryClient {
         self.access_request(
             reqwest::Method::GET,
             &url,
-            registry_url,
-            Some(name),
+            AccessTarget {
+                registry_url,
+                auth_package_name: Some(name),
+                not_found_name: Some(name),
+            },
             None,
             None,
         )
@@ -73,8 +101,11 @@ impl RegistryClient {
         self.access_request(
             reqwest::Method::GET,
             &url,
-            registry_url,
-            Some(name),
+            AccessTarget {
+                registry_url,
+                auth_package_name: Some(name),
+                not_found_name: Some(name),
+            },
             None,
             None,
         )
@@ -93,8 +124,11 @@ impl RegistryClient {
         self.access_request(
             reqwest::Method::POST,
             &url,
-            registry_url,
-            Some(name),
+            AccessTarget {
+                registry_url,
+                auth_package_name: Some(name),
+                not_found_name: Some(name),
+            },
             Some(serde_json::json!({ "access": access })),
             otp,
         )
@@ -114,8 +148,11 @@ impl RegistryClient {
         self.access_request(
             reqwest::Method::POST,
             &url,
-            registry_url,
-            Some(name),
+            AccessTarget {
+                registry_url,
+                auth_package_name: Some(name),
+                not_found_name: Some(name),
+            },
             Some(serde_json::json!({ "publish_requires_tfa": publish_requires_tfa })),
             otp,
         )
@@ -178,23 +215,32 @@ impl RegistryClient {
             encode_access_component(scope.trim_start_matches('@')),
             encode_access_component(team),
         );
-        self.access_request(method, &url, registry_url, Some(name), body, otp)
-            .await
-            .map(|_| ())
+        self.access_request(
+            method,
+            &url,
+            AccessTarget {
+                registry_url,
+                auth_package_name: Some(name),
+                not_found_name: Some(name),
+            },
+            body,
+            otp,
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn access_request(
         &self,
         method: reqwest::Method,
         url: &str,
-        registry_url: &str,
-        package_name: Option<&str>,
+        target: AccessTarget<'_>,
         body: Option<serde_json::Value>,
         otp: Option<&str>,
     ) -> Result<serde_json::Value, Error> {
-        let mut request = match package_name {
-            Some(name) => self.authed_request_for_package(method, url, registry_url, name),
-            None => self.authed_request(method, url, registry_url),
+        let mut request = match target.auth_package_name {
+            Some(name) => self.authed_request_for_package(method, url, target.registry_url, name),
+            None => self.authed_request(method, url, target.registry_url),
         };
         if let Some(body) = body {
             request = request
@@ -208,9 +254,16 @@ impl RegistryClient {
         let resp = request.send().await?;
         match resp.status() {
             reqwest::StatusCode::NOT_FOUND => {
-                return Err(Error::NotFound(
-                    package_name.unwrap_or("access").to_string(),
-                ));
+                if let Some(name) = target.not_found_name {
+                    return Err(Error::NotFound(name.to_string()));
+                }
+                let status = resp.status().as_u16();
+                let body =
+                    read_body_capped(resp, self.fetch_policy.packument_max_bytes, "access").await?;
+                return Err(Error::RegistryWrite {
+                    status,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                });
             }
             reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
                 return Err(Error::Unauthorized);
@@ -261,7 +314,9 @@ fn encode_access_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{RegistryClient, access_package_url, encode_access_component};
+    use crate::Error;
     use crate::config::NpmConfig;
+    use std::collections::BTreeMap;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -311,5 +366,48 @@ mod tests {
             .access_set_status("@scope/pkg", "restricted", Some("123456"))
             .await
             .expect("set status");
+    }
+
+    #[tokio::test]
+    async fn package_list_uses_the_organization_registry() {
+        let default = MockServer::start().await;
+        let scoped = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/-/org/scope/package"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&scoped)
+            .await;
+
+        let client = RegistryClient::from_config(NpmConfig {
+            registry: format!("{}/", default.uri()),
+            scoped_registries: BTreeMap::from([(
+                "@scope".to_string(),
+                format!("{}/", scoped.uri()),
+            )]),
+            ..Default::default()
+        });
+        client
+            .access_list_packages(Some("@scope"))
+            .await
+            .expect("list organization packages");
+    }
+
+    #[tokio::test]
+    async fn package_list_404_names_the_requested_entity() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/-/org/scope/package"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::from_config(NpmConfig {
+            registry: format!("{}/", server.uri()),
+            ..Default::default()
+        });
+        let Err(Error::NotFound(name)) = client.access_list_packages(Some("@scope")).await else {
+            panic!("expected organization lookup to return NotFound");
+        };
+        assert_eq!(name, "@scope");
     }
 }

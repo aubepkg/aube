@@ -126,7 +126,7 @@ cmd access subcommand_required=#true help="Manage package access and visibility 
         }
     }
     cmd ls help="Alias for `list packages`" {
-        arg "[ENTITIES]…" help="User, `@organization`, or `@scope:team`. Also accepts pnpm's `packages [ENTITY]` compatibility form" required=#false var=#true
+        arg "[ENTITIES]…" help="User, `@organization`, or `@scope:team`. Also accepts pnpm's `packages [ENTITY]` compatibility form. Accepted forms are `aube access ls [ENTITY]` and `aube access ls packages [ENTITY]`" required=#false var=#true
     }
     cmd revoke help="Revoke a team's access to a package" {
         arg <TEAM> help="Team in `@scope:team` form"
