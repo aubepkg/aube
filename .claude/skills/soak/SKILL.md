@@ -1,6 +1,6 @@
 ---
 name: soak
-description: Manages the repo's supply-chain soak window (SOAK_DAYS) — checks and fixes the derived surfaces, bumps or disables the window, adds dated per-package exclusions, and bumps pinned external tools. Use when a task touches minimumReleaseAge, min-release-age, min-publish-age, the nightly toolchain pin, external-tools.json, or taze cooldowns, or when investigating why a freshly published version won't install.
+description: Manages the repo's supply-chain soak window (SOAK_DAYS) — checks and fixes the derived surfaces, bumps or disables the window, adds dated per-package exclusions, and bumps pinned external tools. Use when a task touches minimumReleaseAge, min-release-age, min-publish-age, the nightly toolchain pin, external-tools.json, renovate.json, or taze cooldowns, or when investigating why a freshly published version won't install.
 ---
 
 # The soak window
@@ -20,6 +20,7 @@ against it:
 | `docs/.npmrc` | `min-release-age` | days |
 | `docs/taze.config.mts` | `maturityPeriod` | imports `SOAK_DAYS` |
 | `external-tools.json` | `soakBypass` annotations | days |
+| `.github/renovate.json` | `minimumReleaseAge` (explicit — an `extends:` preset doesn't count) | `"N days"` |
 
 ## Commands (mise tasks — the scripts live in `scripts/soak/`)
 

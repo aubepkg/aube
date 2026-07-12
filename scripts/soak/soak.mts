@@ -10,6 +10,7 @@
  *   - `docs/pnpm-workspace.yaml`  `minimumReleaseAge` (minutes) + annotated excludes
  *   - `docs/.npmrc`               `min-release-age` (days)
  *   - `docs/taze.config.mts`      imports SOAK_DAYS (existence + import check)
+ *   - `.github/renovate.json`     `minimumReleaseAge` ("N days", explicit — not preset-inherited)
  *
  *   `--check` (default) fails loud with What / Saw / Wanted / Fix on drift.
  *   `--fix` rewrites window values in place and prunes excludes whose
@@ -324,6 +325,61 @@ export function checkTazeConfig(body: string, file: string): Finding[] {
   return out
 }
 
+/**
+ * Renovate must carry the window EXPLICITLY in this repo's renovate.json.
+ * Renovate bumps manifests + lockfiles server-side, and cargo's
+ * min-publish-age skips already-locked versions — so a Renovate PR is the
+ * one dependency path none of the local soak surfaces can stop. An
+ * inherited preset value (extends:) doesn't count: presets change without
+ * a commit here, which is exactly the silent drift this gate exists to
+ * catch.
+ */
+export function checkRenovateConfig(body: string, file: string): Finding[] {
+  let config: Record<string, unknown>
+  try {
+    config = JSON.parse(body)
+  } catch {
+    return [
+      {
+        file,
+        what: 'renovate config parse',
+        saw: '(invalid JSON)',
+        wanted: 'parseable JSON carrying the soak window',
+        fix: 'repair the JSON, then set minimumReleaseAge (or run --fix)',
+      },
+    ]
+  }
+  const wanted = `${SOAK_DAYS} days`
+  const saw = config['minimumReleaseAge']
+  if (SOAK_DAYS === 0 ? saw === undefined : saw === wanted) {
+    return []
+  }
+  return [
+    {
+      file,
+      what: 'renovate minimumReleaseAge window',
+      saw: saw === undefined ? '(missing — an extends: preset does not count)' : String(saw),
+      wanted: SOAK_DAYS === 0 ? '(absent — soak disabled)' : wanted,
+      fix: `set "minimumReleaseAge": "${wanted}" at the top level (or run --fix)`,
+    },
+  ]
+}
+
+export function fixRenovateConfig(body: string): string {
+  let config: Record<string, unknown>
+  try {
+    config = JSON.parse(body)
+  } catch {
+    return body
+  }
+  if (SOAK_DAYS === 0) {
+    delete config['minimumReleaseAge']
+  } else {
+    config['minimumReleaseAge'] = `${SOAK_DAYS} days`
+  }
+  return `${JSON.stringify(config, null, 2)}\n`
+}
+
 export function fixCargoConfig(body: string): string {
   return body.replace(
     /^(global-min-publish-age\s*=\s*)"[^"]*"/m,
@@ -388,6 +444,7 @@ export function main(argv: string[] = process.argv.slice(2)): number {
     { rel: SURFACES.workspaceYaml, check: checkWorkspaceYaml, fixer: fixWorkspaceYaml },
     { rel: SURFACES.tazeConfig, check: checkTazeConfig },
     { rel: SURFACES.toolchainToml, check: checkToolchainSoak },
+    { rel: SURFACES.renovateJson, check: checkRenovateConfig, fixer: fixRenovateConfig },
   ]
 
   for (const s of surfaces) {

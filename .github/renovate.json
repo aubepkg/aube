@@ -1,6 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["local>jdx/renovate-config"],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
   "ignorePaths": ["fixtures/**"],
   "packageRules": [
     {

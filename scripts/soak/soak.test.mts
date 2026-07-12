@@ -9,11 +9,13 @@ import {
   checkCatalogParity,
   checkExcludeAnnotations,
   checkNpmrc,
+  checkRenovateConfig,
   checkTazeConfig,
   checkToolchainSoak,
   checkWorkspaceYaml,
   fixCargoConfig,
   fixNpmrc,
+  fixRenovateConfig,
   fixWorkspaceYaml,
   main,
   parseExcludeEntries,
@@ -151,6 +153,28 @@ test('fix rewrites a drifted cargo window and leaves a clean one alone', () => {
   const fixed = fixCargoConfig('[registry]\nglobal-min-publish-age = "3 days"\n')
   assert.ok(fixed.includes(`"${SOAK_DAYS} days"`))
   assert.equal(fixCargoConfig(fixed), fixed)
+})
+
+test('renovate: window must be explicit in-repo; preset inheritance is drift', () => {
+  const good = `{ "extends": ["some>preset"], "minimumReleaseAge": "${SOAK_DAYS} days" }`
+  assert.equal(checkRenovateConfig(good, 'r').length, 0)
+  // Missing key = inherited-at-best: the preset can change without a
+  // commit here, so the gate demands the explicit value.
+  assert.equal(checkRenovateConfig('{ "extends": ["some>preset"] }', 'r').length, 1)
+  assert.equal(checkRenovateConfig('{ "minimumReleaseAge": "3 days" }', 'r').length, 1)
+  assert.equal(checkRenovateConfig('{ "minimumReleaseAge": 7 }', 'r').length, 1)
+  assert.equal(checkRenovateConfig('not json', 'r').length, 1)
+})
+
+test('renovate fix sets the window, preserves other keys, and is idempotent', () => {
+  const fixed = fixRenovateConfig('{\n  "labels": ["dependencies"],\n  "minimumReleaseAge": "3 days"\n}\n')
+  const parsed = JSON.parse(fixed)
+  assert.equal(parsed.minimumReleaseAge, `${SOAK_DAYS} days`)
+  assert.deepEqual(parsed.labels, ['dependencies'])
+  assert.equal(fixRenovateConfig(fixed), fixed)
+  assert.equal(JSON.parse(fixRenovateConfig('{}')).minimumReleaseAge, `${SOAK_DAYS} days`)
+  // Unparseable input is left for a human — never rewritten blind.
+  assert.equal(fixRenovateConfig('not json'), 'not json')
 })
 
 // Glue: the tracked surfaces of THIS repo must satisfy the gate — the same
