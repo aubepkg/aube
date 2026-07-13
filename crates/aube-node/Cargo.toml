@@ -13,9 +13,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 aube = { path = "../aube", version = "1.26.0", default-features = false }
+aube-codes = { workspace = true }
+aube-registry = { workspace = true }
+aube-settings = { workspace = true }
 aube-util = { workspace = true }
+miette = { workspace = true }
 napi = { workspace = true }
 napi-derive = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 napi-build = { workspace = true }

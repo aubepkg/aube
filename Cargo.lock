@@ -392,10 +392,15 @@ name = "aube-node"
 version = "1.26.0"
 dependencies = [
  "aube",
+ "aube-codes",
+ "aube-registry",
+ "aube-settings",
  "aube-util",
+ "miette",
  "napi",
  "napi-build",
  "napi-derive",
+ "tokio",
 ]
 
 [[package]]

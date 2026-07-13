@@ -107,6 +107,7 @@ pub const ERR_AUBE_RUNTIME_IO: &str = "ERR_AUBE_RUNTIME_IO";
 pub const ERR_AUBE_INSTALL_CANCELLED: &str = "ERR_AUBE_INSTALL_CANCELLED";
 pub const ERR_AUBE_PATCHES_TRACKING_WRITE: &str = "ERR_AUBE_PATCHES_TRACKING_WRITE";
 pub const ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER: &str = "ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER";
+pub const ERR_AUBE_EMBED_INVALID_PROJECT: &str = "ERR_AUBE_EMBED_INVALID_PROJECT";
 
 /// Stable category labels that group codes in the generated docs and
 /// in `EXIT_TABLE`'s 10-wide allocation ranges. Public so the docs
@@ -560,6 +561,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::MISC_SAFETY,
         description: "A `#!` shebang named an unsafe interpreter when generating a shim — substituted with `node` instead. Surfaced as `tracing::error!` but install continues.",
         exit_code: Some(91),
+    },
+    CodeMeta {
+        name: ERR_AUBE_EMBED_INVALID_PROJECT,
+        category: category::MISC_SAFETY,
+        description: "An in-process embedder was given a project directory that could not be created, inspected, or resolved.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_UNSAFE_PACKAGE_NAME,

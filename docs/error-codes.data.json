@@ -421,6 +421,12 @@
       "exit_code": 91
     },
     {
+      "name": "ERR_AUBE_EMBED_INVALID_PROJECT",
+      "category": "Misc / safety",
+      "description": "An in-process embedder was given a project directory that could not be created, inspected, or resolved.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_UNSAFE_PACKAGE_NAME",
       "category": "Misc / safety",
       "description": "A package/dependency alias would escape its `node_modules` slot if linked.",
