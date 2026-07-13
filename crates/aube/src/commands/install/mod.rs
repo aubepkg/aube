@@ -80,6 +80,38 @@ const TRUST_POLICY_VALIDATION_CACHE_DIR: &str = "trust-policy-v1";
 const TRUST_POLICY_VALIDATION_CACHE_TTL: std::time::Duration =
     std::time::Duration::from_secs(5 * 60);
 
+#[cfg(test)]
+mod reentrancy_tests {
+    use super::*;
+
+    fn explicit_options(project_dir: &std::path::Path) -> InstallOptions {
+        let mut options = InstallOptions::with_mode(FrozenMode::Prefer);
+        options.project_dir = Some(project_dir.to_path_buf());
+        options.ignore_scripts = true;
+        options.skip_root_lifecycle = true;
+        options.network_mode = aube_registry::NetworkMode::Offline;
+        options
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn explicit_directory_installs_can_run_concurrently() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("package.json"), "{}\n").unwrap();
+        std::fs::write(second.path().join("package.json"), "{}\n").unwrap();
+
+        let (first_result, second_result) = tokio::join!(
+            run(explicit_options(first.path())),
+            run(explicit_options(second.path())),
+        );
+
+        first_result.unwrap();
+        second_result.unwrap();
+        assert!(first.path().join("aube-lock.yaml").is_file());
+        assert!(second.path().join("aube-lock.yaml").is_file());
+    }
+}
+
 pub(crate) fn package_build_is_allowed(
     policy: &aube_scripts::BuildPolicy,
     pkg: &aube_lockfile::LockedPackage,
@@ -440,9 +472,26 @@ fn reachable_package_dep_paths(
 }
 
 pub async fn run(opts: InstallOptions) -> miette::Result<()> {
-    let mode = opts.mode;
     let cwd = resolve_project_cwd(&opts)?;
     let _lock = super::take_project_lock(&cwd)?;
+    crate::dep_chain::scope(run_inner(opts, cwd)).await
+}
+
+/// Run install while reusing a project lock owned by an outer command.
+///
+/// The guard reference makes lock reentrancy invocation-scoped: only the
+/// command that owns this lock can bypass acquisition. Concurrent installs
+/// for unrelated projects always acquire their own filesystem lock.
+pub(crate) async fn run_with_project_lock(
+    opts: InstallOptions,
+    _lock: &super::project_lock::ProjectLock,
+) -> miette::Result<()> {
+    let cwd = resolve_project_cwd(&opts)?;
+    crate::dep_chain::scope(run_inner(opts, cwd)).await
+}
+
+async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
+    let mode = opts.mode;
     let start = std::time::Instant::now();
     let mut phase_timings = InstallPhaseTimings::from_env();
     aube_util::diag::spawn_concurrency_sampler();
@@ -512,7 +561,9 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
         )
         .await?;
     }
-    super::configure_script_settings(&settings_ctx, Some("install"));
+    if !opts.ignore_scripts {
+        super::configure_script_settings(&settings_ctx, Some("install"));
+    }
 
     let layout::InstallLayoutConfig {
         lockfile_dir,
@@ -1463,7 +1514,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                         .map(|p| p.start_fetch(&pkg.name, &pkg.version));
                     let bytes_progress = fetch_progress.clone();
 
-                    handles.spawn(async move {
+                    handles.spawn(crate::dep_chain::scope_current(async move {
                         let _row = row;
                         let _diag_tar = aube_util::diag::Span::new(aube_util::diag::Category::Fetch, "tarball")
                             .with_meta_fn(|| format!(r#"{{"name":{},"version":{}}}"#,
@@ -1620,7 +1671,7 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
                         }
 
                         Ok::<_, miette::Report>((dep_path, index, computed_integrity))
-                    });
+                    }));
                 }
 
                 // Collect all fetch results via JoinSet. Drop on

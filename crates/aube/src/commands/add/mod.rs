@@ -325,7 +325,7 @@ pub async fn run(
         }
     }
 
-    let _lock = super::take_project_lock(&cwd)?;
+    let lock = super::take_project_lock(&cwd)?;
     let manifest_path = cwd.join("package.json");
 
     // 1. Read existing package.json. Snapshot the raw bytes when
@@ -411,7 +411,8 @@ pub async fn run(
         install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Fix));
     apply_dangerously_allow_all_builds(&mut install_opts, dangerously_allow_all_builds);
     install_opts.osv_transitive_check = true;
-    let pipeline_result: miette::Result<()> = install::run(install_opts).await;
+    let pipeline_result: miette::Result<()> =
+        install::run_with_project_lock(install_opts, &lock).await;
 
     // 5. Under `--no-save`, restore the snapshotted `package.json` and
     // lockfile so neither shows up in `git status`. The user's

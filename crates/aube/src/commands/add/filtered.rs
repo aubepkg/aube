@@ -21,7 +21,7 @@ pub(super) async fn run(
     // walks up) mutate the real root lockfile and then silently skip
     // the restore under `--no-save`.
     let (root, matched) = crate::commands::select_workspace_packages(&cwd, filter, "add")?;
-    let _lock = crate::commands::take_project_lock(&root)?;
+    let lock = crate::commands::take_project_lock(&root)?;
 
     // CLI build review flags write against the workspace root (where
     // `allowBuilds` lives) — same as the non-filtered path. Run before
@@ -78,7 +78,7 @@ pub(super) async fn run(
         // See the sibling `aube add` codepath for why this flag is set:
         // live OSV API on the resolved transitives.
         install_opts.osv_transitive_check = true;
-        install::run(install_opts).await?;
+        install::run_with_project_lock(install_opts, &lock).await?;
         Ok(())
     }
     .await;
