@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0](https://github.com/jdx/aube/compare/aube-linker-v1.26.0...aube-linker-v1.27.0) - 2026-07-13
+
+### Fixed
+
+- *(linker)* accept plain unified patches ([#1021](https://github.com/jdx/aube/pull/1021))
+
+### Other
+
+- 7-day soak across toolchain and deps, cold-path hints, pinned tooling ([#1020](https://github.com/jdx/aube/pull/1020))
+- refresh benchmarks for v1.26.0 ([#1002](https://github.com/jdx/aube/pull/1002))
+
 ## [1.26.0](https://github.com/jdx/aube/compare/aube-linker-v1.25.2...aube-linker-v1.26.0) - 2026-07-06
 
 ### Other

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0](https://github.com/jdx/aube/compare/aube-resolver-v1.26.0...aube-resolver-v1.27.0) - 2026-07-13
+
+### Other
+
+- 7-day soak across toolchain and deps, cold-path hints, pinned tooling ([#1020](https://github.com/jdx/aube/pull/1020))
+- refresh benchmarks for v1.26.0 ([#1002](https://github.com/jdx/aube/pull/1002))
+
 ## [1.26.0](https://github.com/jdx/aube/compare/aube-resolver-v1.25.2...aube-resolver-v1.26.0) - 2026-07-06
 
 ### Added

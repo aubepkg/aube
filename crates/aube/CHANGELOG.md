@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0](https://github.com/jdx/aube/compare/v1.26.0...v1.27.0) - 2026-07-13
+
+### Added
+
+- *(access)* manage registry package access ([#1012](https://github.com/jdx/aube/pull/1012))
+- *(scripts)* allow git repository build approvals ([#1010](https://github.com/jdx/aube/pull/1010))
+
+### Fixed
+
+- *(publish)* redact inline registry credentials ([#1009](https://github.com/jdx/aube/pull/1009))
+- *(install)* ignore stale pnpm patch entries ([#1022](https://github.com/jdx/aube/pull/1022))
+- *(add)* accept dangerously-allow-all-builds ([#1016](https://github.com/jdx/aube/pull/1016))
+
+### Other
+
+- *(install)* isolate runtime and script state ([#1027](https://github.com/jdx/aube/pull/1027))
+- *(install)* make explicit installs reentrant ([#1026](https://github.com/jdx/aube/pull/1026))
+- refresh benchmarks for v1.26.0 ([#1002](https://github.com/jdx/aube/pull/1002))
+
 ## [1.26.0](https://github.com/jdx/aube/compare/v1.25.2...v1.26.0) - 2026-07-06
 
 ### Added

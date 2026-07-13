@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0](https://github.com/jdx/aube/compare/aube-codes-v1.26.0...aube-codes-v1.27.0) - 2026-07-13
+
+### Added
+
+- *(access)* manage registry package access ([#1012](https://github.com/jdx/aube/pull/1012))
+
+### Other
+
+- refresh benchmarks for v1.26.0 ([#1002](https://github.com/jdx/aube/pull/1002))
+
 ## [1.26.0](https://github.com/jdx/aube/compare/aube-codes-v1.25.2...aube-codes-v1.26.0) - 2026-07-06
 
 ### Added

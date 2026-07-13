@@ -246,7 +246,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "aube"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "ambient-id",
  "assert_cmd",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "aube-codes"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "aube-linker"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-lockfile",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "aube-lockfile"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-manifest",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "aube-manifest"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-util",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "aube-registry"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-manifest",
@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "aube-resolver"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-lockfile",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "aube-runtime"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-manifest",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "aube-scripts"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-manifest",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "aube-settings"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-manifest",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "aube-store"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-util",
  "base64",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "aube-util"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "blake3",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "aube-workspace"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "aube-codes",
  "aube-manifest",

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0](https://github.com/jdx/aube/compare/aube-scripts-v1.26.0...aube-scripts-v1.27.0) - 2026-07-13
+
+### Added
+
+- *(scripts)* allow git repository build approvals ([#1010](https://github.com/jdx/aube/pull/1010))
+
+### Other
+
+- *(install)* isolate runtime and script state ([#1027](https://github.com/jdx/aube/pull/1027))
+- refresh benchmarks for v1.26.0 ([#1002](https://github.com/jdx/aube/pull/1002))
+
 ## [1.26.0](https://github.com/jdx/aube/compare/aube-scripts-v1.25.2...aube-scripts-v1.26.0) - 2026-07-06
 
 ### Added
