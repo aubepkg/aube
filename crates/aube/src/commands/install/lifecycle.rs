@@ -570,7 +570,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
         let modules_dir_name = modules_dir_name.clone();
         let node_gyp_bin_dir = node_gyp_bin_dir.clone();
         let jail_policy = jail_policy.clone();
-        set.spawn(crate::dep_chain::scope_current(async move {
+        let task = crate::dep_chain::scope_current(async move {
             let _permit = sem.acquire().await.unwrap();
             if should_restore_side_effects_cache && let Some(cache_entry) = job.cache_entry.clone()
             {
@@ -665,7 +665,10 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                 }
             }
             Ok(ran_here)
-        }));
+        });
+        let task = crate::runtime::scope_current(task);
+        let task = aube_scripts::scope_current(task);
+        set.spawn(task);
     }
 
     let mut ran = 0usize;

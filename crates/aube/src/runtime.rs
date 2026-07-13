@@ -1,16 +1,19 @@
-//! Process-global Node runtime context: which node this aube process
-//! should put on PATH for scripts, exec, dlx, and lifecycle hooks.
+//! Node runtime context: which node aube should put on PATH for scripts,
+//! exec, dlx, and lifecycle hooks.
 //!
-//! Resolution happens once per process via [`ensure`]; every spawn
-//! site reads the snapshot through [`current`] / [`path_entries`] /
+//! Explicit installs resolve once per invocation inside [`scope`], so parallel
+//! projects cannot replace one another's selected runtime. Other CLI commands
+//! retain the process-wide fallback resolved through [`ensure`]. Every spawn
+//! site reads the active snapshot through [`current`] / [`path_entries`] /
 //! [`node_program`] / [`apply_child_env`]. A project with no runtime
-//! configuration resolves to a pass-through context — PATH untouched,
-//! behavior identical to aube before runtime switching existed.
+//! configuration resolves to a pass-through context — PATH untouched.
 
 use aube_manifest::PackageJson;
 use aube_settings::ResolveCtx;
 use miette::miette;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Where the version requirement came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,11 +92,39 @@ impl RuntimeContext {
     }
 }
 
-static RUNTIME: tokio::sync::OnceCell<RuntimeContext> = tokio::sync::OnceCell::const_new();
+static RUNTIME: tokio::sync::OnceCell<Arc<RuntimeContext>> = tokio::sync::OnceCell::const_new();
+
+type RuntimeSlot = Arc<tokio::sync::OnceCell<Arc<RuntimeContext>>>;
+
+tokio::task_local! {
+    static INSTALL_RUNTIME: RuntimeSlot;
+}
+
+/// Run an install with an isolated runtime slot. Standalone commands outside
+/// this scope retain the process-wide runtime selected by the CLI.
+pub async fn scope<F: Future>(future: F) -> F::Output {
+    INSTALL_RUNTIME
+        .scope(Arc::new(tokio::sync::OnceCell::new()), future)
+        .await
+}
+
+/// Propagate the current install's runtime slot into a spawned task.
+pub fn scope_current<F: Future>(future: F) -> impl Future<Output = F::Output> {
+    let runtime = INSTALL_RUNTIME.try_with(Arc::clone).ok();
+    async move {
+        match runtime {
+            Some(runtime) => INSTALL_RUNTIME.scope(runtime, future).await,
+            None => future.await,
+        }
+    }
+}
 
 /// The resolved context, if [`ensure`] has run.
-pub fn current() -> Option<&'static RuntimeContext> {
-    RUNTIME.get()
+pub fn current() -> Option<Arc<RuntimeContext>> {
+    match INSTALL_RUNTIME.try_with(|runtime| runtime.get().map(Arc::clone)) {
+        Ok(runtime) => runtime,
+        Err(_) => RUNTIME.get().map(Arc::clone),
+    }
 }
 
 /// The node executable spawn sites should use: the switched runtime's
@@ -212,7 +243,7 @@ pub(crate) fn lockfile_node_pin(
 /// [`ensure`] for commands that haven't loaded settings/manifests yet
 /// (dlx, run/exec warm paths): loads the settings for `cwd`'s project
 /// root, reads the lockfile pin, and resolves from there.
-pub async fn ensure_for_cwd(cwd: &Path) -> miette::Result<&'static RuntimeContext> {
+pub async fn ensure_for_cwd(cwd: &Path) -> miette::Result<Arc<RuntimeContext>> {
     if let Some(ctx) = current() {
         return Ok(ctx);
     }
@@ -242,13 +273,28 @@ pub async fn ensure(
     manifest: Option<&PackageJson>,
     settings: RuntimeSettings,
     lock_pin: Option<&aube_lockfile::RuntimePin>,
-) -> miette::Result<&'static RuntimeContext> {
+) -> miette::Result<Arc<RuntimeContext>> {
     let lock_pin = lock_pin.cloned();
     let project_dir = project_dir.to_path_buf();
     let manifest = manifest.cloned();
+    if let Ok(runtime) = INSTALL_RUNTIME.try_with(Arc::clone) {
+        return runtime
+            .get_or_try_init(|| async {
+                resolve_context(project_dir, manifest, settings, lock_pin)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+            .map(Arc::clone);
+    }
     RUNTIME
-        .get_or_try_init(|| resolve_context(project_dir, manifest, settings, lock_pin))
+        .get_or_try_init(|| async {
+            resolve_context(project_dir, manifest, settings, lock_pin)
+                .await
+                .map(Arc::new)
+        })
         .await
+        .map(Arc::clone)
 }
 
 async fn resolve_context(
@@ -700,6 +746,42 @@ impl aube_runtime::DownloadProgress for CliProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_context(requested: &str) -> RuntimeContext {
+        let mut context = RuntimeContext::path_fallback();
+        context.requested = Some(requested.to_string());
+        context
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_runtime_is_isolated_and_propagated() {
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let first_barrier = Arc::clone(&barrier);
+        let second_barrier = Arc::clone(&barrier);
+
+        let first = scope(async move {
+            INSTALL_RUNTIME.with(|runtime| runtime.set(Arc::new(test_context("first"))).unwrap());
+            first_barrier.wait().await;
+            tokio::spawn(scope_current(async {
+                current().and_then(|runtime| runtime.requested.clone())
+            }))
+            .await
+            .unwrap()
+        });
+        let second = scope(async move {
+            INSTALL_RUNTIME.with(|runtime| runtime.set(Arc::new(test_context("second"))).unwrap());
+            second_barrier.wait().await;
+            tokio::spawn(scope_current(async {
+                current().and_then(|runtime| runtime.requested.clone())
+            }))
+            .await
+            .unwrap()
+        });
+
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.as_deref(), Some("first"));
+        assert_eq!(second.as_deref(), Some("second"));
+    }
 
     #[test]
     fn lockfile_pin_round_trip_shapes() {

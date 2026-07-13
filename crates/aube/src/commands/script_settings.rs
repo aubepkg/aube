@@ -37,8 +37,9 @@ pub(crate) fn configure_script_settings(
         script_shell,
         unsafe_perm,
         shell_emulator,
-        node_bin_dir: runtime.and_then(|r| r.bin_dir.clone()),
+        node_bin_dir: runtime.as_ref().and_then(|r| r.bin_dir.clone()),
         node_exe: runtime
+            .as_ref()
             .and_then(|r| r.node_bin.clone())
             .or_else(aube_runtime::node_on_path),
         command: command.map(str::to_string),

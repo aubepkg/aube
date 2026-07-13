@@ -494,7 +494,8 @@ fn reachable_package_dep_paths(
 pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     let cwd = resolve_project_cwd(&opts)?;
     let _lock = super::take_project_lock(&cwd)?;
-    crate::dep_chain::scope(run_inner(opts, cwd)).await
+    let install = Box::pin(run_inner(opts, cwd));
+    crate::runtime::scope(aube_scripts::scope(crate::dep_chain::scope(install))).await
 }
 
 /// Run install while reusing a project lock owned by an outer command.
@@ -509,7 +510,8 @@ pub(crate) async fn run_with_project_lock(
 ) -> miette::Result<()> {
     let cwd = lock.project_dir().to_path_buf();
     opts.project_dir = Some(cwd.clone());
-    crate::dep_chain::scope(run_inner(opts, cwd)).await
+    let install = Box::pin(run_inner(opts, cwd));
+    crate::runtime::scope(aube_scripts::scope(crate::dep_chain::scope(install))).await
 }
 
 async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
@@ -1326,7 +1328,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             // spawned task. The install command reads it back after
             // `filter_graph` prunes the post-resolve graph.
             let fetch_deprecations_tx = deprecations.clone();
-            let fetch_handle = tokio::spawn(async move {
+            let fetch_handle = tokio::spawn(crate::runtime::scope_current(async move {
                 /*
                  * Adaptive tarball concurrency. Loaded from the
                  * cross run persistent store when available so the
@@ -1720,7 +1722,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                     semaphore_for_persist.persist(state, "tarball:default");
                 }
                 Ok::<_, miette::Report>((indices, cached_count, fetch_count, computed_integrities))
-            });
+            }));
 
             // Run resolution (this streams packages to the fetch coordinator).
             // `existing_for_resolver` is `Some` when Fix / Prefer parsed a

@@ -136,14 +136,51 @@ impl Drop for ScriptJailHomeCleanup {
 static SCRIPT_SETTINGS: std::sync::OnceLock<std::sync::RwLock<ScriptSettings>> =
     std::sync::OnceLock::new();
 
+type ScriptSettingsSlot = std::sync::Arc<std::sync::RwLock<ScriptSettings>>;
+
+tokio::task_local! {
+    static INSTALL_SCRIPT_SETTINGS: ScriptSettingsSlot;
+}
+
+/// Run an install with an isolated script-settings snapshot.
+pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
+    INSTALL_SCRIPT_SETTINGS
+        .scope(
+            std::sync::Arc::new(std::sync::RwLock::new(ScriptSettings::default())),
+            future,
+        )
+        .await
+}
+
+/// Propagate the current install's script settings into a spawned task.
+pub fn scope_current<F: std::future::Future>(
+    future: F,
+) -> impl std::future::Future<Output = F::Output> {
+    let settings = INSTALL_SCRIPT_SETTINGS.try_with(std::sync::Arc::clone).ok();
+    async move {
+        match settings {
+            Some(settings) => INSTALL_SCRIPT_SETTINGS.scope(settings, future).await,
+            None => future.await,
+        }
+    }
+}
+
 fn script_settings_lock() -> &'static std::sync::RwLock<ScriptSettings> {
     SCRIPT_SETTINGS.get_or_init(|| std::sync::RwLock::new(ScriptSettings::default()))
 }
 
-/// Replace the process-wide script settings snapshot. CLI commands call
-/// this after resolving `.npmrc` / workspace settings for the active
-/// project.
+/// Replace the current install's script settings snapshot, or the process-wide
+/// fallback when called outside an install scope.
 pub fn set_script_settings(settings: ScriptSettings) {
+    if INSTALL_SCRIPT_SETTINGS
+        .try_with(|slot| match slot.write() {
+            Ok(mut guard) => *guard = settings.clone(),
+            Err(poisoned) => *poisoned.into_inner() = settings.clone(),
+        })
+        .is_ok()
+    {
+        return;
+    }
     match script_settings_lock().write() {
         Ok(mut guard) => *guard = settings,
         Err(poisoned) => *poisoned.into_inner() = settings,
@@ -151,9 +188,52 @@ pub fn set_script_settings(settings: ScriptSettings) {
 }
 
 fn script_settings() -> ScriptSettings {
+    if let Ok(settings) = INSTALL_SCRIPT_SETTINGS.try_with(|slot| match slot.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }) {
+        return settings;
+    }
     match script_settings_lock().read() {
         Ok(guard) => guard.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+#[cfg(test)]
+mod scoped_settings_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn install_script_settings_are_isolated_and_propagated() {
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let first_barrier = std::sync::Arc::clone(&barrier);
+        let second_barrier = std::sync::Arc::clone(&barrier);
+
+        let first = scope(async move {
+            set_script_settings(ScriptSettings {
+                command: Some("first".to_string()),
+                ..ScriptSettings::default()
+            });
+            first_barrier.wait().await;
+            tokio::spawn(scope_current(async { script_settings().command }))
+                .await
+                .unwrap()
+        });
+        let second = scope(async move {
+            set_script_settings(ScriptSettings {
+                command: Some("second".to_string()),
+                ..ScriptSettings::default()
+            });
+            second_barrier.wait().await;
+            tokio::spawn(scope_current(async { script_settings().command }))
+                .await
+                .unwrap()
+        });
+
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.as_deref(), Some("first"));
+        assert_eq!(second.as_deref(), Some("second"));
     }
 }
 
