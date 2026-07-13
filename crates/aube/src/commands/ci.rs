@@ -46,7 +46,7 @@ pub async fn run(args: CiArgs) -> miette::Result<()> {
         network: _,
         virtual_store: _,
     } = args;
-    let cwd = crate::dirs::project_root()?;
+    let cwd = crate::dirs::workspace_or_project_root()?;
     let lock = super::take_project_lock(&cwd)?;
 
     let nm = super::project_modules_dir(&cwd);

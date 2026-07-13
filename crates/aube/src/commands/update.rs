@@ -179,7 +179,7 @@ pub async fn run(
     {
         cwd = root;
     }
-    let lock = super::take_project_lock(&cwd)?;
+    let lock = super::take_install_project_lock(&cwd)?;
     let manifest_path = cwd.join("package.json");
 
     let mut manifest = aube_manifest::PackageJson::from_path(&manifest_path)

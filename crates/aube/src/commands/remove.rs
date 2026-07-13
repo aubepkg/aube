@@ -68,7 +68,7 @@ pub async fn run(
     }
 
     let cwd = crate::dirs::project_root()?;
-    let lock = super::take_project_lock(&cwd)?;
+    let lock = super::take_install_project_lock(&cwd)?;
     let manifest_path = cwd.join("package.json");
 
     let mut manifest = super::load_manifest(&manifest_path)?;

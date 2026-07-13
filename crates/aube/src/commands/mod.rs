@@ -109,6 +109,7 @@ pub(crate) use manifest_io::{
 pub(crate) use package_spec::{
     encode_package_name, max_satisfying_version, resolve_version, split_name_spec,
 };
+pub(crate) use project_lock::take_install_project_lock;
 pub(crate) use project_lock::take_project_lock;
 pub(crate) use script_settings::{configure_script_settings, configure_script_settings_for_cwd};
 pub(crate) use settings_context::{

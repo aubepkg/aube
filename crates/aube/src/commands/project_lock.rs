@@ -55,6 +55,17 @@ pub(crate) fn take_project_lock(cwd: &std::path::Path) -> miette::Result<Project
     take_project_lock_enabled(cwd, project_dir)
 }
 
+/// Lock the directory that a chained install will operate on. Outer commands
+/// may mutate a workspace member manifest, but the install itself owns the
+/// workspace-root lockfile and virtual store.
+pub(crate) fn take_install_project_lock(
+    project_dir: &std::path::Path,
+) -> miette::Result<ProjectLock> {
+    let install_dir =
+        crate::dirs::find_workspace_root(project_dir).unwrap_or_else(|| project_dir.to_path_buf());
+    take_project_lock(&install_dir)
+}
+
 fn take_project_lock_enabled(
     cwd: &std::path::Path,
     project_dir: std::path::PathBuf,
@@ -97,5 +108,22 @@ mod tests {
         assert!(second_lock._inner.is_some());
         assert_eq!(first_lock.project_dir(), first.path());
         assert_eq!(second_lock.project_dir(), second.path());
+    }
+
+    #[test]
+    fn chained_install_lock_targets_workspace_root() {
+        let workspace = tempfile::tempdir().unwrap();
+        let member = workspace.path().join("packages/app");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            workspace.path().join("package.json"),
+            "{\"workspaces\":[\"packages/*\"]}\n",
+        )
+        .unwrap();
+        std::fs::write(member.join("package.json"), "{}\n").unwrap();
+
+        let lock = take_install_project_lock(&member).unwrap();
+
+        assert_eq!(lock.project_dir(), workspace.path().canonicalize().unwrap());
     }
 }

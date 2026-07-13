@@ -29,7 +29,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();
-    let cwd = crate::dirs::project_root()?;
+    let cwd = crate::dirs::workspace_or_project_root()?;
     let lock = super::take_project_lock(&cwd)?;
 
     let manifest = super::load_manifest(&cwd.join("package.json"))?;

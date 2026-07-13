@@ -325,7 +325,7 @@ pub async fn run(
         }
     }
 
-    let lock = super::take_project_lock(&cwd)?;
+    let lock = super::take_install_project_lock(&cwd)?;
     let manifest_path = cwd.join("package.json");
 
     // 1. Read existing package.json. Snapshot the raw bytes when
