@@ -494,8 +494,7 @@ fn reachable_package_dep_paths(
 pub async fn run(opts: InstallOptions) -> miette::Result<()> {
     let cwd = resolve_project_cwd(&opts)?;
     let _lock = super::take_project_lock(&cwd)?;
-    let install = Box::pin(run_inner(opts, cwd));
-    crate::runtime::scope(aube_scripts::scope(crate::dep_chain::scope(install))).await
+    run_scoped(opts, cwd).await
 }
 
 /// Run install while reusing a project lock owned by an outer command.
@@ -510,6 +509,13 @@ pub(crate) async fn run_with_project_lock(
 ) -> miette::Result<()> {
     let cwd = lock.project_dir().to_path_buf();
     opts.project_dir = Some(cwd.clone());
+    run_scoped(opts, cwd).await
+}
+
+async fn run_scoped(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
+    // Box the large install state machine before stacking task-local scopes.
+    // Keeping it inline overflowed a Tokio worker stack in the parallel-install
+    // regression test once runtime and script-settings scopes were added.
     let install = Box::pin(run_inner(opts, cwd));
     crate::runtime::scope(aube_scripts::scope(crate::dep_chain::scope(install))).await
 }
@@ -1328,7 +1334,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             // spawned task. The install command reads it back after
             // `filter_graph` prunes the post-resolve graph.
             let fetch_deprecations_tx = deprecations.clone();
-            let fetch_handle = tokio::spawn(crate::runtime::scope_current(async move {
+            let fetch = Box::pin(async move {
                 /*
                  * Adaptive tarball concurrency. Loaded from the
                  * cross run persistent store when available so the
@@ -1722,7 +1728,10 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                     semaphore_for_persist.persist(state, "tarball:default");
                 }
                 Ok::<_, miette::Report>((indices, cached_count, fetch_count, computed_integrities))
-            }));
+            });
+            let fetch = crate::runtime::scope_current(fetch);
+            let fetch = aube_scripts::scope_current(fetch);
+            let fetch_handle = tokio::spawn(fetch);
 
             // Run resolution (this streams packages to the fetch coordinator).
             // `existing_for_resolver` is `Some` when Fix / Prefer parsed a
