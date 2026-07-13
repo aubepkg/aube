@@ -214,6 +214,7 @@ impl RegistryClient {
         otp: Option<&str>,
     ) -> Result<(), Error> {
         let registry_url = self.registry_url_for(name);
+        let entity = format!("{scope}:{team}");
         let url = format!(
             "{}/-/team/{}/{}/package",
             registry_url.trim_end_matches('/'),
@@ -226,7 +227,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: Some(name),
-                not_found: Some(AccessNotFound::Package(name)),
+                not_found: Some(AccessNotFound::Entity(&entity)),
             },
             body,
             otp,
@@ -421,5 +422,27 @@ mod tests {
             panic!("expected organization lookup to return AccessEntityNotFound");
         };
         assert_eq!(name, "@scope");
+    }
+
+    #[tokio::test]
+    async fn team_access_404_names_the_requested_entity() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/-/team/scope/developers/package"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::from_config(NpmConfig {
+            registry: format!("{}/", server.uri()),
+            ..Default::default()
+        });
+        let Err(Error::AccessEntityNotFound(entity)) = client
+            .access_grant("@scope/pkg", "@scope", "developers", "read-write", None)
+            .await
+        else {
+            panic!("expected team request to return AccessEntityNotFound");
+        };
+        assert_eq!(entity, "@scope:developers");
     }
 }
