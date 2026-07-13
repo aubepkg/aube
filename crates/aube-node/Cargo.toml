@@ -1,0 +1,21 @@
+[package]
+name = "aube-node"
+description = "Node-API proof of concept for embedding aube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aube = { path = "../aube", version = "1.26.0", default-features = false }
+aube-util = { workspace = true }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }

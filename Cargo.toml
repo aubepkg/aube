@@ -17,6 +17,12 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+# Node-API addons execute inside the host process, so panics must unwind to
+# the napi-rs boundary instead of aborting the entire JavaScript runtime.
+[profile.napi]
+inherits = "release"
+panic = "unwind"
+
 [workspace.package]
 version = "1.27.0"
 edition = "2024"
@@ -29,6 +35,11 @@ readme = "README.md"
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+
+# Node-API proof of concept
+napi = { version = "3.10.5", default-features = false, features = ["napi8", "tokio_rt", "dyn-symbols"] }
+napi-derive = "3.5.10"
+napi-build = "2.3.2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
