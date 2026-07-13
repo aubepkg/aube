@@ -27,6 +27,30 @@ run = "cargo build"
 [tasks.test]
 run = "cargo test"
 
+[tasks.soak]
+run = "node scripts/soak/soak.mts --check"
+
+[tasks."test:scripts"]
+run = "node --test scripts/soak/*.test.mts"
+
+[tasks."soak:fix"]
+run = "node scripts/soak/soak.mts --fix"
+
+[tasks."deps:update"]
+run = "node scripts/soak/update-deps.mts"
+
+[tasks."tools:check"]
+run = "node scripts/soak/external-tools.mts --check"
+
+[tasks."remotes:check"]
+run = "node scripts/soak/remotes.mts --check"
+
+[tasks."remotes:fix"]
+run = "node scripts/soak/remotes.mts --fix"
+
+[tasks."tools:install"]
+run = "node scripts/soak/external-tools.mts --install-all --shims"
+
 [tasks."docs:dev"]
 depends = ["build"]
 dir = "docs"

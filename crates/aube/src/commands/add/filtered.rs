@@ -70,6 +70,10 @@ pub(super) async fn run(
         let mut install_opts = install::InstallOptions::with_mode(
             crate::commands::chained_frozen_mode(install::FrozenMode::Fix),
         );
+        super::apply_dangerously_allow_all_builds(
+            &mut install_opts,
+            args.dangerously_allow_all_builds,
+        );
         install_opts.workspace_filter = filter.clone();
         // See the sibling `aube add` codepath for why this flag is set:
         // live OSV API on the resolved transitives.

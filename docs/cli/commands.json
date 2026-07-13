@@ -619,10 +619,23 @@
             "global": false
           },
           {
+            "name": "dangerously-allow-all-builds",
+            "usage": "--dangerously-allow-all-builds",
+            "help": "Allow every dependency's lifecycle scripts to run",
+            "help_long": "Allow every dependency's lifecycle scripts to run.\n\nBypasses the `allowBuilds` allowlist for this invocation. Do not use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.",
+            "help_first_line": "Allow every dependency's lifecycle scripts to run",
+            "short": [],
+            "long": [
+              "dangerously-allow-all-builds"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "deny-build",
             "usage": "--deny-build… <PKG>",
             "help": "Mark a dependency's lifecycle scripts as reviewed and denied",
-            "help_long": "Mark a dependency's lifecycle scripts as reviewed and denied.\n\nWrites `allowBuilds: { <pkg>: false }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's lifecycle scripts stay skipped without tripping `strictDepBuilds=true`. Repeatable — pass the flag once per package.\n\nConflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned denial in the workspace yaml on restore. Also conflicts with `--allow-build` for the same package name.",
+            "help_long": "Mark a dependency's lifecycle scripts as reviewed and denied.\n\nWrites `allowBuilds: { <pkg>: false }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's lifecycle scripts stay skipped without tripping `strictDepBuilds=true`. Repeatable — pass the flag once per package.\n\nConflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned denial in the workspace yaml on restore. Also conflicts with `--allow-build` for the same package name and with `--dangerously-allow-all-builds`.",
             "help_first_line": "Mark a dependency's lifecycle scripts as reviewed and denied",
             "short": [],
             "long": [

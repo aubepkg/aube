@@ -69,6 +69,12 @@ pub struct AddArgs {
     /// which remains a hard block.
     #[arg(long)]
     pub allow_low_downloads: bool,
+    /// Allow every dependency's lifecycle scripts to run.
+    ///
+    /// Bypasses the `allowBuilds` allowlist for this invocation. Do not
+    /// use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.
+    #[arg(long)]
+    pub dangerously_allow_all_builds: bool,
     /// Mark a dependency's lifecycle scripts as reviewed and denied.
     ///
     /// Writes `allowBuilds: { <pkg>: false }` into the workspace yaml
@@ -80,11 +86,11 @@ pub struct AddArgs {
     /// Conflicts with `--no-save`, which only snapshots `package.json`
     /// and the lockfile and would leave an orphaned denial in the
     /// workspace yaml on restore. Also conflicts with `--allow-build` for
-    /// the same package name.
+    /// the same package name and with `--dangerously-allow-all-builds`.
     #[arg(
         long = "deny-build",
         value_name = "PKG",
-        conflicts_with = "no_save",
+        conflicts_with_all = ["no_save", "dangerously_allow_all_builds"],
         require_equals = true,
         value_parser = parse_deny_build_value,
     )]
@@ -214,8 +220,9 @@ pub async fn run(
         save_catalog,
         save_catalog_name,
         allow_build,
-        deny_build,
         allow_low_downloads,
+        dangerously_allow_all_builds,
+        deny_build,
         lockfile,
         network,
         virtual_store,
@@ -236,9 +243,12 @@ pub async fn run(
     if global {
         return global::run_global(
             packages,
-            allow_build,
-            deny_build,
-            allow_low_downloads,
+            global::GlobalAddOptions {
+                allow_build,
+                allow_low_downloads,
+                dangerously_allow_all_builds,
+                deny_build,
+            },
             lockfile,
             network,
             virtual_store,
@@ -399,6 +409,7 @@ pub async fn run(
     // `ERR_AUBE_MALICIOUS_PACKAGE` as the CLI-name gate above.
     let mut install_opts =
         install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Fix));
+    apply_dangerously_allow_all_builds(&mut install_opts, dangerously_allow_all_builds);
     install_opts.osv_transitive_check = true;
     let pipeline_result: miette::Result<()> = install::run(install_opts).await;
 
@@ -437,4 +448,17 @@ pub async fn run(
         return Err(first);
     }
     Ok(())
+}
+
+pub(super) fn apply_dangerously_allow_all_builds(
+    install_opts: &mut install::InstallOptions,
+    enabled: bool,
+) {
+    if enabled {
+        install_opts.dangerously_allow_all_builds = true;
+        install_opts.cli_flags.push((
+            "dangerously-allow-all-builds".to_string(),
+            "true".to_string(),
+        ));
+    }
 }
