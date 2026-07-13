@@ -20,7 +20,14 @@ fn aube_no_lock_enabled(cwd: &std::path::Path) -> bool {
 /// so callers don't have to take a direct dep on `fslock` to name the
 /// type — the lock is released on drop regardless.
 pub(crate) struct ProjectLock {
+    project_dir: std::path::PathBuf,
     _inner: Option<Box<dyn Any + Send>>,
+}
+
+impl ProjectLock {
+    pub(crate) fn project_dir(&self) -> &std::path::Path {
+        &self.project_dir
+    }
 }
 
 /// Take an advisory lock on the current project's `node_modules/`.
@@ -34,14 +41,24 @@ pub(crate) struct ProjectLock {
 /// pass the returned guard into the inner operation rather than attempting to
 /// acquire the same filesystem lock again.
 pub(crate) fn take_project_lock(cwd: &std::path::Path) -> miette::Result<ProjectLock> {
+    let project_dir = cwd
+        .canonicalize()
+        .or_else(|_| std::path::absolute(cwd))
+        .unwrap_or_else(|_| cwd.to_path_buf());
     if aube_no_lock_enabled(cwd) {
-        return Ok(ProjectLock { _inner: None });
+        return Ok(ProjectLock {
+            project_dir,
+            _inner: None,
+        });
     }
 
-    take_project_lock_enabled(cwd)
+    take_project_lock_enabled(cwd, project_dir)
 }
 
-fn take_project_lock_enabled(cwd: &std::path::Path) -> miette::Result<ProjectLock> {
+fn take_project_lock_enabled(
+    cwd: &std::path::Path,
+    project_dir: std::path::PathBuf,
+) -> miette::Result<ProjectLock> {
     let nm_path = super::project_modules_dir(cwd);
     let lock = xx::fslock::FSLock::new(&nm_path)
         .with_callback(|_| {
@@ -57,6 +74,7 @@ fn take_project_lock_enabled(cwd: &std::path::Path) -> miette::Result<ProjectLoc
         .map_err(|e| miette!("failed to acquire project lock: {e}"))?;
 
     Ok(ProjectLock {
+        project_dir,
         _inner: Some(Box::new(lock)),
     })
 }
@@ -70,10 +88,14 @@ mod tests {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
 
-        let first_lock = take_project_lock_enabled(first.path()).unwrap();
-        let second_lock = take_project_lock_enabled(second.path()).unwrap();
+        let first_lock =
+            take_project_lock_enabled(first.path(), first.path().to_path_buf()).unwrap();
+        let second_lock =
+            take_project_lock_enabled(second.path(), second.path().to_path_buf()).unwrap();
 
         assert!(first_lock._inner.is_some());
         assert!(second_lock._inner.is_some());
+        assert_eq!(first_lock.project_dir(), first.path());
+        assert_eq!(second_lock.project_dir(), second.path());
     }
 }

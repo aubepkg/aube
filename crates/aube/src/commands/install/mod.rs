@@ -110,6 +110,26 @@ mod reentrancy_tests {
         assert!(first.path().join("aube-lock.yaml").is_file());
         assert!(second.path().join("aube-lock.yaml").is_file());
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn guarded_installs_can_run_concurrently() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("package.json"), "{}\n").unwrap();
+        std::fs::write(second.path().join("package.json"), "{}\n").unwrap();
+        let first_lock = super::super::take_project_lock(first.path()).unwrap();
+        let second_lock = super::super::take_project_lock(second.path()).unwrap();
+
+        let (first_result, second_result) = tokio::join!(
+            run_with_project_lock(explicit_options(first.path()), &first_lock),
+            run_with_project_lock(explicit_options(second.path()), &second_lock),
+        );
+
+        first_result.unwrap();
+        second_result.unwrap();
+        assert!(first.path().join("aube-lock.yaml").is_file());
+        assert!(second.path().join("aube-lock.yaml").is_file());
+    }
 }
 
 pub(crate) fn package_build_is_allowed(
@@ -479,14 +499,16 @@ pub async fn run(opts: InstallOptions) -> miette::Result<()> {
 
 /// Run install while reusing a project lock owned by an outer command.
 ///
-/// The guard reference makes lock reentrancy invocation-scoped: only the
-/// command that owns this lock can bypass acquisition. Concurrent installs
-/// for unrelated projects always acquire their own filesystem lock.
+/// The guard determines the project directory, making lock reentrancy
+/// invocation-scoped: only the command that owns this project's lock can
+/// bypass acquisition. Concurrent installs for unrelated projects always
+/// acquire their own filesystem lock.
 pub(crate) async fn run_with_project_lock(
-    opts: InstallOptions,
-    _lock: &super::project_lock::ProjectLock,
+    mut opts: InstallOptions,
+    lock: &super::project_lock::ProjectLock,
 ) -> miette::Result<()> {
-    let cwd = resolve_project_cwd(&opts)?;
+    let cwd = lock.project_dir().to_path_buf();
+    opts.project_dir = Some(cwd.clone());
     crate::dep_chain::scope(run_inner(opts, cwd)).await
 }
 
