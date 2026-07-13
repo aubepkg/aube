@@ -281,6 +281,13 @@ async function installAssetTool(name: string, pin: ToolPin): Promise<void> {
   let binName = pin.binaryName ?? name
   const destDir = path.join(RACK_DIR, name, pin.version!)
   let destBin = path.join(destDir, binName)
+  // Windows archives land as `<bin>.exe`; resolve the same suffix the
+  // post-extract path does so a second --install is a no-op instead of a
+  // forced re-download (which wedges on a restricted/offline runner).
+  if (!existsSync(destBin) && existsSync(`${destBin}.exe`)) {
+    destBin = `${destBin}.exe`
+    binName = `${binName}.exe`
+  }
   if (existsSync(destBin)) {
     linkHandle(destBin, binName)
     console.log(`[external-tools] ${name}@${pin.version} already installed`)
