@@ -184,7 +184,7 @@ impl Linker {
             let Some(index) = package_indices.get(dep_path) else {
                 continue;
             };
-            let aube_entry = aube_dir.join(dep_path);
+            let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
             // `file:` directories and portals are mutable while their
             // dep_path is intentionally stable (it identifies the source
             // path, not one generation of its contents). A full install has

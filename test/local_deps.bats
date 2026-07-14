@@ -46,6 +46,7 @@ EOF
 @test "aube install refreshes a settled file: directory dep after its contents change" {
 	_make_local_pkg vendor-dir vendor-dir 1.2.3
 	printf 'module.exports = "v1";\n' >vendor-dir/index.js
+	printf 'obsolete\n' >vendor-dir/obsolete.txt
 
 	mkdir -p app
 	cd app
@@ -63,11 +64,13 @@ EOF
 
 	# Keep the same byte length so freshness cannot rely on file size.
 	printf 'module.exports = "v2";\n' >../vendor-dir/index.js
+	rm ../vendor-dir/obsolete.txt
 	run env CI=1 aube install --offline
 	assert_success
 	refute_output --partial "Already up to date"
 	run cat node_modules/vendor-dir/index.js
 	assert_output 'module.exports = "v2";'
+	assert_file_not_exists node_modules/vendor-dir/obsolete.txt
 }
 
 @test "aube install handles link: symlink dep" {
