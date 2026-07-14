@@ -15,15 +15,3 @@
 # (7.07 s → 9.57 s) — acceptable given the safety guarantee.
 [env]
 RUST_TEST_THREADS = "1"
-
-# Supply-chain soak for cargo's own dependency resolution — the same
-# soak-window rule aube offers npm users via minimumReleaseAge: crate
-# versions younger than the window are pubtime-incompatible and the
-# resolver skips them unless already in Cargo.lock
-# (resolver.incompatible-publish-age defaults to "deny"). The unstable
-# feature is active because rust-toolchain.toml pins a nightly.
-[unstable]
-min-publish-age = true
-
-[registry]
-global-min-publish-age = "7 days"

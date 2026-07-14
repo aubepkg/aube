@@ -3,7 +3,7 @@ project:
   kind: Node.js package manager, Rust workspace
   binary_surface: drop-in for pnpm CLI
   language: Rust 2024
-  msrv: 1.95 (stable floor; builds use the dated nightly pinned in rust-toolchain.toml, adopted after a 7-day soak, so PGO instrument+use share one LLVM)
+  msrv: 1.93
   async_runtime: tokio (multi-thread for install, current-thread for nested islands)
   errors: miette (user-facing, top-level), thiserror (per-library crate)
   error_codes: every error/warning carries a stable ERR_AUBE_*/WARN_AUBE_* identifier from aube-codes crate; bespoke exit codes for a curated subset; see error_codes section below for conventions
@@ -187,7 +187,7 @@ testing:
 
 rust:
   critical[5]:
-    - edition 2024, toolchain pinned to a dated nightly in rust-toolchain.toml (adopt the newest nightly >=7 days old, same soak rule for bumps), msrv 1.95 stable floor (core::hint::cold_path stable; rust 1.90 default-LLD-on-Linux + workspace cargo publish available)
+    - edition 2024, latest stable toolchain, msrv 1.93 (rust 1.90 default-LLD-on-Linux + workspace cargo publish available)
     - no .unwrap()/.expect() in public library APIs or cross-crate boundaries. local-invariant unwraps where panic is genuinely impossible are ok, annotate with WHY
     - crates/aube-*/ (libraries) use tracing (info!/warn!/error!/debug!/trace!). crates/aube/src/commands/*.rs CLI command impls may print to stdout via println!/writeln! when the whole point is CLI output (view, list, outdated, why, cat-index, etc.)
     - cargo clippy -- -D warnings must pass with zero warnings
@@ -202,7 +202,7 @@ rust:
     - shared reqwest::Client with pool, never one per request (aube-registry/src/client.rs does this right)
     - DashMap for concurrent maps, OnceLock/LazyLock for init-once globals, rayon par_iter for CPU-bound parallel passes off the tokio runtime (never spawn tokio tasks for pure CPU)
     - pre-size Vec/HashMap when bounds are known; SmallVec<[T; N]> for hot paths with known-small size; Arc<str>/Box<str> over String when immutable
-    - aube already adopts mimalloc (global allocator), sonic_rs (packument decode), BLAKE3 (non-crypto hashing), core::hint::cold_path() on rare arms of hot install loops (linker materialize, pnpm subset parser, semver caches, tar walk). these are settled; don't re-propose them
+    - aube already adopts mimalloc (global allocator), sonic_rs (packument decode), BLAKE3 (non-crypto hashing). these are settled; don't re-propose them
   async[7]:
     - tokio multi-thread runtime for install (main.rs:586), nested current_thread islands inside spawn_blocking are fine
     - never block in async fn, offload via spawn_blocking (IO that can't be async, tarball decode, tar extract)
@@ -234,24 +234,9 @@ deps:
   policy: minimize, prefer std over external, every added dep must justify >=20 LOC saved
   tls: rustls (no OpenSSL / native-tls)
   reqwest_features: minimal (rustls-tls + http2 + json + stream + charset + system-proxy)
-  supply_chain[4]:
+  supply_chain[2]:
     - cargo audit: CVE database scan (RustSec advisories) before every release, required in CI
     - cargo deny: license policy, banned crates, duplicate detection, approved sources. deny.toml checked in
-    - cargo min-publish-age: 7-day soak on new crate versions (.cargo/config.toml [registry] global-min-publish-age; unstable feature, active via the pinned nightly). resolver skips versions younger than the window unless already locked
-    - external tools: pnpm/npm/sfw/zizmor/agentshield/skillspector pinned exact with sha512 SRI in external-tools.json; installed/verified only via scripts/soak/external-tools.mts (mise run tools:install / tools:check)
-
-soak:
-  window: SOAK_DAYS=7 in scripts/soak/constants.mts — the ONE source; every surface derives or is parity-checked against it
-  surfaces[6]:
-    - .cargo/config.toml global-min-publish-age ("7 days")
-    - rust-toolchain.toml dated nightly (channel date vs the machine-read `# adopted:` line — soak.mts enforces adopted >= channel + SOAK_DAYS)
-    - docs/pnpm-workspace.yaml minimumReleaseAge (10080 minutes; also the taze catalog: home — aube reads this file for docs installs, and a ROOT pnpm-workspace.yaml would re-anchor the docs install at repo root, so it must stay in docs/)
-    - docs/.npmrc min-release-age (7 days, npm >= 11.17 parity)
-    - docs/taze.config.mts maturityPeriod (imports SOAK_DAYS)
-    - .github/renovate.json minimumReleaseAge ("7 days", explicit — extends: presets don't count; renovate PRs commit updated lockfiles and cargo min-publish-age skips already-locked versions, so renovate itself is the only place this dep path can be soaked)
-  manager: .claude/skills/soak/SKILL.md is the how-to; mise run soak (check, CI-gated in test-linux) / soak:fix (syncs windows, prunes expired excludes) / deps:update (taze + cargo update, both soaked)
-  excludes: version-pinned minimumReleaseAgeExclude entries REQUIRE `# published: YYYY-MM-DD | removable: YYYY-MM-DD` on the line above (removable = published + 7d); bare names/globs are standing trust and need no annotation; expired pins are pruned by soak:fix
-  socket_firewall: CI installs sfw (free tier keyless; enterprise auto-selected when the SOCKET_SECURITY_KEY repo secret lands — the one env var every Socket product reads, no aliasing) and shims npm/yarn/pnpm/pip/pip3/uv/cargo via scripts/soak/external-tools.mts --shims; the buildkite agent image pre-bakes the same binary + shims
 
 git:
   forbidden[2]:

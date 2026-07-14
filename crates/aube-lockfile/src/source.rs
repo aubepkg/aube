@@ -248,9 +248,10 @@ impl LocalSource {
             ("link", r)
         } else if let Some(r) = spec.strip_prefix("portal:") {
             ("portal", r)
-        } else {
-            let r = spec.strip_prefix("exec:")?;
+        } else if let Some(r) = spec.strip_prefix("exec:") {
             return Some(LocalSource::Exec(PathBuf::from(r)));
+        } else {
+            return None;
         };
         let rel = PathBuf::from(rest);
         let abs = project_root.join(&rel);
