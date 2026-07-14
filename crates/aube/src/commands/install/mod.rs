@@ -2399,7 +2399,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         prog_ref,
         phase_timings: &mut phase_timings,
     })?;
-    control::check_cancelled()?;
     // Join the overlapped lockfile write before finalize re-reads the
     // graph. The write ran concurrently with the link phase above; a write
     // error surfaces here (it is not dropped). `None` on every inline-write
@@ -2407,7 +2406,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     if let Some(handle) = lockfile_write_handle.take() {
         lockfile_write_overlap::join(handle).await?;
     }
-    control::check_cancelled()?;
     finalize::run_finalize_phase(finalize::FinalizePhaseInput {
         cwd: &cwd,
         settings_ctx: &settings_ctx,
@@ -2445,7 +2443,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         phase_timings: &mut phase_timings,
     })
     .await?;
-    control::check_cancelled()?;
     // A fresh resolve enforces trustPolicy=no-downgrade while picking
     // versions from packuments. If an existing lockfile fed the resolver,
     // `try_lockfile_reuse` may carry locked packages forward without
