@@ -1055,11 +1055,11 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
 
             // Lockfile path: the total is known upfront, so seed the overall
             // bar with the full package count and enter the fetch phase.
+            control::check_cancelled()?;
             if let Some(p) = prog_ref {
                 p.set_total(graph.packages.len());
                 p.set_phase("fetching");
             }
-            control::check_cancelled()?;
             // Seed the chain index for diagnostic enrichment on the
             // lockfile fast path. Same effect as the resolve-fresh
             // branch above — error wrappers in `dep_chain` now know
@@ -1177,6 +1177,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         {
             // No lockfile — resolve + fetch tarballs concurrently
             tracing::debug!("No lockfile found, resolving dependencies for {project_name}...");
+            control::check_cancelled()?;
             if let Some(p) = prog_ref {
                 // Seed the resolving-phase denominator floor from any
                 // existing lockfile on disk. In FrozenMode::Fix /
@@ -1204,7 +1205,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 }
                 p.set_phase("resolving");
             }
-            control::check_cancelled()?;
             // Resolve node version + build policy up front so the
             // GVS-prewarm materializer (spawned below the resolver
             // await) can compute the same graph hashes the link phase
@@ -1872,10 +1872,10 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 super::security_scanner::run_scanner(&scanner, &cwd, &scanner_packages).await?;
             }
 
+            control::check_cancelled()?;
             if let Some(p) = prog_ref {
                 p.set_phase("fetching");
             }
-            control::check_cancelled()?;
             tracing::debug!("phase:resolve (fresh) {:.1?}", phase_start.elapsed());
             phase_timings.record("resolve", phase_start.elapsed());
             drop(_diag_resolve);
