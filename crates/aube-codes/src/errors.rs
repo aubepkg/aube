@@ -108,6 +108,7 @@ pub const ERR_AUBE_INSTALL_CANCELLED: &str = "ERR_AUBE_INSTALL_CANCELLED";
 pub const ERR_AUBE_PATCHES_TRACKING_WRITE: &str = "ERR_AUBE_PATCHES_TRACKING_WRITE";
 pub const ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER: &str = "ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER";
 pub const ERR_AUBE_EMBED_INVALID_PROJECT: &str = "ERR_AUBE_EMBED_INVALID_PROJECT";
+pub const ERR_AUBE_EMBED_INSTALL_FAILED: &str = "ERR_AUBE_EMBED_INSTALL_FAILED";
 
 /// Stable category labels that group codes in the generated docs and
 /// in `EXIT_TABLE`'s 10-wide allocation ranges. Public so the docs
@@ -566,6 +567,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_EMBED_INVALID_PROJECT,
         category: category::MISC_SAFETY,
         description: "An in-process embedder was given a project directory that could not be created, inspected, or resolved.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_EMBED_INSTALL_FAILED,
+        category: category::MISC_SAFETY,
+        description: "An in-process embedder could not initialize its host callback or received an install failure without a more specific stable code.",
         exit_code: None,
     },
     CodeMeta {

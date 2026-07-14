@@ -427,6 +427,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_EMBED_INSTALL_FAILED",
+      "category": "Misc / safety",
+      "description": "An in-process embedder could not initialize its host callback or received an install failure without a more specific stable code.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_UNSAFE_PACKAGE_NAME",
       "category": "Misc / safety",
       "description": "A package/dependency alias would escape its `node_modules` slot if linked.",

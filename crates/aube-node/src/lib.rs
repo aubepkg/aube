@@ -1,10 +1,27 @@
 //! Node-API surface for embedding aube in Bun-based hosts such as OpenCode.
 
 use aube::commands::add::{AddToProjectOptions, add_to_project};
-use aube::commands::install::{FrozenMode, InstallOptions};
-use napi::Status;
+use aube::commands::install::{
+    FrozenMode, InstallControl, InstallEvent, InstallOptions, InstallOutputLevel, InstallPhase,
+    InstallReporter,
+};
+use napi::bindgen_prelude::{AbortSignal, FnArgs, Function, PromiseRaw, ToNapiValue};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::{Env, Status};
 use napi_derive::napi;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+type NodeError = napi::Error;
+type NodeResult<T> = napi::Result<T>;
+type EventCallback =
+    ThreadsafeFunction<InstallEventPayload, (), FnArgs<(InstallEventPayload,)>, Status, false>;
+
+struct InstallFailure {
+    code: String,
+    message: String,
+    diagnostic: String,
+}
 
 static OPENCODE: aube_util::Embedder = aube_util::Embedder {
     name: "opencode",
@@ -33,11 +50,13 @@ pub struct PackageToAdd {
     pub version: Option<String>,
 }
 
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 pub struct InstallInput {
     pub add: Option<Vec<PackageToAdd>>,
     pub force: Option<bool>,
     pub offline: Option<bool>,
+    pub on_event: Option<Function<'static, FnArgs<(InstallEventPayload,)>, ()>>,
+    pub signal: Option<AbortSignal>,
 }
 
 #[napi(object)]
@@ -46,26 +65,85 @@ pub struct InstallResult {
     pub added: Vec<String>,
 }
 
+#[napi(object)]
+pub struct InstallEventPayload {
+    pub kind: String,
+    pub phase: Option<String>,
+    pub level: Option<String>,
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub resolved: Option<f64>,
+    pub total: Option<f64>,
+    pub reused: Option<f64>,
+    pub downloaded: Option<f64>,
+    pub downloaded_bytes: Option<f64>,
+    pub estimated_bytes: Option<f64>,
+}
+
+struct NodeReporter {
+    callback: EventCallback,
+}
+
+impl InstallReporter for NodeReporter {
+    fn report(&self, event: InstallEvent) {
+        let _ = self.callback.call(
+            InstallEventPayload::from(event),
+            ThreadsafeFunctionCallMode::NonBlocking,
+        );
+    }
+}
+
 /// Install a project's declared dependencies and optionally add packages.
 ///
 /// The call shape intentionally mirrors OpenCode's current npm service:
 /// `install(dir, { add: [{ name, version }] })`. Added packages are saved as
 /// exact production dependencies, and lifecycle scripts are always disabled.
 #[napi]
-pub async fn install(
+pub fn install<'env>(
+    env: &'env Env,
     project_dir: String,
     input: Option<InstallInput>,
-) -> napi::Result<InstallResult> {
+) -> NodeResult<PromiseRaw<'env, InstallResult>> {
     initialize_embedder();
 
-    let project_dir = prepare_project_dir(Path::new(&project_dir)).await?;
-    let input = input.unwrap_or(InstallInput {
+    let InstallInput {
+        add,
+        force,
+        offline,
+        on_event,
+        signal,
+    } = input.unwrap_or(InstallInput {
         add: None,
         force: None,
         offline: None,
+        on_event: None,
+        signal: None,
     });
-    let packages = input
-        .add
+    let control = match on_event {
+        Some(callback) => {
+            let callback = callback
+                .build_threadsafe_function()
+                .build_callback(|ctx| Ok(FnArgs::from((ctx.value,))))
+                .map_err(|error| {
+                    into_napi_error(
+                        env,
+                        InstallFailure {
+                            code: aube_codes::errors::ERR_AUBE_EMBED_INSTALL_FAILED.to_string(),
+                            message: format!("failed to create install event callback: {error}"),
+                            diagnostic: format!("{error:?}"),
+                        },
+                    )
+                })?;
+            InstallControl::events(Arc::new(NodeReporter { callback }))
+        }
+        None => InstallControl::silent(),
+    };
+    if let Some(signal) = signal {
+        let control = control.clone();
+        signal.on_abort(move || control.cancel());
+    }
+
+    let packages = add
         .unwrap_or_default()
         .into_iter()
         .map(|package| match package.version {
@@ -73,6 +151,28 @@ pub async fn install(
             _ => package.name,
         })
         .collect::<Vec<_>>();
+    let force = force.unwrap_or(false);
+    let offline = offline.unwrap_or(false);
+
+    env.spawn_future_with_callback(
+        async move {
+            Ok::<_, napi::Error>(run_install(project_dir, packages, force, offline, control).await)
+        },
+        |env, result| match result {
+            Ok(result) => Ok(result),
+            Err(error) => Err(into_napi_error(env, error)),
+        },
+    )
+}
+
+async fn run_install(
+    project_dir: String,
+    packages: Vec<String>,
+    force: bool,
+    offline: bool,
+    control: InstallControl,
+) -> Result<InstallResult, InstallFailure> {
+    let project_dir = prepare_project_dir(Path::new(&project_dir)).await?;
 
     if !packages.is_empty() {
         add_to_project(
@@ -81,25 +181,27 @@ pub async fn install(
             AddToProjectOptions {
                 save_exact: true,
                 ignore_scripts: true,
-                force: input.force.unwrap_or(false),
-                offline: input.offline.unwrap_or(false),
+                force,
+                offline,
+                control,
             },
         )
         .await
-        .map_err(to_napi_error)?;
+        .map_err(to_install_failure)?;
     } else {
         let mut options = InstallOptions::with_mode(FrozenMode::Prefer);
         options.project_dir = Some(project_dir.clone());
         options.ignore_scripts = true;
         options.skip_root_lifecycle = true;
-        options.force = input.force.unwrap_or(false);
-        if input.offline.unwrap_or(false) {
+        options.force = force;
+        options.control = control;
+        if offline {
             options.network_mode = aube_registry::NetworkMode::Offline;
         }
 
         aube::commands::install::run(options)
             .await
-            .map_err(to_napi_error)?;
+            .map_err(to_install_failure)?;
     }
 
     Ok(InstallResult {
@@ -116,7 +218,7 @@ fn initialize_embedder() {
     ]);
 }
 
-async fn prepare_project_dir(project_dir: &Path) -> napi::Result<PathBuf> {
+async fn prepare_project_dir(project_dir: &Path) -> Result<PathBuf, InstallFailure> {
     tokio::fs::create_dir_all(project_dir)
         .await
         .map_err(|error| {
@@ -146,21 +248,111 @@ async fn prepare_project_dir(project_dir: &Path) -> napi::Result<PathBuf> {
     Ok(project_dir)
 }
 
-fn invalid_project_error(project_dir: &Path, detail: String) -> napi::Error {
-    napi::Error::new(
-        Status::InvalidArg,
-        format!(
-            "[{}] invalid project directory {}: {detail}",
-            aube_codes::errors::ERR_AUBE_EMBED_INVALID_PROJECT,
-            project_dir.display()
-        ),
-    )
+fn invalid_project_error(project_dir: &Path, detail: String) -> InstallFailure {
+    let message = format!(
+        "invalid project directory {}: {detail}",
+        project_dir.display()
+    );
+    InstallFailure {
+        code: aube_codes::errors::ERR_AUBE_EMBED_INVALID_PROJECT.to_string(),
+        diagnostic: message.clone(),
+        message,
+    }
 }
 
-fn to_napi_error(error: miette::Report) -> napi::Error {
+fn to_install_failure(error: miette::Report) -> InstallFailure {
     let code = error
         .code()
         .map(|code| code.to_string())
-        .unwrap_or_else(|| "ERR_AUBE_UNKNOWN".to_string());
-    napi::Error::new(Status::GenericFailure, format!("[{code}] {error}"))
+        .unwrap_or_else(|| aube_codes::errors::ERR_AUBE_EMBED_INSTALL_FAILED.to_string());
+    InstallFailure {
+        code,
+        message: error.to_string(),
+        diagnostic: format!("{error:?}"),
+    }
+}
+
+fn into_napi_error(env: &Env, failure: InstallFailure) -> NodeError {
+    let fallback_reason = format!("[{}] {}", failure.code, failure.message);
+    let fallback = || NodeError::new(Status::GenericFailure, fallback_reason.clone());
+    let Ok(mut error) = env.create_error(NodeError::new(Status::GenericFailure, &failure.message))
+    else {
+        return fallback();
+    };
+    if error.set("code", failure.code).is_err()
+        || error.set("diagnostic", failure.diagnostic).is_err()
+    {
+        return fallback();
+    }
+    match error.into_unknown(env) {
+        Ok(error) => NodeError::from(error),
+        Err(_) => fallback(),
+    }
+}
+
+impl From<InstallEvent> for InstallEventPayload {
+    fn from(event: InstallEvent) -> Self {
+        match event {
+            InstallEvent::Phase(phase) => Self {
+                kind: "phase".to_string(),
+                phase: Some(phase_name(phase).to_string()),
+                level: None,
+                code: None,
+                message: None,
+                resolved: None,
+                total: None,
+                reused: None,
+                downloaded: None,
+                downloaded_bytes: None,
+                estimated_bytes: None,
+            },
+            InstallEvent::Progress(progress) => Self {
+                kind: "progress".to_string(),
+                phase: progress.phase.map(phase_name).map(str::to_string),
+                level: None,
+                code: None,
+                message: None,
+                resolved: Some(progress.resolved as f64),
+                total: Some(progress.total as f64),
+                reused: Some(progress.reused as f64),
+                downloaded: Some(progress.downloaded as f64),
+                downloaded_bytes: Some(progress.downloaded_bytes as f64),
+                estimated_bytes: Some(progress.estimated_bytes as f64),
+            },
+            InstallEvent::Output {
+                level,
+                code,
+                message,
+            } => Self {
+                kind: "output".to_string(),
+                phase: None,
+                level: Some(level_name(level).to_string()),
+                code,
+                message: Some(message),
+                resolved: None,
+                total: None,
+                reused: None,
+                downloaded: None,
+                downloaded_bytes: None,
+                estimated_bytes: None,
+            },
+        }
+    }
+}
+
+fn phase_name(phase: InstallPhase) -> &'static str {
+    match phase {
+        InstallPhase::Resolving => "resolving",
+        InstallPhase::Fetching => "fetching",
+        InstallPhase::Linking => "linking",
+        InstallPhase::Complete => "complete",
+    }
+}
+
+fn level_name(level: InstallOutputLevel) -> &'static str {
+    match level {
+        InstallOutputLevel::Info => "info",
+        InstallOutputLevel::Warning => "warning",
+        InstallOutputLevel::Error => "error",
+    }
 }

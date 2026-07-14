@@ -9,13 +9,30 @@ const { install } = require("./aube.node") as {
       add?: { name: string; version?: string }[]
       force?: boolean
       offline?: boolean
+      onEvent?: (event: InstallEvent) => void
+      signal?: AbortSignal
     },
   ): Promise<{ projectDir: string; added: string[] }>
+}
+
+type InstallEvent = {
+  kind: "phase" | "progress" | "output"
+  phase?: "resolving" | "fetching" | "linking" | "complete"
+  level?: "info" | "warning" | "error"
+  code?: string
+  message?: string
+  resolved?: number
+  total?: number
+  reused?: number
+  downloaded?: number
+  downloadedBytes?: number
+  estimatedBytes?: number
 }
 
 const projectDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-"))
 const parallelDirA = await mkdtemp(path.join(tmpdir(), "aube-node-poc-parallel-a-"))
 const parallelDirB = await mkdtemp(path.join(tmpdir(), "aube-node-poc-parallel-b-"))
+const abortDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-abort-"))
 const lifecycleMarker = path.join(projectDir, "postinstall-ran")
 let registry: ReturnType<typeof Bun.serve> | undefined
 
@@ -34,8 +51,10 @@ try {
     ) + "\n",
   )
 
+  const events: InstallEvent[] = []
   const first = await install(projectDir, {
     add: [{ name: "is-number", version: "7.0.0" }],
+    onEvent: (event) => events.push(event),
   })
   if (first.added.join(",") !== "is-number@7.0.0") {
     throw new Error(`unexpected add result: ${JSON.stringify(first)}`)
@@ -47,6 +66,30 @@ try {
 
   if (installed.version !== "7.0.0") {
     throw new Error(`expected is-number@7.0.0, found ${installed.version ?? "unknown"}`)
+  }
+  if (!events.some((event) => event.kind === "phase" && event.phase === "complete")) {
+    throw new Error(`install did not emit a complete phase: ${JSON.stringify(events)}`)
+  }
+  if (!events.some((event) => event.kind === "progress" && event.resolved === 1)) {
+    throw new Error(`install did not emit resolved progress: ${JSON.stringify(events)}`)
+  }
+  if (!events.some((event) => event.kind === "output" && event.message?.startsWith("Resolving "))) {
+    throw new Error(`install did not route add output through events: ${JSON.stringify(events)}`)
+  }
+
+  const invalidParent = path.join(projectDir, "not-a-directory")
+  await writeFile(invalidParent, "file\n")
+  try {
+    await install(path.join(invalidParent, "child"))
+    throw new Error("invalid project install unexpectedly succeeded")
+  } catch (error) {
+    const structured = error as Error & { code?: string; diagnostic?: string }
+    if (structured.code !== "ERR_AUBE_EMBED_INVALID_PROJECT") {
+      throw new Error(`missing structured error code: ${JSON.stringify(structured)}`)
+    }
+    if (!structured.diagnostic?.includes("invalid project directory")) {
+      throw new Error(`missing structured diagnostic: ${JSON.stringify(structured)}`)
+    }
   }
 
   const lifecycleRan = await access(lifecycleMarker).then(
@@ -72,6 +115,15 @@ try {
     port: 0,
     idleTimeout: 30,
     async fetch(request) {
+      const name = decodeURIComponent(new URL(request.url).pathname.slice(1))
+      const packument = packuments.get(name)
+      if (!packument) return new Response("not found", { status: 404 })
+
+      if (name === "is-number") {
+        await Bun.sleep(100)
+        return new Response(packument, { headers: { "content-type": "application/json" } })
+      }
+
       registryArrivals += 1
       if (registryArrivals === 2) releaseRegistryBarrier?.()
 
@@ -90,19 +142,41 @@ try {
         if (timeout) clearTimeout(timeout)
       }
 
-      const name = decodeURIComponent(new URL(request.url).pathname.slice(1))
-      const packument = packuments.get(name)
-      if (!packument) return new Response("not found", { status: 404 })
       return new Response(packument, { headers: { "content-type": "application/json" } })
     },
   })
   const registryUrl = `http://127.0.0.1:${registry.port}/`
   await Promise.all(
-    [parallelDirA, parallelDirB].map(async (dir) => {
+    [parallelDirA, parallelDirB, abortDir].map(async (dir) => {
       await writeFile(path.join(dir, "package.json"), "{}\n")
       await writeFile(path.join(dir, ".npmrc"), `registry=${registryUrl}\n`)
     }),
   )
+
+  const controller = new AbortController()
+  let abortRequested = false
+  try {
+    await install(abortDir, {
+      add: [{ name: "is-number", version: "7.0.0" }],
+      force: true,
+      signal: controller.signal,
+      onEvent(event) {
+        if (event.kind === "phase" && event.phase === "resolving") {
+          abortRequested = true
+          controller.abort()
+        }
+      },
+    })
+    throw new Error("cancelled install unexpectedly succeeded")
+  } catch (error) {
+    const structured = error as Error & { code?: string; diagnostic?: string }
+    if (!abortRequested || structured.code !== "ERR_AUBE_INSTALL_CANCELLED") {
+      throw error
+    }
+    if (!structured.diagnostic?.includes("install cancelled")) {
+      throw new Error(`cancelled install omitted diagnostic: ${JSON.stringify(structured)}`)
+    }
+  }
 
   // Each registry request waits for the other install to arrive. A
   // process-wide addon mutex would deadlock here and trip the timeout.
@@ -129,5 +203,6 @@ try {
     rm(projectDir, { recursive: true, force: true }),
     rm(parallelDirA, { recursive: true, force: true }),
     rm(parallelDirB, { recursive: true, force: true }),
+    rm(abortDir, { recursive: true, force: true }),
   ])
 }

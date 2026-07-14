@@ -7,6 +7,10 @@ It exposes the async operation OpenCode's npm service needs:
 ```ts
 await install(projectDirectory, {
   add: [{ name: "@opencode-ai/plugin", version: opencodeVersion }],
+  signal: abortController.signal,
+  onEvent(event) {
+    // phase, progress, and output events
+  },
 })
 ```
 
@@ -15,6 +19,11 @@ as exact production dependencies, and installs declared dependencies. It always
 skips root and dependency lifecycle scripts. Independent projects install in
 parallel using invocation-scoped runtime, script, dependency-chain, directory,
 and project-lock state.
+
+`onEvent` is delivered through a non-blocking Node-API thread-safe function.
+`signal` cooperatively cancels the invocation at a safe install boundary.
+Rejected promises are JavaScript `Error` objects with stable `code` and
+human-readable `diagnostic` properties.
 
 Run the direct Bun and compiled-executable smoke tests from the repository
 root:
@@ -27,8 +36,8 @@ The script uses Bun 1.3.11 through mise, matching the Bun version OpenCode
 currently declares. It builds the addon with the `napi` Cargo profile, runs it
 directly, embeds it with `bun build --compile`, and runs the resulting
 standalone executable. Its local registry uses a two-request barrier so the
-smoke test fails if independent addon calls become serialized.
+smoke test fails if independent addon calls become serialized. It also covers
+structured events, cancellation, and structured rejection properties.
 
-The remaining production work is progress and cancellation integration,
-structured error objects beyond the stable code prefix in each rejected
-promise, and cross-platform artifact distribution.
+The remaining production work is cross-platform artifact distribution and the
+OpenCode adapter that replaces its Arborist install call.
