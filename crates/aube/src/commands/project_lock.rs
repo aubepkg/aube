@@ -21,7 +21,7 @@ fn aube_no_lock_enabled(cwd: &std::path::Path) -> bool {
 /// type — the lock is released on drop regardless.
 pub(crate) struct ProjectLock {
     project_dir: std::path::PathBuf,
-    _inner: Option<Box<dyn Any + Send>>,
+    _inner: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProjectLock {
@@ -93,6 +93,12 @@ fn take_project_lock_enabled(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guard_can_cross_async_worker_threads_by_reference() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ProjectLock>();
+    }
 
     #[test]
     fn different_projects_hold_independent_process_locks() {

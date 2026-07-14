@@ -12,8 +12,9 @@ await install(projectDirectory, {
 
 The addon creates an empty package manifest when needed, saves added packages
 as exact production dependencies, and installs declared dependencies. It always
-skips root and dependency lifecycle scripts. Calls are serialized inside the
-addon while aube's remaining command-scoped global state is made reentrant.
+skips root and dependency lifecycle scripts. Independent projects install in
+parallel using invocation-scoped runtime, script, dependency-chain, directory,
+and project-lock state.
 
 Run the direct Bun and compiled-executable smoke tests from the repository
 root:
@@ -25,8 +26,9 @@ crates/aube-node/poc/run.sh
 The script uses Bun 1.3.11 through mise, matching the Bun version OpenCode
 currently declares. It builds the addon with the `napi` Cargo profile, runs it
 directly, embeds it with `bun build --compile`, and runs the resulting
-standalone executable.
+standalone executable. Its local registry uses a two-request barrier so the
+smoke test fails if independent addon calls become serialized.
 
 The remaining production work is progress and cancellation integration,
-reentrant parallel installs, structured error objects beyond the stable code
-prefix in each rejected promise, and cross-platform artifact distribution.
+structured error objects beyond the stable code prefix in each rejected
+promise, and cross-platform artifact distribution.

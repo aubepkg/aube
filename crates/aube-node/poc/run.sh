@@ -7,7 +7,7 @@ profile_dir="$repo_root/target/napi"
 compiled="$profile_dir/aube-node-poc"
 
 cleanup() {
-  rm -f "$poc_dir/aube.node"
+	rm -f "$poc_dir/aube.node"
 }
 trap cleanup EXIT
 
@@ -18,13 +18,13 @@ case "$(uname -s)" in
 Darwin) addon="$profile_dir/libaube_node.dylib" ;;
 Linux) addon="$profile_dir/libaube_node.so" ;;
 MINGW* | MSYS* | CYGWIN*)
-  addon="$profile_dir/aube_node.dll"
-  compiled="$compiled.exe"
-  ;;
+	addon="$profile_dir/aube_node.dll"
+	compiled="$compiled.exe"
+	;;
 *)
-  echo "unsupported POC host: $(uname -s)" >&2
-  exit 1
-  ;;
+	echo "unsupported POC host: $(uname -s)" >&2
+	exit 1
+	;;
 esac
 
 cp "$addon" "$poc_dir/aube.node"

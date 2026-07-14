@@ -6,12 +6,6 @@ use napi::Status;
 use napi_derive::napi;
 use std::path::{Path, PathBuf};
 
-/// Aube still has a small amount of mutable command-scoped process state.
-/// Serialize addon entry points until that state is carried by InstallOptions.
-/// Tokio's mutex is non-poisoning, so one failed invocation cannot strand the
-/// host or prevent later installs.
-static INSTALL_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 static OPENCODE: aube_util::Embedder = aube_util::Embedder {
     name: "opencode",
     display_name: "OpenCode",
@@ -62,7 +56,6 @@ pub async fn install(
     project_dir: String,
     input: Option<InstallInput>,
 ) -> napi::Result<InstallResult> {
-    let _gate = INSTALL_GATE.lock().await;
     initialize_embedder();
 
     let project_dir = prepare_project_dir(Path::new(&project_dir)).await?;
