@@ -156,7 +156,16 @@ jobs:
       - name: Resolve minimum supported Rust version
         run: |
           MSRV=$(cargo metadata --no-deps --format-version 1 |
-            jq -er '[.packages[].rust_version | select(. != null)] | unique | if length == 1 then .[0] else error("workspace packages have inconsistent rust-version values") end')
+            jq -er '
+              [.packages[] | select(.rust_version == null) | .name] as $missing |
+              if ($missing | length) > 0 then
+                error("workspace packages missing rust-version: \($missing | join(", "))")
+              else
+                [.packages[].rust_version] | unique |
+                if length == 1 then .[0]
+                else error("workspace packages have inconsistent rust-version values")
+                end
+              end')
 
           if [[ ! "$MSRV" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
             echo "::error::Cargo metadata returned an invalid MSRV: '$MSRV'"
