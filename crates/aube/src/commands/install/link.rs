@@ -82,6 +82,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
     if let Some(p) = prog_ref {
         p.set_phase("linking");
     }
+    super::control::check_cancelled()?;
     tracing::debug!("Link strategy: {strategy:?}");
 
     let shamefully_hoist = aube_settings::resolved::shamefully_hoist(settings_ctx);

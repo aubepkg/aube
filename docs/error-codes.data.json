@@ -403,6 +403,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_INSTALL_CANCELLED",
+      "category": "Misc / safety",
+      "description": "An in-process install was cooperatively cancelled by its embedding host. Cancellation is observed at safe install boundaries so an in-flight filesystem phase is not abandoned mid-mutation.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_UNSAFE_INDEX_KEY",
       "category": "Misc / safety",
       "description": "A package index key tried to escape its directory (path traversal defense in depth).",

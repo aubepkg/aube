@@ -192,17 +192,24 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             p.finish(true);
         }
         if !write_lockfile {
-            eprintln!(
-                "Dry run: lockfile is up to date; fetch/link steps were not run and node_modules were not modified"
+            super::control::output(
+                super::InstallOutputLevel::Info,
+                None,
+                "Dry run: lockfile is up to date; fetch/link steps were not run and node_modules were not modified",
             );
             return Ok(());
         }
-        eprintln!("Lockfile is up to date, resolution step is skipped");
+        super::control::output(
+            super::InstallOutputLevel::Info,
+            None,
+            "Lockfile is up to date, resolution step is skipped",
+        );
         return Ok(());
     }
     if let Some(p) = prog_ref {
         p.set_phase("resolving");
     }
+    super::control::check_cancelled()?;
     let client =
         std::sync::Arc::new(crate::commands::make_client(cwd).with_network_mode(network_mode));
     let pnpmfile_paths = if ignore_pnpmfile {
@@ -215,6 +222,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     };
     crate::commands::run_pnpmfile_pre_resolution(&pnpmfile_paths, cwd, existing_for_resolver)
         .await?;
+    super::control::check_cancelled()?;
     let (read_package_host, read_package_forwarders) =
         match crate::pnpmfile::ReadPackageHostChain::spawn(&pnpmfile_paths, cwd)
             .await
@@ -319,9 +327,13 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         if let Some(p) = prog_ref {
             p.finish(true);
         }
-        eprintln!(
-            "Dry run: resolved {} package(s); lockfile and node_modules were not modified",
-            graph.packages.len()
+        super::control::output(
+            super::InstallOutputLevel::Info,
+            None,
+            format!(
+                "Dry run: resolved {} package(s); lockfile and node_modules were not modified",
+                graph.packages.len()
+            ),
         );
         return Ok(());
     }
@@ -359,9 +371,13 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     if let Some(p) = prog_ref {
         p.finish(true);
     }
-    eprintln!(
-        "Lockfile written ({} packages); skipped node_modules linking",
-        graph.packages.len()
+    super::control::output(
+        super::InstallOutputLevel::Info,
+        None,
+        format!(
+            "Lockfile written ({} packages); skipped node_modules linking",
+            graph.packages.len()
+        ),
     );
     Ok(())
 }

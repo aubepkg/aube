@@ -308,6 +308,7 @@ impl InstallArgs {
             // `advisoryCheckEveryInstall` setting flips it on for
             // every install — neither needs the caller to opt in.
             osv_transitive_check: false,
+            control: super::InstallControl::default(),
         }
     }
 }
@@ -438,6 +439,11 @@ pub struct InstallOptions {
     /// picked a `(name, version)` pair the lockfile didn't
     /// already pin.
     pub osv_transitive_check: bool,
+    /// Invocation-scoped output, progress reporting, and cooperative
+    /// cancellation. Standalone CLI callers use the default human output;
+    /// embedders can select structured events or silence independently for
+    /// each concurrent install.
+    pub control: super::InstallControl,
 }
 
 impl InstallOptions {
@@ -481,6 +487,7 @@ impl InstallOptions {
             // routing (fresh-resolution detection / mirror
             // fallback) instead of an unconditional API hit.
             osv_transitive_check: false,
+            control: super::InstallControl::default(),
         }
     }
 }

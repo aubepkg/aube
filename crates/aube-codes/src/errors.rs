@@ -103,7 +103,8 @@ pub const ERR_AUBE_RUNTIME_EXTRACT_FAILED: &str = "ERR_AUBE_RUNTIME_EXTRACT_FAIL
 #[rustfmt::skip] pub const ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM: &str = "ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM";
 pub const ERR_AUBE_RUNTIME_IO: &str = "ERR_AUBE_RUNTIME_IO";
 
-// ── misc tracing::error! sites (non-fatal but high-severity) ────────
+// ── misc / safety ──────────────────────────────────────────────────
+pub const ERR_AUBE_INSTALL_CANCELLED: &str = "ERR_AUBE_INSTALL_CANCELLED";
 pub const ERR_AUBE_PATCHES_TRACKING_WRITE: &str = "ERR_AUBE_PATCHES_TRACKING_WRITE";
 pub const ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER: &str = "ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER";
 
@@ -542,6 +543,12 @@ pub const ALL: &[CodeMeta] = &[
         exit_code: None,
     },
     // Misc / safety
+    CodeMeta {
+        name: ERR_AUBE_INSTALL_CANCELLED,
+        category: category::MISC_SAFETY,
+        description: "An in-process install was cooperatively cancelled by its embedding host. Cancellation is observed at safe install boundaries so an in-flight filesystem phase is not abandoned mid-mutation.",
+        exit_code: None,
+    },
     CodeMeta {
         name: ERR_AUBE_UNSAFE_INDEX_KEY,
         category: category::MISC_SAFETY,

@@ -314,6 +314,7 @@ pub async fn run(
             aube_registry::NetworkMode::Online
         };
         let opts = InstallOptions {
+            control: install::InstallControl::default(),
             project_dir: Some(s.target.clone()),
             mode,
             dep_selection: dep_selection_for_args(&args),
