@@ -44,6 +44,10 @@ jobs:
         with:
           command: release
         env:
+          # Workspace crates are published in dependency order during one
+          # release, so their freshly published internal dependencies must
+          # bypass the repository-wide 7-day dependency soak.
+          CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE: allow
           GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
       # The `releases` output is an array of every crate that was
       # published, in dependency order. Since aube depends on all
