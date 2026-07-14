@@ -232,19 +232,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct CancelOnOutputReporter(Mutex<Option<InstallControl>>);
-
-    impl InstallReporter for CancelOnOutputReporter {
-        fn report(&self, event: InstallEvent) {
-            if matches!(event, InstallEvent::Output { .. })
-                && let Some(control) = self.0.lock().unwrap().as_ref()
-            {
-                control.cancel();
-            }
-        }
-    }
-
     #[test]
     fn cloned_controls_share_cancellation_without_leaking_to_other_invocations() {
         let first = InstallControl::silent();
@@ -365,9 +352,18 @@ mod tests {
         initial.control = InstallControl::silent();
         super::super::run(initial).await.unwrap();
 
-        let cancelling_reporter = Arc::new(CancelOnOutputReporter::default());
+        let state_path = project.path().join("node_modules/.aube-state/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+        state
+            .as_object_mut()
+            .unwrap()
+            .remove("package_content_hashes");
+        std::fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let cancelling_reporter = Arc::new(RecordingReporter::default());
         let cancelling_control = InstallControl::events(cancelling_reporter.clone());
-        *cancelling_reporter.0.lock().unwrap() = Some(cancelling_control.clone());
+        cancelling_control.cancel();
         let mut cancelled =
             super::super::InstallOptions::with_mode(super::super::FrozenMode::Prefer);
         cancelled.project_dir = Some(project.path().to_path_buf());
@@ -379,6 +375,7 @@ mod tests {
             error.code().map(|code| code.to_string()).as_deref(),
             Some(aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED)
         );
+        assert!(cancelling_reporter.0.lock().unwrap().is_empty());
 
         let reporter = Arc::new(RecordingReporter::default());
         let mut completed =

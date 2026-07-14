@@ -33,7 +33,7 @@ pub(super) fn try_install_fast_path(
     opts: &InstallOptions,
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
-) -> Option<usize> {
+) -> miette::Result<Option<usize>> {
     let dangerously_allow_all_builds = resolve_dangerously_allow_all_builds(cwd, opts);
     if !install_fast_path_eligible(
         cwd,
@@ -42,14 +42,20 @@ pub(super) fn try_install_fast_path(
         modules_cache_sweep_default,
         dangerously_allow_all_builds,
     ) {
-        return None;
+        return Ok(None);
     }
+    opts.control.check_cancelled()?;
     emit_up_to_date(cwd);
-    Some(
-        state::read_state_package_content_hashes(cwd)
-            .map(|packages| packages.len())
-            .unwrap_or_default(),
-    )
+    let total = state::read_state_package_content_hashes(cwd)
+        .map(|packages| packages.len())
+        .or_else(|| {
+            let manifest = super::super::load_manifest_or_default(cwd).ok()?;
+            aube_lockfile::parse_lockfile_with_kind(cwd, &manifest)
+                .ok()
+                .map(|(graph, _)| graph.packages.len())
+        })
+        .unwrap_or_default();
+    Ok(Some(total))
 }
 
 fn resolve_dangerously_allow_all_builds(cwd: &Path, opts: &InstallOptions) -> bool {

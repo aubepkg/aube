@@ -544,9 +544,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     }
     if !opts.dry_run
         && let Some(total) =
-            try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))
+            try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))?
     {
-        control::check_cancelled()?;
         control::complete(total);
         return Ok(());
     }
