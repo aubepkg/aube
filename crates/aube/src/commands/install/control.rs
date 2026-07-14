@@ -150,7 +150,7 @@ impl InstallControl {
             InstallOutputMode::Human => {
                 let message = match level {
                     InstallOutputLevel::Info => message,
-                    InstallOutputLevel::Warning => format!("warning: {message}"),
+                    InstallOutputLevel::Warning => format!("warn: {message}"),
                     InstallOutputLevel::Error => format!("error: {message}"),
                 };
                 crate::progress::safe_eprintln(&message);
