@@ -63,16 +63,14 @@ fn pnpm_patch_hashes(
 }
 
 fn strip_patch_hash_suffix(value: &str) -> String {
-    let Some(start) = value.find("(patch_hash=") else {
-        return value.to_string();
-    };
-    let Some(rel_end) = value[start..].find(')') else {
-        return value.to_string();
-    };
-    let end = start + rel_end + 1;
-    let mut out = String::with_capacity(value.len() - (end - start));
-    out.push_str(&value[..start]);
-    out.push_str(&value[end..]);
+    let mut out = value.to_string();
+    while let Some(start) = out.find("(patch_hash=") {
+        let Some(rel_end) = out[start..].find(')') else {
+            break;
+        };
+        let end = start + rel_end + 1;
+        out.replace_range(start..end, "");
+    }
     out
 }
 
@@ -89,6 +87,20 @@ fn with_patch_hash(value: &str, hash: Option<&str>) -> String {
         &bare[..suffix_at],
         &bare[suffix_at..]
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_patch_hash;
+
+    #[test]
+    fn replaces_every_stale_patch_hash_suffix() {
+        let value = "1.0.0(patch_hash=old)(react@19)(patch_hash=duplicate)";
+        assert_eq!(
+            with_patch_hash(value, Some("current")),
+            "1.0.0(patch_hash=current)(react@19)"
+        );
+    }
 }
 
 /// Write a LockfileGraph as pnpm-lock.yaml v9 format.
@@ -111,6 +123,14 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     .and_then(|name| patch_hashes.get(&format!("{name}@{}", pkg.version)))
             })
             .map(String::as_str)
+    };
+    let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
+        if native_pnpm_aliases {
+            pkg.map(|pkg| with_patch_hash(value, patch_hash_for(pkg)))
+                .unwrap_or_else(|| value.to_string())
+        } else {
+            value.to_string()
+        }
     };
     // Translate a *flat* peer reference from aube's internal FS-safe
     // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
@@ -202,14 +222,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     &peer_suffix_to_spec,
                 )
             };
-            if native_pnpm_aliases
-                && let Some(pkg) = graph
-                    .packages
-                    .get(&dep.dep_path)
-                    .or_else(|| graph.packages.get(&peerless_dep_path(&dep.name, &version)))
-            {
-                version = with_patch_hash(&version, patch_hash_for(pkg));
-            }
+            let target = graph
+                .packages
+                .get(&dep.dep_path)
+                .or_else(|| graph.packages.get(&peerless_dep_path(&dep.name, &version)));
+            version = decorate_patch_hash(&version, target);
 
             let spec = WritableDepSpec {
                 specifier: specifier.to_string(),
@@ -653,13 +670,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     // as the resolved spec (`1.1.4(request@https://…)`).
                     rewrite_peer_suffix(&value, &peer_suffix_to_spec)
                 };
-                let rewritten = if native_pnpm_aliases {
-                    target
-                        .map(|pkg| with_patch_hash(&rewritten, patch_hash_for(pkg)))
-                        .unwrap_or(rewritten)
-                } else {
-                    rewritten
-                };
+                let rewritten = decorate_patch_hash(&rewritten, target);
                 (name, rewritten)
             })
             .collect()
@@ -685,9 +696,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 }
             }
         };
-        if native_pnpm_aliases {
-            key = with_patch_hash(&key, patch_hash_for(pkg));
-        }
+        key = decorate_patch_hash(&key, Some(pkg));
         let pkg_deps = rewrite_local_deps(pkg.dependencies.clone());
         let pkg_opt_deps = rewrite_local_deps(pkg.optional_dependencies.clone());
         snapshots.insert(

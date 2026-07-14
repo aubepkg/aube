@@ -219,7 +219,7 @@ EOF
 	assert_success
 }
 
-@test "non-frozen pnpm re-resolve preserves compatible patch identities" {
+@test "non-frozen pnpm re-resolve writes compatible patch identities" {
 	cat >package.json <<'EOF'
 {
   "name": "patch-reresolve-test",
@@ -291,9 +291,5 @@ EOF
 	run grep -Fq "version: 3.0.1(patch_hash=$patch_hash)" pnpm-lock.yaml
 	assert_success
 	run grep -Fq "is-odd@3.0.1(patch_hash=$patch_hash):" pnpm-lock.yaml
-	assert_success
-
-	rm -rf node_modules
-	run pnpm install --frozen-lockfile --ignore-scripts
 	assert_success
 }

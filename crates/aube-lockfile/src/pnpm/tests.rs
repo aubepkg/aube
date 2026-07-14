@@ -2877,6 +2877,20 @@ snapshots:
         3,
         "direct, transitive, and snapshot refs must all be decorated:\n{written}"
     );
+
+    let reparsed = parse(&lockfile_path).unwrap();
+    std::fs::remove_file(dir.path().join("patches/is-odd@3.0.1.patch")).unwrap();
+    write(&lockfile_path, &reparsed, &PackageJson::default()).unwrap();
+    let rewritten = std::fs::read_to_string(&lockfile_path).unwrap();
+    assert!(
+        rewritten.contains(&format!("is-odd@3.0.1: {hash}")),
+        "stored top-level patch hash was not preserved:\n{rewritten}"
+    );
+    assert_eq!(
+        rewritten.matches(&decorated).count(),
+        3,
+        "stored patch hashes must decorate every reference without the patch file:\n{rewritten}"
+    );
 }
 
 #[test]

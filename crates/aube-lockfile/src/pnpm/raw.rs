@@ -227,7 +227,6 @@ pub(super) enum RawPatchedDependency {
     Object {
         path: String,
         #[serde(default)]
-        #[allow(dead_code)]
         hash: Option<String>,
     },
 }
