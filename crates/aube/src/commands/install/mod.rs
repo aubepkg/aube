@@ -543,10 +543,11 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         apply_force_state_reset(&cwd, &opts)?;
     }
     if !opts.dry_run
-        && try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))
+        && let Some(total) =
+            try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))
     {
         control::check_cancelled()?;
-        control::complete();
+        control::complete(total);
         return Ok(());
     }
 

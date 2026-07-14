@@ -461,8 +461,8 @@ impl InstallProgress {
                 s.resolved.fetch_add(n, Ordering::Relaxed);
             }
             Mode::Events(s) => {
-                s.resolved.fetch_add(n, Ordering::Relaxed);
-                s.total.fetch_add(n, Ordering::Relaxed);
+                let resolved = s.resolved.fetch_add(n, Ordering::Relaxed) + n;
+                s.total.fetch_max(resolved, Ordering::Relaxed);
                 s.report_progress();
             }
         }
@@ -1465,6 +1465,8 @@ mod tests {
             let progress = InstallProgress::try_new().unwrap();
             progress.set_phase("resolving");
             progress.set_total_floor(3);
+            progress.inc_total(1);
+            progress.inc_total(1);
             progress.set_total(2);
             progress.inc_reused(1);
             progress.set_phase("fetching");
@@ -1479,6 +1481,13 @@ mod tests {
         assert!(events.contains(&InstallEvent::Phase(InstallPhase::Resolving)));
         assert!(events.contains(&InstallEvent::Phase(InstallPhase::Fetching)));
         assert!(events.contains(&InstallEvent::Phase(InstallPhase::Complete)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InstallEvent::Progress(snapshot)
+                if snapshot.phase == Some(InstallPhase::Resolving)
+                    && snapshot.resolved == 2
+                    && snapshot.total == 3
+        )));
         assert!(events.iter().any(|event| matches!(
             event,
             InstallEvent::Progress(snapshot)

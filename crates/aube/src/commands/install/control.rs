@@ -164,16 +164,16 @@ impl InstallControl {
         }
     }
 
-    fn complete(&self) {
+    fn complete(&self, total: usize) {
         if self.output != InstallOutputMode::Events {
             return;
         }
         self.report(InstallEvent::Phase(InstallPhase::Complete));
         self.report(InstallEvent::Progress(InstallProgressSnapshot {
             phase: Some(InstallPhase::Complete),
-            resolved: 0,
-            total: 0,
-            reused: 0,
+            resolved: total,
+            total,
+            reused: total,
             downloaded: 0,
             downloaded_bytes: 0,
             estimated_bytes: 0,
@@ -201,8 +201,8 @@ pub(crate) fn output(level: InstallOutputLevel, code: Option<&str>, message: imp
     current().output(level, code, message);
 }
 
-pub(crate) fn complete() {
-    current().complete();
+pub(crate) fn complete(total: usize) {
+    current().complete(total);
 }
 
 #[cfg(test)]
@@ -349,7 +349,13 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         std::fs::write(
             project.path().join("package.json"),
-            r#"{"name":"warm-test","version":"1.0.0"}"#,
+            r#"{"name":"warm-test","version":"1.0.0","dependencies":{"dep":"file:./dep"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir(project.path().join("dep")).unwrap();
+        std::fs::write(
+            project.path().join("dep/package.json"),
+            r#"{"name":"dep","version":"1.0.0"}"#,
         )
         .unwrap();
 
@@ -388,6 +394,9 @@ mod tests {
             event,
             InstallEvent::Progress(snapshot)
                 if snapshot.phase == Some(InstallPhase::Complete)
+                    && snapshot.resolved == 1
+                    && snapshot.total == 1
+                    && snapshot.reused == 1
         )));
     }
 }

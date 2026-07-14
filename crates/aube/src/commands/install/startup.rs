@@ -33,7 +33,7 @@ pub(super) fn try_install_fast_path(
     opts: &InstallOptions,
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
-) -> bool {
+) -> Option<usize> {
     let dangerously_allow_all_builds = resolve_dangerously_allow_all_builds(cwd, opts);
     if !install_fast_path_eligible(
         cwd,
@@ -42,10 +42,14 @@ pub(super) fn try_install_fast_path(
         modules_cache_sweep_default,
         dangerously_allow_all_builds,
     ) {
-        return false;
+        return None;
     }
     emit_up_to_date(cwd);
-    true
+    Some(
+        state::read_state_package_content_hashes(cwd)
+            .map(|packages| packages.len())
+            .unwrap_or_default(),
+    )
 }
 
 fn resolve_dangerously_allow_all_builds(cwd: &Path, opts: &InstallOptions) -> bool {
