@@ -545,6 +545,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     if !opts.dry_run
         && try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))
     {
+        control::check_cancelled()?;
+        control::complete();
         return Ok(());
     }
 
@@ -2359,10 +2361,10 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // output across bar frames. Route through safe_eprintln which
     // pauses the bar and holds the terminal lock for atomic output.
     for w in &policy_warnings {
-        control::output(InstallOutputLevel::Warning, None, format!("warn: {w}"));
+        control::output(InstallOutputLevel::Warning, None, w.to_string());
     }
     for w in &jail_policy_warnings {
-        control::output(InstallOutputLevel::Warning, None, format!("warn: {w}"));
+        control::output(InstallOutputLevel::Warning, None, w.to_string());
     }
 
     let link::LinkPhaseOutput {

@@ -147,7 +147,14 @@ impl InstallControl {
     ) {
         let message = message.into();
         match self.output {
-            InstallOutputMode::Human => crate::progress::safe_eprintln(&message),
+            InstallOutputMode::Human => {
+                let message = match level {
+                    InstallOutputLevel::Info => message,
+                    InstallOutputLevel::Warning => format!("warning: {message}"),
+                    InstallOutputLevel::Error => format!("error: {message}"),
+                };
+                crate::progress::safe_eprintln(&message);
+            }
             InstallOutputMode::Events => self.report(InstallEvent::Output {
                 level,
                 code: code.map(str::to_owned),
@@ -155,6 +162,22 @@ impl InstallControl {
             }),
             InstallOutputMode::Silent => {}
         }
+    }
+
+    fn complete(&self) {
+        if self.output != InstallOutputMode::Events {
+            return;
+        }
+        self.report(InstallEvent::Phase(InstallPhase::Complete));
+        self.report(InstallEvent::Progress(InstallProgressSnapshot {
+            phase: Some(InstallPhase::Complete),
+            resolved: 0,
+            total: 0,
+            reused: 0,
+            downloaded: 0,
+            downloaded_bytes: 0,
+            estimated_bytes: 0,
+        }));
     }
 }
 
@@ -178,6 +201,10 @@ pub(crate) fn output(level: InstallOutputLevel, code: Option<&str>, message: imp
     current().output(level, code, message);
 }
 
+pub(crate) fn complete() {
+    current().complete();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +225,19 @@ mod tests {
     impl InstallReporter for CancelOnResolvingReporter {
         fn report(&self, event: InstallEvent) {
             if event == InstallEvent::Phase(InstallPhase::Resolving)
+                && let Some(control) = self.0.lock().unwrap().as_ref()
+            {
+                control.cancel();
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct CancelOnOutputReporter(Mutex<Option<InstallControl>>);
+
+    impl InstallReporter for CancelOnOutputReporter {
+        fn report(&self, event: InstallEvent) {
+            if matches!(event, InstallEvent::Output { .. })
                 && let Some(control) = self.0.lock().unwrap().as_ref()
             {
                 control.cancel();
@@ -249,6 +289,11 @@ mod tests {
             InstallEvent::Output { message, .. } if message == "first"
         ));
         assert!(matches!(
+            &first_events[1],
+            InstallEvent::Output { level: InstallOutputLevel::Warning, message, .. }
+                if message == "first warning"
+        ));
+        assert!(matches!(
             &second_events[0],
             InstallEvent::Output { message, .. } if message == "second"
         ));
@@ -297,5 +342,52 @@ mod tests {
             Some(aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED)
         );
         assert!(!project.path().join("node_modules").exists());
+    }
+
+    #[tokio::test]
+    async fn warm_path_reports_cancellation_or_completion() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("package.json"),
+            r#"{"name":"warm-test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let mut initial = super::super::InstallOptions::with_mode(super::super::FrozenMode::No);
+        initial.project_dir = Some(project.path().to_path_buf());
+        initial.network_mode = aube_registry::NetworkMode::Offline;
+        initial.control = InstallControl::silent();
+        super::super::run(initial).await.unwrap();
+
+        let cancelling_reporter = Arc::new(CancelOnOutputReporter::default());
+        let cancelling_control = InstallControl::events(cancelling_reporter.clone());
+        *cancelling_reporter.0.lock().unwrap() = Some(cancelling_control.clone());
+        let mut cancelled =
+            super::super::InstallOptions::with_mode(super::super::FrozenMode::Prefer);
+        cancelled.project_dir = Some(project.path().to_path_buf());
+        cancelled.network_mode = aube_registry::NetworkMode::Offline;
+        cancelled.control = cancelling_control;
+
+        let error = super::super::run(cancelled).await.unwrap_err();
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED)
+        );
+
+        let reporter = Arc::new(RecordingReporter::default());
+        let mut completed =
+            super::super::InstallOptions::with_mode(super::super::FrozenMode::Prefer);
+        completed.project_dir = Some(project.path().to_path_buf());
+        completed.network_mode = aube_registry::NetworkMode::Offline;
+        completed.control = InstallControl::events(reporter.clone());
+        super::super::run(completed).await.unwrap();
+
+        let events = reporter.0.lock().unwrap();
+        assert!(events.contains(&InstallEvent::Phase(InstallPhase::Complete)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InstallEvent::Progress(snapshot)
+                if snapshot.phase == Some(InstallPhase::Complete)
+        )));
     }
 }

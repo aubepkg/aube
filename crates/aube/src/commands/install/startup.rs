@@ -149,7 +149,7 @@ pub(super) fn merge_branch_lockfiles_if_needed(
                         super::InstallOutputLevel::Warning,
                         None,
                         format!(
-                            "warn: {} conflict(s) resolved during branch-lockfile merge:",
+                            "{} conflict(s) resolved during branch-lockfile merge:",
                             report.conflicts.len()
                         ),
                     );
@@ -157,7 +157,7 @@ pub(super) fn merge_branch_lockfiles_if_needed(
                         super::control::output(
                             super::InstallOutputLevel::Warning,
                             None,
-                            format!("warn:   {c}"),
+                            format!("  {c}"),
                         );
                     }
                 }
@@ -177,14 +177,14 @@ pub(super) fn warn_accepted_noop_install_settings(settings_ctx: &aube_settings::
         super::control::output(
             super::InstallOutputLevel::Warning,
             None,
-            "warning: aube has no store server; useRunningStoreServer=true is accepted but has no effect",
+            "aube has no store server; useRunningStoreServer=true is accepted but has no effect",
         );
     }
     if !super::settings::resolve_symlink(settings_ctx) {
         super::control::output(
             super::InstallOutputLevel::Warning,
             None,
-            "warning: aube's isolated layout requires symlinks; symlink=false is accepted but has no effect",
+            "aube's isolated layout requires symlinks; symlink=false is accepted but has no effect",
         );
     }
 }

@@ -996,17 +996,17 @@ pub(super) fn check_unmet_peers(
     super::control::output(
         super::InstallOutputLevel::Error,
         None,
-        "error: Issues with peer dependencies found",
+        "Issues with peer dependencies found",
     );
     for u in &unmet {
         let from_ver = version_from_dep_path(&u.from_dep_path, &u.from_name);
         let msg = match &u.found {
             Some(found) => format!(
-                "error:   {}@{from_ver}: expected peer {}@{}, found {found}",
+                "  {}@{from_ver}: expected peer {}@{}, found {found}",
                 u.from_name, u.peer_name, u.declared,
             ),
             None => format!(
-                "error:   {}@{from_ver}: missing required peer {}@{}",
+                "  {}@{from_ver}: missing required peer {}@{}",
                 u.from_name, u.peer_name, u.declared,
             ),
         };

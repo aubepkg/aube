@@ -628,15 +628,18 @@ impl InstallProgress {
             Mode::Ci(s) => s.set_phase(phase),
             Mode::Events(s) => {
                 let (n, phase) = match phase {
-                    "resolving" => (1, Some(InstallPhase::Resolving)),
-                    "fetching" => (2, Some(InstallPhase::Fetching)),
-                    "linking" => (3, Some(InstallPhase::Linking)),
-                    _ => (0, None),
+                    "resolving" => (1, InstallPhase::Resolving),
+                    "fetching" => (2, InstallPhase::Fetching),
+                    "linking" => (3, InstallPhase::Linking),
+                    "" => {
+                        s.phase.store(0, Ordering::Relaxed);
+                        s.report_progress();
+                        return;
+                    }
+                    _ => return,
                 };
                 s.phase.store(n, Ordering::Relaxed);
-                if let Some(phase) = phase {
-                    s.reporter.report(InstallEvent::Phase(phase));
-                }
+                s.reporter.report(InstallEvent::Phase(phase));
                 s.report_progress();
             }
         }
@@ -1465,6 +1468,7 @@ mod tests {
             progress.set_total(2);
             progress.inc_reused(1);
             progress.set_phase("fetching");
+            progress.set_phase("future-phase");
             progress.inc_downloaded_bytes(512);
             drop(progress.start_fetch("dep", "1.0.0"));
             progress.finish(false);
@@ -1475,6 +1479,12 @@ mod tests {
         assert!(events.contains(&InstallEvent::Phase(InstallPhase::Resolving)));
         assert!(events.contains(&InstallEvent::Phase(InstallPhase::Fetching)));
         assert!(events.contains(&InstallEvent::Phase(InstallPhase::Complete)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InstallEvent::Progress(snapshot)
+                if snapshot.phase == Some(InstallPhase::Fetching)
+                    && snapshot.downloaded_bytes == 512
+        )));
         assert!(events.iter().any(|event| matches!(
             event,
             InstallEvent::Progress(snapshot)
