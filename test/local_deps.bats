@@ -182,6 +182,7 @@ EOF
 	# packages the app depends on via file: / link:.
 	_make_local_pkg vendor-dir vendor-dir 9.9.9
 	_make_local_pkg vendor-link vendor-link 9.9.9
+	printf 'module.exports = "v1";\n' >vendor-dir/index.js
 
 	cat >package.json <<'EOF'
 {"name":"ws-root","version":"0.0.0","private":true}
@@ -195,8 +196,13 @@ EOF
 {"name":"app","version":"0.0.0","dependencies":{"vendor-dir":"file:../../vendor-dir","vendor-link":"link:../../vendor-link"}}
 EOF
 
-	run aube install
+	run aube install --offline
 	assert_success
+	run aube install --offline
+	assert_success
+	run aube install --offline
+	assert_success
+	assert_output --partial "Already up to date"
 
 	assert_file_exists packages/app/node_modules/vendor-dir/package.json
 	run cat packages/app/node_modules/vendor-dir/package.json
@@ -208,6 +214,13 @@ EOF
 	assert_file_exists packages/app/node_modules/vendor-link/package.json
 	run cat packages/app/node_modules/vendor-link/package.json
 	assert_output --partial '"version":"9.9.9"'
+
+	printf 'module.exports = "v2";\n' >vendor-dir/index.js
+	run aube install --offline
+	assert_success
+	refute_output --partial "Already up to date"
+	run cat packages/app/node_modules/vendor-dir/index.js
+	assert_output 'module.exports = "v2";'
 }
 
 @test "aube install preserves pnpm workspace link targets relative to importer" {

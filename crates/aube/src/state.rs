@@ -82,7 +82,7 @@ pub struct InstallState {
     /// their project-relative source path. `None` means the state predates
     /// local-source freshness tracking and must miss the warm path once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_directory_hashes: Option<BTreeMap<String, String>>,
+    pub local_directory_hashes: Option<BTreeMap<String, LocalDirectoryFingerprint>>,
     pub aube_version: String,
     #[serde(default, rename = "prod")]
     pub section_filtered: bool,
@@ -151,7 +151,7 @@ struct FreshnessState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     package_json_meta: BTreeMap<String, FileMeta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    local_directory_hashes: Option<BTreeMap<String, String>>,
+    local_directory_hashes: Option<BTreeMap<String, LocalDirectoryFingerprint>>,
     #[serde(default, rename = "prod")]
     section_filtered: bool,
     #[serde(default)]
@@ -185,6 +185,12 @@ pub struct FileMeta {
     pub mtime_secs: i64,
     #[serde(default)]
     pub mtime_nanos: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalDirectoryFingerprint {
+    pub content_hash: String,
+    pub metadata_hash: String,
 }
 
 impl FileMeta {
@@ -310,7 +316,7 @@ fn check_needs_install_compute(
     // No state directory = never installed (or `rm -rf <modulesDir>` wiped it).
     let _diag_read =
         aube_util::diag::Span::new(aube_util::diag::Category::Frozen, "read_state_file");
-    let state = match read_or_migrate_fresh_state(&state_path) {
+    let mut state = match read_or_migrate_fresh_state(&state_path) {
         Some(s) => s,
         None => return Some("install state not found".into()),
     };
@@ -406,20 +412,50 @@ fn check_needs_install_compute(
     // --node-linker=hoisted` writes a hash with cli_flags set, then
     // bare `aube run` reads without the flag, mismatches, and triggers
     // a spurious auto-install.
-    let Some(local_directory_hashes) = state.local_directory_hashes.as_ref() else {
-        return Some("local dependency fingerprints not recorded".to_string());
-    };
-    for (rel, stored_hash) in local_directory_hashes {
-        let path = project_dir.join(rel);
-        match aube_store::directory_content_fingerprint(&path) {
-            Ok(current_hash) if current_hash == *stored_hash => {}
-            Ok(_) => return Some(format!("local dependency {rel} has changed")),
-            Err(_) => return Some(format!("local dependency {rel} is unreadable")),
-        }
-    }
-
     if lockfile_missing {
         return Some("no lockfile found".into());
+    }
+
+    let Some(local_directory_hashes) = state.local_directory_hashes.as_mut() else {
+        return Some("local dependency fingerprints not recorded".to_string());
+    };
+    let mut refreshed_metadata = false;
+    for (rel, stored) in local_directory_hashes {
+        let path = project_dir.join(rel);
+        let current_metadata = match aube_store::directory_metadata_fingerprint(&path) {
+            Ok(current) if current == stored.metadata_hash => continue,
+            Ok(current) => current,
+            Err(err) => {
+                tracing::debug!(
+                    path = %path.display(),
+                    error = %err,
+                    "local dependency metadata fingerprint failed"
+                );
+                return Some(format!("local dependency {rel} is unreadable"));
+            }
+        };
+        match aube_store::directory_content_fingerprint(&path) {
+            Ok(current_hash) if current_hash == stored.content_hash => {
+                stored.metadata_hash = current_metadata;
+                refreshed_metadata = true;
+            }
+            Ok(_) => return Some(format!("local dependency {rel} has changed")),
+            Err(err) => {
+                tracing::debug!(
+                    path = %path.display(),
+                    error = %err,
+                    "local dependency content fingerprint failed"
+                );
+                return Some(format!("local dependency {rel} is unreadable"));
+            }
+        }
+    }
+    if refreshed_metadata && let Err(err) = write_fresh_state(&state_path, &state) {
+        tracing::debug!(
+            path = %fresh_state_file(&state_path).display(),
+            error = %err,
+            "refresh local dependency metadata state failed"
+        );
     }
     None
 }
@@ -681,7 +717,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
 fn collect_local_directory_hashes(
     project_dir: &Path,
     graph: &aube_lockfile::LockfileGraph,
-) -> Result<BTreeMap<String, String>, std::io::Error> {
+) -> Result<BTreeMap<String, LocalDirectoryFingerprint>, std::io::Error> {
     let mut hashes = BTreeMap::new();
     for pkg in graph.packages.values() {
         let rel = match pkg.local_source.as_ref() {
@@ -693,9 +729,16 @@ fn collect_local_directory_hashes(
         if hashes.contains_key(&key) {
             continue;
         }
-        let hash = aube_store::directory_content_fingerprint(&project_dir.join(rel))
-            .map_err(std::io::Error::other)?;
-        hashes.insert(key, hash);
+        let (content_hash, metadata_hash) =
+            aube_store::directory_fingerprints(&project_dir.join(rel))
+                .map_err(std::io::Error::other)?;
+        hashes.insert(
+            key,
+            LocalDirectoryFingerprint {
+                content_hash,
+                metadata_hash,
+            },
+        );
     }
     Ok(hashes)
 }
