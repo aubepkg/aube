@@ -78,6 +78,11 @@ pub struct InstallState {
     /// there for the freshness-check fast-path semantics.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_json_meta: BTreeMap<String, FileMeta>,
+    /// Content fingerprints for copied local directory dependencies, keyed by
+    /// their project-relative source path. `None` means the state predates
+    /// local-source freshness tracking and must miss the warm path once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_directory_hashes: Option<BTreeMap<String, String>>,
     pub aube_version: String,
     #[serde(default, rename = "prod")]
     pub section_filtered: bool,
@@ -145,6 +150,8 @@ struct FreshnessState {
     /// existing hash path, so older state files stay valid.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     package_json_meta: BTreeMap<String, FileMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_directory_hashes: Option<BTreeMap<String, String>>,
     #[serde(default, rename = "prod")]
     section_filtered: bool,
     #[serde(default)]
@@ -208,6 +215,7 @@ impl From<&InstallState> for FreshnessState {
             member_lockfile_meta: state.member_lockfile_meta.clone(),
             package_json_hashes: state.package_json_hashes.clone(),
             package_json_meta: state.package_json_meta.clone(),
+            local_directory_hashes: state.local_directory_hashes.clone(),
             section_filtered: state.section_filtered,
             settings_hash: state.settings_hash.clone(),
             package_json_shape_digests: state.package_json_shape_digests.clone(),
@@ -398,6 +406,18 @@ fn check_needs_install_compute(
     // --node-linker=hoisted` writes a hash with cli_flags set, then
     // bare `aube run` reads without the flag, mismatches, and triggers
     // a spurious auto-install.
+    let Some(local_directory_hashes) = state.local_directory_hashes.as_ref() else {
+        return Some("local dependency fingerprints not recorded".to_string());
+    };
+    for (rel, stored_hash) in local_directory_hashes {
+        let path = project_dir.join(rel);
+        match aube_store::directory_content_fingerprint(&path) {
+            Ok(current_hash) if current_hash == *stored_hash => {}
+            Ok(_) => return Some(format!("local dependency {rel} has changed")),
+            Err(_) => return Some(format!("local dependency {rel} is unreadable")),
+        }
+    }
+
     if lockfile_missing {
         return Some("no lockfile found".into());
     }
@@ -629,6 +649,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     // Fingerprint each member's lockfile so the warm path has something
     // to verify; empty for the default shared layout.
     let (member_lockfile_hashes, member_lockfile_meta) = collect_member_lockfile_state(project_dir);
+    let local_directory_hashes = collect_local_directory_hashes(project_dir, layout.graph)?;
 
     let state = InstallState {
         lockfile_hash,
@@ -637,6 +658,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
         member_lockfile_meta,
         package_json_hashes,
         package_json_meta,
+        local_directory_hashes: Some(local_directory_hashes),
         aube_version: env!("CARGO_PKG_VERSION").to_string(),
         section_filtered,
         settings_hash,
@@ -654,6 +676,28 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     write_fresh_state(&state_path, &fresh_state)?;
 
     Ok(())
+}
+
+fn collect_local_directory_hashes(
+    project_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+) -> Result<BTreeMap<String, String>, std::io::Error> {
+    let mut hashes = BTreeMap::new();
+    for pkg in graph.packages.values() {
+        let rel = match pkg.local_source.as_ref() {
+            Some(aube_lockfile::LocalSource::Directory(rel))
+            | Some(aube_lockfile::LocalSource::Portal(rel)) => rel,
+            _ => continue,
+        };
+        let key = rel.to_string_lossy().replace('\\', "/");
+        if hashes.contains_key(&key) {
+            continue;
+        }
+        let hash = aube_store::directory_content_fingerprint(&project_dir.join(rel))
+            .map_err(std::io::Error::other)?;
+        hashes.insert(key, hash);
+    }
+    Ok(hashes)
 }
 
 fn snapshot_active_lockfile(
@@ -1287,6 +1331,7 @@ mod tests {
             member_lockfile_meta: BTreeMap::new(),
             package_json_hashes: BTreeMap::new(),
             package_json_meta: BTreeMap::new(),
+            local_directory_hashes: Some(BTreeMap::new()),
             aube_version: String::new(),
             section_filtered: false,
             settings_hash: String::new(),
@@ -1467,6 +1512,7 @@ mod tests {
             member_lockfile_meta: BTreeMap::new(),
             package_json_hashes: BTreeMap::from([(".".to_string(), "blake3:pkg".to_string())]),
             package_json_meta: BTreeMap::new(),
+            local_directory_hashes: Some(BTreeMap::new()),
             aube_version: env!("CARGO_PKG_VERSION").to_string(),
             section_filtered: false,
             settings_hash: "blake3:settings".to_string(),
@@ -1522,6 +1568,7 @@ mod tests {
             member_lockfile_meta: BTreeMap::new(),
             package_json_hashes: BTreeMap::new(),
             package_json_meta: BTreeMap::new(),
+            local_directory_hashes: Some(BTreeMap::new()),
             aube_version: env!("CARGO_PKG_VERSION").to_string(),
             section_filtered: false,
             settings_hash: String::new(),
@@ -1621,6 +1668,7 @@ mod tests {
             member_lockfile_meta: BTreeMap::new(),
             package_json_hashes: pjh,
             package_json_meta: BTreeMap::new(),
+            local_directory_hashes: Some(BTreeMap::new()),
             aube_version: env!("CARGO_PKG_VERSION").to_string(),
             section_filtered: false,
             settings_hash: String::new(),
@@ -1685,6 +1733,7 @@ mod tests {
             member_lockfile_meta: BTreeMap::new(),
             package_json_hashes: BTreeMap::new(),
             package_json_meta: BTreeMap::new(),
+            local_directory_hashes: Some(BTreeMap::new()),
             section_filtered: false,
             settings_hash: String::new(),
             package_json_shape_digests: BTreeMap::new(),

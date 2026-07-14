@@ -1,6 +1,73 @@
 use crate::{Error, PackageIndex, Store, StoredFile};
 use std::path::Path;
 
+/// Deterministic fingerprint of a directory imported as a `file:` package.
+///
+/// This deliberately mirrors [`Store::import_directory`]: `.git` and
+/// `node_modules` directories are skipped, non-files are ignored, and each
+/// relative path, content hash, and executable bit contributes to the result.
+/// The install freshness check uses it without writing the files to the CAS.
+pub fn directory_content_fingerprint(dir: &Path) -> Result<String, Error> {
+    let mut entries = Vec::new();
+    fingerprint_directory_recursive(dir, dir, &mut entries)?;
+    entries.sort_unstable();
+    let mut hasher = blake3::Hasher::new();
+    for (path, hex_hash, executable) in entries {
+        hasher.update(path.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(hex_hash.as_bytes());
+        hasher.update(if executable { b"\x01" } else { b"\x00" });
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn fingerprint_directory_recursive(
+    base: &Path,
+    current: &Path,
+    entries: &mut Vec<(String, String, bool)>,
+) -> Result<(), Error> {
+    let dir_entries = std::fs::read_dir(current)
+        .map_err(|e| Error::Tar(format!("read_dir {}: {e}", current.display())))?;
+    for entry in dir_entries {
+        let entry = entry.map_err(|e| Error::Tar(format!("read_dir entry: {e}")))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| Error::Tar(format!("file_type: {e}")))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(name.as_ref(), ".git" | "node_modules") {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            fingerprint_directory_recursive(base, &path, entries)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let content = std::fs::read(&path)
+            .map_err(|e| Error::Tar(format!("read {}: {e}", path.display())))?;
+        #[cfg(unix)]
+        let executable = {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = entry
+                .metadata()
+                .map_err(|e| Error::Tar(format!("metadata: {e}")))?;
+            meta.permissions().mode() & 0o111 != 0
+        };
+        #[cfg(not(unix))]
+        let executable = false;
+        let rel = path
+            .strip_prefix(base)
+            .map_err(|e| Error::Tar(format!("strip_prefix: {e}")))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        entries.push((rel, blake3::hash(&content).to_hex().to_string(), executable));
+    }
+    Ok(())
+}
+
 impl Store {
     /// Import every file under a directory into the store, producing a
     /// `PackageIndex` keyed by paths relative to `dir`. Used by `file:`
@@ -606,3 +673,31 @@ pub(crate) const MAX_TARBALL_ENTRY_BYTES: u64 = 1 << 20;
 pub(crate) const MAX_TARBALL_ENTRIES: usize = 200_000;
 #[cfg(test)]
 pub(crate) const MAX_TARBALL_ENTRIES: usize = 64;
+
+#[cfg(test)]
+mod directory_fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn directory_fingerprint_matches_imported_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(source.join("lib")).unwrap();
+        std::fs::create_dir_all(source.join("node_modules/ignored")).unwrap();
+        std::fs::write(source.join("package.json"), br#"{"name":"local"}"#).unwrap();
+        std::fs::write(source.join("lib/index.js"), b"module.exports = 'v1';\n").unwrap();
+        std::fs::write(source.join("node_modules/ignored/index.js"), b"ignored\n").unwrap();
+
+        let store = Store::at(temp.path().join("store"));
+        let index = store.import_directory(&source).unwrap();
+        assert_eq!(
+            directory_content_fingerprint(&source).unwrap(),
+            crate::index_content_fingerprint(&index)
+        );
+
+        let before = directory_content_fingerprint(&source).unwrap();
+        std::fs::write(source.join("lib/index.js"), b"module.exports = 'v2';\n").unwrap();
+        let after = directory_content_fingerprint(&source).unwrap();
+        assert_ne!(before, after);
+    }
+}
