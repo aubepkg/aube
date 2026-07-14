@@ -153,6 +153,17 @@ jobs:
             pkg-config \
             jq
 
+      - name: Resolve minimum supported Rust version
+        run: |
+          MSRV=$(cargo metadata --no-deps --format-version 1 |
+            jq -er '[.packages[].rust_version | select(. != null)] | unique | if length == 1 then .[0] else error("workspace packages have inconsistent rust-version values") end')
+
+          if [[ ! "$MSRV" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::Cargo metadata returned an invalid MSRV: '$MSRV'"
+            exit 1
+          fi
+          echo "MSRV=${MSRV}" >> "$GITHUB_ENV"
+
       - name: Vendor Rust dependencies
         run: |
           mkdir -p .cargo
@@ -217,7 +228,7 @@ jobs:
           Section: utils
           Priority: optional
           Maintainer: ${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>
-          Build-Depends: debhelper-compat (= 13), rustc (>= 1.93), cargo, libssl-dev, pkgconf, cmake
+          Build-Depends: debhelper-compat (= 13), rustc (>= ${MSRV}), cargo, libssl-dev, pkgconf, cmake
           Standards-Version: 4.6.2
           Homepage: https://aube.jdx.dev
           Vcs-Git: https://github.com/jdx/aube.git
@@ -310,8 +321,8 @@ jobs:
            -- ${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>  $(date -R)
           EOF
 
-            # -d skips build-dep checks since we only need the source package.
-            # TODO: drop -d once the runner's default Rust toolchain >= 1.93.
+            # -d skips build-dep checks since we only need the source package;
+            # Launchpad checks the generated Build-Depends before building.
             debuild -d
 
             mkdir -p "/tmp/packages"
