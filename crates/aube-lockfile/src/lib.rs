@@ -118,10 +118,10 @@ pub struct LockfileGraph {
     /// release.
     pub bun_config_version: Option<u32>,
     /// Top-level `patchedDependencies:` block mirrored by bun 1.1+ and
-    /// pnpm 9+. Key: selector (`lodash@4.17.21`), value: relative patch
-    /// file path (`patches/lodash@4.17.21.patch`). Round-tripped
-    /// verbatim so a parse/write cycle doesn't silently drop user
-    /// patches from the lockfile.
+    /// pnpm 9+. Key: selector (`lodash@4.17.21`); value is the relative
+    /// patch path for bun/fresh resolution or pnpm's patch-content hash
+    /// when parsed from a pnpm lockfile. The pnpm writer resolves paths
+    /// to hashes before serializing.
     pub patched_dependencies: BTreeMap<String, String>,
     /// Top-level `trustedDependencies:` block (bun) — a package-name
     /// allowlist for lifecycle script execution. Preserved so

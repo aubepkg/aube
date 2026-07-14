@@ -852,7 +852,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         .patched_dependencies
         .unwrap_or_default()
         .into_iter()
-        .map(|(k, v)| (k, v.into_path()))
+        .map(|(k, v)| (k, v.into_value()))
         .collect();
 
     // Lift the synthetic runtime importer deps recorded above into

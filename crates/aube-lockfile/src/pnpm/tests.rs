@@ -1685,6 +1685,12 @@ fn overrides_round_trip_through_pnpm_lock_yaml() {
 fn catalogs_overrides_patched_dependencies_match_pnpm_order() {
     let dir = tempfile::tempdir().unwrap();
     let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    std::fs::create_dir(dir.path().join("patches")).unwrap();
+    std::fs::write(
+        dir.path().join("patches/lodash@4.17.21.patch"),
+        "patch contents\n",
+    )
+    .unwrap();
 
     let mut overrides = BTreeMap::new();
     overrides.insert("lodash".to_string(), "4.17.21".to_string());
@@ -2570,7 +2576,7 @@ overrides:
 patchedDependencies:
   is-odd@3.0.1:
     path: patches/is-odd@3.0.1.patch
-    hash: sha256-deadbeef
+    hash: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
 
 catalogs:
   default:
@@ -2665,7 +2671,7 @@ snapshots:
     assert_eq!(graph.overrides.get("react").unwrap(), "catalog:");
     assert_eq!(
         graph.patched_dependencies.get("is-odd@3.0.1").unwrap(),
-        "patches/is-odd@3.0.1.patch"
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     );
     assert_eq!(
         graph.catalogs["evens"]["is-even"].specifier, "^1.0.0",
@@ -2782,7 +2788,7 @@ snapshots:
             .patched_dependencies
             .get("is-odd@3.0.1")
             .unwrap_or_else(|| panic!("patched deps lost after reparse:\n{written}")),
-        "patches/is-odd@3.0.1.patch"
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     );
     assert_eq!(reparsed.catalogs["default"]["react"].version, "18.2.0");
     assert_eq!(
@@ -2798,6 +2804,78 @@ snapshots:
     assert_eq!(
         reparsed.skipped_optional_dependencies["."]["optional-native"],
         "^1.0.0"
+    );
+}
+
+#[test]
+fn pnpm_patch_hash_decorates_direct_transitive_and_peer_context_refs() {
+    let yaml = r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      consumer:
+        specifier: 1.0.0
+        version: 1.0.0
+      is-odd:
+        specifier: 3.0.1
+        version: 3.0.1(react@19.0.0)
+
+packages:
+
+  consumer@1.0.0: {}
+
+  is-odd@3.0.1:
+    peerDependencies:
+      react: '*'
+
+  react@19.0.0: {}
+
+snapshots:
+
+  consumer@1.0.0:
+    dependencies:
+      is-odd: 3.0.1(react@19.0.0)
+
+  is-odd@3.0.1(react@19.0.0):
+    dependencies:
+      react: 19.0.0
+
+  react@19.0.0: {}
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&lockfile_path, yaml).unwrap();
+    std::fs::create_dir(dir.path().join("patches")).unwrap();
+    std::fs::write(
+        dir.path().join("patches/is-odd@3.0.1.patch"),
+        "line1\r\nline2\r\n",
+    )
+    .unwrap();
+
+    let mut graph = parse(&lockfile_path).unwrap();
+    graph.patched_dependencies.insert(
+        "is-odd@3.0.1".to_string(),
+        "patches/is-odd@3.0.1.patch".to_string(),
+    );
+    write(&lockfile_path, &graph, &PackageJson::default()).unwrap();
+    let written = std::fs::read_to_string(&lockfile_path).unwrap();
+    let hash = "2751a3a2f303ad21752038085e2b8c5f98ecff61a2e4ebbd43506a941725be80";
+
+    assert!(
+        written.contains(&format!("is-odd@3.0.1: {hash}")),
+        "top-level patch hash missing:\n{written}"
+    );
+    let decorated = format!("3.0.1(patch_hash={hash})(react@19.0.0)");
+    assert_eq!(
+        written.matches(&decorated).count(),
+        3,
+        "direct, transitive, and snapshot refs must all be decorated:\n{written}"
     );
 }
 

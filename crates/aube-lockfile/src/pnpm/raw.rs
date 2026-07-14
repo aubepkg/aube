@@ -214,10 +214,12 @@ pub(super) struct RawPnpmLockfile {
     pub(super) time: Option<BTreeMap<String, String>>,
 }
 
-/// pnpm writes `patchedDependencies` as either a bare path string
-/// (v8 style) or a nested `{ path, hash }` object (v9+). We accept
-/// both via an untagged enum and collapse to the path string on the
-/// shared graph.
+/// pnpm writes `patchedDependencies` as either a hash string (v11), a
+/// legacy path string, or a nested `{ path, hash }` object (v9/v10).
+/// Preserve the hash when one is present; the pnpm writer needs it to
+/// retain `(patch_hash=...)` package identities without rereading a
+/// patch file that may not be available during a pure lockfile
+/// conversion.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(super) enum RawPatchedDependency {
@@ -231,10 +233,10 @@ pub(super) enum RawPatchedDependency {
 }
 
 impl RawPatchedDependency {
-    pub(super) fn into_path(self) -> String {
+    pub(super) fn into_value(self) -> String {
         match self {
             RawPatchedDependency::Path(p) => p,
-            RawPatchedDependency::Object { path, .. } => path,
+            RawPatchedDependency::Object { path, hash } => hash.unwrap_or(path),
         }
     }
 }

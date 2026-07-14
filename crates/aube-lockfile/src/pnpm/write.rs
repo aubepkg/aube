@@ -5,8 +5,91 @@ use super::format::reformat_for_pnpm_parity;
 use crate::{DepType, Error, LocalSource, LockfileGraph};
 use aube_manifest::PackageJson;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::path::Component;
 use std::path::Path;
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn hex_sha256(content: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(content);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// Resolve the pnpm lockfile's selector -> patch-content SHA-256 map.
+/// Parsed pnpm v10/v11 graphs already carry hashes. Fresh resolutions
+/// carry manifest paths, which pnpm hashes after normalizing CRLF to LF.
+fn pnpm_patch_hashes(
+    lockfile_path: &Path,
+    patched_dependencies: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, Error> {
+    let root = lockfile_path.parent().unwrap_or_else(|| Path::new("."));
+    patched_dependencies
+        .iter()
+        .map(|(selector, value)| {
+            if is_sha256_hex(value) {
+                return Ok((selector.clone(), value.to_ascii_lowercase()));
+            }
+            let rel = Path::new(value);
+            if rel.is_absolute()
+                || rel.has_root()
+                || value.len() >= 2 && value.as_bytes()[1] == b':'
+                || !rel
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+            {
+                return Err(Error::parse(
+                    lockfile_path,
+                    format!("unsafe patchedDependencies path for {selector}: {value:?}"),
+                ));
+            }
+            let patch_path = root.join(rel);
+            let content = std::fs::read_to_string(&patch_path)
+                .map_err(|e| Error::Io(patch_path.clone(), e))?;
+            let normalized = content.replace("\r\n", "\n");
+            let hash = hex_sha256(normalized.as_bytes());
+            Ok((selector.clone(), hash))
+        })
+        .collect()
+}
+
+fn strip_patch_hash_suffix(value: &str) -> String {
+    let Some(start) = value.find("(patch_hash=") else {
+        return value.to_string();
+    };
+    let Some(rel_end) = value[start..].find(')') else {
+        return value.to_string();
+    };
+    let end = start + rel_end + 1;
+    let mut out = String::with_capacity(value.len() - (end - start));
+    out.push_str(&value[..start]);
+    out.push_str(&value[end..]);
+    out
+}
+
+/// pnpm places the patch identity before any peer-context suffix:
+/// `1.0.0(patch_hash=<sha256>)(react@19.0.0)`.
+fn with_patch_hash(value: &str, hash: Option<&str>) -> String {
+    let bare = strip_patch_hash_suffix(value);
+    let Some(hash) = hash else {
+        return bare;
+    };
+    let suffix_at = bare.find('(').unwrap_or(bare.len());
+    format!(
+        "{}(patch_hash={hash}){}",
+        &bare[..suffix_at],
+        &bare[suffix_at..]
+    )
+}
 
 /// Write a LockfileGraph as pnpm-lock.yaml v9 format.
 pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Result<(), Error> {
@@ -14,6 +97,21 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "pnpm-lock.yaml");
+    let patch_hashes = if native_pnpm_aliases {
+        pnpm_patch_hashes(path, &graph.patched_dependencies)?
+    } else {
+        BTreeMap::new()
+    };
+    let patch_hash_for = |pkg: &crate::LockedPackage| -> Option<&str> {
+        patch_hashes
+            .get(&pkg.spec_key())
+            .or_else(|| {
+                pkg.alias_of
+                    .as_ref()
+                    .and_then(|name| patch_hashes.get(&format!("{name}@{}", pkg.version)))
+            })
+            .map(String::as_str)
+    };
     // Translate a *flat* peer reference from aube's internal FS-safe
     // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
     // resolved spec pnpm writes inside a peer suffix
@@ -83,7 +181,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
             // Local deps render with the canonical `file:<path>` /
             // `link:<path>` specifier, not the FS-safe encoded form
             // that lives in `dep_path`.
-            let version = if let Some(local) = graph
+            let mut version = if let Some(local) = graph
                 .packages
                 .get(&dep.dep_path)
                 .and_then(|p| p.local_source.as_ref())
@@ -104,6 +202,14 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     &peer_suffix_to_spec,
                 )
             };
+            if native_pnpm_aliases
+                && let Some(pkg) = graph
+                    .packages
+                    .get(&dep.dep_path)
+                    .or_else(|| graph.packages.get(&peerless_dep_path(&dep.name, &version)))
+            {
+                version = with_patch_hash(&version, patch_hash_for(pkg));
+            }
 
             let spec = WritableDepSpec {
                 specifier: specifier.to_string(),
@@ -531,22 +637,30 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     .packages
                     .get(&dp)
                     .or_else(|| graph.packages.get(&peerless_dep_path(&name, &value)));
-                if let Some(target) = target
+                let rewritten = if let Some(target) = target
                     && let Some(ref local) = target.local_source
                     && !matches!(local, LocalSource::Link(_))
                 {
-                    (name, local.specifier())
+                    local.specifier()
                 } else if native_pnpm_aliases
                     && let Some(target) = target
                     && let Some(real_name) = target.alias_of.as_deref()
                 {
-                    (name, format!("{real_name}@{value}"))
+                    format!("{real_name}@{value}")
                 } else {
                     // Registry dep whose value may carry a
                     // `(git/tarball@hash)` peer suffix — render the suffix
                     // as the resolved spec (`1.1.4(request@https://…)`).
-                    (name, rewrite_peer_suffix(&value, &peer_suffix_to_spec))
-                }
+                    rewrite_peer_suffix(&value, &peer_suffix_to_spec)
+                };
+                let rewritten = if native_pnpm_aliases {
+                    target
+                        .map(|pkg| with_patch_hash(&rewritten, patch_hash_for(pkg)))
+                        .unwrap_or(rewritten)
+                } else {
+                    rewritten
+                };
+                (name, rewritten)
             })
             .collect()
     };
@@ -557,7 +671,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         // pnpm has no resolution shape for generated packages.
         // Other local deps use the canonical specifier key so pnpm's
         // parser lines them up with the packages entry above.
-        let key = match pkg.local_source.as_ref() {
+        let mut key = match pkg.local_source.as_ref() {
             Some(LocalSource::Link(_)) | Some(LocalSource::Exec(_)) => continue,
             Some(local) => format!("{}@{}", pkg.name, local.specifier()),
             None => {
@@ -571,6 +685,9 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 }
             }
         };
+        if native_pnpm_aliases {
+            key = with_patch_hash(&key, patch_hash_for(pkg));
+        }
         let pkg_deps = rewrite_local_deps(pkg.dependencies.clone());
         let pkg_opt_deps = rewrite_local_deps(pkg.optional_dependencies.clone());
         snapshots.insert(
@@ -677,12 +794,12 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     .collect(),
             )
         },
-        // pnpm v9 emits patched deps as `{ path, hash }`. We don't
-        // track the patch hash on the graph (install-time concern),
-        // so write the path form which pnpm still accepts. Skipped
-        // when empty to keep parity with no-patch installs.
+        // pnpm v11 stores selector -> normalized patch-content SHA-256.
+        // Skipped when empty to keep parity with no-patch installs.
         patched_dependencies: if graph.patched_dependencies.is_empty() {
             None
+        } else if native_pnpm_aliases {
+            Some(patch_hashes)
         } else {
             Some(graph.patched_dependencies.clone())
         },
