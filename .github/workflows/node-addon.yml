@@ -128,13 +128,13 @@ jobs:
           test "$(find packages -maxdepth 1 -name '*.tgz' -print | wc -l)" -eq 9
       - name: Smoke-test installed packages with Node and Bun
         shell: bash
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] installs only tarballs built by the required matrix jobs
           mkdir package-smoke
           cd package-smoke
           npm init --yes >/dev/null
           # OpenCode's cross-compiled Bun binaries include every platform
           # package. Force-install all local tarballs to reproduce that build.
-          npm install --force --ignore-scripts --no-package-lock ../packages/*.tgz # zizmor: ignore[adhoc-packages] locally built tarballs
+          npm install --force --ignore-scripts --no-package-lock ../packages/*.tgz
           node -e "require('@jdxcode/aube-node')"
           bun -e "require('@jdxcode/aube-node')"
           AUBE_NODE_OS=linux AUBE_NODE_ARCH=x64 AUBE_NODE_LIBC=glibc \
