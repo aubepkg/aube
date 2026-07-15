@@ -20,8 +20,15 @@ function name(os, cpu, libc) {
   return `@jdxcode/aube-node-${os}-${cpu}${libc ? `-${libc}` : ""}`
 }
 function pack(dir) {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm"
-  const result = spawnSync(npm, ["pack", "--pack-destination", out], { cwd: dir, stdio: "inherit" })
+  const args = ["pack", "--pack-destination", out]
+  const npm = process.platform === "win32"
+    ? resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")
+    : "npm"
+  if (process.platform === "win32") args.unshift(npm)
+  const result = spawnSync(process.platform === "win32" ? process.execPath : npm, args, {
+    cwd: dir,
+    stdio: "inherit",
+  })
   if (result.status !== 0) throw new Error(`npm pack failed: ${result.error?.message ?? result.status}`)
 }
 
