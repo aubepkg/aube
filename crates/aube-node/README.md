@@ -1,30 +1,76 @@
 # aube Node-API bindings
 
-`@jdxcode/aube-node` lets a host such as OpenCode call aube's command layer
-through a Node-API addon, including from a compiled Bun executable. It exposes
-the async operation OpenCode's npm service needs:
+`@jdxcode/aube-node` embeds aube's installer in JavaScript hosts, including
+Node.js, Bun, Electron, and compiled Bun executables.
 
 ```ts
-await install(projectDirectory, {
-  add: [{ name: "@opencode-ai/plugin", version: opencodeVersion }],
+import { install } from "@jdxcode/aube-node"
+
+const result = await install(projectDirectory, {
+  add: [
+    { name: "react", version: "19.1.0" },
+    { name: "typescript", version: "5.9.3", dev: true },
+  ],
   signal: abortController.signal,
   onEvent(event) {
-    // phase, progress, and output events
+    switch (event.kind) {
+      case "phase":
+        console.log(event.phase)
+        break
+      case "progress":
+        console.log(event.resolved, event.downloaded)
+        break
+      case "output":
+        console.log(event.level, event.code, event.message)
+        break
+    }
   },
 })
+
+console.log(result.durationMs)
 ```
 
 The addon creates an empty package manifest when needed, saves added packages
-as exact production dependencies, and installs declared dependencies. It always
-skips root and dependency lifecycle scripts. Independent projects install in
-parallel using invocation-scoped runtime, script, dependency-chain, directory,
-and project-lock state. Registry/auth settings and dependency-section omission
-come from the project's `.npmrc`; `omit=dev` and `omit=optional` are honored.
+at exact versions, and installs declared dependencies. Added entries with
+`dev: true` are saved to `devDependencies`. Root and dependency lifecycle
+scripts are always skipped. Registry/auth settings and dependency-section
+omission come from the project's `.npmrc`; `omit=dev` and `omit=optional` are
+honored.
 
-`onEvent` is delivered through a non-blocking Node-API thread-safe function.
-`signal` cooperatively cancels the invocation at a safe install boundary.
-Rejected promises are JavaScript `Error` objects with stable `code` and
-human-readable `diagnostic` properties.
+Independent projects install concurrently using invocation-scoped state.
+Operations targeting the same workspace serialize on its project lock.
+`onEvent` uses a non-blocking Node-API thread-safe function, and `signal`
+cooperatively cancels at a safe install boundary.
+
+Rejected promises are `AubeError` objects with a stable `code` and a
+human-readable `diagnostic`. Published `ERR_AUBE_*` values follow aube's
+[error-code stability policy](https://github.com/jdx/aube/blob/main/docs/error-codes.md).
+
+## Compiled Bun executables
+
+Add `bunPlugin({ os, arch, libc })` from `@jdxcode/aube-node/bun-plugin` to each
+target's `Bun.build` plugins. The plugin resolves the root import to the
+selected native platform package so each executable embeds one addon.
+
+Cross-compilation hosts must install every optional platform package before
+building targets for other operating systems and architectures:
+
+```sh
+bun install --os="*" --cpu="*" @jdxcode/aube-node@$AUBE_NODE_VERSION
+```
+
+## Compatibility and stability
+
+- The addon targets Node-API 8.
+- Node.js 18 and newer are supported.
+- Bun 1.3.11 is exercised by direct and compiled-executable smoke tests.
+- macOS arm64/x64, Windows arm64/x64, Linux glibc arm64/x64, and Linux musl
+  arm64/x64 packages are published.
+- Package versions track the aube workspace version.
+- The TypeScript API follows semantic versioning; stable error identifiers are
+  not removed or repurposed.
+
+## Development
 
 Run the direct Bun and compiled-executable smoke tests from the repository
 root:
@@ -33,31 +79,6 @@ root:
 crates/aube-node/poc/run.sh
 ```
 
-The script uses Bun 1.3.11 through mise, matching the Bun version OpenCode
-currently declares. It builds the addon with the `napi` Cargo profile, runs it
-directly, embeds it with `bun build --compile`, and runs the resulting
-standalone executable. Its local registry uses a two-request barrier so the
-smoke test fails if independent addon calls become serialized. It also covers
-structured events, in-flight and pre-requested cancellation, local `file:`
-dependencies, `.npmrc` dependency omission, and structured rejection
-properties.
-
-CI packages the addon as `@jdxcode/aube-node` plus platform packages for the
-eight macOS, Windows, glibc Linux, and musl Linux environments OpenCode ships.
-Pull requests and `main` builds expose npm tarballs as workflow artifacts for
-smoke testing; tagged releases publish the same tarballs through npm trusted
-publishing. OpenCode's x64 baseline builds reuse the corresponding x64 addon.
-
-Compiled Bun hosts should add `bunPlugin({ os, arch, libc })` from
-`@jdxcode/aube-node/bun-plugin` to each target's `Bun.build` plugins. It
-resolves the root import to that target's native package, embedding one addon
-per binary. Bundling the root loader directly would conservatively include
-every static platform branch.
-
-Cross-compilation hosts must install all optional platform packages before
-building targets for other operating systems and architectures. OpenCode's
-build preparation should use its pinned addon version:
-
-```sh
-bun install --os="*" --cpu="*" @jdxcode/aube-node@$AUBE_NODE_VERSION
-```
+CI also installs the generated npm tarballs in Node and Bun consumers and
+type-checks the public declarations. For support, use
+[GitHub Discussions](https://github.com/jdx/aube/discussions).

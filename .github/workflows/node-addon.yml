@@ -135,12 +135,15 @@ jobs:
           npm install --force --ignore-scripts --no-package-lock ../packages/*.tgz
           node -e "require('@jdxcode/aube-node')"
           node --input-type=module -e "import { install } from '@jdxcode/aube-node'; if (typeof install !== 'function') process.exit(1)"
+          cp "$GITHUB_WORKSPACE/crates/aube-node/npm/typecheck.ts" .
+          npx --yes --package=typescript@5.9.3 tsc --strict --noEmit \
+            --lib ES2022,DOM --module NodeNext --moduleResolution NodeNext typecheck.ts
           cd ..
           mkdir bun-smoke
           cd bun-smoke
           bun init --yes >/dev/null
-          # OpenCode installs every optional target package before its
-          # cross-compiled Bun matrix build.
+          # Cross-compiling hosts install every optional target package before
+          # building their platform matrix.
           bun install --os="*" --cpu="*" ../packages/*.tgz
           bun -e "require('@jdxcode/aube-node')"
           AUBE_NODE_OS=linux AUBE_NODE_ARCH=x64 AUBE_NODE_LIBC=glibc \

@@ -1,9 +1,8 @@
-//! Node-API surface for embedding aube in Bun-based hosts such as OpenCode.
+//! Node-API surface for embedding aube in JavaScript hosts.
 
-use aube::commands::add::{AddToProjectOptions, add_to_project};
-use aube::commands::install::{
-    DepSelection, FrozenMode, InstallControl, InstallEvent, InstallOptions, InstallOutputLevel,
-    InstallPhase, InstallReporter,
+use aube::embed::{
+    self, AddToProjectOptions, DepSelection, InstallControl, InstallEvent, InstallOutputLevel,
+    InstallPhase, InstallReporter, NetworkMode,
 };
 use napi::bindgen_prelude::{
     AbortSignal, FnArgs, FromNapiValue, Function, JsObjectValue, JsValue, Object, PromiseRaw,
@@ -13,7 +12,8 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 type NodeError = napi::Error;
 type NodeResult<T> = napi::Result<T>;
@@ -26,12 +26,12 @@ struct InstallFailure {
     diagnostic: String,
 }
 
-static OPENCODE: aube_util::Embedder = aube_util::Embedder {
-    name: "opencode",
-    display_name: "OpenCode",
+static NODE_HOST: embed::Host = embed::Host {
+    name: "aube-node",
+    display_name: "aube Node-API",
     vendor: None,
     version: env!("CARGO_PKG_VERSION"),
-    user_agent: concat!("opencode-aube/", env!("CARGO_PKG_VERSION")),
+    user_agent: concat!("aube-node/", env!("CARGO_PKG_VERSION")),
     self_names: &[],
     compatible_names: &["npm", "pnpm", "bun", "yarn"],
     lockfile_basename: "aube-lock.yaml",
@@ -39,8 +39,8 @@ static OPENCODE: aube_util::Embedder = aube_util::Embedder {
     manifest_namespace: "",
     env_prefix: None,
     config_env_prefix: None,
-    cache_namespace: "opencode-aube",
-    data_namespace: "opencode-aube",
+    cache_namespace: "aube-node",
+    data_namespace: "aube-node",
     canonical_lockfile_always_wins: false,
     runtime_switching: false,
     self_engines_check: false,
@@ -51,6 +51,7 @@ static OPENCODE: aube_util::Embedder = aube_util::Embedder {
 pub struct PackageToAdd {
     pub name: String,
     pub version: Option<String>,
+    pub dev: Option<bool>,
 }
 
 #[napi(object, object_to_js = false)]
@@ -66,6 +67,10 @@ pub struct InstallInput {
 pub struct InstallResult {
     pub project_dir: String,
     pub added: Vec<String>,
+    pub resolved: f64,
+    pub reused: f64,
+    pub downloaded: f64,
+    pub duration_ms: f64,
 }
 
 #[napi(object)]
@@ -84,23 +89,41 @@ pub struct InstallEventPayload {
 }
 
 struct NodeReporter {
-    callback: EventCallback,
+    callback: Option<EventCallback>,
+    stats: Arc<Mutex<InstallStats>>,
+}
+
+#[derive(Clone, Default)]
+struct InstallStats {
+    resolved: u64,
+    reused: u64,
+    downloaded: u64,
 }
 
 impl InstallReporter for NodeReporter {
     fn report(&self, event: InstallEvent) {
-        let _ = self.callback.call(
-            InstallEventPayload::from(event),
-            ThreadsafeFunctionCallMode::NonBlocking,
-        );
+        if let InstallEvent::Progress(progress) = &event {
+            let mut stats = self
+                .stats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            stats.resolved = progress.resolved as u64;
+            stats.reused = progress.reused as u64;
+            stats.downloaded = progress.downloaded as u64;
+        }
+        if let Some(callback) = &self.callback {
+            let _ = callback.call(
+                InstallEventPayload::from(event),
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+        }
     }
 }
 
 /// Install a project's declared dependencies and optionally add packages.
 ///
-/// The call shape intentionally mirrors OpenCode's current npm service:
-/// `install(dir, { add: [{ name, version }] })`. Added packages are saved as
-/// exact production dependencies, and lifecycle scripts are always disabled.
+/// Added packages are saved at exact versions. Set an entry's `dev` field to
+/// save it to `devDependencies`. Lifecycle scripts are always disabled.
 #[napi(catch_unwind)]
 pub fn install<'env>(
     env: &'env Env,
@@ -122,7 +145,7 @@ pub fn install<'env>(
         on_event: None,
         signal: None,
     });
-    let control = match on_event {
+    let callback = match on_event {
         Some(callback) => {
             let callback = callback
                 .build_threadsafe_function()
@@ -137,10 +160,15 @@ pub fn install<'env>(
                         },
                     )
                 })?;
-            InstallControl::events(Arc::new(NodeReporter { callback }))
+            Some(callback)
         }
-        None => InstallControl::silent(),
+        None => None,
     };
+    let stats = Arc::new(Mutex::new(InstallStats::default()));
+    let control = InstallControl::events(Arc::new(NodeReporter {
+        callback,
+        stats: Arc::clone(&stats),
+    }));
     if let Some(signal) = signal {
         let aborted = signal.get_named_property::<bool>("aborted")?;
         // SAFETY: `signal` is the same live JS object validated by napi as an
@@ -157,9 +185,12 @@ pub fn install<'env>(
     let packages = add
         .unwrap_or_default()
         .into_iter()
-        .map(|package| match package.version {
-            Some(version) if !version.is_empty() => format!("{}@{version}", package.name),
-            _ => package.name,
+        .map(|package| {
+            let spec = match package.version {
+                Some(version) if !version.is_empty() => format!("{}@{version}", package.name),
+                _ => package.name,
+            };
+            (spec, package.dev.unwrap_or(false))
         })
         .collect::<Vec<_>>();
     let force = force.unwrap_or(false);
@@ -167,7 +198,9 @@ pub fn install<'env>(
 
     env.spawn_future_with_callback(
         async move {
-            Ok::<_, napi::Error>(run_install(project_dir, packages, force, offline, control).await)
+            Ok::<_, napi::Error>(
+                run_install(project_dir, packages, force, offline, control, stats).await,
+            )
         },
         |env, result| match result {
             Ok(result) => Ok(result),
@@ -178,48 +211,71 @@ pub fn install<'env>(
 
 async fn run_install(
     project_dir: String,
-    packages: Vec<String>,
+    packages: Vec<(String, bool)>,
     force: bool,
     offline: bool,
     control: InstallControl,
+    stats: Arc<Mutex<InstallStats>>,
 ) -> Result<InstallResult, InstallFailure> {
+    let started = Instant::now();
     let project_dir = prepare_project_dir(Path::new(&project_dir)).await?;
     let dep_selection = npmrc_dep_selection(&project_dir);
 
     if !packages.is_empty() {
-        add_to_project(
-            &project_dir,
-            &packages,
-            AddToProjectOptions {
-                save_exact: true,
-                ignore_scripts: true,
-                force,
-                offline,
-                dep_selection,
-                control,
-            },
-        )
-        .await
-        .map_err(to_install_failure)?;
+        for save_dev in [false, true] {
+            let selected = packages
+                .iter()
+                .filter(|(_, dev)| *dev == save_dev)
+                .map(|(spec, _)| spec.clone())
+                .collect::<Vec<_>>();
+            if selected.is_empty() {
+                continue;
+            }
+            embed::add(
+                &project_dir,
+                &selected,
+                AddToProjectOptions {
+                    save_dev,
+                    save_exact: true,
+                    save_optional: false,
+                    save_peer: false,
+                    ignore_scripts: true,
+                    force,
+                    dangerously_allow_all_builds: false,
+                    offline,
+                    dep_selection,
+                    osv_transitive_check: false,
+                    control: control.clone(),
+                },
+            )
+            .await
+            .map_err(to_install_failure)?;
+        }
     } else {
-        let mut options = InstallOptions::with_mode(FrozenMode::Prefer);
-        options.project_dir = Some(project_dir.clone());
+        let mut options = embed::InstallOptions::new(project_dir.clone());
         options.ignore_scripts = true;
         options.force = force;
         options.dep_selection = dep_selection;
         options.control = control;
         if offline {
-            options.network_mode = aube_registry::NetworkMode::Offline;
+            options.network_mode = NetworkMode::Offline;
         }
 
-        aube::commands::install::run(options)
-            .await
-            .map_err(to_install_failure)?;
+        embed::install(options).await.map_err(to_install_failure)?;
     }
+
+    let stats = stats
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
 
     Ok(InstallResult {
         project_dir: project_dir.to_string_lossy().into_owned(),
-        added: packages,
+        added: packages.into_iter().map(|(spec, _)| spec).collect(),
+        resolved: stats.resolved as f64,
+        reused: stats.reused as f64,
+        downloaded: stats.downloaded as f64,
+        duration_ms: started.elapsed().as_secs_f64() * 1000.0,
     })
 }
 
@@ -240,11 +296,13 @@ fn npmrc_dep_selection(project_dir: &Path) -> DepSelection {
 }
 
 fn initialize_embedder() {
-    aube_util::set_embedder(&OPENCODE);
-    aube_settings::set_embedder_defaults(vec![
-        ("nodeLinker".to_string(), "hoisted".to_string()),
-        ("minimumReleaseAge".to_string(), "0".to_string()),
-    ]);
+    embed::initialize(
+        &NODE_HOST,
+        vec![
+            ("nodeLinker".to_string(), "hoisted".to_string()),
+            ("minimumReleaseAge".to_string(), "0".to_string()),
+        ],
+    );
 }
 
 async fn prepare_project_dir(project_dir: &Path) -> Result<PathBuf, InstallFailure> {
@@ -290,9 +348,7 @@ fn invalid_project_error(project_dir: &Path, detail: String) -> InstallFailure {
 }
 
 fn to_install_failure(error: miette::Report) -> InstallFailure {
-    let code = error
-        .code()
-        .map(|code| code.to_string())
+    let code = embed::error_code(&error)
         .unwrap_or_else(|| aube_codes::errors::ERR_AUBE_EMBED_INSTALL_FAILED.to_string());
     InstallFailure {
         code,
@@ -337,7 +393,7 @@ impl From<InstallEvent> for InstallEventPayload {
             },
             InstallEvent::Progress(progress) => Self {
                 kind: "progress".to_string(),
-                phase: progress.phase.map(phase_name).map(str::to_string),
+                phase: None,
                 level: None,
                 code: None,
                 message: None,
@@ -346,7 +402,8 @@ impl From<InstallEvent> for InstallEventPayload {
                 reused: Some(progress.reused as f64),
                 downloaded: Some(progress.downloaded as f64),
                 downloaded_bytes: Some(progress.downloaded_bytes as f64),
-                estimated_bytes: Some(progress.estimated_bytes as f64),
+                estimated_bytes: (progress.estimated_bytes > 0)
+                    .then_some(progress.estimated_bytes as f64),
             },
             InstallEvent::Output {
                 level,

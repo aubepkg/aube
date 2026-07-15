@@ -130,6 +130,7 @@ export default defineConfig({
         items: [
           { text: "Overview", link: "/embedding/" },
           { text: "Rust", link: "/embedding/rust" },
+          { text: "Node-API", link: "/embedding/node" },
         ],
       },
       {

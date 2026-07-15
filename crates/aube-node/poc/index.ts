@@ -6,28 +6,34 @@ const { install } = require("./aube.node") as {
   install(
     projectDir: string,
     input?: {
-      add?: { name: string; version?: string }[]
+      add?: { name: string; version?: string; dev?: boolean }[]
       force?: boolean
       offline?: boolean
       onEvent?: (event: InstallEvent) => void
       signal?: AbortSignal
     },
-  ): Promise<{ projectDir: string; added: string[] }>
+  ): Promise<{
+    projectDir: string
+    added: string[]
+    resolved: number
+    reused: number
+    downloaded: number
+    durationMs: number
+  }>
 }
 
-type InstallEvent = {
-  kind: "phase" | "progress" | "output"
-  phase?: "resolving" | "fetching" | "linking" | "complete"
-  level?: "info" | "warning" | "error"
-  code?: string
-  message?: string
-  resolved?: number
-  total?: number
-  reused?: number
-  downloaded?: number
-  downloadedBytes?: number
-  estimatedBytes?: number
-}
+type InstallEvent =
+  | { kind: "phase"; phase: "resolving" | "fetching" | "linking" | "complete" }
+  | {
+      kind: "progress"
+      resolved: number
+      total: number
+      reused: number
+      downloaded: number
+      downloadedBytes: number
+      estimatedBytes?: number
+    }
+  | { kind: "output"; level: "info" | "warning" | "error"; code?: string; message: string }
 
 const projectDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-"))
 const parallelDirA = await mkdtemp(path.join(tmpdir(), "aube-node-poc-parallel-a-"))
@@ -61,6 +67,9 @@ try {
   })
   if (first.added.join(",") !== "is-number@7.0.0") {
     throw new Error(`unexpected add result: ${JSON.stringify(first)}`)
+  }
+  if (first.resolved < 1 || first.durationMs <= 0) {
+    throw new Error(`install result omitted progress statistics: ${JSON.stringify(first)}`)
   }
 
   const installed = JSON.parse(
@@ -152,7 +161,7 @@ try {
     ),
   ])
   await install(workspaceMember, {
-    add: [{ name: "workspace-added", version: "file:./workspace-added" }],
+    add: [{ name: "workspace-added", version: "file:./workspace-added", dev: true }],
   })
   await Promise.all([
     access(path.join(workspaceDir, "aube-lock.yaml")),
@@ -160,6 +169,12 @@ try {
   ])
   if (await Bun.file(path.join(workspaceMember, "aube-lock.yaml")).exists()) {
     throw new Error("workspace member add wrote a member lockfile")
+  }
+  const workspaceManifest = JSON.parse(
+    await readFile(path.join(workspaceMember, "package.json"), "utf8"),
+  ) as { devDependencies?: Record<string, string> }
+  if (workspaceManifest.devDependencies?.["workspace-added"] !== "file:./workspace-added") {
+    throw new Error("dev add was not saved to devDependencies")
   }
 
   const lifecycleRan = await access(lifecycleMarker).then(
