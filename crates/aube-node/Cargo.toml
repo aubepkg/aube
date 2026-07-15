@@ -1,6 +1,6 @@
 [package]
 name = "aube-node"
-description = "Node-API proof of concept for embedding aube"
+description = "Node-API bindings for embedding aube"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-aube = { path = "../aube", version = "1.26.0", default-features = false }
+aube = { path = "../aube", default-features = false }
 aube-codes = { workspace = true }
 aube-registry = { workspace = true }
 aube-settings = { workspace = true }

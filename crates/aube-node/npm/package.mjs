@@ -20,8 +20,9 @@ function name(os, cpu, libc) {
   return `@jdxcode/aube-node-${os}-${cpu}${libc ? `-${libc}` : ""}`
 }
 function pack(dir) {
-  const result = spawnSync("npm", ["pack", "--pack-destination", out], { cwd: dir, stdio: "inherit" })
-  if (result.status !== 0) throw new Error(`npm pack failed with ${result.status}`)
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm"
+  const result = spawnSync(npm, ["pack", "--pack-destination", out], { cwd: dir, stdio: "inherit" })
+  if (result.status !== 0) throw new Error(`npm pack failed: ${result.error?.message ?? result.status}`)
 }
 
 if (process.env.AUBE_NODE_BINARY) {
@@ -48,6 +49,8 @@ if (process.env.AUBE_NODE_BINARY) {
   mkdirSync(stage, { recursive: true })
   cpSync(resolve(here, "index.js"), resolve(stage, "index.js"))
   cpSync(resolve(here, "index.d.ts"), resolve(stage, "index.d.ts"))
+  cpSync(resolve(here, "bun-plugin.js"), resolve(stage, "bun-plugin.js"))
+  cpSync(resolve(here, "bun-plugin.d.ts"), resolve(stage, "bun-plugin.d.ts"))
   cpSync(resolve(here, "../README.md"), resolve(stage, "README.md"))
   const manifest = JSON.parse(readFileSync(resolve(here, "package.json"), "utf8"))
   manifest.version = version

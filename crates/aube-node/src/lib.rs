@@ -2,10 +2,13 @@
 
 use aube::commands::add::{AddToProjectOptions, add_to_project};
 use aube::commands::install::{
-    FrozenMode, InstallControl, InstallEvent, InstallOptions, InstallOutputLevel, InstallPhase,
-    InstallReporter,
+    DepSelection, FrozenMode, InstallControl, InstallEvent, InstallOptions, InstallOutputLevel,
+    InstallPhase, InstallReporter,
 };
-use napi::bindgen_prelude::{AbortSignal, FnArgs, Function, PromiseRaw, ToNapiValue};
+use napi::bindgen_prelude::{
+    AbortSignal, FnArgs, FromNapiValue, Function, JsObjectValue, JsValue, Object, PromiseRaw,
+    ToNapiValue,
+};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
@@ -56,7 +59,7 @@ pub struct InstallInput {
     pub force: Option<bool>,
     pub offline: Option<bool>,
     pub on_event: Option<Function<'static, FnArgs<(InstallEventPayload,)>, ()>>,
-    pub signal: Option<AbortSignal>,
+    pub signal: Option<Object<'static>>,
 }
 
 #[napi(object)]
@@ -98,7 +101,7 @@ impl InstallReporter for NodeReporter {
 /// The call shape intentionally mirrors OpenCode's current npm service:
 /// `install(dir, { add: [{ name, version }] })`. Added packages are saved as
 /// exact production dependencies, and lifecycle scripts are always disabled.
-#[napi]
+#[napi(catch_unwind)]
 pub fn install<'env>(
     env: &'env Env,
     project_dir: String,
@@ -139,8 +142,16 @@ pub fn install<'env>(
         None => InstallControl::silent(),
     };
     if let Some(signal) = signal {
-        let control = control.clone();
-        signal.on_abort(move || control.cancel());
+        let aborted = signal.get_named_property::<bool>("aborted")?;
+        // SAFETY: `signal` is the same live JS object validated by napi as an
+        // Object above, and both conversions happen synchronously on the JS
+        // thread before the native call returns.
+        let signal = unsafe { AbortSignal::from_napi_value(env.raw(), signal.raw()) }?;
+        let abort_control = control.clone();
+        signal.on_abort(move || abort_control.cancel());
+        if aborted {
+            control.cancel();
+        }
     }
 
     let packages = add
@@ -173,6 +184,7 @@ async fn run_install(
     control: InstallControl,
 ) -> Result<InstallResult, InstallFailure> {
     let project_dir = prepare_project_dir(Path::new(&project_dir)).await?;
+    let dep_selection = npmrc_dep_selection(&project_dir);
 
     if !packages.is_empty() {
         add_to_project(
@@ -183,6 +195,7 @@ async fn run_install(
                 ignore_scripts: true,
                 force,
                 offline,
+                dep_selection,
                 control,
             },
         )
@@ -192,8 +205,8 @@ async fn run_install(
         let mut options = InstallOptions::with_mode(FrozenMode::Prefer);
         options.project_dir = Some(project_dir.clone());
         options.ignore_scripts = true;
-        options.skip_root_lifecycle = true;
         options.force = force;
+        options.dep_selection = dep_selection;
         options.control = control;
         if offline {
             options.network_mode = aube_registry::NetworkMode::Offline;
@@ -208,6 +221,22 @@ async fn run_install(
         project_dir: project_dir.to_string_lossy().into_owned(),
         added: packages,
     })
+}
+
+fn npmrc_dep_selection(project_dir: &Path) -> DepSelection {
+    let omit = aube_registry::config::load_npmrc_entries(project_dir)
+        .into_iter()
+        .rev()
+        .find(|(key, _)| key == "omit" || key == "omit[]")
+        .map(|(_, value)| value)
+        .unwrap_or_default();
+    let mut omit_dev = false;
+    let mut omit_optional = false;
+    for value in omit.split([',', ' ', '\t', '\n']) {
+        omit_dev |= value == "dev";
+        omit_optional |= value == "optional";
+    }
+    DepSelection::from_flags(omit_dev, false, omit_optional)
 }
 
 fn initialize_embedder() {

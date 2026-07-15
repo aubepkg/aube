@@ -1,9 +1,17 @@
 const fs = require("node:fs")
+const childProcess = require("node:child_process")
 
 function isMusl() {
-  let musl = fs.existsSync("/etc/alpine-release")
-  try { musl = !process.report.getReport().header.glibcVersionRuntime } catch (_) {}
-  return musl
+  if (fs.existsSync("/etc/alpine-release")) return true
+  try {
+    if (process.report.getReport().header.glibcVersionRuntime) return false
+  } catch (_) {}
+  try {
+    return childProcess.execFileSync("ldd", ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+      .toLowerCase().includes("musl")
+  } catch (error) {
+    return `${error.stdout || ""}\n${error.stderr || ""}`.toLowerCase().includes("musl")
+  }
 }
 
 function load() {

@@ -6,7 +6,11 @@
   "repository": "https://github.com/jdx/aube",
   "main": "index.js",
   "types": "index.d.ts",
-  "files": ["index.js", "index.d.ts", "README.md"],
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" },
+    "./bun-plugin": { "types": "./bun-plugin.d.ts", "default": "./bun-plugin.js" }
+  },
+  "files": ["index.js", "index.d.ts", "bun-plugin.js", "bun-plugin.d.ts", "README.md"],
   "preferUnplugged": true,
   "engines": { "node": ">=18" }
 }

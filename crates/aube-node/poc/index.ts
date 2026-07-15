@@ -33,6 +33,8 @@ const projectDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-"))
 const parallelDirA = await mkdtemp(path.join(tmpdir(), "aube-node-poc-parallel-a-"))
 const parallelDirB = await mkdtemp(path.join(tmpdir(), "aube-node-poc-parallel-b-"))
 const abortDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-abort-"))
+const preAbortDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-pre-abort-"))
+const compatibilityDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-compatibility-"))
 const lifecycleMarker = path.join(projectDir, "postinstall-ran")
 let registry: ReturnType<typeof Bun.serve> | undefined
 
@@ -91,6 +93,49 @@ try {
       throw new Error(`missing structured diagnostic: ${JSON.stringify(structured)}`)
     }
   }
+
+  const preAborted = new AbortController()
+  preAborted.abort()
+  try {
+    await install(preAbortDir, {
+      add: [{ name: "is-number", version: "7.0.0" }],
+      offline: true,
+      signal: preAborted.signal,
+    })
+    throw new Error("pre-cancelled install unexpectedly succeeded")
+  } catch (error) {
+    const structured = error as Error & { code?: string }
+    if (structured.code !== "ERR_AUBE_INSTALL_CANCELLED") throw error
+  }
+
+  const prodDir = path.join(compatibilityDir, "prod-pkg")
+  const devDir = path.join(compatibilityDir, "dev-pkg")
+  const addedDir = path.join(compatibilityDir, "added-pkg")
+  await Promise.all([
+    Bun.write(path.join(prodDir, "package.json"), JSON.stringify({ name: "prod-pkg", version: "1.0.0" })),
+    Bun.write(path.join(devDir, "package.json"), JSON.stringify({ name: "dev-pkg", version: "1.0.0" })),
+    Bun.write(path.join(addedDir, "package.json"), JSON.stringify({ name: "added-pkg", version: "1.0.0" })),
+    Bun.write(path.join(compatibilityDir, ".npmrc"), "omit=dev\n"),
+    Bun.write(
+      path.join(compatibilityDir, "package.json"),
+      JSON.stringify({
+        dependencies: { "prod-pkg": "file:./prod-pkg" },
+        devDependencies: { "dev-pkg": "file:./dev-pkg" },
+      }),
+    ),
+  ])
+  await install(compatibilityDir)
+  await access(path.join(compatibilityDir, "node_modules", "prod-pkg"))
+  try {
+    await access(path.join(compatibilityDir, "node_modules", "dev-pkg"))
+    throw new Error(".npmrc omit=dev was ignored")
+  } catch (error) {
+    if (error instanceof Error && error.message === ".npmrc omit=dev was ignored") throw error
+  }
+  await install(compatibilityDir, {
+    add: [{ name: "added-pkg", version: "file:./added-pkg" }],
+  })
+  await access(path.join(compatibilityDir, "node_modules", "added-pkg"))
 
   const lifecycleRan = await access(lifecycleMarker).then(
     () => true,
@@ -204,5 +249,7 @@ try {
     rm(parallelDirA, { recursive: true, force: true }),
     rm(parallelDirB, { recursive: true, force: true }),
     rm(abortDir, { recursive: true, force: true }),
+    rm(preAbortDir, { recursive: true, force: true }),
+    rm(compatibilityDir, { recursive: true, force: true }),
   ])
 }
