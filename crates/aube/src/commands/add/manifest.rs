@@ -226,6 +226,7 @@ pub(super) async fn update_manifest_for_add(
     // truth for those names. Without these guards the parallel
     // fetch below would 404 on the non-registry name.
     let mut handles = tokio::task::JoinSet::new();
+    let packument_cache_dir = crate::commands::packument_cache_dir_for_cwd(cwd);
     for spec in &parsed {
         if aube_util::pkg::is_workspace_spec(&spec.range)
             || spec.git_spec.is_some()
@@ -235,10 +236,11 @@ pub(super) async fn update_manifest_for_add(
             continue;
         }
         let client = client.clone();
+        let cache_dir = packument_cache_dir.clone();
         let name = spec.name.clone();
         handles.spawn(async move {
             let packument = client
-                .fetch_packument(&name)
+                .fetch_packument_cached(&name, &cache_dir)
                 .await
                 .map_err(|e| miette!("failed to fetch {name}: {e}"))?;
             Ok::<_, miette::Report>((name, packument))
@@ -923,4 +925,62 @@ fn decide_save_catalog(
         range: manual_specifier.to_string(),
     });
     (manifest_specifier, resolved_version.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn offline_add_resolves_from_packument_cache() {
+        let project = tempfile::tempdir().unwrap();
+        let cache_root = project.path().join("cache");
+        std::fs::write(project.path().join("package.json"), "{}\n").unwrap();
+        std::fs::write(
+            project.path().join(".npmrc"),
+            format!("cache-dir={}\n", cache_root.display()),
+        )
+        .unwrap();
+
+        let packument: aube_registry::Packument = serde_json::from_value(serde_json::json!({
+            "name": "cached-only",
+            "dist-tags": { "latest": "1.0.0" },
+            "versions": {
+                "1.0.0": {
+                    "name": "cached-only",
+                    "version": "1.0.0"
+                }
+            }
+        }))
+        .unwrap();
+        let cache_dir = crate::commands::packument_cache_dir_for_cwd(project.path());
+        crate::commands::make_client(project.path()).seed_packument_cache(
+            "cached-only",
+            &cache_dir,
+            &packument,
+            None,
+            None,
+            true,
+        );
+
+        update_manifest_for_add(
+            project.path(),
+            &["cached-only".to_string()],
+            AddManifestOptions {
+                save_dev: false,
+                save_exact: false,
+                save_optional: false,
+                save_peer: false,
+                network_mode: aube_registry::NetworkMode::Offline,
+                save_catalog: None,
+                workspace_protocol_override: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let manifest = std::fs::read_to_string(project.path().join("package.json")).unwrap();
+        assert!(manifest.contains(r#""cached-only": "^1.0.0""#));
+    }
 }

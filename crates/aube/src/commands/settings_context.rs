@@ -551,7 +551,13 @@ pub(crate) fn resolve_virtual_store_dir_for_cwd(cwd: &std::path::Path) -> std::p
 /// the user cache dir can't be resolved (rare).
 pub(crate) fn packument_cache_dir() -> std::path::PathBuf {
     let cwd = crate::dirs::cwd().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-    resolved_cache_dir(&cwd).join("packuments-v1")
+    packument_cache_dir_for_cwd(&cwd)
+}
+
+/// Disk cache directory for packument metadata resolved against an explicit
+/// project directory. Embedders must use this form instead of logical cwd.
+pub(crate) fn packument_cache_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+    resolved_cache_dir(cwd).join("packuments-v1")
 }
 
 /// Disk cache directory for *full* (non-corgi) packument JSON used by

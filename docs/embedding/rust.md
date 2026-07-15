@@ -130,7 +130,9 @@ cancellation_handle.cancel();
 Each invocation has independent event and cancellation state. Installs for
 unrelated projects can run concurrently; operations within the same workspace
 wait on its project lock. Cancelling `add` restores the project manifest and
-lockfile snapshots before returning the cancellation error.
+lockfile snapshots before returning the cancellation error. Other installation
+failures preserve the manifest change so the host can retry `install` without
+repeating the add operation.
 
 ## Errors
 

@@ -120,6 +120,8 @@ pub async fn install(options: InstallOptions) -> Result<()> {
 /// The project lock spans both manifest mutation and installation, so another
 /// in-process operation cannot observe the intermediate manifest state.
 /// Cancellation restores the manifest and lockfile to their pre-call state.
+/// Other install errors preserve the manifest change for a later retry,
+/// matching CLI `add` behavior.
 pub async fn add(
     project_dir: &Path,
     packages: &[String],

@@ -52,7 +52,9 @@ pub struct AddToProjectOptions {
 /// This is the in-process counterpart to [`run`] for embedders. It holds the
 /// project lock across both manifest mutation and installation, and never
 /// consults or changes the process-global logical cwd. Cancellation rolls the
-/// manifest and lockfile back to their pre-call bytes.
+/// manifest and lockfile back to their pre-call bytes. Other install failures
+/// preserve the manifest change, matching CLI `add`, so the host can retry the
+/// install without repeating the add operation.
 pub async fn add_to_project(
     project_dir: &std::path::Path,
     packages: &[String],
