@@ -79,6 +79,10 @@ of package specifier strings.
 - Event strings are borrowed and valid only during the callback.
 - Callbacks run on aube-managed threads. The callback and its context must be
   thread-safe and remain valid until `aube_wait` returns.
+- Callbacks must return normally without throwing, panicking, or unwinding
+  across the C boundary. A callback must not call `aube_wait` for its active
+  operation; signal another host thread to wait or wait after the callback
+  returns.
 - Every exported function catches Rust panics. Release FFI libraries use an
   unwind-enabled profile so a panic cannot cross the C boundary or abort the
   host process.

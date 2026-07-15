@@ -4,13 +4,29 @@ on:
   pull_request:
     paths:
       - "crates/aube-ffi/**"
+      - "crates/aube-codes/**"
+      - "crates/aube/src/lib.rs"
       - "crates/aube/src/embed.rs"
+      - "crates/aube/src/commands/add/mod.rs"
+      - "crates/aube/src/commands/install/control.rs"
+      - "crates/aube/src/commands/install/dep_selection.rs"
+      - "crates/aube/src/commands/install/frozen.rs"
+      - "crates/aube-util/src/identity.rs"
+      - "crates/aube-util/src/lib.rs"
       - ".github/workflows/ffi.yml"
   push:
     branches: [main]
     paths:
       - "crates/aube-ffi/**"
+      - "crates/aube-codes/**"
+      - "crates/aube/src/lib.rs"
       - "crates/aube/src/embed.rs"
+      - "crates/aube/src/commands/add/mod.rs"
+      - "crates/aube/src/commands/install/control.rs"
+      - "crates/aube/src/commands/install/dep_selection.rs"
+      - "crates/aube/src/commands/install/frozen.rs"
+      - "crates/aube-util/src/identity.rs"
+      - "crates/aube-util/src/lib.rs"
       - ".github/workflows/ffi.yml"
   release:
     types: [published]

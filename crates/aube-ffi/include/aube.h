@@ -15,7 +15,9 @@ extern "C" {
 
 /* Called from aube-managed threads. The callback and ctx must remain valid and
  * thread-safe until aube_wait returns for the operation. event_json is borrowed
- * and valid only for the duration of the callback. */
+ * and valid only for the duration of the callback. The callback must return
+ * normally: it must not throw, panic, or unwind across this C boundary, and it
+ * must not call aube_wait for its active operation. */
 typedef void (*aube_event_cb)(const char *event_json, void *ctx);
 
 /* host_json: {"name":"host","version":"1.0.0","defaults":{...}}
@@ -23,14 +25,15 @@ typedef void (*aube_event_cb)(const char *event_json, void *ctx);
 AUBE_API int32_t aube_init(const char *host_json);
 
 /* options_json must contain projectDir. Returns immediately with an operation
- * handle. Inputs are copied before return. A zero handle indicates a caught
- * boundary failure. */
+ * handle. Inputs are copied before return. Boundary failures are represented
+ * by a completed handle; call aube_wait to retrieve the structured error. */
 AUBE_API uint64_t aube_install(
     const char *options_json,
     aube_event_cb callback,
     void *ctx);
 
-/* packages_json is a JSON array of package specifier strings. */
+/* packages_json is a JSON array of package specifier strings. Returns a
+ * completed handle containing a structured error for boundary failures. */
 AUBE_API uint64_t aube_add(
     const char *project_dir,
     const char *packages_json,
