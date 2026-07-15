@@ -1,0 +1,12 @@
+{
+  "name": "@jdxcode/aube-node",
+  "version": "0.0.0-placeholder",
+  "description": "Node-API bindings for embedding the aube package manager",
+  "license": "MIT",
+  "repository": "https://github.com/jdx/aube",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "preferUnplugged": true,
+  "engines": { "node": ">=18" }
+}

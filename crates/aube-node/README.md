@@ -41,3 +41,9 @@ structured events, cancellation, and structured rejection properties.
 
 The remaining production work is cross-platform artifact distribution and the
 OpenCode adapter that replaces its Arborist install call.
+
+CI packages the addon as `@jdxcode/aube-node` plus platform packages for the
+eight macOS, Windows, glibc Linux, and musl Linux environments OpenCode ships.
+Pull requests and `main` builds expose npm tarballs as workflow artifacts for
+smoke testing; tagged releases publish the same tarballs through npm trusted
+publishing. OpenCode's x64 baseline builds reuse the corresponding x64 addon.
