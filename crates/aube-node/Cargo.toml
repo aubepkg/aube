@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-aube = { path = "../aube", default-features = false }
+aube = { workspace = true }
 aube-codes = { workspace = true }
 aube-registry = { workspace = true }
 aube-settings = { workspace = true }
