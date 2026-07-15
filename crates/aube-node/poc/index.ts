@@ -35,6 +35,7 @@ const parallelDirB = await mkdtemp(path.join(tmpdir(), "aube-node-poc-parallel-b
 const abortDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-abort-"))
 const preAbortDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-pre-abort-"))
 const compatibilityDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-compatibility-"))
+const workspaceDir = await mkdtemp(path.join(tmpdir(), "aube-node-poc-workspace-"))
 const lifecycleMarker = path.join(projectDir, "postinstall-ran")
 let registry: ReturnType<typeof Bun.serve> | undefined
 
@@ -136,6 +137,30 @@ try {
     add: [{ name: "added-pkg", version: "file:./added-pkg" }],
   })
   await access(path.join(compatibilityDir, "node_modules", "added-pkg"))
+
+  const workspaceMember = path.join(workspaceDir, "packages", "app")
+  const workspaceDependency = path.join(workspaceMember, "workspace-added")
+  await Promise.all([
+    Bun.write(
+      path.join(workspaceDir, "package.json"),
+      JSON.stringify({ private: true, workspaces: ["packages/*"] }),
+    ),
+    Bun.write(path.join(workspaceMember, "package.json"), JSON.stringify({ name: "workspace-app" })),
+    Bun.write(
+      path.join(workspaceDependency, "package.json"),
+      JSON.stringify({ name: "workspace-added", version: "1.0.0" }),
+    ),
+  ])
+  await install(workspaceMember, {
+    add: [{ name: "workspace-added", version: "file:./workspace-added" }],
+  })
+  await Promise.all([
+    access(path.join(workspaceDir, "aube-lock.yaml")),
+    access(path.join(workspaceMember, "node_modules", "workspace-added")),
+  ])
+  if (await Bun.file(path.join(workspaceMember, "aube-lock.yaml")).exists()) {
+    throw new Error("workspace member add wrote a member lockfile")
+  }
 
   const lifecycleRan = await access(lifecycleMarker).then(
     () => true,
@@ -251,5 +276,6 @@ try {
     rm(abortDir, { recursive: true, force: true }),
     rm(preAbortDir, { recursive: true, force: true }),
     rm(compatibilityDir, { recursive: true, force: true }),
+    rm(workspaceDir, { recursive: true, force: true }),
   ])
 }
