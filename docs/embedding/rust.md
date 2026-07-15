@@ -96,6 +96,9 @@ Set `save_dev`, `save_optional`, or `save_peer` to select the manifest section.
 Combining `save_peer` with `save_dev` writes both sections, matching the CLI.
 Both install option types also expose `osv_transitive_check` when a host wants
 to force a live transitive OSV check for an otherwise unchanged lockfile.
+Offline mode always disables that live request. Set
+`dangerously_allow_all_builds` to bypass the lifecycle build allowlist for the
+invocation; `ignore_scripts` still disables scripts entirely.
 
 ## Progress and cancellation
 

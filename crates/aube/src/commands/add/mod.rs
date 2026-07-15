@@ -34,6 +34,8 @@ pub struct AddToProjectOptions {
     pub ignore_scripts: bool,
     /// Ignore install freshness state and re-resolve/relink the project.
     pub force: bool,
+    /// Allow dependency lifecycle scripts without the normal allowlist.
+    pub dangerously_allow_all_builds: bool,
     /// Refuse network access and resolve exclusively from local caches.
     pub offline: bool,
     /// Dependency sections to materialize for this invocation.
@@ -110,7 +112,11 @@ pub async fn add_to_project(
             install_options.ignore_scripts = options.ignore_scripts;
             install_options.force = options.force;
             install_options.dep_selection = options.dep_selection;
-            install_options.osv_transitive_check = options.osv_transitive_check;
+            install_options.osv_transitive_check = options.osv_transitive_check && !options.offline;
+            apply_dangerously_allow_all_builds(
+                &mut install_options,
+                options.dangerously_allow_all_builds,
+            );
             install_options.control = options.control;
             if options.offline {
                 install_options.network_mode = aube_registry::NetworkMode::Offline;

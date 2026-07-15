@@ -1,6 +1,6 @@
 use aube::embed::{Host, InstallControl, InstallOptions};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
 static TEST_HOST: Host = Host {
     name: "testhost",
@@ -22,12 +22,15 @@ static TEST_HOST: Host = Host {
     self_engines_check: false,
     self_update_enabled: false,
 };
+static INIT: Once = Once::new();
 
 fn initialize_test_host() {
-    aube::embed::initialize(
-        &TEST_HOST,
-        vec![("minimumReleaseAge".to_string(), "0".to_string())],
-    );
+    INIT.call_once(|| {
+        aube::embed::initialize(
+            &TEST_HOST,
+            vec![("minimumReleaseAge".to_string(), "0".to_string())],
+        );
+    });
 }
 
 fn workspace_fixture() -> (tempfile::TempDir, PathBuf) {
