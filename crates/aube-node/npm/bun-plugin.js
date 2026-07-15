@@ -8,11 +8,21 @@ function platformPackage(target) {
 
 function bunPlugin(target) {
   const packageName = platformPackage(target)
+  const addon = require.resolve(packageName)
   return {
     name: "aube-node-platform",
     setup(build) {
       build.onResolve({ filter: /^@jdxcode\/aube-node$/ }, () => ({
-        path: require.resolve(packageName),
+        path: "aube-node-platform",
+        namespace: "aube-node",
+      }))
+      build.onLoad({ filter: /.*/, namespace: "aube-node" }, () => ({
+        contents: [
+          `const addon = require(${JSON.stringify(addon)})`,
+          "export const install = addon.install",
+          "export default addon",
+        ].join("\n"),
+        loader: "js",
       }))
     },
   }

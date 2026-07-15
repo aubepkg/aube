@@ -7,7 +7,9 @@ const requireFromProject = createRequire(path.resolve("package.json"))
 const { bunPlugin } = requireFromProject("@jdxcode/aube-node/bun-plugin")
 
 const result = await Bun.build({
-  files: { "aube-node-entry.js": 'require("@jdxcode/aube-node")\n' },
+  files: {
+    "aube-node-entry.js": 'import { install } from "@jdxcode/aube-node"\nif (typeof install !== "function") throw new Error("missing install export")\n',
+  },
   entrypoints: ["aube-node-entry.js"],
   plugins: [bunPlugin({
     os: process.env.AUBE_NODE_OS,
