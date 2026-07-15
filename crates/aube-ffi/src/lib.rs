@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 pub type AubeEventCallback = unsafe extern "C" fn(*const c_char, *mut c_void);
@@ -53,6 +53,7 @@ impl Failure {
 struct Job {
     control: InstallControl,
     callback: CallbackReporter,
+    wait_claimed: AtomicBool,
     result: Mutex<Option<String>>,
     ready: Condvar,
 }
@@ -62,6 +63,7 @@ impl Job {
         Self {
             control,
             callback,
+            wait_claimed: AtomicBool::new(false),
             result: Mutex::new(None),
             ready: Condvar::new(),
         }
@@ -101,6 +103,12 @@ impl Job {
                 "operation completed without a result",
             )))
         })
+    }
+
+    fn claim_wait(&self) -> bool {
+        self.wait_claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 }
 
@@ -544,6 +552,12 @@ fn wait_impl(handle: u64) -> String {
             format!("unknown or already-consumed operation handle {handle}"),
         )));
     };
+    if !job.claim_wait() {
+        return result_json(Err(Failure::new(
+            aube_codes::errors::ERR_AUBE_FFI_UNKNOWN_HANDLE,
+            format!("operation handle {handle} is already being consumed"),
+        )));
+    }
     let result = job.wait();
     jobs()
         .lock()
@@ -661,9 +675,16 @@ fn leak_string(value: String) -> &'static str {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     fn c(value: impl AsRef<str>) -> CString {
         CString::new(value.as_ref()).unwrap()
+    }
+
+    fn initialize() {
+        let host = c(r#"{"name":"ffi-test","version":"1.0.0"}"#);
+        assert_eq!(aube_init(host.as_ptr()), STATUS_OK);
     }
 
     fn wait(handle: u64) -> serde_json::Value {
@@ -683,13 +704,9 @@ mod tests {
     fn initialization_is_concurrent_and_idempotent() {
         std::thread::scope(|scope| {
             let threads = (0..8)
-                .map(|index| {
-                    scope.spawn(move || {
-                        let host = c(serde_json::json!({
-                            "name": format!("ffi-host-{index}"),
-                            "version": "1.0.0"
-                        })
-                        .to_string());
+                .map(|_| {
+                    scope.spawn(|| {
+                        let host = c(r#"{"name":"ffi-test","version":"1.0.0"}"#);
                         aube_init(host.as_ptr())
                     })
                 })
@@ -698,7 +715,7 @@ mod tests {
                 assert_eq!(thread.join().unwrap(), STATUS_OK);
             }
         });
-        assert!(embed::host().name.starts_with("ffi-host-"));
+        assert_eq!(embed::host().name, "ffi-test");
 
         let malformed = c("{");
         assert_eq!(aube_init(malformed.as_ptr()), STATUS_OK);
@@ -707,6 +724,7 @@ mod tests {
 
     #[test]
     fn task_panics_complete_the_job() {
+        initialize();
         let reporter = CallbackReporter {
             callback: None,
             context: 0,
@@ -719,7 +737,35 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_wait_has_a_single_consumer() {
+        initialize();
+        let reporter = CallbackReporter {
+            callback: None,
+            context: 0,
+        };
+        let (handle, job) = register_job(InstallControl::silent(), reporter);
+        let (sender, receiver) = mpsc::channel();
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let sender = sender.clone();
+                scope.spawn(move || sender.send(wait(handle)).unwrap());
+            }
+            let rejected = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(
+                rejected["code"],
+                aube_codes::errors::ERR_AUBE_FFI_UNKNOWN_HANDLE
+            );
+            job.finish(Ok(()));
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(1)).unwrap()["ok"],
+                true
+            );
+        });
+    }
+
+    #[test]
     fn installs_offline_and_reports_events() {
+        initialize();
         let project = tempfile::tempdir().unwrap();
         fs::write(project.path().join("package.json"), "{}\n").unwrap();
         let options = c(serde_json::json!({
@@ -760,6 +806,7 @@ mod tests {
 
     #[test]
     fn returns_structured_boundary_and_project_errors() {
+        initialize();
         let malformed = c("{");
         let malformed_result = wait(aube_install(malformed.as_ptr(), None, std::ptr::null_mut()));
         assert_eq!(
@@ -780,6 +827,7 @@ mod tests {
 
     #[test]
     fn cancels_an_in_flight_add() {
+        initialize();
         let project = tempfile::tempdir().unwrap();
         fs::write(project.path().join("package.json"), "{}\n").unwrap();
         fs::write(

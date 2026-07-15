@@ -2,9 +2,16 @@ name: node-addon
 
 on:
   pull_request:
-    paths: ["crates/aube-node/**", "crates/aube/**", "crates/aube-*/**", "Cargo.toml", "Cargo.lock", ".github/workflows/node-addon.yml"]
+    paths:
+      - "crates/aube-node/**"
+      - "crates/aube/src/embed.rs"
+      - ".github/workflows/node-addon.yml"
   push:
     branches: [main]
+    paths:
+      - "crates/aube-node/**"
+      - "crates/aube/src/embed.rs"
+      - ".github/workflows/node-addon.yml"
   release:
     types: [published]
   workflow_dispatch:

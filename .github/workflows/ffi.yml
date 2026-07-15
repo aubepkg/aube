@@ -2,9 +2,16 @@ name: ffi
 
 on:
   pull_request:
-    paths: ["crates/aube-ffi/**", "crates/aube/**", "crates/aube-*/**", "Cargo.toml", "Cargo.lock", ".github/workflows/ffi.yml"]
+    paths:
+      - "crates/aube-ffi/**"
+      - "crates/aube/src/embed.rs"
+      - ".github/workflows/ffi.yml"
   push:
     branches: [main]
+    paths:
+      - "crates/aube-ffi/**"
+      - "crates/aube/src/embed.rs"
+      - ".github/workflows/ffi.yml"
   release:
     types: [published]
   workflow_dispatch:

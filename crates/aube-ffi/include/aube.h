@@ -40,7 +40,9 @@ AUBE_API uint64_t aube_add(
 
 /* Blocks until completion and consumes the handle. Returns owned UTF-8 JSON:
  * {"ok":true} or {"ok":false,"code":"ERR_AUBE_*","message":"..."}.
- * Free the returned string with aube_string_free. */
+ * Returns NULL only if an internal result cannot be represented as a C string;
+ * treat that as ERR_AUBE_FFI_RUNTIME. Free a non-null result with
+ * aube_string_free. */
 AUBE_API char *aube_wait(uint64_t handle);
 
 /* Returns 0 when cancellation was requested, -1 for an unknown handle, and -2
