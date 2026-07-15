@@ -317,6 +317,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aube-ffi"
+version = "1.27.0"
+dependencies = [
+ "aube",
+ "aube-codes",
+ "miette",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "aube-linker"
 version = "1.27.0"
 dependencies = [

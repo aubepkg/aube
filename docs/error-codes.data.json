@@ -433,6 +433,30 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_FFI_INVALID_ARGUMENT",
+      "category": "Misc / safety",
+      "description": "A C ABI call received a null pointer, invalid UTF-8, malformed JSON, or an unsupported option value.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_FFI_UNKNOWN_HANDLE",
+      "category": "Misc / safety",
+      "description": "A C ABI wait or cancellation call referenced an unknown or already-consumed operation handle.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_FFI_RUNTIME",
+      "category": "Misc / safety",
+      "description": "The C ABI could not initialize or use its internal asynchronous runtime.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_FFI_PANIC",
+      "category": "Misc / safety",
+      "description": "A panic was caught at the C ABI boundary before it could cross into the host process.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_UNSAFE_PACKAGE_NAME",
       "category": "Misc / safety",
       "description": "A package/dependency alias would escape its `node_modules` slot if linked.",

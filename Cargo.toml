@@ -23,6 +23,13 @@ codegen-units = 1
 inherits = "release"
 panic = "unwind"
 
+# C ABI calls execute inside the host process and catch every panic at the
+# extern boundary. The workspace release profile's panic=abort would bypass
+# those guards and terminate the host.
+[profile.ffi]
+inherits = "release"
+panic = "unwind"
+
 [workspace.package]
 version = "1.27.0"
 edition = "2024"

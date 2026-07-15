@@ -131,6 +131,7 @@ export default defineConfig({
           { text: "Overview", link: "/embedding/" },
           { text: "Rust", link: "/embedding/rust" },
           { text: "Node-API", link: "/embedding/node" },
+          { text: "C ABI", link: "/embedding/ffi" },
         ],
       },
       {

@@ -109,6 +109,10 @@ pub const ERR_AUBE_PATCHES_TRACKING_WRITE: &str = "ERR_AUBE_PATCHES_TRACKING_WRI
 pub const ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER: &str = "ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER";
 pub const ERR_AUBE_EMBED_INVALID_PROJECT: &str = "ERR_AUBE_EMBED_INVALID_PROJECT";
 pub const ERR_AUBE_EMBED_INSTALL_FAILED: &str = "ERR_AUBE_EMBED_INSTALL_FAILED";
+pub const ERR_AUBE_FFI_INVALID_ARGUMENT: &str = "ERR_AUBE_FFI_INVALID_ARGUMENT";
+pub const ERR_AUBE_FFI_UNKNOWN_HANDLE: &str = "ERR_AUBE_FFI_UNKNOWN_HANDLE";
+pub const ERR_AUBE_FFI_RUNTIME: &str = "ERR_AUBE_FFI_RUNTIME";
+pub const ERR_AUBE_FFI_PANIC: &str = "ERR_AUBE_FFI_PANIC";
 
 /// Stable category labels that group codes in the generated docs and
 /// in `EXIT_TABLE`'s 10-wide allocation ranges. Public so the docs
@@ -573,6 +577,30 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_EMBED_INSTALL_FAILED,
         category: category::MISC_SAFETY,
         description: "An in-process embedder could not initialize its host callback or received an install failure without a more specific stable code.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_FFI_INVALID_ARGUMENT,
+        category: category::MISC_SAFETY,
+        description: "A C ABI call received a null pointer, invalid UTF-8, malformed JSON, or an unsupported option value.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_FFI_UNKNOWN_HANDLE,
+        category: category::MISC_SAFETY,
+        description: "A C ABI wait or cancellation call referenced an unknown or already-consumed operation handle.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_FFI_RUNTIME,
+        category: category::MISC_SAFETY,
+        description: "The C ABI could not initialize or use its internal asynchronous runtime.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_FFI_PANIC,
+        category: category::MISC_SAFETY,
+        description: "A panic was caught at the C ABI boundary before it could cross into the host process.",
         exit_code: None,
     },
     CodeMeta {
