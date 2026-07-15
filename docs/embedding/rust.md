@@ -83,6 +83,7 @@ embed::add(
     &project_dir,
     &packages,
     AddToProjectOptions {
+        save_dev: true,
         save_exact: true,
         ignore_scripts: true,
         control: InstallControl::silent(),
@@ -90,6 +91,11 @@ embed::add(
     },
 ).await?;
 ```
+
+Set `save_dev`, `save_optional`, or `save_peer` to select the manifest section.
+Combining `save_peer` with `save_dev` writes both sections, matching the CLI.
+Both install option types also expose `osv_transitive_check` when a host wants
+to force a live transitive OSV check for an otherwise unchanged lockfile.
 
 ## Progress and cancellation
 
@@ -120,7 +126,8 @@ cancellation_handle.cancel();
 
 Each invocation has independent event and cancellation state. Installs for
 unrelated projects can run concurrently; operations within the same workspace
-wait on its project lock.
+wait on its project lock. Cancelling `add` restores the project manifest and
+lockfile snapshots before returning the cancellation error.
 
 ## Errors
 

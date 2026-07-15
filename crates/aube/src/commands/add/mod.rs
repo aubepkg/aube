@@ -21,8 +21,15 @@ use miette::{Context, IntoDiagnostic, miette};
 /// semantics without routing through clap or process-global cwd state.
 #[derive(Debug, Clone, Default)]
 pub struct AddToProjectOptions {
+    /// Save packages to `devDependencies`.
+    pub save_dev: bool,
     /// Save concrete versions instead of applying the configured save prefix.
     pub save_exact: bool,
+    /// Save packages to `optionalDependencies`.
+    pub save_optional: bool,
+    /// Save packages to `peerDependencies`. Combine with [`Self::save_dev`]
+    /// to install the peer locally for development as well.
+    pub save_peer: bool,
     /// Skip root and dependency lifecycle scripts regardless of project policy.
     pub ignore_scripts: bool,
     /// Ignore install freshness state and re-resolve/relink the project.
@@ -31,6 +38,9 @@ pub struct AddToProjectOptions {
     pub offline: bool,
     /// Dependency sections to materialize for this invocation.
     pub dep_selection: install::DepSelection,
+    /// Force a live transitive OSV check even when resolution reused every
+    /// version from the existing lockfile.
+    pub osv_transitive_check: bool,
     /// Invocation-scoped output and cancellation controls for embedders.
     pub control: install::InstallControl,
 }
@@ -39,7 +49,8 @@ pub struct AddToProjectOptions {
 ///
 /// This is the in-process counterpart to [`run`] for embedders. It holds the
 /// project lock across both manifest mutation and installation, and never
-/// consults or changes the process-global logical cwd.
+/// consults or changes the process-global logical cwd. Cancellation rolls the
+/// manifest and lockfile back to their pre-call bytes.
 pub async fn add_to_project(
     project_dir: &std::path::Path,
     packages: &[String],
@@ -52,8 +63,15 @@ pub async fn add_to_project(
     // subsequent install owns the workspace-root lockfile and virtual store.
     // Serialize on the same root lock as the CLI add path.
     let lock = super::take_install_project_lock(project_dir)?;
+    options.control.check_cancelled()?;
+    let manifest_path = project_dir.join("package.json");
+    let original_manifest = std::fs::read(&manifest_path)
+        .into_diagnostic()
+        .wrap_err("failed to snapshot package.json before embedded add")?;
+    let lockfile_path = no_save::lockfile_path_for_project(lock.project_dir());
+    let original_lockfile = no_save::snapshot_lockfile(&lockfile_path)?;
     let mutation_control = options.control.clone();
-    install::control::scope(options.control.clone(), async {
+    let mutation_result = install::control::scope(options.control.clone(), async {
         tokio::select! {
             biased;
             _ = mutation_control.cancelled() => mutation_control.check_cancelled(),
@@ -65,10 +83,10 @@ pub async fn add_to_project(
                     project_dir,
                     packages,
                     AddManifestOptions {
-                        save_dev: false,
+                        save_dev: options.save_dev,
                         save_exact: options.save_exact,
-                        save_optional: false,
-                        save_peer: false,
+                        save_optional: options.save_optional,
+                        save_peer: options.save_peer,
                         network_mode: if options.offline {
                             aube_registry::NetworkMode::Offline
                         } else {
@@ -83,19 +101,47 @@ pub async fn add_to_project(
             } => result,
         }
     })
-    .await?;
-
-    let mut install_options = install::InstallOptions::with_mode(install::FrozenMode::Fix);
-    install_options.project_dir = Some(project_dir.to_path_buf());
-    install_options.ignore_scripts = options.ignore_scripts;
-    install_options.force = options.force;
-    install_options.dep_selection = options.dep_selection;
-    install_options.osv_transitive_check = true;
-    install_options.control = options.control;
-    if options.offline {
-        install_options.network_mode = aube_registry::NetworkMode::Offline;
+    .await;
+    let operation_result = match mutation_result {
+        Err(error) => Err(error),
+        Ok(()) => {
+            let mut install_options = install::InstallOptions::with_mode(install::FrozenMode::Fix);
+            install_options.project_dir = Some(project_dir.to_path_buf());
+            install_options.ignore_scripts = options.ignore_scripts;
+            install_options.force = options.force;
+            install_options.dep_selection = options.dep_selection;
+            install_options.osv_transitive_check = options.osv_transitive_check;
+            install_options.control = options.control;
+            if options.offline {
+                install_options.network_mode = aube_registry::NetworkMode::Offline;
+            }
+            install::run_with_project_lock(install_options, &lock).await
+        }
+    };
+    if let Err(error) = operation_result {
+        let cancelled = error
+            .code()
+            .is_some_and(|code| code.to_string() == aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED);
+        if cancelled {
+            let manifest_restore =
+                aube_util::fs_atomic::atomic_write(&manifest_path, &original_manifest);
+            let lockfile_restore = no_save::restore_lockfile(&lockfile_path, &original_lockfile);
+            if let Err(restore_error) = manifest_restore {
+                return Err(miette!(
+                    code = aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED,
+                    "install cancelled and package.json rollback failed: {restore_error}"
+                ));
+            }
+            if let Err(restore_error) = lockfile_restore {
+                return Err(miette!(
+                    code = aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED,
+                    "install cancelled and lockfile rollback failed: {restore_error}"
+                ));
+            }
+        }
+        return Err(error);
     }
-    install::run_with_project_lock(install_options, &lock).await
+    Ok(())
 }
 
 #[derive(Debug, Clone, Args)]

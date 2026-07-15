@@ -1,4 +1,6 @@
 use aube::embed::{Host, InstallControl, InstallOptions};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 static TEST_HOST: Host = Host {
     name: "testhost",
@@ -28,26 +30,7 @@ fn initialize_test_host() {
     );
 }
 
-#[tokio::test]
-async fn facade_initializes_host_and_runs_install() {
-    initialize_test_host();
-    assert_eq!(aube::embed::host().name, "testhost");
-
-    let project = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("package.json"), "{}\n").unwrap();
-
-    let mut options = InstallOptions::new(project.path());
-    options.ignore_scripts = true;
-    options.network_mode = aube::embed::NetworkMode::Offline;
-    options.control = InstallControl::silent();
-    aube::embed::install(options).await.unwrap();
-
-    assert!(project.path().join("testhost-lock.yaml").is_file());
-}
-
-#[tokio::test]
-async fn facade_adds_local_package_to_workspace_member() {
-    initialize_test_host();
+fn workspace_fixture() -> (tempfile::TempDir, PathBuf) {
     let workspace = tempfile::tempdir().unwrap();
     let app = workspace.path().join("packages/app");
     let library = workspace.path().join("packages/library");
@@ -76,11 +59,48 @@ async fn facade_adds_local_package_to_workspace_member() {
 "#,
     )
     .unwrap();
+    (workspace, app)
+}
+
+struct CancelOnOutput(Mutex<Option<InstallControl>>);
+
+impl aube::embed::InstallReporter for CancelOnOutput {
+    fn report(&self, event: aube::embed::InstallEvent) {
+        if matches!(event, aube::embed::InstallEvent::Output { .. })
+            && let Some(control) = self.0.lock().unwrap().take()
+        {
+            control.cancel();
+        }
+    }
+}
+
+#[tokio::test]
+async fn facade_initializes_host_and_runs_install() {
+    initialize_test_host();
+    assert_eq!(aube::embed::host().name, "testhost");
+
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("package.json"), "{}\n").unwrap();
+
+    let mut options = InstallOptions::new(project.path());
+    options.ignore_scripts = true;
+    options.network_mode = aube::embed::NetworkMode::Offline;
+    options.control = InstallControl::silent();
+    aube::embed::install(options).await.unwrap();
+
+    assert!(project.path().join("testhost-lock.yaml").is_file());
+}
+
+#[tokio::test]
+async fn facade_adds_local_package_to_workspace_member() {
+    initialize_test_host();
+    let (workspace, app) = workspace_fixture();
 
     aube::embed::add(
         &app,
         &["library@workspace:*".to_string()],
         aube::embed::AddToProjectOptions {
+            save_dev: true,
             ignore_scripts: true,
             offline: true,
             control: InstallControl::silent(),
@@ -91,9 +111,42 @@ async fn facade_adds_local_package_to_workspace_member() {
     .unwrap();
 
     let manifest = std::fs::read_to_string(app.join("package.json")).unwrap();
+    assert!(manifest.contains(r#""devDependencies""#));
     assert!(manifest.contains(r#""library": "workspace:*""#));
     assert!(workspace.path().join("testhost-lock.yaml").is_file());
     assert!(!app.join("testhost-lock.yaml").exists());
+}
+
+#[tokio::test]
+async fn cancelled_manifest_mutation_is_rolled_back() {
+    initialize_test_host();
+    let (workspace, app) = workspace_fixture();
+    let original_manifest = std::fs::read(app.join("package.json")).unwrap();
+    let reporter = Arc::new(CancelOnOutput(Mutex::new(None)));
+    let control = InstallControl::events(reporter.clone());
+    *reporter.0.lock().unwrap() = Some(control.clone());
+
+    let error = aube::embed::add(
+        &app,
+        &["library@workspace:*".to_string()],
+        aube::embed::AddToProjectOptions {
+            offline: true,
+            control,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        aube::embed::error_code(&error).as_deref(),
+        Some(aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED)
+    );
+    assert_eq!(
+        std::fs::read(app.join("package.json")).unwrap(),
+        original_manifest
+    );
+    assert!(!workspace.path().join("testhost-lock.yaml").exists());
 }
 
 #[test]

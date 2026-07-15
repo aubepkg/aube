@@ -45,6 +45,9 @@ pub struct InstallOptions {
     pub strict_no_lockfile: bool,
     /// Allow dependency lifecycle scripts without the normal allowlist.
     pub dangerously_allow_all_builds: bool,
+    /// Force a live transitive OSV check even when resolution reused every
+    /// version from the existing lockfile.
+    pub osv_transitive_check: bool,
     /// Invocation-scoped output, progress reporting, and cancellation.
     pub control: InstallControl,
 }
@@ -64,6 +67,7 @@ impl InstallOptions {
             network_mode: NetworkMode::Online,
             strict_no_lockfile: false,
             dangerously_allow_all_builds: false,
+            osv_transitive_check: false,
             control: InstallControl::default(),
         }
     }
@@ -93,7 +97,6 @@ pub fn host() -> &'static Host {
 }
 
 /// Install the dependencies declared by a project.
-///
 pub async fn install(options: InstallOptions) -> Result<()> {
     let mut command_options =
         crate::commands::install::InstallOptions::with_mode(options.frozen_mode);
@@ -107,6 +110,7 @@ pub async fn install(options: InstallOptions) -> Result<()> {
     command_options.network_mode = options.network_mode;
     command_options.strict_no_lockfile = options.strict_no_lockfile;
     command_options.dangerously_allow_all_builds = options.dangerously_allow_all_builds;
+    command_options.osv_transitive_check = options.osv_transitive_check;
     command_options.control = options.control;
     crate::commands::install::run(command_options).await
 }
@@ -115,6 +119,7 @@ pub async fn install(options: InstallOptions) -> Result<()> {
 ///
 /// The project lock spans both manifest mutation and installation, so another
 /// in-process operation cannot observe the intermediate manifest state.
+/// Cancellation restores the manifest and lockfile to their pre-call state.
 pub async fn add(
     project_dir: &Path,
     packages: &[String],
