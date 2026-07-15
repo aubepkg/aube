@@ -1702,11 +1702,8 @@ impl<'a> ResolveDriver<'a> {
                     changed = true;
                 }
             }
-            if let Some(rest) = task.range.strip_prefix("npm:")
-                && let Some(at_idx) = rest.rfind('@')
-            {
-                let real_name = rest[..at_idx].to_string();
-                let real_range = rest[at_idx + 1..].to_string();
+            if let Some(rest) = task.range.strip_prefix("npm:") {
+                let (real_name, real_range) = split_npm_alias(rest);
                 // Keep `task.name` as the user-facing alias; stash
                 // the registry name on `real_name`. Only packument /
                 // tarball fetch sites (via `task.registry_name()`)
@@ -2082,6 +2079,24 @@ impl<'a> ResolveDriver<'a> {
     }
 }
 
+/// Split the body of an `npm:<name>[@<range>]` alias into its
+/// registry name and version range. `rest` is the spec with the
+/// `npm:` prefix already stripped.
+///
+/// Delegates the name/version split to [`aube_util::pkg::split_name_spec`]
+/// so a scoped name's leading `@` (`@popperjs/core`) is never mistaken
+/// for a version separator — the bug that let a version-less scoped
+/// alias fall through to the bare `owner/repo` git-shorthand parser.
+/// A missing range defaults to `latest`, matching pnpm.
+fn split_npm_alias(rest: &str) -> (String, String) {
+    let (name, range) = aube_util::pkg::split_name_spec(rest);
+    let range = match range {
+        Some(r) if !r.is_empty() => r,
+        _ => "latest",
+    };
+    (name.to_string(), range.to_string())
+}
+
 fn attach_integrity_to_git_source(local: &mut LocalSource, integrity: Option<&str>) {
     if let LocalSource::Git(git) = local
         && git.integrity.is_none()
@@ -2094,6 +2109,22 @@ fn attach_integrity_to_git_source(local: &mut LocalSource, integrity: Option<&st
 mod tests {
     use super::*;
     use aube_lockfile::GitSource;
+
+    // The name/version split itself is `split_name_spec`'s job (tested
+    // in aube-util). What's unique here is the wrapper's default: an
+    // alias with no version tail — scoped or plain — falls back to the
+    // `latest` dist-tag rather than an empty range.
+    #[test]
+    fn split_npm_alias_defaults_missing_range_to_latest() {
+        assert_eq!(
+            split_npm_alias("@popperjs/core"),
+            ("@popperjs/core".to_string(), "latest".to_string())
+        );
+        assert_eq!(
+            split_npm_alias("lodash"),
+            ("lodash".to_string(), "latest".to_string())
+        );
+    }
 
     #[test]
     fn attach_integrity_to_git_source_fills_missing_git_integrity() {

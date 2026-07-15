@@ -264,6 +264,35 @@ _setup_catalog_workspace() {
 	assert_output --partial "catalog:"
 }
 
+@test "aube install: plain npm: alias dep with no version resolves to the registry" {
+	# Regression: a version-less `npm:` alias used to be skipped by the
+	# resolver entirely (the rewrite required a trailing `@version`).
+	# The versionless scoped form of the same bug — `npm:@popperjs/core`
+	# via a catalog, whose scope `@` got mistaken for a version
+	# separator and fell through to the git `owner/repo` parser — is
+	# covered hermetically by
+	# `fresh_resolve_handles_versionless_scoped_npm_alias_from_catalog`
+	# in aube-resolver (the offline fixture set has no scoped package
+	# whose `latest` tarball is committed).
+	cat >package.json <<-'EOF'
+		{
+		  "name": "aube-test-alias",
+		  "version": "0.0.0",
+		  "private": true,
+		  "dependencies": {
+		    "alias-odd": "npm:is-odd"
+		  }
+		}
+	EOF
+
+	run aube install
+	assert_success
+
+	assert_dir_exists node_modules/alias-odd
+	run grep "aliasOf: is-odd" aube-lock.yaml
+	assert_success
+}
+
 @test "aube install: unknown catalog reference fails fast" {
 	mkdir -p packages/lib
 	cat >pnpm-workspace.yaml <<-'EOF'
