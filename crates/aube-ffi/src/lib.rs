@@ -7,6 +7,7 @@ use aube::embed::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -21,6 +22,7 @@ static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 static JOBS: OnceLock<Mutex<HashMap<u64, Arc<Job>>>> = OnceLock::new();
 static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
 static HOST_INITIALIZED: OnceLock<()> = OnceLock::new();
+static HOST_INIT_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug)]
 struct Failure {
@@ -345,6 +347,16 @@ pub unsafe extern "C" fn aube_string_free(value: *mut c_char) {
 }
 
 fn init_impl(host_json: *const c_char) -> Result<(), Failure> {
+    if HOST_INITIALIZED.get().is_some() {
+        return Ok(());
+    }
+    let _guard = HOST_INIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if HOST_INITIALIZED.get().is_some() {
+        return Ok(());
+    }
+
     let input: HostInput = parse_json(host_json, "host_json")?;
     if input.name.is_empty()
         || !input.name.bytes().all(|byte| {
@@ -358,10 +370,6 @@ fn init_impl(host_json: *const c_char) -> Result<(), Failure> {
     if input.version.is_empty() {
         return Err(Failure::invalid("host version must not be empty"));
     }
-    if HOST_INITIALIZED.get().is_some() {
-        return Ok(());
-    }
-
     let name = leak_string(input.name);
     let version = leak_string(input.version);
     let user_agent = leak_string(format!("{name}/{version}"));
@@ -404,9 +412,10 @@ fn install_impl(
         callback,
         context: context as usize,
     };
+    let runtime = runtime()?;
     let control = InstallControl::events(Arc::new(reporter.clone()));
     let (handle, job) = register_job(control.clone(), reporter);
-    runtime()?.spawn(async move {
+    spawn_job(runtime, job, async move {
         let mut options = embed::InstallOptions::new(input.project_dir);
         options.frozen_mode = match input.frozen_mode {
             FrozenInput::Frozen => FrozenMode::Frozen,
@@ -430,7 +439,7 @@ fn install_impl(
         options.dangerously_allow_all_builds = input.dangerously_allow_all_builds;
         options.osv_transitive_check = input.osv_transitive_check && !input.offline;
         options.control = control;
-        job.finish(embed::install(options).await.map_err(embed_failure));
+        embed::install(options).await.map_err(embed_failure)
     });
     Ok(handle)
 }
@@ -452,9 +461,10 @@ fn add_impl(
         callback,
         context: context as usize,
     };
+    let runtime = runtime()?;
     let control = InstallControl::events(Arc::new(reporter.clone()));
     let (handle, job) = register_job(control.clone(), reporter);
-    runtime()?.spawn(async move {
+    spawn_job(runtime, job, async move {
         let options = AddToProjectOptions {
             save_dev: input.save_dev,
             save_exact: input.save_exact,
@@ -472,11 +482,9 @@ fn add_impl(
             osv_transitive_check: input.osv_transitive_check && !input.offline,
             control,
         };
-        job.finish(
-            embed::add(&project_dir, &packages, options)
-                .await
-                .map_err(embed_failure),
-        );
+        embed::add(&project_dir, &packages, options)
+            .await
+            .map_err(embed_failure)
     });
     Ok(handle)
 }
@@ -489,6 +497,29 @@ fn register_job(control: InstallControl, callback: CallbackReporter) -> (u64, Ar
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(handle, Arc::clone(&job));
     (handle, job)
+}
+
+fn spawn_job<F>(runtime: &'static tokio::runtime::Runtime, job: Arc<Job>, operation: F)
+where
+    F: Future<Output = Result<(), Failure>> + Send + 'static,
+{
+    let worker_job = Arc::clone(&job);
+    let worker = runtime.spawn(async move {
+        worker_job.finish(operation.await);
+    });
+    runtime.spawn(async move {
+        if let Err(error) = worker.await {
+            let failure = if error.is_panic() {
+                Failure::panic()
+            } else {
+                Failure::new(
+                    aube_codes::errors::ERR_AUBE_FFI_RUNTIME,
+                    format!("aube FFI operation task failed: {error}"),
+                )
+            };
+            job.finish(Err(failure));
+        }
+    });
 }
 
 fn completed_failure(error: Failure) -> u64 {
@@ -646,6 +677,45 @@ mod tests {
         // SAFETY: value was returned by aube_wait and has not been freed.
         unsafe { aube_string_free(value) };
         serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn initialization_is_concurrent_and_idempotent() {
+        std::thread::scope(|scope| {
+            let threads = (0..8)
+                .map(|index| {
+                    scope.spawn(move || {
+                        let host = c(serde_json::json!({
+                            "name": format!("ffi-host-{index}"),
+                            "version": "1.0.0"
+                        })
+                        .to_string());
+                        aube_init(host.as_ptr())
+                    })
+                })
+                .collect::<Vec<_>>();
+            for thread in threads {
+                assert_eq!(thread.join().unwrap(), STATUS_OK);
+            }
+        });
+        assert!(embed::host().name.starts_with("ffi-host-"));
+
+        let malformed = c("{");
+        assert_eq!(aube_init(malformed.as_ptr()), STATUS_OK);
+        assert_eq!(aube_init(std::ptr::null()), STATUS_OK);
+    }
+
+    #[test]
+    fn task_panics_complete_the_job() {
+        let reporter = CallbackReporter {
+            callback: None,
+            context: 0,
+        };
+        let (handle, job) = register_job(InstallControl::silent(), reporter);
+        spawn_job(runtime().unwrap(), job, async {
+            panic!("simulated operation panic");
+        });
+        assert_eq!(wait(handle)["code"], aube_codes::errors::ERR_AUBE_FFI_PANIC);
     }
 
     #[test]
