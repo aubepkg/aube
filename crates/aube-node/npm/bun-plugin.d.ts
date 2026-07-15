@@ -9,7 +9,11 @@ export type AubeNodeBunPlugin = {
   setup(build: {
     onResolve(
       options: { filter: RegExp },
-      callback: () => { path: string },
+      callback: () => { path: string; namespace?: string },
+    ): void
+    onLoad(
+      options: { filter: RegExp; namespace: string },
+      callback: () => { contents: string; loader: "js" },
     ): void
   }): void
 }

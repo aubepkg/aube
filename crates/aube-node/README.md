@@ -53,3 +53,11 @@ Compiled Bun hosts should add `bunPlugin({ os, arch, libc })` from
 resolves the root import to that target's native package, embedding one addon
 per binary. Bundling the root loader directly would conservatively include
 every static platform branch.
+
+Cross-compilation hosts must install all optional platform packages before
+building targets for other operating systems and architectures. OpenCode's
+build preparation should use its pinned addon version:
+
+```sh
+bun install --os="*" --cpu="*" @jdxcode/aube-node@$AUBE_NODE_VERSION
+```

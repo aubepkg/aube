@@ -129,13 +129,18 @@ jobs:
       - name: Smoke-test installed packages with Node and Bun
         shell: bash
         run: | # zizmor: ignore[adhoc-packages] installs only tarballs built by the required matrix jobs
-          mkdir package-smoke
-          cd package-smoke
+          mkdir npm-smoke
+          cd npm-smoke
           npm init --yes >/dev/null
-          # OpenCode's cross-compiled Bun binaries include every platform
-          # package. Force-install all local tarballs to reproduce that build.
           npm install --force --ignore-scripts --no-package-lock ../packages/*.tgz
           node -e "require('@jdxcode/aube-node')"
+          cd ..
+          mkdir bun-smoke
+          cd bun-smoke
+          bun init --yes >/dev/null
+          # OpenCode installs every optional target package before its
+          # cross-compiled Bun matrix build.
+          bun install --os="*" --cpu="*" ../packages/*.tgz
           bun -e "require('@jdxcode/aube-node')"
           AUBE_NODE_OS=linux AUBE_NODE_ARCH=x64 AUBE_NODE_LIBC=glibc \
             bun "$GITHUB_WORKSPACE/crates/aube-node/npm/compile-smoke.mjs"
