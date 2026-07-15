@@ -1702,20 +1702,32 @@ impl<'a> ResolveDriver<'a> {
                     changed = true;
                 }
             }
-            if let Some(rest) = task.range.strip_prefix("npm:")
-                && let Some(at_idx) = rest.rfind('@')
-            {
-                let real_name = rest[..at_idx].to_string();
-                let real_range = rest[at_idx + 1..].to_string();
+            if let Some(rest) = task.range.strip_prefix("npm:") {
+                // The separator for a scoped alias is the `@` after
+                // its package name, not the scope sigil. A missing
+                // separator means the alias has no explicit range and
+                // therefore follows npm's `latest` default.
+                let range_separator = if rest.starts_with('@') {
+                    rest.find('/').and_then(|slash_idx| {
+                        rest[slash_idx + 1..]
+                            .find('@')
+                            .map(|at_idx| slash_idx + 1 + at_idx)
+                    })
+                } else {
+                    rest.find('@')
+                };
+                let (real_name, real_range) = match range_separator {
+                    Some(at_idx) => (&rest[..at_idx], &rest[at_idx + 1..]),
+                    None => (rest, "latest"),
+                };
                 // Keep `task.name` as the user-facing alias; stash
                 // the registry name on `real_name`. Only packument /
                 // tarball fetch sites (via `task.registry_name()`)
                 // hit the real package.
-                if task.real_name.as_deref() != Some(real_name.as_str()) || real_range != task.range
-                {
+                if task.real_name.as_deref() != Some(real_name) || real_range != task.range {
                     tracing::trace!("npm alias: {} -> {}@{}", task.name, real_name, real_range);
-                    task.real_name = Some(real_name);
-                    task.range = real_range;
+                    task.real_name = Some(real_name.to_string());
+                    task.range = real_range.to_string();
                     changed = true;
                 }
             }

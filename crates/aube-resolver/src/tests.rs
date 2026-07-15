@@ -3633,6 +3633,51 @@ async fn fresh_resolve_preserves_npm_alias_as_folder_name() {
     assert_eq!(root[0].dep_path, "odd-alias@3.0.1");
 }
 
+// Catalog expansion happens before npm alias parsing. A versionless
+// scoped alias such as `npm:@popperjs/core` must treat the leading `@`
+// as the scope sigil and default its range to `latest`; otherwise the
+// remainder (`popperjs/core`) is mistaken for GitHub shorthand.
+#[tokio::test]
+async fn fresh_resolve_handles_versionless_scoped_npm_alias_from_catalog() {
+    let popper = make_packument("@popperjs/core", &["2.11.8"], "2.11.8");
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut catalogs: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    catalogs
+        .entry("default".to_string())
+        .or_default()
+        .insert("popper2".to_string(), "npm:@popperjs/core".to_string());
+    let mut resolver = Resolver::new(client).with_catalogs(catalogs);
+    resolver.cache.insert("@popperjs/core".to_string(), popper);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("popper2".to_string(), "catalog:".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("versionless scoped catalog alias should resolve from npm");
+
+    let pkg = graph
+        .packages
+        .get("popper2@2.11.8")
+        .expect("catalog alias must retain its user-facing package name");
+    assert_eq!(pkg.name, "popper2");
+    assert_eq!(pkg.version, "2.11.8");
+    assert_eq!(pkg.alias_of.as_deref(), Some("@popperjs/core"));
+    assert_eq!(pkg.registry_name(), "@popperjs/core");
+    assert!(!graph.packages.contains_key("@popperjs/core@2.11.8"));
+
+    let catalog = graph.catalogs.get("default").unwrap();
+    let entry = catalog.get("popper2").unwrap();
+    assert_eq!(entry.specifier, "npm:@popperjs/core");
+    assert_eq!(entry.version, "2.11.8");
+}
+
 // Catalog-aliased dep + selector override targeting the original
 // (alias) name with a bare-range replacement. Reproduces the
 // pnpm/pnpm `js-yaml: npm:@zkochan/js-yaml@0.0.11` + `js-yaml@<3.14.2:
