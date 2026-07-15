@@ -134,6 +134,7 @@ jobs:
           npm init --yes >/dev/null
           npm install --force --ignore-scripts --no-package-lock ../packages/*.tgz
           node -e "require('@jdxcode/aube-node')"
+          node --input-type=module -e "import { install } from '@jdxcode/aube-node'; if (typeof install !== 'function') process.exit(1)"
           cd ..
           mkdir bun-smoke
           cd bun-smoke

@@ -27,4 +27,5 @@ function load() {
   throw new Error(`Unsupported aube Node-API platform: ${key}`)
 }
 
-module.exports = load()
+const addon = load()
+exports.install = addon.install
