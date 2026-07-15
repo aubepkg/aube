@@ -17,6 +17,87 @@ use manifest::{
 };
 use miette::{Context, IntoDiagnostic, miette};
 
+/// Options for embedders that need npm-style `install(dir, { add })`
+/// semantics without routing through clap or process-global cwd state.
+#[derive(Debug, Clone, Default)]
+pub struct AddToProjectOptions {
+    /// Save concrete versions instead of applying the configured save prefix.
+    pub save_exact: bool,
+    /// Skip root and dependency lifecycle scripts regardless of project policy.
+    pub ignore_scripts: bool,
+    /// Ignore install freshness state and re-resolve/relink the project.
+    pub force: bool,
+    /// Refuse network access and resolve exclusively from local caches.
+    pub offline: bool,
+    /// Dependency sections to materialize for this invocation.
+    pub dep_selection: install::DepSelection,
+    /// Invocation-scoped output and cancellation controls for embedders.
+    pub control: install::InstallControl,
+}
+
+/// Resolve, save, and install packages in an explicitly selected project.
+///
+/// This is the in-process counterpart to [`run`] for embedders. It holds the
+/// project lock across both manifest mutation and installation, and never
+/// consults or changes the process-global logical cwd.
+pub async fn add_to_project(
+    project_dir: &std::path::Path,
+    packages: &[String],
+    options: AddToProjectOptions,
+) -> miette::Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+    // Adding to a workspace member mutates that member's manifest, but the
+    // subsequent install owns the workspace-root lockfile and virtual store.
+    // Serialize on the same root lock as the CLI add path.
+    let lock = super::take_install_project_lock(project_dir)?;
+    let mutation_control = options.control.clone();
+    install::control::scope(options.control.clone(), async {
+        tokio::select! {
+            biased;
+            _ = mutation_control.cancelled() => mutation_control.check_cancelled(),
+            result = async {
+                if !options.offline {
+                    supply_chain::run_cli_name_gates(project_dir, packages, false).await?;
+                }
+                update_manifest_for_add(
+                    project_dir,
+                    packages,
+                    AddManifestOptions {
+                        save_dev: false,
+                        save_exact: options.save_exact,
+                        save_optional: false,
+                        save_peer: false,
+                        network_mode: if options.offline {
+                            aube_registry::NetworkMode::Offline
+                        } else {
+                            aube_registry::NetworkMode::Online
+                        },
+                        save_catalog: None,
+                        workspace_protocol_override: None,
+                    },
+                    false,
+                )
+                .await
+            } => result,
+        }
+    })
+    .await?;
+
+    let mut install_options = install::InstallOptions::with_mode(install::FrozenMode::Fix);
+    install_options.project_dir = Some(project_dir.to_path_buf());
+    install_options.ignore_scripts = options.ignore_scripts;
+    install_options.force = options.force;
+    install_options.dep_selection = options.dep_selection;
+    install_options.osv_transitive_check = true;
+    install_options.control = options.control;
+    if options.offline {
+        install_options.network_mode = aube_registry::NetworkMode::Offline;
+    }
+    install::run_with_project_lock(install_options, &lock).await
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct AddArgs {
     /// Package(s) to add
@@ -381,6 +462,7 @@ pub async fn run(
             save_exact,
             save_optional,
             save_peer,
+            network_mode: aube_registry::NetworkMode::Online,
             save_catalog: save_catalog_target,
             workspace_protocol_override: workspace_protocol_override_from_flags(
                 save_workspace_protocol,

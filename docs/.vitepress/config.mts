@@ -126,6 +126,13 @@ export default defineConfig({
         ],
       },
       {
+        text: "Embedding",
+        items: [
+          { text: "Overview", link: "/embedding/" },
+          { text: "Rust", link: "/embedding/rust" },
+        ],
+      },
+      {
         text: "Performance",
         items: [
           { text: "Benchmarks", link: "/benchmarks" },

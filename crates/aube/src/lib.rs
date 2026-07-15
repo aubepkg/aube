@@ -3,13 +3,10 @@
 //! The `aube` / `aubr` / `aubx` binaries are thin wrappers over
 //! [`cli_main`]; everything else lives here so the command layer can be
 //! embedded by other tools — e.g. constructing
-//! [`commands::install::InstallOptions`] and calling
-//! [`commands::install::run`] in-process instead of shelling out to the
-//! CLI. The public surface is deliberately small: [`commands`] (command
-//! implementations and their args/options structs), [`cli_args`] (the
-//! shared clap argument groups flattened into command args), and
-//! [`cli_main`]. Everything else is crate-private plumbing shared by the
-//! commands.
+//! [`embed::InstallOptions`] and calling [`embed::install`] in-process instead
+//! of shelling out to the CLI. Embedding hosts should use [`embed`], which is
+//! the stable facade over the lower-level [`commands`] modules. [`cli_args`]
+//! and [`cli_main`] remain public for hosts that wrap aube's complete CLI.
 //!
 //! The library makes no global-allocator choice — the mimalloc opt-in
 //! lives in `src/main.rs` so embedders keep control of their own
@@ -21,6 +18,7 @@ pub mod commands;
 mod dep_chain;
 mod deprecations;
 mod dirs;
+pub mod embed;
 mod engines;
 mod patches;
 mod pnpmfile;
