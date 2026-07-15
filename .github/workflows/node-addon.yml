@@ -46,7 +46,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build addon
         shell: bash
-        run: cargo build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
+        run: |
+          if [[ '${{ matrix.libc }}' == musl ]]; then
+            export RUSTFLAGS='-C target-feature=-crt-static'
+          fi
+          cargo build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
       - name: Import macOS signing certificate
         if: github.event_name == 'release' && matrix.os == 'darwin'
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
