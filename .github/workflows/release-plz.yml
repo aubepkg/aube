@@ -128,19 +128,44 @@ jobs:
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
 
+  # Build + codesign the C ABI libraries and attach them (plus aube.h)
+  # to the draft release. Must complete before `publish-release`:
+  # immutable releases freeze the asset list the moment the draft
+  # flips live, so ffi.yml's old post-publish upload path could never
+  # attach anything. npm publishing of @jdxcode/aube-ffi is NOT part
+  # of this call — that stays on ffi.yml's `release: published`
+  # trigger so packages only go out for releases that actually
+  # shipped.
+  upload-ffi-assets:
+    name: Upload ffi assets
+    needs: release-plz-release
+    if: ${{ needs.release-plz-release.outputs.tag != '' }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/ffi.yml
+    with:
+      tag: ${{ needs.release-plz-release.outputs.tag }}
+    secrets:
+      AUBE_GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+      CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
+      CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
+
   # Flip the draft release to non-draft once *every* asset uploaded
   # cleanly. With immutable GitHub releases enabled, a published
   # release can't have its assets replaced — so if any matrix target
   # failed, we leave the draft in place rather than ship a release
   # with missing platform binaries (downstream npm / COPR / PPA jobs
   # would also fail trying to fetch the holes). To recover: manually
-  # re-run `release.yml` via workflow_dispatch with the tag input,
-  # which fills in the missing assets, then either flip the draft by
-  # hand (`gh release edit $TAG --draft=false`) or workflow_dispatch
-  # the whole release-plz workflow again so this job runs.
+  # re-run `release.yml` (CLI binaries) or `ffi.yml` (C ABI libraries)
+  # via workflow_dispatch with the tag input, which fills in the
+  # missing assets, then either flip the draft by hand
+  # (`gh release edit $TAG --draft=false`) or workflow_dispatch the
+  # whole release-plz workflow again so this job runs.
   publish-release:
     name: Publish release
-    needs: [release-plz-release, upload-assets]
+    needs: [release-plz-release, upload-assets, upload-ffi-assets]
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
     runs-on: namespace-profile-endev-linux-amd64
     permissions:
