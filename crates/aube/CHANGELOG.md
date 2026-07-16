@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.1](https://github.com/jdx/aube/compare/v1.29.0...v1.29.1) - 2026-07-16
+
+### Fixed
+
+- *(add)* honor minimumReleaseAge when pinning manifest versions ([#1056](https://github.com/jdx/aube/pull/1056))
+
 ## [1.29.0](https://github.com/jdx/aube/compare/v1.28.0...v1.29.0) - 2026-07-16
 
 ### Other
