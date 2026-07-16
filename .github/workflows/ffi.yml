@@ -218,4 +218,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: gh release upload "$RELEASE_TAG" packages/libaube-* packages/aube.h --clobber
+        # No checkout in this job, so gh needs the repo passed explicitly.
+        run: gh release upload --repo "$GITHUB_REPOSITORY" "$RELEASE_TAG" packages/libaube-* packages/aube.h --clobber
