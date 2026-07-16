@@ -109,6 +109,8 @@ pub const ERR_AUBE_PATCHES_TRACKING_WRITE: &str = "ERR_AUBE_PATCHES_TRACKING_WRI
 pub const ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER: &str = "ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER";
 pub const ERR_AUBE_EMBED_INVALID_PROJECT: &str = "ERR_AUBE_EMBED_INVALID_PROJECT";
 pub const ERR_AUBE_EMBED_INSTALL_FAILED: &str = "ERR_AUBE_EMBED_INSTALL_FAILED";
+pub const ERR_AUBE_EMBED_INVALID_SETTING: &str = "ERR_AUBE_EMBED_INVALID_SETTING";
+pub const ERR_AUBE_EMBED_ALREADY_INITIALIZED: &str = "ERR_AUBE_EMBED_ALREADY_INITIALIZED";
 pub const ERR_AUBE_FFI_INVALID_ARGUMENT: &str = "ERR_AUBE_FFI_INVALID_ARGUMENT";
 pub const ERR_AUBE_FFI_UNKNOWN_HANDLE: &str = "ERR_AUBE_FFI_UNKNOWN_HANDLE";
 pub const ERR_AUBE_FFI_RUNTIME: &str = "ERR_AUBE_FFI_RUNTIME";
@@ -577,6 +579,18 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_EMBED_INSTALL_FAILED,
         category: category::MISC_SAFETY,
         description: "An in-process embedder could not initialize its host callback or received an install failure without a more specific stable code.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_EMBED_INVALID_SETTING,
+        category: category::MISC_SAFETY,
+        description: "An in-process embedder passed a setting default whose name is not a canonical aube setting.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_EMBED_ALREADY_INITIALIZED,
+        category: category::MISC_SAFETY,
+        description: "An in-process embedder tried to register setting defaults after the process already initialized its embedder profile.",
         exit_code: None,
     },
     CodeMeta {

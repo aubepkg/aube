@@ -407,6 +407,7 @@ dependencies = [
  "aube",
  "aube-codes",
  "aube-registry",
+ "aube-settings",
  "miette",
  "napi",
  "napi-build",

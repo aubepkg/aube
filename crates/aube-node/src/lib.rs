@@ -11,7 +11,9 @@ use napi::bindgen_prelude::{
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -47,6 +49,87 @@ static NODE_HOST: embed::Host = embed::Host {
     self_update_enabled: false,
 };
 
+/// Whether this process has registered its embedder profile and setting
+/// defaults. `configure` and the first `install` race for it; registration is
+/// process-global and first-write-wins, so a `configure` that loses the race
+/// must fail loudly rather than silently not apply.
+static EMBEDDER_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+fn builtin_defaults() -> Vec<(String, String)> {
+    vec![
+        ("nodeLinker".to_string(), "hoisted".to_string()),
+        ("minimumReleaseAge".to_string(), "0".to_string()),
+    ]
+}
+
+fn merged_defaults(overrides: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut merged = builtin_defaults();
+    for (key, value) in overrides {
+        match merged.iter_mut().find(|(name, _)| *name == key) {
+            Some(existing) => existing.1 = value,
+            None => merged.push((key, value)),
+        }
+    }
+    merged
+}
+
+fn validate_defaults(defaults: HashMap<String, String>) -> Result<Vec<(String, String)>, String> {
+    let mut overrides = defaults.into_iter().collect::<Vec<_>>();
+    // HashMap iteration order is random; keep registration deterministic.
+    overrides.sort();
+    for (key, _) in &overrides {
+        if aube_settings::find(key).is_none() {
+            return Err(key.clone());
+        }
+    }
+    Ok(overrides)
+}
+
+#[napi(object)]
+pub struct ConfigureInput {
+    /// Embedder setting defaults by canonical setting name (e.g.
+    /// `minimumReleaseAge`). They sit at the lowest precedence, below
+    /// environment variables, project files, and user configuration.
+    pub defaults: Option<HashMap<String, String>>,
+}
+
+/// Register embedder setting defaults for this process.
+///
+/// Call before the first `install`; registration is process-global and
+/// first-write-wins, so calling after an install (or a second time) rejects
+/// with `ERR_AUBE_EMBED_ALREADY_INITIALIZED`. Unknown setting names reject
+/// with `ERR_AUBE_EMBED_INVALID_SETTING`.
+#[napi(catch_unwind)]
+pub fn configure(env: &Env, input: Option<ConfigureInput>) -> NodeResult<()> {
+    let defaults = input.and_then(|input| input.defaults).unwrap_or_default();
+    let overrides = validate_defaults(defaults).map_err(|key| {
+        into_napi_error(
+            env,
+            InstallFailure {
+                code: aube_codes::errors::ERR_AUBE_EMBED_INVALID_SETTING.to_string(),
+                message: format!("unknown setting {key:?}"),
+                diagnostic: format!(
+                    "{key:?} is not a canonical aube setting name; see https://aube.jdx.dev/settings"
+                ),
+            },
+        )
+    })?;
+    if EMBEDDER_INITIALIZED.swap(true, Ordering::SeqCst) {
+        return Err(into_napi_error(
+            env,
+            InstallFailure {
+                code: aube_codes::errors::ERR_AUBE_EMBED_ALREADY_INITIALIZED.to_string(),
+                message: "configure must be called before the first install".to_string(),
+                diagnostic: "embedder defaults are process-global and first-write-wins; this \
+                             process already registered them"
+                    .to_string(),
+            },
+        ));
+    }
+    embed::initialize(&NODE_HOST, merged_defaults(overrides));
+    Ok(())
+}
+
 #[napi(object)]
 pub struct PackageToAdd {
     pub name: String,
@@ -59,6 +142,7 @@ pub struct InstallInput {
     pub add: Option<Vec<PackageToAdd>>,
     pub force: Option<bool>,
     pub offline: Option<bool>,
+    pub osv_transitive_check: Option<bool>,
     pub on_event: Option<Function<'static, FnArgs<(InstallEventPayload,)>, ()>>,
     pub signal: Option<Object<'static>>,
 }
@@ -136,12 +220,14 @@ pub fn install<'env>(
         add,
         force,
         offline,
+        osv_transitive_check,
         on_event,
         signal,
     } = input.unwrap_or(InstallInput {
         add: None,
         force: None,
         offline: None,
+        osv_transitive_check: None,
         on_event: None,
         signal: None,
     });
@@ -195,11 +281,21 @@ pub fn install<'env>(
         .collect::<Vec<_>>();
     let force = force.unwrap_or(false);
     let offline = offline.unwrap_or(false);
+    let osv_transitive_check = osv_transitive_check.unwrap_or(false);
 
     env.spawn_future_with_callback(
         async move {
             Ok::<_, napi::Error>(
-                run_install(project_dir, packages, force, offline, control, stats).await,
+                run_install(
+                    project_dir,
+                    packages,
+                    force,
+                    offline,
+                    osv_transitive_check,
+                    control,
+                    stats,
+                )
+                .await,
             )
         },
         |env, result| match result {
@@ -214,6 +310,7 @@ async fn run_install(
     packages: Vec<(String, bool)>,
     force: bool,
     offline: bool,
+    osv_transitive_check: bool,
     control: InstallControl,
     stats: Arc<Mutex<InstallStats>>,
 ) -> Result<InstallResult, InstallFailure> {
@@ -244,7 +341,7 @@ async fn run_install(
                     dangerously_allow_all_builds: false,
                     offline,
                     dep_selection,
-                    osv_transitive_check: false,
+                    osv_transitive_check,
                     control: control.clone(),
                 },
             )
@@ -256,6 +353,7 @@ async fn run_install(
         options.ignore_scripts = true;
         options.force = force;
         options.dep_selection = dep_selection;
+        options.osv_transitive_check = osv_transitive_check;
         options.control = control;
         if offline {
             options.network_mode = NetworkMode::Offline;
@@ -296,13 +394,10 @@ fn npmrc_dep_selection(project_dir: &Path) -> DepSelection {
 }
 
 fn initialize_embedder() {
-    embed::initialize(
-        &NODE_HOST,
-        vec![
-            ("nodeLinker".to_string(), "hoisted".to_string()),
-            ("minimumReleaseAge".to_string(), "0".to_string()),
-        ],
-    );
+    if EMBEDDER_INITIALIZED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    embed::initialize(&NODE_HOST, builtin_defaults());
 }
 
 async fn prepare_project_dir(project_dir: &Path) -> Result<PathBuf, InstallFailure> {
@@ -440,5 +535,58 @@ fn level_name(level: InstallOutputLevel) -> &'static str {
         InstallOutputLevel::Info => "info",
         InstallOutputLevel::Warning => "warning",
         InstallOutputLevel::Error => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merged_defaults_lets_overrides_replace_builtins() {
+        let merged = merged_defaults(vec![(
+            "minimumReleaseAge".to_string(),
+            "259200".to_string(),
+        )]);
+        assert!(merged.contains(&("minimumReleaseAge".to_string(), "259200".to_string())));
+        assert!(merged.contains(&("nodeLinker".to_string(), "hoisted".to_string())));
+        assert_eq!(
+            merged
+                .iter()
+                .filter(|(key, _)| key == "minimumReleaseAge")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn merged_defaults_appends_settings_without_builtin_values() {
+        let merged = merged_defaults(vec![("paranoid".to_string(), "true".to_string())]);
+        assert!(merged.contains(&("paranoid".to_string(), "true".to_string())));
+        assert_eq!(merged.len(), builtin_defaults().len() + 1);
+    }
+
+    #[test]
+    fn validate_defaults_rejects_unknown_setting_names() {
+        let defaults = HashMap::from([("minimumRelaseAge".to_string(), "259200".to_string())]);
+        assert_eq!(
+            validate_defaults(defaults),
+            Err("minimumRelaseAge".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_defaults_sorts_canonical_names() {
+        let defaults = HashMap::from([
+            ("nodeLinker".to_string(), "hoisted".to_string()),
+            ("minimumReleaseAge".to_string(), "259200".to_string()),
+        ]);
+        assert_eq!(
+            validate_defaults(defaults),
+            Ok(vec![
+                ("minimumReleaseAge".to_string(), "259200".to_string()),
+                ("nodeLinker".to_string(), "hoisted".to_string()),
+            ])
+        );
     }
 }

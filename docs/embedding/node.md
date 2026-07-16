@@ -44,6 +44,31 @@ saves an entry to `devDependencies`. Lifecycle scripts are skipped.
 Setting `offline: true` refuses registry access and resolves from the local
 store and packument caches. A missing cached package rejects the operation.
 
+## Configuration
+
+Register embedder setting defaults before the first `install`:
+
+```ts
+import { configure, install } from "@jdxcode/aube-node"
+
+configure({
+  defaults: {
+    minimumReleaseAge: "259200", // seconds; 3-day cooldown for fresh releases
+  },
+})
+```
+
+Defaults use canonical setting names and sit at the lowest precedence —
+environment variables, project files, and user configuration all override
+them. Registration is process-global and first-write-wins: calling
+`configure` after an install (or a second time) rejects with
+`ERR_AUBE_EMBED_ALREADY_INITIALIZED`, and unknown setting names reject with
+`ERR_AUBE_EMBED_INVALID_SETTING`. Without a `configure` call the addon
+applies its built-in defaults (`nodeLinker=hoisted`, `minimumReleaseAge=0`).
+
+Per-install, `osvTransitiveCheck: true` forces a live transitive OSV check
+even when resolution reused every version from the existing lockfile.
+
 ## Events
 
 `InstallEvent` is a discriminated union:

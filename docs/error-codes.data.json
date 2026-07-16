@@ -433,6 +433,18 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_EMBED_INVALID_SETTING",
+      "category": "Misc / safety",
+      "description": "An in-process embedder passed a setting default whose name is not a canonical aube setting.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_EMBED_ALREADY_INITIALIZED",
+      "category": "Misc / safety",
+      "description": "An in-process embedder tried to register setting defaults after the process already initialized its embedder profile.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_FFI_INVALID_ARGUMENT",
       "category": "Misc / safety",
       "description": "A C ABI call received a null pointer, invalid UTF-8, malformed JSON, or an unsupported option value.",

@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 aube = { workspace = true }
 aube-codes = { workspace = true }
 aube-registry = { workspace = true }
+aube-settings = { workspace = true }
 miette = { workspace = true }
 napi = { workspace = true }
 napi-derive = { workspace = true }

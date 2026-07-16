@@ -28,4 +28,5 @@ function load() {
 }
 
 const addon = load()
+exports.configure = addon.configure
 exports.install = addon.install

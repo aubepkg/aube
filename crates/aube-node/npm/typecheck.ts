@@ -1,4 +1,4 @@
-import { install, type AubeError, type InstallEvent } from "@jdxcode/aube-node"
+import { configure, install, type AubeError, type InstallEvent } from "@jdxcode/aube-node"
 
 function handleEvent(event: InstallEvent) {
   switch (event.kind) {
@@ -15,8 +15,11 @@ function handleEvent(event: InstallEvent) {
   }
 }
 
+configure({ defaults: { minimumReleaseAge: "259200" } })
+
 const controller = new AbortController()
 install(".", {
+  osvTransitiveCheck: true,
   add: [{ name: "typescript", version: "latest", dev: true }],
   signal: controller.signal,
   onEvent: handleEvent,
