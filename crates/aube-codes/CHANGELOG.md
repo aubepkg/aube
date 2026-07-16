@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.0](https://github.com/jdx/aube/compare/aube-codes-v1.28.0...aube-codes-v1.29.0) - 2026-07-16
+
+### Added
+
+- *(node)* add configure() for embedder setting defaults ([#1053](https://github.com/jdx/aube/pull/1053))
+
+### Other
+
+- refresh benchmarks for v1.28.0 ([#1050](https://github.com/jdx/aube/pull/1050))
+
 ## [1.28.0](https://github.com/jdx/aube/compare/aube-codes-v1.27.0...aube-codes-v1.28.0) - 2026-07-16
 
 ### Added
