@@ -147,6 +147,7 @@ jobs:
     uses: ./.github/workflows/ffi.yml
     with:
       tag: ${{ needs.release-plz-release.outputs.tag }}
+      draft_phase: true
     secrets:
       AUBE_GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
