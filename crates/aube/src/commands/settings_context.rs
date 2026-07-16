@@ -568,6 +568,13 @@ pub(crate) fn packument_full_cache_dir() -> std::path::PathBuf {
     resolved_cache_dir(&cwd).join("packuments-full-v1")
 }
 
+/// [`packument_full_cache_dir`] against an explicit project dir instead of
+/// the process-global logical cwd — for embed-safe paths like
+/// `add_to_project`, which must not consult the host process's cwd.
+pub(crate) fn packument_full_cache_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+    resolved_cache_dir(cwd).join("packuments-full-v1")
+}
+
 #[cfg(test)]
 mod resolve_virtual_store_dir_tests {
     use super::resolve_virtual_store_dir;

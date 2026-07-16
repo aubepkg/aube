@@ -3909,6 +3909,91 @@ fn pick_version_exact_pin_not_hijacked_by_dist_tag() {
     assert_eq!(result.version, "1.0.0");
 }
 
+/// Packument with a `time` map: `old` versions dated 2020, `fresh` ones
+/// dated 2099 — deterministically before/after any wall-clock cutoff a
+/// test-sized `minutes` value produces.
+fn make_timed_packument(name: &str, old: &[&str], fresh: &[&str], latest: &str) -> Packument {
+    let all: Vec<&str> = old.iter().chain(fresh.iter()).copied().collect();
+    let mut packument = make_packument(name, &all, latest);
+    for v in old {
+        packument
+            .time
+            .insert(v.to_string(), "2020-01-01T00:00:00.000Z".to_string());
+    }
+    for v in fresh {
+        packument
+            .time
+            .insert(v.to_string(), "2099-01-01T00:00:00.000Z".to_string());
+    }
+    packument
+}
+
+fn mra(minutes: u64, strict: bool, exclude: &[&str]) -> MinimumReleaseAge {
+    let rules: Vec<String> = exclude.iter().map(|s| s.to_string()).collect();
+    let (exclude, errors) = crate::trust::PackageVersionPolicy::parse_lossy(rules);
+    assert!(errors.is_empty(), "test exclude rules must parse");
+    MinimumReleaseAge {
+        minutes,
+        exclude,
+        strict,
+    }
+}
+
+#[test]
+fn pick_version_for_add_steers_gated_latest_to_mature_version() {
+    // The freshly published version is the one tagged `latest` — the
+    // classic supply-chain scenario minimumReleaseAge exists for.
+    let packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "foo", "*", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.0.0");
+}
+
+#[test]
+fn pick_version_for_add_prefers_mature_latest_tag() {
+    // A mature `latest` tag wins over a higher untagged fresh version,
+    // matching the resolver's dist-tag preference.
+    let packument = make_timed_packument("foo", &["1.0.0"], &["2.0.0"], "1.0.0");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "foo", "*", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.0.0");
+}
+
+#[test]
+fn pick_version_for_add_lenient_fallback_admits_exact_pin() {
+    // An exact pin of a fresh version has no older alternative; the
+    // lenient (default) mode honors it, same as full resolution.
+    let packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "foo", "1.1.0", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.1.0");
+}
+
+#[test]
+fn pick_version_for_add_strict_refuses_gated_pick() {
+    let packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    let gate = mra(1440, true, &[]);
+    assert!(matches!(
+        pick_version_for_add(&packument, "foo", "1.1.0", Some(&gate)),
+        PickResult::AgeGated
+    ));
+}
+
+#[test]
+fn pick_version_for_add_exclude_exempts_registry_name() {
+    let packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    let gate = mra(1440, false, &["foo"]);
+    let result = pick_version_for_add(&packument, "foo", "*", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.1.0");
+}
+
+#[test]
+fn pick_version_for_add_without_gate_keeps_latest_preference() {
+    let packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    let result = pick_version_for_add(&packument, "foo", "*", None).unwrap();
+    assert_eq!(result.version, "1.1.0");
+}
+
 fn assert_protocol_hijack_blocked(spec: &str) {
     let mut packument = make_packument("@victim/utils", &["1.0.0"], "1.0.0");
     packument

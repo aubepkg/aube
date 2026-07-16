@@ -89,7 +89,7 @@ pub(super) async fn update_manifest_for_add(
     // own dir so a sub-project's `.npmrc` still wins — switching the
     // entire context to the workspace root would silently drop those
     // overrides, since `load_npmrc_entries` doesn't walk up.
-    let (default_tag, default_prefix, catalog_mode) =
+    let (default_tag, default_prefix, catalog_mode, minimum_release_age, registry_supports_time) =
         crate::commands::with_settings_ctx(cwd, |ctx| {
             let tag = aube_settings::resolved::tag(ctx);
             let prefix = if opts.save_exact {
@@ -109,8 +109,30 @@ pub(super) async fn update_manifest_for_add(
                 }
             };
             let catalog_mode = aube_settings::resolved::catalog_mode(ctx);
-            (tag, prefix, catalog_mode)
+            // The version this function writes into the manifest must
+            // honor `minimumReleaseAge` the same way full resolution
+            // does: dist-tag adds and `--save-exact` pin a concrete
+            // version here, and a pinned fresh version would sail past
+            // the resolver's gate via its lenient exact-range fallback.
+            let minimum_release_age =
+                crate::commands::install::resolve_minimum_release_age(ctx, None);
+            let registry_supports_time_field =
+                aube_settings::resolved::registry_supports_time_field(ctx);
+            (
+                tag,
+                prefix,
+                catalog_mode,
+                minimum_release_age,
+                registry_supports_time_field,
+            )
         });
+    // Offline adds resolve from whatever the local cache already holds —
+    // a freshly published version cannot appear there mid-flight, so the
+    // age gate is moot, and the abbreviated cache (which offline adds
+    // have always served from) predates the gate's need for `time` data.
+    // The gate governs online adds only.
+    let minimum_release_age =
+        minimum_release_age.filter(|_| opts.network_mode != aube_registry::NetworkMode::Offline);
     let workspace_settings_cwd = crate::dirs::find_workspace_yaml_root(cwd)
         .or_else(|| crate::dirs::find_workspace_root(cwd))
         .unwrap_or_else(|| cwd.to_path_buf());
@@ -226,7 +248,18 @@ pub(super) async fn update_manifest_for_add(
     // truth for those names. Without these guards the parallel
     // fetch below would 404 on the non-registry name.
     let mut handles = tokio::task::JoinSet::new();
-    let packument_cache_dir = crate::commands::packument_cache_dir_for_cwd(cwd);
+    // The age gate compares against the packument `time` map, which the
+    // abbreviated (corgi) payload omits — fetch full packuments when the
+    // gate is active. Same needs_time split the resolver makes.
+    // `registrySupportsTimeField` keeps the cheaper abbreviated path hot
+    // when the registry inlines `time` in corgi payloads — the same split
+    // the resolver's fetch scheduler makes.
+    let needs_time = minimum_release_age.is_some() && !registry_supports_time;
+    let packument_cache_dir = if needs_time {
+        crate::commands::packument_full_cache_dir_for_cwd(cwd)
+    } else {
+        crate::commands::packument_cache_dir_for_cwd(cwd)
+    };
     for spec in &parsed {
         if aube_util::pkg::is_workspace_spec(&spec.range)
             || spec.git_spec.is_some()
@@ -239,10 +272,14 @@ pub(super) async fn update_manifest_for_add(
         let cache_dir = packument_cache_dir.clone();
         let name = spec.name.clone();
         handles.spawn(async move {
-            let packument = client
-                .fetch_packument_cached(&name, &cache_dir)
-                .await
-                .map_err(|e| miette!("failed to fetch {name}: {e}"))?;
+            let packument = if needs_time {
+                client
+                    .fetch_packument_with_time_cached(&name, &cache_dir)
+                    .await
+            } else {
+                client.fetch_packument_cached(&name, &cache_dir).await
+            }
+            .map_err(|e| miette!("failed to fetch {name}: {e}"))?;
             Ok::<_, miette::Report>((name, packument))
         });
     }
@@ -326,51 +363,63 @@ pub(super) async fn update_manifest_for_add(
             format!("Resolving {}@{}...", spec.name, spec.range),
         );
 
-        // Resolve "latest" and other dist-tags to a version range.
-        let effective_range = if let Some(tagged_version) = packument.dist_tags.get(&spec.range) {
-            tagged_version.clone()
-        } else {
-            spec.range.clone()
+        // Resolve "latest" and other dist-tags to a version range. Under an
+        // active minimumReleaseAge gate the `latest` tag is steered like a
+        // range pick instead of pinned verbatim — in the common attack the
+        // freshly published compromise is exactly the version tagged
+        // `latest`, and pinning it here would smuggle it past the
+        // resolver's gate as an exact manifest spec its lenient fallback
+        // honors. `pick_version_for_add` prefers the tagged version
+        // whenever it clears the cutoff, so mature `latest` tags resolve
+        // exactly as before. Other dist-tags stay verbatim: like exact
+        // pins, a non-latest tag is a deliberate user override (strict
+        // mode still refuses it below).
+        let effective_range = match packument.dist_tags.get(&spec.range) {
+            Some(_) if spec.range == "latest" && minimum_release_age.is_some() => "*".to_string(),
+            Some(tagged_version) => tagged_version.clone(),
+            None => spec.range.clone(),
         };
 
-        // Find highest matching version. Reused below when a
-        // `catalogMode` rewrite redirects resolution to the catalog's
-        // range — the display version should match what will actually
-        // get installed, not what the user's original range resolved
-        // to, so we call this twice when the rewrite fires.
-        //
-        // Parse every candidate version once (skipping invalid ones
-        // entirely) and sort the parsed pairs. Comparator-only parsing
-        // burned ~2N parses per add; pre-parse turns it into N + log N
-        // and lets the satisfies-scan reuse the parsed `Version`.
-        let mut parsed_versions: Vec<(&String, node_semver::Version)> = packument
-            .versions
-            .keys()
-            .filter_map(|v| node_semver::Version::parse(v).ok().map(|p| (v, p)))
-            .collect();
-        parsed_versions.sort_by(|a, b| b.1.cmp(&a.1));
+        // Version pick, shared with the `catalogMode` rewrite below — the
+        // display version must match what will actually get installed, so
+        // the same pick runs when the rewrite redirects resolution to the
+        // catalog's range. Delegates to the resolver's `pick_version` so
+        // `add` and full resolution cannot drift: dist-tag preference,
+        // `minimumReleaseAgeExclude` exemptions, and the strict/lenient
+        // age-gate fallback all behave identically.
         let highest_satisfying = |range_str: &str| -> Option<String> {
-            let range = node_semver::Range::parse(range_str).ok()?;
-            // Mirror `aube_resolver::pick_version`: prefer the
-            // `dist-tags.latest` version when it satisfies the range.
-            // npm and pnpm both pin toward the publisher's tagged
-            // build over the strictly-highest matching version, and
-            // the display line here must agree with what the
-            // resolver actually installs.
-            if let Some(latest) = packument.dist_tags.get("latest")
-                && let Ok(parsed_latest) = node_semver::Version::parse(latest)
-                && parsed_latest.satisfies(&range)
-                && packument.versions.contains_key(latest)
-            {
-                return Some(latest.clone());
+            match aube_resolver::pick_version_for_add(
+                packument,
+                &spec.name,
+                range_str,
+                minimum_release_age.as_ref(),
+            ) {
+                aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
+                aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
             }
-            parsed_versions
-                .iter()
-                .find(|(_, parsed)| parsed.satisfies(&range))
-                .map(|(raw, _)| (*raw).clone())
         };
-        let resolved_version = highest_satisfying(&effective_range)
-            .ok_or_else(|| miette!("no version of {} matches {effective_range}", spec.name))?;
+        let resolved_version = match aube_resolver::pick_version_for_add(
+            packument,
+            &spec.name,
+            &effective_range,
+            minimum_release_age.as_ref(),
+        ) {
+            aube_resolver::PickResult::Found(meta) => meta.version.clone(),
+            aube_resolver::PickResult::AgeGated => {
+                return Err(miette!(
+                    code = aube_codes::errors::ERR_AUBE_NO_MATURE_MATCHING_VERSION,
+                    "no version of {} matching {effective_range} is older than {} minute(s) (minimumReleaseAgeStrict=true)",
+                    spec.name,
+                    minimum_release_age.as_ref().map_or(0, |m| m.minutes),
+                ));
+            }
+            aube_resolver::PickResult::NoMatch => {
+                return Err(miette!(
+                    "no version of {} matches {effective_range}",
+                    spec.name
+                ));
+            }
+        };
 
         // Build the specifier for package.json.
         // Dist-tags (including "latest") are written as ^version — this matches pnpm's behavior
