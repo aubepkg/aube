@@ -13,8 +13,7 @@ use napi::{Env, Status};
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 type NodeError = napi::Error;
@@ -49,11 +48,12 @@ static NODE_HOST: embed::Host = embed::Host {
     self_update_enabled: false,
 };
 
-/// Whether this process has registered its embedder profile and setting
-/// defaults. `configure` and the first `install` race for it; registration is
-/// process-global and first-write-wins, so a `configure` that loses the race
-/// must fail loudly rather than silently not apply.
-static EMBEDDER_INITIALIZED: AtomicBool = AtomicBool::new(false);
+/// Registration of the embedder profile and setting defaults. `configure` and
+/// the first `install` race for it; `OnceLock` both serializes the race (a
+/// concurrent install blocks until registration completes rather than
+/// proceeding under the standalone profile) and records who won, so a
+/// `configure` that loses must fail loudly rather than silently not apply.
+static EMBEDDER_INIT: OnceLock<()> = OnceLock::new();
 
 fn builtin_defaults() -> Vec<(String, String)> {
     vec![
@@ -101,6 +101,21 @@ pub struct ConfigureInput {
 /// with `ERR_AUBE_EMBED_INVALID_SETTING`.
 #[napi(catch_unwind)]
 pub fn configure(env: &Env, input: Option<ConfigureInput>) -> NodeResult<()> {
+    let already_initialized = || {
+        into_napi_error(
+            env,
+            InstallFailure {
+                code: aube_codes::errors::ERR_AUBE_EMBED_ALREADY_INITIALIZED.to_string(),
+                message: "configure must be called before the first install".to_string(),
+                diagnostic: "embedder defaults are process-global and first-write-wins; this \
+                             process already registered them"
+                    .to_string(),
+            },
+        )
+    };
+    if EMBEDDER_INIT.get().is_some() {
+        return Err(already_initialized());
+    }
     let defaults = input.and_then(|input| input.defaults).unwrap_or_default();
     let overrides = validate_defaults(defaults).map_err(|key| {
         into_napi_error(
@@ -114,19 +129,14 @@ pub fn configure(env: &Env, input: Option<ConfigureInput>) -> NodeResult<()> {
             },
         )
     })?;
-    if EMBEDDER_INITIALIZED.swap(true, Ordering::SeqCst) {
-        return Err(into_napi_error(
-            env,
-            InstallFailure {
-                code: aube_codes::errors::ERR_AUBE_EMBED_ALREADY_INITIALIZED.to_string(),
-                message: "configure must be called before the first install".to_string(),
-                diagnostic: "embedder defaults are process-global and first-write-wins; this \
-                             process already registered them"
-                    .to_string(),
-            },
-        ));
+    let mut applied = false;
+    EMBEDDER_INIT.get_or_init(|| {
+        embed::initialize(&NODE_HOST, merged_defaults(overrides));
+        applied = true;
+    });
+    if !applied {
+        return Err(already_initialized());
     }
-    embed::initialize(&NODE_HOST, merged_defaults(overrides));
     Ok(())
 }
 
@@ -394,10 +404,7 @@ fn npmrc_dep_selection(project_dir: &Path) -> DepSelection {
 }
 
 fn initialize_embedder() {
-    if EMBEDDER_INITIALIZED.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    embed::initialize(&NODE_HOST, builtin_defaults());
+    EMBEDDER_INIT.get_or_init(|| embed::initialize(&NODE_HOST, builtin_defaults()));
 }
 
 async fn prepare_project_dir(project_dir: &Path) -> Result<PathBuf, InstallFailure> {
