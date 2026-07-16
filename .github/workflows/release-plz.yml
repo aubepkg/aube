@@ -320,12 +320,13 @@ jobs:
             `$1${newVersion}$2`,
           );
           for (const name of packages) {
-            let found = false;
+            // Workspace members nobody depends on (aube-node, aube-ffi) have no
+            // [workspace.dependencies] entry; their versions come from
+            // workspace.package, bumped above. Only rewrite lines that exist.
             cargoToml = cargoToml
               .split('\n')
               .map((line) => {
                 if (!line.startsWith(`${name} = {`) || !line.includes('path = ')) return line;
-                found = true;
                 const updated = line.replace(`version = "${oldVersion}"`, `version = "${newVersion}"`);
                 if (updated === line) {
                   throw new Error(`path dependency ${name} did not contain version ${oldVersion}`);
@@ -333,7 +334,6 @@ jobs:
                 return updated;
               })
               .join('\n');
-            if (!found) throw new Error(`path dependency ${name} not found in Cargo.toml`);
           }
           fs.writeFileSync('Cargo.toml', cargoToml);
 
