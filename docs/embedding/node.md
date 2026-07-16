@@ -113,6 +113,7 @@ Install optional dependencies for every target before a cross-platform build:
 bun install --os="*" --cpu="*" @jdxcode/aube-node
 ```
 
-The addon targets Node-API 8. Package versions track the aube workspace
-version. For support, use
-[GitHub Discussions](https://github.com/jdx/aube/discussions).
+## Compatibility
+
+The addon targets Node-API 8 and supports Node.js 18 and newer. Package
+versions track the aube workspace version.

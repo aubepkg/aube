@@ -46,9 +46,10 @@ void aube_string_free(char *value);
 run on an internal multi-threaded runtime. `aube_wait` blocks until completion
 and consumes the handle. `aube_cancel` requests cooperative cancellation.
 A callback-driven host should call `aube_wait` after receiving the terminal
-event; it then returns immediately and releases the completed handle.
+event; `aube_wait` then returns immediately and releases the completed handle.
 
-Initialize the host once before starting operations:
+Initialize the host once before starting operations by passing `aube_init` a
+JSON host profile:
 
 ```json
 {
@@ -190,5 +191,4 @@ callback.close()
 library.close()
 ```
 
-Run Deno with `--allow-ffi`. For support, use
-[GitHub Discussions](https://github.com/jdx/aube/discussions).
+Run Deno with `--allow-ffi`.

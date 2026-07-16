@@ -48,8 +48,8 @@ embed::initialize(
 
 Initialization is process-global and first-write-wins. Setting defaults have
 the lowest precedence, so users can still override them through normal aube
-configuration sources. Behavior fields on `Host` are fixed by the embedding
-application.
+configuration sources. `Host` fields, by contrast, are decisions of the
+embedding application and are not user-configurable.
 
 ## Install a project
 

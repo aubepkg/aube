@@ -5,27 +5,33 @@ process. Embedding avoids CLI startup and output parsing, gives the host
 structured progress events and stable error codes, and allows cooperative
 cancellation.
 
-The native Rust API is the foundation for all embedding integrations. Runtime
-adapters, such as Node-API bindings, should be thin translations over this API.
+The native Rust API is the foundation for every embedding integration; the
+Node-API and C ABI distributions are thin adapters over it.
 
 ## Supported operations
 
 The stable `aube::embed` facade supports:
 
-- installing a project's declared dependencies;
-- adding packages and installing the resulting dependency graph;
-- per-install structured progress and output events;
-- cooperative cancellation;
-- concurrent operations in unrelated projects; and
-- stable `ERR_AUBE_*` diagnostic codes.
+- installing a project's declared dependencies
+- adding packages and installing the resulting dependency graph
+- per-install structured progress and output events
+- cooperative cancellation
+- concurrent operations in unrelated projects
+- stable `ERR_AUBE_*` diagnostic codes
 
 Operations that target the same workspace are serialized. The project lock
 spans manifest changes, lockfile updates, and linking, so concurrent callers do
 not observe partial state.
 
-See [Embedding in Rust](./rust.md) for the native API. JavaScript adapters
-should translate this facade through Node-API rather than calling Rust through
-a C FFI layer.
+## Choosing an integration
+
+- [Rust](./rust.md) — the native `aube::embed` facade for Rust hosts.
+- [Node-API](./node.md) — `@jdxcode/aube-node` for Node.js, Bun, Electron, and
+  compiled Bun executables. Prefer this for any JavaScript host that supports
+  Node-API.
+- [C ABI](./ffi.md) — `@jdxcode/aube-ffi` for hosts that need a
+  dynamic-library boundary: Deno FFI, Python `ctypes`, and native
+  applications.
 
 ## Compatibility
 
