@@ -3994,6 +3994,27 @@ fn pick_version_for_add_without_gate_keeps_latest_preference() {
     assert_eq!(result.version, "1.1.0");
 }
 
+#[test]
+fn pick_version_for_add_normalizes_gated_latest_range() {
+    // `latest` passed verbatim under an active gate must be normalized at
+    // the API boundary — pick_version's internal dist-tag fallback would
+    // otherwise turn it into the tagged version's exact range, whose
+    // lenient fallback admits the fresh publish.
+    let packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "foo", "latest", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.0.0");
+}
+
+#[test]
+fn pick_version_for_add_gated_latest_survives_missing_dist_tag() {
+    let mut packument = make_timed_packument("foo", &["1.0.0"], &["1.1.0"], "1.1.0");
+    packument.dist_tags.remove("latest");
+    let gate = mra(1440, false, &[]);
+    let result = pick_version_for_add(&packument, "foo", "latest", Some(&gate)).unwrap();
+    assert_eq!(result.version, "1.0.0");
+}
+
 fn assert_protocol_hijack_blocked(spec: &str) {
     let mut packument = make_packument("@victim/utils", &["1.0.0"], "1.0.0");
     packument

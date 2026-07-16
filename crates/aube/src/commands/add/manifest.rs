@@ -363,21 +363,19 @@ pub(super) async fn update_manifest_for_add(
             format!("Resolving {}@{}...", spec.name, spec.range),
         );
 
-        // Resolve "latest" and other dist-tags to a version range. Under an
-        // active minimumReleaseAge gate the `latest` tag is steered like a
-        // range pick instead of pinned verbatim — in the common attack the
-        // freshly published compromise is exactly the version tagged
-        // `latest`, and pinning it here would smuggle it past the
-        // resolver's gate as an exact manifest spec its lenient fallback
-        // honors. `pick_version_for_add` prefers the tagged version
-        // whenever it clears the cutoff, so mature `latest` tags resolve
-        // exactly as before. Other dist-tags stay verbatim: like exact
-        // pins, a non-latest tag is a deliberate user override (strict
-        // mode still refuses it below).
-        let effective_range = match packument.dist_tags.get(&spec.range) {
-            Some(_) if spec.range == "latest" && minimum_release_age.is_some() => "*".to_string(),
-            Some(tagged_version) => tagged_version.clone(),
-            None => spec.range.clone(),
+        // Resolve non-`latest` dist-tags to their tagged version: like
+        // exact pins, they're a deliberate user override (strict mode
+        // still refuses a gated one below). `latest` passes through
+        // verbatim — `pick_version_for_add` normalizes it at the API
+        // boundary, steering a gated `latest` to the newest version
+        // clearing the minimumReleaseAge cutoff while keeping the plain
+        // dist-tag preference for a mature one.
+        let effective_range = if spec.range == "latest" {
+            spec.range.clone()
+        } else if let Some(tagged_version) = packument.dist_tags.get(&spec.range) {
+            tagged_version.clone()
+        } else {
+            spec.range.clone()
         };
 
         // Version pick, shared with the `catalogMode` rewrite below — the
@@ -406,11 +404,21 @@ pub(super) async fn update_manifest_for_add(
         ) {
             aube_resolver::PickResult::Found(meta) => meta.version.clone(),
             aube_resolver::PickResult::AgeGated => {
+                // Only reachable in strict mode today (the lenient pick
+                // falls back instead), but derive the label anyway so a
+                // future lenient AgeGated path can't print a lie.
+                let (minutes, strict) = minimum_release_age
+                    .as_ref()
+                    .map_or((0, false), |m| (m.minutes, m.strict));
                 return Err(miette!(
                     code = aube_codes::errors::ERR_AUBE_NO_MATURE_MATCHING_VERSION,
-                    "no version of {} matching {effective_range} is older than {} minute(s) (minimumReleaseAgeStrict=true)",
+                    "no version of {} matching {effective_range} is older than {minutes} minute(s){}",
                     spec.name,
-                    minimum_release_age.as_ref().map_or(0, |m| m.minutes),
+                    if strict {
+                        " (minimumReleaseAgeStrict=true)"
+                    } else {
+                        ""
+                    },
                 ));
             }
             aube_resolver::PickResult::NoMatch => {
@@ -525,8 +533,11 @@ pub(super) async fn update_manifest_for_add(
                         .unwrap_or_default();
                     let catalog_version = highest_satisfying(&cat_range).unwrap_or_else(|| {
                         tracing::debug!(
-                            "catalog range {cat_range:?} for {} did not match any packument version; \
-                             falling back to user-resolved version for display",
+                            "catalog range {cat_range:?} for {} matched no packument version \
+                             (or, under minimumReleaseAgeStrict, none mature enough); falling \
+                             back to user-resolved version for display — the install that \
+                             follows resolves the catalog range itself and fails loudly if it \
+                             genuinely can't",
                             spec.name
                         );
                         resolved_version.clone()
@@ -947,8 +958,10 @@ fn decide_save_catalog(
             // for the same reason `decide_add_rewrite` does.
             let catalog_version = highest_satisfying(existing_range).unwrap_or_else(|| {
                 tracing::debug!(
-                    "catalog range {existing_range:?} for {} did not match any \
-                     packument version; falling back to user-resolved version for display",
+                    "catalog range {existing_range:?} for {} matched no packument version \
+                     (or, under minimumReleaseAgeStrict, none mature enough); falling back \
+                     to user-resolved version for display — the install that follows \
+                     resolves the catalog range itself and fails loudly if it genuinely can't",
                     spec.name
                 );
                 resolved_version.to_string()

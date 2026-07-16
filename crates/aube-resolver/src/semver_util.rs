@@ -35,6 +35,14 @@ impl<'a> PickResult<'a> {
 /// registry identity, not a user-facing alias. Pass `None` for
 /// `minimum_release_age` to get today's ungated pick (dist-tag preference,
 /// then highest satisfying).
+///
+/// A gated `latest` range is normalized to `*` here, at the API boundary,
+/// so no caller can reintroduce the bypass: [`pick_version`]'s internal
+/// dist-tag fallback turns `latest` into the tagged version's exact range,
+/// whose lenient fallback would admit a fresh publish — the very thing the
+/// gate exists to block. `*` keeps the dist-tag preference for a mature
+/// `latest`, steers a gated one to the newest version clearing the cutoff,
+/// and (unlike the tag) still resolves when `dist-tags.latest` is missing.
 pub fn pick_version_for_add<'a>(
     packument: &'a Packument,
     registry_name: &str,
@@ -42,6 +50,11 @@ pub fn pick_version_for_add<'a>(
     minimum_release_age: Option<&crate::MinimumReleaseAge>,
 ) -> PickResult<'a> {
     let cutoff = minimum_release_age.and_then(|m| m.cutoff());
+    let range = if range == "latest" && cutoff.is_some() {
+        "*"
+    } else {
+        range
+    };
     let strict = minimum_release_age.is_some_and(|m| m.strict);
     let exclude = minimum_release_age.map(|m| &m.exclude);
     let is_age_exempt = |ver: &str, parsed: Option<&node_semver::Version>| {
