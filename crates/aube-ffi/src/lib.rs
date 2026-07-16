@@ -646,12 +646,16 @@ fn wait_impl(handle: u64) -> String {
 }
 
 fn events_next_impl(handle: u64) -> Option<String> {
-    let job = jobs()
+    // Dequeue while holding the jobs lock so a poll cannot race aube_wait's
+    // removal and return an event for an already-consumed handle.
+    jobs()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&handle)
-        .cloned()?;
-    job.callback.buffer.as_ref()?.next()
+        .get(&handle)?
+        .callback
+        .buffer
+        .as_ref()?
+        .next()
 }
 
 fn cancel_impl(handle: u64) -> bool {

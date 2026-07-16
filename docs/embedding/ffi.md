@@ -152,6 +152,9 @@ const poll = setInterval(() => {
     library.symbols.aube_string_free(event)
   }
 }, 50)
+
+// When aube_wait(handle) returns (on whichever thread waits), stop polling:
+clearInterval(poll)
 ```
 
 `aube_events_next` returns the next buffered event as JSON (same schema as the
