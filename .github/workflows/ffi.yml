@@ -31,10 +31,15 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (e.g. v1.28.0) to publish packages for. Empty runs a smoke build."
+        required: false
+        default: ""
 
 concurrency:
   group: ffi-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'release' }}
+  cancel-in-progress: ${{ github.event_name != 'release' && inputs.tag == '' }}
 
 permissions: {}
 
@@ -79,13 +84,13 @@ jobs:
           fi
           cargo build --locked --profile ffi -p aube-ffi --target '${{ matrix.target }}'
       - name: Import macOS signing certificate
-        if: github.event_name == 'release' && matrix.os == 'darwin'
+        if: (github.event_name == 'release' || inputs.tag != '') && matrix.os == 'darwin'
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
         with:
           p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
           p12-password: ${{ secrets.CERTIFICATES_P12_PASS }}
       - name: Sign macOS library
-        if: github.event_name == 'release' && matrix.os == 'darwin'
+        if: (github.event_name == 'release' || inputs.tag != '') && matrix.os == 'darwin'
         shell: bash
         run: |
           codesign --force --sign 'Developer ID Application: Jeffrey Dickey (4993Y37DX6)' \
@@ -95,10 +100,9 @@ jobs:
         id: version
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          if [[ "$EVENT_NAME" == release ]]; then version=${RELEASE_TAG#v}; else version="0.0.0-smoke.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"; fi
+          if [[ -n "$RELEASE_TAG" ]]; then version=${RELEASE_TAG#v}; else version="0.0.0-smoke.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Stage library and platform package
         shell: bash
@@ -141,10 +145,9 @@ jobs:
       - name: Pack root npm package
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          if [[ "$EVENT_NAME" == release ]]; then VERSION=${RELEASE_TAG#v}; else VERSION="0.0.0-smoke.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"; fi
+          if [[ -n "$RELEASE_TAG" ]]; then VERSION=${RELEASE_TAG#v}; else VERSION="0.0.0-smoke.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"; fi
           VERSION="$VERSION" OUT_DIR="$PWD/packages" node crates/aube-ffi/npm/package.mjs
           cp crates/aube-ffi/include/aube.h packages/aube.h
           test "$(find packages -maxdepth 1 -name '*.tgz' -print | wc -l)" -eq 9
@@ -175,17 +178,17 @@ jobs:
             packages/aube.h
           if-no-files-found: error
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.tag != ''
         with:
           subject-path: |
             packages/*.tgz
             packages/libaube-*
             packages/aube.h
       - name: Publish platform and root packages
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.tag != ''
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           version=${RELEASE_TAG#v}; tag=latest; [[ "$version" == *-* ]] && tag=next
           publish_package() {
@@ -197,11 +200,13 @@ jobs:
             fi
             npm publish "$package" --access public --provenance --tag "$tag"
           }
-          for package in packages/*-darwin-*.tgz packages/*-linux-*.tgz packages/*-win32-*.tgz; do publish_package "$package"; done
-          publish_package "packages/jdxcode-aube-ffi-${version}.tgz"
+          # Relative paths need the ./ prefix or npm parses them as
+          # hosted-git owner/repo shorthands instead of local tarballs.
+          for package in ./packages/*-darwin-*.tgz ./packages/*-linux-*.tgz ./packages/*-win32-*.tgz; do publish_package "$package"; done
+          publish_package "./packages/jdxcode-aube-ffi-${version}.tgz"
 
   release-assets:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || inputs.tag != ''
     needs: packages
     runs-on: ubuntu-latest
     permissions: { contents: write }
@@ -212,5 +217,5 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: gh release upload "$RELEASE_TAG" packages/libaube-* packages/aube.h --clobber
