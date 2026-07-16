@@ -60,6 +60,10 @@ Initialize the host once before starting operations:
 }
 ```
 
+Initialization and operation start are synchronized. If an operation starts
+before `aube_init`, aube permanently selects its standalone host defaults for
+the process and later initialization calls are no-ops.
+
 Install options require `projectDir` and may include `frozenMode`, `prodOnly`,
 `devOnly`, `omitOptional`, `ignoreScripts`, `runRootLifecycle`, `dryRun`,
 `lockfileOnly`, `force`, `offline`, `strictNoLockfile`,

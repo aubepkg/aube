@@ -21,7 +21,9 @@ extern "C" {
 typedef void (*aube_event_cb)(const char *event_json, void *ctx);
 
 /* host_json: {"name":"host","version":"1.0.0","defaults":{...}}
- * Returns 0 on success, -1 for invalid input, and -2 when a panic is caught. */
+ * Call before starting operations. The first operation seals standalone host
+ * defaults when init has not run. Returns 0 on success, -1 for invalid input,
+ * and -2 when a panic is caught. */
 AUBE_API int32_t aube_init(const char *host_json);
 
 /* options_json must contain projectDir. Returns immediately with an operation

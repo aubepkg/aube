@@ -130,7 +130,9 @@ impl CallbackReporter {
             return;
         };
         // SAFETY: The host promises that callback and context remain valid and
-        // thread-safe until aube_wait returns. The CString lives through the call.
+        // thread-safe until aube_wait returns. The callback contract also
+        // forbids waiting on this operation or unwinding across the boundary.
+        // The CString lives through the call.
         unsafe { callback(json.as_ptr(), self.context as *mut c_void) };
     }
 }
@@ -407,6 +409,19 @@ fn init_impl(host_json: *const c_char) -> Result<(), Failure> {
     Ok(())
 }
 
+fn seal_host_initialization() {
+    if HOST_INITIALIZED.get().is_some() {
+        return;
+    }
+    let _guard = HOST_INIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if HOST_INITIALIZED.get().is_none() {
+        embed::initialize(&embed::AUBE, Vec::new());
+        let _ = HOST_INITIALIZED.set(());
+    }
+}
+
 fn install_impl(
     options_json: *const c_char,
     callback: Option<AubeEventCallback>,
@@ -416,6 +431,7 @@ fn install_impl(
     if input.prod_only && input.dev_only {
         return Err(Failure::invalid("prodOnly and devOnly cannot both be true"));
     }
+    seal_host_initialization();
     let reporter = CallbackReporter {
         callback,
         context: context as usize,
@@ -465,6 +481,7 @@ fn add_impl(
     if input.prod_only && input.dev_only {
         return Err(Failure::invalid("prodOnly and devOnly cannot both be true"));
     }
+    seal_host_initialization();
     let reporter = CallbackReporter {
         callback,
         context: context as usize,
