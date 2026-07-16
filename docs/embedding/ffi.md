@@ -144,18 +144,27 @@ const handle = library.symbols.aube_install(
   null,
   null,
 )
-const poll = setInterval(() => {
+let terminal = false
+while (!terminal) {
   for (;;) {
-    const event = library.symbols.aube_events_next(handle)
-    if (!event) break
-    console.log(JSON.parse(new CString(event).toString()))
-    library.symbols.aube_string_free(event)
+    const raw = library.symbols.aube_events_next(handle)
+    if (!raw) break
+    const event = JSON.parse(new CString(raw).toString())
+    library.symbols.aube_string_free(raw)
+    console.log(event)
+    terminal ||=
+      (event.kind === "phase" && event.phase === "complete") ||
+      (event.kind === "output" && event.level === "error")
   }
-}, 50)
-
-// When aube_wait(handle) returns (on whichever thread waits), stop polling:
-clearInterval(poll)
+  if (!terminal) await new Promise((resolve) => setTimeout(resolve, 50))
+}
+// The terminal event arrived, so aube_wait returns immediately and
+// releases the handle.
+const result = library.symbols.aube_wait(handle)
 ```
+
+The terminal event is the `complete` phase on success or the `error` output a
+failed operation emits last.
 
 `aube_events_next` returns the next buffered event as JSON (same schema as the
 callback transport), or null when no event is pending or the handle is unknown
@@ -175,6 +184,7 @@ const library = dlopen(libraryPath, {
   aube_init: { args: ["ptr"], returns: "i32" },
   aube_install: { args: ["ptr", "ptr", "ptr"], returns: "u64" },
   aube_wait: { args: ["u64"], returns: "ptr" },
+  aube_events_next: { args: ["u64"], returns: "ptr" },
   aube_cancel: { args: ["u64"], returns: "i32" },
   aube_string_free: { args: ["ptr"], returns: "void" },
 })
