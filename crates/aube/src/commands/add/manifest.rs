@@ -126,13 +126,6 @@ pub(super) async fn update_manifest_for_add(
                 registry_supports_time_field,
             )
         });
-    // Offline adds resolve from whatever the local cache already holds —
-    // a freshly published version cannot appear there mid-flight, so the
-    // age gate is moot, and the abbreviated cache (which offline adds
-    // have always served from) predates the gate's need for `time` data.
-    // The gate governs online adds only.
-    let minimum_release_age =
-        minimum_release_age.filter(|_| opts.network_mode != aube_registry::NetworkMode::Offline);
     let workspace_settings_cwd = crate::dirs::find_workspace_yaml_root(cwd)
         .or_else(|| crate::dirs::find_workspace_root(cwd))
         .unwrap_or_else(|| cwd.to_path_buf());
@@ -252,14 +245,11 @@ pub(super) async fn update_manifest_for_add(
     // abbreviated (corgi) payload omits — fetch full packuments when the
     // gate is active. Same needs_time split the resolver makes.
     // `registrySupportsTimeField` keeps the cheaper abbreviated path hot
-    // when the registry inlines `time` in corgi payloads — the same split
-    // the resolver's fetch scheduler makes.
+    // when the registry inlines `time` in corgi payloads.
     let needs_time = minimum_release_age.is_some() && !registry_supports_time;
-    let packument_cache_dir = if needs_time {
-        crate::commands::packument_full_cache_dir_for_cwd(cwd)
-    } else {
-        crate::commands::packument_cache_dir_for_cwd(cwd)
-    };
+    let corgi_cache_dir = crate::commands::packument_cache_dir_for_cwd(cwd);
+    let full_cache_dir = crate::commands::packument_full_cache_dir_for_cwd(cwd);
+    let offline = opts.network_mode == aube_registry::NetworkMode::Offline;
     for spec in &parsed {
         if aube_util::pkg::is_workspace_spec(&spec.range)
             || spec.git_spec.is_some()
@@ -269,15 +259,39 @@ pub(super) async fn update_manifest_for_add(
             continue;
         }
         let client = client.clone();
-        let cache_dir = packument_cache_dir.clone();
+        let corgi_dir = corgi_cache_dir.clone();
+        let full_dir = full_cache_dir.clone();
         let name = spec.name.clone();
         handles.spawn(async move {
-            let packument = if needs_time {
+            let primary = if needs_time {
                 client
-                    .fetch_packument_with_time_cached(&name, &cache_dir)
+                    .fetch_packument_with_time_cached(&name, &full_dir)
                     .await
             } else {
-                client.fetch_packument_cached(&name, &cache_dir).await
+                client.fetch_packument_cached(&name, &corgi_dir).await
+            };
+            // Offline adds serve whichever cache format holds the
+            // packument: the needs_time split writes online fetches to
+            // one cache only, so an add cached online under the gate
+            // lives in `packuments-full-v1` while an ungated one lives
+            // in the corgi cache — an offline retry must not fail on a
+            // package that's on disk in the other format. The full
+            // payload is a superset of corgi, and corgi's missing
+            // `time` map keeps its versions cutoff-eligible in
+            // `pick_version`, so either format picks correctly.
+            let packument = match primary {
+                Ok(packument) => Ok(packument),
+                Err(primary_err) if offline => {
+                    let fallback = if needs_time {
+                        client.fetch_packument_cached(&name, &corgi_dir).await
+                    } else {
+                        client
+                            .fetch_packument_with_time_cached(&name, &full_dir)
+                            .await
+                    };
+                    fallback.map_err(|_| primary_err)
+                }
+                Err(primary_err) => Err(primary_err),
             }
             .map_err(|e| miette!("failed to fetch {name}: {e}"))?;
             Ok::<_, miette::Report>((name, packument))
@@ -1044,5 +1058,63 @@ mod tests {
 
         let manifest = std::fs::read_to_string(project.path().join("package.json")).unwrap();
         assert!(manifest.contains(r#""cached-only": "^1.0.0""#));
+    }
+
+    #[tokio::test]
+    async fn offline_add_falls_back_to_full_packument_cache() {
+        // Online adds under the age gate cache packuments in
+        // `packuments-full-v1` only. If the gate is later disabled, the
+        // primary offline lookup moves to the corgi cache — but the add
+        // must still serve the full packument already on disk instead of
+        // failing on the empty corgi cache.
+        let project = tempfile::tempdir().unwrap();
+        let cache_root = project.path().join("cache");
+        std::fs::write(project.path().join("package.json"), "{}\n").unwrap();
+        std::fs::write(
+            project.path().join(".npmrc"),
+            format!("cache-dir={}\nminimumReleaseAge=0\n", cache_root.display()),
+        )
+        .unwrap();
+
+        let packument: aube_registry::Packument = serde_json::from_value(serde_json::json!({
+            "name": "full-cached-only",
+            "dist-tags": { "latest": "1.0.0" },
+            "versions": {
+                "1.0.0": {
+                    "name": "full-cached-only",
+                    "version": "1.0.0"
+                }
+            }
+        }))
+        .unwrap();
+        let full_cache_dir = crate::commands::packument_full_cache_dir_for_cwd(project.path());
+        crate::commands::make_client(project.path()).seed_full_packument_cache(
+            "full-cached-only",
+            &full_cache_dir,
+            &packument,
+            None,
+            None,
+            true,
+        );
+
+        update_manifest_for_add(
+            project.path(),
+            &["full-cached-only".to_string()],
+            AddManifestOptions {
+                save_dev: false,
+                save_exact: false,
+                save_optional: false,
+                save_peer: false,
+                network_mode: aube_registry::NetworkMode::Offline,
+                save_catalog: None,
+                workspace_protocol_override: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let manifest = std::fs::read_to_string(project.path().join("package.json")).unwrap();
+        assert!(manifest.contains(r#""full-cached-only": "^1.0.0""#));
     }
 }
