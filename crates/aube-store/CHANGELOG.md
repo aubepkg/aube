@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0](https://github.com/jdx/aube/compare/aube-store-v1.27.0...aube-store-v1.28.0) - 2026-07-16
+
+### Fixed
+
+- *(install)* refresh changed file directory dependencies ([#1034](https://github.com/jdx/aube/pull/1034))
+
+### Other
+
+- refresh benchmarks for v1.27.0 ([#1041](https://github.com/jdx/aube/pull/1041))
+- undo 7-day soak toolchain changes ([#1039](https://github.com/jdx/aube/pull/1039))
+
 ## [1.27.0](https://github.com/jdx/aube/compare/aube-store-v1.26.0...aube-store-v1.27.0) - 2026-07-13
 
 ### Other

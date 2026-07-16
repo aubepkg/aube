@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0](https://github.com/jdx/aube/compare/aube-codes-v1.27.0...aube-codes-v1.28.0) - 2026-07-16
+
+### Added
+
+- *(packaging)* add C ABI embedding distribution ([#1046](https://github.com/jdx/aube/pull/1046))
+- *(packaging)* add production Node-API embedding ([#1025](https://github.com/jdx/aube/pull/1025))
+- *(install)* add embedder control hooks ([#1036](https://github.com/jdx/aube/pull/1036))
+
+### Other
+
+- refresh benchmarks for v1.27.0 ([#1041](https://github.com/jdx/aube/pull/1041))
+
 ## [1.27.0](https://github.com/jdx/aube/compare/aube-codes-v1.26.0...aube-codes-v1.27.0) - 2026-07-13
 
 ### Added
