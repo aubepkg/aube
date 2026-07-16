@@ -5,7 +5,7 @@ use aube::embed::{
     InstallOutputLevel, InstallPhase, InstallReporter, NetworkMode,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::future::Future;
 use std::path::PathBuf;
@@ -112,18 +112,61 @@ impl Job {
     }
 }
 
+/// Bounded FIFO of serialized events for hosts that poll instead of
+/// registering a callback (e.g. Bun, where cross-thread JS callbacks are
+/// unsupported). When full, the oldest event is dropped; progress consumers
+/// only care about the most recent snapshot.
+struct EventBuffer {
+    events: Mutex<VecDeque<String>>,
+}
+
+const EVENT_BUFFER_CAP: usize = 4096;
+
+impl EventBuffer {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    fn push(&self, json: String) {
+        let mut events = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if events.len() == EVENT_BUFFER_CAP {
+            events.pop_front();
+        }
+        events.push_back(json);
+    }
+
+    fn next(&self) -> Option<String> {
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()
+    }
+}
+
 #[derive(Clone)]
 struct CallbackReporter {
     callback: Option<AubeEventCallback>,
     context: usize,
+    buffer: Option<Arc<EventBuffer>>,
 }
 
 impl CallbackReporter {
     fn report_payload(&self, event: &EventPayload) {
-        let Some(callback) = self.callback else {
+        if self.callback.is_none() && self.buffer.is_none() {
+            return;
+        }
+        let Ok(json) = serde_json::to_string(event) else {
             return;
         };
-        let Ok(json) = serde_json::to_string(event) else {
+        if let Some(buffer) = &self.buffer {
+            buffer.push(json.clone());
+        }
+        let Some(callback) = self.callback else {
             return;
         };
         let Ok(json) = CString::new(json) else {
@@ -242,6 +285,8 @@ struct InstallInput {
     dangerously_allow_all_builds: bool,
     #[serde(default)]
     osv_transitive_check: bool,
+    #[serde(default)]
+    buffer_events: bool,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -269,6 +314,7 @@ struct AddInput {
     dev_only: bool,
     omit_optional: bool,
     osv_transitive_check: bool,
+    buffer_events: bool,
 }
 
 fn default_true() -> bool {
@@ -327,6 +373,19 @@ pub extern "C" fn aube_wait(handle: u64) -> *mut c_char {
         Err(_) => result_json(Err(Failure::panic())),
     };
     owned_c_string(json)
+}
+
+/// Return the next buffered event for an operation started with
+/// `bufferEvents: true`, or null when no event is pending (or the handle is
+/// unknown or already consumed). The returned string must be freed with
+/// [`aube_string_free`]. Events still buffered when [`aube_wait`] returns are
+/// discarded with the handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn aube_events_next(handle: u64) -> *mut c_char {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| events_next_impl(handle))) {
+        Ok(Some(json)) => owned_c_string(json),
+        _ => std::ptr::null_mut(),
+    }
 }
 
 /// Request cooperative cancellation for an operation.
@@ -435,6 +494,7 @@ fn install_impl(
     let reporter = CallbackReporter {
         callback,
         context: context as usize,
+        buffer: input.buffer_events.then(|| Arc::new(EventBuffer::new())),
     };
     let runtime = runtime()?;
     let control = InstallControl::events(Arc::new(reporter.clone()));
@@ -485,6 +545,7 @@ fn add_impl(
     let reporter = CallbackReporter {
         callback,
         context: context as usize,
+        buffer: input.buffer_events.then(|| Arc::new(EventBuffer::new())),
     };
     let runtime = runtime()?;
     let control = InstallControl::events(Arc::new(reporter.clone()));
@@ -551,6 +612,7 @@ fn completed_failure(error: Failure) -> u64 {
     let reporter = CallbackReporter {
         callback: None,
         context: 0,
+        buffer: None,
     };
     let (handle, job) = register_job(InstallControl::silent(), reporter);
     job.finish(Err(error));
@@ -581,6 +643,15 @@ fn wait_impl(handle: u64) -> String {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&handle);
     result
+}
+
+fn events_next_impl(handle: u64) -> Option<String> {
+    let job = jobs()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&handle)
+        .cloned()?;
+    job.callback.buffer.as_ref()?.next()
 }
 
 fn cancel_impl(handle: u64) -> bool {
@@ -745,6 +816,7 @@ mod tests {
         let reporter = CallbackReporter {
             callback: None,
             context: 0,
+            buffer: None,
         };
         let (handle, job) = register_job(InstallControl::silent(), reporter);
         spawn_job(runtime().unwrap(), job, async {
@@ -759,6 +831,7 @@ mod tests {
         let reporter = CallbackReporter {
             callback: None,
             context: 0,
+            buffer: None,
         };
         let (handle, job) = register_job(InstallControl::silent(), reporter);
         let (sender, receiver) = mpsc::channel();
@@ -840,6 +913,75 @@ mod tests {
             project_result["code"],
             aube_codes::errors::ERR_AUBE_EMBED_INSTALL_FAILED
         );
+    }
+
+    fn next_event(handle: u64) -> Option<String> {
+        let value = aube_events_next(handle);
+        if value.is_null() {
+            return None;
+        }
+        // SAFETY: aube_events_next returned an owned NUL-terminated string.
+        let json = unsafe { CStr::from_ptr(value) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        // SAFETY: value was returned by aube_events_next and has not been freed.
+        unsafe { aube_string_free(value) };
+        Some(json)
+    }
+
+    #[test]
+    fn polls_buffered_events_without_a_callback() {
+        initialize();
+        let project = tempfile::tempdir().unwrap();
+        fs::write(project.path().join("package.json"), "{}\n").unwrap();
+        let options = c(serde_json::json!({
+            "projectDir": project.path(),
+            "offline": true,
+            "ignoreScripts": true,
+            "bufferEvents": true
+        })
+        .to_string());
+        let handle = aube_install(options.as_ptr(), None, std::ptr::null_mut());
+
+        let mut events = Vec::new();
+        for _ in 0..600 {
+            while let Some(event) = next_event(handle) {
+                events.push(event);
+            }
+            if events
+                .iter()
+                .any(|event| event.contains(r#""phase":"complete""#))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            events
+                .iter()
+                .any(|event| event.contains(r#""phase":"complete""#))
+        );
+        assert_eq!(wait(handle)["ok"], true);
+        assert!(aube_events_next(handle).is_null());
+    }
+
+    #[test]
+    fn events_next_is_null_without_buffering_or_for_unknown_handles() {
+        initialize();
+        assert!(aube_events_next(u64::MAX).is_null());
+
+        let project = tempfile::tempdir().unwrap();
+        fs::write(project.path().join("package.json"), "{}\n").unwrap();
+        let options = c(serde_json::json!({
+            "projectDir": project.path(),
+            "offline": true,
+            "ignoreScripts": true
+        })
+        .to_string());
+        let handle = aube_install(options.as_ptr(), None, std::ptr::null_mut());
+        assert!(aube_events_next(handle).is_null());
+        assert_eq!(wait(handle)["ok"], true);
     }
 
     #[test]

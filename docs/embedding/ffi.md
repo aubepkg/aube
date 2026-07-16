@@ -132,6 +132,36 @@ type InstallEvent =
 
 Codes follow the published [error-code stability policy](/error-codes).
 
+## Polled events
+
+Hosts that cannot receive callbacks on foreign threads (Bun FFI, some ctypes
+setups) can poll instead. Start the operation with `bufferEvents: true` and
+drain the queue from any host thread:
+
+```ts
+const handle = library.symbols.aube_install(
+  ptr(c(JSON.stringify({ projectDir: ".", bufferEvents: true }))),
+  null,
+  null,
+)
+const poll = setInterval(() => {
+  for (;;) {
+    const event = library.symbols.aube_events_next(handle)
+    if (!event) break
+    console.log(JSON.parse(new CString(event).toString()))
+    library.symbols.aube_string_free(event)
+  }
+}, 50)
+```
+
+`aube_events_next` returns the next buffered event as JSON (same schema as the
+callback transport), or null when no event is pending or the handle is unknown
+or already consumed. Each returned string must be freed with
+`aube_string_free`. The buffer holds 4096 events and drops the oldest when
+full; events still buffered when `aube_wait` returns are discarded with the
+handle, so drain before waiting (or poll from a different thread than the one
+that waits).
+
 ## Bun FFI
 
 ```ts
@@ -160,8 +190,9 @@ library.symbols.aube_string_free(resultPointer)
 library.close()
 ```
 
-Bun's FFI and arbitrary-thread JavaScript callbacks remain experimental. Use
-the Node-API package when a JavaScript event callback is required in Bun.
+Bun's FFI and arbitrary-thread JavaScript callbacks remain experimental. In
+Bun, poll with `bufferEvents`/`aube_events_next` (above) instead of passing a
+callback, or use the Node-API package.
 
 ## Deno FFI
 

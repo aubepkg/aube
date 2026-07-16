@@ -12,6 +12,7 @@ const library = dlopen(libraryPath, {
   aube_install: { args: ["ptr", "ptr", "ptr"], returns: "u64" },
   aube_add: { args: ["ptr", "ptr", "ptr", "ptr", "ptr"], returns: "u64" },
   aube_wait: { args: ["u64"], returns: "ptr" },
+  aube_events_next: { args: ["u64"], returns: "ptr" },
   aube_cancel: { args: ["u64"], returns: "i32" },
   aube_string_free: { args: ["ptr"], returns: "void" },
 })
@@ -53,6 +54,30 @@ try {
   const installResult = wait(library.symbols.aube_install(ptr(installOptions), 0, 0))
   if (!installResult.ok) throw new Error(`offline install failed: ${JSON.stringify(installResult)}`)
   await access(path.join(project, "node_modules", "local-dependency"))
+
+  const polledOptions = cstring(
+    JSON.stringify({ projectDir: project, offline: true, ignoreScripts: true, force: true, bufferEvents: true }),
+  )
+  const polledHandle = library.symbols.aube_install(ptr(polledOptions), 0, 0)
+  const polled: string[] = []
+  for (let attempt = 0; attempt < 600; attempt++) {
+    for (;;) {
+      const event = library.symbols.aube_events_next(polledHandle)
+      if (!event) break
+      polled.push(new CString(event).toString())
+      library.symbols.aube_string_free(event)
+    }
+    if (polled.some((event) => event.includes('"phase":"complete"'))) break
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  if (!polled.some((event) => event.includes('"phase":"complete"'))) {
+    throw new Error(`polled events missing completion: ${JSON.stringify(polled)}`)
+  }
+  const polledResult = wait(polledHandle)
+  if (!polledResult.ok) throw new Error(`polled install failed: ${JSON.stringify(polledResult)}`)
+  if (library.symbols.aube_events_next(polledHandle)) {
+    throw new Error("events_next should be null after wait consumed the handle")
+  }
 
   const malformed = cstring("{")
   const malformedResult = wait(library.symbols.aube_install(ptr(malformed), 0, 0))

@@ -50,6 +50,12 @@ AUBE_API uint64_t aube_add(
  * aube_string_free. */
 AUBE_API char *aube_wait(uint64_t handle);
 
+/* Next buffered event for an operation started with bufferEvents: true, or
+ * NULL when none is pending or the handle is unknown/consumed. Free the
+ * returned string with aube_string_free. Events still buffered when
+ * aube_wait returns are discarded with the handle. */
+AUBE_API char *aube_events_next(uint64_t handle);
+
 /* Returns 0 when cancellation was requested, -1 for an unknown handle, and -2
  * when a panic is caught. */
 AUBE_API int32_t aube_cancel(uint64_t handle);
