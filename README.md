@@ -84,10 +84,10 @@ performance. The npm commands above include the flag that keeps that
 working even if your npm config disables scripts. We still recommend mise
 for the smoothest install and runtime management path.
 
-Homebrew installs come from the jdx tap:
+Homebrew installs come from the core tap:
 
 ```sh
-brew install jdx/tap/aube
+brew install aube
 ```
 
 See [other install methods](https://aube.jdx.dev/installation).

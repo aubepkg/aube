@@ -39,13 +39,13 @@ same dependency versions CI built against. The compiled binary lands in
 
 ## From Homebrew
 
-aube is published from the jdx tap until it lands in homebrew-core:
+aube is published from the core tap:
 
 ```sh
-brew install jdx/tap/aube
+brew install aube
 ```
 
-The tap formula builds from source and installs shell completions.
+The tap formula uses prebuilt bottles and installs shell completions.
 
 ## From npm
 
