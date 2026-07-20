@@ -33,14 +33,14 @@ zip = { workspace = true }
 
 [features]
 # Defaults preserve standalone aube behavior: rustls + in-process DNS
-# caching. Embedders (mise) use `default-features = false` and pick their
-# own TLS backend so neither rustls nor hickory-dns leaks into their build
-# via feature unification — reqwest's hickory-dns cargo feature would
-# otherwise flip the default resolver for every client in their binary.
-# Exactly one of `rustls` / `native-tls` must be enabled.
+# caching. Embedders (mise) use `default-features = false` and re-enable
+# `rustls` so hickory-dns doesn't leak into their build via feature
+# unification — reqwest's hickory-dns cargo feature flips the default
+# resolver for every client in the final binary. rustls is the only
+# supported TLS backend (no OpenSSL / native-tls — see CLAUDE.md) and is
+# required; without it the crate fails to compile.
 default = ["rustls", "hickory-dns"]
 rustls = ["reqwest/rustls", "aube-util/rustls"]
-native-tls = ["reqwest/native-tls", "aube-util/native-tls"]
 hickory-dns = ["reqwest/hickory-dns"]
 
 [dev-dependencies]

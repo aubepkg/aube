@@ -154,22 +154,13 @@ fn build_http_client_inner(
             std::env::consts::ARCH
         )
     });
-    let mut builder = aube_util::http::with_webpki_root_fallback(reqwest::Client::builder());
-    // Pin the TLS backend explicitly instead of relying on reqwest's default
-    // selection. When an embedder's dependency graph enables both native-tls
-    // and rustls cargo features on reqwest, the default silently becomes
-    // native-tls, which would mismatch the rustls `Identity` built by
-    // `client_identity` (and the session-ticket wiring in the aube binary).
-    // rustls wins when both aube-registry features are enabled.
-    #[cfg(feature = "rustls")]
-    {
-        builder = builder.use_rustls_tls();
-    }
-    #[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
-    {
-        builder = builder.use_native_tls();
-    }
-    builder = builder
+    // Pin rustls explicitly instead of relying on reqwest's default backend
+    // selection: if an embedder's dependency graph also turns on reqwest's
+    // native-tls feature, reqwest's default silently becomes native-tls,
+    // which would mismatch the rustls `Identity` built below and the
+    // session-ticket wiring in the aube binary.
+    let mut builder = aube_util::http::with_webpki_root_fallback(reqwest::Client::builder())
+        .use_rustls_tls()
         .user_agent(user_agent)
         // Wire-level decompression for packument JSON. Tarball
         // requests explicitly send `Accept-Encoding: identity`
@@ -326,11 +317,9 @@ fn build_http_client_inner(
 }
 
 /// Build a client-cert identity from `.npmrc` `cert` / `key` values.
-/// reqwest's `Identity` constructors are TLS-backend-specific: rustls takes
-/// a single combined PEM buffer, native-tls takes cert and PKCS#8 key
-/// separately. rustls is preferred when both features are on (matches the
-/// backend `build_http_client` produces in that configuration).
-#[cfg(feature = "rustls")]
+/// rustls' `Identity::from_pem` takes cert and key concatenated in a single
+/// PEM buffer and accepts both PKCS#8 (`BEGIN PRIVATE KEY`) and PKCS#1
+/// (`BEGIN RSA PRIVATE KEY`) keys.
 fn client_identity(cert: &str, key: &str) -> reqwest::Result<reqwest::Identity> {
     let mut pem = Vec::with_capacity(cert.len() + key.len() + 1);
     pem.extend_from_slice(cert.as_bytes());
@@ -339,11 +328,6 @@ fn client_identity(cert: &str, key: &str) -> reqwest::Result<reqwest::Identity> 
     }
     pem.extend_from_slice(key.as_bytes());
     reqwest::Identity::from_pem(&pem)
-}
-
-#[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
-fn client_identity(cert: &str, key: &str) -> reqwest::Result<reqwest::Identity> {
-    reqwest::Identity::from_pkcs8_pem(cert.as_bytes(), key.as_bytes())
 }
 
 /// BATS-fixture escape hatch: ask the registry for the unabbreviated

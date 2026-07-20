@@ -23,13 +23,13 @@ pub mod ticket_cache;
 /// (except Android) and Windows. On other targets, leave the builder alone
 /// so client construction does not fail at runtime.
 ///
-/// Compiled to a no-op when neither the `rustls` nor `native-tls` feature is
-/// enabled — reqwest's `Certificate`/`tls_certs_merge` APIs only exist with a
-/// TLS backend, and this crate deliberately leaves that choice to the final
-/// binary (the aube binary selects rustls via aube-registry's defaults).
+/// Compiled to a no-op when the `rustls` feature is not enabled — reqwest's
+/// `Certificate`/`tls_certs_merge` APIs only exist with a TLS backend, and
+/// this crate leaves that choice to the final binary (the aube binary selects
+/// rustls via aube-registry's defaults).
 pub fn with_webpki_root_fallback(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     #[cfg(all(
-        any(feature = "rustls", feature = "native-tls"),
+        feature = "rustls",
         any(all(unix, not(target_os = "android")), target_os = "windows")
     ))]
     {
@@ -45,7 +45,7 @@ pub fn with_webpki_root_fallback(builder: reqwest::ClientBuilder) -> reqwest::Cl
     }
 
     #[cfg(not(all(
-        any(feature = "rustls", feature = "native-tls"),
+        feature = "rustls",
         any(all(unix, not(target_os = "android")), target_os = "windows")
     )))]
     {
