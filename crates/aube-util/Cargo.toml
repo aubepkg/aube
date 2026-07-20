@@ -24,6 +24,14 @@ reqwest = { workspace = true }
 webpki-root-certs = { workspace = true }
 thiserror = { workspace = true }
 
+[features]
+# No TLS backend by default: the choice belongs to the final binary.
+# aube-registry's default features select rustls for the aube binary;
+# embedders (mise) pick their own backend instead of inheriting ours.
+default = []
+rustls = ["reqwest/rustls"]
+native-tls = ["reqwest/native-tls"]
+
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 

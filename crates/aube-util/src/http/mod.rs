@@ -22,8 +22,16 @@ pub mod ticket_cache;
 /// reqwest 0.13 can merge extra roots with the platform verifier on Unix
 /// (except Android) and Windows. On other targets, leave the builder alone
 /// so client construction does not fail at runtime.
+///
+/// Compiled to a no-op when neither the `rustls` nor `native-tls` feature is
+/// enabled — reqwest's `Certificate`/`tls_certs_merge` APIs only exist with a
+/// TLS backend, and this crate deliberately leaves that choice to the final
+/// binary (the aube binary selects rustls via aube-registry's defaults).
 pub fn with_webpki_root_fallback(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
-    #[cfg(any(all(unix, not(target_os = "android")), target_os = "windows"))]
+    #[cfg(all(
+        any(feature = "rustls", feature = "native-tls"),
+        any(all(unix, not(target_os = "android")), target_os = "windows")
+    ))]
     {
         let certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS
             .iter()
@@ -36,7 +44,10 @@ pub fn with_webpki_root_fallback(builder: reqwest::ClientBuilder) -> reqwest::Cl
         builder.tls_certs_merge(certs)
     }
 
-    #[cfg(not(any(all(unix, not(target_os = "android")), target_os = "windows")))]
+    #[cfg(not(all(
+        any(feature = "rustls", feature = "native-tls"),
+        any(all(unix, not(target_os = "android")), target_os = "windows")
+    )))]
     {
         builder
     }

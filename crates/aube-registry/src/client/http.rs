@@ -154,7 +154,22 @@ fn build_http_client_inner(
             std::env::consts::ARCH
         )
     });
-    let mut builder = aube_util::http::with_webpki_root_fallback(reqwest::Client::builder())
+    let mut builder = aube_util::http::with_webpki_root_fallback(reqwest::Client::builder());
+    // Pin the TLS backend explicitly instead of relying on reqwest's default
+    // selection. When an embedder's dependency graph enables both native-tls
+    // and rustls cargo features on reqwest, the default silently becomes
+    // native-tls, which would mismatch the rustls `Identity` built by
+    // `client_identity` (and the session-ticket wiring in the aube binary).
+    // rustls wins when both aube-registry features are enabled.
+    #[cfg(feature = "rustls")]
+    {
+        builder = builder.use_rustls_tls();
+    }
+    #[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
+    {
+        builder = builder.use_native_tls();
+    }
+    builder = builder
         .user_agent(user_agent)
         // Wire-level decompression for packument JSON. Tarball
         // requests explicitly send `Accept-Encoding: identity`
@@ -188,13 +203,19 @@ fn build_http_client_inner(
     } else {
         builder = builder.http1_only();
     }
+    // In-process DNS caching via hickory-dns. The system resolver
+    // does not cache and uses a thread pool for `getaddrinfo`,
+    // which serializes the first cold lookup per origin. hickory
+    // resolves async + caches for the process lifetime. Feature-gated
+    // so embedders that keep their host binary on getaddrinfo (reqwest's
+    // hickory-dns cargo feature flips the default for every client in
+    // the binary) can opt out; default features keep it on for aube.
+    #[cfg(feature = "hickory-dns")]
+    {
+        builder = builder.hickory_dns(true);
+    }
     builder = builder
         .tcp_keepalive(std::time::Duration::from_secs(60))
-        // In-process DNS caching via hickory-dns. The system resolver
-        // does not cache and uses a thread pool for `getaddrinfo`,
-        // which serializes the first cold lookup per origin. hickory
-        // resolves async + caches for the process lifetime.
-        .hickory_dns(true)
         // `strict-ssl=false` disables cert validation entirely. This
         // is a security hole on purpose: corporate registries should
         // prefer per-registry `ca` / `cafile` so validation stays on.
@@ -291,13 +312,7 @@ fn build_http_client_inner(
             "per-registry",
         );
         if let (Some(cert), Some(key)) = (&registry_config.tls.cert, &registry_config.tls.key) {
-            let mut pem = Vec::with_capacity(cert.len() + key.len() + 1);
-            pem.extend_from_slice(cert.as_bytes());
-            if !cert.ends_with('\n') {
-                pem.push(b'\n');
-            }
-            pem.extend_from_slice(key.as_bytes());
-            match reqwest::Identity::from_pem(&pem) {
+            match client_identity(cert, key) {
                 Ok(identity) => builder = builder.identity(identity),
                 Err(e) => tracing::warn!(
                     code = aube_codes::warnings::WARN_AUBE_INVALID_CLIENT_CERT,
@@ -308,6 +323,27 @@ fn build_http_client_inner(
     }
 
     builder.build().expect("failed to build HTTP client")
+}
+
+/// Build a client-cert identity from `.npmrc` `cert` / `key` values.
+/// reqwest's `Identity` constructors are TLS-backend-specific: rustls takes
+/// a single combined PEM buffer, native-tls takes cert and PKCS#8 key
+/// separately. rustls is preferred when both features are on (matches the
+/// backend `build_http_client` produces in that configuration).
+#[cfg(feature = "rustls")]
+fn client_identity(cert: &str, key: &str) -> reqwest::Result<reqwest::Identity> {
+    let mut pem = Vec::with_capacity(cert.len() + key.len() + 1);
+    pem.extend_from_slice(cert.as_bytes());
+    if !cert.ends_with('\n') {
+        pem.push(b'\n');
+    }
+    pem.extend_from_slice(key.as_bytes());
+    reqwest::Identity::from_pem(&pem)
+}
+
+#[cfg(all(not(feature = "rustls"), feature = "native-tls"))]
+fn client_identity(cert: &str, key: &str) -> reqwest::Result<reqwest::Identity> {
+    reqwest::Identity::from_pkcs8_pem(cert.as_bytes(), key.as_bytes())
 }
 
 /// BATS-fixture escape hatch: ask the registry for the unabbreviated

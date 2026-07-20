@@ -31,6 +31,18 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 zip = { workspace = true }
 
+[features]
+# Defaults preserve standalone aube behavior: rustls + in-process DNS
+# caching. Embedders (mise) use `default-features = false` and pick their
+# own TLS backend so neither rustls nor hickory-dns leaks into their build
+# via feature unification — reqwest's hickory-dns cargo feature would
+# otherwise flip the default resolver for every client in their binary.
+# Exactly one of `rustls` / `native-tls` must be enabled.
+default = ["rustls", "hickory-dns"]
+rustls = ["reqwest/rustls", "aube-util/rustls"]
+native-tls = ["reqwest/native-tls", "aube-util/native-tls"]
+hickory-dns = ["reqwest/hickory-dns"]
+
 [dev-dependencies]
 tempfile = "3"
 flate2 = { workspace = true }

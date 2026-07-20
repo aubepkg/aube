@@ -33,7 +33,10 @@ panic = "unwind"
 [workspace.package]
 version = "1.29.1"
 edition = "2024"
-rust-version = "1.93"
+# Kept at the floor mise can build with (its distro packaging pins the
+# toolchain) so mise can embed the library crates. CI enforces this via
+# `cargo msrv verify` — bump deliberately, not as a side effect.
+rust-version = "1.91"
 license = "MIT"
 repository = "https://github.com/jdx/aube"
 homepage = "https://github.com/jdx/aube"
@@ -72,7 +75,13 @@ clap = { version = "4", features = ["derive"] }
 strum = { version = "0.28", features = ["derive"] }
 
 # HTTP
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "http2", "charset", "system-proxy", "gzip", "brotli", "zstd", "hickory-dns"] }
+# TLS backend and DNS resolver are deliberately NOT chosen here. Library
+# crates must stay backend-agnostic so embedders (mise) don't get rustls or
+# hickory-dns forced into their build via feature unification — reqwest's
+# hickory-dns cargo feature flips the default resolver for every client in
+# the final binary. The aube binary gets rustls + hickory-dns through
+# aube-registry's default features.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "http2", "charset", "system-proxy", "gzip", "brotli", "zstd"] }
 webpki-root-certs = "1"
 
 # Hashing
@@ -153,7 +162,11 @@ log = "0.4"
 regex = "1"
 
 # Archive extraction
-flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
+# Pure-Rust backend here so library crates don't force libz-ng-sys (cmake +
+# C toolchain) onto embedders' builds. The aube binary re-enables zlib-ng —
+# feature unification makes it win over rust_backend for the whole workspace
+# build, so standalone aube keeps the fast C backend.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 tar = "0.4"
 zstd = { version = "0.13", default-features = false }
 # Zip reader for the OSV advisory mirror — the bulk dump at

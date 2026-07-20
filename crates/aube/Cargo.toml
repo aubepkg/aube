@@ -81,7 +81,11 @@ sigstore-types = { workspace = true }
 ambient-id = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-flate2 = { workspace = true }
+# zlib-ng re-enabled at the binary level only: feature unification makes the
+# C backend win for the whole aube build (same perf as before), while library
+# crates stay on the pure-Rust backend so embedders don't inherit a cmake
+# build dependency. See the workspace flate2 entry.
+flate2 = { workspace = true, features = ["zlib-ng"] }
 glob = { workspace = true }
 ignore = { workspace = true }
 node-semver = { workspace = true }
