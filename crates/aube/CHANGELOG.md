@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.0](https://github.com/jdx/aube/compare/v1.29.1...v1.30.0) - 2026-07-20
+
+### Added
+
+- make library crates embeddable at MSRV 1.91 with backend-agnostic features ([#1068](https://github.com/jdx/aube/pull/1068))
+- *(exec)* image-replace the tool on standalone terminal runs ([#1067](https://github.com/jdx/aube/pull/1067))
+
+### Fixed
+
+- *(dlx)* tear down spawned tool when aube is terminated ([#1065](https://github.com/jdx/aube/pull/1065))
+
+### Other
+
+- satisfy nightly clippy (question_mark, fetch_update) ([#1066](https://github.com/jdx/aube/pull/1066))
+- refresh benchmarks for v1.29.1 ([#1060](https://github.com/jdx/aube/pull/1060))
+
 ## [1.29.1](https://github.com/jdx/aube/compare/v1.29.0...v1.29.1) - 2026-07-16
 
 ### Fixed

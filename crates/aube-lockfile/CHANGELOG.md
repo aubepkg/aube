@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.0](https://github.com/jdx/aube/compare/aube-lockfile-v1.29.1...aube-lockfile-v1.30.0) - 2026-07-20
+
+### Other
+
+- satisfy nightly clippy (question_mark, fetch_update) ([#1066](https://github.com/jdx/aube/pull/1066))
+- refresh benchmarks for v1.29.1 ([#1060](https://github.com/jdx/aube/pull/1060))
+
 ## [1.29.0](https://github.com/jdx/aube/compare/aube-lockfile-v1.28.0...aube-lockfile-v1.29.0) - 2026-07-16
 
 ### Other
