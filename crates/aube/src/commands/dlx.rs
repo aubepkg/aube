@@ -145,26 +145,39 @@ pub async fn run(args: DlxArgs) -> miette::Result<Option<i32>> {
     // Bin name is only used in the non-shell path. Under shell-mode the
     // user assembles their own line and we run it through `sh -c`, so any
     // bin lookup is the shell's job.
+    // Resolve the runtime from the *user's* project up front — before the
+    // local-bin fast path and before switching into the scratch dir. A dlx
+    // scratch project has no version config, and the OnceCell context is
+    // process-global, so resolving here (original cwd) is what makes both the
+    // local-bin bin and `aubx` honor the project's .nvmrc / devEngines. The
+    // fast path replaces the image immediately, so this must run before it or
+    // a local `dlx` bin would launch with the ambient runtime.
+    let initial_cwd = crate::dirs::cwd()?;
+    crate::runtime::ensure_for_cwd(&initial_cwd).await?;
+
     let bin_name = bin_name_for(&command);
-    if !explicit_package && !shell_mode && can_use_local_bin(&command) {
-        let initial_cwd = crate::dirs::cwd()?;
-        if let Some(project_dir) = crate::dirs::find_project_root(&initial_cwd) {
-            let bin_path = super::project_modules_dir(&project_dir)
-                .join(".bin")
-                .join(&bin_name);
-            if bin_path.exists() {
-                return super::exec::exec_bin(&initial_cwd, &bin_path, &bin_name, &bin_args, false)
-                    .await;
-            }
+    if !explicit_package
+        && !shell_mode
+        && can_use_local_bin(&command)
+        && let Some(project_dir) = crate::dirs::find_project_root(&initial_cwd)
+    {
+        let bin_path = super::project_modules_dir(&project_dir)
+            .join(".bin")
+            .join(&bin_name);
+        if bin_path.exists() {
+            // Local-bin fast path: no scratch dir was created, so nothing
+            // needs to run after the tool. Hand off via image replacement
+            // on the standalone binary (embedded/Windows supervise).
+            return super::exec::exec_bin_terminal(
+                &initial_cwd,
+                &bin_path,
+                &bin_name,
+                &bin_args,
+                false,
+            )
+            .await;
         }
     }
-
-    // Resolve the runtime from the *user's* project before switching
-    // into the scratch dir — a dlx scratch project has no version
-    // config, and the OnceCell context is process-global, so resolving
-    // here (original cwd) is what makes `aubx` honor the project's
-    // .nvmrc / devEngines.
-    crate::runtime::ensure_for_cwd(&crate::dirs::cwd()?).await?;
 
     let tmp = tempfile::Builder::new()
         .prefix("aube-dlx-")
