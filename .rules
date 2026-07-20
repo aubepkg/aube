@@ -96,7 +96,7 @@ commands:
   test_unit: cargo test
   clippy: cargo clippy --all-targets -- -D warnings
   fmt_check: cargo fmt --check
-  bats: mise run test:bats (needs Node.js 22 + GNU parallel)
+  bats: mise run test:bats (needs Node.js 22; parallel jobs run via mise-managed rush, no system GNU parallel needed)
   bats_single: mise run test:bats test/install.bats
 
 release_profile:
