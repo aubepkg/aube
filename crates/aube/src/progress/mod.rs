@@ -72,6 +72,11 @@ fn overflow_fetch_label(count: usize) -> String {
 fn clamp_reused_to(reused: &AtomicUsize, downloaded: &AtomicUsize, total: usize) {
     let dl = downloaded.load(Ordering::Relaxed);
     let cap = total.saturating_sub(dl);
+    // `fetch_update` is renamed to `try_update` in Rust 1.99, but that method
+    // is only stable since 1.95 and our MSRV is 1.93 — switch once the MSRV
+    // clears 1.95. The deprecation is nightly-only for now; allow it so a
+    // nightly `clippy -D warnings` stays green.
+    #[allow(deprecated)]
     let _ = reused.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
         (cur > cap).then_some(cap)
     });
