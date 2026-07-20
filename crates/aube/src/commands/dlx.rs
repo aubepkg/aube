@@ -230,8 +230,8 @@ pub async fn run(args: DlxArgs) -> miette::Result<Option<i32>> {
         crate::runtime::apply_child_env(&mut cmd);
         cmd.env("PATH", &new_path)
             .current_dir(&prev_cwd)
-            .stderr(aube_scripts::child_stderr())
-            .status()
+            .stderr(aube_scripts::child_stderr());
+        crate::process_guard::spawn_and_wait(cmd)
             .await
             .into_diagnostic()
             .wrap_err("failed to execute dlx shell command")?
@@ -275,7 +275,7 @@ pub async fn run(args: DlxArgs) -> miette::Result<Option<i32>> {
             cmd.env("PATH", aube_scripts::prepend_paths(&runtime_dirs));
         }
         crate::runtime::apply_child_env(&mut cmd);
-        cmd.status()
+        crate::process_guard::spawn_and_wait(cmd)
             .await
             .into_diagnostic()
             .wrap_err("failed to execute dlx binary")?

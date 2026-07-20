@@ -22,6 +22,7 @@ pub mod embed;
 mod engines;
 mod patches;
 mod pnpmfile;
+mod process_guard;
 mod progress;
 mod runtime;
 mod self_version;

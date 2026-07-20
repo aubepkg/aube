@@ -332,10 +332,10 @@ pub(crate) async fn exec_bin_with_node_args(
         cmd.args(args);
         cmd
     };
-    let status = command
+    command
         .current_dir(cwd)
-        .stderr(aube_scripts::child_stderr())
-        .status()
+        .stderr(aube_scripts::child_stderr());
+    let status = crate::process_guard::spawn_and_wait(command)
         .await
         .into_diagnostic()
         .wrap_err("failed to execute binary")?;
