@@ -807,18 +807,21 @@ mod tests {
             let bin_dir = PathBuf::from("/opt/mise/node/bin");
             seed_embedder_node(bin_dir.clone());
 
+            // The seed absolutizes the dir; compute the expected the same way
+            // so this holds on Windows (where `/opt/...` isn't absolute).
+            let expected = std::path::absolute(&bin_dir).unwrap_or(bin_dir);
+            let node_exe = if cfg!(windows) { "node.exe" } else { "node" };
+
             let ctx = current().expect("slot seeded");
             assert_eq!(ctx.source, RuntimeSource::Embedder);
-            assert_eq!(ctx.bin_dir.as_deref(), Some(bin_dir.as_path()));
-
-            let node_exe = if cfg!(windows) { "node.exe" } else { "node" };
-            assert_eq!(node_program(), bin_dir.join(node_exe));
-            assert_eq!(path_entries(), vec![bin_dir.clone()]);
+            assert_eq!(ctx.bin_dir.as_deref(), Some(expected.as_path()));
+            assert_eq!(node_program(), expected.join(node_exe));
+            assert_eq!(path_entries(), vec![expected.clone()]);
 
             // `ensure`-style early return: a second seed does not clobber the
             // first (OnceCell is set once).
             seed_embedder_node(PathBuf::from("/other"));
-            assert_eq!(node_program(), bin_dir.join(node_exe));
+            assert_eq!(node_program(), expected.join(node_exe));
         })
         .await;
     }
