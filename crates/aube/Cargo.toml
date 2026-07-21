@@ -125,8 +125,10 @@ publish = ["dep:sigstore-sign", "dep:sigstore-oidc", "dep:sigstore-types", "dep:
 rustls = ["reqwest/rustls", "aube-registry/rustls", "aube-util/rustls"]
 # In-process DNS caching. Default for the aube binary; opt-in for embedders,
 # because reqwest's hickory-dns feature flips the default resolver for every
-# client in the final binary (see aube-registry's feature docs).
-hickory-dns = ["aube-registry/hickory-dns"]
+# client in the final binary (see aube-registry's feature docs). Lists
+# reqwest/hickory-dns directly — mirroring `rustls` — so the crate's own
+# reqwest clients keep it even if aube-registry's feature graph changes.
+hickory-dns = ["reqwest/hickory-dns", "aube-registry/hickory-dns"]
 
 [dev-dependencies]
 clap-sort = "1"
