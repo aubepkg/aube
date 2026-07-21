@@ -50,7 +50,9 @@ pub mod patch_remove;
 pub mod peers;
 pub mod prefix;
 pub mod prune;
+#[cfg(feature = "publish")]
 pub mod publish;
+#[cfg(feature = "publish")]
 pub mod publish_provenance;
 pub mod query;
 pub mod rebuild;

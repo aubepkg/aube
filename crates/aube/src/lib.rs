@@ -450,6 +450,7 @@ enum Commands {
     #[command(after_long_help = commands::prune::AFTER_LONG_HELP)]
     Prune(commands::prune::PruneArgs),
     /// Publish the current package to the registry
+    #[cfg(feature = "publish")]
     Publish(commands::publish::PublishArgs),
     /// Alias for `clean` — remove `node_modules` across every workspace project.
     ///
@@ -979,6 +980,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         }
         Some(Commands::Prefix(args)) => commands::prefix::run(args).await?,
         Some(Commands::Prune(args)) => commands::prune::run(args).await?,
+        #[cfg(feature = "publish")]
         Some(Commands::Publish(args)) => {
             commands::publish::run(args, effective_filter.clone()).await?
         }
@@ -1035,6 +1037,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                         return Ok(Some(code));
                     }
                 }
+                #[cfg(feature = "publish")]
                 Some(Commands::Publish(args)) => {
                     commands::publish::run(args, nested_filter).await?
                 }
