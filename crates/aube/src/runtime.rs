@@ -141,7 +141,16 @@ pub fn current() -> Option<Arc<RuntimeContext>> {
 /// before [`ensure`] runs — `ensure` returns early when the slot is already
 /// set, so this override wins without aube probing for its own runtime. A
 /// no-op outside a scope or if the slot is already populated.
-pub fn seed_embedder_node(bin_dir: PathBuf) {
+pub async fn seed_embedder_node(bin_dir: PathBuf) {
+    // No-op outside an install scope, or when the slot is already seeded.
+    // Check first so the path/version probing below is skipped entirely in
+    // those cases (a later `set` would be a no-op anyway).
+    let should_seed = INSTALL_RUNTIME
+        .try_with(|slot| slot.get().is_none())
+        .unwrap_or(false);
+    if !should_seed {
+        return;
+    }
     // Absolutize: lifecycle scripts may run with a different working
     // directory, so both `node_program()` and the prepended PATH entry must
     // resolve independently of cwd. `absolute` doesn't require the dir to
@@ -152,9 +161,12 @@ pub fn seed_embedder_node(bin_dir: PathBuf) {
     // Probe the supplied node for its version so engine checks and
     // virtual-store hashing key off the *same* node as lifecycle scripts,
     // instead of `effective_node_version` falling back to an ambient `node`.
-    let version = std::process::Command::new(&node_bin)
+    // Async spawn so the install task doesn't block a Tokio worker on the
+    // child process.
+    let version = tokio::process::Command::new(&node_bin)
         .arg("--version")
         .output()
+        .await
         .ok()
         .filter(|out| out.status.success())
         .and_then(|out| String::from_utf8(out.stdout).ok())
@@ -805,7 +817,7 @@ mod tests {
         scope(async {
             assert!(current().is_none(), "slot starts empty");
             let bin_dir = PathBuf::from("/opt/mise/node/bin");
-            seed_embedder_node(bin_dir.clone());
+            seed_embedder_node(bin_dir.clone()).await;
 
             // The seed absolutizes the dir; compute the expected the same way
             // so this holds on Windows (where `/opt/...` isn't absolute).
@@ -820,7 +832,7 @@ mod tests {
 
             // `ensure`-style early return: a second seed does not clobber the
             // first (OnceCell is set once).
-            seed_embedder_node(PathBuf::from("/other"));
+            seed_embedder_node(PathBuf::from("/other")).await;
             assert_eq!(node_program(), expected.join(node_exe));
         })
         .await;
@@ -832,7 +844,7 @@ mod tests {
         // must not panic and must not leak into a later scope. Asserting via a
         // fresh `scope` reads the (empty) task-local, not the process-wide
         // `RUNTIME`, so this stays deterministic regardless of test order.
-        seed_embedder_node(PathBuf::from("/opt/mise/node/bin"));
+        seed_embedder_node(PathBuf::from("/opt/mise/node/bin")).await;
         scope(async {
             assert!(current().is_none(), "seed outside a scope must not leak in");
         })

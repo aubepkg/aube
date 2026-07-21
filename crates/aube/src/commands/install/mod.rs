@@ -601,7 +601,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // `ensure` returns early when the slot is set, so aube skips its own
     // runtime resolution and scripts spawn on the host's node.
     if let Some(bin_dir) = &opts.embedder_node_bin_dir {
-        crate::runtime::seed_embedder_node(bin_dir.clone());
+        crate::runtime::seed_embedder_node(bin_dir.clone()).await;
     }
     if !opts.dry_run {
         crate::runtime::ensure(
