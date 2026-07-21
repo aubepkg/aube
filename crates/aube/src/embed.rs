@@ -50,6 +50,11 @@ pub struct InstallOptions {
     pub osv_transitive_check: bool,
     /// Invocation-scoped output, progress reporting, and cancellation.
     pub control: InstallControl,
+    /// Directory containing the `node` executable to run lifecycle scripts on.
+    /// Set this when the host manages its own node runtime (e.g. mise) so
+    /// scripts spawn on it and find it on PATH; `None` uses aube's own runtime
+    /// resolution / PATH fallback.
+    pub node_bin_dir: Option<PathBuf>,
 }
 
 impl InstallOptions {
@@ -69,6 +74,7 @@ impl InstallOptions {
             dangerously_allow_all_builds: false,
             osv_transitive_check: false,
             control: InstallControl::default(),
+            node_bin_dir: None,
         }
     }
 }
@@ -112,6 +118,7 @@ pub async fn install(options: InstallOptions) -> Result<()> {
     command_options.dangerously_allow_all_builds = options.dangerously_allow_all_builds;
     command_options.osv_transitive_check = options.osv_transitive_check;
     command_options.control = options.control;
+    command_options.embedder_node_bin_dir = options.node_bin_dir;
     crate::commands::install::run(command_options).await
 }
 

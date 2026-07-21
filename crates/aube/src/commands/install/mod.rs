@@ -596,6 +596,13 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     let lockfile_parse_options = aube_lockfile::ParseOptions {
         strict_store_integrity: strict_store_integrity_setting,
     };
+    // An embedding host (mise) can supply the node runtime for lifecycle
+    // scripts. Seed it into the scoped runtime slot before `ensure` runs —
+    // `ensure` returns early when the slot is set, so aube skips its own
+    // runtime resolution and scripts spawn on the host's node.
+    if let Some(bin_dir) = &opts.embedder_node_bin_dir {
+        crate::runtime::seed_embedder_node(bin_dir.clone());
+    }
     if !opts.dry_run {
         crate::runtime::ensure(
             &cwd,
