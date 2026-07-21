@@ -4889,7 +4889,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5315,9 +5315,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-iter"
-version = "1.26.1"
+version = "1.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fa36a1486a196f8de9ded8047a5c6e42d8b9d83a530a67e8316ba8468a325d4"
+checksum = "0cbef0ee83b87916292355e78f4fdee268d719ececa729be8914882428ca86b0"
 dependencies = [
  "tree-sitter",
 ]
@@ -6196,9 +6196,9 @@ dependencies = [
 
 [[package]]
 name = "yamlpath"
-version = "1.26.1"
+version = "1.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25eed75b3170866fd4ad5848fb7e19ce9344f3dbc12238d9b175ef0632d27779"
+checksum = "1362068e6e34bf985c39ee42ee8d410fcc398fedbd5f9303602616db26f542b5"
 dependencies = [
  "line-index",
  "self_cell",
