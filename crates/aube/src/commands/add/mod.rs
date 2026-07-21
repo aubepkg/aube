@@ -48,8 +48,9 @@ pub struct AddToProjectOptions {
     /// Directory containing the `node` executable an embedding host wants
     /// lifecycle scripts to run on (see
     /// [`crate::commands::install::InstallOptions::embedder_node_bin_dir`]).
-    /// `None` keeps aube's own runtime resolution.
-    pub embedder_node_bin_dir: Option<std::path::PathBuf>,
+    /// `None` keeps aube's own runtime resolution. Matches the
+    /// `node_bin_dir` field on [`crate::embed::InstallOptions`].
+    pub node_bin_dir: Option<std::path::PathBuf>,
 }
 
 /// Resolve, save, and install packages in an explicitly selected project.
@@ -125,7 +126,7 @@ pub async fn add_to_project(
                 options.dangerously_allow_all_builds,
             );
             install_options.control = options.control;
-            install_options.embedder_node_bin_dir = options.embedder_node_bin_dir;
+            install_options.embedder_node_bin_dir = options.node_bin_dir;
             if options.offline {
                 install_options.network_mode = aube_registry::NetworkMode::Offline;
             }

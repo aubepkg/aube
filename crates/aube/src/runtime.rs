@@ -142,11 +142,28 @@ pub fn current() -> Option<Arc<RuntimeContext>> {
 /// set, so this override wins without aube probing for its own runtime. A
 /// no-op outside a scope or if the slot is already populated.
 pub fn seed_embedder_node(bin_dir: PathBuf) {
+    // Absolutize: lifecycle scripts may run with a different working
+    // directory, so both `node_program()` and the prepended PATH entry must
+    // resolve independently of cwd. `absolute` doesn't require the dir to
+    // exist or touch symlinks; fall back to the input if it errors.
+    let bin_dir = std::path::absolute(&bin_dir).unwrap_or(bin_dir);
     let node_exe = if cfg!(windows) { "node.exe" } else { "node" };
+    let node_bin = bin_dir.join(node_exe);
+    // Probe the supplied node for its version so engine checks and
+    // virtual-store hashing key off the *same* node as lifecycle scripts,
+    // instead of `effective_node_version` falling back to an ambient `node`.
+    let version = std::process::Command::new(&node_bin)
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|v| v.trim().trim_start_matches('v').to_string())
+        .filter(|v| !v.is_empty());
     let ctx = RuntimeContext {
-        node_bin: Some(bin_dir.join(node_exe)),
+        node_bin: Some(node_bin),
         bin_dir: Some(bin_dir),
-        version: None,
+        version,
         requested: None,
         source: RuntimeSource::Embedder,
         provenance: RuntimeProvenance::Mise,
@@ -808,9 +825,15 @@ mod tests {
 
     #[tokio::test]
     async fn seed_embedder_node_is_a_noop_outside_scope() {
-        // No install scope active → nothing to seed, and no panic.
+        // No install scope active: the seed can't set a task-local slot, so it
+        // must not panic and must not leak into a later scope. Asserting via a
+        // fresh `scope` reads the (empty) task-local, not the process-wide
+        // `RUNTIME`, so this stays deterministic regardless of test order.
         seed_embedder_node(PathBuf::from("/opt/mise/node/bin"));
-        assert!(current().is_none());
+        scope(async {
+            assert!(current().is_none(), "seed outside a scope must not leak in");
+        })
+        .await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

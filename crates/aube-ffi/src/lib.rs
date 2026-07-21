@@ -567,6 +567,8 @@ fn add_impl(
             ),
             osv_transitive_check: input.osv_transitive_check && !input.offline,
             control,
+            // C ABI hosts rely on ambient node; no host-supplied runtime.
+            node_bin_dir: None,
         };
         embed::add(&project_dir, &packages, options)
             .await

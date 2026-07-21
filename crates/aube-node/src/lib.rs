@@ -353,6 +353,8 @@ async fn run_install(
                     dep_selection,
                     osv_transitive_check,
                     control: control.clone(),
+                    // JS hosts rely on ambient node; no host-supplied runtime.
+                    node_bin_dir: None,
                 },
             )
             .await
