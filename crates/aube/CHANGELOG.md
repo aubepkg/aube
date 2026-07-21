@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.31.0](https://github.com/jdx/aube/compare/v1.30.0...v1.31.0) - 2026-07-21
+
+### Added
+
+- *(aube)* make the crate embeddable without the publish/DNS stack ([#1069](https://github.com/jdx/aube/pull/1069))
+
 ## [1.30.0](https://github.com/jdx/aube/compare/v1.29.1...v1.30.0) - 2026-07-20
 
 ### Added
