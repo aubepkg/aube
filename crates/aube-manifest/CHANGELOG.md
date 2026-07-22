@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.0](https://github.com/jdx/aube/compare/aube-manifest-v1.31.0...aube-manifest-v1.32.0) - 2026-07-22
+
+### Other
+
+- refresh benchmarks for v1.31.0 ([#1072](https://github.com/jdx/aube/pull/1072))
+
 ## [1.30.0](https://github.com/jdx/aube/compare/aube-manifest-v1.29.1...aube-manifest-v1.30.0) - 2026-07-20
 
 ### Other

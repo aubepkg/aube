@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.0](https://github.com/jdx/aube/compare/v1.31.0...v1.32.0) - 2026-07-22
+
+### Added
+
+- *(embed)* let hosts supply the node runtime for lifecycle scripts ([#1079](https://github.com/jdx/aube/pull/1079))
+
+### Other
+
+- refresh benchmarks for v1.31.0 ([#1072](https://github.com/jdx/aube/pull/1072))
+
 ## [1.31.0](https://github.com/jdx/aube/compare/v1.30.0...v1.31.0) - 2026-07-21
 
 ### Added
