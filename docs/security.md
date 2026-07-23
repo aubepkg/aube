@@ -169,6 +169,12 @@ Version selectors are npm-style semver ranges.
 Default: `no-downgrade`. Set `trustPolicy: off` to disable, or use
 `trustPolicyExclude` for per-package opt-outs.
 
+aube also ships a small built-in exclude list for well-known packages whose
+maintainers legitimately publish provenance-inconsistent releases (e.g.
+maintaining multiple major-version lines and backporting to older ones without
+attestation), so common installs don't fail on a known-benign downgrade. Your
+own `trustPolicyExclude` entries are added on top of these defaults.
+
 Settings: [`trustPolicy`](/settings/#setting-trustpolicy),
 [`trustPolicyExclude`](/settings/#setting-trustpolicyexclude),
 [`trustPolicyIgnoreAfter`](/settings/#setting-trustpolicyignoreafter).

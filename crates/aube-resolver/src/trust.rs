@@ -252,6 +252,11 @@ fn cutoff_iso8601(minutes_ago: u64) -> Option<String> {
 /// the name) or `<name>@<semver-range>[ || <semver-range>]…` (no name
 /// globs combined with versions).
 pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
+    // @octokit maintains several major-version lines in parallel and backports
+    // fixes to older lines without provenance attestation. A backport (e.g.
+    // @octokit/endpoint@9.0.6) is published after an attested newer major
+    // (10.1.0), so the no-downgrade check flags the legitimate older release.
+    "@octokit/endpoint",
     "chokidar",
     "eslint-config-prettier",
     "eslint-import-resolver-typescript",
@@ -1121,6 +1126,28 @@ mod tests {
             );
         }
         assert!(!r.matches("left-pad", &node_semver::Version::parse("1.0.0").unwrap()));
+    }
+
+    #[test]
+    fn default_excludes_scoped_octokit_endpoint_backport() {
+        // Regression: @octokit backports fixes to older major lines without
+        // provenance, so a legitimate older release (e.g. 9.0.6) published
+        // after an attested newer major (10.1.0) tripped no-downgrade. The
+        // scoped name must match every version, and the leading `@` must not
+        // be misparsed as a version separator.
+        let r = TrustExcludeRules::default();
+        assert!(r.matches(
+            "@octokit/endpoint",
+            &node_semver::Version::parse("9.0.6").unwrap()
+        ));
+        assert!(r.matches(
+            "@octokit/endpoint",
+            &node_semver::Version::parse("10.1.0").unwrap()
+        ));
+        assert!(!r.matches(
+            "@octokit/core",
+            &node_semver::Version::parse("9.0.6").unwrap()
+        ));
     }
 
     #[test]
