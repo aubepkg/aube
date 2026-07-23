@@ -187,6 +187,17 @@ pub fn release_target_triple() -> Result<String, Error> {
             format!("{arch}-unknown-linux-{libc}")
         }
         "windows" => format!("{arch}-pc-windows-msvc"),
+        // aube publishes no FreeBSD release archive, so self-update has
+        // nothing to fetch. `Platform::current()` still recognizes
+        // FreeBSD (see platform.rs) so installs run against system/mise
+        // Node; only the self-updater is unavailable here.
+        "freebsd" => {
+            return Err(Error::UnsupportedPlatform {
+                platform: format!(
+                    "freebsd-{arch} (no published aube build; install via pkg or mise)"
+                ),
+            });
+        }
         other => {
             return Err(Error::UnsupportedPlatform {
                 platform: format!("{other}-{arch}"),
@@ -625,8 +636,8 @@ mod tests {
     #[test]
     fn target_triple_is_publishable() {
         // On every platform CI runs, the host triple must map to a
-        // name aube actually publishes (Intel macOS is the documented
-        // exception).
+        // name aube actually publishes. Documented exceptions with no
+        // published build: Intel macOS, and FreeBSD (any arch).
         match release_target_triple() {
             Ok(t) => {
                 assert!(
@@ -637,8 +648,12 @@ mod tests {
                 );
             }
             Err(Error::UnsupportedPlatform { .. }) => {
-                assert_eq!(std::env::consts::OS, "macos");
-                assert_eq!(std::env::consts::ARCH, "x86_64");
+                let os = std::env::consts::OS;
+                assert!(
+                    os == "freebsd" || (os == "macos" && std::env::consts::ARCH == "x86_64"),
+                    "unexpected unsupported host: {os}-{}",
+                    std::env::consts::ARCH
+                );
             }
             Err(other) => panic!("unexpected error: {other}"),
         }
