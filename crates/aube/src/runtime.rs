@@ -156,7 +156,15 @@ pub fn scope_current<F: Future>(future: F) -> impl Future<Output = F::Output> {
 pub fn current() -> Option<Arc<RuntimeContext>> {
     match INSTALL_RUNTIME.try_with(|runtime| runtime.get().map(Arc::clone)) {
         Ok(runtime) => runtime,
-        Err(_) => RUNTIME.get().map(Arc::clone),
+        // Non-install commands (dlx/exec/run/node). A process-wide
+        // embedder runtime is authoritative over a `RUNTIME` an earlier
+        // `ensure` may have populated, so registration order can't leave
+        // these paths on a pre-registration runtime while install scopes
+        // see the registered one.
+        Err(_) => EMBEDDER_CONTEXT
+            .get()
+            .map(Arc::clone)
+            .or_else(|| RUNTIME.get().map(Arc::clone)),
     }
 }
 
@@ -480,61 +488,103 @@ pub fn child_env_vars() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
         vars.push(("NODE".into(), node.into_os_string()));
     }
     if let Some(ctx) = ctx {
-        for entry in &ctx.env {
-            let value = match entry.merge {
-                EnvMerge::Replace => entry.val.clone(),
-                EnvMerge::Append => match std::env::var_os(&entry.key).filter(|v| !v.is_empty()) {
+        // Non-jailed spawns inherit the parent env, so `Append` composes
+        // onto the inherited value of the key.
+        vars.extend(fold_env(&ctx.env, |key| {
+            std::env::var_os(key).filter(|v| !v.is_empty())
+        }));
+    }
+    vars
+}
+
+/// Fold embedder env entries into resolved `(key, value)` pairs, in the
+/// order keys first appear. [`EnvMerge::Append`] composes onto the
+/// running value for that key — seeded from `base(key)` (the inherited
+/// env for non-jailed spawns, `None` in the cleared jail) — so several
+/// appends to one key chain in order; [`EnvMerge::Replace`] overwrites,
+/// and a later append composes onto the replaced value. Kept pure (the
+/// base is supplied by the caller) so it is unit-testable without
+/// touching the process environment.
+fn fold_env(
+    entries: &[EmbedderEnv],
+    base: impl Fn(&std::ffi::OsStr) -> Option<std::ffi::OsString>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let mut order: Vec<std::ffi::OsString> = Vec::new();
+    let mut acc: std::collections::HashMap<std::ffi::OsString, std::ffi::OsString> =
+        std::collections::HashMap::new();
+    for entry in entries {
+        if !acc.contains_key(&entry.key) {
+            order.push(entry.key.clone());
+        }
+        let value = match entry.merge {
+            EnvMerge::Replace => entry.val.clone(),
+            EnvMerge::Append => {
+                let running = acc
+                    .get(&entry.key)
+                    .cloned()
+                    .or_else(|| base(&entry.key))
+                    .filter(|v| !v.is_empty());
+                match running {
                     Some(mut existing) => {
                         existing.push(" ");
                         existing.push(&entry.val);
                         existing
                     }
                     None => entry.val.clone(),
-                },
-            };
-            vars.push((entry.key.clone(), value));
-        }
+                }
+            }
+        };
+        acc.insert(entry.key.clone(), value);
     }
-    vars
+    order
+        .into_iter()
+        .map(|key| {
+            let value = acc.remove(&key).unwrap_or_default();
+            (key, value)
+        })
+        .collect()
 }
 
 /// The `NODE_OPTIONS` an embedder contributed, folded over `base` (the
-/// resolved `nodeOptions` setting). Used by spawn paths that build env
-/// through a settings snapshot rather than [`apply_child_env`]. Returns
-/// `base` unchanged when no embedder `NODE_OPTIONS` entry is active.
+/// resolved `nodeOptions` setting). Used by the jailed lifecycle-script
+/// path, which builds env through a settings snapshot rather than
+/// [`apply_child_env`]. Returns `base` unchanged when no embedder
+/// `NODE_OPTIONS` entry is active; multiple appends chain in order.
 pub fn merge_node_options(base: Option<String>) -> Option<String> {
     let ctx = current();
     let entries = ctx.as_ref().map(|c| c.env.as_slice()).unwrap_or(&[]);
-    let mut value = base;
-    for entry in entries {
-        if entry.key != std::ffi::OsStr::new("NODE_OPTIONS") {
-            continue;
-        }
-        let contrib = entry.val.to_string_lossy().into_owned();
-        value = match (entry.merge, value.take()) {
-            (EnvMerge::Replace, _) => Some(contrib),
-            (EnvMerge::Append, Some(existing)) if !existing.is_empty() => {
-                Some(format!("{existing} {contrib}"))
-            }
-            (EnvMerge::Append, _) => Some(contrib),
-        };
+    let node_options: Vec<EmbedderEnv> = entries
+        .iter()
+        .filter(|e| e.key == std::ffi::OsStr::new("NODE_OPTIONS"))
+        .cloned()
+        .collect();
+    if node_options.is_empty() {
+        return base;
     }
-    value
+    let base_os = base.map(std::ffi::OsString::from);
+    fold_env(&node_options, |_| base_os.clone())
+        .into_iter()
+        .next()
+        .map(|(_, v)| v.to_string_lossy().into_owned())
+        .or_else(|| base_os.map(|b| b.to_string_lossy().into_owned()))
 }
 
 /// Embedder env entries other than `NODE_OPTIONS` (which
-/// [`merge_node_options`] handles), as plain `(key, value)` pairs to
-/// stamp on a child. `Append` here collapses to the value, since aube
-/// has no base for these keys — documented behavior.
+/// [`merge_node_options`] handles), as resolved `(key, value)` pairs for
+/// the jailed lifecycle-script path. `env_clear` means there is no
+/// inherited base, so `Append` composes only across the embedder's own
+/// entries for a key; `Replace` overwrites.
 pub fn embedder_extra_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let Some(ctx) = current() else {
         return Vec::new();
     };
-    ctx.env
+    let entries: Vec<EmbedderEnv> = ctx
+        .env
         .iter()
         .filter(|e| e.key != std::ffi::OsStr::new("NODE_OPTIONS"))
-        .map(|e| (e.key.clone(), e.val.clone()))
-        .collect()
+        .cloned()
+        .collect();
+    fold_env(&entries, |_| None)
 }
 
 /// The runtime-relevant settings, extracted from a `ResolveCtx` so
@@ -1239,6 +1289,41 @@ mod tests {
             assert_eq!(node_program(), bin.join(node_exe));
         })
         .await;
+    }
+
+    #[test]
+    fn fold_env_composes_appends_and_honors_replace() {
+        fn os(s: &str) -> std::ffi::OsString {
+            std::ffi::OsString::from(s)
+        }
+        fn entry(k: &str, v: &str, merge: EnvMerge) -> EmbedderEnv {
+            EmbedderEnv {
+                key: os(k),
+                val: os(v),
+                merge,
+            }
+        }
+        // Append seeds from the caller's base and chains multiple entries
+        // for the same key in order; a key with no base starts empty.
+        let entries = vec![
+            entry("NODE_OPTIONS", "--a", EnvMerge::Append),
+            entry("NODE_OPTIONS", "--b", EnvMerge::Append),
+            entry("FRESH", "x", EnvMerge::Append),
+        ];
+        let out = fold_env(&entries, |k| {
+            (k == std::ffi::OsStr::new("NODE_OPTIONS")).then(|| os("--base"))
+        });
+        assert_eq!(out[0], (os("NODE_OPTIONS"), os("--base --a --b")));
+        assert_eq!(out[1], (os("FRESH"), os("x")));
+
+        // Replace overwrites even a present base; a later append composes
+        // onto the replaced value, not the base.
+        let entries = vec![
+            entry("K", "one", EnvMerge::Replace),
+            entry("K", "two", EnvMerge::Append),
+        ];
+        let out = fold_env(&entries, |_| Some(os("IGNORED")));
+        assert_eq!(out, vec![(os("K"), os("one two"))]);
     }
 
     #[tokio::test]

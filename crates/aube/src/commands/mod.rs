@@ -86,7 +86,7 @@ mod script_settings;
 mod settings_context;
 mod workspace_helpers;
 
-pub(crate) use auto_install::ensure_installed;
+pub(crate) use auto_install::{ensure_installed, ensure_installed_in};
 
 pub(crate) fn settings_hoisting_limits_to_linker(
     value: aube_settings::resolved::HoistingLimits,

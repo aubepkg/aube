@@ -22,9 +22,10 @@ pub(crate) fn configure_script_settings(
     // this for lifecycle scripts to see the pinned node — the install
     // driver resolves the runtime early, then configures script
     // settings. When no context exists (or no switching is active)
-    // `node_bin_dir` stays `None` (PATH untouched); `node_exe` still
-    // falls back to the ambient `node` on PATH so `npm_node_execpath` /
-    // `NODE` are populated for lifecycle scripts the way pnpm/npm do.
+    // `node_bin_dir` stays `None` (PATH untouched); `node_program` /
+    // `node_execpath` still fall back to the ambient `node` on PATH so
+    // `NODE` / `npm_node_execpath` are populated for lifecycle scripts
+    // the way pnpm/npm do.
     let runtime = crate::runtime::current();
     // Resolve the proxy the same way the registry client does, so a
     // dependency's install script honors it too. `httpProxy` inherits

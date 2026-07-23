@@ -1,4 +1,4 @@
-use super::ensure_installed;
+use super::ensure_installed_in;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::path::Path;
@@ -124,7 +124,7 @@ pub async fn run_in(
         )
     })?;
 
-    ensure_installed(no_install).await?;
+    ensure_installed_in(no_install, Some(&cwd)).await?;
 
     if !filter.is_empty() {
         // Same defaulting rule as `aube run`: sort=on unless `--no-sort`

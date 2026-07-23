@@ -1,4 +1,4 @@
-use super::ensure_installed;
+use super::ensure_installed_in;
 use aube_manifest::PackageJson;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
@@ -449,7 +449,7 @@ pub(crate) async fn run_script_with(
 
     let manifest = load_manifest(&cwd)?;
     if !manifest.scripts.contains_key(script) {
-        ensure_installed(no_install).await?;
+        ensure_installed_in(no_install, Some(&cwd)).await?;
         let bin_path = super::project_modules_dir(&cwd).join(".bin").join(script);
         if bin_path.exists() {
             return super::exec::exec_bin_with_node_args(
@@ -475,7 +475,7 @@ pub(crate) async fn run_script_with(
         return Err(miette!("script not found: {script}\n  {hint}"));
     }
 
-    ensure_installed(no_install).await?;
+    ensure_installed_in(no_install, Some(&cwd)).await?;
     exec_script_chain(
         &cwd,
         &manifest,
@@ -527,7 +527,7 @@ async fn run_script_filtered(
     // isolated linker already materializes every workspace package's
     // deps in a single pass, so per-package reinstalls would just
     // re-check the same lockfile N times.
-    ensure_installed(no_install).await?;
+    ensure_installed_in(no_install, Some(cwd)).await?;
 
     if let Some(concurrency) = effective_concurrency(parallel, recursive.workspace_concurrency) {
         return run_filtered_parallel(

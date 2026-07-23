@@ -13,7 +13,7 @@ pub use crate::commands::install::{
     DepSelection, FrozenMode, InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode,
     InstallPhase, InstallProgressSnapshot, InstallReporter,
 };
-pub use crate::runtime::{EmbedderRuntime, EnvMerge, set_embedder_runtime};
+pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
 pub use aube_registry::NetworkMode;
 pub use aube_util::{AUBE, Embedder as Host};
 
@@ -206,6 +206,11 @@ pub async fn exec(
 /// roots runtime resolution and the local-`.bin` fast path. Every spawn
 /// honors `runtime` when given, else the process-wide
 /// [`set_embedder_runtime`].
+///
+/// Unlike [`run`] / [`exec`], `dlx` changes the process working directory
+/// (into its scratch project) for the duration of the transient install —
+/// inherent to how dlx works. A host should not run `dlx` concurrently
+/// with other cwd-sensitive work in the same process.
 pub async fn dlx(
     project_dir: &Path,
     params: Vec<String>,

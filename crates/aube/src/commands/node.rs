@@ -81,12 +81,18 @@ pub async fn run_spawn(
     for (key, value) in crate::runtime::child_env_vars() {
         cmd.env(key, value);
     }
-    let status = cmd.status().await.into_diagnostic().map_err(|e| {
-        miette!(
-            code = aube_codes::errors::ERR_AUBE_SHIM_EXEC_FAILED,
-            "failed to spawn node at {}: {e}",
-            node.display()
-        )
-    })?;
+    // Tie the child to aube's lifetime (signal forwarding + PDEATHSIG) the
+    // same way dlx/exec supervised children are, so a host that stops the
+    // embedding process doesn't strand Node. Drop-in for `cmd.status()`.
+    let status = crate::process_guard::spawn_and_wait(cmd)
+        .await
+        .into_diagnostic()
+        .map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_SHIM_EXEC_FAILED,
+                "failed to spawn node at {}: {e}",
+                node.display()
+            )
+        })?;
     Ok(status.code())
 }
