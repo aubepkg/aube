@@ -94,7 +94,10 @@ pub fn prefix_dir() -> miette::Result<PathBuf> {
     resolve_home()
 }
 
-#[cfg(target_os = "linux")]
+// Linux plus every other Unix (FreeBSD, …): pnpm special-cases only
+// macOS (`~/Library/pnpm`) and Windows (`%LOCALAPPDATA%`), and uses the
+// XDG default everywhere else.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn platform_default() -> miette::Result<PathBuf> {
     if let Some(xdg) = aube_util::env::xdg_data_home() {
         return Ok(xdg.join("pnpm"));
