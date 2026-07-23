@@ -487,10 +487,9 @@ pub(crate) fn link_hoisted_importer(
             }
         }
 
-        let patch_key = pkg.spec_key();
-        if let Some(patch_text) = linker.patches.get(&patch_key) {
+        if let Some((patch_key, patch_text)) = pkg.lookup_patch(&linker.patches) {
             apply_multi_file_patch(&pkg_dir, patch_text)
-                .map_err(|msg| Error::Patch(patch_key.clone(), msg))?;
+                .map_err(|msg| Error::Patch(patch_key, msg))?;
         }
 
         stats.packages_linked += 1;

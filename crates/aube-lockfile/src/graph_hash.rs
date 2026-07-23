@@ -422,7 +422,12 @@ fn full_pkg_id(pkg: &LockedPackage, patch_hash: PatchHashFn<'_>, content: Option
     let content = content
         .map(|hex| format!(":content:{hex}"))
         .unwrap_or_default();
-    match patch_hash(&pkg.name, &pkg.version) {
+    // Patches are declared against the registry identity, so an
+    // npm-aliased entry (`name` = alias) must resolve its patch hash by
+    // `registry_name()@version`; the callbacks key the patch map that
+    // way. The node identity string still uses `pkg.name` so the alias
+    // keeps its own dep_path. Mirrors `LockedPackage::lookup_patch`.
+    match patch_hash(pkg.registry_name(), &pkg.version) {
         Some(hex) => format!(
             "{}@{}:patch:{hex}{source}{content}:{integrity}",
             pkg.name, pkg.version
