@@ -148,9 +148,9 @@ jobs:
       - name: Rust embedding API — cargo-semver-checks
         id: semver
         continue-on-error: true
-        # Version can be bumped freely; a newer checker only adds lints.
+        # Version pinned in bin/cargo-semver-checks (mise tool-stub).
         run: |
-          mise x cargo:cargo-semver-checks@0.49.0 -- cargo semver-checks \
+          cargo-semver-checks semver-checks \
             --baseline-rev origin/main \
             --package aube-codes --package aube-settings --package aube-util
       - name: C ABI — frozen export set
