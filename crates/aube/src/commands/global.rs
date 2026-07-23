@@ -95,9 +95,11 @@ pub fn prefix_dir() -> miette::Result<PathBuf> {
 }
 
 // Linux plus every other Unix (FreeBSD, …): pnpm special-cases only
-// macOS (`~/Library/pnpm`) and Windows (`%LOCALAPPDATA%`), and uses the
-// XDG default everywhere else.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+// macOS (`~/Library/pnpm`), while Windows has its own arm below. Scoped
+// to `unix` so a non-Unix, non-Windows target doesn't silently inherit
+// the XDG/HOME logic — it gets a compile error instead, which is the
+// signal we'd want before shipping such a build.
+#[cfg(all(unix, not(target_os = "macos")))]
 fn platform_default() -> miette::Result<PathBuf> {
     if let Some(xdg) = aube_util::env::xdg_data_home() {
         return Ok(xdg.join("pnpm"));

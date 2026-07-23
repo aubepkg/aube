@@ -403,6 +403,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_SELF_UPDATE_UNSUPPORTED_PLATFORM",
+      "category": "Engine / CLI",
+      "description": "`aube self-update` has no published aube release archive for this OS/architecture (e.g. FreeBSD, Intel macOS). Install aube via your system package manager or mise. Distinct from ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM, which is about the Node.js download.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_INSTALL_CANCELLED",
       "category": "Misc / safety",
       "description": "An in-process install was cooperatively cancelled by its embedding host. Cancellation is observed at safe install boundaries so an in-flight filesystem phase is not abandoned mid-mutation.",

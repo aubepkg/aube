@@ -102,6 +102,7 @@ pub const ERR_AUBE_RUNTIME_EXTRACT_FAILED: &str = "ERR_AUBE_RUNTIME_EXTRACT_FAIL
 #[rustfmt::skip] pub const ERR_AUBE_RUNTIME_MISE_INSTALL_FAILED: &str = "ERR_AUBE_RUNTIME_MISE_INSTALL_FAILED";
 #[rustfmt::skip] pub const ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM: &str = "ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM";
 pub const ERR_AUBE_RUNTIME_IO: &str = "ERR_AUBE_RUNTIME_IO";
+#[rustfmt::skip] pub const ERR_AUBE_SELF_UPDATE_UNSUPPORTED_PLATFORM: &str = "ERR_AUBE_SELF_UPDATE_UNSUPPORTED_PLATFORM";
 
 // ── misc / safety ──────────────────────────────────────────────────
 pub const ERR_AUBE_INSTALL_CANCELLED: &str = "ERR_AUBE_INSTALL_CANCELLED";
@@ -548,6 +549,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_RUNTIME_IO,
         category: category::ENGINE_CLI,
         description: "A filesystem operation in the runtime store failed (lock acquisition, staging, or publishing an install). Not a download failure — the message names the failing path.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_SELF_UPDATE_UNSUPPORTED_PLATFORM,
+        category: category::ENGINE_CLI,
+        description: "`aube self-update` has no published aube release archive for this OS/architecture (e.g. FreeBSD, Intel macOS). Install aube via your system package manager or mise. Distinct from ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM, which is about the Node.js download.",
         exit_code: None,
     },
     // Misc / safety
