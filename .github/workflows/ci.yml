@@ -100,6 +100,90 @@ jobs:
           fi
       - run: mise run docs:build
 
+  # Guards the embedding API surfaces `embed` introduced against
+  # unintended breaks:
+  #   * Rust library crates (aube-codes/aube-settings/aube-util) via
+  #     cargo-semver-checks, baselined against main.
+  #   * The C ABI export set via the cdylib's dynamic symbol table diffed
+  #     against the frozen crates/aube-ffi/abi-symbols.txt manifest.
+  # A Rust break is allowed only when the PR is explicitly marked
+  # breaking — a `!` in the conventional-commit title (feat(ffi)!: ...)
+  # or the `breaking-api` label — the same signal that drives
+  # release-plz's major bump, so the gate and the version bump agree.
+  # Symbol drift always blocks (keeps the manifest honest); removing an
+  # export shows as a manifest deletion in the diff and must ride a
+  # breaking PR.
+  api-stability:
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: namespacelabs/nscloud-cache-action@58bf6e08898e88803c098e2b522668541cd3b2e3 # v1.6.0
+        with:
+          cache: rust
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: false
+      - name: Fetch semver baseline
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - name: Determine breaking-change override
+        id: gate
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          breaking=false
+          # conventional-commit breaking marker: type(scope)!: or type!:
+          if printf '%s' "$PR_TITLE" | grep -qE '^[a-z]+(\([^)]*\))?!:'; then breaking=true; fi
+          if printf '%s' "$PR_LABELS" | grep -q '"breaking-api"'; then breaking=true; fi
+          echo "breaking=$breaking" >> "$GITHUB_OUTPUT"
+          echo "breaking override: $breaking"
+      - name: Rust embedding API — cargo-semver-checks
+        id: semver
+        continue-on-error: true
+        # Version can be bumped freely; a newer checker only adds lints.
+        run: |
+          mise x cargo:cargo-semver-checks@0.49.0 -- cargo semver-checks \
+            --baseline-rev origin/main \
+            --package aube-codes --package aube-settings --package aube-util
+      - name: C ABI — frozen export set
+        id: ffi
+        continue-on-error: true
+        run: |
+          cargo build --locked --profile ffi -p aube-ffi
+          grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt
+          nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
+            | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt
+          diff -u /tmp/abi-expected.txt /tmp/abi-actual.txt
+      - name: Enforce API stability
+        if: always()
+        env:
+          SEMVER: ${{ steps.semver.outcome }}
+          FFI: ${{ steps.ffi.outcome }}
+          BREAKING: ${{ steps.gate.outputs.breaking }}
+        run: |
+          fail=0
+          if [ "$FFI" = failure ]; then
+            echo "::error::C ABI exports drifted from crates/aube-ffi/abi-symbols.txt. Update the manifest to match; removing or renaming an export is a breaking change — also mark the PR breaking (a '!' in the title or the 'breaking-api' label)."
+            fail=1
+          fi
+          if [ "$SEMVER" = failure ]; then
+            if [ "$BREAKING" = true ]; then
+              echo "::notice::Rust embedding API change is breaking; allowed because this PR is marked breaking."
+            else
+              echo "::error::A breaking change to a Rust embedding API (aube-codes/aube-settings/aube-util) was detected. If intentional, mark the PR breaking: a '!' in the conventional-commit title (e.g. feat(settings)!: ...) or the 'breaking-api' label."
+              fail=1
+            fi
+          fi
+          exit $fail
+
   # BATS integration shards. Linux runs 4 shards (matches Buildkite),
   # macOS runs 2. Keep these on GitHub-hosted runners: the jail-build
   # tests assert native OS sandbox behavior that does not match the
