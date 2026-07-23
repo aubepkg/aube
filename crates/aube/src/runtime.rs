@@ -79,6 +79,12 @@ pub struct RuntimeContext {
     /// the unwrapped binary for a wrapper. `None` falls back to
     /// `node_program`, then to the ambient `node`.
     pub node_execpath: Option<PathBuf>,
+    /// The node aube's internal machinery spawns (pnpmfile hooks,
+    /// security scanner, version probes) when it should differ from
+    /// `node_program` — a wrapping embedder points this at the real
+    /// binary so aube's own hot paths skip the wrapper hop. `None`
+    /// falls back to `node_program`.
+    pub internal_node: Option<PathBuf>,
     /// Exact resolved version (`"24.4.1"`), when known without probing.
     /// An embedder may leave this unset; [`crate::engines`] probes
     /// [`Self::node_execpath`] lazily (memoized) when a version is
@@ -108,6 +114,7 @@ impl RuntimeContext {
             bin_dir: None,
             node_program: None,
             node_execpath: None,
+            internal_node: None,
             version: None,
             requested: None,
             source: RuntimeSource::PathFallback,
@@ -192,6 +199,7 @@ pub struct EmbedderRuntime {
     bin_dir: Option<PathBuf>,
     node_program: Option<PathBuf>,
     node_execpath: Option<PathBuf>,
+    internal_node: Option<PathBuf>,
     version: Option<String>,
     env: Vec<EmbedderEnv>,
 }
@@ -229,6 +237,17 @@ impl EmbedderRuntime {
     /// program's parent (e.g. a shim dir separate from the real bin).
     pub fn path_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.bin_dir = Some(dir.into());
+        self
+    }
+
+    /// The node aube's *internal* machinery spawns — pnpmfile hooks, the
+    /// security scanner, version probes — when it should differ from
+    /// [`wrapper`](Self::wrapper)'s shim. A wrapping host typically points
+    /// this at the real binary so aube's own hot paths skip the wrapper
+    /// hop; user-facing spawns (scripts, `NODE`, `node`) stay wrapped.
+    /// Defaults to `node_program`.
+    pub fn internal_node(mut self, path: impl Into<PathBuf>) -> Self {
+        self.internal_node = Some(path.into());
         self
     }
 
@@ -297,10 +316,12 @@ impl EmbedderRuntime {
             .clone()
             .map(|p| abs(&p))
             .or_else(|| node_program.clone());
+        let internal_node = self.internal_node.clone().map(|p| abs(&p));
         RuntimeContext {
             bin_dir,
             node_program,
             node_execpath,
+            internal_node,
             version: self.version.clone().filter(|v| !v.is_empty()),
             requested: None,
             source: RuntimeSource::Embedder,
@@ -356,12 +377,46 @@ pub fn seed_install_embedder_runtime(per_call: Option<&EmbedderRuntime>) {
     });
 }
 
+/// Run `future` with a per-call embedder runtime active, falling through
+/// to the process-wide state when `runtime` is `None`. This is how the
+/// non-install embed entry points (`run`/`exec`/`dlx`/`node`) honor a
+/// per-call [`EmbedderRuntime`]: the process-wide `RUNTIME` slot is
+/// set-once, so a host that varies the runtime per invocation (e.g. a
+/// fresh shim dir per command) scopes each call instead. The task-local
+/// slot shadows the process-wide one for every `current()` read inside.
+pub async fn with_embedder_runtime<F: Future>(
+    runtime: Option<EmbedderRuntime>,
+    future: F,
+) -> F::Output {
+    match runtime {
+        Some(rt) => {
+            scope(async move {
+                seed_install_embedder_runtime(Some(&rt));
+                future.await
+            })
+            .await
+        }
+        None => future.await,
+    }
+}
+
 /// The node executable spawn sites should use: the runtime's
 /// `node_program` (the wrapper/shim for an embedder, the selected binary
 /// otherwise), else bare `"node"` (PATH lookup at spawn time).
 pub fn node_program() -> PathBuf {
     current()
         .and_then(|c| c.node_program.clone())
+        .unwrap_or_else(|| PathBuf::from("node"))
+}
+
+/// The node for aube's *internal* spawns — pnpmfile hooks, the security
+/// scanner, version probes. A wrapping embedder may split this off via
+/// [`EmbedderRuntime::internal_node`] so aube's own machinery runs on
+/// the real binary while user-facing spawns stay wrapped; otherwise it
+/// is [`node_program`].
+pub fn internal_node_program() -> PathBuf {
+    current()
+        .and_then(|c| c.internal_node.clone().or_else(|| c.node_program.clone()))
         .unwrap_or_else(|| PathBuf::from("node"))
 }
 
@@ -712,6 +767,7 @@ async fn resolve_context(
             // `npm_node_execpath` are the same binary.
             node_program: Some(res.node_bin.clone()),
             node_execpath: Some(res.node_bin.clone()),
+            internal_node: None,
             version: Some(res.version.to_string()),
             requested: Some(requested),
             source,
@@ -1100,11 +1156,13 @@ mod tests {
     fn wrapper_splits_shim_from_real_node() {
         let ctx = EmbedderRuntime::wrapper("/shim/node")
             .real_node("/node-24.4.1/bin/node")
+            .internal_node("/node-24.4.1/bin/node")
             .version("24.4.1")
             .env_append("NODE_OPTIONS", "--import /preload.mjs")
             .resolve();
         // PATH entry defaults to the shim's parent; `NODE` is the shim; the
-        // execpath is the real binary node-gyp reads.
+        // execpath is the real binary node-gyp reads; internal spawns
+        // (pnpmfile, scanner) skip the wrapper hop.
         assert_eq!(ctx.bin_dir.as_deref(), Some(abs("/shim").as_path()));
         assert_eq!(
             ctx.node_program.as_deref(),
@@ -1114,9 +1172,50 @@ mod tests {
             ctx.node_execpath.as_deref(),
             Some(abs("/node-24.4.1/bin/node").as_path())
         );
+        assert_eq!(
+            ctx.internal_node.as_deref(),
+            Some(abs("/node-24.4.1/bin/node").as_path())
+        );
         assert_eq!(ctx.version.as_deref(), Some("24.4.1"));
         assert_eq!(ctx.env.len(), 1);
         assert_eq!(ctx.env[0].merge, EnvMerge::Append);
+    }
+
+    #[tokio::test]
+    async fn internal_node_defaults_to_node_program() {
+        scope(async {
+            let rt = EmbedderRuntime::wrapper("/shim/node");
+            seed_install_embedder_runtime(Some(&rt));
+            // Without an explicit internal_node, internal spawns use the
+            // wrapper too (today's behavior for a plain wrapper).
+            assert_eq!(internal_node_program(), abs("/shim/node"));
+        })
+        .await;
+        scope(async {
+            let rt = EmbedderRuntime::wrapper("/shim/node").internal_node("/real/node");
+            seed_install_embedder_runtime(Some(&rt));
+            assert_eq!(internal_node_program(), abs("/real/node"));
+            // User-facing program stays the shim.
+            assert_eq!(node_program(), abs("/shim/node"));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn with_embedder_runtime_scopes_a_per_call_runtime() {
+        // A per-call runtime is visible inside the scoped future and gone
+        // after it — the process-wide state is untouched, so a host can
+        // vary the runtime per invocation (fresh shim dir per command).
+        let seen = with_embedder_runtime(Some(EmbedderRuntime::wrapper("/shim-a/node")), async {
+            node_program()
+        })
+        .await;
+        assert_eq!(seen, abs("/shim-a/node"));
+        // A fresh scope afterwards starts empty — nothing leaked.
+        scope(async {
+            assert!(current().is_none());
+        })
+        .await;
     }
 
     #[tokio::test]

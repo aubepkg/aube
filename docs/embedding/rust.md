@@ -126,9 +126,15 @@ sandbox — uses `wrapper`. The shim is `NODE` and goes on `PATH` so a script's
 ```rust
 let runtime = EmbedderRuntime::wrapper("/opt/mytool/shim/node")
     .real_node("/opt/mytool/node-24.4.1/bin/node")
+    .internal_node("/opt/mytool/node-24.4.1/bin/node") // aube's own spawns skip the wrapper
     .version("24.4.1") // supplied, not probed
     .env_append("NODE_OPTIONS", "--import /opt/mytool/preload.mjs");
 ```
+
+`internal_node` splits off the node aube's *internal* machinery spawns —
+pnpmfile hooks, the security scanner, version probes — so those hot paths run
+on the real binary while user-facing spawns (scripts, `NODE`, `aube node`)
+stay wrapped. It defaults to the wrapper program.
 
 Apply it per call, or register it once so every spawn path — install lifecycle
 scripts, `dlx`, `exec`, `run`, `node` — is covered:
@@ -155,14 +161,17 @@ Each resolves its project from the directory passed in — never the process
 working directory — and returns the child's exit code:
 
 ```rust
-embed::run(&project_dir, "build", vec![]).await?;          // package script
-embed::exec(&project_dir, "eslint", vec![".".into()]).await?; // node_modules/.bin
-embed::dlx(&project_dir, vec!["cowsay".into(), "hi".into()], vec![]).await?;
-embed::node(&project_dir, vec!["--eval".into(), "console.log(1)".into()]).await?;
+embed::run(&project_dir, "build", vec![], None).await?;          // package script
+embed::exec(&project_dir, "eslint", vec![".".into()], None).await?; // node_modules/.bin
+embed::dlx(&project_dir, vec!["cowsay".into(), "hi".into()], vec![], None).await?;
+embed::node(&project_dir, vec!["--eval".into(), "console.log(1)".into()], None).await?;
 ```
 
-Unlike the CLI, `embed::node` supervises a child rather than replacing the
-host process.
+The trailing parameter is an optional per-call `EmbedderRuntime`. `None` uses
+the process-wide registration; pass `Some(runtime)` when the runtime varies
+per invocation (e.g. a host that provisions a fresh shim directory per
+command), since `set_embedder_runtime` is set-once. Unlike the CLI,
+`embed::node` supervises a child rather than replacing the host process.
 
 ## Progress and cancellation
 

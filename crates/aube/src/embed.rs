@@ -146,15 +146,26 @@ pub async fn add(
 ///
 /// The project is resolved from `project_dir` (walking up to the nearest
 /// `package.json`), never the process cwd, so concurrent calls in different
-/// projects don't race. Every spawn honors the active [`EmbedderRuntime`].
-pub async fn run(project_dir: &Path, script: &str, args: Vec<String>) -> Result<Option<i32>> {
-    crate::commands::run::run_script_in(
-        project_dir.to_path_buf(),
-        script,
-        &args,
-        false,
-        false,
-        &aube_workspace::selector::EffectiveFilter::default(),
+/// projects don't race. Every spawn honors `runtime` when given, else the
+/// process-wide [`set_embedder_runtime`] — pass a per-call runtime when it
+/// varies per invocation (e.g. a fresh shim dir per command), since the
+/// process-wide registration is set-once.
+pub async fn run(
+    project_dir: &Path,
+    script: &str,
+    args: Vec<String>,
+    runtime: Option<EmbedderRuntime>,
+) -> Result<Option<i32>> {
+    crate::runtime::with_embedder_runtime(
+        runtime,
+        crate::commands::run::run_script_in(
+            project_dir.to_path_buf(),
+            script,
+            &args,
+            false,
+            false,
+            &aube_workspace::selector::EffectiveFilter::default(),
+        ),
     )
     .await
 }
@@ -162,17 +173,26 @@ pub async fn run(project_dir: &Path, script: &str, args: Vec<String>) -> Result<
 /// Run a project-local binary (`node_modules/.bin/<bin>`) in `project_dir`,
 /// the in-process equivalent of `aube exec <bin> -- <args>`. Returns the
 /// binary's exit code. The project is resolved from `project_dir`, not the
-/// process cwd; every spawn honors the active [`EmbedderRuntime`].
-pub async fn exec(project_dir: &Path, bin: &str, args: Vec<String>) -> Result<Option<i32>> {
+/// process cwd; every spawn honors `runtime` when given, else the
+/// process-wide [`set_embedder_runtime`].
+pub async fn exec(
+    project_dir: &Path,
+    bin: &str,
+    args: Vec<String>,
+    runtime: Option<EmbedderRuntime>,
+) -> Result<Option<i32>> {
     let exec_args = crate::commands::exec::ExecArgs {
         bin: bin.to_string(),
         args,
         ..Default::default()
     };
-    crate::commands::exec::run_in(
-        exec_args,
-        aube_workspace::selector::EffectiveFilter::default(),
-        Some(project_dir.to_path_buf()),
+    crate::runtime::with_embedder_runtime(
+        runtime,
+        crate::commands::exec::run_in(
+            exec_args,
+            aube_workspace::selector::EffectiveFilter::default(),
+            Some(project_dir.to_path_buf()),
+        ),
     )
     .await
 }
@@ -184,27 +204,42 @@ pub async fn exec(project_dir: &Path, bin: &str, args: Vec<String>) -> Result<Op
 ///
 /// The transient install runs in its own scratch project; `project_dir`
 /// roots runtime resolution and the local-`.bin` fast path. Every spawn
-/// honors the active [`EmbedderRuntime`].
+/// honors `runtime` when given, else the process-wide
+/// [`set_embedder_runtime`].
 pub async fn dlx(
     project_dir: &Path,
     params: Vec<String>,
     packages: Vec<String>,
+    runtime: Option<EmbedderRuntime>,
 ) -> Result<Option<i32>> {
     let args = crate::commands::dlx::DlxArgs {
         params,
         package: packages,
         ..Default::default()
     };
-    crate::commands::dlx::run_in(args, Some(project_dir.to_path_buf())).await
+    crate::runtime::with_embedder_runtime(
+        runtime,
+        crate::commands::dlx::run_in(args, Some(project_dir.to_path_buf())),
+    )
+    .await
 }
 
 /// Run Node as a supervised child in `project_dir`, the in-process
 /// equivalent of `aube node -- <args>`. Unlike the CLI, this never
 /// image-replaces the host process; it returns Node's exit code. Runtime is
-/// resolved from `project_dir`; the spawn honors the active
-/// [`EmbedderRuntime`] (a wrapper's `NODE`/`NODE_OPTIONS` included).
-pub async fn node(project_dir: &Path, args: Vec<std::ffi::OsString>) -> Result<Option<i32>> {
-    crate::commands::node::run_spawn(args, Some(project_dir.to_path_buf())).await
+/// resolved from `project_dir`; the spawn honors `runtime` when given —
+/// a wrapper's `NODE`/`NODE_OPTIONS` included — else the process-wide
+/// [`set_embedder_runtime`].
+pub async fn node(
+    project_dir: &Path,
+    args: Vec<std::ffi::OsString>,
+    runtime: Option<EmbedderRuntime>,
+) -> Result<Option<i32>> {
+    crate::runtime::with_embedder_runtime(
+        runtime,
+        crate::commands::node::run_spawn(args, Some(project_dir.to_path_buf())),
+    )
+    .await
 }
 
 /// Extract a stable `ERR_AUBE_*` identifier from a failed operation.

@@ -1267,7 +1267,7 @@ mod finalize_lockfile_graph_tests {
     use super::*;
 
     fn node_available() -> bool {
-        std::process::Command::new(crate::runtime::node_program())
+        std::process::Command::new(crate::runtime::internal_node_program())
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
