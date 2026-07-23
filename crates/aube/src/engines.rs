@@ -109,7 +109,13 @@ pub fn effective_node_version(override_: Option<&str>) -> Option<String> {
 }
 
 fn probe_node_version() -> Option<String> {
-    let output = std::process::Command::new("node")
+    // Prefer the active runtime's real binary (`npm_node_execpath`) so a
+    // wrapper embedder that left `version` unset gets the underlying
+    // Node's version, not whatever bare `node` PATH resolves to. Falls
+    // back to bare `node` when no runtime is active.
+    let program =
+        crate::runtime::node_execpath().unwrap_or_else(|| std::path::PathBuf::from("node"));
+    let output = std::process::Command::new(program)
         .arg("--version")
         .output()
         .ok()?;

@@ -41,9 +41,20 @@ pub struct ScriptSettings {
     /// system one while project-local binaries still win. `None` when
     /// no runtime switching is active.
     pub node_bin_dir: Option<PathBuf>,
-    /// The resolved node executable, exported as `npm_node_execpath` /
-    /// `NODE` (npm parity) for every script.
-    pub node_exe: Option<PathBuf>,
+    /// The node exported as `NODE` (npm parity) — the program a
+    /// script's `$NODE` / bare `node` re-spawns. A wrapper's shim; the
+    /// real binary otherwise.
+    pub node_program: Option<PathBuf>,
+    /// The node exported as `npm_node_execpath` — the *real* binary
+    /// node-gyp reads to find Node's install prefix. Equals
+    /// [`Self::node_program`] unless a wrapper split them apart.
+    pub node_execpath: Option<PathBuf>,
+    /// Extra environment an embedder contributes to every script,
+    /// applied last (after `env_clear`) so it survives the jail. Merge
+    /// semantics against aube's own values are resolved upstream; these
+    /// are plain overrides. (`NODE_OPTIONS` folding happens through
+    /// [`Self::node_options`].)
+    pub extra_env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     /// The top-level package-manager command, exported as `npm_command`
     /// (npm/pnpm parity): `"run-script"` for `aube run`, `"install"`
     /// for install lifecycle hooks, `"rebuild"`, `"pack"`, etc. `None`
@@ -607,11 +618,21 @@ fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &Scrip
     if let Some(exe) = aube_exe.as_deref() {
         cmd.env("npm_execpath", exe);
     }
-    // `npm_node_execpath` / `NODE`: the node binary scripts should use
-    // — the switched runtime's node, or the ambient `node` on PATH.
-    // Set here (not at spawn) so it survives the jail's `env_clear`.
-    if let Some(node_exe) = settings.node_exe.as_deref() {
-        cmd.env("npm_node_execpath", node_exe).env("NODE", node_exe);
+    // `npm_node_execpath` / `NODE`: the node binaries scripts should use
+    // — the switched runtime's node, or the ambient `node` on PATH. `NODE`
+    // is the program a script re-spawns (a wrapper's shim); the execpath
+    // is the *real* binary node-gyp reads for Node's install prefix. They
+    // coincide unless a wrapping embedder split them. Set here (not at
+    // spawn) so they survive the jail's `env_clear`.
+    let node_execpath = settings
+        .node_execpath
+        .as_deref()
+        .or(settings.node_program.as_deref());
+    if let Some(execpath) = node_execpath {
+        cmd.env("npm_node_execpath", execpath);
+    }
+    if let Some(node) = settings.node_program.as_deref().or(node_execpath) {
+        cmd.env("NODE", node);
     }
     // `npm_command`: the top-level PM command (run-script / install / …).
     if let Some(command) = settings.command.as_deref() {
@@ -670,6 +691,14 @@ fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &Scrip
             cmd.env("NO_PROXY", no_proxy);
         }
         cmd.env("NODE_USE_ENV_PROXY", "1");
+    }
+    // Embedder-contributed env, applied last (after `env_clear`, so it
+    // survives the jail) and after every aube-set var, so a wrapping
+    // host has the final say. `NODE_OPTIONS` is not among these — it is
+    // folded into `settings.node_options` upstream to preserve the
+    // user's value.
+    for (key, value) in &settings.extra_env {
+        cmd.env(key, value);
     }
 }
 
@@ -1512,6 +1541,39 @@ mod jail_tests {
         });
         assert_eq!(env("NO_PROXY"), None);
         assert_eq!(env("NODE_USE_ENV_PROXY"), None);
+    }
+
+    #[test]
+    fn wrapper_node_and_execpath_are_stamped_distinctly() {
+        // A wrapping embedder: `NODE` is the shim (so `$NODE` stays
+        // wrapped) while `npm_node_execpath` is the real binary node-gyp
+        // reads. Embedder `extra_env` lands last.
+        let env = proxy_env(ScriptSettings {
+            node_program: Some(PathBuf::from("/shim/node")),
+            node_execpath: Some(PathBuf::from("/real/node-24.4.1/bin/node")),
+            extra_env: vec![("MYTOOL_WRAPPED".into(), "1".into())],
+            ..Default::default()
+        });
+        assert_eq!(env("NODE").as_deref(), Some("/shim/node"));
+        assert_eq!(
+            env("npm_node_execpath").as_deref(),
+            Some("/real/node-24.4.1/bin/node")
+        );
+        assert_eq!(env("MYTOOL_WRAPPED").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn node_execpath_falls_back_to_node_program() {
+        // A selector supplies only `node_program`; both vars point at it.
+        let env = proxy_env(ScriptSettings {
+            node_program: Some(PathBuf::from("/opt/node/bin/node")),
+            ..Default::default()
+        });
+        assert_eq!(env("NODE").as_deref(), Some("/opt/node/bin/node"));
+        assert_eq!(
+            env("npm_node_execpath").as_deref(),
+            Some("/opt/node/bin/node")
+        );
     }
 }
 

@@ -169,7 +169,7 @@ fn runtime_section(warnings: &mut Vec<String>) -> Section {
                 ));
             }
         }
-        if let Some(bin) = &ctx.node_bin {
+        if let Some(bin) = &ctx.node_program {
             s.push("node-bin", display_path_owned(bin.clone()));
         }
     }

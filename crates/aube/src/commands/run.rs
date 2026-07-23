@@ -186,6 +186,7 @@ pub async fn run(
     };
     run_script_with(
         &script, &args, &node_args, no_install, if_present, parallel, silent, &filter, recursive,
+        None,
     )
     .await
 }
@@ -352,6 +353,36 @@ pub(crate) async fn run_script(
         silent,
         filter,
         RecursiveOpts::default(),
+        None,
+    )
+    .await
+}
+
+/// Run a script rooted at an explicit `base_dir` instead of the process
+/// cwd — the in-process embedding entry. Resolves the project runtime and
+/// the project root from `base_dir`, so concurrent embed calls in
+/// different projects don't race on process-global cwd.
+pub(crate) async fn run_script_in(
+    base_dir: std::path::PathBuf,
+    script: &str,
+    args: &[String],
+    no_install: bool,
+    if_present: bool,
+    filter: &aube_workspace::selector::EffectiveFilter,
+) -> miette::Result<Option<i32>> {
+    crate::runtime::ensure_for_cwd(&base_dir).await?;
+    let silent = super::global_output_flags().silent;
+    run_script_with(
+        script,
+        args,
+        &[],
+        no_install,
+        if_present,
+        false,
+        silent,
+        filter,
+        RecursiveOpts::default(),
+        Some(base_dir),
     )
     .await
 }
@@ -367,8 +398,12 @@ pub(crate) async fn run_script_with(
     silent: bool,
     filter: &aube_workspace::selector::EffectiveFilter,
     recursive: RecursiveOpts,
+    base_dir: Option<std::path::PathBuf>,
 ) -> miette::Result<Option<i32>> {
-    let initial_cwd = crate::dirs::cwd()?;
+    let initial_cwd = match base_dir {
+        Some(dir) => dir,
+        None => crate::dirs::cwd()?,
+    };
     // Walk upward to the nearest `package.json` so `aube run` from a
     // subdirectory picks up the project root's scripts, matching pnpm.
     // Filtered/recursive runs accept a yaml-only workspace root —

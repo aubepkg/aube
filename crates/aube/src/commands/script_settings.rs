@@ -8,7 +8,12 @@ pub(crate) fn configure_script_settings(
     ctx: &aube_settings::ResolveCtx<'_>,
     command: Option<&str>,
 ) {
-    let node_options = aube_settings::resolved::node_options(ctx).and_then(non_empty_string);
+    // Fold an embedder's `NODE_OPTIONS` contribution over the resolved
+    // `nodeOptions` setting (append by default, so a wrapper's `--import`
+    // preload adds to the user's value rather than replacing it).
+    let node_options = crate::runtime::merge_node_options(
+        aube_settings::resolved::node_options(ctx).and_then(non_empty_string),
+    );
     let script_shell = aube_settings::resolved::script_shell(ctx)
         .and_then(|s| non_empty_string(s).map(Into::into));
     let unsafe_perm = aube_settings::resolved::unsafe_perm(ctx);
@@ -38,10 +43,15 @@ pub(crate) fn configure_script_settings(
         unsafe_perm,
         shell_emulator,
         node_bin_dir: runtime.as_ref().and_then(|r| r.bin_dir.clone()),
-        node_exe: runtime
+        node_program: runtime
             .as_ref()
-            .and_then(|r| r.node_bin.clone())
+            .and_then(|r| r.node_program.clone())
             .or_else(aube_runtime::node_on_path),
+        node_execpath: runtime
+            .as_ref()
+            .and_then(|r| r.node_execpath.clone().or_else(|| r.node_program.clone()))
+            .or_else(aube_runtime::node_on_path),
+        extra_env: crate::runtime::embedder_extra_env(),
         command: command.map(str::to_string),
         // `npm_config_node_gyp` parity: hand every lifecycle script a
         // runnable node-gyp stand-in. The shim is written once into

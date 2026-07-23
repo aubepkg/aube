@@ -13,6 +13,7 @@ pub use crate::commands::install::{
     DepSelection, FrozenMode, InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode,
     InstallPhase, InstallProgressSnapshot, InstallReporter,
 };
+pub use crate::runtime::{EmbedderRuntime, EnvMerge, set_embedder_runtime};
 pub use aube_registry::NetworkMode;
 pub use aube_util::{AUBE, Embedder as Host};
 
@@ -50,11 +51,13 @@ pub struct InstallOptions {
     pub osv_transitive_check: bool,
     /// Invocation-scoped output, progress reporting, and cancellation.
     pub control: InstallControl,
-    /// Directory containing the `node` executable to run lifecycle scripts on.
-    /// Set this when the host manages its own node runtime (e.g. mise) so
-    /// scripts spawn on it and find it on PATH; `None` uses aube's own runtime
-    /// resolution / PATH fallback.
-    pub node_bin_dir: Option<PathBuf>,
+    /// How the host wants Node invoked for lifecycle scripts. Use
+    /// [`EmbedderRuntime::selector`] when the host merely manages a Node
+    /// toolchain (e.g. mise), or [`EmbedderRuntime::wrapper`] to interpose on
+    /// Node (instrumenting runtime, transpiling loader, sandbox). Takes
+    /// precedence over any process-wide [`set_embedder_runtime`]; `None` falls
+    /// back to that, else aube's own runtime resolution / PATH fallback.
+    pub runtime: Option<EmbedderRuntime>,
 }
 
 impl InstallOptions {
@@ -74,7 +77,7 @@ impl InstallOptions {
             dangerously_allow_all_builds: false,
             osv_transitive_check: false,
             control: InstallControl::default(),
-            node_bin_dir: None,
+            runtime: None,
         }
     }
 }
@@ -118,7 +121,7 @@ pub async fn install(options: InstallOptions) -> Result<()> {
     command_options.dangerously_allow_all_builds = options.dangerously_allow_all_builds;
     command_options.osv_transitive_check = options.osv_transitive_check;
     command_options.control = options.control;
-    command_options.embedder_node_bin_dir = options.node_bin_dir;
+    command_options.embedder_runtime = options.runtime;
     crate::commands::install::run(command_options).await
 }
 
@@ -135,6 +138,73 @@ pub async fn add(
     options: AddToProjectOptions,
 ) -> Result<()> {
     crate::commands::add::add_to_project(project_dir, packages, options).await
+}
+
+/// Run a package's script (`package.json` `scripts.<name>`) in `project_dir`,
+/// the in-process equivalent of `aube run <script> -- <args>`. Runs pre/post
+/// hooks and returns the script's exit code (`None` when nothing ran).
+///
+/// The project is resolved from `project_dir` (walking up to the nearest
+/// `package.json`), never the process cwd, so concurrent calls in different
+/// projects don't race. Every spawn honors the active [`EmbedderRuntime`].
+pub async fn run(project_dir: &Path, script: &str, args: Vec<String>) -> Result<Option<i32>> {
+    crate::commands::run::run_script_in(
+        project_dir.to_path_buf(),
+        script,
+        &args,
+        false,
+        false,
+        &aube_workspace::selector::EffectiveFilter::default(),
+    )
+    .await
+}
+
+/// Run a project-local binary (`node_modules/.bin/<bin>`) in `project_dir`,
+/// the in-process equivalent of `aube exec <bin> -- <args>`. Returns the
+/// binary's exit code. The project is resolved from `project_dir`, not the
+/// process cwd; every spawn honors the active [`EmbedderRuntime`].
+pub async fn exec(project_dir: &Path, bin: &str, args: Vec<String>) -> Result<Option<i32>> {
+    let exec_args = crate::commands::exec::ExecArgs {
+        bin: bin.to_string(),
+        args,
+        ..Default::default()
+    };
+    crate::commands::exec::run_in(
+        exec_args,
+        aube_workspace::selector::EffectiveFilter::default(),
+        Some(project_dir.to_path_buf()),
+    )
+    .await
+}
+
+/// Install one or more packages into a throwaway project and run a binary
+/// from them, the in-process equivalent of `aube dlx`. `params` is the
+/// command followed by its arguments; `packages` overrides the inferred
+/// install target (the `-p` flag), empty to infer from the command.
+///
+/// The transient install runs in its own scratch project; `project_dir`
+/// roots runtime resolution and the local-`.bin` fast path. Every spawn
+/// honors the active [`EmbedderRuntime`].
+pub async fn dlx(
+    project_dir: &Path,
+    params: Vec<String>,
+    packages: Vec<String>,
+) -> Result<Option<i32>> {
+    let args = crate::commands::dlx::DlxArgs {
+        params,
+        package: packages,
+        ..Default::default()
+    };
+    crate::commands::dlx::run_in(args, Some(project_dir.to_path_buf())).await
+}
+
+/// Run Node as a supervised child in `project_dir`, the in-process
+/// equivalent of `aube node -- <args>`. Unlike the CLI, this never
+/// image-replaces the host process; it returns Node's exit code. Runtime is
+/// resolved from `project_dir`; the spawn honors the active
+/// [`EmbedderRuntime`] (a wrapper's `NODE`/`NODE_OPTIONS` included).
+pub async fn node(project_dir: &Path, args: Vec<std::ffi::OsString>) -> Result<Option<i32>> {
+    crate::commands::node::run_spawn(args, Some(project_dir.to_path_buf())).await
 }
 
 /// Extract a stable `ERR_AUBE_*` identifier from a failed operation.

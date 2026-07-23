@@ -3,7 +3,7 @@ use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::path::Path;
 
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub struct ExecArgs {
     /// Binary name
     pub bin: String,
@@ -76,12 +76,29 @@ pub async fn run(
     exec_args: ExecArgs,
     filter: aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<Option<i32>> {
+    run_in(exec_args, filter, None).await
+}
+
+/// `exec` rooted at an explicit `base_dir` instead of the process cwd.
+/// `None` reproduces the CLI behavior (resolve from the process cwd);
+/// `Some(dir)` is the in-process embedding entry — the project is
+/// resolved from `dir`, so concurrent embed calls in different projects
+/// don't race on process-global cwd.
+pub async fn run_in(
+    exec_args: ExecArgs,
+    filter: aube_workspace::selector::EffectiveFilter,
+    base_dir: Option<std::path::PathBuf>,
+) -> miette::Result<Option<i32>> {
     exec_args.network.install_overrides();
     exec_args.lockfile.install_overrides();
     exec_args.virtual_store.install_overrides();
+    let effective_cwd = match base_dir {
+        Some(dir) => dir,
+        None => crate::dirs::cwd()?,
+    };
     // Resolve the project's Node runtime before anything spawns (see
     // run.rs for the warm-path rationale).
-    crate::runtime::ensure_for_cwd(&crate::dirs::cwd()?).await?;
+    crate::runtime::ensure_for_cwd(&effective_cwd).await?;
     let ExecArgs {
         bin,
         args,
@@ -100,7 +117,12 @@ pub async fn run(
         network: _,
         virtual_store: _,
     } = exec_args;
-    let cwd = crate::dirs::project_root()?;
+    let cwd = crate::dirs::find_project_root(&effective_cwd).ok_or_else(|| {
+        miette!(
+            "no package.json found in {} or any parent directory",
+            effective_cwd.display()
+        )
+    })?;
 
     ensure_installed(no_install).await?;
 

@@ -100,6 +100,70 @@ Offline mode always disables that live request. Set
 `dangerously_allow_all_builds` to bypass the lifecycle build allowlist for the
 invocation; `ignore_scripts` still disables scripts entirely.
 
+## Node runtime
+
+By default aube resolves its own Node for lifecycle scripts. A host that
+manages Node itself describes how Node should be invoked with an
+`EmbedderRuntime`.
+
+A host that merely selects a toolchain (a version manager) uses `selector` —
+the bin directory goes on `PATH` and its `node` is both `NODE` and
+`npm_node_execpath`:
+
+```rust
+use aube::embed::EmbedderRuntime;
+
+let runtime = EmbedderRuntime::selector("/opt/mytool/node-24.4.1/bin");
+```
+
+A host that *wraps* Node — an instrumenting runtime, a transpiling loader, a
+sandbox — uses `wrapper`. The shim is `NODE` and goes on `PATH` so a script's
+`node` / `$NODE` stays wrapped, while `real_node` is exported as
+`npm_node_execpath` so `node-gyp` builds against the real binary. Use
+`env_append` to add a `NODE_OPTIONS` preload without dropping the user's value
+(`env_set` overwrites):
+
+```rust
+let runtime = EmbedderRuntime::wrapper("/opt/mytool/shim/node")
+    .real_node("/opt/mytool/node-24.4.1/bin/node")
+    .version("24.4.1") // supplied, not probed
+    .env_append("NODE_OPTIONS", "--import /opt/mytool/preload.mjs");
+```
+
+Apply it per call, or register it once so every spawn path — install lifecycle
+scripts, `dlx`, `exec`, `run`, `node` — is covered:
+
+```rust
+// Per call.
+let mut options = InstallOptions::new(&project_dir);
+options.runtime = Some(runtime.clone());
+embed::install(options).await?;
+
+// Or once at startup (first-write-wins; a per-call `runtime` still wins for
+// that install).
+embed::set_embedder_runtime(runtime);
+```
+
+Every field is optional and unset reproduces standalone aube's behavior. The
+runtime is honored regardless of the host's `runtime_switching` flag — an
+explicit invocation is an override, not a resolution.
+
+## Run scripts, binaries, and Node
+
+With a runtime registered, a host can drive the run-class commands in process.
+Each resolves its project from the directory passed in — never the process
+working directory — and returns the child's exit code:
+
+```rust
+embed::run(&project_dir, "build", vec![]).await?;          // package script
+embed::exec(&project_dir, "eslint", vec![".".into()]).await?; // node_modules/.bin
+embed::dlx(&project_dir, vec!["cowsay".into(), "hi".into()], vec![]).await?;
+embed::node(&project_dir, vec!["--eval".into(), "console.log(1)".into()]).await?;
+```
+
+Unlike the CLI, `embed::node` supervises a child rather than replacing the
+host process.
+
 ## Progress and cancellation
 
 Implement `InstallReporter` and pass it through `InstallControl::events`.
