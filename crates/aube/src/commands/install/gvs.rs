@@ -131,7 +131,8 @@ fn upsert_virtual_store_dir(existing: &[u8], virtual_store_dir: &str) -> std::io
                     && matches!(value.trim_start().chars().next(), Some('|' | '>'))
             })
     });
-    if flow_mapping || block_scalar {
+    let explicit_document_end = source.lines().any(|line| line.trim() == "...");
+    if flow_mapping || block_scalar || explicit_document_end {
         let Some(mapping) = parsed.as_mapping_mut() else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -485,7 +486,7 @@ try{{const __ac=__aubeRfs(__aubeJoin(__awr,{modules_dir},\".modules.yaml\"),\"ut
 let __av;try{{__av=JSON.parse(__ac).virtualStoreDir;}}catch{{const __am=__ac.match(/^virtualStoreDir:\\s*(.+?)\\s*(?:#.*)?$/m);\
 if(__am)try{{__av=JSON.parse(__am[1]);}}catch{{__av=__am[1];}}}}\
 if(__av){{if(__aubeIsAbs(__av))allowDirs.push(__av);\
-else if(__av.startsWith(\"..\"))allowDirs.push(__aubeResolve(__aubeJoin(__awr,{modules_dir}),__av));}}}}catch{{}}"
+else if(__av.startsWith(\"..\"))allowDirs.push(__aubeResolve(__aubeJoin(__awr,{modules_dir}),__av));}}}}catch{{void 0;}}"
     );
     let patched = source.replacen(anchor, &format!("{anchor}{insert}"), 1);
     let patched = format!("{VITE_COMPAT_PREPEND}{patched}");
@@ -685,6 +686,24 @@ mod tests {
                 .get(yaml_serde::Value::String("layoutVersion".to_string()))
                 .and_then(yaml_serde::Value::as_i64),
             Some(5)
+        );
+    }
+
+    #[test]
+    fn inserts_metadata_before_an_explicit_document_end() {
+        let existing = b"layoutVersion: 5\nhoistPattern:\n  - '*'\n...\n";
+        let updated =
+            upsert_virtual_store_dir(existing, "/shared/store").expect("metadata should update");
+        let parsed: yaml_serde::Value =
+            yaml_serde::from_slice(&updated).expect("updated metadata should remain valid YAML");
+        let mapping = parsed
+            .as_mapping()
+            .expect("updated metadata should remain a mapping");
+        assert_eq!(
+            mapping
+                .get(yaml_serde::Value::String("virtualStoreDir".to_string()))
+                .and_then(yaml_serde::Value::as_str),
+            Some("/shared/store")
         );
     }
 
