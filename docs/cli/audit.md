@@ -11,7 +11,7 @@ Check installed packages against the registry advisory DB
 
 Only print advisories at or above this severity.
 
-One of: `info`, `low`, `moderate`, `high`, `critical`. Default: `low`.
+One of: `info`, `low`, `moderate`, `high`, `critical`. Defaults to `audit.level` (or legacy `auditLevel`), then `low`.
 
 **Choices:**
 
@@ -20,8 +20,6 @@ One of: `info`, `low`, `moderate`, `high`, `critical`. Default: `low`.
 - `moderate`
 - `high`
 - `critical`
-
-**Default:** `low`
 
 ### `-D --dev`
 

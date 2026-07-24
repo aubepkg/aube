@@ -1211,10 +1211,19 @@ fn with_update_settings_ctx<T>(
     // sub-package as cwd, so an unwalked load returns an empty map and
     // `updateConfig.ignoreDependencies` silently drops every entry.
     // Discussion #602: zod was in the ignore list yet appeared in the
-    // recursive picker because of this miss. Fall back to cwd if no
-    // workspace root is found (single-project case).
+    // recursive picker because of this miss. Load root project sources,
+    // then append member project sources so member-local values retain
+    // their normal precedence. Fall back to cwd if no workspace root is
+    // found (single-project case).
     let yaml_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let files = crate::commands::FileSources::load(&yaml_root);
+    let mut files = crate::commands::FileSources::load(&yaml_root);
+    if cwd != yaml_root {
+        let member_files = crate::commands::FileSources::load(cwd);
+        files.project_npmrc.extend(member_files.project_npmrc);
+        files
+            .project_aube_config
+            .extend(member_files.project_aube_config);
+    }
     let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_default();
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
@@ -1750,6 +1759,26 @@ mod tests {
         assert_eq!(
             ignored_update_dependencies(&member, &manifest).unwrap(),
             BTreeSet::from(["canonical".to_string()])
+        );
+    }
+
+    #[test]
+    fn workspace_member_update_ignores_override_root_project_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let member = dir.path().join("packages/app");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".npmrc"), "update.ignoreDeps=[\"root\"]\n").unwrap();
+        std::fs::write(member.join(".npmrc"), "update.ignoreDeps=[\"member\"]\n").unwrap();
+        let manifest = aube_manifest::PackageJson::default();
+
+        assert_eq!(
+            ignored_update_dependencies(&member, &manifest).unwrap(),
+            BTreeSet::from(["member".to_string()])
         );
     }
 

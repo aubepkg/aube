@@ -1042,7 +1042,7 @@
             "name": "audit-level",
             "usage": "--audit-level <AUDIT_LEVEL>",
             "help": "Only print advisories at or above this severity",
-            "help_long": "Only print advisories at or above this severity.\n\nOne of: `info`, `low`, `moderate`, `high`, `critical`. Default: `low`.",
+            "help_long": "Only print advisories at or above this severity.\n\nOne of: `info`, `low`, `moderate`, `high`, `critical`. Defaults to `audit.level` (or legacy `auditLevel`), then `low`.",
             "help_first_line": "Only print advisories at or above this severity",
             "short": [],
             "long": [
@@ -1065,10 +1065,7 @@
                   "critical"
                 ]
               }
-            },
-            "default": [
-              "low"
-            ]
+            }
           },
           {
             "name": "dev",
