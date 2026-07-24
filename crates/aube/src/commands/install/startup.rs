@@ -127,7 +127,12 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
                     Some(global_virtual_store)
                 }
                 Some(false) => Some(aube_dir),
-                None => None,
+                None => {
+                    tracing::debug!(
+                        "install warm path skipped: unable to detect virtual-store layout"
+                    );
+                    return false;
+                }
             }
         }
     };

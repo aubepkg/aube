@@ -220,7 +220,7 @@ pub(super) fn modules_metadata_is_current<'a>(
                 return false;
             };
             let matches = expected_virtual_store_dir
-                .is_none_or(|expected| actual == expected.to_string_lossy());
+                .is_none_or(|expected| actual.as_str() == expected.to_string_lossy().as_ref());
             if !matches {
                 tracing::debug!(
                     "install warm path skipped: {} has virtualStoreDir={actual}, expected {}",
