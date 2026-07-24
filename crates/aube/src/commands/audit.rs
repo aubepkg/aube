@@ -51,7 +51,8 @@ Examples:
 pub struct AuditArgs {
     /// Only print advisories at or above this severity.
     ///
-    /// One of: `info`, `low`, `moderate`, `high`, `critical`. Default: `low`.
+    /// One of: `info`, `low`, `moderate`, `high`, `critical`.
+    /// Defaults to `audit.level` (or legacy `auditLevel`), then `low`.
     #[arg(long, value_enum)]
     pub audit_level: Option<Severity>,
 
@@ -457,18 +458,20 @@ fn resolve_audit_level(cwd: &std::path::Path, cli: Option<Severity>) -> miette::
     if let Some(level) = cli {
         return Ok(level);
     }
-    let configured =
-        with_audit_settings_ctx(cwd, aube_settings::resolved::audit_level)?.or_else(|| {
+    let configured = with_audit_settings_ctx(cwd, aube_settings::resolved::audit_level)?
+        .map(|value| ("audit.level", value))
+        .or_else(|| {
             let yaml_root =
                 crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
             let raw = aube_manifest::workspace::load_raw(&yaml_root).ok()?;
             aube_settings::workspace_yaml_value(&raw, "auditLevel")
                 .and_then(yaml_serde::Value::as_str)
-                .map(str::to_string)
+                .map(|value| ("auditLevel", value.to_string()))
         });
-    configured.map_or(Ok(Severity::Low), |raw| {
-        raw.parse::<Severity>()
-            .map_err(|_| miette!("invalid audit.level {raw:?}"))
+    configured.map_or(Ok(Severity::Low), |(key, raw)| {
+        raw.parse::<Severity>().map_err(|_| {
+            miette!("invalid {key} {raw:?}; expected one of: info, low, moderate, high, critical")
+        })
     })
 }
 
@@ -1538,6 +1541,22 @@ mod tests {
             resolve_audit_level(dir.path(), None).unwrap(),
             Severity::High
         );
+    }
+
+    #[test]
+    fn invalid_legacy_audit_level_names_key_and_expected_values() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages: []\nauditLevel: severe\n",
+        )
+        .unwrap();
+
+        let error = resolve_audit_level(dir.path(), None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("invalid auditLevel \"severe\""));
+        assert!(error.contains("info, low, moderate, high, critical"));
     }
 
     #[test]

@@ -1159,13 +1159,9 @@ fn resolve_update_settings(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<UpdateSettings> {
-    let ignored = ignored_update_dependencies(cwd, manifest)?;
-    let rewrites_specifier = with_update_settings_ctx(cwd, |ctx| {
-        aube_settings::resolved::update_rewrites_specifier(ctx)
-    })?;
-    Ok(UpdateSettings {
-        ignored,
-        rewrites_specifier,
+    with_update_settings_ctx(cwd, |ctx| UpdateSettings {
+        ignored: ignored_update_dependencies_from_ctx(ctx, manifest),
+        rewrites_specifier: aube_settings::resolved::update_rewrites_specifier(ctx),
     })
 }
 
@@ -1173,22 +1169,29 @@ pub(super) fn ignored_update_dependencies(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<BTreeSet<String>> {
-    let configured = with_update_settings_ctx(cwd, |ctx| {
-        aube_settings::resolved::update_ignore_deps(ctx)
-            .map(|canonical| (true, canonical))
-            .or_else(|| {
-                aube_settings::resolved::update_config_ignore_dependencies(ctx)
-                    .map(|legacy| (false, legacy))
-            })
-    })?;
+    with_update_settings_ctx(cwd, |ctx| {
+        ignored_update_dependencies_from_ctx(ctx, manifest)
+    })
+}
+
+fn ignored_update_dependencies_from_ctx(
+    ctx: &aube_settings::ResolveCtx<'_>,
+    manifest: &aube_manifest::PackageJson,
+) -> BTreeSet<String> {
+    let configured = aube_settings::resolved::update_ignore_deps(ctx)
+        .map(|canonical| (true, canonical))
+        .or_else(|| {
+            aube_settings::resolved::update_config_ignore_dependencies(ctx)
+                .map(|legacy| (false, legacy))
+        });
     if let Some((true, canonical)) = configured {
-        return Ok(canonical.into_iter().collect());
+        return canonical.into_iter().collect();
     }
     let mut ignored: BTreeSet<String> = manifest.update_ignore_dependencies().into_iter().collect();
     if let Some((false, legacy)) = configured {
         ignored.extend(legacy);
     }
-    Ok(ignored)
+    ignored
 }
 
 fn with_update_settings_ctx<T>(
