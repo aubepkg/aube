@@ -1,6 +1,6 @@
 use crate::state;
 use miette::miette;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(super) fn resolve_global_virtual_store_override(
     settings_ctx: &aube_settings::ResolveCtx<'_>,
@@ -120,7 +120,15 @@ fn upsert_virtual_store_dir(existing: &[u8], virtual_store_dir: &str) -> std::io
             (!content.is_empty()).then(|| content.starts_with('{'))
         })
         .unwrap_or(false);
-    if flow_mapping {
+    let block_scalar = source.lines().any(|line| {
+        let line = line.trim_end();
+        !line.chars().next().is_some_and(char::is_whitespace)
+            && line.split_once(':').is_some_and(|(key, value)| {
+                key.trim_matches([' ', '"', '\'']) == "virtualStoreDir"
+                    && matches!(value.trim_start().chars().next(), Some('|' | '>'))
+            })
+    });
+    if flow_mapping || block_scalar {
         let Some(mapping) = parsed.as_mapping_mut() else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -232,6 +240,7 @@ pub(super) fn detect_existing_global_virtual_store(
     workspace_root: &Path,
     aube_dir: &Path,
     modules_dir_name: &str,
+    global_virtual_store: &Path,
 ) -> Option<bool> {
     let mut existing_gvs = super::settings::detect_aube_dir_gvs_mode(aube_dir)?;
     if !existing_gvs {
@@ -239,7 +248,20 @@ pub(super) fn detect_existing_global_virtual_store(
         existing_gvs = std::fs::read(metadata_path)
             .ok()
             .and_then(|bytes| metadata_virtual_store_dir(&bytes))
-            .is_some_and(|path| Path::new(&path) != aube_dir);
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    workspace_root.join(modules_dir_name).join(path)
+                }
+            })
+            .is_some_and(|path| {
+                let actual = std::fs::canonicalize(&path).unwrap_or(path);
+                let expected = std::fs::canonicalize(global_virtual_store)
+                    .unwrap_or_else(|_| global_virtual_store.to_path_buf());
+                actual == expected
+            });
     }
     Some(existing_gvs)
 }
@@ -474,8 +496,17 @@ pub(super) fn reset_on_mode_change(
     modules_dir_name: &str,
     planned_gvs: bool,
 ) -> miette::Result<()> {
-    let Some(existing_gvs) = detect_existing_global_virtual_store(cwd, aube_dir, modules_dir_name)
+    let Some(global_virtual_store) =
+        aube_store::dirs::cache_dir().map(|dir| dir.join(aube_store::VIRTUAL_STORE_SUBDIR))
     else {
+        return Ok(());
+    };
+    let Some(existing_gvs) = detect_existing_global_virtual_store(
+        cwd,
+        aube_dir,
+        modules_dir_name,
+        &global_virtual_store,
+    ) else {
         return Ok(());
     };
     if existing_gvs == planned_gvs {
@@ -627,6 +658,30 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_block_scalar_yaml_without_leaving_scalar_lines() {
+        let existing = b"virtualStoreDir: |-\n  .pnpm\nlayoutVersion: 5\nhoistPattern:\n  - '*'\n";
+        let updated =
+            upsert_virtual_store_dir(existing, "/shared/store").expect("metadata should update");
+        let parsed: yaml_serde::Value =
+            yaml_serde::from_slice(&updated).expect("updated metadata should remain valid YAML");
+        let mapping = parsed
+            .as_mapping()
+            .expect("updated metadata should remain a mapping");
+        assert_eq!(
+            mapping
+                .get(yaml_serde::Value::String("virtualStoreDir".to_string()))
+                .and_then(yaml_serde::Value::as_str),
+            Some("/shared/store")
+        );
+        assert_eq!(
+            mapping
+                .get(yaml_serde::Value::String("layoutVersion".to_string()))
+                .and_then(yaml_serde::Value::as_i64),
+            Some(5)
+        );
+    }
+
+    #[test]
     fn metadata_disambiguates_gvs_trees_with_only_local_packages() {
         let tmp = tempfile::tempdir().expect("tempdir should be created");
         let root = tmp.path();
@@ -644,10 +699,20 @@ mod tests {
         )
         .expect("metadata should be written");
 
-        reset_on_mode_change(root, &aube_dir, "node_modules", true)
-            .expect("matching GVS mode should be preserved");
-
-        assert!(aube_dir.join("vendor-dir@9.9.9").is_dir());
+        assert_eq!(
+            detect_existing_global_virtual_store(root, &aube_dir, "node_modules", &shared_store),
+            Some(true)
+        );
+        std::fs::write(
+            root.join("node_modules/.modules.yaml"),
+            "virtualStoreDir: .pnpm\n",
+        )
+        .expect("pnpm metadata should be written");
+        assert_eq!(
+            detect_existing_global_virtual_store(root, &aube_dir, "node_modules", &shared_store),
+            Some(false),
+            "pnpm's relative local store must not imply aube GVS mode"
+        );
     }
 
     #[test]

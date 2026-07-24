@@ -110,18 +110,21 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
     let expected = match layout.linker {
         state::InstallLayoutMode::Hoisted => Some(aube_dir),
         state::InstallLayoutMode::Isolated => {
+            let Some(global_virtual_store) =
+                aube_store::dirs::cache_dir().map(|dir| dir.join(aube_store::VIRTUAL_STORE_SUBDIR))
+            else {
+                return false;
+            };
             match super::gvs::detect_existing_global_virtual_store(
                 cwd,
                 &aube_dir,
                 &modules_dir_name,
+                &global_virtual_store,
             ) {
                 Some(true) => {
-                    let Ok(store) = super::super::open_store(cwd) else {
-                        return false;
-                    };
                     legacy_vite_patches_current =
                         super::gvs::legacy_vite_patches_are_current(&aube_dir);
-                    Some(store.virtual_store_dir())
+                    Some(global_virtual_store)
                 }
                 Some(false) => Some(aube_dir),
                 None => None,
