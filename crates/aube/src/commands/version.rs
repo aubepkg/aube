@@ -9,6 +9,7 @@
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use node_semver::{Identifier, Version};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::process::Command;
 
@@ -439,7 +440,12 @@ fn is_git_repo(cwd: &Path) -> bool {
 
 fn version_from_git(cwd: &Path) -> miette::Result<String> {
     let tags = Command::new("git")
-        .args(["tag", "--merged", "HEAD"])
+        .args([
+            "for-each-ref",
+            "--merged=HEAD",
+            "--format=%(objectname)%09%(*objectname)%09%(refname:strip=2)",
+            "refs/tags",
+        ])
         .current_dir(cwd)
         .output()
         .into_diagnostic()
@@ -447,46 +453,71 @@ fn version_from_git(cwd: &Path) -> miette::Result<String> {
     if !tags.status.success() {
         let stderr = String::from_utf8_lossy(&tags.stderr);
         return Err(miette!(
-            "git tag failed while resolving `from-git`: {}",
+            "git for-each-ref failed while resolving `from-git`: {}",
             stderr.trim()
         ));
     }
     let tags = String::from_utf8(tags.stdout)
         .into_diagnostic()
         .wrap_err("git tags are not UTF-8")?;
-    let version_tags: Vec<&str> = tags
-        .lines()
-        .filter(|tag| Version::parse(tag.strip_prefix('v').unwrap_or(tag)).is_ok())
-        .collect();
-    if version_tags.is_empty() {
+    let mut versions_by_commit: HashMap<&str, Vec<Version>> = HashMap::new();
+    for line in tags.lines() {
+        let mut fields = line.splitn(3, '\t');
+        let object = fields.next().unwrap_or_default();
+        let peeled = fields.next().unwrap_or_default();
+        let tag = fields.next().unwrap_or_default();
+        let commit = if peeled.is_empty() { object } else { peeled };
+        if let Ok(version) = Version::parse(tag.strip_prefix('v').unwrap_or(tag)) {
+            versions_by_commit.entry(commit).or_default().push(version);
+        }
+    }
+    if versions_by_commit.is_empty() {
         return Err(miette!("no valid version tags found for `from-git`"));
     }
 
-    let mut command = Command::new("git");
-    command.args(["describe", "--tags", "--abbrev=0"]);
-    for tag in version_tags {
-        command.arg(format!("--match={tag}"));
-    }
-    let output = command
+    let history = Command::new("git")
+        .args(["rev-list", "--parents", "HEAD"])
         .current_dir(cwd)
         .output()
         .into_diagnostic()
-        .wrap_err("failed to read version from git tags")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        .wrap_err("failed to read git history")?;
+    if !history.status.success() {
+        let stderr = String::from_utf8_lossy(&history.stderr);
         return Err(miette!(
-            "git describe failed while resolving `from-git`: {}",
+            "git rev-list failed while resolving `from-git`: {}",
             stderr.trim()
         ));
     }
-    let tag = String::from_utf8(output.stdout)
+    let history = String::from_utf8(history.stdout)
         .into_diagnostic()
-        .wrap_err("git version tag is not UTF-8")?;
-    let tag = tag.trim();
-    let candidate = tag.strip_prefix('v').unwrap_or(tag);
-    Version::parse(candidate)
-        .map(|version| version.to_string())
-        .map_err(|e| miette!("git tag {tag:?} is not a valid version: {e}"))
+        .wrap_err("git history is not UTF-8")?;
+    let mut parents = HashMap::new();
+    let mut head = None;
+    for line in history.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(commit) = fields.next() else {
+            continue;
+        };
+        head.get_or_insert(commit);
+        parents.insert(commit, fields.collect::<Vec<_>>());
+    }
+
+    let mut queue = VecDeque::from([head.ok_or_else(|| miette!("git history is empty"))?]);
+    let mut seen = HashSet::new();
+    while let Some(commit) = queue.pop_front() {
+        if !seen.insert(commit) {
+            continue;
+        }
+        if let Some(versions) = versions_by_commit.get(commit)
+            && let Some(version) = versions.iter().max()
+        {
+            return Ok(version.to_string());
+        }
+        if let Some(commit_parents) = parents.get(commit) {
+            queue.extend(commit_parents.iter().copied());
+        }
+    }
+    Err(miette!("no reachable version tags found for `from-git`"))
 }
 
 fn git_commit_and_tag(
