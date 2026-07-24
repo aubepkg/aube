@@ -470,6 +470,12 @@ fn version_from_git(cwd: &Path) -> miette::Result<String> {
         if let Ok(version) = Version::parse(candidate) {
             return Ok(version.to_string());
         }
+        if excluded.iter().any(|excluded| excluded == tag) {
+            return Err(miette!(
+                code = aube_codes::errors::ERR_AUBE_GIT_ERROR,
+                "git describe repeatedly returned excluded non-version tag {tag:?}"
+            ));
+        }
         excluded.push(tag.to_string());
     }
 }
