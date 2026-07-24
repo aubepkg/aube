@@ -297,9 +297,7 @@ pub async fn run(
         for name in packages {
             if all_specifiers.contains_key(name.as_str()) {
                 if ignored_updates.contains(name.as_str()) {
-                    return Err(miette!(
-                        "package '{name}' is ignored by updateConfig.ignoreDependencies"
-                    ));
+                    return Err(miette!("package '{name}' is ignored by update.ignoreDeps"));
                 }
                 continue;
             }
@@ -321,9 +319,7 @@ pub async fn run(
                 return Err(miette!("package '{name}' is not a dependency"));
             }
             if ignored_updates.contains(name.as_str()) {
-                return Err(miette!(
-                    "package '{name}' is ignored by updateConfig.ignoreDependencies"
-                ));
+                return Err(miette!("package '{name}' is ignored by update.ignoreDeps"));
             }
             indirect_arg_names.insert(name.clone());
         }
@@ -340,7 +336,7 @@ pub async fn run(
             .filter(|p| all_specifiers.contains_key(p.as_str()))
             .filter(|p| {
                 if ignored_updates.contains(p.as_str()) {
-                    tracing::info!("skipping {p} (updateConfig.ignoreDependencies)");
+                    tracing::info!("skipping {p} (update.ignoreDeps)");
                     false
                 } else {
                     true
@@ -1163,18 +1159,29 @@ fn resolve_update_settings(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<UpdateSettings> {
-    let mut ignored: BTreeSet<String> = manifest.update_ignore_dependencies().into_iter().collect();
+    let ignored = ignored_update_dependencies(cwd, manifest)?;
     let rewrites_specifier = with_update_settings_ctx(cwd, |ctx| {
-        if let Some(from_settings) = aube_settings::resolved::update_config_ignore_dependencies(ctx)
-        {
-            ignored.extend(from_settings);
-        }
         aube_settings::resolved::update_rewrites_specifier(ctx)
     })?;
     Ok(UpdateSettings {
         ignored,
         rewrites_specifier,
     })
+}
+
+pub(super) fn ignored_update_dependencies(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+) -> miette::Result<BTreeSet<String>> {
+    let mut ignored: BTreeSet<String> = manifest.update_ignore_dependencies().into_iter().collect();
+    with_update_settings_ctx(cwd, |ctx| {
+        if let Some(from_settings) = aube_settings::resolved::update_ignore_deps(ctx)
+            .or_else(|| aube_settings::resolved::update_config_ignore_dependencies(ctx))
+        {
+            ignored.extend(from_settings);
+        }
+    })?;
+    Ok(ignored)
 }
 
 fn with_update_settings_ctx<T>(

@@ -42,6 +42,23 @@ _write_pkg_with_old_is_odd() {
 	assert_output --partial "3.0.1"
 }
 
+@test "aube outdated honors workspace update.ignoreDeps" {
+	_write_pkg_with_old_is_odd
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - "."
+update:
+  ignoreDeps:
+    - is-odd
+EOF
+	run aube install
+	assert_success
+
+	run aube outdated
+	assert_success
+	refute_output --partial "is-odd"
+}
+
 @test "aube outdated --json emits a package-keyed object with dependencyType" {
 	_write_pkg_with_old_is_odd
 	run aube install

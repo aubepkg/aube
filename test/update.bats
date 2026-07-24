@@ -187,7 +187,26 @@ EOF
 
 	run aube update is-odd
 	assert_failure
-	assert_output --partial "ignored by updateConfig.ignoreDependencies"
+	assert_output --partial "ignored by update.ignoreDeps"
+}
+
+@test "aube update: workspace update.ignoreDeps takes precedence" {
+	_setup_outdated_project
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - "."
+update:
+  ignoreDeps:
+    - is-odd
+updateConfig:
+  ignoreDependencies:
+    - is-even
+EOF
+
+	run aube update
+	assert_success
+	run grep 'is-odd@0.1.2' aube-lock.yaml
+	assert_success
 }
 
 @test "aube update: reports already latest when nothing to update" {

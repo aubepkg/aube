@@ -14,7 +14,12 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`packageExtensions`](#setting-packageextensions) | `object` | Extend existing package definitions with additional information. |
 | [`allowedDeprecatedVersions`](#setting-alloweddeprecatedversions) | `object` | Mute deprecation warnings for specific package versions. |
 | [`deprecationWarnings`](#setting-deprecationwarnings) | `"none" \| "direct" \| "all" \| "summary"` | Scope of deprecation warnings shown during install. |
-| [`updateConfig.ignoreDependencies`](#setting-updateconfig-ignoredependencies) | `list<string>` | List of packages to ignore during update checks. |
+| [`updateConfig.ignoreDependencies`](#setting-updateconfig-ignoredependencies) | `list<string>` | Deprecated list of packages to ignore during update checks. |
+| [`update.ignoreDeps`](#setting-update-ignoredeps) | `list<string>` | List of packages to ignore during update checks. |
+| [`audit.level`](#setting-audit-level) | `string` | Minimum advisory severity reported by audit. |
+| [`audit.ignore`](#setting-audit-ignore) | `list<string>` | Advisory identifiers ignored by audit. |
+| [`auditConfig.ignoreGhsas`](#setting-auditconfig-ignoreghsas) | `list<string>` | Deprecated list of GHSA identifiers ignored by audit. |
+| [`auditConfig.ignoreCves`](#setting-auditconfig-ignorecves) | `list<string>` | Deprecated list of CVE identifiers ignored by audit. |
 | [`supportedArchitectures`](#setting-supportedarchitectures) | `object` | Specify architectures for optional dependency installation. |
 | [`ignoredOptionalDependencies`](#setting-ignoredoptionaldependencies) | `list<string>` | Skip optional dependencies by name. |
 | [`pnpmfilePath`](#setting-pnpmfilepath) | `string` | Location of the pnpmfile hook file. |
@@ -220,7 +225,7 @@ Examples:
 
 ### `updateConfig.ignoreDependencies` {#setting-updateconfig-ignoredependencies}
 
-List of packages to ignore during update checks.
+Deprecated list of packages to ignore during update checks.
 
 - Type: `list<string>`
 - Default: `undefined`
@@ -230,6 +235,68 @@ List of packages to ignore during update checks.
 
 Packages in this list are never bumped by `aube update`, even when a
 newer version matching their range exists.
+
+### `update.ignoreDeps` {#setting-update-ignoredeps}
+
+List of packages to ignore during update checks.
+
+- Type: `list<string>`
+- Default: `undefined`
+- Environment: `npm_config_update_ignore_deps`, `NPM_CONFIG_UPDATE_IGNORE_DEPS`, `AUBE_UPDATE_IGNORE_DEPS`
+- .npmrc keys: `update.ignoreDeps`, `update.ignore-deps`
+- Workspace YAML keys: `update.ignoreDeps`
+
+Packages in this list are never bumped by `aube update` or reported by
+`aube outdated`. This is the canonical pnpm 11.16+ spelling and takes
+precedence over `updateConfig.ignoreDependencies`.
+
+### `audit.level` {#setting-audit-level}
+
+Minimum advisory severity reported by audit.
+
+- Type: `string`
+- Default: `undefined`
+- Environment: `npm_config_audit_level`, `NPM_CONFIG_AUDIT_LEVEL`, `AUBE_AUDIT_LEVEL`
+- .npmrc keys: `audit.level`, `audit-level`, `auditLevel`
+- Workspace YAML keys: `audit.level`
+
+Sets the default severity threshold for `aube audit`. A command-line
+`--audit-level` value takes precedence.
+
+### `audit.ignore` {#setting-audit-ignore}
+
+Advisory identifiers ignored by audit.
+
+- Type: `list<string>`
+- Default: `undefined`
+- Environment: `npm_config_audit_ignore`, `NPM_CONFIG_AUDIT_IGNORE`, `AUBE_AUDIT_IGNORE`
+- .npmrc keys: `audit.ignore`
+- Workspace YAML keys: `audit.ignore`
+
+Advisory IDs in this list are filtered from `aube audit`. Values may be
+numeric npm advisory IDs, GHSA identifiers, or CVE identifiers.
+
+### `auditConfig.ignoreGhsas` {#setting-auditconfig-ignoreghsas}
+
+Deprecated list of GHSA identifiers ignored by audit.
+
+- Type: `list<string>`
+- Default: `undefined`
+- .npmrc keys: `auditConfig.ignoreGhsas`, `audit-config.ignore-ghsas`
+- Workspace YAML keys: `auditConfig.ignoreGhsas`
+
+Use `audit.ignore` instead.
+
+### `auditConfig.ignoreCves` {#setting-auditconfig-ignorecves}
+
+Deprecated list of CVE identifiers ignored by audit.
+
+- Type: `list<string>`
+- Default: `undefined`
+- .npmrc keys: `auditConfig.ignoreCves`, `audit-config.ignore-cves`
+- Workspace YAML keys: `auditConfig.ignoreCves`
+
+Use `audit.ignore` instead.
 
 ### `supportedArchitectures` {#setting-supportedarchitectures}
 

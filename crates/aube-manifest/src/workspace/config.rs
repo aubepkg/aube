@@ -59,6 +59,31 @@ pub struct JailBuildPermission {
     pub network: bool,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceUpdateConfig {
+    #[serde(default)]
+    pub ignore_deps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceAuditConfig {
+    #[serde(default)]
+    pub level: Option<String>,
+    #[serde(default)]
+    pub ignore: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyWorkspaceAuditConfig {
+    #[serde(default)]
+    pub ignore_ghsas: Vec<String>,
+    #[serde(default)]
+    pub ignore_cves: Vec<String>,
+}
+
 /// Configuration from `pnpm-workspace.yaml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -260,6 +285,22 @@ pub struct WorkspaceConfig {
     /// Update-time policy knobs.
     #[serde(default)]
     pub update_config: Option<UpdateConfig>,
+
+    /// Canonical pnpm 11.16+ update policy.
+    #[serde(default)]
+    pub update: Option<WorkspaceUpdateConfig>,
+
+    /// Canonical pnpm 11.16+ audit policy.
+    #[serde(default)]
+    pub audit: Option<WorkspaceAuditConfig>,
+
+    /// Deprecated audit policy, retained for pnpm 11 compatibility.
+    #[serde(default)]
+    pub audit_config: Option<LegacyWorkspaceAuditConfig>,
+
+    /// Deprecated audit severity, retained for pnpm 11 compatibility.
+    #[serde(default)]
+    pub audit_level: Option<String>,
 
     /// Node.js download mirror map (pnpm parity), keyed by channel:
     /// `release` is used for runtime downloads; `rc`/`nightly` are

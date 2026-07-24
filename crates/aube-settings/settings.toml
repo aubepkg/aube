@@ -110,7 +110,7 @@ examples = [
 ]
 
 ["updateConfig.ignoreDependencies"]
-description = "List of packages to ignore during update checks."
+description = "Deprecated list of packages to ignore during update checks."
 type = "list<string>"
 default = "undefined"
 docs = """
@@ -121,6 +121,71 @@ sources.cli = []
 sources.env = ["npm_config_update_config_ignore_dependencies", "NPM_CONFIG_UPDATE_CONFIG_IGNORE_DEPENDENCIES", "AUBE_UPDATE_CONFIG_IGNORE_DEPENDENCIES"]
 sources.npmrc = ["updateConfig.ignoreDependencies"]
 sources.workspaceYaml = ["updateConfig.ignoreDependencies"]
+examples = []
+
+["update.ignoreDeps"]
+description = "List of packages to ignore during update checks."
+type = "list<string>"
+default = "undefined"
+docs = """
+Packages in this list are never bumped by `aube update` or reported by
+`aube outdated`. This is the canonical pnpm 11.16+ spelling and takes
+precedence over `updateConfig.ignoreDependencies`.
+"""
+sources.cli = []
+sources.env = ["npm_config_update_ignore_deps", "NPM_CONFIG_UPDATE_IGNORE_DEPS", "AUBE_UPDATE_IGNORE_DEPS"]
+sources.npmrc = ["update.ignoreDeps"]
+sources.workspaceYaml = ["update.ignoreDeps"]
+examples = []
+
+["audit.level"]
+description = "Minimum advisory severity reported by audit."
+type = "string"
+default = "undefined"
+docs = """
+Sets the default severity threshold for `aube audit`. A command-line
+`--audit-level` value takes precedence.
+"""
+sources.cli = []
+sources.env = ["npm_config_audit_level", "NPM_CONFIG_AUDIT_LEVEL", "AUBE_AUDIT_LEVEL"]
+sources.npmrc = ["audit.level", "audit-level"]
+sources.workspaceYaml = ["audit.level"]
+examples = []
+
+["audit.ignore"]
+description = "Advisory identifiers ignored by audit."
+type = "list<string>"
+default = "undefined"
+docs = """
+Advisory IDs in this list are filtered from `aube audit`. Values may be
+numeric npm advisory IDs, GHSA identifiers, or CVE identifiers.
+"""
+sources.cli = []
+sources.env = ["npm_config_audit_ignore", "NPM_CONFIG_AUDIT_IGNORE", "AUBE_AUDIT_IGNORE"]
+sources.npmrc = ["audit.ignore"]
+sources.workspaceYaml = ["audit.ignore"]
+examples = []
+
+["auditConfig.ignoreGhsas"]
+description = "Deprecated list of GHSA identifiers ignored by audit."
+type = "list<string>"
+default = "undefined"
+docs = "Use `audit.ignore` instead."
+sources.cli = []
+sources.env = []
+sources.npmrc = ["auditConfig.ignoreGhsas"]
+sources.workspaceYaml = ["auditConfig.ignoreGhsas"]
+examples = []
+
+["auditConfig.ignoreCves"]
+description = "Deprecated list of CVE identifiers ignored by audit."
+type = "list<string>"
+default = "undefined"
+docs = "Use `audit.ignore` instead."
+sources.cli = []
+sources.env = []
+sources.npmrc = ["auditConfig.ignoreCves"]
+sources.workspaceYaml = ["auditConfig.ignoreCves"]
 examples = []
 
 [supportedArchitectures]
