@@ -1,0 +1,2 @@
+// `aube run <TAB>` offers the nearest package.json's scripts.
+complete "script" run="{bin} run --complete" descriptions=#true

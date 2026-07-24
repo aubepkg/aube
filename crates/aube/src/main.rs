@@ -34,7 +34,21 @@ fn main() {
     // argv before clap, so their `usage` tokens belong to the wrapped tool.
     if is_usage_invocation() {
         let mut cmd = aube::command();
-        clap_usage::generate(&mut cmd, embedder.name, &mut std::io::stdout());
+        let mut spec = Vec::new();
+        clap_usage::generate(&mut cmd, embedder.name, &mut spec);
+        let mut out = std::io::stdout();
+        let _ = std::io::Write::write_all(&mut out, &spec);
+        // `clap_usage` only sees the clap tree, which has no way to express a
+        // dynamic completer, so the `complete` nodes come from a hand-written
+        // fragment. usage merges top-level nodes, so appending the text is
+        // enough (`mise usage` does the same). `{bin}` carries the embedder's
+        // binary name into the shell snippet the completer runs.
+        let _ = std::io::Write::write_all(
+            &mut out,
+            include_str!("../assets/extra.usage.kdl")
+                .replace("{bin}", embedder.name)
+                .as_bytes(),
+        );
         return;
     }
 

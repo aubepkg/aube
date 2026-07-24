@@ -571,3 +571,40 @@ JSON
 	assert_success
 	assert_output --partial "cli-bin"
 }
+
+@test "aube run --complete lists package.json scripts for shell completion" {
+	cat >package.json <<'JSON'
+{
+  "name": "complete-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p .",
+    "test:unit": "vitest run"
+  }
+}
+JSON
+	run aube run --complete
+	assert_success
+	assert_line "build:tsc -p ."
+	# usage splits each line on the first unescaped colon, so a colon in the
+	# script name has to survive as `\:`.
+	assert_line 'test\:unit:vitest run'
+}
+
+@test "aube run --complete finds the project root from a subdirectory" {
+	cat >package.json <<'JSON'
+{ "name": "root", "version": "1.0.0", "scripts": { "build": "echo hi" } }
+JSON
+	mkdir -p src/deep
+	run aube -C src/deep run --complete
+	assert_success
+	assert_line "build:echo hi"
+}
+
+@test "aube run --complete stays quiet outside a project" {
+	mkdir -p empty
+	run aube -C empty run --complete
+	assert_success
+	assert_output ""
+}

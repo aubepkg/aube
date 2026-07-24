@@ -16,6 +16,12 @@ pub struct RunArgs {
     /// Arguments to pass to the script
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
+    /// Print the nearest `package.json`'s scripts for shell completion.
+    ///
+    /// Consumed by the `complete "script"` node in the usage spec, not
+    /// meant to be typed by hand.
+    #[arg(long, hide = true)]
+    pub complete: bool,
     /// Don't error if the script is missing from package.json
     #[arg(long)]
     pub if_present: bool,
@@ -131,12 +137,21 @@ pub async fn run(
     run_args: RunArgs,
     filter: aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<Option<i32>> {
+    // Completion probe: answer from package.json alone, before any setting
+    // override, install check, or runtime resolution runs. A TAB press must
+    // stay cheap and must never fail — outside a project there is simply
+    // nothing to offer.
+    if run_args.complete {
+        print_script_completions();
+        return Ok(Some(0));
+    }
     run_args.network.install_overrides();
     run_args.lockfile.install_overrides();
     run_args.virtual_store.install_overrides();
     let RunArgs {
         script,
         args,
+        complete: _,
         no_install,
         no_sort,
         if_present,
@@ -310,6 +325,44 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
             .into_diagnostic()
             .wrap_err("failed to read script selection"),
     }
+}
+
+/// Print the nearest `package.json`'s scripts for the `complete "script"`
+/// node in the usage spec, one `name:command` line each.
+///
+/// Best-effort by design: a missing, unreadable, or malformed
+/// `package.json` prints nothing rather than erroring, because the caller
+/// is a TAB press and completion noise is worse than no completions.
+fn print_script_completions() {
+    let Some(root) = crate::dirs::cwd()
+        .ok()
+        .and_then(|cwd| crate::dirs::find_project_root(&cwd))
+    else {
+        return;
+    };
+    let Ok(scripts) = read_scripts_in_order(&root) else {
+        return;
+    };
+    let mut out = String::new();
+    for (name, cmd) in &scripts {
+        out.push_str(&completion_line(name, cmd));
+        out.push('\n');
+    }
+    print!("{out}");
+}
+
+/// Format one `name:command` completion line. `usage` splits each line on
+/// its first *unescaped* colon, so colons inside the name are escaped —
+/// without this a `test:unit` script completes as `test` described by
+/// `unit:vitest …`. Newlines and tabs in the command are folded to spaces
+/// so a multi-line script stays on one line.
+fn completion_line(name: &str, cmd: &str) -> String {
+    let name = name.replace(':', "\\:");
+    let cmd: String = cmd
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
+    format!("{name}:{}", cmd.trim())
 }
 
 /// Read `package.json` and return its `scripts` entries in the order
@@ -1186,8 +1239,8 @@ async fn exec_script_status_with_node_args(
 #[cfg(test)]
 mod tests {
     use super::{
-        RecursiveOpts, effective_concurrency, inject_node_args, node_args_from_run_flags,
-        order_matched_packages,
+        RecursiveOpts, completion_line, effective_concurrency, inject_node_args,
+        node_args_from_run_flags, order_matched_packages,
     };
     use aube_manifest::PackageJson;
     use aube_workspace::selector::SelectedPackage;
@@ -1345,6 +1398,24 @@ mod tests {
         assert_eq!(
             inject_node_args("node-gyp rebuild", &args),
             "node-gyp rebuild"
+        );
+    }
+
+    #[test]
+    fn completion_line_escapes_colons_in_the_script_name() {
+        // usage splits on the first unescaped colon, so only the name is
+        // escaped — a colon in the command is part of the description.
+        assert_eq!(
+            completion_line("test:unit", "vitest run --reporter=x:y"),
+            "test\\:unit:vitest run --reporter=x:y"
+        );
+    }
+
+    #[test]
+    fn completion_line_folds_a_multiline_command_onto_one_line() {
+        assert_eq!(
+            completion_line("deploy", "node deploy.mjs \\\n  --yes\n"),
+            "deploy:node deploy.mjs \\   --yes"
         );
     }
 }

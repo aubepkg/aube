@@ -9376,6 +9376,19 @@
         ],
         "flags": [
           {
+            "name": "complete",
+            "usage": "--complete",
+            "help": "Print the nearest `package.json`'s scripts for shell completion",
+            "help_long": "Print the nearest `package.json`'s scripts for shell completion.\n\nConsumed by the `complete \"script\"` node in the usage spec, not meant to be typed by hand.",
+            "help_first_line": "Print the nearest `package.json`'s scripts for shell completion",
+            "short": [],
+            "long": [
+              "complete"
+            ],
+            "hide": true,
+            "global": false
+          },
+          {
             "name": "if-present",
             "usage": "--if-present",
             "help": "Don't error if the script is missing from package.json",
@@ -13265,6 +13278,12 @@
   },
   "version": "1.32.0",
   "usage": "Usage: aube [OPTIONS] [COMMAND]",
-  "complete": {},
+  "complete": {
+    "script": {
+      "name": "script",
+      "run": "aube run --complete",
+      "descriptions": true
+    }
+  },
   "about": "A fast Node.js package manager"
 }

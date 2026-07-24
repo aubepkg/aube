@@ -1617,6 +1617,9 @@ cmd root help="Print the path to `node_modules`" {
 }
 cmd run help="Run a script defined in package.json" {
     alias run-script hide=#true
+    flag --complete help="Print the nearest `package.json`'s scripts for shell completion" hide=#true {
+        long_help "Print the nearest `package.json`'s scripts for shell completion.\n\nConsumed by the `complete \"script\"` node in the usage spec, not meant to be typed by hand."
+    }
     flag --if-present help="Don't error if the script is missing from package.json"
     flag --inspect help="Forward `--inspect` to a Node-backed script or local binary" {
         arg "[[HOST:]PORT]" required=#false
@@ -2201,3 +2204,5 @@ cmd why help="Print reverse dependency chains explaining why a package is instal
     arg <PACKAGE> help="Package name to search for (exact match against package names)"
 }
 
+// `aube run <TAB>` offers the nearest package.json's scripts.
+complete "script" run="aube run --complete" descriptions=#true
