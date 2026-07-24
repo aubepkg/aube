@@ -488,8 +488,8 @@ fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
     );
 
     let second = linker.link_all(&project_dir, &graph, &indices).unwrap();
-    assert_eq!(second.packages_linked, 1);
-    assert_eq!(second.packages_cached, 1);
+    assert_eq!(second.packages_linked, 0);
+    assert_eq!(second.packages_cached, 2);
 }
 
 #[test]
@@ -538,6 +538,12 @@ fn workspace_selected_package_materializes_locally_while_dependencies_use_gvs() 
             .join("packages/app/node_modules/foo/index.js")
             .exists()
     );
+
+    let second = linker
+        .link_workspace(&project_dir, &graph, &indices, &workspace_dirs)
+        .unwrap();
+    assert_eq!(second.packages_linked, 0);
+    assert_eq!(second.packages_cached, 2);
 }
 
 #[test]

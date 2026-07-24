@@ -113,6 +113,9 @@ fn upsert_virtual_store_dir(existing: &[u8], virtual_store_dir: &str) -> std::io
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .find_map(|line| {
+            if line.starts_with('%') || line == "---" || line == "..." {
+                return None;
+            }
             let content = line
                 .strip_prefix("---")
                 .map(str::trim_start)
@@ -635,26 +638,30 @@ mod tests {
 
     #[test]
     fn rewrites_flow_style_yaml_as_a_valid_mapping() {
-        let existing = b"{virtualStoreDir: .pnpm, layoutVersion: 5}\n";
-        let updated =
-            upsert_virtual_store_dir(existing, "/shared/store").expect("metadata should update");
-        let parsed: yaml_serde::Value =
-            yaml_serde::from_slice(&updated).expect("updated metadata should remain valid YAML");
-        let mapping = parsed
-            .as_mapping()
-            .expect("updated metadata should remain a mapping");
-        assert_eq!(
-            mapping
-                .get(yaml_serde::Value::String("virtualStoreDir".to_string()))
-                .and_then(yaml_serde::Value::as_str),
-            Some("/shared/store")
-        );
-        assert_eq!(
-            mapping
-                .get(yaml_serde::Value::String("layoutVersion".to_string()))
-                .and_then(yaml_serde::Value::as_i64),
-            Some(5)
-        );
+        for existing in [
+            "{virtualStoreDir: .pnpm, layoutVersion: 5}\n",
+            "%YAML 1.2\n---\n{virtualStoreDir: .pnpm, layoutVersion: 5}\n",
+        ] {
+            let updated = upsert_virtual_store_dir(existing.as_bytes(), "/shared/store")
+                .expect("metadata should update");
+            let parsed: yaml_serde::Value = yaml_serde::from_slice(&updated)
+                .expect("updated metadata should remain valid YAML");
+            let mapping = parsed
+                .as_mapping()
+                .expect("updated metadata should remain a mapping");
+            assert_eq!(
+                mapping
+                    .get(yaml_serde::Value::String("virtualStoreDir".to_string()))
+                    .and_then(yaml_serde::Value::as_str),
+                Some("/shared/store")
+            );
+            assert_eq!(
+                mapping
+                    .get(yaml_serde::Value::String("layoutVersion".to_string()))
+                    .and_then(yaml_serde::Value::as_i64),
+                Some(5)
+            );
+        }
     }
 
     #[test]

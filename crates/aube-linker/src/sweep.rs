@@ -306,6 +306,19 @@ pub(crate) fn classify_entry_state(link_path: &Path, expected: &Path) -> EntrySt
     }
 }
 
+/// Classify a project-local virtual-store entry. A real directory is
+/// already materialized and reusable; symlinks and other file types are
+/// stale shapes left by a different layout mode.
+#[inline]
+pub(crate) fn classify_local_entry_state(path: &Path) -> EntryState {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => EntryState::Fresh,
+        Ok(_) => EntryState::Stale,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => EntryState::Missing,
+        Err(_) => EntryState::Stale,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_physical_importer;

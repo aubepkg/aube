@@ -6,9 +6,9 @@ use crate::patches::{
 };
 use crate::pool::with_link_pool;
 use crate::sweep::{
-    EntryState, classify_entry_state, is_physical_importer, mkdirp, remove_hidden_hoist_tree,
-    sweep_dead_hidden_hoist_entries, sweep_stale_tmp_dirs, sweep_stale_top_level_entries,
-    try_remove_entry,
+    EntryState, classify_entry_state, classify_local_entry_state, is_physical_importer, mkdirp,
+    remove_hidden_hoist_tree, sweep_dead_hidden_hoist_entries, sweep_stale_tmp_dirs,
+    sweep_stale_top_level_entries, try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
@@ -286,9 +286,13 @@ impl Linker {
                             // `remove_dir`/`remove_file` pair on cold installs,
                             // which strace showed as ~1.4k ENOENT syscalls per
                             // install on the medium fixture.
-                            let state = classify_entry_state(&local_aube_entry, &global_entry);
+                            let state = if project_local {
+                                classify_local_entry_state(&local_aube_entry)
+                            } else {
+                                classify_entry_state(&local_aube_entry, &global_entry)
+                            };
 
-                            if !project_local && matches!(state, EntryState::Fresh) {
+                            if matches!(state, EntryState::Fresh) {
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
@@ -857,9 +861,13 @@ impl Linker {
                             let global_entry = self.virtual_store.join(subdir);
                             let project_local = self.project_local_dep_paths.contains(dep_path);
 
-                            let state = classify_entry_state(&local_aube_entry, &global_entry);
+                            let state = if project_local {
+                                classify_local_entry_state(&local_aube_entry)
+                            } else {
+                                classify_entry_state(&local_aube_entry, &global_entry)
+                            };
 
-                            if !project_local && matches!(state, EntryState::Fresh) {
+                            if matches!(state, EntryState::Fresh) {
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
