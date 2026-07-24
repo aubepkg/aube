@@ -119,18 +119,8 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
                     let Ok(store) = super::super::open_store(cwd) else {
                         return false;
                     };
-                    let Ok(manifest) = super::super::load_manifest_or_default(cwd) else {
-                        return false;
-                    };
-                    let Ok((graph, _)) = aube_lockfile::parse_lockfile_with_kind(cwd, &manifest)
-                    else {
-                        return false;
-                    };
-                    legacy_vite_patches_current = super::gvs::legacy_vite_patches_are_current(
-                        &aube_dir,
-                        &graph,
-                        super::super::resolve_virtual_store_dir_max_length_for_cwd(cwd),
-                    );
+                    legacy_vite_patches_current =
+                        super::gvs::legacy_vite_patches_are_current(&aube_dir);
                     Some(store.virtual_store_dir())
                 }
                 Some(false) => Some(aube_dir),

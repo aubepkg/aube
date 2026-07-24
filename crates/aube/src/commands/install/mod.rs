@@ -1132,6 +1132,11 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             };
             let lock_materialize_handle =
                 spawn_gvs_prewarm(lock_prewarm_inputs, lock_materialize_rx);
+            let lock_project_local_dep_paths = if planned_gvs {
+                gvs::legacy_vite_project_local_closure(&graph)
+            } else {
+                Default::default()
+            };
 
             let fetch_result = fetch_packages_with_root(
                 &graph.packages,
@@ -1146,6 +1151,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 &aube_dir,
                 Some(lock_materialize_tx),
                 /*skip_already_linked_shortcut=*/ has_workspace,
+                &lock_project_local_dep_paths,
                 virtual_store_dir_max_length,
                 opts.ignore_scripts,
                 network_concurrency_setting,
@@ -2169,6 +2175,11 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 let catchup_start = std::time::Instant::now();
                 let cwd_for_catchup_client = cwd.clone();
                 let catchup_network_mode = opts.network_mode;
+                let project_local_dep_paths = if planned_gvs {
+                    gvs::legacy_vite_project_local_closure(&graph)
+                } else {
+                    Default::default()
+                };
                 let (catchup_indices, catchup_cached, catchup_fetched, catchup_integrities) =
                     fetch_packages_with_root(
                         &missing_packages,
@@ -2184,6 +2195,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                         &aube_dir,
                         /*materialize_tx=*/ None,
                         /*skip_already_linked_shortcut=*/ has_workspace,
+                        &project_local_dep_paths,
                         virtual_store_dir_max_length,
                         opts.ignore_scripts,
                         network_concurrency_setting,

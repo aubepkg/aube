@@ -372,45 +372,60 @@ pub(super) fn patch_legacy_vite_copies(
     Ok(patched)
 }
 
-pub(super) fn legacy_vite_patches_are_current(
-    aube_dir: &Path,
-    graph: &aube_lockfile::LockfileGraph,
-    virtual_store_dir_max_length: usize,
-) -> bool {
-    for dep_path in legacy_vite_dep_paths(graph) {
-        let Some(pkg) = graph.packages.get(&dep_path) else {
-            return false;
+pub(super) fn legacy_vite_patches_are_current(aube_dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(aube_dir) else {
+        return false;
+    };
+    let mut inspected = std::collections::BTreeSet::new();
+    for entry in entries.flatten() {
+        let modules_dir = entry.path().join("node_modules");
+        let Ok(packages) = std::fs::read_dir(modules_dir) else {
+            continue;
         };
-        let entry = aube_lockfile::dep_path_filename::dep_path_to_filename(
-            &dep_path,
-            virtual_store_dir_max_length,
-        );
-        let dist_node = aube_dir
-            .join(entry)
-            .join("node_modules")
-            .join(&pkg.name)
-            .join("dist")
-            .join("node");
-        let mut files = Vec::new();
-        if collect_vite_js(&dist_node, &mut files, 0).is_err() {
-            return false;
-        }
-        let mut found_marker = false;
-        for file in files {
-            let Ok(source) = std::fs::read_to_string(file) else {
+        for package in packages.flatten() {
+            let package_dir = package.path();
+            let Ok(bytes) = std::fs::read(package_dir.join("package.json")) else {
+                continue;
+            };
+            let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
                 return false;
             };
-            if source.contains(VITE_COMPAT_MARKER) {
-                found_marker = true;
-            } else if VITE_COMPAT_ANCHORS
-                .iter()
-                .any(|anchor| source.contains(anchor))
+            if manifest.get("name").and_then(serde_json::Value::as_str) != Some("vite") {
+                continue;
+            }
+            let Some(version) = manifest.get("version").and_then(serde_json::Value::as_str) else {
+                return false;
+            };
+            if !vite_needs_modules_metadata_backport(version) {
+                continue;
+            }
+            let real_package_dir =
+                std::fs::canonicalize(&package_dir).unwrap_or_else(|_| package_dir.clone());
+            if !inspected.insert(real_package_dir.clone()) {
+                continue;
+            }
+            let mut files = Vec::new();
+            if collect_vite_js(&real_package_dir.join("dist").join("node"), &mut files, 0).is_err()
             {
                 return false;
             }
-        }
-        if !found_marker {
-            return false;
+            let mut found_marker = false;
+            for file in files {
+                let Ok(source) = std::fs::read_to_string(file) else {
+                    return false;
+                };
+                if source.contains(VITE_COMPAT_MARKER) {
+                    found_marker = true;
+                } else if VITE_COMPAT_ANCHORS
+                    .iter()
+                    .any(|anchor| source.contains(anchor))
+                {
+                    return false;
+                }
+            }
+            if !found_marker {
+                return false;
+            }
         }
     }
     true
@@ -735,6 +750,11 @@ mod tests {
         let global = tmp.path().join("global-virtual-store");
         std::fs::create_dir_all(&chunks).expect("Vite chunks should be created");
         std::fs::create_dir_all(&global).expect("global store should be created");
+        std::fs::write(
+            vite_dir.join("package.json"),
+            r#"{"name":"vite","version":"7.3.6"}"#,
+        )
+        .expect("Vite manifest should be written");
 
         let mut graph = aube_lockfile::LockfileGraph::default();
         graph.importers.insert(
@@ -787,18 +807,10 @@ mod tests {
         )
         .expect("second patch pass should succeed");
         assert_eq!(second, 0);
-        assert!(legacy_vite_patches_are_current(
-            &aube_dir,
-            &graph,
-            aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
-        ));
+        assert!(legacy_vite_patches_are_current(&aube_dir));
 
         std::fs::write(&chunk, source).expect("unpatched Vite chunk should be restored");
-        assert!(!legacy_vite_patches_are_current(
-            &aube_dir,
-            &graph,
-            aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
-        ));
+        assert!(!legacy_vite_patches_are_current(&aube_dir));
     }
 
     #[test]
