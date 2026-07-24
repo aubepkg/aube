@@ -1224,7 +1224,14 @@ fn with_update_settings_ctx<T>(
             .project_aube_config
             .extend(member_files.project_aube_config);
     }
-    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_default();
+    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_else(|error| {
+        tracing::debug!(
+            %error,
+            workspace_root = %yaml_root.display(),
+            "ignoring invalid workspace config while resolving update settings"
+        );
+        BTreeMap::new()
+    });
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
     Ok(f(&ctx))

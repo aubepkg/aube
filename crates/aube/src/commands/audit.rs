@@ -481,7 +481,14 @@ fn with_audit_settings_ctx<T>(
 ) -> miette::Result<T> {
     let yaml_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
     let files = crate::commands::FileSources::load(&yaml_root);
-    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_default();
+    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_else(|error| {
+        tracing::debug!(
+            %error,
+            workspace_root = %yaml_root.display(),
+            "ignoring invalid workspace config while resolving audit settings"
+        );
+        BTreeMap::new()
+    });
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
     Ok(f(&ctx))
