@@ -303,9 +303,19 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
     let mut picker = demand::Select::new("Select a script to run")
         .description("package.json scripts")
         .filterable(true);
+    let name_column = scripts
+        .iter()
+        .map(|(name, _)| console::measure_text_width(name))
+        .max()
+        .unwrap_or(0);
+    let command_column = command_column_width(name_column, terminal_width());
     for (name, cmd) in &scripts {
-        let label = format!("{name}: {cmd}");
-        picker = picker.option(demand::DemandOption::new(name.clone()).label(&label));
+        let mut option = demand::DemandOption::new(name.clone());
+        if command_column > 0 {
+            let cmd = single_line(cmd);
+            option = option.description(&console::truncate_str(&cmd, command_column, "…"));
+        }
+        picker = picker.option(option);
     }
     match picker.run() {
         Ok(name) => Ok(Some(name)),
@@ -317,6 +327,49 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
             .into_diagnostic()
             .wrap_err("failed to read script selection"),
     }
+}
+
+/// How many columns the picker's command text may occupy, or `0` when
+/// there's no room worth spending on it (very narrow terminal, very long
+/// script names) and the rows should show script names alone.
+///
+/// `demand` renders each row as `❯ ` + the name padded to the widest
+/// name + two spaces + the description, and clears the previous frame by
+/// counting *logical* lines. A row wider than the terminal wraps into
+/// physical rows the clear never erases, so every keypress stacks another
+/// copy of the frame on screen. Keeping rows inside the width is what
+/// makes the picker usable, not just tidy.
+fn command_column_width(name_column: usize, terminal: usize) -> usize {
+    /// Below this a truncated command is all ellipsis and no information.
+    const MIN_COMMAND_COLUMN: usize = 12;
+    // `❯ ` before the name, two spaces between the columns.
+    let row_overhead = 2 + name_column + 2;
+    match terminal.saturating_sub(row_overhead) {
+        w if w >= MIN_COMMAND_COLUMN => w,
+        _ => 0,
+    }
+}
+
+/// Width of the terminal the picker draws on, falling back to 80 when
+/// stderr isn't a TTY or the size can't be read. `$COLUMNS` wins because
+/// it's what the user's shell reports for the current window.
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| {
+            console::Term::stderr()
+                .size_checked()
+                .map(|(_rows, cols)| cols as usize)
+        })
+        .filter(|cols| *cols > 0)
+        .unwrap_or(80)
+}
+
+/// Collapse every run of whitespace to a single space so a multi-line
+/// script command still occupies exactly one row.
+fn single_line(cmd: &str) -> String {
+    cmd.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Print the nearest `package.json`'s scripts for the `complete "script"`
@@ -386,8 +439,8 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
 /// Format one `name:command` completion line. `usage` splits each line on
 /// its first *unescaped* colon, so colons inside the name are escaped —
 /// without this a `test:unit` script completes as `test` described by
-/// `unit:vitest …`. Newlines and tabs in the command are folded to spaces
-/// so a multi-line script stays on one line.
+/// `unit:vitest …`. The command is folded onto one line so a multi-line
+/// script doesn't turn into several bogus completion candidates.
 ///
 /// A name that ends in a backslash gets no description at all. The
 /// separator immediately after it would read as escaped, and `usage` would
@@ -397,14 +450,10 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
 /// the one form that still yields the right name.
 fn completion_line(name: &str, cmd: &str) -> String {
     let name = name.replace(':', "\\:");
-    let cmd: String = cmd
-        .chars()
-        .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .collect();
     if name.ends_with('\\') {
         return name;
     }
-    format!("{name}:{}", cmd.trim())
+    format!("{name}:{}", single_line(cmd))
 }
 
 /// Read `package.json` and return its `scripts` entries in the order
@@ -1281,8 +1330,8 @@ async fn exec_script_status_with_node_args(
 #[cfg(test)]
 mod tests {
     use super::{
-        RecursiveOpts, completion_line, effective_concurrency, inject_node_args,
-        node_args_from_run_flags, order_matched_packages,
+        RecursiveOpts, command_column_width, completion_line, effective_concurrency,
+        inject_node_args, node_args_from_run_flags, order_matched_packages,
     };
     use aube_manifest::PackageJson;
     use aube_workspace::selector::SelectedPackage;
@@ -1481,7 +1530,21 @@ mod tests {
     fn completion_line_folds_a_multiline_command_onto_one_line() {
         assert_eq!(
             completion_line("deploy", "node deploy.mjs \\\n  --yes\n"),
-            "deploy:node deploy.mjs \\   --yes"
+            "deploy:node deploy.mjs \\ --yes"
         );
+    }
+
+    #[test]
+    fn command_column_takes_what_the_name_column_leaves() {
+        // "❯ " + 6-wide name column + "  " = 10 columns of overhead.
+        assert_eq!(command_column_width(6, 80), 70);
+    }
+
+    #[test]
+    fn command_column_collapses_when_the_row_would_wrap() {
+        // Nothing useful fits, so the picker shows script names alone
+        // rather than rows that wrap and corrupt the redraw.
+        assert_eq!(command_column_width(60, 64), 0);
+        assert_eq!(command_column_width(6, 12), 0);
     }
 }
