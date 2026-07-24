@@ -55,6 +55,11 @@ aube reads pnpm v11 YAML files for compatibility. `aube-lock.yaml` and
 `aube-workspace.yaml` use pnpm-compatible shapes today but are the long-term
 contract and may diverge over time.
 
+aube also writes the effective virtual-store path to
+`node_modules/.modules.yaml` for tools such as Vite that use pnpm's metadata as
+a filesystem-compatibility signal. This does not make it aube's install state;
+freshness and layout data remain in `node_modules/.aube-state`.
+
 aube never touches pnpm's `node_modules/.pnpm/` or `~/.pnpm-store/`. The two
 virtual stores can coexist under `node_modules`. For the lockfile and
 workspace YAML, aube reads and writes whichever file already exists on disk

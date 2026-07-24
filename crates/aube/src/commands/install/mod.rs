@@ -2428,6 +2428,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         jail_policy: &jail_policy,
         stats: &stats,
         node_linker,
+        planned_gvs,
         virtual_store_only,
         current_leaf_hashes,
         current_subtree_hashes,

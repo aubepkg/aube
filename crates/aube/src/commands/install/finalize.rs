@@ -6,7 +6,7 @@ use super::side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root}
 use super::summary::{print_direct_dependency_summary, should_print_human_install_summary};
 use super::sweep::sweep_orphaned_aube_entries;
 use super::workspace::importer_project_dir;
-use super::{InstallPhaseTimings, delta, unreviewed_builds};
+use super::{InstallPhaseTimings, delta, gvs, unreviewed_builds};
 use crate::state;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
@@ -26,6 +26,7 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
     pub(super) node_linker: aube_linker::NodeLinker,
+    pub(super) planned_gvs: bool,
     pub(super) virtual_store_only: bool,
     pub(super) current_leaf_hashes: Option<BTreeMap<String, String>>,
     pub(super) current_subtree_hashes: Option<BTreeMap<String, String>>,
@@ -64,6 +65,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         jail_policy,
         stats,
         node_linker,
+        planned_gvs,
         virtual_store_only,
         current_leaf_hashes,
         current_subtree_hashes,
@@ -100,6 +102,17 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
     let install_is_noop = stats.packages_linked == 0 && stats.top_level_linked == 0;
     if let Some(p) = prog_ref {
         p.finish(!install_is_noop);
+    }
+
+    if !virtual_store_only {
+        let virtual_store_dir = if planned_gvs && node_linker == aube_linker::NodeLinker::Isolated {
+            store.virtual_store_dir()
+        } else {
+            aube_dir.to_path_buf()
+        };
+        gvs::write_modules_metadata(cwd, graph_for_link, modules_dir_name, &virtual_store_dir)
+            .into_diagnostic()
+            .wrap_err("failed to write node_modules/.modules.yaml")?;
     }
 
     if !ignore_scripts && strict_dep_builds_setting && !virtual_store_only {

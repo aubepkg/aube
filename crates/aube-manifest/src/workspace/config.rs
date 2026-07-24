@@ -90,16 +90,14 @@ pub struct WorkspaceConfig {
 
     /// Package names whose presence in any importer forces
     /// per-project materialization (disabling the global virtual
-    /// store for that install). Defaults to the common bundler /
-    /// framework direct-devDeps whose module resolvers follow
-    /// symlinks then walk up (Next.js's Turbopack, Vite, Rollup,
-    /// Webpack, Parcel, Nuxt, VitePress) — the global virtual store
-    /// makes `.aube/<pkg>` an absolute symlink that escapes the
-    /// project's filesystem root, which those resolvers can't walk
-    /// back from. Add more names as you discover tools with the same
-    /// restriction; set to `[]` to disable the heuristic. Declared
-    /// here so `settings.toml`'s workspaceYaml source stays in sync
-    /// with the actual deserialize surface.
+    /// store for that install). Defaults to tools with concrete
+    /// realpath/walk-up failures (Next.js, Nuxt, and Parcel). Vite
+    /// 8.1+ instead reads the `.modules.yaml` compatibility metadata
+    /// aube writes and allows the shared store explicitly. Add more
+    /// names as you discover tools with the same restriction; set to
+    /// `[]` to disable the heuristic. Declared here so
+    /// `settings.toml`'s workspaceYaml source stays in sync with the
+    /// actual deserialize surface.
     #[serde(default)]
     pub disable_global_virtual_store_for_packages: Option<Vec<String>>,
 

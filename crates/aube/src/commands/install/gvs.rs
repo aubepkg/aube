@@ -46,6 +46,42 @@ pub(super) fn planned_global_virtual_store(
         .unwrap_or_else(|| !env_snapshot.iter().any(|(k, _)| k == "CI"))
 }
 
+/// Write the pnpm-compatible metadata Vite 8.1+ uses to allow files
+/// served from a virtual store outside the workspace root.
+///
+/// `.modules.yaml` is not aube's install-state file — `.aube-state`
+/// remains authoritative. This is a narrow compatibility surface, and
+/// preserving unknown keys lets aube coexist with metadata left by
+/// pnpm or other tools.
+pub(super) fn write_modules_metadata(
+    workspace_root: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    modules_dir_name: &str,
+    virtual_store_dir: &Path,
+) -> std::io::Result<()> {
+    let virtual_store_dir = virtual_store_dir.to_string_lossy().into_owned();
+    for importer_path in graph.importers.keys() {
+        let project_dir =
+            super::workspace::importer_project_dir(workspace_root, importer_path.as_str());
+        let metadata_path = project_dir.join(modules_dir_name).join(".modules.yaml");
+        let mut metadata = match std::fs::read(&metadata_path) {
+            Ok(bytes) => {
+                serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&bytes)
+                    .unwrap_or_default()
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+            Err(err) => return Err(err),
+        };
+        metadata.insert(
+            "virtualStoreDir".to_string(),
+            serde_json::Value::String(virtual_store_dir.clone()),
+        );
+        let bytes = serde_json::to_vec_pretty(&metadata)?;
+        aube_util::fs_atomic::atomic_write(&metadata_path, &bytes)?;
+    }
+    Ok(())
+}
+
 pub(super) fn reset_on_mode_change(
     cwd: &Path,
     aube_dir: &Path,
@@ -91,5 +127,52 @@ fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_vite_metadata_for_each_importer_and_preserves_unknown_keys() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("node_modules"))
+            .expect("root node_modules should be created");
+        std::fs::create_dir_all(root.join("packages/app/node_modules"))
+            .expect("member node_modules should be created");
+        std::fs::write(
+            root.join("node_modules/.modules.yaml"),
+            br#"{"packageManager":"pnpm@11.0.0","virtualStoreDir":".pnpm"}"#,
+        )
+        .expect("existing metadata should be written");
+
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert(".".to_string(), Default::default());
+        graph
+            .importers
+            .insert("packages/app".to_string(), Default::default());
+        let store = root.join("shared/virtual-store");
+
+        write_modules_metadata(root, &graph, "node_modules", &store)
+            .expect("metadata should be written");
+
+        for project in [root.to_path_buf(), root.join("packages/app")] {
+            let bytes = std::fs::read(project.join("node_modules/.modules.yaml"))
+                .expect("metadata should exist");
+            let metadata: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("metadata should be JSON-compatible YAML");
+            assert_eq!(
+                metadata["virtualStoreDir"],
+                store.to_string_lossy().as_ref()
+            );
+        }
+        let root_metadata: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("node_modules/.modules.yaml"))
+                .expect("root metadata should exist"),
+        )
+        .expect("root metadata should parse");
+        assert_eq!(root_metadata["packageManager"], "pnpm@11.0.0");
     }
 }
