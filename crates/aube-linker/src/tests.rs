@@ -493,6 +493,54 @@ fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
 }
 
 #[test]
+fn workspace_selected_package_materializes_locally_while_dependencies_use_gvs() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(project_dir.join("packages/app")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Dev,
+            specifier: None,
+        }],
+    );
+    let workspace_dirs = BTreeMap::new();
+    Linker::new_with_gvs(&store, LinkStrategy::Copy, true)
+        .link_workspace(&project_dir, &graph, &indices, &workspace_dirs)
+        .unwrap();
+    let aube_dir = project_dir.join("node_modules/.aube");
+    assert!(std::fs::read_link(aube_dir.join("foo@1.0.0")).is_ok());
+
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true)
+        .with_project_local_dep_paths(["foo@1.0.0".to_string()]);
+    linker
+        .link_workspace(&project_dir, &graph, &indices, &workspace_dirs)
+        .unwrap();
+
+    let foo = aube_dir.join("foo@1.0.0");
+    let bar = aube_dir.join("bar@2.0.0");
+    assert!(foo.is_dir());
+    assert!(
+        std::fs::read_link(&foo).is_err(),
+        "selected workspace package must be project-local"
+    );
+    assert!(
+        std::fs::read_link(&bar).is_ok(),
+        "unselected workspace dependency must stay in the GVS"
+    );
+    assert!(
+        project_dir
+            .join("packages/app/node_modules/foo/index.js")
+            .exists()
+    );
+}
+
+#[test]
 fn test_link_file_fresh_reports_missing_cas_shard_and_invalidates_cache() {
     // Reproduces jdx/aube#393: a partially corrupt CAS leaves the
     // cached package index pointing at a missing shard. Materialize
