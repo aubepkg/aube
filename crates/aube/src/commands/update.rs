@@ -1173,14 +1173,21 @@ pub(super) fn ignored_update_dependencies(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<BTreeSet<String>> {
-    let mut ignored: BTreeSet<String> = manifest.update_ignore_dependencies().into_iter().collect();
-    with_update_settings_ctx(cwd, |ctx| {
-        if let Some(from_settings) = aube_settings::resolved::update_ignore_deps(ctx)
-            .or_else(|| aube_settings::resolved::update_config_ignore_dependencies(ctx))
-        {
-            ignored.extend(from_settings);
-        }
+    let configured = with_update_settings_ctx(cwd, |ctx| {
+        aube_settings::resolved::update_ignore_deps(ctx)
+            .map(|canonical| (true, canonical))
+            .or_else(|| {
+                aube_settings::resolved::update_config_ignore_dependencies(ctx)
+                    .map(|legacy| (false, legacy))
+            })
     })?;
+    if let Some((true, canonical)) = configured {
+        return Ok(canonical.into_iter().collect());
+    }
+    let mut ignored: BTreeSet<String> = manifest.update_ignore_dependencies().into_iter().collect();
+    if let Some((false, legacy)) = configured {
+        ignored.extend(legacy);
+    }
     Ok(ignored)
 }
 
@@ -1677,6 +1684,26 @@ fn exact_pin_version(spec: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_update_ignores_replace_package_json_legacy_values() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages: []\nupdate:\n  ignoreDeps:\n    - canonical\n",
+        )
+        .unwrap();
+        let manifest = aube_manifest::PackageJson::parse(
+            &dir.path().join("package.json"),
+            r#"{"updateConfig":{"ignoreDependencies":["legacy"]}}"#.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            ignored_update_dependencies(dir.path(), &manifest).unwrap(),
+            BTreeSet::from(["canonical".to_string()])
+        );
+    }
 
     fn locked(name: &str, version: &str) -> aube_lockfile::LockedPackage {
         aube_lockfile::LockedPackage {

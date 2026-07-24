@@ -430,25 +430,26 @@ fn configured_audit_ignores(
     cli: &[String],
 ) -> miette::Result<Vec<String>> {
     let mut out = cli.to_vec();
-    if let Some(config) = manifest
-        .extra
-        .get("auditConfig")
-        .and_then(|v| v.as_object())
-    {
-        for key in ["ignoreGhsas", "ignoreCves"] {
-            if let Some(values) = config.get(key).and_then(|v| v.as_array()) {
-                out.extend(values.iter().filter_map(|v| v.as_str().map(str::to_string)));
+    let canonical = with_audit_settings_ctx(cwd, aube_settings::resolved::audit_ignore)?;
+    if let Some(canonical) = canonical {
+        out.extend(canonical);
+    } else {
+        if let Some(config) = manifest
+            .extra
+            .get("auditConfig")
+            .and_then(|v| v.as_object())
+        {
+            for key in ["ignoreGhsas", "ignoreCves"] {
+                if let Some(values) = config.get(key).and_then(|v| v.as_array()) {
+                    out.extend(values.iter().filter_map(|v| v.as_str().map(str::to_string)));
+                }
             }
         }
-    }
-    with_audit_settings_ctx(cwd, |ctx| {
-        if let Some(canonical) = aube_settings::resolved::audit_ignore(ctx) {
-            out.extend(canonical);
-        } else {
+        with_audit_settings_ctx(cwd, |ctx| {
             out.extend(aube_settings::resolved::audit_config_ignore_ghsas(ctx).unwrap_or_default());
             out.extend(aube_settings::resolved::audit_config_ignore_cves(ctx).unwrap_or_default());
-        }
-    })?;
+        })?;
+    }
     Ok(out)
 }
 
@@ -1486,6 +1487,26 @@ mod tests {
         assert_eq!(
             configured_audit_ignores(dir.path(), &manifest, &[]).unwrap(),
             vec!["GHSA-aaaa-bbbb-cccc".to_string()]
+        );
+    }
+
+    #[test]
+    fn canonical_audit_ignore_replaces_package_json_legacy_values() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages: []\naudit:\n  ignore:\n    - GHSA-canonical\n",
+        )
+        .unwrap();
+        let manifest = aube_manifest::PackageJson::parse(
+            &dir.path().join("package.json"),
+            r#"{"auditConfig":{"ignoreGhsas":["GHSA-legacy"]}}"#.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            configured_audit_ignores(dir.path(), &manifest, &["CLI-IGNORE".to_string()]).unwrap(),
+            vec!["CLI-IGNORE".to_string(), "GHSA-canonical".to_string()]
         );
     }
 
