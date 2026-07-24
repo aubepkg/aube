@@ -92,12 +92,41 @@ fn install_fast_path_eligible(
     // consulted), leaving `aube install -v` silent on repeat-install loops
     // that originate from state drift rather than lockfile drift.
     match state::check_needs_install_with_flags(cwd, &opts.cli_flags) {
-        None => true,
+        None => compatibility_metadata_is_current(cwd),
         Some(reason) => {
             tracing::debug!("install warm path skipped: {reason}");
             false
         }
     }
+}
+
+fn compatibility_metadata_is_current(cwd: &Path) -> bool {
+    let Some(layout) = state::read_state_layout(cwd) else {
+        return false;
+    };
+    let modules_dir_name = super::super::resolve_modules_dir_name_for_cwd(cwd);
+    let aube_dir = super::super::resolve_virtual_store_dir_for_cwd(cwd);
+    let expected = match layout.linker {
+        state::InstallLayoutMode::Hoisted => Some(aube_dir),
+        state::InstallLayoutMode::Isolated => {
+            match super::settings::detect_aube_dir_gvs_mode(&aube_dir) {
+                Some(true) => {
+                    let Ok(store) = super::super::open_store(cwd) else {
+                        return false;
+                    };
+                    Some(store.virtual_store_dir())
+                }
+                Some(false) => Some(aube_dir),
+                None => None,
+            }
+        }
+    };
+    super::gvs::modules_metadata_is_current(
+        cwd,
+        layout.direct_entries.keys().map(String::as_str),
+        &modules_dir_name,
+        expected.as_deref(),
+    )
 }
 
 fn trust_policy_requires_validation(cwd: &Path, opts: &InstallOptions) -> bool {

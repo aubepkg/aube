@@ -64,22 +64,114 @@ pub(super) fn write_modules_metadata(
         let project_dir =
             super::workspace::importer_project_dir(workspace_root, importer_path.as_str());
         let metadata_path = project_dir.join(modules_dir_name).join(".modules.yaml");
-        let mut metadata = match std::fs::read(&metadata_path) {
-            Ok(bytes) => {
-                serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&bytes)
-                    .unwrap_or_default()
+        let bytes = match std::fs::read(&metadata_path) {
+            Ok(bytes) => upsert_virtual_store_dir(&bytes, &virtual_store_dir)?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let mut metadata = serde_json::Map::new();
+                metadata.insert(
+                    "virtualStoreDir".to_string(),
+                    serde_json::Value::String(virtual_store_dir.clone()),
+                );
+                serde_json::to_vec_pretty(&metadata)?
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
             Err(err) => return Err(err),
         };
-        metadata.insert(
-            "virtualStoreDir".to_string(),
-            serde_json::Value::String(virtual_store_dir.clone()),
-        );
-        let bytes = serde_json::to_vec_pretty(&metadata)?;
         aube_util::fs_atomic::atomic_write(&metadata_path, &bytes)?;
     }
     Ok(())
+}
+
+fn upsert_virtual_store_dir(existing: &[u8], virtual_store_dir: &str) -> std::io::Result<Vec<u8>> {
+    if let Ok(mut metadata) =
+        serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(existing)
+    {
+        metadata.insert(
+            "virtualStoreDir".to_string(),
+            serde_json::Value::String(virtual_store_dir.to_string()),
+        );
+        return serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other);
+    }
+
+    let source = std::str::from_utf8(existing)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let parsed: yaml_serde::Value = yaml_serde::from_str(source)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if !parsed.is_mapping() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "node_modules/.modules.yaml must contain a mapping",
+        ));
+    }
+
+    let quoted = serde_json::to_string(virtual_store_dir).map_err(std::io::Error::other)?;
+    let replacement = format!("virtualStoreDir: {quoted}");
+    let mut output = String::with_capacity(source.len() + replacement.len() + 1);
+    let mut replaced = false;
+    for segment in source.split_inclusive('\n') {
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let is_top_level_key = !line.chars().next().is_some_and(char::is_whitespace)
+            && line
+                .split_once(':')
+                .is_some_and(|(key, _)| key.trim_matches([' ', '"', '\'']) == "virtualStoreDir");
+        if is_top_level_key {
+            output.push_str(&replacement);
+            if segment.ends_with("\r\n") {
+                output.push_str("\r\n");
+            } else if segment.ends_with('\n') {
+                output.push('\n');
+            }
+            replaced = true;
+        } else {
+            output.push_str(segment);
+        }
+    }
+    if !replaced {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(&replacement);
+        output.push('\n');
+    }
+    Ok(output.into_bytes())
+}
+
+fn metadata_virtual_store_dir(bytes: &[u8]) -> Option<String> {
+    if let Ok(metadata) =
+        serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(bytes)
+    {
+        return metadata
+            .get("virtualStoreDir")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+    }
+    let source = std::str::from_utf8(bytes).ok()?;
+    let metadata: yaml_serde::Value = yaml_serde::from_str(source).ok()?;
+    metadata
+        .as_mapping()?
+        .get(yaml_serde::Value::String("virtualStoreDir".to_string()))?
+        .as_str()
+        .map(str::to_string)
+}
+
+pub(super) fn modules_metadata_is_current<'a>(
+    workspace_root: &Path,
+    importer_paths: impl IntoIterator<Item = &'a str>,
+    modules_dir_name: &str,
+    expected_virtual_store_dir: Option<&Path>,
+) -> bool {
+    importer_paths.into_iter().all(|importer_path| {
+        let project_dir = super::workspace::importer_project_dir(workspace_root, importer_path);
+        let metadata_path = project_dir.join(modules_dir_name).join(".modules.yaml");
+        let Some(actual) = std::fs::read(metadata_path)
+            .ok()
+            .and_then(|bytes| metadata_virtual_store_dir(&bytes))
+        else {
+            return false;
+        };
+        expected_virtual_store_dir
+            .is_none_or(|expected| actual == expected.to_string_lossy().as_ref())
+    })
 }
 
 fn legacy_vite_dep_paths(
@@ -148,7 +240,8 @@ import{join as __aubeJoin,isAbsolute as __aubeIsAbs,resolve as __aubeResolve}fro
 const VITE_COMPAT_INSERT: &str = ";const __awr=searchForWorkspaceRoot(root);\
 if(!allowDirs)allowDirs=[__awr];\
 try{const __ac=__aubeRfs(__aubeJoin(__awr,\"node_modules\",\".modules.yaml\"),\"utf-8\");\
-const __av=JSON.parse(__ac).virtualStoreDir;\
+let __av;try{__av=JSON.parse(__ac).virtualStoreDir;}catch{const __am=__ac.match(/^virtualStoreDir:\\s*(.+?)\\s*(?:#.*)?$/m);\
+if(__am)try{__av=JSON.parse(__am[1]);}catch{__av=__am[1];}}\
 if(__av){if(__aubeIsAbs(__av))allowDirs.push(__av);\
 else if(__av.startsWith(\"..\"))allowDirs.push(__aubeResolve(__aubeJoin(__awr,\"node_modules\"),__av));}}catch{}";
 const VITE_COMPAT_ANCHORS: &[&str] = &[
@@ -310,6 +403,11 @@ mod tests {
             br#"{"packageManager":"pnpm@11.0.0","virtualStoreDir":".pnpm"}"#,
         )
         .expect("existing metadata should be written");
+        std::fs::write(
+            root.join("packages/app/node_modules/.modules.yaml"),
+            "layoutVersion: 5\n# preserve this comment\nvirtualStoreDir: .pnpm\nhoistPattern:\n  - '*'\n",
+        )
+        .expect("existing pnpm YAML should be written");
 
         let mut graph = aube_lockfile::LockfileGraph::default();
         graph.importers.insert(".".to_string(), Default::default());
@@ -324,11 +422,9 @@ mod tests {
         for project in [root.to_path_buf(), root.join("packages/app")] {
             let bytes = std::fs::read(project.join("node_modules/.modules.yaml"))
                 .expect("metadata should exist");
-            let metadata: serde_json::Value =
-                serde_json::from_slice(&bytes).expect("metadata should be JSON-compatible YAML");
             assert_eq!(
-                metadata["virtualStoreDir"],
-                store.to_string_lossy().as_ref()
+                metadata_virtual_store_dir(&bytes).as_deref(),
+                Some(store.to_string_lossy().as_ref())
             );
         }
         let root_metadata: serde_json::Value = serde_json::from_slice(
@@ -337,6 +433,30 @@ mod tests {
         )
         .expect("root metadata should parse");
         assert_eq!(root_metadata["packageManager"], "pnpm@11.0.0");
+        let member_metadata =
+            std::fs::read_to_string(root.join("packages/app/node_modules/.modules.yaml"))
+                .expect("member metadata should be readable");
+        assert!(member_metadata.contains("layoutVersion: 5"));
+        assert!(member_metadata.contains("# preserve this comment"));
+        assert!(member_metadata.contains("hoistPattern:\n  - '*'"));
+        assert_eq!(
+            metadata_virtual_store_dir(member_metadata.as_bytes()).as_deref(),
+            Some(store.to_string_lossy().as_ref())
+        );
+        assert!(modules_metadata_is_current(
+            root,
+            graph.importers.keys().map(String::as_str),
+            "node_modules",
+            Some(&store)
+        ));
+        std::fs::remove_file(root.join("packages/app/node_modules/.modules.yaml"))
+            .expect("member metadata should be removed");
+        assert!(!modules_metadata_is_current(
+            root,
+            graph.importers.keys().map(String::as_str),
+            "node_modules",
+            Some(&store)
+        ));
     }
 
     #[test]

@@ -111,6 +111,11 @@ JSON
 	run sed -n 's/.*"virtualStoreDir": "\(.*\)".*/\1/p' node_modules/.modules.yaml
 	assert_success
 	[[ "$output" == /*/aube/virtual-store ]]
+
+	rm node_modules/.modules.yaml
+	run aube install
+	assert_success
+	[ -f node_modules/.modules.yaml ]
 }
 
 @test "vite compatibility metadata is written for nested workspace importers" {
