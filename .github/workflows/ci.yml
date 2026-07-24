@@ -160,7 +160,7 @@ jobs:
         continue-on-error: true
         # Version pinned in bin/cargo-semver-checks (mise tool-stub).
         run: |
-          cargo-semver-checks semver-checks \
+          ./bin/cargo-semver-checks semver-checks \
             --baseline-rev origin/main \
             --package aube-codes --package aube-settings --package aube-util
       - name: C ABI — frozen export set
@@ -186,9 +186,9 @@ jobs:
           fi
           if [ "$SEMVER" = failure ]; then
             if [ "$BREAKING" = true ]; then
-              echo "::notice::Rust embedding API change is breaking; allowed because this PR is marked breaking."
+              echo "::notice::Rust embedding API compatibility check failed; allowed because this PR is marked breaking. Inspect the cargo-semver-checks output to confirm the failure is expected."
             else
-              echo "::error::A breaking change to a Rust embedding API (aube-codes/aube-settings/aube-util) was detected. If intentional, mark the PR breaking: a '!' in the conventional-commit title (e.g. feat(settings)!: ...), a 'BREAKING CHANGE:' footer in the body, or the 'breaking-api' label."
+              echo "::error::Rust embedding API compatibility check failed. Inspect the cargo-semver-checks output above. If it reports an intentional breaking change, mark the PR breaking: a '!' in the conventional-commit title (e.g. feat(settings)!: ...), a 'BREAKING CHANGE:' footer in the body, or the 'breaking-api' label."
               fail=1
             fi
           fi
