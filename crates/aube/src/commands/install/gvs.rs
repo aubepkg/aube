@@ -202,11 +202,46 @@ pub(super) fn modules_metadata_is_current<'a>(
                 .ok()
                 .and_then(|bytes| metadata_virtual_store_dir(&bytes))
             else {
+                tracing::debug!(
+                    "install warm path skipped: {} has no virtualStoreDir",
+                    project_dir
+                        .join(modules_dir_name)
+                        .join(".modules.yaml")
+                        .display()
+                );
                 return false;
             };
-            expected_virtual_store_dir
-                .is_none_or(|expected| actual == expected.to_string_lossy().as_ref())
+            let matches = expected_virtual_store_dir
+                .is_none_or(|expected| actual == expected.to_string_lossy());
+            if !matches {
+                tracing::debug!(
+                    "install warm path skipped: {} has virtualStoreDir={actual}, expected {}",
+                    project_dir
+                        .join(modules_dir_name)
+                        .join(".modules.yaml")
+                        .display(),
+                    expected_virtual_store_dir
+                        .map_or_else(|| "<any>".into(), |path| path.to_string_lossy())
+                );
+            }
+            matches
         })
+}
+
+pub(super) fn detect_existing_global_virtual_store(
+    workspace_root: &Path,
+    aube_dir: &Path,
+    modules_dir_name: &str,
+) -> Option<bool> {
+    let mut existing_gvs = super::settings::detect_aube_dir_gvs_mode(aube_dir)?;
+    if !existing_gvs {
+        let metadata_path = workspace_root.join(modules_dir_name).join(".modules.yaml");
+        existing_gvs = std::fs::read(metadata_path)
+            .ok()
+            .and_then(|bytes| metadata_virtual_store_dir(&bytes))
+            .is_some_and(|path| Path::new(&path) != aube_dir);
+    }
+    Some(existing_gvs)
 }
 
 fn legacy_vite_dep_paths(
@@ -425,7 +460,8 @@ pub(super) fn reset_on_mode_change(
     modules_dir_name: &str,
     planned_gvs: bool,
 ) -> miette::Result<()> {
-    let Some(existing_gvs) = super::settings::detect_aube_dir_gvs_mode(aube_dir) else {
+    let Some(existing_gvs) = detect_existing_global_virtual_store(cwd, aube_dir, modules_dir_name)
+    else {
         return Ok(());
     };
     if existing_gvs == planned_gvs {
@@ -574,6 +610,30 @@ mod tests {
                 .and_then(yaml_serde::Value::as_i64),
             Some(5)
         );
+    }
+
+    #[test]
+    fn metadata_disambiguates_gvs_trees_with_only_local_packages() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let root = tmp.path();
+        let aube_dir = root.join("node_modules/.aube");
+        std::fs::create_dir_all(aube_dir.join("vendor-dir@9.9.9"))
+            .expect("local package should be created");
+        let shared_store = root.join("shared/virtual-store");
+        std::fs::write(
+            root.join("node_modules/.modules.yaml"),
+            format!(
+                "virtualStoreDir: {}\n",
+                serde_json::to_string(&shared_store.to_string_lossy())
+                    .expect("store path should serialize")
+            ),
+        )
+        .expect("metadata should be written");
+
+        reset_on_mode_change(root, &aube_dir, "node_modules", true)
+            .expect("matching GVS mode should be preserved");
+
+        assert!(aube_dir.join("vendor-dir@9.9.9").is_dir());
     }
 
     #[test]
