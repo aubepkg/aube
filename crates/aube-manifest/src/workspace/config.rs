@@ -92,8 +92,9 @@ pub struct WorkspaceConfig {
     /// per-project materialization (disabling the global virtual
     /// store for that install). Defaults to tools with concrete
     /// realpath/walk-up failures (Next.js, Nuxt, and Parcel). Vite
-    /// 8.1+ instead reads the `.modules.yaml` compatibility metadata
-    /// aube writes and allows the shared store explicitly. Add more
+    /// 8.1+ reads the `.modules.yaml` compatibility metadata aube
+    /// writes; older Vite dependency paths are materialized locally
+    /// and receive the same allow-list lookup as a backport. Add more
     /// names as you discover tools with the same restriction; set to
     /// `[]` to disable the heuristic. Declared here so
     /// `settings.toml`'s workspaceYaml source stays in sync with the

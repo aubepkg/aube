@@ -1079,7 +1079,10 @@ canonicalizes through symlinks and walks up for app-router/monorepo detection,
 Nuxt plugins walk up for config discovery, and Parcel's resolver walks up for
 `.parcelrc`. Vite and VitePress are compatible with the global virtual store:
 aube writes `node_modules/.modules.yaml` with the store location, which Vite
-8.1+ reads when constructing its filesystem allow-list.
+8.1+ reads when constructing its filesystem allow-list. For older Vite
+versions, aube materializes only the Vite dependency path locally and backports
+the same allow-list lookup into that project-local copy; unrelated dependencies
+remain in the shared store.
 
 Webpack and Rollup are *not* on the default list: plain Webpack
 resolves via the sibling symlinks aube already places inside

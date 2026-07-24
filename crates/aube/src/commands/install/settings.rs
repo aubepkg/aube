@@ -168,14 +168,15 @@ pub(super) fn find_gvs_incompatible_trigger<'a>(
 /// symlinks. Callers use this to detect the transition and wipe
 /// `node_modules/` before the linker runs.
 ///
-/// Assumes a consistent `.aube/` tree (every entry the same type),
-/// which is what a successful install produces. A crash mid-link
-/// during a transition could leave a mixed tree; we classify from the
-/// first entry `read_dir` yields and let the next install self-heal
-/// — worst case is one extra wipe, which is identical to the cost of
-/// the transition we're already handling.
+/// A GVS tree may contain a small number of deliberately project-local
+/// compatibility copies (for example Vite before 8.1), so a single
+/// real directory does not make the whole layout per-project. Any
+/// package symlink/junction classifies the tree as GVS; only a tree
+/// containing exclusively real package directories classifies as
+/// per-project.
 pub(super) fn detect_aube_dir_gvs_mode(aube_dir: &std::path::Path) -> Option<bool> {
     let entries = std::fs::read_dir(aube_dir).ok()?;
+    let mut saw_real_dir = false;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -197,11 +198,35 @@ pub(super) fn detect_aube_dir_gvs_mode(aube_dir: &std::path::Path) -> Option<boo
         // and move on to the next candidate.
         match std::fs::read_link(entry.path()) {
             Ok(_) => return Some(true),
-            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => return Some(false),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => saw_real_dir = true,
             Err(_) => continue,
         }
     }
-    None
+    saw_real_dir.then_some(false)
+}
+
+#[cfg(test)]
+mod gvs_mode_tests {
+    use super::detect_aube_dir_gvs_mode;
+
+    #[test]
+    fn mixed_project_local_and_linked_entries_still_classify_as_gvs() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let aube_dir = tmp.path().join(".aube");
+        let global = tmp.path().join("global/foo");
+        std::fs::create_dir_all(aube_dir.join("vite@7.3.6"))
+            .expect("project-local entry should be created");
+        std::fs::create_dir_all(&global).expect("global entry should be created");
+        aube_linker::sys::create_dir_link(&global, &aube_dir.join("foo@1.0.0"))
+            .expect("global-store link should be created");
+
+        assert_eq!(detect_aube_dir_gvs_mode(&aube_dir), Some(true));
+
+        std::fs::remove_dir(aube_dir.join("foo@1.0.0"))
+            .or_else(|_| std::fs::remove_file(aube_dir.join("foo@1.0.0")))
+            .expect("global-store link should be removed");
+        assert_eq!(detect_aube_dir_gvs_mode(&aube_dir), Some(false));
+    }
 }
 
 /// Honor `cleanupUnusedCatalogs` by pruning declared-but-unreferenced

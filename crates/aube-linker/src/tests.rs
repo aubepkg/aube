@@ -450,6 +450,49 @@ fn test_link_all_creates_pnpm_virtual_store() {
 }
 
 #[test]
+fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let graph = make_graph();
+    Linker::new_with_gvs(&store, LinkStrategy::Copy, true)
+        .link_all(&project_dir, &graph, &indices)
+        .unwrap();
+    let initial_foo = project_dir.join("node_modules/.aube/foo@1.0.0");
+    assert!(
+        std::fs::read_link(&initial_foo).is_ok(),
+        "fixture should start with an existing GVS symlink"
+    );
+
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true)
+        .with_project_local_dep_paths(["foo@1.0.0".to_string()]);
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let aube_dir = project_dir.join("node_modules/.aube");
+    let foo = aube_dir.join("foo@1.0.0");
+    let bar = aube_dir.join("bar@2.0.0");
+    assert!(foo.is_dir());
+    assert!(
+        std::fs::read_link(&foo).is_err(),
+        "selected package must be a real project-local directory"
+    );
+    assert!(
+        std::fs::read_link(&bar).is_ok(),
+        "unselected dependency must remain linked to the GVS"
+    );
+    assert_eq!(
+        std::fs::read_to_string(foo.join("node_modules/foo/index.js")).unwrap(),
+        "module.exports = 'foo';"
+    );
+
+    let second = linker.link_all(&project_dir, &graph, &indices).unwrap();
+    assert_eq!(second.packages_linked, 1);
+    assert_eq!(second.packages_cached, 1);
+}
+
+#[test]
 fn test_link_file_fresh_reports_missing_cas_shard_and_invalidates_cache() {
     // Reproduces jdx/aube#393: a partially corrupt CAS leaves the
     // cached package index pointing at a missing shard. Materialize

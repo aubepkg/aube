@@ -276,6 +276,7 @@ impl Linker {
                             let mut local_stats = LinkStats::default();
                             let local_aube_entry = aube_dir.join(entry_name);
                             let global_entry = self.virtual_store.join(subdir);
+                            let project_local = self.project_local_dep_paths.contains(dep_path);
 
                             // Single readlink classifies the entry into one of
                             // three states and drives the whole per-package
@@ -287,7 +288,7 @@ impl Linker {
                             // install on the medium fixture.
                             let state = classify_entry_state(&local_aube_entry, &global_entry);
 
-                            if matches!(state, EntryState::Fresh) {
+                            if !project_local && matches!(state, EntryState::Fresh) {
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
@@ -317,6 +318,23 @@ impl Linker {
                                     &owned_index
                                 }
                             };
+                            if project_local {
+                                if !matches!(state, EntryState::Missing) {
+                                    try_remove_entry(&local_aube_entry);
+                                }
+                                self.materialize_into(
+                                    &aube_dir,
+                                    &aube_dir,
+                                    dep_path,
+                                    pkg,
+                                    index,
+                                    &mut local_stats,
+                                    false,
+                                    nested_link_targets.as_ref(),
+                                )?;
+                                return Ok(local_stats);
+                            }
+
                             self.ensure_in_virtual_store_with_subdir(
                                 dep_path,
                                 subdir,

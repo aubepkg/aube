@@ -59,6 +59,8 @@ aube also writes the effective virtual-store path to
 `node_modules/.modules.yaml` for tools such as Vite that use pnpm's metadata as
 a filesystem-compatibility signal. This does not make it aube's install state;
 freshness and layout data remain in `node_modules/.aube-state`.
+Vite versions before 8.1 receive the equivalent lookup in a project-local copy,
+leaving the shared store immutable.
 
 aube never touches pnpm's `node_modules/.pnpm/` or `~/.pnpm-store/`. The two
 virtual stores can coexist under `node_modules`. For the lockfile and

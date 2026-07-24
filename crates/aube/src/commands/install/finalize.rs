@@ -113,6 +113,16 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         gvs::write_modules_metadata(cwd, graph_for_link, modules_dir_name, &virtual_store_dir)
             .into_diagnostic()
             .wrap_err("failed to write node_modules/.modules.yaml")?;
+        if planned_gvs && node_linker == aube_linker::NodeLinker::Isolated {
+            gvs::patch_legacy_vite_copies(
+                aube_dir,
+                graph_for_link,
+                virtual_store_dir_max_length,
+                &store.virtual_store_dir(),
+            )
+            .into_diagnostic()
+            .wrap_err("failed to backport Vite global virtual store support")?;
+        }
     }
 
     if !ignore_scripts && strict_dep_builds_setting && !virtual_store_only {

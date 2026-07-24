@@ -82,6 +82,168 @@ pub(super) fn write_modules_metadata(
     Ok(())
 }
 
+fn legacy_vite_dep_paths(
+    graph: &aube_lockfile::LockfileGraph,
+) -> std::collections::BTreeSet<String> {
+    graph
+        .packages
+        .iter()
+        .filter(|(_, pkg)| {
+            pkg.registry_name() == "vite" && vite_needs_modules_metadata_backport(&pkg.version)
+        })
+        .map(|(dep_path, _)| dep_path.clone())
+        .collect()
+}
+
+/// Select each legacy Vite package plus every package ancestor needed
+/// to make the root/importer resolution path reach that local copy.
+///
+/// Other branches of the graph remain in the GVS. Dependencies of a
+/// selected ancestor that are not themselves selected still resolve
+/// through the ordinary local `.aube` symlinks into the shared store.
+pub(super) fn legacy_vite_project_local_closure(
+    graph: &aube_lockfile::LockfileGraph,
+) -> std::collections::BTreeSet<String> {
+    let mut selected = legacy_vite_dep_paths(graph);
+    loop {
+        let mut added = false;
+        for (parent_path, parent) in &graph.packages {
+            if selected.contains(parent_path) {
+                continue;
+            }
+            let reaches_selected = parent.dependencies.iter().any(|(name, tail)| {
+                aube_lockfile::resolve_dep_edge(name, tail, |key| graph.packages.contains_key(key))
+                    .is_some_and(|child| selected.contains(&child))
+            });
+            if reaches_selected {
+                selected.insert(parent_path.clone());
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    selected
+}
+
+fn vite_needs_modules_metadata_backport(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let mut parts = core.split('.');
+    let Some(major) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    if major != 8 {
+        return major < 8;
+    }
+    parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0)
+        < 1
+}
+
+const VITE_COMPAT_PREPEND: &str = "import{readFileSync as __aubeRfs}from\"node:fs\";\
+import{join as __aubeJoin,isAbsolute as __aubeIsAbs,resolve as __aubeResolve}from\"node:path\";\n";
+const VITE_COMPAT_INSERT: &str = ";const __awr=searchForWorkspaceRoot(root);\
+if(!allowDirs)allowDirs=[__awr];\
+try{const __ac=__aubeRfs(__aubeJoin(__awr,\"node_modules\",\".modules.yaml\"),\"utf-8\");\
+const __av=JSON.parse(__ac).virtualStoreDir;\
+if(__av){if(__aubeIsAbs(__av))allowDirs.push(__av);\
+else if(__av.startsWith(\"..\"))allowDirs.push(__aubeResolve(__aubeJoin(__awr,\"node_modules\"),__av));}}catch{}";
+const VITE_COMPAT_ANCHORS: &[&str] = &[
+    "let allowDirs = server.fs.allow;",
+    "let allowDirs = server.fs?.allow;",
+    "let allowDirs = (_a = server.fs) === null || _a === void 0 ? void 0 : _a.allow;",
+];
+const VITE_COMPAT_MARKER: &str = "__aubeRfs(__aubeJoin";
+
+/// Backport Vite 8.1's `.modules.yaml` allow-list sniff into the
+/// project-local legacy Vite copies.
+///
+/// The linker may hardlink package files from the CAS. Atomic sibling
+/// replacement is therefore load-bearing: truncating the installed
+/// file in place would mutate the shared CAS inode.
+pub(super) fn patch_legacy_vite_copies(
+    aube_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    virtual_store_dir_max_length: usize,
+    global_virtual_store: &Path,
+) -> std::io::Result<usize> {
+    let global_virtual_store = std::fs::canonicalize(global_virtual_store)
+        .unwrap_or_else(|_| global_virtual_store.to_path_buf());
+    let mut patched = 0;
+    for dep_path in legacy_vite_dep_paths(graph) {
+        let Some(pkg) = graph.packages.get(&dep_path) else {
+            continue;
+        };
+        let entry = aube_lockfile::dep_path_filename::dep_path_to_filename(
+            &dep_path,
+            virtual_store_dir_max_length,
+        );
+        let vite_dir = aube_dir.join(entry).join("node_modules").join(&pkg.name);
+        let real_vite_dir = match std::fs::canonicalize(&vite_dir) {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if real_vite_dir.starts_with(&global_virtual_store) {
+            return Err(std::io::Error::other(format!(
+                "refusing to patch shared Vite package at {}",
+                real_vite_dir.display()
+            )));
+        }
+        let dist_node = real_vite_dir.join("dist").join("node");
+        if !dist_node.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        collect_vite_js(&dist_node, &mut files, 0)?;
+        for file in files {
+            patched += usize::from(patch_vite_file(&file)?);
+        }
+    }
+    Ok(patched)
+}
+
+fn collect_vite_js(
+    dir: &Path,
+    out: &mut Vec<std::path::PathBuf>,
+    depth: usize,
+) -> std::io::Result<()> {
+    if depth > 8 {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_vite_js(&path, out, depth + 1)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "js") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn patch_vite_file(file: &Path) -> std::io::Result<bool> {
+    let source = std::fs::read_to_string(file)?;
+    if source.contains(VITE_COMPAT_MARKER) {
+        return Ok(false);
+    }
+    let Some(anchor) = VITE_COMPAT_ANCHORS
+        .iter()
+        .find(|anchor| source.contains(**anchor))
+    else {
+        return Ok(false);
+    };
+    let patched = source.replacen(anchor, &format!("{anchor}{VITE_COMPAT_INSERT}"), 1);
+    let patched = format!("{VITE_COMPAT_PREPEND}{patched}");
+    aube_util::fs_atomic::atomic_write(file, patched.as_bytes())?;
+    Ok(true)
+}
+
 pub(super) fn reset_on_mode_change(
     cwd: &Path,
     aube_dir: &Path,
@@ -133,6 +295,7 @@ fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aube_lockfile::{DepType, DirectDep, LockedPackage};
 
     #[test]
     fn writes_vite_metadata_for_each_importer_and_preserves_unknown_keys() {
@@ -174,5 +337,171 @@ mod tests {
         )
         .expect("root metadata should parse");
         assert_eq!(root_metadata["packageManager"], "pnpm@11.0.0");
+    }
+
+    #[test]
+    fn legacy_direct_vite_is_selected_but_modern_vite_is_not() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![
+                DirectDep {
+                    name: "vite".to_string(),
+                    dep_path: "vite@7.3.6".to_string(),
+                    dep_type: DepType::Dev,
+                    specifier: Some("^7.0.0".to_string()),
+                },
+                DirectDep {
+                    name: "vite".to_string(),
+                    dep_path: "vite@8.1.0".to_string(),
+                    dep_type: DepType::Dev,
+                    specifier: Some("^8.1.0".to_string()),
+                },
+            ],
+        );
+        for version in ["7.3.6", "8.1.0"] {
+            let dep_path = format!("vite@{version}");
+            graph.packages.insert(
+                dep_path.clone(),
+                LockedPackage {
+                    name: "vite".to_string(),
+                    version: version.to_string(),
+                    dep_path,
+                    ..Default::default()
+                },
+            );
+        }
+
+        assert_eq!(
+            legacy_vite_dep_paths(&graph),
+            ["vite@7.3.6".to_string()].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn legacy_vite_local_closure_includes_framework_ancestors_only() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "vitepress".to_string(),
+                dep_path: "vitepress@1.6.4".to_string(),
+                dep_type: DepType::Dev,
+                specifier: Some("^1.6.0".to_string()),
+            }],
+        );
+        graph.packages.insert(
+            "vite@5.4.21".to_string(),
+            LockedPackage {
+                name: "vite".to_string(),
+                version: "5.4.21".to_string(),
+                dep_path: "vite@5.4.21".to_string(),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "vitepress@1.6.4".to_string(),
+            LockedPackage {
+                name: "vitepress".to_string(),
+                version: "1.6.4".to_string(),
+                dep_path: "vitepress@1.6.4".to_string(),
+                dependencies: [("vite".to_string(), "5.4.21".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "unrelated@1.0.0".to_string(),
+            LockedPackage {
+                name: "unrelated".to_string(),
+                version: "1.0.0".to_string(),
+                dep_path: "unrelated@1.0.0".to_string(),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            legacy_vite_project_local_closure(&graph),
+            ["vite@5.4.21".to_string(), "vitepress@1.6.4".to_string()]
+                .into_iter()
+                .collect()
+        );
+    }
+
+    #[test]
+    fn legacy_vite_patch_is_anchored_idempotent_and_breaks_cas_hardlinks() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let aube_dir = tmp.path().join("project/node_modules/.aube");
+        let vite_dir = aube_dir.join("vite@7.3.6/node_modules/vite");
+        let chunks = vite_dir.join("dist/node/chunks");
+        let global = tmp.path().join("global-virtual-store");
+        std::fs::create_dir_all(&chunks).expect("Vite chunks should be created");
+        std::fs::create_dir_all(&global).expect("global store should be created");
+
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "vite".to_string(),
+                dep_path: "vite@7.3.6".to_string(),
+                dep_type: DepType::Dev,
+                specifier: Some("^7.0.0".to_string()),
+            }],
+        );
+        graph.packages.insert(
+            "vite@7.3.6".to_string(),
+            LockedPackage {
+                name: "vite".to_string(),
+                version: "7.3.6".to_string(),
+                dep_path: "vite@7.3.6".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let cas = tmp.path().join("cas.js");
+        let chunk = chunks.join("config.js");
+        let source = "let allowDirs = server.fs.allow;\n";
+        std::fs::write(&cas, source).expect("CAS stand-in should be written");
+        std::fs::hard_link(&cas, &chunk).expect("installed chunk should hardlink to CAS stand-in");
+
+        let patched = patch_legacy_vite_copies(
+            &aube_dir,
+            &graph,
+            aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+            &global,
+        )
+        .expect("legacy Vite should be patched");
+        assert_eq!(patched, 1);
+        let output = std::fs::read_to_string(&chunk).expect("patched chunk should be readable");
+        assert!(output.starts_with(VITE_COMPAT_PREPEND));
+        assert!(output.contains(VITE_COMPAT_MARKER));
+        assert_eq!(
+            std::fs::read_to_string(&cas).expect("CAS stand-in should be readable"),
+            source,
+            "atomic replacement must not mutate the shared hardlink inode"
+        );
+
+        let second = patch_legacy_vite_copies(
+            &aube_dir,
+            &graph,
+            aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+            &global,
+        )
+        .expect("second patch pass should succeed");
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn legacy_vite_patch_matches_vite_two_through_eight_bundles() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        for (index, anchor) in VITE_COMPAT_ANCHORS.iter().enumerate() {
+            let chunk = tmp.path().join(format!("chunk-{index}.js"));
+            std::fs::write(&chunk, format!("{anchor}\n"))
+                .expect("synthetic Vite chunk should be written");
+            assert!(patch_vite_file(&chunk).expect("matching anchor should patch"));
+            let output = std::fs::read_to_string(&chunk).expect("patched chunk should be readable");
+            assert!(output.contains(VITE_COMPAT_MARKER));
+        }
     }
 }
