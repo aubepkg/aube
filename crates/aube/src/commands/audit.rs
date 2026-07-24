@@ -1445,8 +1445,9 @@ mod tests {
 
     #[test]
     fn configured_audit_ignores_reads_ghsa_and_legacy_cve_keys() {
+        let dir = tempfile::tempdir().unwrap();
         let manifest = aube_manifest::PackageJson::parse(
-            std::path::Path::new("package.json"),
+            &dir.path().join("package.json"),
             r#"{
               "name": "demo",
               "version": "1.0.0",
@@ -1459,8 +1460,7 @@ mod tests {
         )
         .unwrap();
         let ignores =
-            configured_audit_ignores(std::path::Path::new("."), &manifest, &["1404".to_string()])
-                .unwrap();
+            configured_audit_ignores(dir.path(), &manifest, &["1404".to_string()]).unwrap();
         assert_eq!(
             ignores,
             vec![
