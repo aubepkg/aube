@@ -107,13 +107,19 @@ jobs:
   #   * The C ABI export set via the cdylib's dynamic symbol table diffed
   #     against the frozen crates/aube-ffi/abi-symbols.txt manifest.
   # A Rust break is allowed only when the PR is explicitly marked
-  # breaking — a `!` in the conventional-commit title (feat(ffi)!: ...)
-  # or the `breaking-api` label — the same signal that drives
-  # release-plz's major bump, so the gate and the version bump agree.
+  # breaking — a `!` in the conventional-commit title (feat(ffi)!: ...),
+  # a `BREAKING CHANGE:` footer in the body, or the `breaking-api`
+  # label — the same signals that drive release-plz's major bump, so the
+  # gate and the version bump agree.
   # Symbol drift always blocks (keeps the manifest honest); removing an
   # export shows as a manifest deletion in the diff and must ride a
   # breaking PR.
   api-stability:
+    # PR-time gate only: the checks read `github.event.pull_request.*` and
+    # baseline against main, which is meaningless on push/tag/dispatch runs
+    # (those fields are undefined there). `final` treats the resulting
+    # `skipped` as a pass.
+    if: github.event_name == 'pull_request'
     runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
     timeout-minutes: 20
     permissions:
@@ -137,11 +143,15 @@ jobs:
         id: gate
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           breaking=false
           # conventional-commit breaking marker: type(scope)!: or type!:
           if printf '%s' "$PR_TITLE" | grep -qE '^[a-z]+(\([^)]*\))?!:'; then breaking=true; fi
+          # conventional-commit breaking footer in the body (release-plz
+          # honors `BREAKING CHANGE:` / `BREAKING-CHANGE:` for the major bump).
+          if printf '%s' "$PR_BODY" | grep -qE '^BREAKING[ -]CHANGE:'; then breaking=true; fi
           if printf '%s' "$PR_LABELS" | grep -q '"breaking-api"'; then breaking=true; fi
           echo "breaking=$breaking" >> "$GITHUB_OUTPUT"
           echo "breaking override: $breaking"
@@ -178,7 +188,7 @@ jobs:
             if [ "$BREAKING" = true ]; then
               echo "::notice::Rust embedding API change is breaking; allowed because this PR is marked breaking."
             else
-              echo "::error::A breaking change to a Rust embedding API (aube-codes/aube-settings/aube-util) was detected. If intentional, mark the PR breaking: a '!' in the conventional-commit title (e.g. feat(settings)!: ...) or the 'breaking-api' label."
+              echo "::error::A breaking change to a Rust embedding API (aube-codes/aube-settings/aube-util) was detected. If intentional, mark the PR breaking: a '!' in the conventional-commit title (e.g. feat(settings)!: ...), a 'BREAKING CHANGE:' footer in the body, or the 'breaking-api' label."
               fail=1
             fi
           fi
@@ -328,6 +338,8 @@ jobs:
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is
   # blocked. Lets the branch-protection rule depend on one name instead of ten.
+  # Exception: jobs in SKIP_OK below (api-stability, a PR-only gate) are allowed
+  # to skip on push/tag/dispatch runs without failing the aggregate.
   final:
     needs:
       - build
@@ -335,6 +347,7 @@ jobs:
       - bats
       - bats-serial
       - windows
+      - api-stability
     runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 2
     permissions: {}
@@ -351,12 +364,18 @@ jobs:
           import os
           import sys
 
+          # Jobs whose `if:` legitimately skips them on non-PR runs. A skip
+          # here is a pass; every other job must actually succeed.
+          SKIP_OK = {"api-stability"}
+
           needs = json.loads(os.environ["NEEDS_JSON"])
           failed = False
           for name, data in sorted(needs.items()):
               result = data.get("result", "unknown")
               if result == "success":
                   print(f"::notice::{name}: {result}")
+              elif result == "skipped" and name in SKIP_OK:
+                  print(f"::notice::{name}: {result} (allowed to skip)")
               else:
                   print(f"::error::{name}: {result}")
                   failed = True
