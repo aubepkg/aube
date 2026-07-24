@@ -1206,7 +1206,6 @@ fn with_update_settings_ctx<T>(
     cwd: &std::path::Path,
     f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
 ) -> miette::Result<T> {
-    let files = crate::commands::FileSources::load(cwd);
     // `pnpm-workspace.yaml` lives at the workspace root, not in
     // sub-packages. Filtered runs (`update -r`) call us with the
     // sub-package as cwd, so an unwalked load returns an empty map and
@@ -1215,9 +1214,8 @@ fn with_update_settings_ctx<T>(
     // recursive picker because of this miss. Fall back to cwd if no
     // workspace root is found (single-project case).
     let yaml_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root)
-        .into_diagnostic()
-        .wrap_err("failed to read workspace config")?;
+    let files = crate::commands::FileSources::load(&yaml_root);
+    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_default();
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
     Ok(f(&ctx))
@@ -1712,6 +1710,45 @@ mod tests {
 
         assert_eq!(
             ignored_update_dependencies(dir.path(), &manifest).unwrap(),
+            BTreeSet::from(["canonical".to_string()])
+        );
+    }
+
+    #[test]
+    fn malformed_workspace_yaml_does_not_block_package_json_update_ignores() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-workspace.yaml"), "packages: [\n").unwrap();
+        let manifest = aube_manifest::PackageJson::parse(
+            &dir.path().join("package.json"),
+            r#"{"updateConfig":{"ignoreDependencies":["legacy"]}}"#.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            ignored_update_dependencies(dir.path(), &manifest).unwrap(),
+            BTreeSet::from(["legacy".to_string()])
+        );
+    }
+
+    #[test]
+    fn workspace_members_read_update_ignores_from_root_npmrc() {
+        let dir = tempfile::tempdir().unwrap();
+        let member = dir.path().join("packages/app");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".npmrc"),
+            "update.ignoreDeps=[\"canonical\"]\n",
+        )
+        .unwrap();
+        let manifest = aube_manifest::PackageJson::default();
+
+        assert_eq!(
+            ignored_update_dependencies(&member, &manifest).unwrap(),
             BTreeSet::from(["canonical".to_string()])
         );
     }

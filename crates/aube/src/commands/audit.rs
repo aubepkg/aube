@@ -479,11 +479,9 @@ fn with_audit_settings_ctx<T>(
     cwd: &std::path::Path,
     f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
 ) -> miette::Result<T> {
-    let files = crate::commands::FileSources::load(cwd);
     let yaml_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root)
-        .into_diagnostic()
-        .wrap_err("failed to read workspace config")?;
+    let files = crate::commands::FileSources::load(&yaml_root);
+    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_default();
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
     Ok(f(&ctx))
@@ -1470,6 +1468,22 @@ mod tests {
                 "GHSA-aaaa-bbbb-cccc".to_string(),
                 "CVE-2099-0001".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn malformed_workspace_yaml_does_not_block_legacy_audit_ignores() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-workspace.yaml"), "packages: [\n").unwrap();
+        let manifest = aube_manifest::PackageJson::parse(
+            &dir.path().join("package.json"),
+            r#"{"auditConfig":{"ignoreGhsas":["GHSA-legacy"]}}"#.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            configured_audit_ignores(dir.path(), &manifest, &[]).unwrap(),
+            vec!["GHSA-legacy".to_string()]
         );
     }
 
