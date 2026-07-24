@@ -106,6 +106,7 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
     };
     let modules_dir_name = super::super::resolve_modules_dir_name_for_cwd(cwd);
     let aube_dir = super::super::resolve_virtual_store_dir_for_cwd(cwd);
+    let mut legacy_vite_patches_current = true;
     let expected = match layout.linker {
         state::InstallLayoutMode::Hoisted => Some(aube_dir),
         state::InstallLayoutMode::Isolated => {
@@ -114,6 +115,18 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
                     let Ok(store) = super::super::open_store(cwd) else {
                         return false;
                     };
+                    let Ok(manifest) = super::super::load_manifest_or_default(cwd) else {
+                        return false;
+                    };
+                    let Ok((graph, _)) = aube_lockfile::parse_lockfile_with_kind(cwd, &manifest)
+                    else {
+                        return false;
+                    };
+                    legacy_vite_patches_current = super::gvs::legacy_vite_patches_are_current(
+                        &aube_dir,
+                        &graph,
+                        super::super::resolve_virtual_store_dir_max_length_for_cwd(cwd),
+                    );
                     Some(store.virtual_store_dir())
                 }
                 Some(false) => Some(aube_dir),
@@ -121,12 +134,13 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
             }
         }
     };
-    super::gvs::modules_metadata_is_current(
-        cwd,
-        layout.direct_entries.keys().map(String::as_str),
-        &modules_dir_name,
-        expected.as_deref(),
-    )
+    legacy_vite_patches_current
+        && super::gvs::modules_metadata_is_current(
+            cwd,
+            layout.direct_entries.keys().map(String::as_str),
+            &modules_dir_name,
+            expected.as_deref(),
+        )
 }
 
 fn trust_policy_requires_validation(cwd: &Path, opts: &InstallOptions) -> bool {

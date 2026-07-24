@@ -98,7 +98,7 @@ fn upsert_virtual_store_dir(existing: &[u8], virtual_store_dir: &str) -> std::io
 
     let source = std::str::from_utf8(existing)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let parsed: yaml_serde::Value = yaml_serde::from_str(source)
+    let mut parsed: yaml_serde::Value = yaml_serde::from_str(source)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     if !parsed.is_mapping() {
         return Err(std::io::Error::new(
@@ -108,6 +108,34 @@ fn upsert_virtual_store_dir(existing: &[u8], virtual_store_dir: &str) -> std::io
     }
 
     let quoted = serde_json::to_string(virtual_store_dir).map_err(std::io::Error::other)?;
+    let flow_mapping = source
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .find_map(|line| {
+            let content = line
+                .strip_prefix("---")
+                .map(str::trim_start)
+                .unwrap_or(line);
+            (!content.is_empty()).then(|| content.starts_with('{'))
+        })
+        .unwrap_or(false);
+    if flow_mapping {
+        let Some(mapping) = parsed.as_mapping_mut() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "node_modules/.modules.yaml must contain a mapping",
+            ));
+        };
+        mapping.insert(
+            yaml_serde::Value::String("virtualStoreDir".to_string()),
+            yaml_serde::Value::String(virtual_store_dir.to_string()),
+        );
+        return yaml_serde::to_string(&parsed)
+            .map(String::into_bytes)
+            .map_err(std::io::Error::other);
+    }
+
     let replacement = format!("virtualStoreDir: {quoted}");
     let mut output = String::with_capacity(source.len() + replacement.len() + 1);
     let mut replaced = false;
@@ -309,6 +337,50 @@ pub(super) fn patch_legacy_vite_copies(
     Ok(patched)
 }
 
+pub(super) fn legacy_vite_patches_are_current(
+    aube_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    virtual_store_dir_max_length: usize,
+) -> bool {
+    for dep_path in legacy_vite_dep_paths(graph) {
+        let Some(pkg) = graph.packages.get(&dep_path) else {
+            return false;
+        };
+        let entry = aube_lockfile::dep_path_filename::dep_path_to_filename(
+            &dep_path,
+            virtual_store_dir_max_length,
+        );
+        let dist_node = aube_dir
+            .join(entry)
+            .join("node_modules")
+            .join(&pkg.name)
+            .join("dist")
+            .join("node");
+        let mut files = Vec::new();
+        if collect_vite_js(&dist_node, &mut files, 0).is_err() {
+            return false;
+        }
+        let mut found_marker = false;
+        for file in files {
+            let Ok(source) = std::fs::read_to_string(file) else {
+                return false;
+            };
+            if source.contains(VITE_COMPAT_MARKER) {
+                found_marker = true;
+            } else if VITE_COMPAT_ANCHORS
+                .iter()
+                .any(|anchor| source.contains(anchor))
+            {
+                return false;
+            }
+        }
+        if !found_marker {
+            return false;
+        }
+    }
+    true
+}
+
 fn collect_vite_js(
     dir: &Path,
     out: &mut Vec<std::path::PathBuf>,
@@ -481,6 +553,30 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_flow_style_yaml_as_a_valid_mapping() {
+        let existing = b"{virtualStoreDir: .pnpm, layoutVersion: 5}\n";
+        let updated =
+            upsert_virtual_store_dir(existing, "/shared/store").expect("metadata should update");
+        let parsed: yaml_serde::Value =
+            yaml_serde::from_slice(&updated).expect("updated metadata should remain valid YAML");
+        let mapping = parsed
+            .as_mapping()
+            .expect("updated metadata should remain a mapping");
+        assert_eq!(
+            mapping
+                .get(yaml_serde::Value::String("virtualStoreDir".to_string()))
+                .and_then(yaml_serde::Value::as_str),
+            Some("/shared/store")
+        );
+        assert_eq!(
+            mapping
+                .get(yaml_serde::Value::String("layoutVersion".to_string()))
+                .and_then(yaml_serde::Value::as_i64),
+            Some(5)
+        );
+    }
+
+    #[test]
     fn legacy_direct_vite_is_selected_but_modern_vite_is_not() {
         let mut graph = aube_lockfile::LockfileGraph::default();
         graph.importers.insert(
@@ -631,6 +727,18 @@ mod tests {
         )
         .expect("second patch pass should succeed");
         assert_eq!(second, 0);
+        assert!(legacy_vite_patches_are_current(
+            &aube_dir,
+            &graph,
+            aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+        ));
+
+        std::fs::write(&chunk, source).expect("unpatched Vite chunk should be restored");
+        assert!(!legacy_vite_patches_are_current(
+            &aube_dir,
+            &graph,
+            aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+        ));
     }
 
     #[test]
