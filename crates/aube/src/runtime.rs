@@ -131,6 +131,13 @@ type RuntimeSlot = Arc<tokio::sync::OnceCell<Arc<RuntimeContext>>>;
 
 tokio::task_local! {
     static INSTALL_RUNTIME: RuntimeSlot;
+    /// A per-call embedder runtime for an in-process embed invocation.
+    /// Unlike [`INSTALL_RUNTIME`], it is *not* re-scoped by [`scope`], so
+    /// it survives the fresh scope `install::run` opens for a nested
+    /// install (e.g. `dlx`'s transient install, or `run`/`exec`
+    /// auto-install) — that's what lets a per-call runtime reach lifecycle
+    /// scripts in those nested installs.
+    static PER_CALL_RUNTIME: Arc<RuntimeContext>;
 }
 
 /// Run an install with an isolated runtime slot. Standalone commands outside
@@ -155,17 +162,22 @@ pub fn scope_current<F: Future>(future: F) -> impl Future<Output = F::Output> {
 /// The resolved context, if [`ensure`] has run.
 pub fn current() -> Option<Arc<RuntimeContext>> {
     match INSTALL_RUNTIME.try_with(|runtime| runtime.get().map(Arc::clone)) {
+        // Inside an install scope the slot is authoritative (it may be
+        // `None` mid-resolution, before `ensure`/seed fills it).
         Ok(runtime) => runtime,
-        // Non-install commands (dlx/exec/run/node). A process-wide
-        // embedder runtime is authoritative over a `RUNTIME` an earlier
-        // `ensure` may have populated, so registration order can't leave
-        // these paths on a pre-registration runtime while install scopes
-        // see the registered one.
-        Err(_) => EMBEDDER_CONTEXT
-            .get()
-            .map(Arc::clone)
+        // Non-install commands (dlx/exec/run/node). Precedence: a per-call
+        // embed runtime, then a process-wide `set_embedder_runtime` (both
+        // authoritative over a `RUNTIME` an earlier `ensure` may have
+        // populated, so registration order can't strand these paths on a
+        // pre-registration runtime), then the ambient resolved runtime.
+        Err(_) => per_call_runtime()
+            .or_else(|| EMBEDDER_CONTEXT.get().map(Arc::clone))
             .or_else(|| RUNTIME.get().map(Arc::clone)),
     }
+}
+
+fn per_call_runtime() -> Option<Arc<RuntimeContext>> {
+    PER_CALL_RUNTIME.try_with(Arc::clone).ok()
 }
 
 /// How an embedder-supplied env var combines with any value aube would
@@ -375,8 +387,12 @@ pub fn set_embedder_runtime(runtime: EmbedderRuntime) {
 pub fn seed_install_embedder_runtime(per_call: Option<&EmbedderRuntime>) {
     let ctx = match per_call {
         Some(rt) => Arc::new(rt.resolve()),
-        None => match EMBEDDER_CONTEXT.get() {
-            Some(ctx) => Arc::clone(ctx),
+        // No explicit per-install runtime: inherit the enclosing embed
+        // call's per-call runtime (survives this fresh install scope),
+        // else the process-wide registration. Neither → aube resolves its
+        // own runtime for the install.
+        None => match per_call_runtime().or_else(|| EMBEDDER_CONTEXT.get().map(Arc::clone)) {
+            Some(ctx) => ctx,
             None => return,
         },
     };
@@ -385,26 +401,40 @@ pub fn seed_install_embedder_runtime(per_call: Option<&EmbedderRuntime>) {
     });
 }
 
-/// Run `future` with a per-call embedder runtime active, falling through
-/// to the process-wide state when `runtime` is `None`. This is how the
-/// non-install embed entry points (`run`/`exec`/`dlx`/`node`) honor a
-/// per-call [`EmbedderRuntime`]: the process-wide `RUNTIME` slot is
-/// set-once, so a host that varies the runtime per invocation (e.g. a
-/// fresh shim dir per command) scopes each call instead. The task-local
-/// slot shadows the process-wide one for every `current()` read inside.
+/// Run an in-process embed command (`run`/`exec`/`dlx`/`node`) with its
+/// runtime isolated to this call. Always opens a fresh [`scope`] so the
+/// call's runtime resolution lands in its own slot rather than reusing a
+/// process-wide `RUNTIME` an earlier call resolved — sequential embed
+/// calls to different projects don't cross-contaminate.
+///
+/// A per-call `runtime` is also published to [`PER_CALL_RUNTIME`] so it
+/// reaches lifecycle scripts in any nested install (`dlx`'s transient
+/// install, `run`/`exec` auto-install), which open their own scope and
+/// otherwise wouldn't see this one's slot. `None` falls through to a
+/// process-wide [`set_embedder_runtime`], else aube's own resolution.
 pub async fn with_embedder_runtime<F: Future>(
     runtime: Option<EmbedderRuntime>,
     future: F,
 ) -> F::Output {
     match runtime {
         Some(rt) => {
-            scope(async move {
-                seed_install_embedder_runtime(Some(&rt));
-                future.await
-            })
-            .await
+            let ctx = Arc::new(rt.resolve());
+            let seeded = Arc::clone(&ctx);
+            PER_CALL_RUNTIME
+                .scope(
+                    ctx,
+                    scope(async move {
+                        // Seed this call's own slot so direct spawns and
+                        // `ensure_for_cwd` see the runtime without resolving.
+                        let _ = INSTALL_RUNTIME.try_with(|slot| {
+                            let _ = slot.set(seeded);
+                        });
+                        future.await
+                    }),
+                )
+                .await
         }
-        None => future.await,
+        None => scope(future).await,
     }
 }
 
@@ -1264,6 +1294,25 @@ mod tests {
         // A fresh scope afterwards starts empty — nothing leaked.
         scope(async {
             assert!(current().is_none());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn per_call_runtime_reaches_a_nested_install_scope() {
+        // The per-call runtime must survive the *fresh* scope a nested
+        // install opens (dlx's transient install, run/exec auto-install):
+        // `seed_install_embedder_runtime(None)` inside that inner scope
+        // should still pick it up, so lifecycle scripts run wrapped.
+        with_embedder_runtime(Some(EmbedderRuntime::wrapper("/shim-b/node")), async {
+            // Simulate `install::run`: a fresh scope with no per-install
+            // runtime of its own.
+            scope(async {
+                assert!(current().is_none(), "nested scope starts empty");
+                seed_install_embedder_runtime(None);
+                assert_eq!(node_program(), abs("/shim-b/node"));
+            })
+            .await;
         })
         .await;
     }

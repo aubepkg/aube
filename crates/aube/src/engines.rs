@@ -120,7 +120,10 @@ fn probe_node_version(program: &std::path::Path) -> Option<String> {
         std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Option<String>>>,
     > = std::sync::OnceLock::new();
     let cache = PROBED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Some(cached) = cache.lock().expect("probe cache poisoned").get(program) {
+    // Recover from a poisoned lock rather than panic: this runs in
+    // embedded/library contexts, and a stale cache entry from a panicked
+    // probe is harmless (worst case: one redundant `--version` spawn).
+    if let Some(cached) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(program) {
         return cached.clone();
     }
     let probed = (|| {
@@ -136,7 +139,7 @@ fn probe_node_version(program: &std::path::Path) -> Option<String> {
     })();
     cache
         .lock()
-        .expect("probe cache poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .insert(program.to_path_buf(), probed.clone());
     probed
 }
