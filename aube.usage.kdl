@@ -2127,7 +2127,7 @@ cmd version help="Bump the version in package.json (and optionally create a git 
         arg <ID>
     }
     flag --sign-git-tag help="GPG-sign the created tag (`git tag -s`)"
-    arg "[NEW_VERSION]" help="Bump keyword or an explicit version string" help_long="Bump keyword or an explicit version string.\n\nAccepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, or an explicit version. When omitted, prints the current version." required=#false
+    arg "[NEW_VERSION]" help="Bump keyword or an explicit version string" help_long="Bump keyword or an explicit version string.\n\nAccepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or an explicit version. `from-git` reads the nearest reachable version-like Git tag. When omitted, prints the current version." required=#false
 }
 cmd view help="Print package metadata from the registry" {
     alias info show

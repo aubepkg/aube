@@ -445,24 +445,26 @@ fn version_from_git(cwd: &Path) -> miette::Result<String> {
         for tag in &excluded {
             command.arg(format!("--exclude={tag}"));
         }
-        let output = command
-            .current_dir(cwd)
-            .output()
-            .into_diagnostic()
-            .wrap_err("failed to read version from git tags")?;
+        let output = command.current_dir(cwd).output().map_err(|error| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_GIT_ERROR,
+                "failed to read version from git tags: {error}"
+            )
+        })?;
         if !output.status.success() {
-            if !excluded.is_empty() {
-                return Err(miette!("no valid version tags found for `from-git`"));
-            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(miette!(
+                code = aube_codes::errors::ERR_AUBE_GIT_ERROR,
                 "git describe failed while resolving `from-git`: {}",
                 stderr.trim()
             ));
         }
-        let tag = String::from_utf8(output.stdout)
-            .into_diagnostic()
-            .wrap_err("git version tag is not UTF-8")?;
+        let tag = String::from_utf8(output.stdout).map_err(|error| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_GIT_ERROR,
+                "git version tag is not UTF-8: {error}"
+            )
+        })?;
         let tag = tag.trim();
         let candidate = tag.strip_prefix('v').unwrap_or(tag);
         if let Ok(version) = Version::parse(candidate) {
@@ -692,5 +694,34 @@ mod tests {
         run_git(dir.path(), &["tag", "foo.bar.baz"]).unwrap();
 
         assert_eq!(version_from_git(dir.path()).unwrap(), "3.4.5");
+    }
+
+    #[test]
+    fn reports_git_error_after_excluding_every_non_version_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init"]).unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        run_git(dir.path(), &["add", "package.json"]).unwrap();
+        run_git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=aube",
+                "-c",
+                "user.email=aube@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        )
+        .unwrap();
+        run_git(dir.path(), &["tag", "release-9.9.9"]).unwrap();
+
+        let error = version_from_git(dir.path()).unwrap_err();
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(aube_codes::errors::ERR_AUBE_GIT_ERROR)
+        );
+        assert!(error.to_string().contains("git describe failed"));
     }
 }

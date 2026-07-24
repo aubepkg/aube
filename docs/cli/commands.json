@@ -12319,7 +12319,7 @@
             "name": "NEW_VERSION",
             "usage": "[NEW_VERSION]",
             "help": "Bump keyword or an explicit version string",
-            "help_long": "Bump keyword or an explicit version string.\n\nAccepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, or an explicit version. When omitted, prints the current version.",
+            "help_long": "Bump keyword or an explicit version string.\n\nAccepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or an explicit version. `from-git` reads the nearest reachable version-like Git tag. When omitted, prints the current version.",
             "help_first_line": "Bump keyword or an explicit version string",
             "required": false,
             "double_dash": "Optional",

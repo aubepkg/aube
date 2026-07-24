@@ -11,7 +11,7 @@ Bump the version in package.json (and optionally create a git commit + tag)
 
 Bump keyword or an explicit version string.
 
-Accepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, or an explicit version. When omitted, prints the current version.
+Accepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or an explicit version. `from-git` reads the nearest reachable version-like Git tag. When omitted, prints the current version.
 
 ## Flags
 
