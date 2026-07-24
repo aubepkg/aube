@@ -195,7 +195,7 @@ jobs:
           ref: refs/tags/${{ needs.release-plz-release.outputs.tag }}
           submodules: recursive
           persist-credentials: false
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
         with:
           install_args: communique
       - name: Enhance GitHub release with communique
@@ -268,7 +268,7 @@ jobs:
       # of silently re-resolving `"latest"` pins and rewriting mise.lock.
       # release-plz refuses to run against a dirty tree, and intentional
       # lockfile bumps should land via their own PR.
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
         env:
           MISE_LOCKED: "1"
       - uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
