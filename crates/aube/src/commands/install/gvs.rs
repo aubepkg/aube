@@ -310,13 +310,6 @@ fn vite_needs_modules_metadata_backport(version: &str) -> bool {
 
 const VITE_COMPAT_PREPEND: &str = "import{readFileSync as __aubeRfs}from\"node:fs\";\
 import{join as __aubeJoin,isAbsolute as __aubeIsAbs,resolve as __aubeResolve}from\"node:path\";\n";
-const VITE_COMPAT_INSERT: &str = ";const __awr=searchForWorkspaceRoot(root);\
-if(!allowDirs)allowDirs=[__awr];\
-try{const __ac=__aubeRfs(__aubeJoin(__awr,\"node_modules\",\".modules.yaml\"),\"utf-8\");\
-let __av;try{__av=JSON.parse(__ac).virtualStoreDir;}catch{const __am=__ac.match(/^virtualStoreDir:\\s*(.+?)\\s*(?:#.*)?$/m);\
-if(__am)try{__av=JSON.parse(__am[1]);}catch{__av=__am[1];}}\
-if(__av){if(__aubeIsAbs(__av))allowDirs.push(__av);\
-else if(__av.startsWith(\"..\"))allowDirs.push(__aubeResolve(__aubeJoin(__awr,\"node_modules\"),__av));}}catch{}";
 const VITE_COMPAT_ANCHORS: &[&str] = &[
     "let allowDirs = server.fs.allow;",
     "let allowDirs = server.fs?.allow;",
@@ -335,6 +328,7 @@ pub(super) fn patch_legacy_vite_copies(
     graph: &aube_lockfile::LockfileGraph,
     virtual_store_dir_max_length: usize,
     global_virtual_store: &Path,
+    modules_dir_name: &str,
 ) -> std::io::Result<usize> {
     let global_virtual_store = std::fs::canonicalize(global_virtual_store)
         .unwrap_or_else(|_| global_virtual_store.to_path_buf());
@@ -366,7 +360,7 @@ pub(super) fn patch_legacy_vite_copies(
         let mut files = Vec::new();
         collect_vite_js(&dist_node, &mut files, 0)?;
         for file in files {
-            patched += usize::from(patch_vite_file(&file)?);
+            patched += usize::from(patch_vite_file(&file, modules_dir_name)?);
         }
     }
     Ok(patched)
@@ -409,22 +403,17 @@ pub(super) fn legacy_vite_patches_are_current(aube_dir: &Path) -> bool {
             {
                 return false;
             }
-            let mut found_marker = false;
             for file in files {
                 let Ok(source) = std::fs::read_to_string(file) else {
                     return false;
                 };
-                if source.contains(VITE_COMPAT_MARKER) {
-                    found_marker = true;
-                } else if VITE_COMPAT_ANCHORS
-                    .iter()
-                    .any(|anchor| source.contains(anchor))
+                if !source.contains(VITE_COMPAT_MARKER)
+                    && VITE_COMPAT_ANCHORS
+                        .iter()
+                        .any(|anchor| source.contains(anchor))
                 {
                     return false;
                 }
-            }
-            if !found_marker {
-                return false;
             }
         }
     }
@@ -452,7 +441,7 @@ fn collect_vite_js(
     Ok(())
 }
 
-fn patch_vite_file(file: &Path) -> std::io::Result<bool> {
+fn patch_vite_file(file: &Path, modules_dir_name: &str) -> std::io::Result<bool> {
     let source = std::fs::read_to_string(file)?;
     if source.contains(VITE_COMPAT_MARKER) {
         return Ok(false);
@@ -463,7 +452,17 @@ fn patch_vite_file(file: &Path) -> std::io::Result<bool> {
     else {
         return Ok(false);
     };
-    let patched = source.replacen(anchor, &format!("{anchor}{VITE_COMPAT_INSERT}"), 1);
+    let modules_dir = serde_json::to_string(modules_dir_name).map_err(std::io::Error::other)?;
+    let insert = format!(
+        ";const __awr=searchForWorkspaceRoot(root);\
+if(!allowDirs)allowDirs=[__awr];\
+try{{const __ac=__aubeRfs(__aubeJoin(__awr,{modules_dir},\".modules.yaml\"),\"utf-8\");\
+let __av;try{{__av=JSON.parse(__ac).virtualStoreDir;}}catch{{const __am=__ac.match(/^virtualStoreDir:\\s*(.+?)\\s*(?:#.*)?$/m);\
+if(__am)try{{__av=JSON.parse(__am[1]);}}catch{{__av=__am[1];}}}}\
+if(__av){{if(__aubeIsAbs(__av))allowDirs.push(__av);\
+else if(__av.startsWith(\"..\"))allowDirs.push(__aubeResolve(__aubeJoin(__awr,{modules_dir}),__av));}}}}catch{{}}"
+    );
+    let patched = source.replacen(anchor, &format!("{anchor}{insert}"), 1);
     let patched = format!("{VITE_COMPAT_PREPEND}{patched}");
     aube_util::fs_atomic::atomic_write(file, patched.as_bytes())?;
     Ok(true)
@@ -787,12 +786,15 @@ mod tests {
             &graph,
             aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
             &global,
+            "vendor_modules",
         )
         .expect("legacy Vite should be patched");
         assert_eq!(patched, 1);
         let output = std::fs::read_to_string(&chunk).expect("patched chunk should be readable");
         assert!(output.starts_with(VITE_COMPAT_PREPEND));
         assert!(output.contains(VITE_COMPAT_MARKER));
+        assert!(output.contains(r#"__aubeJoin(__awr,"vendor_modules",".modules.yaml")"#));
+        assert!(!output.contains(r#"__aubeJoin(__awr,"node_modules",".modules.yaml")"#));
         assert_eq!(
             std::fs::read_to_string(&cas).expect("CAS stand-in should be readable"),
             source,
@@ -804,6 +806,7 @@ mod tests {
             &graph,
             aube_lockfile::dep_path_filename::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
             &global,
+            "vendor_modules",
         )
         .expect("second patch pass should succeed");
         assert_eq!(second, 0);
@@ -811,6 +814,13 @@ mod tests {
 
         std::fs::write(&chunk, source).expect("unpatched Vite chunk should be restored");
         assert!(!legacy_vite_patches_are_current(&aube_dir));
+
+        std::fs::write(&chunk, "export const untouched = true;\n")
+            .expect("anchorless Vite chunk should be written");
+        assert!(
+            legacy_vite_patches_are_current(&aube_dir),
+            "an anchorless bundle is intentionally skipped by the patcher"
+        );
     }
 
     #[test]
@@ -820,7 +830,7 @@ mod tests {
             let chunk = tmp.path().join(format!("chunk-{index}.js"));
             std::fs::write(&chunk, format!("{anchor}\n"))
                 .expect("synthetic Vite chunk should be written");
-            assert!(patch_vite_file(&chunk).expect("matching anchor should patch"));
+            assert!(patch_vite_file(&chunk, "node_modules").expect("matching anchor should patch"));
             let output = std::fs::read_to_string(&chunk).expect("patched chunk should be readable");
             assert!(output.contains(VITE_COMPAT_MARKER));
         }
