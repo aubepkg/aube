@@ -18,8 +18,8 @@ pub struct VersionArgs {
     ///
     /// Accepts `major`, `minor`, `patch`, `premajor`, `preminor`,
     /// `prepatch`, `prerelease`, `from-git`, or an explicit version.
-    /// `from-git` reads the latest version-like Git tag. When omitted,
-    /// prints the current version.
+    /// `from-git` reads the nearest reachable version-like Git tag.
+    /// When omitted, prints the current version.
     pub new_version: Option<String>,
 
     /// Allow setting the version to its current value without erroring.
@@ -654,13 +654,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_version_from_latest_git_tag() {
+    fn reads_version_from_nearest_reachable_git_tag() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init"]).unwrap();
         std::fs::write(dir.path().join("package.json"), "{}").unwrap();
         run_git(dir.path(), &["add", "package.json"]).unwrap();
-        let output = Command::new("git")
-            .args([
+        run_git(
+            dir.path(),
+            &[
                 "-c",
                 "user.name=aube",
                 "-c",
@@ -668,16 +669,15 @@ mod tests {
                 "commit",
                 "-m",
                 "initial",
-            ])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(output.status.success());
+            ],
+        )
+        .unwrap();
         run_git(dir.path(), &["tag", "v3.4.5"]).unwrap();
         std::fs::write(dir.path().join("package.json"), "{\"name\":\"example\"}").unwrap();
         run_git(dir.path(), &["add", "package.json"]).unwrap();
-        let output = Command::new("git")
-            .args([
+        run_git(
+            dir.path(),
+            &[
                 "-c",
                 "user.name=aube",
                 "-c",
@@ -685,11 +685,9 @@ mod tests {
                 "commit",
                 "-m",
                 "newer",
-            ])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(output.status.success());
+            ],
+        )
+        .unwrap();
         run_git(dir.path(), &["tag", "release-9.9.9"]).unwrap();
         run_git(dir.path(), &["tag", "foo.bar.baz"]).unwrap();
 
