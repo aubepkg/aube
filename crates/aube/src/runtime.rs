@@ -148,12 +148,22 @@ pub async fn scope<F: Future>(future: F) -> F::Output {
         .await
 }
 
-/// Propagate the current install's runtime slot into a spawned task.
+/// Propagate the current install's runtime slot — and any active
+/// per-call embed runtime — into a spawned task. Task-locals don't cross
+/// `tokio::spawn`, so a fan-out that skips this would fall back to the
+/// process-wide state inside the child task.
 pub fn scope_current<F: Future>(future: F) -> impl Future<Output = F::Output> {
     let runtime = INSTALL_RUNTIME.try_with(Arc::clone).ok();
+    let per_call = per_call_runtime();
     async move {
-        match runtime {
-            Some(runtime) => INSTALL_RUNTIME.scope(runtime, future).await,
+        let future = async move {
+            match runtime {
+                Some(runtime) => INSTALL_RUNTIME.scope(runtime, future).await,
+                None => future.await,
+            }
+        };
+        match per_call {
+            Some(per_call) => PER_CALL_RUNTIME.scope(per_call, future).await,
             None => future.await,
         }
     }
@@ -361,16 +371,15 @@ static EMBEDDER_CONTEXT: std::sync::OnceLock<Arc<RuntimeContext>> = std::sync::O
 /// install lifecycle scripts, `dlx`, `exec`, `run`, `node` — invokes
 /// Node the way the host describes. First-write-wins, mirroring
 /// `set_embedder` / `set_embedder_defaults`. A per-call runtime on
-/// `InstallOptions` takes precedence over this for that install.
+/// `InstallOptions` (or on the embed run-class entry points) takes
+/// precedence over this for that call.
 ///
 /// Honored regardless of `runtime_switching`: an explicit invocation is
-/// an override, not a resolution aube performs.
+/// an override, not a resolution aube performs. Registration order
+/// doesn't matter — [`current`] and [`ensure`] consult this before any
+/// previously-resolved process-wide runtime.
 pub fn set_embedder_runtime(runtime: EmbedderRuntime) {
-    let ctx = Arc::new(runtime.resolve());
-    let _ = EMBEDDER_CONTEXT.set(Arc::clone(&ctx));
-    // Pre-fill the process-wide slot so non-install commands early-return
-    // it from `ensure` and read it through `current()` without resolving.
-    let _ = RUNTIME.set(ctx);
+    let _ = EMBEDDER_CONTEXT.set(Arc::new(runtime.resolve()));
 }
 
 /// Seed the current install's runtime slot from an embedder-supplied
@@ -407,34 +416,35 @@ pub fn seed_install_embedder_runtime(per_call: Option<&EmbedderRuntime>) {
 /// process-wide `RUNTIME` an earlier call resolved — sequential embed
 /// calls to different projects don't cross-contaminate.
 ///
-/// A per-call `runtime` is also published to [`PER_CALL_RUNTIME`] so it
-/// reaches lifecycle scripts in any nested install (`dlx`'s transient
-/// install, `run`/`exec` auto-install), which open their own scope and
-/// otherwise wouldn't see this one's slot. `None` falls through to a
-/// process-wide [`set_embedder_runtime`], else aube's own resolution.
+/// Both arms seed the fresh slot through
+/// [`seed_install_embedder_runtime`]`(None)`, whose lookup chain is
+/// per-call → process-wide [`set_embedder_runtime`] → none (aube
+/// resolves for this call). Seeding in the `None` arm is what keeps a
+/// *globally* registered runtime effective inside the isolation scope —
+/// without it, `ensure` would resolve aube's own runtime in the empty
+/// slot and silently bypass the registered wrapper.
+///
+/// A per-call `runtime` is additionally published to `PER_CALL_RUNTIME`
+/// so it reaches lifecycle scripts in any nested install (`dlx`'s
+/// transient install, `run`/`exec` auto-install), which open their own
+/// scope and otherwise wouldn't see this one's slot.
 pub async fn with_embedder_runtime<F: Future>(
     runtime: Option<EmbedderRuntime>,
     future: F,
 ) -> F::Output {
+    let seeded_scope = |future: F| {
+        scope(async move {
+            seed_install_embedder_runtime(None);
+            future.await
+        })
+    };
     match runtime {
         Some(rt) => {
-            let ctx = Arc::new(rt.resolve());
-            let seeded = Arc::clone(&ctx);
             PER_CALL_RUNTIME
-                .scope(
-                    ctx,
-                    scope(async move {
-                        // Seed this call's own slot so direct spawns and
-                        // `ensure_for_cwd` see the runtime without resolving.
-                        let _ = INSTALL_RUNTIME.try_with(|slot| {
-                            let _ = slot.set(seeded);
-                        });
-                        future.await
-                    }),
-                )
+                .scope(Arc::new(rt.resolve()), seeded_scope(future))
                 .await
         }
-        None => scope(future).await,
+        None => seeded_scope(future).await,
     }
 }
 
@@ -740,6 +750,12 @@ pub async fn ensure(
             })
             .await
             .map(Arc::clone);
+    }
+    // No scope: a registered embedder runtime is authoritative and
+    // registration-order independent — prefer it over (and never let it
+    // race with) a `RUNTIME` an earlier resolution may have filled.
+    if let Some(ctx) = EMBEDDER_CONTEXT.get() {
+        return Ok(Arc::clone(ctx));
     }
     RUNTIME
         .get_or_try_init(|| async {
@@ -1294,6 +1310,32 @@ mod tests {
         // A fresh scope afterwards starts empty — nothing leaked.
         scope(async {
             assert!(current().is_none());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn none_arm_still_seeds_from_the_ambient_embedder_runtime() {
+        // Regression: the `None` arm of `with_embedder_runtime` opens an
+        // isolation scope, and an empty slot there means `ensure` would
+        // resolve aube's own runtime — silently bypassing a registered
+        // embedder runtime. Both arms must seed through
+        // `seed_install_embedder_runtime(None)`, whose lookup chain is
+        // per-call → process-wide. Exercised via the per-call tier (the
+        // process-wide `set_embedder_runtime` is once-per-process and
+        // would leak into unrelated tests in this binary; both tiers flow
+        // through the same seed path).
+        with_embedder_runtime(Some(EmbedderRuntime::wrapper("/shim-c/node")), async {
+            with_embedder_runtime(None, async {
+                // Inside the inner isolation scope the ambient embedder
+                // runtime must already be seeded — not an empty slot that
+                // `ensure` would fill with aube's own resolution.
+                assert_eq!(
+                    current().map(|c| c.node_program.clone()),
+                    Some(Some(abs("/shim-c/node")))
+                );
+            })
+            .await;
         })
         .await;
     }
