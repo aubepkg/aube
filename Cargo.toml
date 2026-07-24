@@ -147,7 +147,7 @@ libc = "0.2"
 seccompiler = "0.5"
 
 # Progress UI
-clx = "2"
+clx = "3"
 
 # Logging
 tracing = "0.1"
