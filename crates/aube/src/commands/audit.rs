@@ -461,7 +461,9 @@ fn resolve_audit_level(cwd: &std::path::Path, cli: Option<Severity>) -> miette::
             let yaml_root =
                 crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
             let raw = aube_manifest::workspace::load_raw(&yaml_root).ok()?;
-            aube_settings::values::string_from_workspace_yaml("auditLevel", &raw)
+            aube_settings::workspace_yaml_value(&raw, "auditLevel")
+                .and_then(yaml_serde::Value::as_str)
+                .map(str::to_string)
         });
     configured.map_or(Ok(Severity::Low), |raw| {
         raw.parse::<Severity>()
@@ -1499,6 +1501,21 @@ mod tests {
         assert_eq!(
             resolve_audit_level(dir.path(), Some(Severity::Low)).unwrap(),
             Severity::Low
+        );
+    }
+
+    #[test]
+    fn reads_legacy_top_level_audit_level() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages: []\nauditLevel: high\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_audit_level(dir.path(), None).unwrap(),
+            Severity::High
         );
     }
 
