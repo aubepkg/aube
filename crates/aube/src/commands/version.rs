@@ -438,8 +438,36 @@ fn is_git_repo(cwd: &Path) -> bool {
 }
 
 fn version_from_git(cwd: &Path) -> miette::Result<String> {
-    let output = Command::new("git")
-        .args(["describe", "--tags", "--abbrev=0", "--match=*.*.*"])
+    let tags = Command::new("git")
+        .args(["tag", "--merged", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .into_diagnostic()
+        .wrap_err("failed to list git tags")?;
+    if !tags.status.success() {
+        let stderr = String::from_utf8_lossy(&tags.stderr);
+        return Err(miette!(
+            "git tag failed while resolving `from-git`: {}",
+            stderr.trim()
+        ));
+    }
+    let tags = String::from_utf8(tags.stdout)
+        .into_diagnostic()
+        .wrap_err("git tags are not UTF-8")?;
+    let version_tags: Vec<&str> = tags
+        .lines()
+        .filter(|tag| Version::parse(tag.strip_prefix('v').unwrap_or(tag)).is_ok())
+        .collect();
+    if version_tags.is_empty() {
+        return Err(miette!("no valid version tags found for `from-git`"));
+    }
+
+    let mut command = Command::new("git");
+    command.args(["describe", "--tags", "--abbrev=0"]);
+    for tag in version_tags {
+        command.arg(format!("--match={tag}"));
+    }
+    let output = command
         .current_dir(cwd)
         .output()
         .into_diagnostic()
@@ -663,6 +691,24 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         run_git(dir.path(), &["tag", "v3.4.5"]).unwrap();
+        std::fs::write(dir.path().join("package.json"), "{\"name\":\"example\"}").unwrap();
+        run_git(dir.path(), &["add", "package.json"]).unwrap();
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "user.name=aube",
+                "-c",
+                "user.email=aube@example.com",
+                "commit",
+                "-m",
+                "newer",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        run_git(dir.path(), &["tag", "release-9.9.9"]).unwrap();
+        run_git(dir.path(), &["tag", "foo.bar.baz"]).unwrap();
 
         assert_eq!(version_from_git(dir.path()).unwrap(), "3.4.5");
     }
