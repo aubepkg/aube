@@ -1182,7 +1182,7 @@ pub(super) fn ignored_update_dependencies(
     })
 }
 
-fn ignored_update_dependencies_from_ctx(
+pub(super) fn ignored_update_dependencies_from_ctx(
     ctx: &aube_settings::ResolveCtx<'_>,
     manifest: &aube_manifest::PackageJson,
 ) -> BTreeSet<String> {
@@ -1218,11 +1218,7 @@ fn with_update_settings_ctx<T>(
     let yaml_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
     let mut files = crate::commands::FileSources::load(&yaml_root);
     if cwd != yaml_root {
-        let member_files = crate::commands::FileSources::load(cwd);
-        files.project_npmrc.extend(member_files.project_npmrc);
-        files
-            .project_aube_config
-            .extend(member_files.project_aube_config);
+        files.extend_project_sources(cwd);
     }
     let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root).unwrap_or_else(|error| {
         tracing::debug!(

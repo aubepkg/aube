@@ -114,6 +114,7 @@ pub(crate) fn global_output_flags() -> GlobalOutputFlags {
 /// [`aube_settings::ResolveCtx`]: managed config, project + user `.npmrc`,
 /// and project + user `~/.config/aube/config.toml`. Construct once with
 /// `FileSources::load`, borrow into a `ResolveCtx` via `FileSources::ctx`.
+#[derive(Clone)]
 pub(crate) struct FileSources {
     pub managed_aube_config: Vec<(String, String)>,
     pub user_npmrc: Vec<(String, String)>,
@@ -132,6 +133,13 @@ impl FileSources {
             user_aube_config: config::load_user_aube_config_entries(),
             project_aube_config: config::load_project_aube_config_entries(cwd),
         }
+    }
+
+    pub(crate) fn extend_project_sources(&mut self, cwd: &Path) {
+        let npmrc = aube_registry::config::load_npmrc_entries_split(cwd);
+        self.project_npmrc.extend(npmrc.project);
+        self.project_aube_config
+            .extend(config::load_project_aube_config_entries(cwd));
     }
 
     pub(crate) fn ctx<'a>(
