@@ -17,7 +17,8 @@ pub struct VersionArgs {
     /// Bump keyword or an explicit version string.
     ///
     /// Accepts `major`, `minor`, `patch`, `premajor`, `preminor`,
-    /// `prepatch`, `prerelease`, or an explicit version. When omitted,
+    /// `prepatch`, `prerelease`, `from-git`, or an explicit version.
+    /// `from-git` reads the latest version-like Git tag. When omitted,
     /// prints the current version.
     pub new_version: Option<String>,
 
@@ -79,7 +80,12 @@ pub async fn run(args: VersionArgs) -> miette::Result<()> {
         return Ok(());
     };
 
-    let new_version = compute_new_version(&current, bump, args.preid.as_deref())?;
+    let requested = if bump == "from-git" {
+        version_from_git(&cwd)?
+    } else {
+        bump.to_string()
+    };
+    let new_version = compute_new_version(&current, &requested, args.preid.as_deref())?;
     if new_version == current && !args.allow_same_version {
         return Err(miette!(
             "version not changed: already at {current} (pass --allow-same-version to force)"
@@ -431,6 +437,30 @@ fn is_git_repo(cwd: &Path) -> bool {
     matches!(out, Ok(o) if o.status.success())
 }
 
+fn version_from_git(cwd: &Path) -> miette::Result<String> {
+    let output = Command::new("git")
+        .args(["describe", "--tags", "--abbrev=0", "--match=*.*.*"])
+        .current_dir(cwd)
+        .output()
+        .into_diagnostic()
+        .wrap_err("failed to read version from git tags")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(miette!(
+            "git describe failed while resolving `from-git`: {}",
+            stderr.trim()
+        ));
+    }
+    let tag = String::from_utf8(output.stdout)
+        .into_diagnostic()
+        .wrap_err("git version tag is not UTF-8")?;
+    let tag = tag.trim();
+    let candidate = tag.strip_prefix('v').unwrap_or(tag);
+    Version::parse(candidate)
+        .map(|version| version.to_string())
+        .map_err(|e| miette!("git tag {tag:?} is not a valid version: {e}"))
+}
+
 fn git_commit_and_tag(
     cwd: &Path,
     new_version: &str,
@@ -610,5 +640,30 @@ mod tests {
     #[test]
     fn invalid_explicit_rejected() {
         assert!(compute_new_version("1.2.3", "not-a-version", None).is_err());
+    }
+
+    #[test]
+    fn reads_version_from_latest_git_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init"]).unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        run_git(dir.path(), &["add", "package.json"]).unwrap();
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "user.name=aube",
+                "-c",
+                "user.email=aube@example.com",
+                "commit",
+                "-m",
+                "initial",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        run_git(dir.path(), &["tag", "v3.4.5"]).unwrap();
+
+        assert_eq!(version_from_git(dir.path()).unwrap(), "3.4.5");
     }
 }
