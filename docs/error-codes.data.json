@@ -151,6 +151,12 @@
       "exit_code": 42
     },
     {
+      "name": "ERR_AUBE_WEB_LOGIN_RESPONSE_TOO_LARGE",
+      "category": "Registry / network",
+      "description": "The web-login token response exceeded the 64 KiB safety limit.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_OFFLINE",
       "category": "Registry / network",
       "description": "Offline mode and the requested resource isn't in the local cache.",

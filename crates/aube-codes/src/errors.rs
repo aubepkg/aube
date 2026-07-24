@@ -46,6 +46,7 @@ pub const ERR_AUBE_LOW_DOWNLOAD_PACKAGE: &str = "ERR_AUBE_LOW_DOWNLOAD_PACKAGE";
 pub const ERR_AUBE_ADVISORY_CHECK_FAILED: &str = "ERR_AUBE_ADVISORY_CHECK_FAILED";
 pub const ERR_AUBE_SECURITY_SCANNER_FATAL: &str = "ERR_AUBE_SECURITY_SCANNER_FATAL";
 pub const ERR_AUBE_SECURITY_SCANNER_FAILED: &str = "ERR_AUBE_SECURITY_SCANNER_FAILED";
+pub const ERR_AUBE_WEB_LOGIN_RESPONSE_TOO_LARGE: &str = "ERR_AUBE_WEB_LOGIN_RESPONSE_TOO_LARGE";
 
 // ── tarball / store ─────────────────────────────────────────────────
 pub const ERR_AUBE_TARBALL_INTEGRITY: &str = "ERR_AUBE_TARBALL_INTEGRITY";
@@ -293,6 +294,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::REGISTRY_NETWORK,
         description: "Registry returned 401/403 — missing or invalid auth. Run `aube login`.",
         exit_code: Some(42),
+    },
+    CodeMeta {
+        name: ERR_AUBE_WEB_LOGIN_RESPONSE_TOO_LARGE,
+        category: category::REGISTRY_NETWORK,
+        description: "The web-login token response exceeded the 64 KiB safety limit.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_OFFLINE,
