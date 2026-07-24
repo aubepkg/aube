@@ -193,13 +193,16 @@ pub(super) fn detect_aube_dir_gvs_mode(aube_dir: &std::path::Path) -> Option<boo
         // making a gvs-on entry indistinguishable from a per-project
         // real directory via the file-type bit. `read_link` succeeds on
         // both Unix symlinks and Windows junction reparse points, and
-        // returns `Err(InvalidInput)` on a regular directory — exactly
-        // the signal we need. Non-link IO errors just skip the entry
-        // and move on to the next candidate.
+        // may return different errors for regular directories across
+        // platforms, so fall back to the entry's directory bit after
+        // link detection fails.
         match std::fs::read_link(entry.path()) {
             Ok(_) => return Some(true),
-            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => saw_real_dir = true,
-            Err(_) => continue,
+            Err(_) => {
+                if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+                    saw_real_dir = true;
+                }
+            }
         }
     }
     saw_real_dir.then_some(false)

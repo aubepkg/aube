@@ -60,7 +60,11 @@ pub(super) fn write_modules_metadata(
     virtual_store_dir: &Path,
 ) -> std::io::Result<()> {
     let virtual_store_dir = virtual_store_dir.to_string_lossy().into_owned();
-    for importer_path in graph.importers.keys() {
+    for importer_path in graph
+        .importers
+        .keys()
+        .filter(|path| aube_linker::is_physical_importer(path))
+    {
         let project_dir =
             super::workspace::importer_project_dir(workspace_root, importer_path.as_str());
         let metadata_path = project_dir.join(modules_dir_name).join(".modules.yaml");
@@ -160,18 +164,21 @@ pub(super) fn modules_metadata_is_current<'a>(
     modules_dir_name: &str,
     expected_virtual_store_dir: Option<&Path>,
 ) -> bool {
-    importer_paths.into_iter().all(|importer_path| {
-        let project_dir = super::workspace::importer_project_dir(workspace_root, importer_path);
-        let metadata_path = project_dir.join(modules_dir_name).join(".modules.yaml");
-        let Some(actual) = std::fs::read(metadata_path)
-            .ok()
-            .and_then(|bytes| metadata_virtual_store_dir(&bytes))
-        else {
-            return false;
-        };
-        expected_virtual_store_dir
-            .is_none_or(|expected| actual == expected.to_string_lossy().as_ref())
-    })
+    importer_paths
+        .into_iter()
+        .filter(|path| aube_linker::is_physical_importer(path))
+        .all(|importer_path| {
+            let project_dir = super::workspace::importer_project_dir(workspace_root, importer_path);
+            let metadata_path = project_dir.join(modules_dir_name).join(".modules.yaml");
+            let Some(actual) = std::fs::read(metadata_path)
+                .ok()
+                .and_then(|bytes| metadata_virtual_store_dir(&bytes))
+            else {
+                return false;
+            };
+            expected_virtual_store_dir
+                .is_none_or(|expected| actual == expected.to_string_lossy().as_ref())
+        })
 }
 
 fn legacy_vite_dep_paths(
@@ -197,6 +204,9 @@ pub(super) fn legacy_vite_project_local_closure(
     graph: &aube_lockfile::LockfileGraph,
 ) -> std::collections::BTreeSet<String> {
     let mut selected = legacy_vite_dep_paths(graph);
+    if selected.is_empty() {
+        return selected;
+    }
     loop {
         let mut added = false;
         for (parent_path, parent) in &graph.packages {
@@ -414,6 +424,10 @@ mod tests {
         graph
             .importers
             .insert("packages/app".to_string(), Default::default());
+        let synthetic_importer = "packages/app/node_modules/vite@5.4.21";
+        graph
+            .importers
+            .insert(synthetic_importer.to_string(), Default::default());
         let store = root.join("shared/virtual-store");
 
         write_modules_metadata(root, &graph, "node_modules", &store)
@@ -442,6 +456,13 @@ mod tests {
         assert_eq!(
             metadata_virtual_store_dir(member_metadata.as_bytes()).as_deref(),
             Some(store.to_string_lossy().as_ref())
+        );
+        assert!(
+            !root
+                .join(synthetic_importer)
+                .join("node_modules/.modules.yaml")
+                .exists(),
+            "synthetic peer-context importers must not get filesystem metadata"
         );
         assert!(modules_metadata_is_current(
             root,
