@@ -297,7 +297,10 @@ pub async fn run(
         for name in packages {
             if all_specifiers.contains_key(name.as_str()) {
                 if ignored_updates.contains(name.as_str()) {
-                    return Err(miette!("package '{name}' is ignored by update.ignoreDeps"));
+                    return Err(miette!(
+                        "package '{name}' is ignored by update.ignoreDeps \
+                         (or legacy updateConfig.ignoreDependencies)"
+                    ));
                 }
                 continue;
             }
@@ -319,7 +322,10 @@ pub async fn run(
                 return Err(miette!("package '{name}' is not a dependency"));
             }
             if ignored_updates.contains(name.as_str()) {
-                return Err(miette!("package '{name}' is ignored by update.ignoreDeps"));
+                return Err(miette!(
+                    "package '{name}' is ignored by update.ignoreDeps \
+                     (or legacy updateConfig.ignoreDependencies)"
+                ));
             }
             indirect_arg_names.insert(name.clone());
         }
@@ -336,7 +342,9 @@ pub async fn run(
             .filter(|p| all_specifiers.contains_key(p.as_str()))
             .filter(|p| {
                 if ignored_updates.contains(p.as_str()) {
-                    tracing::info!("skipping {p} (update.ignoreDeps)");
+                    tracing::info!(
+                        "skipping {p} (update.ignoreDeps or legacy updateConfig.ignoreDependencies)"
+                    );
                     false
                 } else {
                     true

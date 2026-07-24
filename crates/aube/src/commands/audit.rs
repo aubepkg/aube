@@ -481,7 +481,7 @@ fn with_audit_settings_ctx<T>(
 ) -> miette::Result<T> {
     let files = crate::commands::FileSources::load(cwd);
     let yaml_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let (_workspace_config, raw_workspace) = aube_manifest::workspace::load_both(&yaml_root)
+    let raw_workspace = aube_manifest::workspace::load_raw(&yaml_root)
         .into_diagnostic()
         .wrap_err("failed to read workspace config")?;
     let env = aube_settings::values::process_env();
