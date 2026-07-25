@@ -175,6 +175,10 @@ maintaining multiple major-version lines and backporting to older ones without
 attestation), so common installs don't fail on a known-benign downgrade. Your
 own `trustPolicyExclude` entries are added on top of these defaults.
 
+See [Trust policy downgrades](/trust-policy-exceptions) for an investigation
+checklist, guidance for reporting packaging failures upstream, and the
+dynamically generated list of built-in exceptions.
+
 Settings: [`trustPolicy`](/settings/#setting-trustpolicy),
 [`trustPolicyExclude`](/settings/#setting-trustpolicyexclude),
 [`trustPolicyIgnoreAfter`](/settings/#setting-trustpolicyignoreafter).
