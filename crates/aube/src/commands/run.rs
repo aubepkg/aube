@@ -304,14 +304,18 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
         .description("package.json scripts")
         .filterable(true)
         .filtering(true);
-    let name_column = scripts
+    let terminal = terminal_width();
+    let widest_name = scripts
         .iter()
         .map(|(name, _)| console::measure_text_width(name))
         .max()
         .unwrap_or(0);
-    let command_column = command_column_width(name_column, terminal_width());
+    let name_column = name_column_width(widest_name, terminal);
+    let command_column = command_column_width(name_column, terminal);
     for (name, cmd) in &scripts {
-        let mut option = demand::DemandOption::new(name.clone());
+        let ellipsis = if name_column > 0 { "…" } else { "" };
+        let label = console::truncate_str(name, name_column, ellipsis);
+        let mut option = demand::DemandOption::new(name.clone()).label(&label);
         if command_column > 0 {
             let cmd = single_line(cmd);
             option = option.description(&console::truncate_str(&cmd, command_column, "…"));
@@ -330,9 +334,18 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
     }
 }
 
+/// How many columns the picker's name text may occupy.
+///
+/// A name-only `demand` row still has a one-column cursor and a space
+/// before its label. Truncating only commands would therefore leave long
+/// script names able to wrap on their own.
+fn name_column_width(widest_name: usize, terminal: usize) -> usize {
+    widest_name.min(terminal.saturating_sub(2))
+}
+
 /// How many columns the picker's command text may occupy, or `0` when
 /// there's no room worth spending on it (very narrow terminal, very long
-/// script names) and the rows should show script names alone.
+/// script names) and the rows should show truncated script names alone.
 ///
 /// `demand` renders each row as `❯ ` + the name padded to the widest
 /// name + two spaces + the description, and clears the previous frame by
@@ -1337,7 +1350,7 @@ async fn exec_script_status_with_node_args(
 mod tests {
     use super::{
         RecursiveOpts, command_column_width, completion_line, effective_concurrency,
-        inject_node_args, node_args_from_run_flags, order_matched_packages,
+        inject_node_args, name_column_width, node_args_from_run_flags, order_matched_packages,
     };
     use aube_manifest::PackageJson;
     use aube_workspace::selector::SelectedPackage;
@@ -1552,5 +1565,14 @@ mod tests {
         // rather than rows that wrap and corrupt the redraw.
         assert_eq!(command_column_width(60, 64), 0);
         assert_eq!(command_column_width(6, 12), 0);
+    }
+
+    #[test]
+    fn name_column_stays_inside_the_terminal() {
+        // The option value remains the full script name; only its label is
+        // truncated to leave room for demand's cursor and separating space.
+        assert_eq!(name_column_width(100, 64), 62);
+        assert_eq!(name_column_width(6, 64), 6);
+        assert_eq!(name_column_width(6, 2), 0);
     }
 }
