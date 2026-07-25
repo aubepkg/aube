@@ -302,7 +302,8 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
     }
     let mut picker = demand::Select::new("Select a script to run")
         .description("package.json scripts")
-        .filterable(true);
+        .filterable(true)
+        .filtering(true);
     let name_column = scripts
         .iter()
         .map(|(name, _)| console::measure_text_width(name))
