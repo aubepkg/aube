@@ -2204,5 +2204,14 @@ cmd why help="Print reverse dependency chains explaining why a package is instal
     arg <PACKAGE> help="Package name to search for (exact match against package names)"
 }
 
-// `aube run <TAB>` offers the nearest package.json's scripts.
+// `aube run <TAB>` offers the scripts from the package.json nearest the
+// shell's cwd.
+//
+// The command is fixed, so a `-C` on the line being completed is not
+// forwarded and `aube -C packages/api run <TAB>` still offers the outer
+// project's scripts. usage's only channel for the typed words is tera
+// interpolation into a `sh -c` string, with no shell-quoting filter, so
+// forwarding it would mean pasting user input into a shell command. The
+// helper itself honors `-C` for direct invocation, ready for a safer
+// channel upstream.
 complete "script" run="aube run --complete" descriptions=#true
