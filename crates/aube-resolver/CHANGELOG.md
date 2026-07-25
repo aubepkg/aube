@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.33.1](https://github.com/jdx/aube/compare/aube-resolver-v1.33.0...aube-resolver-v1.33.1) - 2026-07-25
+
+### Fixed
+
+- *(resolver)* make versioned entries in the trust-exclude defaults work ([#1118](https://github.com/jdx/aube/pull/1118))
+- *(resolver)* exclude @hono/node-server from no-downgrade by default ([#1113](https://github.com/jdx/aube/pull/1113))
+
 ## [1.33.0](https://github.com/jdx/aube/compare/aube-resolver-v1.32.0...aube-resolver-v1.33.0) - 2026-07-25
 
 ### Fixed

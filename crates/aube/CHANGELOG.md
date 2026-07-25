@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.33.1](https://github.com/jdx/aube/compare/v1.33.0...v1.33.1) - 2026-07-25
+
+### Fixed
+
+- *(install)* restore animated progress bar in interactive terminals ([#1117](https://github.com/jdx/aube/pull/1117))
+- *(install)* bootstrap node-gyp in-process instead of re-execing aube ([#1114](https://github.com/jdx/aube/pull/1114))
+
 ## [1.33.0](https://github.com/jdx/aube/compare/v1.32.0...v1.33.0) - 2026-07-25
 
 ### Added
