@@ -257,6 +257,12 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     // @octokit/endpoint@9.0.6) is published after an attested newer major
     // (10.1.0), so the no-downgrade check flags the legitimate older release.
     "@octokit/endpoint",
+    // @hono/node-server keeps a 1.x line alive alongside 2.x. The 2.x releases
+    // are published from CI with SLSA provenance, but 1.x backports are
+    // hand-published by the maintainer without attestation — e.g.
+    // @hono/node-server@1.19.15 (2026-07-24) came after the attested
+    // 2.0.10 (2026-07-15), so no-downgrade flags the legitimate backport.
+    "@hono/node-server",
     "chokidar",
     "eslint-config-prettier",
     "eslint-import-resolver-typescript",
@@ -1148,6 +1154,23 @@ mod tests {
             "@octokit/core",
             &node_semver::Version::parse("9.0.6").unwrap()
         ));
+    }
+
+    #[test]
+    fn default_excludes_scoped_hono_node_server_backport() {
+        // Regression: @hono/node-server publishes 2.x from CI with provenance
+        // but hand-publishes 1.x backports without it, so 1.19.15 (released
+        // after the attested 2.0.10) tripped no-downgrade.
+        let r = TrustExcludeRules::default();
+        assert!(r.matches(
+            "@hono/node-server",
+            &node_semver::Version::parse("1.19.15").unwrap()
+        ));
+        assert!(r.matches(
+            "@hono/node-server",
+            &node_semver::Version::parse("2.0.10").unwrap()
+        ));
+        assert!(!r.matches("hono", &node_semver::Version::parse("1.19.15").unwrap()));
     }
 
     #[test]
