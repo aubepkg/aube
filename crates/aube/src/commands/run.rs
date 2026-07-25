@@ -332,16 +332,23 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
     let Ok(cwd) = crate::dirs::cwd() else {
         return;
     };
-    // `-C` is resolved against the cwd, matching what the later chdir
-    // would do with a relative path. Canonicalized for the same reason:
-    // a real run chdirs and then reads the cwd back, which resolves
-    // symlinks, so the ancestor walk has to start from the target's
-    // hierarchy rather than the link's. A path that doesn't resolve falls
-    // back to the literal one and simply finds nothing.
+    // `-C` is resolved against the cwd, the way the later chdir treats a
+    // relative path, and canonicalized for the same reason: a real run
+    // chdirs and reads the cwd back, which resolves symlinks, so the
+    // ancestor walk has to start from the target's hierarchy rather than
+    // the link's.
+    //
+    // A path that won't resolve is a path the real chdir would reject, so
+    // there's nothing to offer. Falling back to the literal path would be
+    // worse than useless: `find_project_root` walks ancestors lexically,
+    // so `-C does-not-exist` would surface the *parent* project's scripts
+    // and complete a command that can't run.
     let start = match dir {
         Some(dir) => {
-            let joined = cwd.join(dir);
-            joined.canonicalize().unwrap_or(joined)
+            let Ok(resolved) = cwd.join(dir).canonicalize() else {
+                return;
+            };
+            resolved
         }
         None => cwd,
     };
