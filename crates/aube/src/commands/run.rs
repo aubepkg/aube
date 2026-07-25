@@ -329,25 +329,26 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
 /// `package.json` prints nothing rather than erroring, because the caller
 /// is a TAB press and completion noise is worse than no completions.
 pub(crate) fn print_script_completions(dir: Option<&Path>) {
-    // Perform the same chdir a real run would rather than trying to
-    // predict it. Every way `-C` can be unusable — missing, not a
-    // directory, no search permission — is a way `chdir` already fails,
-    // and completing a command that can't run is worse than completing
-    // nothing: `find_project_root` walks ancestors lexically, so any
-    // approximation that guesses wrong offers the *parent* project's
-    // scripts. Safe to change the process cwd here because this probe
-    // prints and exits; nothing downstream observes it.
-    if let Some(dir) = dir
-        && std::env::set_current_dir(dir).is_err()
-    {
+    let Ok(cwd) = crate::dirs::cwd() else {
         return;
-    }
-    // Read the cwd back instead of reusing the argument: `getcwd` returns
-    // the resolved path, so a symlinked `-C` searches the target's
-    // hierarchy the way a real run does. Deliberately not
-    // `crate::dirs::cwd()`, whose memoized value predates the chdir.
-    let Ok(start) = std::env::current_dir() else {
-        return;
+    };
+    // Establish where to search *without* chdir'ing. `cli_main` is a
+    // library entry point, so an embedding host is driving this in-process
+    // and would keep any cwd change we made.
+    //
+    // Getting this wrong is worse than declining to answer: a real run
+    // chdirs into `-C`, and `find_project_root` walks ancestors lexically,
+    // so a target the chdir would reject still surfaces the *parent*
+    // project's scripts and completes a command that can't run. Hence all
+    // three checks — resolvable (also resolving symlinks, so the walk
+    // starts in the target's hierarchy the way `getcwd` would report it),
+    // a directory, and readable.
+    let start = match dir {
+        Some(dir) => match cwd.join(dir).canonicalize() {
+            Ok(resolved) if resolved.is_dir() && std::fs::read_dir(&resolved).is_ok() => resolved,
+            _ => return,
+        },
+        None => cwd,
     };
     let Some(root) = crate::dirs::find_project_root(&start) else {
         return;
@@ -1434,6 +1435,16 @@ mod tests {
             completion_line("test:unit", "vitest run --reporter=x:y"),
             "test\\:unit:vitest run --reporter=x:y"
         );
+    }
+
+    /// `cli_main` is a library entry point, so an embedding host is
+    /// driving the probe in-process. Resolving `-C` must not leave the
+    /// host's working directory somewhere else.
+    #[test]
+    fn completion_probe_leaves_the_working_directory_alone() {
+        let before = std::env::current_dir().unwrap();
+        super::print_script_completions(Some(std::path::Path::new("..")));
+        assert_eq!(std::env::current_dir().unwrap(), before);
     }
 
     #[test]
