@@ -685,4 +685,14 @@ JSON
 	run aube -C README.md run --complete
 	assert_success
 	assert_output ""
+
+	# ...and for one the process can't enter. root ignores the mode bits.
+	if [ "$(id -u)" -ne 0 ]; then
+		mkdir -p locked
+		chmod 000 locked
+		run aube -C locked run --complete
+		chmod 755 locked
+		assert_success
+		assert_output ""
+	fi
 }

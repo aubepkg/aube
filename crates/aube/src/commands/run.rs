@@ -329,27 +329,25 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
 /// `package.json` prints nothing rather than erroring, because the caller
 /// is a TAB press and completion noise is worse than no completions.
 pub(crate) fn print_script_completions(dir: Option<&Path>) {
-    let Ok(cwd) = crate::dirs::cwd() else {
+    // Perform the same chdir a real run would rather than trying to
+    // predict it. Every way `-C` can be unusable — missing, not a
+    // directory, no search permission — is a way `chdir` already fails,
+    // and completing a command that can't run is worse than completing
+    // nothing: `find_project_root` walks ancestors lexically, so any
+    // approximation that guesses wrong offers the *parent* project's
+    // scripts. Safe to change the process cwd here because this probe
+    // prints and exits; nothing downstream observes it.
+    if let Some(dir) = dir
+        && std::env::set_current_dir(dir).is_err()
+    {
         return;
-    };
-    // `-C` is resolved against the cwd, the way the later chdir treats a
-    // relative path, and canonicalized for the same reason: a real run
-    // chdirs and reads the cwd back, which resolves symlinks, so the
-    // ancestor walk has to start from the target's hierarchy rather than
-    // the link's.
-    //
-    // Anything the real chdir would reject — a path that doesn't resolve,
-    // or one that isn't a directory — offers nothing. Searching from it
-    // anyway is worse than staying quiet, because `find_project_root`
-    // walks ancestors lexically: `-C does-not-exist` or `-C README.md`
-    // would surface the *parent* project's scripts and complete a command
-    // that can't run.
-    let start = match dir {
-        Some(dir) => match cwd.join(dir).canonicalize() {
-            Ok(resolved) if resolved.is_dir() => resolved,
-            _ => return,
-        },
-        None => cwd,
+    }
+    // Read the cwd back instead of reusing the argument: `getcwd` returns
+    // the resolved path, so a symlinked `-C` searches the target's
+    // hierarchy the way a real run does. Deliberately not
+    // `crate::dirs::cwd()`, whose memoized value predates the chdir.
+    let Ok(start) = std::env::current_dir() else {
+        return;
     };
     let Some(root) = crate::dirs::find_project_root(&start) else {
         return;
