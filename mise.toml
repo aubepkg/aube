@@ -7,6 +7,13 @@ cargo-binstall = "latest"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
 "github:foresterre/cargo-msrv" = "latest"
+# Pinned rather than "latest" because tak is the measuring instrument: an
+# upgrade that changes how it samples would land in the series as a step
+# change in aube's numbers, indistinguishable from a real regression. Bump
+# deliberately, on a commit that does nothing else.
+# TODO: switch to plain `tak = "0.0.2"` once jdx/mise#11307 adds the registry
+# entry and the shorthand exists.
+"github:jdx/tak" = "0.0.2"
 hk = "latest"
 node = "24"
 pitchfork = "latest"
@@ -100,6 +107,25 @@ run = [
   "cargo build --release",
   "mise x aqua:sharkdp/hyperfine@latest github:pnpm/pnpm@latest npm:@yarnpkg/cli-dist@latest bun@latest deno@latest npm:vlt@latest node@24 -- bash benchmarks/bench.sh",
   "node benchmarks/update-readme.mts",
+]
+
+# Measure startup cost and print it. Instruction counts need valgrind; without
+# it tak reports wall clock only and says so, so this is still useful on macOS.
+[tasks.perf]
+dir = "{{config_root}}"
+run = [
+  "cargo build --release",
+  "tak run",
+]
+
+# Same measurement, appended to refs/notes/tak for this commit. Run by the
+# `perf` workflow on every push to main; the notes are what the history is.
+# Safe to run locally — nothing leaves the machine until `tak push`.
+[tasks."perf:record"]
+dir = "{{config_root}}"
+run = [
+  "cargo build --release",
+  "tak run --record",
 ]
 
 [tasks."build:pgo"]

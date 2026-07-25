@@ -1,0 +1,25 @@
+# Startup cost, measured by tak (https://github.com/jdx/tak).
+#
+# Deliberately narrow. This tracks what every `aube` invocation pays before it
+# does any work — process start, dynamic linking, clap construction, settings
+# load. That is the part instruction counting measures exactly, and the part
+# the hyperfine matrix in `benchmarks/` cannot see: those scenarios are
+# dominated by network and filesystem work whose variance is orders of
+# magnitude larger than a startup regression.
+#
+# The two suites answer different questions and neither replaces the other.
+# `benchmarks/bench.sh` asks "is aube faster than pnpm at installing?".  This
+# asks "did today's commit make `aube` slower to start than yesterday's?", and
+# it can answer that to ~0.02% because cachegrind counts instructions rather
+# than timing them.
+
+[bench.version]
+cmd = ["./target/release/aube", "--version"]
+
+# `--help` costs more than `--version`: clap has to build and render the whole
+# command tree, so a subcommand added with an expensive default shows up here
+# first. Fewer runs because it is the slower of the two under cachegrind's ~50x
+# slowdown, and instruction counts do not need samples to converge.
+[bench.help]
+cmd = ["./target/release/aube", "--help"]
+runs = 10

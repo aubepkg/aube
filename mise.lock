@@ -179,6 +179,52 @@ checksum = "sha256:e437443331865218763d44089680f4d36547353e8c3c8b394c24859203e6c
 url = "https://github.com/foresterre/cargo-msrv/releases/download/v0.19.3/cargo-msrv-x86_64-pc-windows-msvc-v0.19.3.zip"
 url_api = "https://api.github.com/repos/foresterre/cargo-msrv/releases/assets/380851496"
 
+[[tools."github:jdx/tak"]]
+version = "0.0.2"
+backend = "github:jdx/tak"
+
+[tools."github:jdx/tak"."platforms.linux-arm64"]
+checksum = "sha256:cc7c611b5d4bf57066ca141e415f8fee457d3bee41395c04a9464cfacaa38b57"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776888"
+provenance = "github-attestations"
+
+[tools."github:jdx/tak"."platforms.linux-arm64-musl"]
+checksum = "sha256:b552c5020911f2978e37aa7b82158e49d8e799efe52eb2f729ec4102920a96a3"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776889"
+provenance = "github-attestations"
+
+[tools."github:jdx/tak"."platforms.linux-x64"]
+checksum = "sha256:13827cc448824cf821490fa02ba109ecbf4fb5edfa23d4eb06f8f7abe39c63a5"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776900"
+provenance = "github-attestations"
+
+[tools."github:jdx/tak"."platforms.linux-x64-musl"]
+checksum = "sha256:994efac9c7a199e48e8736bbde4cf1280c1af1657fe0a8243c9ff63a004c16b1"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776899"
+provenance = "github-attestations"
+
+[tools."github:jdx/tak"."platforms.macos-arm64"]
+checksum = "sha256:8500112b24d4aef2f5c133178c9ca2a3367dfa820cd50a6320a3ce890963ca9e"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776890"
+provenance = "github-attestations"
+
+[tools."github:jdx/tak"."platforms.macos-x64"]
+checksum = "sha256:1c2a6b7e151d5e9e21bb3c846814e4184ed5880a3c4c9cc828d82ea0d54a454e"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776897"
+provenance = "github-attestations"
+
+[tools."github:jdx/tak"."platforms.windows-x64"]
+checksum = "sha256:20afc9690859822b26e78a29d615c3936dffd77ddc1ced5cedace96cb83a5d66"
+url = "https://github.com/jdx/tak/releases/download/v0.0.2/tak-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/489776898"
+provenance = "github-attestations"
+
 [[tools.hk]]
 version = "1.44.3"
 backend = "aqua:jdx/hk"
