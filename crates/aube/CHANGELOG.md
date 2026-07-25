@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.33.0](https://github.com/jdx/aube/compare/v1.32.0...v1.33.0) - 2026-07-25
+
+### Added
+
+- *(run)* complete package.json scripts in shell completions ([#1108](https://github.com/jdx/aube/pull/1108))
+- *(embed)* let hosts wrap the Node runtime, not just select one ([#1086](https://github.com/jdx/aube/pull/1086))
+- *(settings)* adopt canonical update and audit sections ([#1104](https://github.com/jdx/aube/pull/1104))
+- *(release)* support version from-git ([#1102](https://github.com/jdx/aube/pull/1102))
+- *(runtime)* detect FreeBSD as a supported host platform ([#1084](https://github.com/jdx/aube/pull/1084))
+
+### Fixed
+
+- *(run)* start script picker in search mode and prevent wrapping ([#1109](https://github.com/jdx/aube/pull/1109))
+- *(linker)* expose global virtual store to Vite ([#1106](https://github.com/jdx/aube/pull/1106))
+- *(linker)* apply registry-name patches to npm-aliased installs ([#1085](https://github.com/jdx/aube/pull/1085))
+
+### Other
+
+- refresh benchmarks for v1.32.0 ([#1080](https://github.com/jdx/aube/pull/1080))
+
+### Security
+
+- *(login)* cap web token responses ([#1103](https://github.com/jdx/aube/pull/1103))
+
 ## [1.32.0](https://github.com/jdx/aube/compare/v1.31.0...v1.32.0) - 2026-07-22
 
 ### Added
