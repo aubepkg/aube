@@ -36,3 +36,33 @@ cmd = ["./target/release/aube", "-C", "fixtures/medium", "sbom"]
 # `--depth 20` is past the fixture's real depth, so nothing is truncated.
 [bench.tree]
 cmd = ["./target/release/aube", "-C", "fixtures/medium", "list", "--depth", "20"]
+
+# Install, on the path people actually hit most: everything is already present
+# and aube has to prove it. Every CI job with a warm cache and every redundant
+# `aube install` a developer types pays exactly this, and at ~106ms it is the
+# heaviest thing here.
+#
+# `--offline` is what makes it measurable. Plain `install --frozen-lockfile`
+# contacts the registry even when nothing needs fetching — verified by pointing
+# it at a dead port, where it spends 70s retrying before failing. `--offline`
+# against the same dead port succeeds unchanged, so no measurement here can be
+# perturbed by the network.
+#
+# The store must already hold the fixture's packages; `mise run perf` warms it
+# with one networked install before handing over to tak.
+#
+# Not covered: the fresh-link path, where node_modules is deleted first — that
+# is the 571ms number in `benchmarks/results.json`. It cannot be repeated
+# without resetting the directory between runs, and tak has no per-benchmark
+# setup hook. `aube ci` looked like the answer since it deletes node_modules
+# itself, but it takes neither `--offline` nor `npm_config_offline`, so it
+# cannot be made hermetic. A setup hook in tak is the real fix.
+[bench.install]
+cmd = [
+  "./target/release/aube",
+  "-C",
+  "fixtures/medium",
+  "install",
+  "--frozen-lockfile",
+  "--offline",
+]

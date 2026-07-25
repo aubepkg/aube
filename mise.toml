@@ -109,12 +109,23 @@ run = [
   "node benchmarks/update-readme.mts",
 ]
 
-# Measure startup cost and print it. Instruction counts need valgrind; without
-# it tak reports wall clock only and says so, so this is still useful on macOS.
+# Instruction-counted benchmarks (see tak.toml). Needs valgrind for counts;
+# without it tak reports wall clock only and says so, so this still works on
+# macOS.
+#
+# GVS is pinned for the same reason benchmarks/bench.sh pins it: aube's default
+# flips based on the inherited CI=true, so without this a laptop and a CI runner
+# would be measuring different code paths and the series would be meaningless.
+#
+# The store warm-up is the one networked step. It has to happen before tak runs
+# because the install benchmark uses --offline, and it is outside the
+# measurement on purpose — nothing tak times ever touches the registry.
 [tasks.perf]
 dir = "{{config_root}}"
+env = { npm_config_enable_global_virtual_store = "true" }
 run = [
   "cargo build --release",
+  "./target/release/aube -C fixtures/medium install --frozen-lockfile",
   "tak run",
 ]
 
@@ -123,8 +134,10 @@ run = [
 # Safe to run locally — nothing leaves the machine until `tak push`.
 [tasks."perf:record"]
 dir = "{{config_root}}"
+env = { npm_config_enable_global_virtual_store = "true" }
 run = [
   "cargo build --release",
+  "./target/release/aube -C fixtures/medium install --frozen-lockfile",
   "tak run --record",
 ]
 
