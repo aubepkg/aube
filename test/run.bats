@@ -627,3 +627,26 @@ JSON
 	assert_success
 	assert_output "build:tsc -p ."
 }
+
+@test "aube run --complete honors -C" {
+	# The chdir that normally applies `-C` runs after the completion probe
+	# returns, so the probe resolves the directory itself.
+	cat >package.json <<'JSON'
+{ "name": "root", "version": "1.0.0", "scripts": { "root-build": "echo root" } }
+JSON
+	mkdir -p packages/api
+	cat >packages/api/package.json <<'JSON'
+{ "name": "api", "version": "1.0.0", "scripts": { "api-serve": "node server.js" } }
+JSON
+	run aube -C packages/api run --complete
+	assert_success
+	assert_output "api-serve:node server.js"
+
+	run aube --dir "$PWD/packages/api" run --complete
+	assert_success
+	assert_output "api-serve:node server.js"
+
+	run aube run --complete
+	assert_success
+	assert_output "root-build:echo root"
+}

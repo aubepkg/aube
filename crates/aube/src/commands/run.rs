@@ -322,14 +322,23 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
 /// Print the nearest `package.json`'s scripts for the `complete "script"`
 /// node in the usage spec, one `name:command` line each.
 ///
+/// Searches upward from `dir` when the invocation carried `-C`, and from
+/// the process cwd otherwise.
+///
 /// Best-effort by design: a missing, unreadable, or malformed
 /// `package.json` prints nothing rather than erroring, because the caller
 /// is a TAB press and completion noise is worse than no completions.
-pub(crate) fn print_script_completions() {
-    let Some(root) = crate::dirs::cwd()
-        .ok()
-        .and_then(|cwd| crate::dirs::find_project_root(&cwd))
-    else {
+pub(crate) fn print_script_completions(dir: Option<&Path>) {
+    let Ok(cwd) = crate::dirs::cwd() else {
+        return;
+    };
+    // `-C` is resolved against the cwd, matching what the later chdir
+    // would do with a relative path.
+    let start = match dir {
+        Some(dir) => cwd.join(dir),
+        None => cwd,
+    };
+    let Some(root) = crate::dirs::find_project_root(&start) else {
         return;
     };
     let Ok(scripts) = read_scripts_in_order(&root) else {

@@ -682,10 +682,14 @@ fn inner_main() -> miette::Result<i32> {
     //     that pins a different package manager.
     //
     // None of those are things a completion helper should do.
+    //
+    // `-C` is honored explicitly, since the chdir that normally applies it
+    // happens further down: completing `aube -C packages/api run <TAB>`
+    // has to offer that package's scripts, not the shell's cwd's.
     if let Some(Commands::Run(args)) = cli.command.as_ref()
         && args.complete
     {
-        commands::run::print_script_completions();
+        commands::run::print_script_completions(cli.dir.as_deref());
         return Ok(0);
     }
 
