@@ -1,25 +1,38 @@
-# Startup cost, measured by tak (https://github.com/jdx/tak).
+# Instruction-counted benchmarks, measured by tak (https://github.com/jdx/tak).
 #
-# Deliberately narrow. This tracks what every `aube` invocation pays before it
-# does any work — process start, dynamic linking, clap construction, settings
-# load. That is the part instruction counting measures exactly, and the part
-# the hyperfine matrix in `benchmarks/` cannot see: those scenarios are
-# dominated by network and filesystem work whose variance is orders of
-# magnitude larger than a startup regression.
+# These complement the hyperfine matrix in `benchmarks/`, which measures
+# installs — network and filesystem work whose variance is orders of magnitude
+# larger than any CPU regression. Everything here is pure CPU against a
+# committed fixture: no registry access, no writes, no clock, so cachegrind can
+# count it to ~0.02% where wall clock on the same hardware moves 4-20%.
 #
-# The two suites answer different questions and neither replaces the other.
-# `benchmarks/bench.sh` asks "is aube faster than pnpm at installing?".  This
-# asks "did today's commit make `aube` slower to start than yesterday's?", and
-# it can answer that to ~0.02% because cachegrind counts instructions rather
-# than timing them.
+# Hermeticity was checked by running each of these with the registry pointed at
+# a dead port; all three succeed unchanged. `aube --version` deliberately is not
+# here: it is documented as "print version and check for updates", and a command
+# that talks to the network retires a different number of instructions depending
+# on conditions that have nothing to do with the code under test.
+#
+# `startup` is the control. It does no package work, so it measures the fixed
+# cost every invocation pays — process start, settings load, workspace
+# discovery. The other two are that same cost plus real graph work. When all
+# three move together the regression is in startup; when only one moves it is in
+# that command's path. Reading them without the control tells you much less.
+#
+# `fixtures/medium` is a 10-dependency, 28KB lockfile — small, but it separates
+# well: measured against a debug build, `startup` is 6.7ms where `graph` and
+# `tree` are 11.8ms and 11.1ms, so the package work is around 40% of each. A
+# larger fixture would raise that fraction if this ever feels blunt.
 
-[bench.version]
-cmd = ["./target/release/aube", "--version"]
+# Fixed cost of any invocation: startup, settings, workspace discovery.
+[bench.startup]
+cmd = ["./target/release/aube", "-C", "fixtures/medium", "prefix"]
 
-# `--help` costs more than `--version`: clap has to build and render the whole
-# command tree, so a subcommand added with an expensive default shows up here
-# first. Fewer runs because it is the slower of the two under cachegrind's ~50x
-# slowdown, and instruction counts do not need samples to converge.
-[bench.help]
-cmd = ["./target/release/aube", "--help"]
-runs = 10
+# Parse the lockfile, walk the whole dependency graph, serialize every package.
+# Output is byte-identical run to run.
+[bench.graph]
+cmd = ["./target/release/aube", "-C", "fixtures/medium", "sbom"]
+
+# The other major read path over the same graph: resolve and render the tree.
+# `--depth 20` is past the fixture's real depth, so nothing is truncated.
+[bench.tree]
+cmd = ["./target/release/aube", "-C", "fixtures/medium", "list", "--depth", "20"]

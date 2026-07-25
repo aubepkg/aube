@@ -59,8 +59,10 @@ jobs:
       # precise enough to detect anything.
       - name: Install valgrind
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends valgrind
+          command -v valgrind || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends valgrind
+          }
           valgrind --version
 
       - name: Measure and record
