@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
-include = ["src/**/*.rs", "src/**/*.mjs", "build.rs"]
+include = ["src/**/*.rs", "src/**/*.mjs", "assets/**", "build.rs"]
 
 # The command layer is a library so it can be embedded (construct
 # `commands::install::InstallOptions`, call `commands::install::run`)
