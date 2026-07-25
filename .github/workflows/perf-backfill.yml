@@ -11,6 +11,11 @@ name: perf-backfill
 # Dispatch-only, and effectively idempotent: release binaries are immutable, so
 # a second run produces byte-identical records that cat_sort_uniq collapses on
 # merge. Re-running is harmless, just pointless.
+#
+# Split into two jobs so the repository-write token is never present while
+# downloaded binaries are executing. `measure` runs 64 historical executables
+# and holds only a read token; `publish` holds the write token and runs nothing
+# but git.
 
 on:
   workflow_dispatch:
@@ -28,15 +33,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  backfill:
-    name: Backfill
+  measure:
+    name: Measure released binaries
     # Same runner class as perf.yml. Absolute instruction counts shift between
     # machine types by more than a real regression does, so the backfilled
     # series and the ongoing one have to come from the same kind of machine.
     runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 60
     permissions:
-      contents: write # pushing refs/notes/tak is a write to this repository
+      contents: read # listing releases and downloading assets; no write here
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -76,6 +81,10 @@ jobs:
       #
       # The fixture path is absolute so it does not depend on the working
       # directory tak happens to run each downloaded binary from.
+      #
+      # This step executes 64 binaries downloaded from the releases API. The
+      # token in scope is read-only, so what they inherit is worth nothing
+      # beyond what a public clone already grants.
       - name: Backfill from published releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,26 +93,74 @@ jobs:
           tak backfill --bench release-graph --limit "$LIMIT" -- \
             -C "$GITHUB_WORKSPACE/fixtures/medium" sbom
 
-      # persist-credentials: false means the push needs its own auth. Same
-      # pattern as perf.yml and bench-refresh.yml: re-point origin rather than
-      # pushing to a one-shot URL, so tak's retry path has a remote to fetch
-      # from when it loses a race.
-      - name: Push measurements
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
+      # A bundle is how the notes reach the publish job: it carries the ref and
+      # its object closure in one file, and `git fetch` restores it exactly.
+      # Passing the records as text would mean re-deriving the ref on the far
+      # side and getting the cat_sort_uniq byte-ordering right by hand.
+      - name: Bundle the notes
         run: |
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git"
-          tak push
+          git bundle create notes.bundle refs/notes/tak
+          git bundle verify notes.bundle
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tak-notes
+          path: notes.bundle
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Summary
+        env:
+          LIMIT: ${{ inputs.limit }}
         run: |
           {
-            echo "Backfilled up to ${LIMIT} releases into \`refs/notes/tak\` as \`release-graph\`."
+            echo "Measured up to ${LIMIT} releases as \`release-graph\`."
             echo
             echo '```'
             tak history 2>&1 | head -40
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish measurements
+    needs: measure
+    # Only main publishes. workflow_dispatch can be pointed at any branch or
+    # tag, and refs/notes/tak is a shared baseline. A dispatch from a branch
+    # still measures and still prints its numbers in the summary above — it
+    # just keeps them out of the shared series, which matters because a branch
+    # may have changed the fixture or the subject while keeping the bench name.
+    if: github.ref == 'refs/heads/main'
+    runs-on: namespace-profile-endev-linux-amd64
+    timeout-minutes: 10
+    permissions:
+      contents: write # pushing refs/notes/tak is a write to this repository
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        with:
+          cache: false
         env:
-          LIMIT: ${{ inputs.limit }}
+          MISE_LOCKED: "1"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: tak-notes
+
+      # `tak push` rather than a plain `git push`: it re-fetches and merges with
+      # cat_sort_uniq when it loses a race, which it can against perf.yml.
+      #
+      # persist-credentials: false means the push needs its own auth. Same
+      # pattern as perf.yml and bench-refresh.yml: re-point origin rather than
+      # pushing to a one-shot URL, so tak's retry path has a remote to fetch
+      # from.
+      - name: Import and push measurements
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          git fetch notes.bundle 'refs/notes/tak:refs/notes/tak'
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git"
+          tak push
