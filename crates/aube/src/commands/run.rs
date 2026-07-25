@@ -367,12 +367,22 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
 /// without this a `test:unit` script completes as `test` described by
 /// `unit:vitest …`. Newlines and tabs in the command are folded to spaces
 /// so a multi-line script stays on one line.
+///
+/// A name that ends in a backslash gets no description at all. The
+/// separator immediately after it would read as escaped, and `usage` would
+/// swallow the whole line into the candidate — `weird\:echo hi` completes
+/// as the script `weird:echo hi`. Escaping the backslash doesn't help,
+/// since the escape grammar only covers `\:`. Dropping the description is
+/// the one form that still yields the right name.
 fn completion_line(name: &str, cmd: &str) -> String {
     let name = name.replace(':', "\\:");
     let cmd: String = cmd
         .chars()
         .map(|c| if c.is_whitespace() { ' ' } else { c })
         .collect();
+    if name.ends_with('\\') {
+        return name;
+    }
     format!("{name}:{}", cmd.trim())
 }
 
@@ -1419,6 +1429,20 @@ mod tests {
         assert_eq!(
             completion_line("test:unit", "vitest run --reporter=x:y"),
             "test\\:unit:vitest run --reporter=x:y"
+        );
+    }
+
+    #[test]
+    fn completion_line_drops_the_description_after_a_trailing_backslash() {
+        // The separator would look escaped and usage would fold the
+        // command into the candidate. Verified against usage 3.2 and 3.5:
+        // the bare name is the only form that round-trips.
+        assert_eq!(completion_line("weird\\", "echo hi"), "weird\\");
+        // A backslash anywhere else is fine — the split still lands on the
+        // first unescaped colon.
+        assert_eq!(
+            completion_line("mid\\slash", "echo mid"),
+            "mid\\slash:echo mid"
         );
     }
 
