@@ -69,8 +69,13 @@ fn print_usage_spec(embedder: &'static aube_util::Embedder) -> i32 {
         Ok(()) => 0,
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => 0,
         Err(e) => {
-            eprintln!("{}: failed to write usage spec: {e}", embedder.name);
-            1
+            // This path never reaches miette — the usage branch returns
+            // before `cli_main` — so the stable code is printed here and
+            // the exit status comes from the same `EXIT_TABLE` lookup the
+            // diagnostic path uses.
+            let code = aube_codes::errors::ERR_AUBE_USAGE_SPEC_WRITE_FAILED;
+            eprintln!("{}: {code}: failed to write usage spec: {e}", embedder.name);
+            aube_codes::exit::exit_code_for(code).unwrap_or(aube_codes::exit::EXIT_GENERIC)
         }
     }
 }

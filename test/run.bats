@@ -694,5 +694,24 @@ JSON
 		chmod 755 locked
 		assert_success
 		assert_output ""
+
+		# An execute-only directory is enterable, though, so a real run
+		# would work there and completion must not decline it.
+		mkdir -p searchable
+		echo '{ "name": "s", "scripts": { "s-build": "echo s" } }' >searchable/package.json
+		chmod 111 searchable
+		run aube -C searchable run --complete
+		chmod 755 searchable
+		assert_success
+		assert_output "s-build:echo s"
 	fi
+}
+
+@test "aube run --complete skips a script name containing a newline" {
+	# The protocol is one candidate per line, so such a name would split
+	# into several candidates, none of which names a real script.
+	printf '{ "name": "nl", "scripts": { "ok": "echo ok", "bad\\nname": "echo bad" } }' >package.json
+	run aube run --complete
+	assert_success
+	assert_output "ok:echo ok"
 }

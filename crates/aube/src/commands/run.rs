@@ -339,13 +339,22 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
     // Getting this wrong is worse than declining to answer: a real run
     // chdirs into `-C`, and `find_project_root` walks ancestors lexically,
     // so a target the chdir would reject still surfaces the *parent*
-    // project's scripts and completes a command that can't run. Hence all
-    // three checks — resolvable (also resolving symlinks, so the walk
-    // starts in the target's hierarchy the way `getcwd` would report it),
-    // a directory, and readable.
+    // project's scripts and completes a command that can't run.
+    //
+    // Resolving also collapses symlinks, so the walk starts in the
+    // target's hierarchy the way `getcwd` would report it after a real
+    // chdir. The `try_exists` probe stands in for the permission half:
+    // it stats a path *inside* the directory, so it needs the same search
+    // bit `chdir` does, and reports `Err` exactly when that bit is
+    // missing. (`read_dir` would test the read bit instead and reject
+    // execute-only directories a real run handles fine.)
     let start = match dir {
         Some(dir) => match cwd.join(dir).canonicalize() {
-            Ok(resolved) if resolved.is_dir() && std::fs::read_dir(&resolved).is_ok() => resolved,
+            Ok(resolved)
+                if resolved.is_dir() && resolved.join("package.json").try_exists().is_ok() =>
+            {
+                resolved
+            }
             _ => return,
         },
         None => cwd,
@@ -358,6 +367,13 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
     };
     let mut out = String::new();
     for (name, cmd) in &scripts {
+        // JSON keys can hold a newline, and the protocol is one candidate
+        // per line — such a name would split into several bogus
+        // candidates, none of which names a real script. Nothing sane can
+        // be offered for it, so skip it.
+        if name.contains(['\n', '\r']) {
+            continue;
+        }
         out.push_str(&completion_line(name, cmd));
         out.push('\n');
     }

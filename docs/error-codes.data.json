@@ -325,6 +325,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_USAGE_SPEC_WRITE_FAILED",
+      "category": "Engine / CLI",
+      "description": "`aube usage` couldn't write the CLI spec to stdout; the output would have been truncated.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_REMOVE_PRIOR_INSTALL_DIR",
       "category": "Engine / CLI",
       "description": "Couldn't clean up a prior global install dir before re-installing.",

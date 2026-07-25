@@ -87,6 +87,7 @@ pub const ERR_AUBE_RECURSIVE_NOT_SUPPORTED: &str = "ERR_AUBE_RECURSIVE_NOT_SUPPO
 pub const ERR_AUBE_UNKNOWN_COMMAND: &str = "ERR_AUBE_UNKNOWN_COMMAND";
 pub const ERR_AUBE_NPM_ONLY_COMMAND: &str = "ERR_AUBE_NPM_ONLY_COMMAND";
 pub const ERR_AUBE_COMPLETION_FAILED: &str = "ERR_AUBE_COMPLETION_FAILED";
+pub const ERR_AUBE_USAGE_SPEC_WRITE_FAILED: &str = "ERR_AUBE_USAGE_SPEC_WRITE_FAILED";
 pub const ERR_AUBE_REMOVE_PRIOR_INSTALL_DIR: &str = "ERR_AUBE_REMOVE_PRIOR_INSTALL_DIR";
 pub const ERR_AUBE_CONFIG_NESTED_AUBE_KEY: &str = "ERR_AUBE_CONFIG_NESTED_AUBE_KEY";
 pub const ERR_AUBE_CONFLICTING_BUILD_FLAGS: &str = "ERR_AUBE_CONFLICTING_BUILD_FLAGS";
@@ -471,6 +472,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_COMPLETION_FAILED,
         category: category::ENGINE_CLI,
         description: "`aube completion` couldn't invoke `usage` to render the shell completions.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_USAGE_SPEC_WRITE_FAILED,
+        category: category::ENGINE_CLI,
+        description: "`aube usage` couldn't write the CLI spec to stdout; the output would have been truncated.",
         exit_code: None,
     },
     CodeMeta {
