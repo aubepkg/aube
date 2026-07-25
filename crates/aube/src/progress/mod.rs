@@ -2,22 +2,24 @@
 //!
 //! Two modes live behind one API so call sites in `install::run` stay the same:
 //!
-//! * **TTY** — an animated clx bar, kept as an internal fallback for callers
-//!   that explicitly opt into an in-place display. It redraws by moving the
-//!   cursor and clearing the previous frame.
-//! * **Append-only** — lines safe for terminals, GitHub Actions, and plain
-//!   pipes: a single repeating pnpm-style `Progress:` line emitted on a ~2s
+//! * **TTY** — an animated clx bar: a root row with overall counts plus
+//!   transient child rows for in-flight tarball fetches. Children collapse on
+//!   completion, so the display stays bounded even though the pipeline
+//!   resolves → fetches → links concurrently.
+//! * **Append-only** — lines safe for GitHub Actions and plain pipes: a
+//!   single repeating pnpm-style `Progress:` line emitted on a ~2s
 //!   heartbeat, showing `resolved` / `reused` / `downloaded` plus the byte
 //!   total for the downloaded set. The heartbeat only prints when something
 //!   actually advanced, so a fast install stays quiet and a slow one shows
 //!   exactly *why* it's slow (network-bound vs linker-bound). No phase noise,
 //!   no child rows, no redraws.
 //!
-//! `try_new` picks the append-only mode by default. The clx TTY renderer
-//! clears the previous frame on every redraw; that makes installs look like
-//! the screen is blinking right before the post-install package summary lands.
-//! Set `AUBE_TTY_PROGRESS=1` to use the in-place renderer while it remains
-//! useful for local debugging.
+//! `try_new` picks the mode: TTY on an interactive stderr, append-only on a
+//! pipe, or append-only when `is_ci::cached()` detects a known CI environment
+//! (Buildkite, GitHub Actions, etc.) even if stderr looks like a TTY — those
+//! systems allocate a PTY so tools emit colors, but their log capturers strip
+//! cursor-control escapes and each animation frame lands as its own log line.
+//! The ~2s heartbeat is the right shape for that.
 //! It returns `None` only when clx has been forced into text mode
 //! (`--silent`, `-v`, `--reporter=append-only|ndjson`) — those modes own
 //! their own output and we stay out of the way.
@@ -80,15 +82,6 @@ fn clamp_reused_to(reused: &AtomicUsize, downloaded: &AtomicUsize, total: usize)
     let _ = reused.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
         (cur > cap).then_some(cap)
     });
-}
-
-fn env_truthy(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|value| {
-        !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "no" | "off"
-        )
-    })
 }
 
 /// Whether the vendor attribution (`by jdx.dev`) may render into the banner.
@@ -304,12 +297,16 @@ impl InstallProgress {
         if clx::progress::output() == ProgressOutput::Text {
             return None;
         }
-        // The animated TTY renderer redraws via cursor movement plus
-        // clear-to-end-of-screen. That is fine for a standalone progress bar,
-        // but it looks like a screen wipe when followed by the post-install
-        // dependency summary. Default to append-only progress everywhere and
-        // leave the in-place renderer behind an explicit debugging opt-in.
-        if std::io::stderr().is_terminal() && !is_ci::cached() && env_truthy("AUBE_TTY_PROGRESS") {
+        // Prefer append-only mode whenever we're in a known CI environment
+        // (`is_ci` checks `CI`, `BUILDKITE`, `GITHUB_ACTIONS`, and friends),
+        // even when stderr looks like a TTY. Most CI runners allocate a PTY
+        // so child processes emit colors, which makes `is_terminal()` return
+        // true — but the log capturer then strips cursor-control escapes and
+        // each animation frame becomes its own log line, flooding the build
+        // log with thousands of near-duplicate spinner rows. The 2s heartbeat
+        // is the right shape there. `--reporter=append-only` forces the same
+        // mode on demand in an interactive terminal.
+        if std::io::stderr().is_terminal() && !is_ci::cached() {
             Some(Self::new_tty())
         } else {
             Some(Self::new_ci())
