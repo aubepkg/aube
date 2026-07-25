@@ -23,8 +23,29 @@ export default {
       throw new Error('could not find DEFAULT_TRUST_POLICY_EXCLUDES in trust.rs')
     }
 
-    return [...block.matchAll(/^\s*"([^"]+)",\s*$/gm)]
-      .map((match) => match[1])
-      .sort((a, b) => a.localeCompare(b))
+    const entries = block.split('\n').flatMap((line, index) => {
+      const trimmed = line.trim()
+      if (
+        !trimmed ||
+        trimmed.startsWith('//') ||
+        trimmed.startsWith('/*') ||
+        trimmed.startsWith('*') ||
+        trimmed === '*/'
+      ) {
+        return []
+      }
+
+      const match = trimmed.match(
+        /^"([^"]+)"\s*,?\s*(?:(?:\/\/.*)|(?:\/\*.*\*\/))?$/,
+      )
+      if (!match) {
+        throw new Error(
+          `unrecognized DEFAULT_TRUST_POLICY_EXCLUDES entry on line ${index + 1}: ${trimmed}`,
+        )
+      }
+      return [match[1]]
+    })
+
+    return entries.sort((a, b) => a.localeCompare(b))
   },
 }

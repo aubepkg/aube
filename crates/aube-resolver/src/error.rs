@@ -148,7 +148,7 @@ impl miette::Diagnostic for Error {
 fn format_trust_downgrade_help(d: &TrustDowngradeDetails) -> String {
     format!(
         "this is a supply-chain trust failure, not an ordinary version-resolution error. \
-         An earlier release carried {evidence}, but {name}@{ver} does not.\n\
+         An earlier release carried {prior_evidence}, but {name}@{ver} carries {current_evidence}.\n\
          \n\
          This can signal a compromised publisher or tampered release. It can also be benign \
          release-process drift: a maintainer manually published, backported outside the trusted \
@@ -156,15 +156,20 @@ fn format_trust_downgrade_help(d: &TrustDowngradeDetails) -> String {
          \n\
          Before bypassing:\n\
          1. Inspect the package's npm release, source tag/commit, publisher identity, and tarball; \
-         confirm the change is expected and nothing appears tampered with.\n\
-         2. Report the downgrade upstream. The package's release process failed to preserve its \
-         previous trust evidence, and the maintainer should restore the trusted publishing path.\n\
+         compare the metadata with npmjs.org, and confirm the change is expected and nothing \
+         appears tampered with.\n\
+         2. Report inconsistent evidence to the relevant upstream owner. Package-release drift \
+         belongs with the maintainer; metadata present on npmjs.org but missing from a proxy or \
+         mirror belongs with that registry operator.\n\
          3. Only after review, pin a version that retains evidence or add the narrow \
          `{name}@{ver}` exception to `trustPolicyExclude`. A bare `{name}` exempts every version; \
          `trustPolicy = off` disables this protection for the entire install.\n\
          \n\
          Details and known built-in exceptions: https://aube.jdx.dev/trust-policy-exceptions",
-        evidence = d.prior_evidence.label(),
+        prior_evidence = d.prior_evidence.label(),
+        current_evidence = d
+            .current_evidence
+            .map_or("no trust evidence", |e| e.label()),
         name = d.name,
         ver = d.picked_version,
     )
@@ -529,8 +534,10 @@ mod tests {
         });
 
         assert!(help.contains("not an ordinary version-resolution error"));
+        assert!(help.contains("carries no trust evidence"));
         assert!(help.contains("confirm the change is expected and nothing appears tampered with"));
-        assert!(help.contains("Report the downgrade upstream"));
+        assert!(help.contains("Report inconsistent evidence to the relevant upstream owner"));
+        assert!(help.contains("belongs with that registry operator"));
         assert!(help.contains("`@scope/pkg@2.0.0` exception"));
         assert!(help.contains("A bare `@scope/pkg` exempts every version"));
         assert!(help.contains("https://aube.jdx.dev/trust-policy-exceptions"));

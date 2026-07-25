@@ -22,9 +22,10 @@ There are also less dramatic explanations:
 - parallel major-version lines use inconsistent release automation;
 - a registry proxy or mirror omitted trust metadata.
 
-Those explanations may be benign, but they are still packaging failures. Once
+Release-process drift may be benign, but it is still a packaging failure. Once
 a project establishes a trusted publishing path, every release should preserve
-it.
+it. Metadata lost only by a proxy or mirror is instead a registry-operator
+failure.
 
 ## What to do before adding an exception
 
@@ -36,9 +37,10 @@ it.
    that the release was tampered with.
 4. Check the upstream repository and advisories for a compromised account,
    workflow outage, or intentional manual publish.
-5. Report the downgrade to the package maintainer. Ask them to restore the
-   trusted publishing workflow and publish a corrected release when
-   appropriate.
+5. Report inconsistent evidence to the relevant upstream owner. Ask the package
+   maintainer to restore a drifted publishing workflow, or ask the registry
+   operator to restore metadata that exists on npmjs.org but is missing from its
+   proxy or mirror.
 
 Do not treat an allowlist entry as proof that a package is safe. It only records
 that someone chose to bypass this particular signal.
