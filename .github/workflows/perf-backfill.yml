@@ -149,6 +149,54 @@ jobs:
         with:
           name: tak-notes
 
+      # The measure job runs 64 downloaded executables in a writable checkout,
+      # so anything it hands over is untrusted input crossing into a job that
+      # can write to the repository. Two checks before the write token is used.
+      #
+      # What this defends is the shape of the data, not its truthfulness: a
+      # subject that lies about its own performance cannot be caught here, and
+      # no arrangement of jobs could catch it, because the subject *is* the
+      # measurement. What it stops is a tampered bundle carrying extra refs or
+      # arbitrary blobs into this repository.
+      - name: Verify the bundle carries only measurements
+        run: |
+          git bundle verify notes.bundle
+
+          refs=$(git bundle list-heads notes.bundle | awk '{print $2}')
+          if [ "$refs" != "refs/notes/tak" ]; then
+            echo "::error::bundle carries unexpected refs:"
+            printf '%s\n' "$refs"
+            exit 1
+          fi
+
+          git fetch notes.bundle 'refs/notes/tak:refs/notes/tak'
+
+          # Every line of every note must be a tak record. A note holding
+          # anything else means the ref was written by something other than tak.
+          git notes --ref=tak list | awk '{print $2}' > /tmp/tak-commits
+          : > /tmp/tak-records
+          while IFS= read -r commit; do
+            git notes --ref=tak show "$commit" >> /tmp/tak-records
+          done < /tmp/tak-commits
+
+          bad=0
+          count=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            count=$((count + 1))
+            printf '%s' "$line" | jq -e '
+              type == "object" and has("v") and has("bench")
+              and (.metrics | type == "object")
+            ' > /dev/null 2>&1 || { echo "::error::not a tak record: $line"; bad=1; }
+          done < /tmp/tak-records
+
+          if [ "$bad" -ne 0 ]; then exit 1; fi
+          if [ "$count" -eq 0 ]; then
+            echo "::error::the bundle contains no measurements"
+            exit 1
+          fi
+          echo "verified $count records across $(wc -l < /tmp/tak-commits) commits"
+
       # `tak push` rather than a plain `git push`: it re-fetches and merges with
       # cat_sort_uniq when it loses a race, which it can against perf.yml.
       #
@@ -156,11 +204,10 @@ jobs:
       # pattern as perf.yml and bench-refresh.yml: re-point origin rather than
       # pushing to a one-shot URL, so tak's retry path has a remote to fetch
       # from.
-      - name: Import and push measurements
+      - name: Push measurements
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          git fetch notes.bundle 'refs/notes/tak:refs/notes/tak'
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git"
           tak push
