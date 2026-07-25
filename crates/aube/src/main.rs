@@ -32,30 +32,47 @@ fn main() {
     // before `cli_main` rather than carried as a subcommand in the lib. Only
     // the standalone `aube` invocation reaches it: multicall shims rewrite
     // argv before clap, so their `usage` tokens belong to the wrapped tool.
-    if is_usage_invocation() {
-        let mut cmd = aube::command();
-        let mut spec = Vec::new();
-        clap_usage::generate(&mut cmd, embedder.name, &mut spec);
-        let mut out = std::io::stdout();
-        let _ = std::io::Write::write_all(&mut out, &spec);
-        // `clap_usage` only sees the clap tree, which has no way to express a
-        // dynamic completer, so the `complete` nodes come from a hand-written
-        // fragment. usage merges top-level nodes, so appending the text is
-        // enough (`mise usage` does the same). `{bin}` carries the embedder's
-        // binary name into the shell snippet the completer runs.
-        let _ = std::io::Write::write_all(
-            &mut out,
-            include_str!("../assets/extra.usage.kdl")
-                .replace("{bin}", embedder.name)
-                .as_bytes(),
-        );
-        return;
-    }
-
     // The binary owns the single `std::process::exit`: `cli_main` returns the
     // code so the library stays embed-safe (a host driving it in-process is
     // never hard-killed), and the standalone binary terminates with it here.
-    std::process::exit(aube::cli_main(embedder));
+    let code = if is_usage_invocation() {
+        print_usage_spec(embedder)
+    } else {
+        aube::cli_main(embedder)
+    };
+    std::process::exit(code);
+}
+
+/// Print the usage.jdx.dev KDL spec for the CLI and return an exit code.
+fn print_usage_spec(embedder: &'static aube_util::Embedder) -> i32 {
+    let mut cmd = aube::command();
+    let mut spec = Vec::new();
+    clap_usage::generate(&mut cmd, embedder.name, &mut spec);
+    // `clap_usage` only sees the clap tree, which has no way to express a
+    // dynamic completer, so the `complete` nodes come from a hand-written
+    // fragment. usage merges top-level nodes, so appending the text is
+    // enough (`mise usage` does the same). `{bin}` carries the embedder's
+    // binary name into the shell snippet the completer runs.
+    spec.extend_from_slice(
+        include_str!("../assets/extra.usage.kdl")
+            .replace("{bin}", embedder.name)
+            .as_bytes(),
+    );
+
+    // `mise render` redirects this into `aube.usage.kdl`, so a short write
+    // must not pass for success — a truncated spec would become the
+    // checked-in one, and the completions built from it. A reader that
+    // hung up (`aube usage | head`) is not a failure.
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    match out.write_all(&spec).and_then(|()| out.flush()) {
+        Ok(()) => 0,
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => 0,
+        Err(e) => {
+            eprintln!("{}: failed to write usage spec: {e}", embedder.name);
+            1
+        }
+    }
 }
 
 /// True for a standalone `aube usage` invocation: argv[0] resolves to the

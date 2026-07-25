@@ -333,9 +333,16 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
         return;
     };
     // `-C` is resolved against the cwd, matching what the later chdir
-    // would do with a relative path.
+    // would do with a relative path. Canonicalized for the same reason:
+    // a real run chdirs and then reads the cwd back, which resolves
+    // symlinks, so the ancestor walk has to start from the target's
+    // hierarchy rather than the link's. A path that doesn't resolve falls
+    // back to the literal one and simply finds nothing.
     let start = match dir {
-        Some(dir) => cwd.join(dir),
+        Some(dir) => {
+            let joined = cwd.join(dir);
+            joined.canonicalize().unwrap_or(joined)
+        }
         None => cwd,
     };
     let Some(root) = crate::dirs::find_project_root(&start) else {

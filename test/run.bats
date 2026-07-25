@@ -650,3 +650,21 @@ JSON
 	assert_success
 	assert_output "root-build:echo root"
 }
+
+@test "aube run --complete resolves a symlinked -C to its target" {
+	# A real run chdirs and reads the cwd back, which resolves symlinks, so
+	# the ancestor walk starts from the target's hierarchy. The probe has to
+	# match or it searches the link's parents instead.
+	mkdir -p real/nested outer
+	cat >real/package.json <<'JSON'
+{ "name": "real", "version": "1.0.0", "scripts": { "real-build": "echo real" } }
+JSON
+	cat >outer/package.json <<'JSON'
+{ "name": "outer", "version": "1.0.0", "scripts": { "outer-build": "echo outer" } }
+JSON
+	ln -s "$PWD/real/nested" outer/deep
+
+	run aube -C outer/deep run --complete
+	assert_success
+	assert_output "real-build:echo real"
+}
