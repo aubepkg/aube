@@ -669,7 +669,7 @@ JSON
 	assert_output "real-build:echo real"
 }
 
-@test "aube run --complete stays quiet when -C names a missing directory" {
+@test "aube run --complete stays quiet when -C is not a usable directory" {
 	# The ancestor walk is lexical, so falling back to the unresolved path
 	# would surface the parent project's scripts and complete a command
 	# that can't run — the real chdir rejects the directory.
@@ -677,6 +677,12 @@ JSON
 { "name": "root", "version": "1.0.0", "scripts": { "root-build": "echo root" } }
 JSON
 	run aube -C does-not-exist run --complete
+	assert_success
+	assert_output ""
+
+	# Same for a target that exists but isn't a directory.
+	touch README.md
+	run aube -C README.md run --complete
 	assert_success
 	assert_output ""
 }

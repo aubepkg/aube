@@ -338,18 +338,17 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
     // ancestor walk has to start from the target's hierarchy rather than
     // the link's.
     //
-    // A path that won't resolve is a path the real chdir would reject, so
-    // there's nothing to offer. Falling back to the literal path would be
-    // worse than useless: `find_project_root` walks ancestors lexically,
-    // so `-C does-not-exist` would surface the *parent* project's scripts
-    // and complete a command that can't run.
+    // Anything the real chdir would reject — a path that doesn't resolve,
+    // or one that isn't a directory — offers nothing. Searching from it
+    // anyway is worse than staying quiet, because `find_project_root`
+    // walks ancestors lexically: `-C does-not-exist` or `-C README.md`
+    // would surface the *parent* project's scripts and complete a command
+    // that can't run.
     let start = match dir {
-        Some(dir) => {
-            let Ok(resolved) = cwd.join(dir).canonicalize() else {
-                return;
-            };
-            resolved
-        }
+        Some(dir) => match cwd.join(dir).canonicalize() {
+            Ok(resolved) if resolved.is_dir() => resolved,
+            _ => return,
+        },
         None => cwd,
     };
     let Some(root) = crate::dirs::find_project_root(&start) else {
