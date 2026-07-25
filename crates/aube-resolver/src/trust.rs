@@ -262,6 +262,10 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     // hand-published by the maintainer without attestation — e.g.
     // @hono/node-server@1.19.15 (2026-07-24) came after the attested
     // 2.0.10 (2026-07-15), so no-downgrade flags the legitimate backport.
+    // Deliberately package-wide rather than scoped to `^1`: this publisher
+    // has already shipped one line without attestation, and we are not
+    // betting on 2.x holding its CI-published discipline. Do not narrow
+    // this to a version range on the theory that only 1.x is affected.
     "@hono/node-server",
     "chokidar",
     "eslint-config-prettier",
@@ -300,7 +304,18 @@ pub struct TrustExcludeRules {
 
 impl Default for TrustExcludeRules {
     fn default() -> Self {
-        Self::from_name_excludes(DEFAULT_TRUST_POLICY_EXCLUDES)
+        // Parse the entries rather than assuming each is a bare name, so a
+        // future `name@range` default actually works. The previous
+        // `from_name_excludes` hardcoded `version_ranges: None`, which would
+        // have compiled such an entry into a name matcher for the literal
+        // string `"name@range"` — silently matching nothing and dropping the
+        // exemption rather than erroring. Every current entry is a bare name,
+        // for which this is behavior-identical. The list is a compile-time
+        // constant, so a malformed entry is an authoring bug;
+        // `default_excludes_known_provenance_churn_packages` asserts each one
+        // parses.
+        Self::parse(DEFAULT_TRUST_POLICY_EXCLUDES)
+            .expect("DEFAULT_TRUST_POLICY_EXCLUDES must be valid exclude patterns")
     }
 }
 
@@ -356,18 +371,6 @@ impl TrustExcludeRules {
 
     pub fn len(&self) -> usize {
         self.rules.len()
-    }
-
-    fn from_name_excludes(names: &[&str]) -> Self {
-        Self {
-            rules: names
-                .iter()
-                .map(|name| TrustExcludeRule {
-                    name_matcher: NameMatcher::compile(name),
-                    version_ranges: None,
-                })
-                .collect(),
-        }
     }
 
     pub fn with_defaults_and_user_rules(user_rules: Self) -> Self {
@@ -446,18 +449,23 @@ impl TrustExcludeRules {
     }
 }
 
-fn parse_one(pattern: &str) -> Result<TrustExcludeRule, TrustExcludeParseError> {
-    let scoped = pattern.starts_with('@');
-    let at_index = if scoped {
-        pattern[1..].find('@').map(|i| i + 1)
-    } else {
-        pattern.find('@')
+/// Split `<name>[@<versions>]` on the separator that isn't a scope marker,
+/// so a scoped name's leading `@` isn't mistaken for a version selector.
+fn split_name_and_versions(pattern: &str) -> (&str, Option<&str>) {
+    let at_index = match pattern.strip_prefix('@') {
+        // Scoped name: the leading `@` is the scope marker, so the version
+        // separator is the next `@`, offset back past the one we stripped.
+        Some(rest) => rest.find('@').map(|i| i + 1),
+        None => pattern.find('@'),
     };
-
-    let (name_part, versions_part) = match at_index {
+    match at_index {
         Some(i) => (&pattern[..i], Some(&pattern[i + 1..])),
         None => (pattern, None),
-    };
+    }
+}
+
+fn parse_one(pattern: &str) -> Result<TrustExcludeRule, TrustExcludeParseError> {
+    let (name_part, versions_part) = split_name_and_versions(pattern);
 
     let version_ranges = match versions_part {
         None => None,
@@ -1125,10 +1133,19 @@ mod tests {
     #[test]
     fn default_excludes_known_provenance_churn_packages() {
         let r = TrustExcludeRules::default();
+        // Every entry parses into exactly one rule — a malformed default
+        // would otherwise silently drop protection or panic at first use.
+        assert_eq!(r.len(), DEFAULT_TRUST_POLICY_EXCLUDES.len());
         for package in DEFAULT_TRUST_POLICY_EXCLUDES {
+            let (name, versions) = split_name_and_versions(package);
+            // Bare-name entries exempt every version. Version-scoped entries
+            // deliberately do not, so they get their own targeted tests.
+            if versions.is_some() {
+                continue;
+            }
             assert!(
-                r.matches(package, &node_semver::Version::parse("1.0.0").unwrap()),
-                "{package} should be globally excluded"
+                r.matches(name, &node_semver::Version::parse("1.0.0").unwrap()),
+                "{name} should be globally excluded"
             );
         }
         assert!(!r.matches("left-pad", &node_semver::Version::parse("1.0.0").unwrap()));
@@ -1166,9 +1183,15 @@ mod tests {
             "@hono/node-server",
             &node_semver::Version::parse("1.19.15").unwrap()
         ));
+        // Every version, not just the 1.x line — the exclusion is
+        // intentionally package-wide (see DEFAULT_TRUST_POLICY_EXCLUDES).
         assert!(r.matches(
             "@hono/node-server",
             &node_semver::Version::parse("2.0.10").unwrap()
+        ));
+        assert!(r.matches(
+            "@hono/node-server",
+            &node_semver::Version::parse("2.1.0").unwrap()
         ));
         assert!(!r.matches("hono", &node_semver::Version::parse("1.19.15").unwrap()));
     }
