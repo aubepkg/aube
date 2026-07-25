@@ -608,3 +608,22 @@ JSON
 	assert_success
 	assert_output ""
 }
+
+@test "aube run --complete answers before the useStderr redirect and guards" {
+	# `useStderr=true` dup2s stdout onto stderr at startup, and a foreign
+	# `packageManager` pin trips the guardrail — both before command
+	# dispatch. The completion probe has to return ahead of both, or
+	# `usage` reads an empty stdout.
+	cat >package.json <<'JSON'
+{
+  "name": "guarded",
+  "version": "1.0.0",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": { "build": "tsc -p ." }
+}
+JSON
+	echo "useStderr=true" >.npmrc
+	run --separate-stderr aube run --complete
+	assert_success
+	assert_output "build:tsc -p ."
+}

@@ -668,6 +668,27 @@ fn inner_main() -> miette::Result<i32> {
         Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
     };
 
+    // `run --complete` is the shell-completion probe behind
+    // `complete "script"` in the usage spec. It answers from the nearest
+    // `package.json` and nothing else, so it returns here — ahead of
+    // every piece of startup that would either cost a TAB press real time
+    // or swallow the candidate list outright:
+    //
+    //   - `useStderr` dup2s stdout onto stderr, and `usage` reads the
+    //     child's stdout, so the completions would vanish;
+    //   - `self_version::maybe_switch` can download and re-exec a
+    //     different aube for a keypress;
+    //   - `enforce_package_manager_guardrails` hard-errors in a project
+    //     that pins a different package manager.
+    //
+    // None of those are things a completion helper should do.
+    if let Some(Commands::Run(args)) = cli.command.as_ref()
+        && args.complete
+    {
+        commands::run::print_script_completions();
+        return Ok(0);
+    }
+
     // `--color` / `--no-color` take effect before anything else touches
     // color state: we translate the flags into the env vars that miette,
     // clx, `supports-color`, and spawned child processes all already

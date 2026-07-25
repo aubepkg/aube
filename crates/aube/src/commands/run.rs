@@ -137,14 +137,6 @@ pub async fn run(
     run_args: RunArgs,
     filter: aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<Option<i32>> {
-    // Completion probe: answer from package.json alone, before any setting
-    // override, install check, or runtime resolution runs. A TAB press must
-    // stay cheap and must never fail — outside a project there is simply
-    // nothing to offer.
-    if run_args.complete {
-        print_script_completions();
-        return Ok(Some(0));
-    }
     run_args.network.install_overrides();
     run_args.lockfile.install_overrides();
     run_args.virtual_store.install_overrides();
@@ -333,7 +325,7 @@ fn prompt_for_script() -> miette::Result<Option<String>> {
 /// Best-effort by design: a missing, unreadable, or malformed
 /// `package.json` prints nothing rather than erroring, because the caller
 /// is a TAB press and completion noise is worse than no completions.
-fn print_script_completions() {
+pub(crate) fn print_script_completions() {
     let Some(root) = crate::dirs::cwd()
         .ok()
         .and_then(|cwd| crate::dirs::find_project_root(&cwd))
@@ -348,7 +340,10 @@ fn print_script_completions() {
         out.push_str(&completion_line(name, cmd));
         out.push('\n');
     }
-    print!("{out}");
+    // `write_all` rather than `print!`: the latter panics if stdout is
+    // gone, and a completion helper whose reader closed the pipe should
+    // just stop, not abort with a panic message.
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), out.as_bytes());
 }
 
 /// Format one `name:command` completion line. `usage` splits each line on
