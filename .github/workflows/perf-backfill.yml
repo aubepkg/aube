@@ -137,6 +137,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # Tags, so the validation below can check that every note attaches to
+          # a commit some release tag points at. Fetched here rather than
+          # trusted from the measure job's checkout, which untrusted binaries
+          # ran inside.
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
@@ -151,14 +156,18 @@ jobs:
 
       # The measure job runs 64 downloaded executables in a writable checkout,
       # so anything it hands over is untrusted input crossing into a job that
-      # can write to the repository. Two checks before the write token is used.
+      # can write to the repository. Everything below runs before the write
+      # token is in scope.
       #
-      # What this defends is the shape of the data, not its truthfulness: a
-      # subject that lies about its own performance cannot be caught here, and
-      # no arrangement of jobs could catch it, because the subject *is* the
-      # measurement. What it stops is a tampered bundle carrying extra refs or
-      # arbitrary blobs into this repository.
+      # What this defends is the shape and placement of the data, not its
+      # truthfulness. A subject that lies about its own performance cannot be
+      # caught here, and no arrangement of jobs could catch it, because the
+      # subject *is* the measurement. What it stops is a tampered bundle
+      # carrying extra refs, notes on unrelated objects, records for another
+      # benchmark, or non-numeric metrics into this repository.
       - name: Verify the bundle carries only measurements
+        env:
+          EXPECTED_BENCH: release-graph
         run: |
           git bundle verify notes.bundle
 
@@ -171,31 +180,47 @@ jobs:
 
           git fetch notes.bundle 'refs/notes/tak:refs/notes/tak'
 
-          # Every line of every note must be a tak record. A note holding
-          # anything else means the ref was written by something other than tak.
-          git notes --ref=tak list | awk '{print $2}' > /tmp/tak-commits
-          : > /tmp/tak-records
-          while IFS= read -r commit; do
-            git notes --ref=tak show "$commit" >> /tmp/tak-records
-          done < /tmp/tak-commits
+          # Notes may only attach to something a release tag points at. Backfill
+          # measures published releases and nothing else, so a note anywhere
+          # else was not written by the run we asked for. Both the tag object
+          # and its peeled commit are accepted.
+          git for-each-ref refs/tags --format='%(objectname)%0a%(*objectname)' \
+            | grep -v '^$' | sort -u > /tmp/tag-objects
 
+          git notes --ref=tak list > /tmp/note-list
           bad=0
-          count=0
-          while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            count=$((count + 1))
-            printf '%s' "$line" | jq -e '
-              type == "object" and has("v") and has("bench")
-              and (.metrics | type == "object")
-            ' > /dev/null 2>&1 || { echo "::error::not a tak record: $line"; bad=1; }
-          done < /tmp/tak-records
+          notes=0
+          records=0
+          while read -r _blob target; do
+            notes=$((notes + 1))
+            if ! grep -qx "$target" /tmp/tag-objects; then
+              echo "::error::note on $target, which no release tag points at"
+              bad=1
+              continue
+            fi
+            # Shape alone would accept a forged record, so this also pins the
+            # schema version, the benchmark name, and that metrics are numbers.
+            git notes --ref=tak show "$target" > /tmp/note-body
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              records=$((records + 1))
+              printf '%s' "$line" | jq -e --arg want "$EXPECTED_BENCH" '
+                type == "object"
+                and .v == 1
+                and .bench == $want
+                and (.metrics | type == "object")
+                and (.metrics | length > 0)
+                and ([.metrics[] | type] | all(. == "number"))
+              ' > /dev/null 2>&1 || { echo "::error::rejected on $target: $line"; bad=1; }
+            done < /tmp/note-body
+          done < /tmp/note-list
 
           if [ "$bad" -ne 0 ]; then exit 1; fi
-          if [ "$count" -eq 0 ]; then
+          if [ "$records" -eq 0 ]; then
             echo "::error::the bundle contains no measurements"
             exit 1
           fi
-          echo "verified $count records across $(wc -l < /tmp/tak-commits) commits"
+          echo "verified $records records across $notes tagged commits"
 
       # `tak push` rather than a plain `git push`: it re-fetches and merges with
       # cat_sort_uniq when it loses a race, which it can against perf.yml.
