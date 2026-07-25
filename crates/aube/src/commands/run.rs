@@ -350,17 +350,22 @@ fn command_column_width(name_column: usize, terminal: usize) -> usize {
     }
 }
 
-/// Width of the terminal the picker draws on, falling back to 80 when
-/// stderr isn't a TTY or the size can't be read. `$COLUMNS` wins because
-/// it's what the user's shell reports for the current window.
+/// Width of the terminal the picker draws on.
+///
+/// Queried from stderr, because that's where `demand` renders and what it
+/// sizes itself against — budgeting rows against anything else is how they
+/// end up disagreeing. `$COLUMNS` is only a fallback for when the size
+/// can't be read: it's an inherited value that goes stale on resize, and
+/// trusting it over a live `ioctl` would put rows past the real edge and
+/// bring the wrapping right back. 80 when neither is available.
 fn terminal_width() -> usize {
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
+    console::Term::stderr()
+        .size_checked()
+        .map(|(_rows, cols)| cols as usize)
         .or_else(|| {
-            console::Term::stderr()
-                .size_checked()
-                .map(|(_rows, cols)| cols as usize)
+            std::env::var("COLUMNS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
         })
         .filter(|cols| *cols > 0)
         .unwrap_or(80)
