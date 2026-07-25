@@ -1,0 +1,109 @@
+name: perf-backfill
+
+# Seeds refs/notes/tak with measurements of already-published aube binaries, so
+# the performance history starts with a real series instead of one point.
+#
+# The alternative is rebuilding aube at 64 historical commits, which is hours of
+# compute and fails outright on old commits whose dependencies no longer
+# resolve. Downloading what was already published takes minutes and measures the
+# exact artifact users installed.
+#
+# Dispatch-only, and effectively idempotent: release binaries are immutable, so
+# a second run produces byte-identical records that cat_sort_uniq collapses on
+# merge. Re-running is harmless, just pointless.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Most recent releases to measure
+        required: false
+        default: "64"
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: perf-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: Backfill
+    # Same runner class as perf.yml. Absolute instruction counts shift between
+    # machine types by more than a real regression does, so the backfilled
+    # series and the ongoing one have to come from the same kind of machine.
+    runs-on: namespace-profile-endev-linux-amd64
+    timeout-minutes: 60
+    permissions:
+      contents: write # pushing refs/notes/tak is a write to this repository
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # tak resolves each release tag to the commit it points at, so a
+          # measurement lands on the commit that produced it rather than on
+          # HEAD. That needs the tags, and a shallow checkout has none.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        with:
+          cache: false
+        env:
+          MISE_LOCKED: "1"
+
+      - name: Install valgrind
+        run: |
+          command -v valgrind || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends valgrind
+          }
+          valgrind --version
+
+      # `sbom` rather than tak's default of `--version`. aube's `-V` is
+      # documented as "print version and check for updates", and a subject that
+      # talks to the network cannot hold a stable instruction count.
+      #
+      # `sbom` reads only the committed lockfile — no node_modules, no store, no
+      # registry — so it needs no setup and cannot be perturbed. It was checked
+      # against releases sampled across the whole range, back to v1.0.0-beta.1,
+      # and works on all of them; `prefix` does not exist that far back.
+      #
+      # Separate bench name from the CI series on purpose. These are release
+      # artifacts built by the release pipeline; perf.yml measures a plain
+      # `cargo build --release`. Plotting them on one axis would compare build
+      # configurations, not commits.
+      #
+      # The fixture path is absolute so it does not depend on the working
+      # directory tak happens to run each downloaded binary from.
+      - name: Backfill from published releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          tak backfill --bench release-graph --limit "$LIMIT" -- \
+            -C "$GITHUB_WORKSPACE/fixtures/medium" sbom
+
+      # persist-credentials: false means the push needs its own auth. Same
+      # pattern as perf.yml and bench-refresh.yml: re-point origin rather than
+      # pushing to a one-shot URL, so tak's retry path has a remote to fetch
+      # from when it loses a race.
+      - name: Push measurements
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git"
+          tak push
+
+      - name: Summary
+        run: |
+          {
+            echo "Backfilled up to ${LIMIT} releases into \`refs/notes/tak\` as \`release-graph\`."
+            echo
+            echo '```'
+            tak history 2>&1 | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          LIMIT: ${{ inputs.limit }}
