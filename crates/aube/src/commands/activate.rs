@@ -86,10 +86,7 @@ fn write_shim(shim_dir: &Path, name: &str, exe: &Path) -> miette::Result<()> {
     let dest = shim_dir.join(name);
     let _ = std::fs::remove_file(&dest);
     std::fs::hard_link(exe, &dest)
-        .or_else(|_| {
-            std::fs::copy(exe, &dest)?;
-            Ok(())
-        })
+        .or_else(|_| std::fs::copy(exe, &dest).map(|_| ()))
         .map_err(|e| {
             miette!(
                 code = aube_codes::errors::ERR_AUBE_SHIM_CREATE_FAILED,

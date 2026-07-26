@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031
 # Node runtime switching: version sources (.nvmrc / .node-version /
 # devEngines.runtime), install discovery (aube dir + mise dir), onFail
 # policies, and `aube runtime` CLI surface. Hermetic — no network:
