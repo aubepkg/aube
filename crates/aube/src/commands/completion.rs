@@ -193,12 +193,23 @@ async fn print_candidates(kind: CompletionKind, query: &str) {
     };
     candidates.sort_by(|a, b| a.0.cmp(&b.0));
     candidates.dedup_by(|a, b| a.0 == b.0);
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    write_candidates(&mut stdout, candidates);
+}
+
+fn write_candidates(writer: &mut impl Write, candidates: Vec<(String, String)>) {
     for (value, description) in candidates {
-        println!(
+        if writeln!(
+            writer,
             "{}:{}",
             escape_completion_field(&value),
             escape_completion_field(&description)
-        );
+        )
+        .is_err()
+        {
+            break;
+        }
     }
 }
 
@@ -346,8 +357,9 @@ fn escape_completion_field(value: &str) -> String {
 mod tests {
     use super::{
         bin_candidates, dependency_candidates, escape_completion_field, multicall_usage_spec,
-        package_name_from_spec, setting_candidates,
+        package_name_from_spec, setting_candidates, write_candidates,
     };
+    use std::io::{self, Write};
 
     #[test]
     fn aubr_spec_roots_run_arguments_and_dynamic_completion() {
@@ -410,6 +422,26 @@ mod tests {
         assert_eq!(
             escape_completion_field("1.0: useful\npackage"),
             "1.0\\: useful package"
+        );
+    }
+
+    #[test]
+    fn candidate_output_stops_quietly_on_broken_pipe() {
+        struct BrokenPipe;
+
+        impl Write for BrokenPipe {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        write_candidates(
+            &mut BrokenPipe,
+            vec![("react".to_string(), "19.1.0".to_string())],
         );
     }
 }

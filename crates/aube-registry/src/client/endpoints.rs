@@ -6,6 +6,7 @@ use super::{
 };
 use crate::Error;
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +51,12 @@ impl RegistryClient {
         limit: usize,
         timeout: std::time::Duration,
     ) -> Result<Vec<PackageSearchResult>, Error> {
-        let registry_url = self.config.registry_for(query);
+        let routing_name = if query.starts_with('@') && !query.contains('/') {
+            Cow::Owned(format!("{query}/"))
+        } else {
+            Cow::Borrowed(query)
+        };
+        let registry_url = self.config.registry_for(&routing_name);
         let mut url = reqwest::Url::parse(&format!(
             "{}/-/v1/search",
             registry_url.trim_end_matches('/')
@@ -61,9 +67,9 @@ impl RegistryClient {
             .append_pair("size", &limit.clamp(1, 250).to_string());
         let response = self
             .authed_for_package(
-                self.http_for_package(registry_url, query).get(url),
+                self.http_for_package(registry_url, &routing_name).get(url),
                 registry_url,
-                query,
+                &routing_name,
             )
             .timeout(timeout)
             .header("Accept", "application/json")
@@ -410,6 +416,37 @@ mod search_tests {
         let client = RegistryClient::from_config(config);
         let results = client
             .search_packages("@acme/tool", 5, std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(results[0].name, "@acme/tool");
+    }
+
+    #[tokio::test]
+    async fn incomplete_scope_search_uses_its_configured_registry() {
+        let default_server = MockServer::start().await;
+        let scoped_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/-/v1/search"))
+            .and(query_param("text", "@acme"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "objects": [{
+                    "package": {"name": "@acme/tool", "version": "2.0.0"}
+                }]
+            })))
+            .expect(1)
+            .mount(&scoped_server)
+            .await;
+
+        let mut config = crate::config::NpmConfig {
+            registry: default_server.uri(),
+            ..Default::default()
+        };
+        config
+            .scoped_registries
+            .insert("@acme".to_string(), scoped_server.uri());
+        let client = RegistryClient::from_config(config);
+        let results = client
+            .search_packages("@acme", 5, std::time::Duration::from_secs(1))
             .await
             .unwrap();
         assert_eq!(results[0].name, "@acme/tool");
