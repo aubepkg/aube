@@ -228,7 +228,14 @@ fn range_could_satisfy(task_range: &str, req: &str) -> bool {
             // Probe just above the exclusive boundary: `>3.0.5` covers
             // every version above 3.0.5, so use 3.0.5 + minimum patch
             // bump as the representative point.
-            v.patch() += 1;
+            let vp = v.into_parts();
+            v = nodejs_semver::Version::new(
+                vp.major,
+                vp.minor,
+                vp.patch + 1,
+                vp.pre_release,
+                vp.build,
+            );
         }
         return v.satisfies(&r);
     }
