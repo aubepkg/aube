@@ -88,6 +88,21 @@ mod workspace_helpers;
 
 pub(crate) use auto_install::{ensure_installed, ensure_installed_in};
 
+/// Resolve the directory a completion probe should inspect without changing
+/// the process cwd. Invalid `-C` targets yield no completions, matching the
+/// real command's chdir behavior without mutating an embedding host.
+pub(crate) fn completion_start_dir(dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let cwd = crate::dirs::cwd().ok()?;
+    match dir {
+        Some(dir) => {
+            let resolved = cwd.join(dir).canonicalize().ok()?;
+            (resolved.is_dir() && resolved.join("package.json").try_exists().is_ok())
+                .then_some(resolved)
+        }
+        None => Some(cwd),
+    }
+}
+
 pub(crate) fn settings_hoisting_limits_to_linker(
     value: aube_settings::resolved::HoistingLimits,
 ) -> aube_linker::HoistingLimits {

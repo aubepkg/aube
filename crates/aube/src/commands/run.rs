@@ -401,9 +401,6 @@ fn single_line(cmd: &str) -> String {
 /// `package.json` prints nothing rather than erroring, because the caller
 /// is a TAB press and completion noise is worse than no completions.
 pub(crate) fn print_script_completions(dir: Option<&Path>) {
-    let Ok(cwd) = crate::dirs::cwd() else {
-        return;
-    };
     // Establish where to search *without* chdir'ing. `cli_main` is a
     // library entry point, so an embedding host is driving this in-process
     // and would keep any cwd change we made.
@@ -420,16 +417,8 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
     // bit `chdir` does, and reports `Err` exactly when that bit is
     // missing. (`read_dir` would test the read bit instead and reject
     // execute-only directories a real run handles fine.)
-    let start = match dir {
-        Some(dir) => match cwd.join(dir).canonicalize() {
-            Ok(resolved)
-                if resolved.is_dir() && resolved.join("package.json").try_exists().is_ok() =>
-            {
-                resolved
-            }
-            _ => return,
-        },
-        None => cwd,
+    let Some(start) = super::completion_start_dir(dir) else {
+        return;
     };
     let Some(root) = crate::dirs::find_project_root(&start) else {
         return;
