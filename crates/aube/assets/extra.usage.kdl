@@ -1,4 +1,4 @@
-// `aube run <TAB>` offers the scripts from the package.json nearest the
+// `{run} <TAB>` offers the scripts from the package.json nearest the
 // shell's cwd.
 //
 // The command is fixed, so a `-C` on the line being completed is not
@@ -8,4 +8,4 @@
 // forwarding it would mean pasting user input into a shell command. The
 // helper itself honors `-C` for direct invocation, ready for a safer
 // channel upstream.
-complete "script" run="{bin} run --complete" descriptions=#true
+complete "script" run="{run} --complete" descriptions=#true

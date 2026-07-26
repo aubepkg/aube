@@ -62,7 +62,7 @@ fn print_usage_spec(embedder: &'static aube_util::Embedder) -> i32 {
     // binary name into the shell snippet the completer runs.
     spec.extend_from_slice(
         include_str!("../assets/extra.usage.kdl")
-            .replace("{bin}", embedder.name)
+            .replace("{run}", &format!("{} run", embedder.name))
             .as_bytes(),
     );
 
