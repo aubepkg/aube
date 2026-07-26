@@ -82,7 +82,7 @@ fn ensure_success(shell: &str, output: &std::process::Output) -> Result<()> {
 
 fn aubr_usage_spec() -> String {
     let mut cmd = crate::command();
-    let mut spec = clap_usage::spec(&mut cmd, "aube");
+    let mut spec = clap_usage::spec(&mut cmd, aube_util::prog());
     let root_flags = spec
         .cmd
         .flags
@@ -102,7 +102,7 @@ fn aubr_usage_spec() -> String {
     run.full_cmd = vec!["aubr".to_string()];
     run.aliases.clear();
     run.hidden_aliases.clear();
-    run.usage = run.usage.replacen("aube run", "aubr", 1);
+    run.usage = run.usage.replacen(&aube_util::cmd("run"), "aubr", 1);
 
     spec.name = "aubr".to_string();
     spec.bin = "aubr".to_string();
