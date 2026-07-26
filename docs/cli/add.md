@@ -3,6 +3,7 @@
 
 - **Usage**: `aube add [FLAGS] [PACKAGES]…`
 - **Aliases**: `a`
+- **Effect**: modifies state
 
 Add a dependency
 

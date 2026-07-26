@@ -2,6 +2,7 @@
 # `aube patch-remove`
 
 - **Usage**: `aube patch-remove [PACKAGES]…`
+- **Effect**: destructive — may delete or irreversibly overwrite
 
 Remove patch entries from `pnpm.patchedDependencies`
 

@@ -2,6 +2,7 @@
 # `aube audit`
 
 - **Usage**: `aube audit [FLAGS]`
+- **Effect**: read-only
 
 Check installed packages against the registry advisory DB
 

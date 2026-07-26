@@ -2,6 +2,7 @@
 # `aube logout`
 
 - **Usage**: `aube logout [FLAGS]`
+- **Effect**: modifies state
 
 Remove a registry auth token from the user's ~/.npmrc
 

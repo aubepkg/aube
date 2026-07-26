@@ -22,6 +22,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "write",
         "hide": true,
         "help": "Bootstrap aube's cached node-gyp and print the executable path",
         "name": "__node-gyp-bootstrap",
@@ -63,6 +64,7 @@
                 ],
                 "flags": [],
                 "mounts": [],
+                "effect": "read",
                 "hide": false,
                 "help": "Get a package's public or restricted status",
                 "name": "status",
@@ -74,6 +76,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "subcommand_required": true,
             "help": "Get package visibility status",
@@ -120,6 +123,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Grant a team read-only or read-write access to a package",
             "name": "grant",
@@ -164,6 +168,7 @@
                 ],
                 "flags": [],
                 "mounts": [],
+                "effect": "read",
                 "hide": false,
                 "help": "List collaborators for a package, optionally filtering to one user",
                 "name": "collaborators",
@@ -192,6 +197,7 @@
                 ],
                 "flags": [],
                 "mounts": [],
+                "effect": "read",
                 "hide": false,
                 "help": "List packages visible to the current user or an optional entity",
                 "name": "packages",
@@ -203,6 +209,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "subcommand_required": true,
             "help": "List packages visible to a user, organization, or team",
@@ -232,6 +239,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Alias for `list packages`",
             "name": "ls",
@@ -268,6 +276,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "destructive",
             "hide": false,
             "help": "Revoke a team's access to a package",
             "name": "revoke",
@@ -304,6 +313,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Set package visibility or a publish MFA requirement",
             "name": "set",
@@ -467,6 +477,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Manage package access and visibility on the registry",
@@ -501,6 +512,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Emit shell activation code for runtime tool shims",
         "name": "activate",
@@ -965,6 +977,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Add a dependency",
         "name": "add",
@@ -1022,6 +1035,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Approve ignored dependency build scripts",
         "help_long": "Approve ignored dependency build scripts.\n\nWrites entries under `allowBuilds` in `aube-workspace.yaml` (or `pnpm-workspace.yaml` if present).",
@@ -1329,6 +1343,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Check installed packages against the registry advisory DB",
         "name": "audit",
@@ -1377,6 +1392,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print the path to `node_modules/.bin`",
         "name": "bin",
@@ -1526,6 +1542,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Open package bug tracker URLs",
         "name": "bugs",
@@ -1564,6 +1581,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Delete metadata cache for the specified package(s)",
             "help_long": "Delete metadata cache for the specified package(s).\n\nSupports glob patterns; matches against the package name (e.g. `lodash`, `@babel/*`).",
@@ -1594,6 +1612,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "List the available packages in the metadata cache",
             "help_long": "List the available packages in the metadata cache.\n\nOptional glob filters narrow the result; with no filter every cached package is listed.",
@@ -1612,6 +1631,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "List configured registries from the project + user `.npmrc`",
             "help_long": "List configured registries from the project + user `.npmrc`.\n\nAube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.",
@@ -1665,6 +1685,7 @@
               }
             ],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Remove stale extracted primer files from the metadata cache",
             "name": "prune",
@@ -1705,6 +1726,7 @@
               }
             ],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "View the cached metadata for a single package",
             "help_long": "View the cached metadata for a single package.\n\nPrints a summary (versions, dist-tags, ETag, fetched-at) by default; `--json` dumps the raw cache file.",
@@ -1717,6 +1739,7 @@
         "args": [],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Inspect and manage the packument metadata cache",
@@ -1745,6 +1768,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print a file from the global store by integrity or hex hash",
         "name": "cat-file",
@@ -1772,6 +1796,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print the cached package index JSON for `<name>@<version>`",
         "name": "cat-index",
@@ -1801,6 +1826,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Verify installed packages can resolve their declared deps",
         "help_long": "Verify installed packages can resolve their declared deps.\n\nWalks the `node_modules/` symlink tree and confirms every dependency in each `package.json` resolves to a real entry.",
@@ -2028,6 +2054,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Clean install: delete node_modules, then install with frozen lockfile",
         "help_long": "Clean install: delete node_modules, then install with frozen lockfile.\n\nUse in CI to guarantee a reproducible install from the committed lockfile.",
@@ -2066,6 +2093,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Remove `node_modules` across every workspace project",
         "help_long": "Remove `node_modules` across every workspace project.\n\n`--lockfile` / `-l` also deletes lockfiles. A `clean` script in the root `package.json` overrides the built-in.",
@@ -2093,6 +2121,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Generate shell completions (bash, zsh, fish)",
         "name": "completion",
@@ -2170,6 +2199,7 @@
               }
             ],
             "mounts": [],
+            "effect": "destructive",
             "hide": false,
             "help": "Delete a key from aube config or the selected `.npmrc` file",
             "name": "delete",
@@ -2201,6 +2231,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Explain a known setting, including defaults and supported config sources",
             "name": "explain",
@@ -2229,6 +2260,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Search known settings by name, source key, or description",
             "name": "find",
@@ -2316,6 +2348,7 @@
               }
             ],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Print the effective value of a key",
             "name": "get",
@@ -2401,6 +2434,7 @@
               }
             ],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Print every key/value from aube config and selected `.npmrc` file(s)",
             "name": "list",
@@ -2482,6 +2516,7 @@
               }
             ],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Write a key=value pair to aube config or the selected `.npmrc` file",
             "name": "set",
@@ -2499,6 +2534,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Browse known settings in an interactive terminal UI",
             "name": "tui",
@@ -2578,6 +2614,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Read and write settings in `.npmrc`",
         "name": "config",
@@ -2943,6 +2980,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Re-resolve the lockfile to collapse duplicate versions",
         "name": "dedupe",
@@ -3236,6 +3274,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Deploy a workspace package into a target directory with deps inlined",
         "name": "deploy",
@@ -3425,6 +3464,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Mark published versions of a package as deprecated on the registry",
         "name": "deprecate",
@@ -3598,6 +3638,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Report deprecated packages in the resolved dependency graph",
         "name": "deprecations",
@@ -3631,6 +3672,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Show critical path / starvation / per-pkg lifecycle from a saved trace",
             "name": "analyze",
@@ -3712,6 +3754,7 @@
               }
             ],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Diff two diag JSONL traces and surface per-operation regressions",
             "name": "compare",
@@ -3723,6 +3766,7 @@
         "args": [],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Diagnostic trace analysis (compare/analyze JSONL traces)",
@@ -3786,6 +3830,7 @@
               }
             ],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Add or update a dist-tag on a package",
             "help_long": "Add or update a dist-tag on a package.\n\nSpec must include a concrete version: `aube dist-tag add react@18.2.0 stable`. The tag argument defaults to `latest`.",
@@ -3815,6 +3860,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "List every dist-tag for a package",
             "help_long": "List every dist-tag for a package.\n\nReads the package name from `./package.json` when no argument is given.",
@@ -3872,6 +3918,7 @@
               }
             ],
             "mounts": [],
+            "effect": "destructive",
             "hide": false,
             "help": "Remove a dist-tag from a package",
             "name": "rm",
@@ -4006,6 +4053,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Manage package distribution tags on the registry",
@@ -4312,6 +4360,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Run broad install-health diagnostics",
         "name": "doctor",
@@ -4920,6 +4969,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Download lockfile dependencies into the store without linking node_modules",
         "name": "fetch",
@@ -5081,6 +5131,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "List packages whose cached index references a given file hash",
         "name": "find-hash",
@@ -5166,6 +5217,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Alias for `config get` (hidden; prefer `config get`)",
         "name": "get",
@@ -5197,6 +5249,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print packages whose install scripts were skipped by `pnpm.allowBuilds`",
         "name": "ignored-builds",
@@ -5253,6 +5306,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Convert a supported lockfile into aube-lock.yaml",
         "name": "import",
@@ -5440,6 +5494,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Create a `package.json` in the current directory",
         "name": "init",
@@ -6046,6 +6101,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Install all dependencies",
         "name": "install",
@@ -6436,6 +6492,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Alias for `list --long` (hidden; prefer `list --long`)",
         "name": "la",
@@ -6642,6 +6699,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Report the licenses of installed dependencies",
         "name": "licenses",
@@ -6685,6 +6743,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Link a local package globally, or into the current project",
         "name": "link",
@@ -6848,6 +6907,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print the installed dependency tree",
         "name": "list",
@@ -7012,6 +7072,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Alias for `list --long` (hidden; prefer `list --long`)",
         "name": "ll",
@@ -7191,6 +7252,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Store a registry auth token in the user's ~/.npmrc",
         "name": "login",
@@ -7349,6 +7411,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Remove a registry auth token from the user's ~/.npmrc",
         "name": "logout",
@@ -7606,6 +7669,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Report dependencies whose installed version lags behind the registry",
         "name": "outdated",
@@ -7755,6 +7819,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Manage package owners (not implemented — use `npm owner`)",
         "name": "owner",
@@ -7947,6 +8012,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Create a publishable `.tgz` tarball from the current project",
         "name": "pack",
@@ -8008,6 +8074,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Extract a package into an edit directory so it can be patched",
         "name": "patch",
@@ -8059,6 +8126,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Generate a `.patch` file from a `aube patch` edit directory",
         "name": "patch-commit",
@@ -8087,6 +8155,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "destructive",
         "hide": false,
         "help": "Remove patch entries from `pnpm.patchedDependencies`",
         "name": "patch-remove",
@@ -8123,6 +8192,7 @@
               }
             ],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Check for unmet and missing peer-dependency issues by reading the lockfile",
             "help_long": "Check for unmet and missing peer-dependency issues by reading the lockfile.\n\nExits with status 1 if any issue is reported.",
@@ -8136,6 +8206,7 @@
         "args": [],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Inspect peer-dependency resolution from the lockfile",
@@ -8285,6 +8356,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Manage package.json entries (not implemented — use `npm pkg`)",
         "name": "pkg",
@@ -8316,6 +8388,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print the current package prefix directory",
         "name": "prefix",
@@ -8361,6 +8434,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Remove extraneous packages from project `node_modules`",
         "help_long": "Remove extraneous packages from project `node_modules`.\n\nReads the lockfile, computes the packages still reachable from each importer, and removes stale top-level links, stale virtual-store entries, and dangling .bin links. Does not modify package.json or the lockfile.",
@@ -8636,6 +8710,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Publish the current package to the registry",
         "name": "publish",
@@ -8668,6 +8743,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Alias for `clean` — remove `node_modules` across every workspace project",
         "help_long": "Alias for `clean` — remove `node_modules` across every workspace project.\n\nA `purge` script in the root `package.json` overrides the built-in.",
@@ -8750,6 +8826,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Query packages in the resolved dependency graph",
         "name": "query",
@@ -8778,6 +8855,7 @@
         ],
         "flags": [],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Re-run root lifecycle scripts and allowlisted dependency builds",
         "name": "rebuild",
@@ -9077,6 +9155,7 @@
           }
         ],
         "mounts": [],
+        "effect": "destructive",
         "hide": false,
         "help": "Remove a dependency",
         "name": "remove",
@@ -9338,6 +9417,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print the path to `node_modules`",
         "name": "root",
@@ -9805,6 +9885,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Show the resolved runtime and installed versions",
             "name": "list",
@@ -9892,6 +9973,7 @@
               }
             ],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Pin a runtime in package.json devEngines.runtime and install it",
             "name": "set",
@@ -9903,6 +9985,7 @@
         "args": [],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Manage the project's Node.js runtime (pin, install, inspect)",
@@ -9992,6 +10075,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Generate a Software Bill of Materials (CycloneDX or SPDX)",
         "name": "sbom",
@@ -10140,6 +10224,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Search the registry for packages (not implemented — use `npm search`)",
         "name": "search",
@@ -10218,6 +10303,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": true,
         "help": "Alias for `config set` (hidden; prefer `config set`)",
         "name": "set",
@@ -10366,6 +10452,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Set a `package.json` script (not implemented — use `npm set-script`)",
         "name": "set-script",
@@ -10382,6 +10469,7 @@
         "args": [],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Show the companies sponsoring aube and the jdx.dev open source tools",
         "name": "sponsors",
@@ -10530,6 +10618,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Stage packages for publishing (not implemented — use `npm stage`)",
         "name": "stage",
@@ -11012,6 +11101,7 @@
             ],
             "flags": [],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Add one or more packages to the global store without linking them into any project",
             "help_long": "Add one or more packages to the global store without linking them into any project.\n\nEach argument is a package spec: `lodash`, `lodash@4.17.21`, `react@next`, or `express@^4`.",
@@ -11030,6 +11120,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Show the store path",
             "name": "path",
@@ -11047,6 +11138,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "write",
             "hide": false,
             "help": "Remove unreferenced packages from the global store",
             "help_long": "Remove unreferenced packages from the global store.\n\nOperates on the store printed by `aube store path`; it does not touch project node_modules directories, manifests, or lockfiles.\n\nIt keeps files referenced by cached package indexes and, on hardlink filesystems, files that still have project hardlink references.\n\nOn reflink filesystems such as APFS or btrfs, link counts cannot prove project reachability, so pruning relies on cached package indexes.",
@@ -11065,6 +11157,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Verify the store against cached package indexes",
             "help_long": "Verify the store against cached package indexes.\n\nConfirms every file referenced by a cached package index is still present in the store and that its BLAKE3 hash matches. Exits non-zero when any corruption is detected.",
@@ -11077,6 +11170,7 @@
         "args": [],
         "flags": [],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "subcommand_required": true,
         "help": "Manage the global store",
@@ -11452,6 +11546,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Manage registry auth tokens (not implemented — use `npm token`)",
         "name": "token",
@@ -11631,6 +11726,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Clear an existing deprecation on the registry",
         "name": "undeprecate",
@@ -11673,6 +11769,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Unlink a package (remove linked entries from node_modules)",
         "name": "unlink",
@@ -11869,6 +11966,7 @@
           }
         ],
         "mounts": [],
+        "effect": "destructive",
         "hide": false,
         "help": "Remove a package (or a single version) from the registry",
         "name": "unpublish",
@@ -12308,6 +12406,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Update dependencies",
         "name": "update",
@@ -12453,6 +12552,7 @@
           }
         ],
         "mounts": [],
+        "effect": "write",
         "hide": false,
         "help": "Bump the version in package.json (and optionally create a git commit + tag)",
         "name": "version",
@@ -12624,6 +12724,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print package metadata from the registry",
         "name": "view",
@@ -12778,6 +12879,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": true,
         "help": "Report the current registry user (not implemented — use `npm whoami`)",
         "name": "whoami",
@@ -12870,6 +12972,7 @@
           }
         ],
         "mounts": [],
+        "effect": "read",
         "hide": false,
         "help": "Print reverse dependency chains explaining why a package is installed",
         "name": "why",
@@ -13285,5 +13388,6 @@
       "descriptions": true
     }
   },
-  "about": "A fast Node.js package manager"
+  "about": "A fast Node.js package manager",
+  "min_usage_version": "4.0"
 }

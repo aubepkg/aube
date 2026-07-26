@@ -2,6 +2,7 @@
 # `aube version`
 
 - **Usage**: `aube version [FLAGS] [NEW_VERSION]`
+- **Effect**: modifies state
 
 Bump the version in package.json (and optionally create a git commit + tag)
 

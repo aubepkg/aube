@@ -3,6 +3,7 @@
 
 - **Usage**: `aube list [FLAGS] [PATTERN]`
 - **Aliases**: `ls`
+- **Effect**: read-only
 
 Print the installed dependency tree
 

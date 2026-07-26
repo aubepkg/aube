@@ -14,6 +14,7 @@
 
 mod argv;
 pub mod cli_args;
+pub mod command_effects;
 pub mod commands;
 mod dep_chain;
 mod deprecations;
