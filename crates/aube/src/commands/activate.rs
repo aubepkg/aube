@@ -58,7 +58,6 @@ fn ensure_shims(shim_dir: &Path) -> miette::Result<()> {
 #[cfg(unix)]
 fn write_shim(shim_dir: &Path, name: &str) -> miette::Result<()> {
     let dest = shim_dir.join(name);
-    let _ = std::fs::remove_file(&dest);
     write_dispatcher_shim(&dest, name, aube_util::prog()).map_err(|e| {
         miette!(
             code = aube_codes::errors::ERR_AUBE_SHIM_CREATE_FAILED,
@@ -70,6 +69,7 @@ fn write_shim(shim_dir: &Path, name: &str) -> miette::Result<()> {
 
 #[cfg(unix)]
 fn write_dispatcher_shim(dest: &Path, name: &str, program: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
 
     let program = shell_double_quote(program);
@@ -77,8 +77,24 @@ fn write_dispatcher_shim(dest: &Path, name: &str, program: &str) -> std::io::Res
         "#!/bin/sh\n# aube-tool-shim v1\nexec {program} {} {name} \"$@\"\n",
         crate::tool_shims::DISPATCH_ARG
     );
-    std::fs::write(dest, script)?;
-    std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
+    let tmp = aube_util::fs_atomic::sibling_tempdir(dest);
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(script.as_bytes())?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o755))?;
+        drop(file);
+        // The temp file lives beside the destination, so Unix rename replaces
+        // the old executable atomically. Readers see either complete shim,
+        // never the remove/write/chmod window activation previously exposed.
+        std::fs::rename(&tmp, dest)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(not(unix))]
@@ -207,5 +223,32 @@ mod tests {
             std::fs::read_to_string(node).expect("embedder shim should be readable"),
             "#!/bin/sh\n# aube-tool-shim v1\nexec \"nublike\" __aube-shim node \"$@\"\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dispatcher_shim_atomically_replaces_existing_file() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let dir = tempfile::tempdir().expect("shim tempdir should be created");
+        let node = dir.path().join("node");
+        std::fs::write(&node, "old shim").expect("old shim should be created");
+        let old_inode = std::fs::metadata(&node)
+            .expect("old shim should have metadata")
+            .ino();
+
+        write_dispatcher_shim(&node, "node", "aube").expect("shim should be replaced");
+
+        let metadata = std::fs::metadata(&node).expect("new shim should have metadata");
+        assert_ne!(metadata.ino(), old_inode);
+        assert_ne!(metadata.permissions().mode() & 0o111, 0);
+        assert_eq!(
+            std::fs::read_to_string(&node).expect("new shim should be complete"),
+            "#!/bin/sh\n# aube-tool-shim v1\nexec \"aube\" __aube-shim node \"$@\"\n"
+        );
+        let entries = std::fs::read_dir(dir.path())
+            .expect("shim dir should be readable")
+            .count();
+        assert_eq!(entries, 1, "temporary shim should be renamed away");
     }
 }
