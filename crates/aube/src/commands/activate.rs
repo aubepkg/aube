@@ -77,12 +77,19 @@ fn write_dispatcher_shim(dest: &Path, name: &str, program: &str) -> std::io::Res
         "#!/bin/sh\n# aube-tool-shim v1\nexec {program} {} {name} \"$@\"\n",
         crate::tool_shims::DISPATCH_ARG
     );
-    let tmp = aube_util::fs_atomic::sibling_tempdir(dest);
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
+    let (tmp, mut file) = loop {
+        let tmp = aube_util::fs_atomic::sibling_tempdir(dest);
+        match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&tmp)?;
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    let result = (|| {
         file.write_all(script.as_bytes())?;
         file.set_permissions(std::fs::Permissions::from_mode(0o755))?;
         drop(file);
