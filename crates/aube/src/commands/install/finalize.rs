@@ -101,7 +101,12 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
     // block and the branded line as redundant twins.
     let install_is_noop = stats.packages_linked == 0 && stats.top_level_linked == 0;
     if let Some(p) = prog_ref {
-        p.finish(!install_is_noop);
+        let tty_behavior = if install_is_noop {
+            crate::progress::TtyFinishBehavior::Clear
+        } else {
+            crate::progress::TtyFinishBehavior::Preserve
+        };
+        p.finish(!install_is_noop, tty_behavior);
     }
 
     if !virtual_store_only {

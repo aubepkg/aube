@@ -146,6 +146,12 @@ pub struct InstallProgress {
     unpacked_sizes: Arc<Mutex<HashMap<String, u64>>>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum TtyFinishBehavior {
+    Preserve,
+    Clear,
+}
+
 #[derive(Clone)]
 enum Mode {
     Tty {
@@ -971,11 +977,11 @@ impl InstallProgress {
         }
     }
 
-    /// Finalize the progress display. TTY mode leaves the collapsed final
-    /// root row behind so the terminal does not visibly blink/clear right
-    /// before the install summary. CI mode blocks until the heartbeat thread has actually
-    /// stopped so no stray tick can appear after this returns, and
-    /// optionally writes the final framed `[ ✓ … ]` status line.
+    /// Finalize the progress display. TTY mode either preserves the collapsed
+    /// final root row or clears it according to `tty_behavior`. CI mode blocks
+    /// until the heartbeat thread has actually stopped so no stray tick can
+    /// appear after this returns, and optionally writes the final framed
+    /// `[ ✓ … ]` status line.
     /// Idempotent.
     ///
     /// `print_ci_summary`: set to `false` when a later call site will
@@ -983,7 +989,7 @@ impl InstallProgress {
     /// doesn't double up with [`print_install_summary`]). Set to `true`
     /// for early-return paths (`--lockfile-only`, drift check) that
     /// want the framed summary to remain the end of CI log output.
-    pub fn finish(&self, print_ci_summary: bool) {
+    pub fn finish(&self, print_ci_summary: bool, tty_behavior: TtyFinishBehavior) {
         match &self.mode {
             Mode::Tty {
                 root,
@@ -1014,7 +1020,10 @@ impl InstallProgress {
                 );
                 root.set_status(ProgressStatus::Done);
                 finished.store(true, Ordering::Relaxed);
-                clx::progress::stop();
+                match tty_behavior {
+                    TtyFinishBehavior::Preserve => clx::progress::stop(),
+                    TtyFinishBehavior::Clear => clx::progress::stop_clear(),
+                }
             }
             Mode::Ci(s) => s.stop(print_ci_summary),
             Mode::Events(s) => {
@@ -1475,7 +1484,7 @@ mod tests {
             progress.set_phase("future-phase");
             progress.inc_downloaded_bytes(512);
             drop(progress.start_fetch("dep", "1.0.0"));
-            progress.finish(false);
+            progress.finish(false, TtyFinishBehavior::Preserve);
         })
         .await;
 
