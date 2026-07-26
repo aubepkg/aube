@@ -57,10 +57,10 @@ pub fn pick_version_for_add<'a>(
     };
     let strict = minimum_release_age.is_some_and(|m| m.strict);
     let exclude = minimum_release_age.map(|m| &m.exclude);
-    let is_age_exempt = |ver: &str, parsed: Option<&node_semver::Version>| {
+    let is_age_exempt = |ver: &str, parsed: Option<&nodejs_semver::Version>| {
         exclude.is_some_and(|ex| match parsed {
             Some(v) => ex.matches(registry_name, v),
-            None => match node_semver::Version::parse(ver) {
+            None => match nodejs_semver::Version::parse(ver) {
                 Ok(v) => ex.matches(registry_name, &v),
                 Err(_) => ex.matches_name_only(registry_name),
             },
@@ -119,7 +119,7 @@ pub(crate) fn pick_version<'a>(
     cutoff: Option<&str>,
     exempt_cutoff: Option<&str>,
     strict: bool,
-    is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
+    is_age_exempt: impl Fn(&str, Option<&nodejs_semver::Version>) -> bool,
 ) -> PickResult<'a> {
     // Handle dist-tag references. If the requested range is a tag
     // name and the packument has that tag, use the tagged version
@@ -132,7 +132,7 @@ pub(crate) fn pick_version<'a>(
     // npm and pnpm fall back to the highest non-prerelease version.
     // Do the same so `aube install foo` does not silently fail on a
     // packument that just happens to lack the tag.
-    let range = match node_semver::Range::parse(normalize_range(range_str)) {
+    let range = match nodejs_semver::Range::parse(normalize_range(range_str)) {
         Ok(r) => r,
         Err(_) => {
             // Reject protocol-prefixed ranges that survived workspace /
@@ -156,7 +156,7 @@ pub(crate) fn pick_version<'a>(
             } else {
                 return PickResult::NoMatch;
             };
-            match node_semver::Range::parse(normalize_range(&effective_range)) {
+            match nodejs_semver::Range::parse(normalize_range(&effective_range)) {
                 Ok(r) => r,
                 Err(_) => return PickResult::NoMatch,
             }
@@ -178,7 +178,7 @@ pub(crate) fn pick_version<'a>(
     // A version's effective cutoff: exempt versions answer to the
     // time-based wall (`exempt_cutoff`) only; everyone else answers to
     // the merged `cutoff`.
-    let passes_cutoff = |ver: &str, parsed: Option<&node_semver::Version>| -> bool {
+    let passes_cutoff = |ver: &str, parsed: Option<&nodejs_semver::Version>| -> bool {
         let effective = if is_age_exempt(ver, parsed) {
             exempt_cutoff
         } else {
@@ -189,7 +189,7 @@ pub(crate) fn pick_version<'a>(
 
     // Prefer locked version if it satisfies and clears the cutoff.
     if let Some(locked_ver) = locked
-        && let Ok(v) = node_semver::Version::parse(locked_ver)
+        && let Ok(v) = nodejs_semver::Version::parse(locked_ver)
         && v.satisfies(&range)
         && passes_cutoff(locked_ver, Some(&v))
         && let Some(meta) = packument.versions.get(locked_ver)
@@ -207,7 +207,7 @@ pub(crate) fn pick_version<'a>(
     // not the publisher's preferred build).
     if !pick_lowest
         && let Some(latest_ver) = packument.dist_tags.get("latest")
-        && let Ok(v) = node_semver::Version::parse(latest_ver)
+        && let Ok(v) = nodejs_semver::Version::parse(latest_ver)
         && v.satisfies(&range)
         && passes_cutoff(latest_ver, Some(&v))
         && let Some(meta) = packument.versions.get(latest_ver)
@@ -220,12 +220,12 @@ pub(crate) fn pick_version<'a>(
     // related, not a real "no match in range".
     let mut had_satisfying_but_age_gated = false;
 
-    let mut best: Option<(node_semver::Version, &'a aube_registry::VersionMetadata)> = None;
-    let mut fallback_lowest: Option<(node_semver::Version, &'a aube_registry::VersionMetadata)> =
+    let mut best: Option<(nodejs_semver::Version, &'a aube_registry::VersionMetadata)> = None;
+    let mut fallback_lowest: Option<(nodejs_semver::Version, &'a aube_registry::VersionMetadata)> =
         None;
 
     for (ver_str, meta) in &packument.versions {
-        let Ok(v) = node_semver::Version::parse(ver_str) else {
+        let Ok(v) = nodejs_semver::Version::parse(ver_str) else {
             continue;
         };
         if !v.satisfies(&range) {
@@ -327,9 +327,9 @@ fn looks_like_protocol_range(range_str: &str) -> bool {
 
 #[inline]
 pub(crate) fn highest_stable_version(packument: &Packument) -> Option<String> {
-    let mut best: Option<(node_semver::Version, String)> = None;
+    let mut best: Option<(nodejs_semver::Version, String)> = None;
     for key in packument.versions.keys() {
-        let Ok(v) = node_semver::Version::parse(key) else {
+        let Ok(v) = nodejs_semver::Version::parse(key) else {
             continue;
         };
         // Skip prereleases so we match npm semantics. Registry
@@ -374,7 +374,7 @@ pub(crate) fn version_satisfies(version: &str, range_str: &str) -> bool {
 }
 
 /// npm / pnpm / yarn all treat an empty or whitespace-only version
-/// range as equivalent to `"*"` (match any). `node_semver` rejects it
+/// range as equivalent to `"*"` (match any). `nodejs_semver` rejects it
 /// with `No valid ranges could be parsed`. Normalize here so the
 /// resolver and every `version_satisfies` caller agree with the
 /// upstream registry semantics. Real-world case: `hashring@0.0.8`
@@ -387,7 +387,7 @@ pub(crate) fn normalize_range(range_str: &str) -> &str {
     }
 }
 
-/// Thread-local `node_semver::Range` parse cache.
+/// Thread-local `nodejs_semver::Range` parse cache.
 ///
 /// Resolver hot loops (sibling dedupe, lockfile-reuse scan,
 /// peer-context fixed-point, catalog pick) call `version_satisfies`
@@ -399,15 +399,15 @@ pub(crate) fn normalize_range(range_str: &str) -> &str {
 /// slice of ranges, lock contention would erase the parse savings.
 /// Two workers parsing the same range twice is cheaper than one
 /// lock round-trip.
-fn with_cached_range<R>(range_str: &str, f: impl FnOnce(Option<&node_semver::Range>) -> R) -> R {
+fn with_cached_range<R>(range_str: &str, f: impl FnOnce(Option<&nodejs_semver::Range>) -> R) -> R {
     thread_local! {
-        static CACHE: std::cell::RefCell<crate::FxHashMap<String, Option<node_semver::Range>>> =
+        static CACHE: std::cell::RefCell<crate::FxHashMap<String, Option<nodejs_semver::Range>>> =
             std::cell::RefCell::default();
     }
     CACHE.with(|cell| {
         let mut map = cell.borrow_mut();
         if !map.contains_key(range_str) {
-            let parsed = node_semver::Range::parse(range_str).ok();
+            let parsed = nodejs_semver::Range::parse(range_str).ok();
             map.insert(range_str.to_string(), parsed);
         }
         f(map.get(range_str).and_then(Option::as_ref))
@@ -417,15 +417,15 @@ fn with_cached_range<R>(range_str: &str, f: impl FnOnce(Option<&node_semver::Ran
 // Mirrors with_cached_range. Locked-version side hits same string
 // thousands of times across peer-context + dedupe passes. Hit rate
 // trends to 1.0 after first BFS layer.
-fn with_cached_version<R>(version: &str, f: impl FnOnce(Option<&node_semver::Version>) -> R) -> R {
+fn with_cached_version<R>(version: &str, f: impl FnOnce(Option<&nodejs_semver::Version>) -> R) -> R {
     thread_local! {
-        static CACHE: std::cell::RefCell<crate::FxHashMap<String, Option<node_semver::Version>>> =
+        static CACHE: std::cell::RefCell<crate::FxHashMap<String, Option<nodejs_semver::Version>>> =
             std::cell::RefCell::default();
     }
     CACHE.with(|cell| {
         let mut map = cell.borrow_mut();
         if !map.contains_key(version) {
-            let parsed = node_semver::Version::parse(version).ok();
+            let parsed = nodejs_semver::Version::parse(version).ok();
             map.insert(version.to_string(), parsed);
         }
         f(map.get(version).and_then(Option::as_ref))

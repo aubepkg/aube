@@ -929,10 +929,10 @@ fn spec_range(spec: &str) -> &str {
 }
 
 fn spec_satisfies_version(spec: &str, version: &str) -> bool {
-    let Ok(version) = node_semver::Version::parse(version) else {
+    let Ok(version) = nodejs_semver::Version::parse(version) else {
         return false;
     };
-    node_semver::Range::parse(spec_range(spec))
+    nodejs_semver::Range::parse(spec_range(spec))
         .ok()
         .is_some_and(|range| version.satisfies(&range))
 }
@@ -989,24 +989,24 @@ fn resolved_versions_by_name(
 }
 
 fn version_is_vulnerable(version: &str, vulnerable_versions: &[String]) -> bool {
-    let Ok(version) = node_semver::Version::parse(version) else {
+    let Ok(version) = nodejs_semver::Version::parse(version) else {
         return false;
     };
     vulnerable_versions
         .iter()
-        .filter_map(|range| node_semver::Range::parse(range).ok())
+        .filter_map(|range| nodejs_semver::Range::parse(range).ok())
         .any(|range| version.satisfies(&range))
 }
 
 /// Atomic package.json write via tempfile + rename. Crash or Ctrl+C
 fn best_non_vulnerable(packument: &Packument, vulnerable_versions: &[String]) -> Option<String> {
-    let vulnerable: Vec<node_semver::Range> = vulnerable_versions
+    let vulnerable: Vec<nodejs_semver::Range> = vulnerable_versions
         .iter()
-        .filter_map(|range| node_semver::Range::parse(range).ok())
+        .filter_map(|range| nodejs_semver::Range::parse(range).ok())
         .collect();
-    let mut best: Option<(&str, node_semver::Version)> = None;
+    let mut best: Option<(&str, nodejs_semver::Version)> = None;
     for ver_str in packument.versions.keys() {
-        let Ok(version) = node_semver::Version::parse(ver_str) else {
+        let Ok(version) = nodejs_semver::Version::parse(ver_str) else {
             continue;
         };
         if !version.pre_release.is_empty() {

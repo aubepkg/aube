@@ -119,12 +119,12 @@ fn indexed(
 
 // Local copies of the resolver's predicates so the bench links without
 // reaching into the crate's private modules. `version_satisfies` mirrors
-// `semver_util::version_satisfies` (node-semver Range::satisfies);
+// `semver_util::version_satisfies` (nodejs-semver Range::satisfies);
 // `is_vulnerable` mirrors `resolve::vulnerable::is_vulnerable`.
 fn version_satisfies(version: &str, range_str: &str) -> bool {
     let (Ok(v), Ok(r)) = (
-        node_semver::Version::parse(version),
-        node_semver::Range::parse(range_str),
+        nodejs_semver::Version::parse(version),
+        nodejs_semver::Range::parse(range_str),
     ) else {
         return false;
     };
@@ -135,12 +135,12 @@ fn is_vulnerable(name: &str, version: &str, vuln: &BTreeMap<String, Vec<String>>
     let Some(ranges) = vuln.get(name) else {
         return false;
     };
-    let Ok(v) = node_semver::Version::parse(version) else {
+    let Ok(v) = nodejs_semver::Version::parse(version) else {
         return false;
     };
     ranges
         .iter()
-        .filter_map(|r| node_semver::Range::parse(r).ok())
+        .filter_map(|r| nodejs_semver::Range::parse(r).ok())
         .any(|r| v.satisfies(&r))
 }
 

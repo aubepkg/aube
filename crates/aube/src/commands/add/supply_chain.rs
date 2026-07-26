@@ -133,7 +133,7 @@ fn is_full_exact_version(range: &str) -> bool {
     [major, minor, patch]
         .into_iter()
         .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-        && node_semver::Version::parse(range).is_ok()
+        && nodejs_semver::Version::parse(range).is_ok()
 }
 
 #[cfg(test)]

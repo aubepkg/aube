@@ -1128,7 +1128,7 @@ impl PeerDependencyRules {
             self.allowed_versions.get(&scoped_key),
             self.allowed_versions.get(peer),
         ];
-        let Ok(found_v) = node_semver::Version::parse(found) else {
+        let Ok(found_v) = nodejs_semver::Version::parse(found) else {
             return false;
         };
         candidates
@@ -1138,8 +1138,8 @@ impl PeerDependencyRules {
     }
 }
 
-fn matches_range(range: &str, found: &node_semver::Version) -> bool {
-    match node_semver::Range::parse(range) {
+fn matches_range(range: &str, found: &nodejs_semver::Version) -> bool {
+    match nodejs_semver::Range::parse(range) {
         Ok(r) => r.satisfies(found),
         Err(_) => false,
     }

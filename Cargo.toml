@@ -177,7 +177,7 @@ zstd = { version = "0.13", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
 # Semver
-node-semver = "2"
+nodejs-semver = "5"
 
 # Diff/patch
 diffy = "0.5"

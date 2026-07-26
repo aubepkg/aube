@@ -623,7 +623,7 @@ fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
 }
 
 fn normalize_publish_version(version: &str) -> String {
-    node_semver::Version::parse(version)
+    nodejs_semver::Version::parse(version)
         .map(|v| v.to_string())
         .unwrap_or_else(|_| version.to_string())
 }

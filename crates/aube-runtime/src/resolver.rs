@@ -33,7 +33,7 @@ pub enum ResolvedFrom {
 /// A successfully resolved runtime.
 #[derive(Debug, Clone)]
 pub struct Resolution {
-    pub version: node_semver::Version,
+    pub version: nodejs_semver::Version,
     /// Directory to prepend to PATH. `None` for [`ResolvedFrom::PathEnv`].
     pub bin_dir: Option<PathBuf>,
     pub node_bin: PathBuf,
@@ -251,7 +251,7 @@ impl NodeRuntime {
 
     async fn install(
         &self,
-        version: &node_semver::Version,
+        version: &nodejs_semver::Version,
         download: &DownloadSpec,
         progress: &dyn DownloadProgress,
     ) -> Result<InstalledNode, Error> {
@@ -320,7 +320,7 @@ impl NodeRuntime {
     /// configured mirror's checksums, plus — when running against the
     /// default official mirror — unofficial-builds' musl checksums,
     /// best-effort (older releases have no musl builds).
-    async fn build_full_pin(&self, version: &node_semver::Version) -> Result<PinnedNode, Error> {
+    async fn build_full_pin(&self, version: &nodejs_semver::Version) -> Result<PinnedNode, Error> {
         let base = self.cfg.mirror_base();
         let sums = shasums::load_shasums(&self.http, &self.cfg, &base, version).await?;
         let mut variants = variants_from_shasums(&base, version, sums.iter());
@@ -387,7 +387,7 @@ fn local_resolution(target: &NodeSpec) -> Option<Resolution> {
 /// `win` → `win32`, bin paths per OS, `prefix` set for zips.
 fn variants_from_shasums<'a>(
     base: &str,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     entries: impl Iterator<Item = (&'a String, &'a [u8; 32])>,
 ) -> Vec<PinnedVariant> {
     let prefix = format!("node-v{version}-");
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn shasums_variant_mapping() {
-        let version: node_semver::Version = "24.4.1".parse().unwrap();
+        let version: nodejs_semver::Version = "24.4.1".parse().unwrap();
         let entries: Vec<(String, [u8; 32])> = vec![
             ("node-v24.4.1-darwin-arm64.tar.gz".into(), [1; 32]),
             ("node-v24.4.1-linux-x64.tar.gz".into(), [2; 32]),

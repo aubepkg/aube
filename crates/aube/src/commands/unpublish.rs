@@ -419,7 +419,7 @@ fn highest_semver(versions: &[String]) -> Option<String> {
     versions
         .iter()
         .filter_map(|v| {
-            node_semver::Version::parse(v)
+            nodejs_semver::Version::parse(v)
                 .ok()
                 .map(|parsed| (parsed, v))
         })

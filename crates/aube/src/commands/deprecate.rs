@@ -97,13 +97,13 @@ pub async fn apply(
         .and_then(Value::as_object_mut)
         .ok_or_else(|| miette!("registry response for {name} has no `versions` field"))?;
 
-    let range_parsed = node_semver::Range::parse(range)
+    let range_parsed = nodejs_semver::Range::parse(range)
         .into_diagnostic()
         .wrap_err_with(|| format!("invalid version range {range:?}"))?;
 
     let mut matched: Vec<String> = Vec::new();
     for (version_str, entry) in versions_obj.iter_mut() {
-        let Ok(v) = node_semver::Version::parse(version_str) else {
+        let Ok(v) = nodejs_semver::Version::parse(version_str) else {
             continue;
         };
         if !range_parsed.satisfies(&v) {

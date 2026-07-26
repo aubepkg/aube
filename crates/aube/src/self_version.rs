@@ -56,7 +56,7 @@ pub(crate) async fn maybe_switch(settings: &crate::startup::StartupSettings) -> 
         return Ok(());
     };
 
-    let current = node_semver::Version::parse(running_version().trim_end_matches("-DEBUG")).ok();
+    let current = nodejs_semver::Version::parse(running_version().trim_end_matches("-DEBUG")).ok();
     if let Some(current) = &current
         && pin.spec.satisfied_by(current) == Some(true)
     {
@@ -235,7 +235,7 @@ fn extract_pin(manifest: &aube_manifest::PackageJson) -> Option<SelfPin> {
     // Strip a corepack `+<hash>` suffix.
     let version = version.split_once('+').map_or(version, |(v, _)| v);
     let version = version.trim().trim_end_matches("-DEBUG");
-    let exact = node_semver::Version::parse(version).ok()?;
+    let exact = nodejs_semver::Version::parse(version).ok()?;
     Some(SelfPin {
         spec: aube_runtime::NodeSpec::Exact(exact),
         raw: version.to_string(),

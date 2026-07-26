@@ -85,7 +85,7 @@ impl Resolver {
 /// as non-prerelease so a registry returning a non-semver `latest`
 /// (rare, but possible) still surfaces as an upgrade hint.
 fn is_prerelease(version: &str) -> bool {
-    node_semver::Version::parse(version)
+    nodejs_semver::Version::parse(version)
         .map(|v| !v.pre_release.is_empty())
         .unwrap_or(false)
 }

@@ -13,7 +13,7 @@ pub enum InstallPhase {
 pub trait DownloadProgress: Send + Sync {
     /// `version` is `None` during [`InstallPhase::Resolving`] — the
     /// exact version isn't known until resolution finishes.
-    fn on_phase(&self, _version: Option<&node_semver::Version>, _phase: InstallPhase) {}
+    fn on_phase(&self, _version: Option<&nodejs_semver::Version>, _phase: InstallPhase) {}
     fn on_download_start(&self, _total_bytes: Option<u64>) {}
     fn on_download_chunk(&self, _bytes: u64) {}
     fn on_done(&self) {}

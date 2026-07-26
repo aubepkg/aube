@@ -26,7 +26,7 @@ pub fn mise_on_path() -> Option<PathBuf> {
 /// `install_tool_via_mise`).
 pub(crate) async fn install_via_mise(
     mise_bin: &std::path::Path,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     progress: &dyn crate::progress::DownloadProgress,
 ) -> Result<InstalledNode, Error> {
     install_tool_via_mise(mise_bin, "node", version, progress).await?;
@@ -60,7 +60,7 @@ pub(crate) async fn install_via_mise(
 pub(crate) async fn install_tool_via_mise(
     mise_bin: &std::path::Path,
     tool: &str,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     progress: &dyn crate::progress::DownloadProgress,
 ) -> Result<(), Error> {
     let spec = format!("{tool}@{version}");
@@ -96,7 +96,7 @@ pub(crate) async fn install_tool_via_mise(
 }
 
 /// Look up one exact version in mise's installs dir.
-pub(crate) fn find_mise_install(version: &node_semver::Version) -> Option<InstalledNode> {
+pub(crate) fn find_mise_install(version: &nodejs_semver::Version) -> Option<InstalledNode> {
     let dir = discover::mise_node_installs_dir()?.join(version.to_string());
     discover::validate_install(&dir, version.clone(), InstallOrigin::Mise)
 }

@@ -544,10 +544,10 @@ fn colorize_diff(current: &str, target: &str, width: usize) -> String {
     if current == target {
         return plain;
     }
-    let Ok(cur) = node_semver::Version::parse(current) else {
+    let Ok(cur) = nodejs_semver::Version::parse(current) else {
         return plain;
     };
-    let Ok(new) = node_semver::Version::parse(target) else {
+    let Ok(new) = nodejs_semver::Version::parse(target) else {
         return plain;
     };
     let trailing_pad = " ".repeat(width.saturating_sub(target.len()));

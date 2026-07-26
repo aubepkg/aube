@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 pub struct IndexEntry {
     /// `"v22.1.0"` in the raw feed; exposed parsed.
     #[serde(with = "v_prefixed_version")]
-    pub version: node_semver::Version,
+    pub version: nodejs_semver::Version,
     /// `false`, or the LTS codename (`"Jod"`).
     #[serde(default)]
     pub lts: LtsField,
@@ -52,13 +52,13 @@ impl LtsField {
 mod v_prefixed_version {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(v: &node_semver::Version, ser: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(v: &nodejs_semver::Version, ser: S) -> Result<S::Ok, S::Error> {
         ser.serialize_str(&format!("v{v}"))
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<node_semver::Version, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<nodejs_semver::Version, D::Error> {
         let raw = String::deserialize(de)?;
-        node_semver::Version::parse(raw.trim_start_matches('v'))
+        nodejs_semver::Version::parse(raw.trim_start_matches('v'))
             .map_err(|e| serde::de::Error::custom(format!("bad version {raw:?}: {e}")))
     }
 }

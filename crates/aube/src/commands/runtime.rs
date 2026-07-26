@@ -186,7 +186,7 @@ async fn run_set_global(
 
     // aube-managed global install: fetch into the runtime dir and tell
     // the user how to reach it directly or through opt-in activation.
-    let version: node_semver::Version = resolved.parse().into_diagnostic()?;
+    let version: nodejs_semver::Version = resolved.parse().into_diagnostic()?;
     let cfg = aube_runtime::RuntimeConfig {
         installer: aube_runtime::InstallerMode::Aube,
         mirror: settings.mirror.clone(),

@@ -174,7 +174,7 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
                         .values()
                         .filter(|p| p.name == *peer_name)
                         .filter_map(|p| {
-                            node_semver::Version::parse(&p.version)
+                            nodejs_semver::Version::parse(&p.version)
                                 .ok()
                                 .map(|v| (v, p.version.clone()))
                         })
@@ -1683,7 +1683,7 @@ fn visit_peer_context<'g>(
                         .strip_prefix(&format!("{}@", p.name))
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| p.version.clone());
-                    node_semver::Version::parse(&p.version)
+                    nodejs_semver::Version::parse(&p.version)
                         .ok()
                         .map(|ver| (ver, tail))
                 })

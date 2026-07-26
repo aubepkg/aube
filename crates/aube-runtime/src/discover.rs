@@ -24,7 +24,7 @@ impl InstallOrigin {
 /// A validated on-disk Node install.
 #[derive(Debug, Clone)]
 pub struct InstalledNode {
-    pub version: node_semver::Version,
+    pub version: nodejs_semver::Version,
     pub install_dir: PathBuf,
     /// The directory to prepend to PATH: `<dir>/bin` on unix, the
     /// install dir itself on Windows (node.exe sits at the root).
@@ -37,7 +37,7 @@ pub struct InstalledNode {
 /// and mise's installs dir. When both have the same version, aube's
 /// copy wins (deterministic, and it's the copy aube can manage).
 pub fn list_installed() -> Vec<InstalledNode> {
-    let mut by_version: BTreeMap<node_semver::Version, InstalledNode> = BTreeMap::new();
+    let mut by_version: BTreeMap<nodejs_semver::Version, InstalledNode> = BTreeMap::new();
     // Insert mise first so aube entries overwrite on version collision.
     if let Some(dir) = mise_node_installs_dir() {
         for node in scan_install_dir(&dir, InstallOrigin::Mise) {
@@ -96,7 +96,7 @@ fn scan_install_dir(root: &Path, origin: InstallOrigin) -> Vec<InstalledNode> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let Ok(version) = node_semver::Version::parse(name.trim_start_matches('v')) else {
+        let Ok(version) = nodejs_semver::Version::parse(name.trim_start_matches('v')) else {
             continue;
         };
         if let Some(node) = validate_install(&path, version, origin) {
@@ -111,7 +111,7 @@ fn scan_install_dir(root: &Path, origin: InstallOrigin) -> Vec<InstalledNode> {
 /// (or one mise just created) through the exact same rules.
 pub(crate) fn validate_install(
     dir: &Path,
-    version: node_semver::Version,
+    version: nodejs_semver::Version,
     origin: InstallOrigin,
 ) -> Option<InstalledNode> {
     if dir.join("incomplete").exists() {
@@ -179,13 +179,13 @@ pub(crate) fn node_paths_in(dir: &Path) -> (PathBuf, PathBuf) {
 /// Find `node` on PATH and probe its version (`node --version`).
 /// Memoized for the process: one spawn no matter how many resolution
 /// calls happen.
-pub fn probe_path_node() -> Option<(node_semver::Version, PathBuf)> {
-    static PROBED: std::sync::OnceLock<Option<(node_semver::Version, PathBuf)>> =
+pub fn probe_path_node() -> Option<(nodejs_semver::Version, PathBuf)> {
+    static PROBED: std::sync::OnceLock<Option<(nodejs_semver::Version, PathBuf)>> =
         std::sync::OnceLock::new();
     PROBED.get_or_init(probe_path_node_uncached).clone()
 }
 
-fn probe_path_node_uncached() -> Option<(node_semver::Version, PathBuf)> {
+fn probe_path_node_uncached() -> Option<(nodejs_semver::Version, PathBuf)> {
     let exe = find_on_path(node_exe_name())?;
     let output = std::process::Command::new(&exe)
         .arg("--version")
@@ -195,7 +195,7 @@ fn probe_path_node_uncached() -> Option<(node_semver::Version, PathBuf)> {
         return None;
     }
     let raw = String::from_utf8(output.stdout).ok()?;
-    let version = node_semver::Version::parse(raw.trim().trim_start_matches('v')).ok()?;
+    let version = nodejs_semver::Version::parse(raw.trim().trim_start_matches('v')).ok()?;
     Some((version, exe))
 }
 

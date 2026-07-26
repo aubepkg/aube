@@ -7,8 +7,8 @@ use crate::error::Error;
 /// A parsed Node version request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeSpec {
-    Exact(node_semver::Version),
-    Range(node_semver::Range),
+    Exact(nodejs_semver::Version),
+    Range(nodejs_semver::Range),
     /// Newest LTS release (`lts`, `lts/*`).
     Lts,
     /// Newest release of any kind (`latest`, `current`, `node`).
@@ -39,10 +39,10 @@ impl NodeSpec {
             });
         }
         let unprefixed = s.strip_prefix('v').unwrap_or(s);
-        if let Ok(v) = node_semver::Version::parse(unprefixed) {
+        if let Ok(v) = nodejs_semver::Version::parse(unprefixed) {
             return Ok(NodeSpec::Exact(v));
         }
-        if let Ok(r) = node_semver::Range::parse(unprefixed) {
+        if let Ok(r) = nodejs_semver::Range::parse(unprefixed) {
             return Ok(NodeSpec::Range(r));
         }
         // Bare alphabetic word → treat as an LTS codename (`jod`,
@@ -61,7 +61,7 @@ impl NodeSpec {
     /// vocabulary that are decidable without the dist index. `Lts` /
     /// `Latest` / codenames return `None` — satisfaction depends on
     /// index data the caller may not have.
-    pub fn satisfied_by(&self, version: &node_semver::Version) -> Option<bool> {
+    pub fn satisfied_by(&self, version: &nodejs_semver::Version) -> Option<bool> {
         match self {
             NodeSpec::Exact(v) => Some(v == version),
             NodeSpec::Range(r) => Some(version.satisfies(r)),
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn local_satisfaction() {
-        let v: node_semver::Version = "22.3.0".parse().unwrap();
+        let v: nodejs_semver::Version = "22.3.0".parse().unwrap();
         assert_eq!(parse("^22").satisfied_by(&v), Some(true));
         assert_eq!(parse("^20").satisfied_by(&v), Some(false));
         assert_eq!(parse("22.3.0").satisfied_by(&v), Some(true));
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn bare_number_is_a_range() {
         // "22" must match every 22.x.y, not just 22.0.0.
-        let v: node_semver::Version = "22.9.1".parse().unwrap();
+        let v: nodejs_semver::Version = "22.9.1".parse().unwrap();
         assert_eq!(parse("22").satisfied_by(&v), Some(true));
     }
 }

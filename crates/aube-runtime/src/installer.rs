@@ -28,7 +28,7 @@ pub(crate) struct DownloadSpec {
 /// version is already present and valid.
 pub(crate) async fn install(
     http: &Http,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     spec: &DownloadSpec,
     progress: &dyn DownloadProgress,
 ) -> Result<InstalledNode, Error> {
@@ -81,7 +81,7 @@ pub(crate) async fn install(
 
 async fn download_verify_extract(
     http: &Http,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     spec: &DownloadSpec,
     dest: &Path,
     progress: &dyn DownloadProgress,

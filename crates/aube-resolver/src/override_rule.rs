@@ -311,10 +311,10 @@ fn match_from_right(parents: &[Segment], anc: &[AncestorFrame<'_>]) -> bool {
 }
 
 fn version_in_req(version: &str, req: &str) -> bool {
-    let Ok(v) = node_semver::Version::parse(version) else {
+    let Ok(v) = nodejs_semver::Version::parse(version) else {
         return false;
     };
-    let Ok(r) = node_semver::Range::parse(req) else {
+    let Ok(r) = nodejs_semver::Range::parse(req) else {
         return false;
     };
     v.satisfies(&r)
@@ -339,16 +339,16 @@ fn version_in_req(version: &str, req: &str) -> bool {
 /// return `true` (overridden too aggressively beats silently
 /// ignoring) so users at least see the override take effect.
 fn range_could_satisfy(task_range: &str, req: &str) -> bool {
-    let Ok(r) = node_semver::Range::parse(req) else {
+    let Ok(r) = nodejs_semver::Range::parse(req) else {
         return true;
     };
-    if let Ok(v) = node_semver::Version::parse(task_range)
+    if let Ok(v) = nodejs_semver::Version::parse(task_range)
         && v.satisfies(&r)
     {
         return true;
     }
     if let Some(candidate) = lower_bound_version(task_range)
-        && let Ok(v) = node_semver::Version::parse(&candidate)
+        && let Ok(v) = nodejs_semver::Version::parse(&candidate)
     {
         let hit = v.satisfies(&r);
         if !hit {

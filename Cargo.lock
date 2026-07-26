@@ -80,7 +80,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -202,7 +202,7 @@ dependencies = [
  "http",
  "reqwest",
  "serde",
- "thiserror 2.0.18",
+ "thiserror",
  "tower-service",
 ]
 
@@ -273,7 +273,7 @@ dependencies = [
  "libc",
  "miette",
  "mimalloc",
- "node-semver",
+ "nodejs-semver",
  "pathdiff",
  "pluralizer",
  "predicates",
@@ -341,7 +341,7 @@ dependencies = [
  "sha2 0.11.0",
  "strum",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "xx",
 ]
@@ -360,7 +360,7 @@ dependencies = [
  "glob",
  "memchr",
  "miette",
- "node-semver",
+ "nodejs-semver",
  "proptest",
  "serde",
  "serde_json",
@@ -368,7 +368,7 @@ dependencies = [
  "smallvec",
  "sonic-rs",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "yaml_serde",
 ]
@@ -385,7 +385,7 @@ dependencies = [
  "serde_yaml",
  "sonic-rs",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "yaml_serde",
  "yamlpatch",
  "yamlpath",
@@ -420,7 +420,7 @@ dependencies = [
  "bytes",
  "flate2",
  "miette",
- "node-semver",
+ "nodejs-semver",
  "proptest",
  "reqwest",
  "serde",
@@ -429,7 +429,7 @@ dependencies = [
  "sonic-rs",
  "tar",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "wiremock",
@@ -450,7 +450,7 @@ dependencies = [
  "criterion",
  "flate2",
  "miette",
- "node-semver",
+ "nodejs-semver",
  "pathdiff",
  "rkyv",
  "serde",
@@ -460,7 +460,7 @@ dependencies = [
  "sonic-rs",
  "tar",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "zstd",
@@ -476,14 +476,14 @@ dependencies = [
  "base64",
  "flate2",
  "hex",
- "node-semver",
+ "nodejs-semver",
  "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tar",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "xx",
@@ -502,7 +502,7 @@ dependencies = [
  "miette",
  "regex",
  "seccompiler",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
@@ -542,7 +542,7 @@ dependencies = [
  "sonic-rs",
  "tar",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "xx",
  "zstd",
 ]
@@ -562,7 +562,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "webpki-root-certs",
@@ -578,7 +578,7 @@ dependencies = [
  "miette",
  "pathdiff",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -945,7 +945,7 @@ dependencies = [
  "serde_json",
  "strum",
  "tera",
- "thiserror 2.0.18",
+ "thiserror",
  "unicode-width 0.2.2",
 ]
 
@@ -1374,7 +1374,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -1960,7 +1960,7 @@ dependencies = [
  "ipnet",
  "jni",
  "rand 0.10.2",
- "thiserror 2.0.18",
+ "thiserror",
  "tinyvec",
  "tokio",
  "tracing",
@@ -1981,7 +1981,7 @@ dependencies = [
  "prefix-trie",
  "rand 0.10.2",
  "ring",
- "thiserror 2.0.18",
+ "thiserror",
  "tinyvec",
  "tracing",
  "url",
@@ -2008,7 +2008,7 @@ dependencies = [
  "resolv-conf",
  "smallvec",
  "system-configuration",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
 ]
@@ -2450,7 +2450,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.18",
+ "thiserror",
  "walkdir",
  "windows-link 0.2.1",
 ]
@@ -2526,7 +2526,7 @@ checksum = "bde5057d6143cc94e861d90f591b9303d6716c6b9602309150bd068853c10899"
 dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2548,7 +2548,7 @@ checksum = "635839550ae8b90d9fd2571460a6645dc0aec070225956ca7a2831ed31d2795d"
 dependencies = [
  "enumflags2",
  "libc",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2741,12 +2741,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
-name = "minimal-lexical"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2894,16 +2888,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "node-semver"
-version = "2.2.0"
+name = "nodejs-semver"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b1a233ea5dc37d2cfba31cfc87a5a56cc2a9c04e3672c15d179ca118dae40a7"
+checksum = "364dd919c4d6feef8c3a3f3e2b64af729187902156e17481618622cbbf1353a1"
 dependencies = [
  "bytecount",
  "miette",
- "nom 7.1.3",
- "serde",
- "thiserror 1.0.69",
+ "smallvec",
+ "thiserror",
+ "winnow 0.7.15",
 ]
 
 [[package]]
@@ -2911,16 +2905,6 @@ name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
-
-[[package]]
-name = "nom"
-version = "7.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
-dependencies = [
- "memchr",
- "minimal-lexical",
-]
 
 [[package]]
 name = "nom"
@@ -3364,7 +3348,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "web-time",
@@ -3387,7 +3371,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.18",
+ "thiserror",
  "tinyvec",
  "tracing",
  "web-time",
@@ -3535,7 +3519,7 @@ dependencies = [
  "palette",
  "serde",
  "strum",
- "thiserror 2.0.18",
+ "thiserror",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.2",
@@ -4219,7 +4203,7 @@ dependencies = [
  "sigstore-rekor",
  "sigstore-tsa",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -4239,7 +4223,7 @@ dependencies = [
  "signature",
  "sigstore-types",
  "spki",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "x509-cert",
 ]
@@ -4257,7 +4241,7 @@ dependencies = [
  "sigstore-crypto",
  "sigstore-oidc",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
  "url",
 ]
 
@@ -4271,7 +4255,7 @@ dependencies = [
  "hex",
  "sigstore-crypto",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -4289,7 +4273,7 @@ dependencies = [
  "serde_json",
  "sigstore-crypto",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "url",
 ]
@@ -4308,7 +4292,7 @@ dependencies = [
  "sigstore-crypto",
  "sigstore-merkle",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
  "url",
 ]
 
@@ -4328,7 +4312,7 @@ dependencies = [
  "sigstore-trust-root",
  "sigstore-tsa",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
  "x509-cert",
 ]
 
@@ -4347,7 +4331,7 @@ dependencies = [
  "sigstore-crypto",
  "sigstore-tuf",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
  "x509-cert",
 ]
 
@@ -4371,7 +4355,7 @@ dependencies = [
  "rustls-webpki",
  "sigstore-crypto",
  "sigstore-types",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "x509-cert",
  "x509-tsp",
@@ -4393,7 +4377,7 @@ dependencies = [
  "sigstore-crypto",
  "sigstore-types",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "url",
@@ -4410,7 +4394,7 @@ dependencies = [
  "pem",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -4486,7 +4470,7 @@ dependencies = [
  "simdutf8",
  "sonic-number",
  "sonic-simd",
- "thiserror 2.0.18",
+ "thiserror",
  "zmij",
 ]
 
@@ -4726,31 +4710,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.18",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -5218,7 +5182,7 @@ dependencies = [
  "shell-words",
  "strum",
  "tera",
- "thiserror 2.0.18",
+ "thiserror",
  "versions",
  "xx",
 ]
@@ -5265,7 +5229,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80a7e511ce1795821207a837b7b1c8d8aca0c648810966ad200446ae58f6667f"
 dependencies = [
  "itertools 0.14.0",
- "nom 8.0.0",
+ "nom",
 ]
 
 [[package]]
@@ -5831,6 +5795,15 @@ dependencies = [
 
 [[package]]
 name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "winnow"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
@@ -5923,7 +5896,7 @@ dependencies = [
  "regex",
  "sha2 0.11.0",
  "strsim",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -5949,7 +5922,7 @@ dependencies = [
  "line-index",
  "serde_json",
  "subfeature",
- "thiserror 2.0.18",
+ "thiserror",
  "yaml_serde",
  "yamlpath",
 ]
@@ -5963,7 +5936,7 @@ dependencies = [
  "line-index",
  "self_cell",
  "serde",
- "thiserror 2.0.18",
+ "thiserror",
  "tree-sitter",
  "tree-sitter-iter",
  "tree-sitter-yaml",

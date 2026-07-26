@@ -9,12 +9,12 @@ pub(crate) fn is_vulnerable(
     let Some(ranges) = vulnerable_ranges.get(package_name) else {
         return false;
     };
-    let Ok(version) = node_semver::Version::parse(version) else {
+    let Ok(version) = nodejs_semver::Version::parse(version) else {
         return false;
     };
     ranges
         .iter()
-        .filter_map(|range| node_semver::Range::parse(range).ok())
+        .filter_map(|range| nodejs_semver::Range::parse(range).ok())
         .any(|range| version.satisfies(&range))
 }
 
@@ -28,12 +28,12 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
     cutoff: Option<&str>,
     exempt_cutoff: Option<&str>,
     vulnerable_ranges: &BTreeMap<String, Vec<String>>,
-    is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
+    is_age_exempt: impl Fn(&str, Option<&nodejs_semver::Version>) -> bool,
 ) -> &'a aube_registry::VersionMetadata {
     if !is_vulnerable(package_name, &fallback.version, vulnerable_ranges) {
         return fallback;
     }
-    let Ok(range) = node_semver::Range::parse(crate::semver_util::normalize_range(range_str))
+    let Ok(range) = nodejs_semver::Range::parse(crate::semver_util::normalize_range(range_str))
     else {
         return fallback;
     };
@@ -42,7 +42,7 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
     // subject to `exempt_cutoff`, the time-based wall), otherwise the
     // re-pick could discard the exempt safe version and keep the
     // vulnerable one.
-    let passes_cutoff = |ver: &str, parsed: Option<&node_semver::Version>| -> bool {
+    let passes_cutoff = |ver: &str, parsed: Option<&nodejs_semver::Version>| -> bool {
         let effective = if is_age_exempt(ver, parsed) {
             exempt_cutoff
         } else {
@@ -54,9 +54,9 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
             None => true,
         }
     };
-    let mut best: Option<(node_semver::Version, &'a aube_registry::VersionMetadata)> = None;
+    let mut best: Option<(nodejs_semver::Version, &'a aube_registry::VersionMetadata)> = None;
     for (ver_str, meta) in &packument.versions {
-        let Ok(version) = node_semver::Version::parse(ver_str) else {
+        let Ok(version) = nodejs_semver::Version::parse(ver_str) else {
             continue;
         };
         if !version.satisfies(&range)

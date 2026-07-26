@@ -11,10 +11,10 @@ pub(crate) fn max_satisfying_version(
     packument: &aube_registry::Packument,
     range_str: &str,
 ) -> Option<String> {
-    let range = node_semver::Range::parse(range_str).ok()?;
-    let mut best: Option<(&str, node_semver::Version)> = None;
+    let range = nodejs_semver::Range::parse(range_str).ok()?;
+    let mut best: Option<(&str, nodejs_semver::Version)> = None;
     for ver_str in packument.versions.keys() {
-        let Ok(v) = node_semver::Version::parse(ver_str) else {
+        let Ok(v) = nodejs_semver::Version::parse(ver_str) else {
             continue;
         };
         if !v.satisfies(&range) {
@@ -59,11 +59,11 @@ pub(crate) fn resolve_version(packument: &serde_json::Value, spec: Option<&str>)
         return Some(spec.to_string());
     }
 
-    let range: node_semver::Range = spec.parse().ok()?;
+    let range: nodejs_semver::Range = spec.parse().ok()?;
     versions
         .keys()
         .filter_map(|v| {
-            v.parse::<node_semver::Version>()
+            v.parse::<nodejs_semver::Version>()
                 .ok()
                 .filter(|parsed| parsed.satisfies(&range))
                 .map(|parsed| (v.clone(), parsed))

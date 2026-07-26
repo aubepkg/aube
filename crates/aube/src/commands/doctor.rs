@@ -238,8 +238,8 @@ fn project_section(anchor: &Path, report: &mut Report) -> Section {
                 && let Some(node) = crate::engines::effective_node_version(None)
             {
                 match (
-                    node_semver::Version::parse(&node),
-                    node_semver::Range::parse(range),
+                    nodejs_semver::Version::parse(&node),
+                    nodejs_semver::Range::parse(range),
                 ) {
                     (Ok(v), Ok(r)) if !v.satisfies(&r) => {
                         report.errors.push(format!(

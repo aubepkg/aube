@@ -122,7 +122,7 @@ impl RuntimeConfig {
 /// `aube_lockfile::RuntimePin`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedNode {
-    pub version: node_semver::Version,
+    pub version: nodejs_semver::Version,
     pub variants: Vec<PinnedVariant>,
 }
 

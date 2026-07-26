@@ -191,10 +191,10 @@ fn format_trust_missing_time_help(d: &MissingTimeDetails) -> String {
 /// alias), and a sample of the highest non-prerelease versions so the
 /// diagnostic can tell the user how close they were.
 pub(crate) fn build_no_match(task: &ResolveTask, packument: &Packument) -> NoMatchDetails {
-    let mut stable: Vec<(node_semver::Version, &str)> = Vec::new();
-    let mut prerelease: Vec<(node_semver::Version, &str)> = Vec::new();
+    let mut stable: Vec<(nodejs_semver::Version, &str)> = Vec::new();
+    let mut prerelease: Vec<(nodejs_semver::Version, &str)> = Vec::new();
     for v in packument.versions.keys() {
-        let Ok(parsed) = node_semver::Version::parse(v) else {
+        let Ok(parsed) = nodejs_semver::Version::parse(v) else {
             continue;
         };
         if parsed.pre_release.is_empty() {
@@ -261,11 +261,11 @@ pub(crate) fn build_age_gate(
     // fails silently and the help text drops the "blocked by age gate"
     // line entirely, losing the most useful diagnostic.
     let effective = resolve_dist_tag_range(packument, &task.range);
-    let range = node_semver::Range::parse(&effective).ok();
-    let mut gated: Vec<(node_semver::Version, String)> = Vec::new();
+    let range = nodejs_semver::Range::parse(&effective).ok();
+    let mut gated: Vec<(nodejs_semver::Version, String)> = Vec::new();
     if let Some(r) = range {
         for ver in packument.versions.keys() {
-            let Ok(v) = node_semver::Version::parse(ver) else {
+            let Ok(v) = nodejs_semver::Version::parse(ver) else {
                 continue;
             };
             if !v.satisfies(&r) {

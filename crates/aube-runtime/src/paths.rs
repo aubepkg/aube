@@ -35,7 +35,7 @@ pub fn runtime_dir() -> Option<PathBuf> {
 }
 
 /// The install dir for an exact version: `<runtime_dir>/24.1.0/`.
-pub fn install_dir(version: &node_semver::Version) -> Option<PathBuf> {
+pub fn install_dir(version: &nodejs_semver::Version) -> Option<PathBuf> {
     runtime_dir().map(|d| d.join(version.to_string()))
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn index_cache_path(mirror_base: &str) -> Option<PathBuf> {
 /// `$XDG_CACHE_HOME/aube/node-shasums/origin-<sha256-16>/v24.1.0.txt`.
 pub(crate) fn shasums_cache_path(
     mirror_base: &str,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
 ) -> Option<PathBuf> {
     cache_dir().map(|d| {
         d.join("node-shasums")

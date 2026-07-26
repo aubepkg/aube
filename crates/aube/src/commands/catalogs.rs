@@ -109,10 +109,10 @@ pub(crate) fn range_compatible(
     if user_range == catalog_range {
         return true;
     }
-    let Ok(catalog_parsed) = node_semver::Range::parse(catalog_range) else {
+    let Ok(catalog_parsed) = nodejs_semver::Range::parse(catalog_range) else {
         return false;
     };
-    let Ok(version) = node_semver::Version::parse(resolved_version) else {
+    let Ok(version) = nodejs_semver::Version::parse(resolved_version) else {
         return false;
     };
     version.satisfies(&catalog_parsed)

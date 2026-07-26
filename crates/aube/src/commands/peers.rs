@@ -132,8 +132,8 @@ fn collect_issues(graph: &LockfileGraph) -> Vec<Issue> {
                 Some(tail) => {
                     let version_str = tail.split_once('(').map(|(v, _)| v).unwrap_or(tail);
                     match (
-                        node_semver::Version::parse(version_str),
-                        node_semver::Range::parse(peer_range),
+                        nodejs_semver::Version::parse(version_str),
+                        nodejs_semver::Range::parse(peer_range),
                     ) {
                         (Ok(v), Ok(r)) if v.satisfies(&r) => {}
                         (Ok(_), Ok(_)) => out.push(Issue {

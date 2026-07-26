@@ -328,7 +328,7 @@ fn highest_semver<'a, I: IntoIterator<Item = &'a str>>(versions: I) -> Option<St
     let all: Vec<&str> = versions.into_iter().collect();
     let parsed_max = all
         .iter()
-        .filter_map(|v| node_semver::Version::parse(v).ok().map(|p| (p, *v)))
+        .filter_map(|v| nodejs_semver::Version::parse(v).ok().map(|p| (p, *v)))
         .max_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, s)| s.to_string());
     parsed_max.or_else(|| all.iter().max().map(|s| s.to_string()))

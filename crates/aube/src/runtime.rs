@@ -903,7 +903,7 @@ fn release_mirror(ctx: &ResolveCtx<'_>) -> Option<String> {
 fn pinned_from_lockfile(
     pin: &aube_lockfile::RuntimePin,
 ) -> Result<aube_runtime::PinnedNode, aube_runtime::Error> {
-    let version = node_semver::Version::parse(&pin.version).map_err(|e| {
+    let version = nodejs_semver::Version::parse(&pin.version).map_err(|e| {
         aube_runtime::Error::NoMatchingVersion {
             requested: format!("lockfile pin {}: {e}", pin.version),
             platform_note: String::new(),
@@ -1124,7 +1124,7 @@ impl CliProgress {
 }
 
 impl aube_runtime::DownloadProgress for CliProgress {
-    fn on_phase(&self, version: Option<&node_semver::Version>, phase: aube_runtime::InstallPhase) {
+    fn on_phase(&self, version: Option<&nodejs_semver::Version>, phase: aube_runtime::InstallPhase) {
         use aube_runtime::InstallPhase;
         let mut state = self.state.lock().unwrap();
         if let Some(v) = version {

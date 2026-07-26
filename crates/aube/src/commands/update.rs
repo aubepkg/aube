@@ -392,11 +392,11 @@ pub async fn run(
             // `latest`: the manifest pin (if exact) and the locked version
             // (if any). Either tipping above latest is enough to preserve.
             let manifest_pin =
-                exact_pin_version(original).and_then(|p| node_semver::Version::parse(p).ok());
+                exact_pin_version(original).and_then(|p| nodejs_semver::Version::parse(p).ok());
             let locked_pin = existing
                 .as_ref()
                 .and_then(|g| lookup_pkg(g, &existing_importers, key, &real_name))
-                .and_then(|p| node_semver::Version::parse(&p.version).ok());
+                .and_then(|p| nodejs_semver::Version::parse(&p.version).ok());
             if manifest_pin.is_none() && locked_pin.is_none() {
                 continue;
             }
@@ -421,7 +421,7 @@ pub async fn run(
                     }
                 };
                 let latest_v = packument.dist_tags.get("latest")?;
-                let Ok(parsed_latest) = node_semver::Version::parse(latest_v) else {
+                let Ok(parsed_latest) = nodejs_semver::Version::parse(latest_v) else {
                     tracing::warn!(
                         code = aube_codes::warnings::WARN_AUBE_PRERELEASE_CHECK_SKIPPED,
                         "skipping prerelease-preservation check for {real_name}: \

@@ -46,7 +46,7 @@ const VERSION_URL: &str = "https://aube.jdx.dev/VERSION";
 /// A validated on-disk aube install.
 #[derive(Debug, Clone)]
 pub struct InstalledAube {
-    pub version: node_semver::Version,
+    pub version: nodejs_semver::Version,
     pub install_dir: PathBuf,
     /// The `aube` executable. `aubr` / `aubx` siblings live next to it.
     pub exe: PathBuf,
@@ -74,7 +74,7 @@ pub fn self_dir() -> Option<PathBuf> {
 /// self dir. Same collision rule as Node: aube's own copy of a
 /// version wins over mise's.
 pub fn list_installed_aube() -> Vec<InstalledAube> {
-    let mut by_version: std::collections::BTreeMap<node_semver::Version, InstalledAube> =
+    let mut by_version: std::collections::BTreeMap<nodejs_semver::Version, InstalledAube> =
         Default::default();
     if let Some(dir) = discover::mise_tool_installs_dir("aube") {
         for install in scan_aube_dir(&dir, InstallOrigin::Mise) {
@@ -91,7 +91,7 @@ pub fn list_installed_aube() -> Vec<InstalledAube> {
 
 /// Look up one exact installed version (mise first, then self dir —
 /// the self-dir copy wins, mirroring `list_installed_aube`).
-pub fn find_installed_aube(version: &node_semver::Version) -> Option<InstalledAube> {
+pub fn find_installed_aube(version: &nodejs_semver::Version) -> Option<InstalledAube> {
     let from_self = self_dir()
         .map(|d| d.join(version.to_string()))
         .and_then(|d| validate_aube_install(&d, version.clone(), InstallOrigin::Aube));
@@ -119,7 +119,7 @@ fn scan_aube_dir(root: &Path, origin: InstallOrigin) -> Vec<InstalledAube> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let Ok(version) = node_semver::Version::parse(name.trim_start_matches('v')) else {
+        let Ok(version) = nodejs_semver::Version::parse(name.trim_start_matches('v')) else {
             continue;
         };
         if let Some(install) = validate_aube_install(&path, version, origin) {
@@ -135,7 +135,7 @@ fn scan_aube_dir(root: &Path, origin: InstallOrigin) -> Vec<InstalledAube> {
 /// alternative packagings).
 fn validate_aube_install(
     dir: &Path,
-    version: node_semver::Version,
+    version: nodejs_semver::Version,
     origin: InstallOrigin,
 ) -> Option<InstalledAube> {
     if dir.join("incomplete").exists() {
@@ -232,14 +232,14 @@ fn versions_host() -> String {
 /// plaintext list — CDN-cached, no rate limits; the
 /// `aube.jdx.dev/VERSION` latest-only announcement is the fallback,
 /// degrading range resolution to "newest release" rather than failing.
-pub async fn available_aube_versions(retries: u32) -> Result<Vec<node_semver::Version>, Error> {
+pub async fn available_aube_versions(retries: u32) -> Result<Vec<nodejs_semver::Version>, Error> {
     let http = Http::new(retries);
     let list_url = format!("{}/aube", versions_host());
     match fetch_text(&http, &list_url).await {
         Ok(text) => {
-            let versions: Vec<node_semver::Version> = text
+            let versions: Vec<nodejs_semver::Version> = text
                 .lines()
-                .filter_map(|l| node_semver::Version::parse(l.trim().trim_start_matches('v')).ok())
+                .filter_map(|l| nodejs_semver::Version::parse(l.trim().trim_start_matches('v')).ok())
                 .collect();
             if !versions.is_empty() {
                 return Ok(versions);
@@ -255,7 +255,7 @@ pub async fn available_aube_versions(retries: u32) -> Result<Vec<node_semver::Ve
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| VERSION_URL.to_string());
     let text = fetch_text(&http, &url).await?;
-    let latest = node_semver::Version::parse(text.trim().trim_start_matches('v')).map_err(|e| {
+    let latest = nodejs_semver::Version::parse(text.trim().trim_start_matches('v')).map_err(|e| {
         Error::DownloadFailed {
             url,
             reason: format!("unparseable version announcement: {e}"),
@@ -281,7 +281,7 @@ async fn fetch_text(http: &Http, url: &str) -> Result<String, Error> {
 /// users), self-download from GitHub releases otherwise.
 pub async fn install_aube(
     cfg: &RuntimeConfig,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     progress: &dyn DownloadProgress,
 ) -> Result<InstalledAube, Error> {
     if let Some(existing) = find_installed_aube(version) {
@@ -317,7 +317,7 @@ pub async fn install_aube(
 
 async fn delegate_to_mise(
     mise_bin: &Path,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     progress: &dyn DownloadProgress,
 ) -> Result<InstalledAube, Error> {
     mise::install_tool_via_mise(mise_bin, "aube", version, progress).await?;
@@ -338,7 +338,7 @@ async fn delegate_to_mise(
 /// archive root — and atomically publish.
 async fn self_download(
     cfg: &RuntimeConfig,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     progress: &dyn DownloadProgress,
 ) -> Result<InstalledAube, Error> {
     let root = self_dir().ok_or_else(|| {
@@ -468,7 +468,7 @@ async fn self_download(
 /// failing a download GitHub itself already served over TLS.
 async fn fetch_release_digest(
     http: &Http,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     archive_name: &str,
 ) -> Option<[u8; 32]> {
     let api_override = aube_util::env::embedder_env("SELF_API_BASE")
@@ -525,7 +525,7 @@ async fn digest_from_release_json(
     http: &Http,
     url: &str,
     bearer: Option<&str>,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
     archive_name: &str,
 ) -> Option<[u8; 32]> {
     let resp = http

@@ -91,7 +91,7 @@ tracing-subscriber = { workspace = true }
 flate2 = { workspace = true, features = ["zlib-ng"] }
 glob = { workspace = true }
 ignore = { workspace = true }
-node-semver = { workspace = true }
+nodejs-semver = { workspace = true }
 rayon = { workspace = true }
 tar = { workspace = true }
 tempfile = "3"

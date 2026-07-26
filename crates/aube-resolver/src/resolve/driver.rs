@@ -585,10 +585,10 @@ impl<'a> ResolveDriver<'a> {
             .minimum_release_age
             .as_ref()
             .map(|m| &m.exclude);
-        let is_age_exempt = |ver: &str, parsed: Option<&node_semver::Version>| {
+        let is_age_exempt = |ver: &str, parsed: Option<&nodejs_semver::Version>| {
             mra_exclude.is_some_and(|ex| match parsed {
                 Some(v) => ex.matches(&registry_name, v),
-                None => match node_semver::Version::parse(ver) {
+                None => match nodejs_semver::Version::parse(ver) {
                     Ok(v) => ex.matches(&registry_name, &v),
                     Err(_) => ex.matches_name_only(&registry_name),
                 },

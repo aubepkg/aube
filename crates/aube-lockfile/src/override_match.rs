@@ -211,10 +211,10 @@ fn parse_segment(seg: &str) -> Option<(String, Option<String>)> {
 /// for two ranges with empty intersection. The caller signals the
 /// exclusive form via a separate try with `bumped_lower_bound` first.
 fn range_could_satisfy(task_range: &str, req: &str) -> bool {
-    let Ok(r) = node_semver::Range::parse(req) else {
+    let Ok(r) = nodejs_semver::Range::parse(req) else {
         return true;
     };
-    if let Ok(v) = node_semver::Version::parse(task_range)
+    if let Ok(v) = nodejs_semver::Version::parse(task_range)
         && v.satisfies(&r)
     {
         return true;
@@ -222,7 +222,7 @@ fn range_could_satisfy(task_range: &str, req: &str) -> bool {
     let trimmed = task_range.trim();
     let exclusive = trimmed.starts_with('>') && !trimmed.starts_with(">=");
     if let Some(candidate) = lower_bound_version(trimmed)
-        && let Ok(mut v) = node_semver::Version::parse(&candidate)
+        && let Ok(mut v) = nodejs_semver::Version::parse(&candidate)
     {
         if exclusive {
             // Probe just above the exclusive boundary: `>3.0.5` covers

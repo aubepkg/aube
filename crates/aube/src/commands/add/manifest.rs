@@ -219,8 +219,8 @@ pub(super) async fn update_manifest_for_add(
             // dist-tag never blocks a workspace match.
             if spec.has_explicit_range
                 && let (Ok(parsed_version), Ok(parsed_range)) = (
-                    node_semver::Version::parse(version),
-                    node_semver::Range::parse(&spec.range),
+                    nodejs_semver::Version::parse(version),
+                    nodejs_semver::Range::parse(&spec.range),
                 )
                 && !parsed_version.satisfies(&parsed_range)
             {

@@ -146,8 +146,8 @@ fn unix_now() -> u64 {
 
 fn is_newer(latest: &str, current: &str) -> bool {
     match (
-        node_semver::Version::parse(latest),
-        node_semver::Version::parse(current),
+        nodejs_semver::Version::parse(latest),
+        nodejs_semver::Version::parse(current),
     ) {
         (Ok(l), Ok(c)) => l > c,
         _ => false,

@@ -450,8 +450,8 @@ fn existing_version_from_dep_path(dep: &DirectDep) -> &str {
 /// never panics.
 fn prefer_higher_version(a: &str, b: &str) -> bool {
     match (
-        node_semver::Version::parse(a),
-        node_semver::Version::parse(b),
+        nodejs_semver::Version::parse(a),
+        nodejs_semver::Version::parse(b),
     ) {
         (Ok(va), Ok(vb)) => va >= vb,
         _ => a >= b,

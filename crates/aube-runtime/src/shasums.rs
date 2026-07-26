@@ -65,7 +65,7 @@ pub(crate) async fn load_shasums(
     http: &Http,
     cfg: &RuntimeConfig,
     base: &str,
-    version: &node_semver::Version,
+    version: &nodejs_semver::Version,
 ) -> Result<Shasums, Error> {
     let cache_path = paths::shasums_cache_path(base, version);
     if let Some(text) = cache_path

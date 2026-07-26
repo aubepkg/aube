@@ -144,7 +144,7 @@ pub fn check_no_downgrade(
     exclude: &TrustExcludeRules,
     ignore_after_minutes: Option<u64>,
 ) -> Result<(), TrustCheckError> {
-    let picked_parsed = node_semver::Version::parse(picked_version).ok();
+    let picked_parsed = nodejs_semver::Version::parse(picked_version).ok();
 
     if let Some(ref pv) = picked_parsed {
         if exclude.matches(&packument.name, pv) {
@@ -202,7 +202,7 @@ pub fn check_no_downgrade(
             continue;
         }
         if exclude_prereleases
-            && let Ok(parsed) = node_semver::Version::parse(other_ver)
+            && let Ok(parsed) = nodejs_semver::Version::parse(other_ver)
             && !parsed.pre_release.is_empty()
         {
             continue;
@@ -324,7 +324,7 @@ struct TrustExcludeRule {
     name_matcher: NameMatcher,
     /// `None` → rule matches every version of any name match.
     /// `Some(ranges)` → rule matches any version satisfying one range.
-    version_ranges: Option<Vec<node_semver::Range>>,
+    version_ranges: Option<Vec<nodejs_semver::Range>>,
 }
 
 #[derive(Debug, Clone)]
@@ -421,7 +421,7 @@ impl TrustExcludeRules {
         (Self { rules }, errors)
     }
 
-    pub(crate) fn matches(&self, name: &str, version: &node_semver::Version) -> bool {
+    pub(crate) fn matches(&self, name: &str, version: &nodejs_semver::Version) -> bool {
         for rule in &self.rules {
             if !rule.name_matcher.matches(name) {
                 continue;
@@ -483,7 +483,7 @@ fn parse_one(pattern: &str) -> Result<TrustExcludeRule, TrustExcludeParseError> 
                         pattern: pattern.to_string(),
                     });
                 }
-                let r = node_semver::Range::parse(trimmed).map_err(|_| {
+                let r = nodejs_semver::Range::parse(trimmed).map_err(|_| {
                     TrustExcludeParseError::InvalidVersionUnion {
                         pattern: pattern.to_string(),
                     }
@@ -1125,9 +1125,9 @@ mod tests {
     #[test]
     fn exclude_parses_name_only() {
         let r = TrustExcludeRules::parse(["foo"]).unwrap();
-        assert!(r.matches("foo", &node_semver::Version::parse("1.0.0").unwrap()));
-        assert!(r.matches("foo", &node_semver::Version::parse("99.0.0").unwrap()));
-        assert!(!r.matches("bar", &node_semver::Version::parse("1.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("1.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("99.0.0").unwrap()));
+        assert!(!r.matches("bar", &nodejs_semver::Version::parse("1.0.0").unwrap()));
     }
 
     #[test]
@@ -1144,11 +1144,11 @@ mod tests {
                 continue;
             }
             assert!(
-                r.matches(name, &node_semver::Version::parse("1.0.0").unwrap()),
+                r.matches(name, &nodejs_semver::Version::parse("1.0.0").unwrap()),
                 "{name} should be globally excluded"
             );
         }
-        assert!(!r.matches("left-pad", &node_semver::Version::parse("1.0.0").unwrap()));
+        assert!(!r.matches("left-pad", &nodejs_semver::Version::parse("1.0.0").unwrap()));
     }
 
     #[test]
@@ -1161,15 +1161,15 @@ mod tests {
         let r = TrustExcludeRules::default();
         assert!(r.matches(
             "@octokit/endpoint",
-            &node_semver::Version::parse("9.0.6").unwrap()
+            &nodejs_semver::Version::parse("9.0.6").unwrap()
         ));
         assert!(r.matches(
             "@octokit/endpoint",
-            &node_semver::Version::parse("10.1.0").unwrap()
+            &nodejs_semver::Version::parse("10.1.0").unwrap()
         ));
         assert!(!r.matches(
             "@octokit/core",
-            &node_semver::Version::parse("9.0.6").unwrap()
+            &nodejs_semver::Version::parse("9.0.6").unwrap()
         ));
     }
 
@@ -1181,35 +1181,35 @@ mod tests {
         let r = TrustExcludeRules::default();
         assert!(r.matches(
             "@hono/node-server",
-            &node_semver::Version::parse("1.19.15").unwrap()
+            &nodejs_semver::Version::parse("1.19.15").unwrap()
         ));
         // Every version, not just the 1.x line — the exclusion is
         // intentionally package-wide (see DEFAULT_TRUST_POLICY_EXCLUDES).
         assert!(r.matches(
             "@hono/node-server",
-            &node_semver::Version::parse("2.0.10").unwrap()
+            &nodejs_semver::Version::parse("2.0.10").unwrap()
         ));
         assert!(r.matches(
             "@hono/node-server",
-            &node_semver::Version::parse("2.1.0").unwrap()
+            &nodejs_semver::Version::parse("2.1.0").unwrap()
         ));
-        assert!(!r.matches("hono", &node_semver::Version::parse("1.19.15").unwrap()));
+        assert!(!r.matches("hono", &nodejs_semver::Version::parse("1.19.15").unwrap()));
     }
 
     #[test]
     fn exclude_parses_name_at_version() {
         let r = TrustExcludeRules::parse(["foo@1.0.0"]).unwrap();
-        assert!(r.matches("foo", &node_semver::Version::parse("1.0.0").unwrap()));
-        assert!(!r.matches("foo", &node_semver::Version::parse("1.0.1").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("1.0.0").unwrap()));
+        assert!(!r.matches("foo", &nodejs_semver::Version::parse("1.0.1").unwrap()));
     }
 
     #[test]
     fn exclude_parses_version_union() {
         let r = TrustExcludeRules::parse(["foo@1.0.0 || 2.0.0 || 3.0.0"]).unwrap();
-        assert!(r.matches("foo", &node_semver::Version::parse("1.0.0").unwrap()));
-        assert!(r.matches("foo", &node_semver::Version::parse("2.0.0").unwrap()));
-        assert!(r.matches("foo", &node_semver::Version::parse("3.0.0").unwrap()));
-        assert!(!r.matches("foo", &node_semver::Version::parse("4.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("1.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("2.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("3.0.0").unwrap()));
+        assert!(!r.matches("foo", &nodejs_semver::Version::parse("4.0.0").unwrap()));
     }
 
     #[test]
@@ -1217,11 +1217,11 @@ mod tests {
         let r = TrustExcludeRules::parse(["@babel/core@7.20.0"]).unwrap();
         assert!(r.matches(
             "@babel/core",
-            &node_semver::Version::parse("7.20.0").unwrap()
+            &nodejs_semver::Version::parse("7.20.0").unwrap()
         ));
         assert!(!r.matches(
             "@babel/core",
-            &node_semver::Version::parse("7.20.1").unwrap()
+            &nodejs_semver::Version::parse("7.20.1").unwrap()
         ));
     }
 
@@ -1230,32 +1230,32 @@ mod tests {
         let r = TrustExcludeRules::parse(["@babel/core"]).unwrap();
         assert!(r.matches(
             "@babel/core",
-            &node_semver::Version::parse("9.9.9").unwrap()
+            &nodejs_semver::Version::parse("9.9.9").unwrap()
         ));
     }
 
     #[test]
     fn exclude_parses_glob() {
         let r = TrustExcludeRules::parse(["is-*"]).unwrap();
-        assert!(r.matches("is-odd", &node_semver::Version::parse("1.0.0").unwrap()));
-        assert!(r.matches("is-even", &node_semver::Version::parse("1.0.0").unwrap()));
-        assert!(!r.matches("lodash", &node_semver::Version::parse("1.0.0").unwrap()));
+        assert!(r.matches("is-odd", &nodejs_semver::Version::parse("1.0.0").unwrap()));
+        assert!(r.matches("is-even", &nodejs_semver::Version::parse("1.0.0").unwrap()));
+        assert!(!r.matches("lodash", &nodejs_semver::Version::parse("1.0.0").unwrap()));
     }
 
     #[test]
     fn exclude_parses_star_matches_all() {
         let r = TrustExcludeRules::parse(["*"]).unwrap();
-        assert!(r.matches("anything", &node_semver::Version::parse("0.0.1").unwrap()));
+        assert!(r.matches("anything", &nodejs_semver::Version::parse("0.0.1").unwrap()));
     }
 
     #[test]
     fn exclude_parses_version_ranges() {
         let r = TrustExcludeRules::parse(["foo@^1.0.0 || ~2.1.0 || >=3.0.0 <4.0.0"]).unwrap();
-        assert!(r.matches("foo", &node_semver::Version::parse("1.2.3").unwrap()));
-        assert!(r.matches("foo", &node_semver::Version::parse("2.1.9").unwrap()));
-        assert!(r.matches("foo", &node_semver::Version::parse("3.5.0").unwrap()));
-        assert!(!r.matches("foo", &node_semver::Version::parse("2.2.0").unwrap()));
-        assert!(!r.matches("foo", &node_semver::Version::parse("4.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("1.2.3").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("2.1.9").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("3.5.0").unwrap()));
+        assert!(!r.matches("foo", &nodejs_semver::Version::parse("2.2.0").unwrap()));
+        assert!(!r.matches("foo", &nodejs_semver::Version::parse("4.0.0").unwrap()));
     }
 
     #[test]
@@ -1285,10 +1285,10 @@ mod tests {
             "is-*@nope",
         ]);
         // Two valid rules survive; two invalid surface as separate errors.
-        assert!(rules.matches("good", &node_semver::Version::parse("1.0.0").unwrap()));
+        assert!(rules.matches("good", &nodejs_semver::Version::parse("1.0.0").unwrap()));
         assert!(rules.matches(
             "@scope/also-good",
-            &node_semver::Version::parse("1.0.0").unwrap()
+            &nodejs_semver::Version::parse("1.0.0").unwrap()
         ));
         assert_eq!(errors.len(), 2, "two malformed entries reported");
     }
@@ -1297,6 +1297,6 @@ mod tests {
     fn exclude_skips_empty_patterns() {
         // npm config arrays sometimes include empty entries; ignore them.
         let r = TrustExcludeRules::parse(["", "foo", ""]).unwrap();
-        assert!(r.matches("foo", &node_semver::Version::parse("1.0.0").unwrap()));
+        assert!(r.matches("foo", &nodejs_semver::Version::parse("1.0.0").unwrap()));
     }
 }

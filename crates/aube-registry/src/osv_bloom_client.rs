@@ -221,7 +221,7 @@ impl Bloom {
 /// Bucket a concrete semver as the upstream builder does. Mirrors
 /// `osv_bloom::bucket` — keep in sync with the published wire format.
 fn bucket_of(version: &str) -> Option<String> {
-    let v = node_semver::Version::parse(version).ok()?;
+    let v = nodejs_semver::Version::parse(version).ok()?;
     if v.major == 0 {
         Some(format!("0.{}", v.minor))
     } else {

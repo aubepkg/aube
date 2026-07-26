@@ -561,7 +561,7 @@ fn dep_path_has_registry_version(dep_path: &str, name: &str) -> bool {
         return false;
     };
     let version = tail.split('(').next().unwrap_or(tail);
-    node_semver::Version::parse(version).is_ok()
+    nodejs_semver::Version::parse(version).is_ok()
 }
 
 #[cfg(test)]

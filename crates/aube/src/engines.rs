@@ -150,10 +150,10 @@ fn probe_node_version(program: &std::path::Path) -> Option<String> {
 /// fields or unusual binaries that report non-standard version strings
 /// (e.g. nightly builds, custom forks).
 fn version_satisfies(version: &str, range: &str) -> bool {
-    let Ok(v) = node_semver::Version::parse(version) else {
+    let Ok(v) = nodejs_semver::Version::parse(version) else {
         return true;
     };
-    let Ok(r) = node_semver::Range::parse(range) else {
+    let Ok(r) = nodejs_semver::Range::parse(range) else {
         return true;
     };
     v.satisfies(&r)

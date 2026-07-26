@@ -129,7 +129,7 @@ fn detect_musl() -> bool {
 
 /// The artifact filename for `version` on `platform`:
 /// `node-v22.1.0-darwin-arm64.tar.gz`.
-pub fn artifact_filename(version: &node_semver::Version, platform: &Platform) -> String {
+pub fn artifact_filename(version: &nodejs_semver::Version, platform: &Platform) -> String {
     format!(
         "node-v{version}-{}.{}",
         platform.dist_slug(),
@@ -139,7 +139,7 @@ pub fn artifact_filename(version: &node_semver::Version, platform: &Platform) ->
 
 /// The top-level directory inside an artifact:
 /// `node-v22.1.0-darwin-arm64`.
-pub fn artifact_top_dir(version: &node_semver::Version, platform: &Platform) -> String {
+pub fn artifact_top_dir(version: &nodejs_semver::Version, platform: &Platform) -> String {
     format!("node-v{version}-{}", platform.dist_slug())
 }
 
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn artifact_names() {
-        let v: node_semver::Version = "22.1.0".parse().unwrap();
+        let v: nodejs_semver::Version = "22.1.0".parse().unwrap();
         assert_eq!(
             artifact_filename(&v, &plat("win32", "x64", None)),
             "node-v22.1.0-win-x64.zip"
