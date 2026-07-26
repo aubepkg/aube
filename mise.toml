@@ -11,9 +11,10 @@ communique = "latest"
 # upgrade that changes how it samples would land in the series as a step
 # change in aube's numbers, indistinguishable from a real regression. Bump
 # deliberately, on a commit that does nothing else.
-# TODO: switch to plain `tak = "0.0.2"` once jdx/mise#11307 adds the registry
-# entry and the shorthand exists.
-"github:jdx/tak" = "0.0.2"
+# TODO: switch to plain `tak = "0.0.3"` once a mise release ships the registry
+# entry from jdx/mise#11307 — the shorthand exists on main but the registry is
+# compiled in, so it is not usable until then.
+"github:jdx/tak" = "0.0.3"
 hk = "latest"
 node = "24"
 pitchfork = "latest"
