@@ -512,7 +512,7 @@
         ],
         "flags": [],
         "mounts": [],
-        "effect": "read",
+        "effect": "write",
         "hide": false,
         "help": "Emit shell activation code for runtime tool shims",
         "name": "activate",
@@ -7411,7 +7411,7 @@
           }
         ],
         "mounts": [],
-        "effect": "write",
+        "effect": "destructive",
         "hide": false,
         "help": "Remove a registry auth token from the user's ~/.npmrc",
         "name": "logout",

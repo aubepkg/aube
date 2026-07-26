@@ -53,7 +53,9 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
     // Removes a team's access; restoring it means re-granting.
     ("access revoke", Destructive),
     ("access set", Write),
-    ("activate", Read),
+    // Unlike most `activate` commands this does not only print shell code:
+    // `ensure_shims` creates the shim dir and writes the tool shims into it.
+    ("activate", Write),
     ("add", Write),
     ("approve-builds", Write),
     ("audit", Read),
@@ -110,8 +112,10 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
     ("list", Read),
     ("ll", Read),
     ("login", Write),
-    // Drops a stored token; logging back in restores it.
-    ("logout", Write),
+    // Removes the stored auth token from .npmrc. Getting it back means
+    // authenticating again, which is the same "redoing work" that makes
+    // `config delete` destructive — this is `config delete` for the auth key.
+    ("logout", Destructive),
     ("outdated", Read),
     ("pack", Write),
     ("patch", Write),
@@ -123,10 +127,6 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
     ("prefix", Read),
     // Removes extraneous packages from node_modules; reinstall restores them.
     ("prune", Write),
-    // Publishes to the registry. Creates rather than removes, so `write` by
-    // the rules above — but a published version cannot be replaced, and every
-    // consumer can see it immediately. Never auto-run this.
-    ("publish", Write),
     ("purge", Write),
     ("query", Read),
     ("rebuild", Write),
@@ -168,6 +168,20 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
     ("set", Write),
 ];
 
+/// Commands that only exist behind a cargo feature, so they must only be
+/// classified where they exist — otherwise the stale-entry test fails under
+/// `--no-default-features`. The feature is on by default.
+///
+/// `config tui` is deliberately *not* here: a `cfg(not(feature = "config-tui"))`
+/// stub keeps the subcommand present either way, it just errors when invoked.
+pub const FEATURE_EFFECTS: &[(&str, SpecCommandEffect)] = &[
+    // Publishes to the registry. Creates rather than removes, so `write` by
+    // the rules above — but a published version cannot be replaced, and every
+    // consumer can see it immediately. Never auto-run this.
+    #[cfg(feature = "publish")]
+    ("publish", Write),
+];
+
 /// Commands with no fixed effect, and why.
 ///
 /// These run code that is not aube's: a package's lifecycle scripts, a binary
@@ -196,7 +210,8 @@ pub const UNCLASSIFIED: &[(&str, &str)] = &[
 
 /// Annotate every command in the spec that has a declared effect.
 pub fn apply(spec: &mut usage::Spec) {
-    let effects: HashMap<&str, SpecCommandEffect> = EFFECTS.iter().copied().collect();
+    let effects: HashMap<&str, SpecCommandEffect> =
+        EFFECTS.iter().chain(FEATURE_EFFECTS).copied().collect();
     annotate(&mut spec.cmd, &mut vec![], &effects);
 }
 
@@ -241,6 +256,7 @@ mod tests {
     fn classified() -> HashSet<&'static str> {
         EFFECTS
             .iter()
+            .chain(FEATURE_EFFECTS)
             .map(|(name, _)| *name)
             .chain(UNCLASSIFIED.iter().map(|(name, _)| *name))
             .collect()
@@ -285,6 +301,7 @@ mod tests {
         let mut seen = HashSet::new();
         for name in EFFECTS
             .iter()
+            .chain(FEATURE_EFFECTS)
             .map(|(n, _)| *n)
             .chain(UNCLASSIFIED.iter().map(|(n, _)| *n))
         {

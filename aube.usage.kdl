@@ -229,7 +229,7 @@ Use this npm registry URL for package metadata, tarballs, audit requests, dist-t
         arg <PACKAGE> help="Package name"
     }
 }
-cmd activate help="Emit shell activation code for runtime tool shims" effect=read {
+cmd activate help="Emit shell activation code for runtime tool shims" effect=write {
     arg <SHELL> help="Shell to emit activation code for" {
         choices bash fish zsh
     }
@@ -2522,7 +2522,7 @@ Use this npm registry URL for package metadata, tarballs, audit requests, dist-t
         arg <URL>
     }
 }
-cmd logout help="Remove a registry auth token from the user's ~/.npmrc" effect=write {
+cmd logout help="Remove a registry auth token from the user's ~/.npmrc" effect=destructive {
     flag --scope help="Scope whose registry mapping should also be removed (e.g. `@myorg`)" {
         arg <SCOPE>
     }
