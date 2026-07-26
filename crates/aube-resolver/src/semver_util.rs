@@ -335,7 +335,7 @@ pub(crate) fn highest_stable_version(packument: &Packument) -> Option<String> {
         // Skip prereleases so we match npm semantics. Registry
         // with only prereleases returns None and caller gets
         // NoMatch, same as before.
-        if !v.pre_release.is_empty() {
+        if !v.pre_release().is_empty() {
             continue;
         }
         match &best {

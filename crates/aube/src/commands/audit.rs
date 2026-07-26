@@ -1009,7 +1009,7 @@ fn best_non_vulnerable(packument: &Packument, vulnerable_versions: &[String]) ->
         let Ok(version) = nodejs_semver::Version::parse(ver_str) else {
             continue;
         };
-        if !version.pre_release.is_empty() {
+        if !version.pre_release().is_empty() {
             continue;
         }
         if vulnerable.iter().any(|range| version.satisfies(range)) {

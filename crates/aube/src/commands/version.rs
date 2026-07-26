@@ -327,13 +327,13 @@ fn compute_new_version(current: &str, bump: &str, preid: Option<&str>) -> miette
         // prerelease instead of incrementing. Going through those helpers
         // would leave e.g. `premajor` of `2.0.0-rc.0` as `2.0.0-0` rather
         // than the npm-matching `3.0.0-0`.
-        "premajor" => prerelease_of(Version::new(current_ver.major + 1, 0, 0), preid),
+        "premajor" => prerelease_of(Version::new(current_ver.major() + 1, 0, 0), preid),
         "preminor" => prerelease_of(
-            Version::new(current_ver.major, current_ver.minor + 1, 0),
+            Version::new(current_ver.major(), current_ver.minor() + 1, 0),
             preid,
         ),
         "prepatch" => prerelease_of(
-            Version::new(current_ver.major, current_ver.minor, current_ver.patch + 1),
+            Version::new(current_ver.major(), current_ver.minor(), current_ver.patch() + 1),
             preid,
         ),
         "prerelease" => bump_prerelease(&current_ver, preid),
@@ -348,32 +348,32 @@ fn bump_major(v: &Version) -> Version {
     // If the current version has a prerelease and the core is already
     // bumped (minor=0, patch=0), the release drops the prerelease without
     // advancing the major. Mirrors npm's `inc('major')`.
-    if v.minor == 0 && v.patch == 0 && v.is_prerelease() {
-        Version::new(v.major, 0, 0)
+    if v.minor() == 0 && v.patch() == 0 && v.is_prerelease() {
+        Version::new(v.major(), 0, 0)
     } else {
-        Version::new(v.major + 1, 0, 0)
+        Version::new(v.major() + 1, 0, 0)
     }
 }
 
 fn bump_minor(v: &Version) -> Version {
-    if v.patch == 0 && v.is_prerelease() {
-        Version::new(v.major, v.minor, 0)
+    if v.patch() == 0 && v.is_prerelease() {
+        Version::new(v.major(), v.minor(), 0)
     } else {
-        Version::new(v.major, v.minor + 1, 0)
+        Version::new(v.major(), v.minor() + 1, 0)
     }
 }
 
 fn bump_patch(v: &Version) -> Version {
     if v.is_prerelease() {
-        Version::new(v.major, v.minor, v.patch)
+        Version::new(v.major(), v.minor(), v.patch())
     } else {
-        Version::new(v.major, v.minor, v.patch + 1)
+        Version::new(v.major(), v.minor(), v.patch() + 1)
     }
 }
 
 fn prerelease_of(core: Version, preid: Option<&str>) -> Version {
     let mut out = core;
-    out.pre_release = initial_prerelease(preid);
+    out.pre_release() = initial_prerelease(preid);
     out
 }
 
@@ -395,37 +395,37 @@ fn bump_prerelease(current: &Version, preid: Option<&str>) -> Version {
         if let Some(id) = preid
             && !id.is_empty()
         {
-            let current_preid = current.pre_release.first().and_then(|ident| match ident {
+            let current_preid = current.pre_release().first().and_then(|ident| match ident {
                 Identifier::AlphaNumeric(s) => Some(s.as_str()),
                 Identifier::Numeric(_) => None,
             });
             if current_preid != Some(id) {
                 return Version {
-                    major: current.major,
-                    minor: current.minor,
-                    patch: current.patch,
+                    major: current.major(),
+                    minor: current.minor(),
+                    patch: current.patch(),
                     build: Vec::new(),
                     pre_release: initial_prerelease(Some(id)),
                 };
             }
         }
         let mut out = Version {
-            major: current.major,
-            minor: current.minor,
-            patch: current.patch,
+            major: current.major(),
+            minor: current.minor(),
+            patch: current.patch(),
             build: Vec::new(),
-            pre_release: current.pre_release.clone(),
+            pre_release: current.pre_release().clone(),
         };
-        if let Some(Identifier::Numeric(n)) = out.pre_release.last().cloned() {
-            *out.pre_release.last_mut().unwrap() = Identifier::Numeric(n + 1);
+        if let Some(Identifier::Numeric(n)) = out.pre_release().last().cloned() {
+            *out.pre_release().last_mut().unwrap() = Identifier::Numeric(n + 1);
         } else {
-            out.pre_release.push(Identifier::Numeric(0));
+            out.pre_release().push(Identifier::Numeric(0));
         }
         return out;
     }
     // Not yet a prerelease — bump patch and add `-<preid>.0` / `-0`.
-    let mut out = Version::new(current.major, current.minor, current.patch + 1);
-    out.pre_release = initial_prerelease(preid);
+    let mut out = Version::new(current.major(), current.minor(), current.patch() + 1);
+    out.pre_release() = initial_prerelease(preid);
     out
 }
 

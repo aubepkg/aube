@@ -86,7 +86,7 @@ impl Resolver {
 /// (rare, but possible) still surfaces as an upgrade hint.
 fn is_prerelease(version: &str) -> bool {
     nodejs_semver::Version::parse(version)
-        .map(|v| !v.pre_release.is_empty())
+        .map(|v| !v.pre_release().is_empty())
         .unwrap_or(false)
 }
 

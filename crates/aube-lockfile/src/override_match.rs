@@ -228,7 +228,7 @@ fn range_could_satisfy(task_range: &str, req: &str) -> bool {
             // Probe just above the exclusive boundary: `>3.0.5` covers
             // every version above 3.0.5, so use 3.0.5 + minimum patch
             // bump as the representative point.
-            v.patch += 1;
+            v.patch() += 1;
         }
         return v.satisfies(&r);
     }

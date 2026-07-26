@@ -555,18 +555,18 @@ fn colorize_diff(current: &str, target: &str, width: usize) -> String {
     // every component to the right is also "new" and gets the same
     // color so a `1.2.3 → 2.0.0` major bump highlights the whole
     // tail, not just the leading `2`.
-    let head_color = if cur.major != new.major {
+    let head_color = if cur.major() != new.major() {
         SemverDiff::Major
-    } else if cur.minor != new.minor {
+    } else if cur.minor() != new.minor() {
         SemverDiff::Minor
-    } else if cur.patch != new.patch {
+    } else if cur.patch() != new.patch() {
         SemverDiff::Patch
     } else {
         SemverDiff::Prerelease
     };
-    let core = format!("{}.{}.{}", new.major, new.minor, new.patch);
-    let prerelease = if !new.pre_release.is_empty() {
-        let parts: Vec<String> = new.pre_release.iter().map(|p| p.to_string()).collect();
+    let core = format!("{}.{}.{}", new.major(), new.minor(), new.patch());
+    let prerelease = if !new.pre_release().is_empty() {
+        let parts: Vec<String> = new.pre_release().iter().map(|p| p.to_string()).collect();
         format!("-{}", parts.join("."))
     } else {
         String::new()
@@ -577,8 +577,8 @@ fn colorize_diff(current: &str, target: &str, width: usize) -> String {
     // `MAJOR.MINOR.PATCH` plain and color the `-rc.x` tail.
     let split_at = match head_color {
         SemverDiff::Major => 0,
-        SemverDiff::Minor => format!("{}.", new.major).len(),
-        SemverDiff::Patch => format!("{}.{}.", new.major, new.minor).len(),
+        SemverDiff::Minor => format!("{}.", new.major()).len(),
+        SemverDiff::Patch => format!("{}.{}.", new.major(), new.minor()).len(),
         SemverDiff::Prerelease => core.len(),
     };
     let (head, tail_in_core) = core.split_at(split_at.min(core.len()));

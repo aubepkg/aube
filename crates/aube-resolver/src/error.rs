@@ -197,7 +197,7 @@ pub(crate) fn build_no_match(task: &ResolveTask, packument: &Packument) -> NoMat
         let Ok(parsed) = nodejs_semver::Version::parse(v) else {
             continue;
         };
-        if parsed.pre_release.is_empty() {
+        if parsed.pre_release().is_empty() {
             stable.push((parsed, v.as_str()));
         } else {
             prerelease.push((parsed, v.as_str()));

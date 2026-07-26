@@ -187,7 +187,7 @@ pub fn check_no_downgrade(
     // block a stable that omits attestation.
     let exclude_prereleases = picked_parsed
         .as_ref()
-        .map(|v| v.pre_release.is_empty())
+        .map(|v| v.pre_release().is_empty())
         .unwrap_or(false);
 
     let mut best: Option<(TrustEvidence, &str)> = None;
@@ -203,7 +203,7 @@ pub fn check_no_downgrade(
         }
         if exclude_prereleases
             && let Ok(parsed) = nodejs_semver::Version::parse(other_ver)
-            && !parsed.pre_release.is_empty()
+            && !parsed.pre_release().is_empty()
         {
             continue;
         }
