@@ -24,6 +24,7 @@ mod slow_tarball_tests;
 
 pub use cache::CachedPackumentLookup;
 use dist_tags::*;
+pub use endpoints::PackageSearchResult;
 use http::*;
 use parse::parse_full_response;
 

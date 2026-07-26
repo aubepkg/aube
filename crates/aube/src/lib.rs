@@ -69,7 +69,7 @@ pub(crate) struct Cli {
     /// Currently honored by `run`, `test`, `start`, `stop`, `restart`,
     /// `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`,
     /// `update`, `why`, and implicit-script invocations.
-    #[arg(short = 'F', long, global = true, value_name = "PATTERN")]
+    #[arg(short = 'F', long, global = true, value_name = "WORKSPACE")]
     filter: Vec<String>,
 
     /// Run the command across every workspace package.

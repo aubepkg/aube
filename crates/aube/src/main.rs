@@ -60,11 +60,14 @@ fn print_usage_spec(embedder: &'static aube_util::Embedder) -> i32 {
     // fragment. usage merges top-level nodes, so appending the text is
     // enough (`mise usage` does the same). `{bin}` carries the embedder's
     // binary name into the shell snippet the completer runs.
-    spec.extend_from_slice(
-        include_str!("../assets/extra.usage.kdl")
-            .replace("{run}", &format!("{} run", embedder.name))
-            .as_bytes(),
-    );
+    let extra = include_str!("../assets/extra.usage.kdl")
+        .replace("{run}", &format!("{} run", embedder.name))
+        .replace(
+            "{completers}",
+            &include_str!("../assets/completion.usage.kdl").replace("{bin}", embedder.name),
+        );
+    spec.extend_from_slice(extra.trim_end().as_bytes());
+    spec.push(b'\n');
 
     // `mise render` redirects this into `aube.usage.kdl`, so a short write
     // must not pass for success — a truncated spec would become the

@@ -9,3 +9,7 @@
 // helper itself honors `-C` for direct invocation, ready for a safer
 // channel upstream.
 complete "script" run="{run} --complete" descriptions=#true
+
+// Keep value completers in a shared fragment so `aube usage`, `aubr`, and
+// `aubx` are generated from the same candidate protocol.
+{completers}

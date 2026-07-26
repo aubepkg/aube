@@ -2119,7 +2119,58 @@
             "hide": false
           }
         ],
-        "flags": [],
+        "flags": [
+          {
+            "name": "complete",
+            "usage": "--complete <COMPLETE>",
+            "help": "Emit dynamic candidates for the shell completion engine",
+            "help_first_line": "Emit dynamic candidates for the shell completion engine",
+            "short": [],
+            "long": [
+              "complete"
+            ],
+            "hide": true,
+            "global": false,
+            "arg": {
+              "name": "COMPLETE",
+              "usage": "<COMPLETE>",
+              "required": true,
+              "double_dash": "Optional",
+              "hide": false,
+              "choices": {
+                "choices": [
+                  "package",
+                  "bin",
+                  "workspace",
+                  "setting",
+                  "patch"
+                ]
+              }
+            }
+          },
+          {
+            "name": "query",
+            "usage": "--query <QUERY>",
+            "help": "Current word being completed",
+            "help_first_line": "Current word being completed",
+            "short": [],
+            "long": [
+              "query"
+            ],
+            "hide": true,
+            "global": false,
+            "arg": {
+              "name": "QUERY",
+              "usage": "<QUERY>",
+              "required": true,
+              "double_dash": "Optional",
+              "hide": false
+            },
+            "default": [
+              ""
+            ]
+          }
+        ],
         "mounts": [],
         "effect": "read",
         "hide": false,
@@ -8138,12 +8189,12 @@
         "full_cmd": [
           "patch-remove"
         ],
-        "usage": "patch-remove [PACKAGES]…",
+        "usage": "patch-remove [PATCH]…",
         "subcommands": {},
         "args": [
           {
-            "name": "PACKAGES",
-            "usage": "[PACKAGES]…",
+            "name": "PATCH",
+            "usage": "[PATCH]…",
             "help": "Patch keys to remove, formatted as `<name>@<version>`",
             "help_long": "Patch keys to remove, formatted as `<name>@<version>`.\n\nSame shape used as the `pnpm.patchedDependencies` map key. With no arguments, every declared patch is removed.",
             "help_first_line": "Patch keys to remove, formatted as `<name>@<version>`",
@@ -13011,7 +13062,7 @@
       },
       {
         "name": "filter",
-        "usage": "-F --filter… <PATTERN>",
+        "usage": "-F --filter… <WORKSPACE>",
         "help": "Scope command execution to workspace packages matching PATTERN",
         "help_long": "Scope command execution to workspace packages matching PATTERN.\n\nSupports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.\n\nCurrently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.",
         "help_first_line": "Scope command execution to workspace packages matching PATTERN",
@@ -13025,8 +13076,8 @@
         "hide": false,
         "global": true,
         "arg": {
-          "name": "PATTERN",
-          "usage": "<PATTERN>",
+          "name": "WORKSPACE",
+          "usage": "<WORKSPACE>",
           "required": true,
           "double_dash": "Optional",
           "hide": false
@@ -13386,6 +13437,49 @@
       "name": "script",
       "run": "aube run --complete",
       "descriptions": true
+    },
+    "package": {
+      "name": "package",
+      "run": "aube completion _ --complete package --query='{{ words[CURRENT] | replace(from=\"'\", to=\"'\\\\''\") }}'",
+      "descriptions": true
+    },
+    "packages": {
+      "name": "packages",
+      "run": "aube completion _ --complete package --query='{{ words[CURRENT] | replace(from=\"'\", to=\"'\\\\''\") }}'",
+      "descriptions": true
+    },
+    "pkg": {
+      "name": "pkg",
+      "run": "aube completion _ --complete package --query='{{ words[CURRENT] | replace(from=\"'\", to=\"'\\\\''\") }}'",
+      "descriptions": true
+    },
+    "bin": {
+      "name": "bin",
+      "run": "aube completion _ --complete bin",
+      "descriptions": true
+    },
+    "workspace": {
+      "name": "workspace",
+      "run": "aube completion _ --complete workspace",
+      "descriptions": true
+    },
+    "key": {
+      "name": "key",
+      "run": "aube completion _ --complete setting",
+      "descriptions": true
+    },
+    "patch": {
+      "name": "patch",
+      "run": "aube completion _ --complete patch",
+      "descriptions": true
+    },
+    "dir": {
+      "name": "dir",
+      "type_": "dir"
+    },
+    "path": {
+      "name": "path",
+      "type_": "path"
     }
   },
   "about": "A fast Node.js package manager",

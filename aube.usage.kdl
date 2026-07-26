@@ -16,7 +16,7 @@ Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packa
 
 Currently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.
 """#
-    arg <PATTERN>
+    arg <WORKSPACE>
 }
 flag "-r --recursive" help="Run the command across every workspace package" global=#true {
     long_help #"""
@@ -820,6 +820,14 @@ Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap
     }
 }
 cmd completion help="Generate shell completions (bash, zsh, fish)" effect=read {
+    flag --complete help="Emit dynamic candidates for the shell completion engine" hide=#true {
+        arg <COMPLETE> {
+            choices package bin workspace setting patch
+        }
+    }
+    flag --query help="Current word being completed" hide=#true default="" {
+        arg <QUERY>
+    }
     arg <SHELL> help="The shell to generate completions for (bash, zsh, fish)"
 }
 cmd config help="Read and write settings in `.npmrc`" effect=read {
@@ -2822,7 +2830,7 @@ The matching source snapshot is read from a sibling `source/` dir, located via t
 """#
 }
 cmd patch-remove help="Remove patch entries from `pnpm.patchedDependencies`" effect=destructive {
-    arg "[PACKAGES]…" help="Patch keys to remove, formatted as `<name>@<version>`" help_long=#"""
+    arg "[PATCH]…" help="Patch keys to remove, formatted as `<name>@<version>`" help_long=#"""
 Patch keys to remove, formatted as `<name>@<version>`.
 
 Same shape used as the `pnpm.patchedDependencies` map key. With no arguments, every declared patch is removed.
@@ -4416,3 +4424,21 @@ Examples:
 // helper itself honors `-C` for direct invocation, ready for a safer
 // channel upstream.
 complete "script" run="aube run --complete" descriptions=#true
+
+// Keep value completers in a shared fragment so `aube usage`, `aubr`, and
+// `aubx` are generated from the same candidate protocol.
+// Dynamic completion follows mise's custom-completer pattern: the usage
+// spec delegates candidate production to a hidden, machine-oriented CLI mode.
+//
+// usage renders the current token into `sh -c`. Wrap it in single quotes and
+// replace every embedded apostrophe with the POSIX close/escape/reopen form so
+// arbitrary input remains one inert argument.
+complete "package" run=#"aube completion _ --complete package --query='{{ words[CURRENT] | replace(from="'", to="'\\''") }}'"# descriptions=#true
+complete "packages" run=#"aube completion _ --complete package --query='{{ words[CURRENT] | replace(from="'", to="'\\''") }}'"# descriptions=#true
+complete "pkg" run=#"aube completion _ --complete package --query='{{ words[CURRENT] | replace(from="'", to="'\\''") }}'"# descriptions=#true
+complete "bin" run="aube completion _ --complete bin" descriptions=#true
+complete "workspace" run="aube completion _ --complete workspace" descriptions=#true
+complete "key" run="aube completion _ --complete setting" descriptions=#true
+complete "patch" run="aube completion _ --complete patch" descriptions=#true
+complete "dir" type="dir"
+complete "path" type="path"
