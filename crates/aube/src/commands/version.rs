@@ -415,8 +415,8 @@ fn bump_prerelease(current: &Version, preid: Option<&str>) -> Version {
                     current.major(),
                     current.minor(),
                     current.patch(),
-                    Vec::new(),
                     initial_prerelease(Some(id)),
+                    Vec::new(),
                 );
             }
         }
