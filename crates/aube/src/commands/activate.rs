@@ -59,7 +59,7 @@ fn ensure_shims(shim_dir: &Path) -> miette::Result<()> {
 fn write_shim(shim_dir: &Path, name: &str) -> miette::Result<()> {
     let dest = shim_dir.join(name);
     let _ = std::fs::remove_file(&dest);
-    write_dispatcher_shim(&dest, name).map_err(|e| {
+    write_dispatcher_shim(&dest, name, aube_util::prog()).map_err(|e| {
         miette!(
             code = aube_codes::errors::ERR_AUBE_SHIM_CREATE_FAILED,
             "failed to create shim {}: {e}",
@@ -69,11 +69,12 @@ fn write_shim(shim_dir: &Path, name: &str) -> miette::Result<()> {
 }
 
 #[cfg(unix)]
-fn write_dispatcher_shim(dest: &Path, name: &str) -> std::io::Result<()> {
+fn write_dispatcher_shim(dest: &Path, name: &str, program: &str) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
+    let program = shell_double_quote(program);
     let script = format!(
-        "#!/bin/sh\n# aube-tool-shim v1\nexec aube {} {name} \"$@\"\n",
+        "#!/bin/sh\n# aube-tool-shim v1\nexec {program} {} {name} \"$@\"\n",
         crate::tool_shims::DISPATCH_ARG
     );
     std::fs::write(dest, script)?;
@@ -195,7 +196,19 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&node).expect("node shim should be readable after creation"),
-            "#!/bin/sh\n# aube-tool-shim v1\nexec aube __aube-shim node \"$@\"\n"
+            "#!/bin/sh\n# aube-tool-shim v1\nexec \"aube\" __aube-shim node \"$@\"\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dispatcher_shim_uses_embedder_program() {
+        let dir = tempfile::tempdir().expect("shim tempdir should be created");
+        let node = dir.path().join("node");
+        write_dispatcher_shim(&node, "node", "nublike").expect("embedder shim should be created");
+        assert_eq!(
+            std::fs::read_to_string(node).expect("embedder shim should be readable"),
+            "#!/bin/sh\n# aube-tool-shim v1\nexec \"nublike\" __aube-shim node \"$@\"\n"
         );
     }
 }
