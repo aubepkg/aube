@@ -669,11 +669,9 @@ fn inner_main() -> miette::Result<i32> {
         Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
     };
 
-    // `run --complete` is the shell-completion probe behind
-    // `complete "script"` in the usage spec. It answers from the nearest
-    // `package.json` and nothing else, so it returns here — ahead of
-    // every piece of startup that would either cost a TAB press real time
-    // or swallow the candidate list outright:
+    // Shell-completion probes return here — ahead of every piece of startup
+    // that would either cost a TAB press real time or swallow the candidate
+    // list outright:
     //
     //   - `useStderr` dup2s stdout onto stderr, and `usage` reads the
     //     child's stdout, so the completions would vanish;
@@ -691,6 +689,19 @@ fn inner_main() -> miette::Result<i32> {
         && args.complete
     {
         commands::run::print_script_completions(cli.dir.as_deref());
+        return Ok(0);
+    }
+    if let Some(Commands::Completion(args)) = cli.command.as_ref()
+        && args.is_probe()
+    {
+        // Package search is async, but a completion probe does not need the
+        // full multi-thread runtime and blocking pool used by installs.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .into_diagnostic()
+            .wrap_err("failed to build completion runtime")?;
+        runtime.block_on(args.run_probe(cli.dir.as_deref()));
         return Ok(0);
     }
 
