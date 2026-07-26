@@ -1570,6 +1570,10 @@ mod multicall_tests {
             rewrite_multicall_argv(os(&["aube", "node", "--version"])),
             os(&["aube", "node", "--", "--version"])
         );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["aube", "__aube-shim", "node", "--version"])),
+            os(&["aube", "node", "--", "--version"])
+        );
     }
 
     #[test]
@@ -1601,6 +1605,24 @@ mod multicall_tests {
         assert_eq!(
             rewrite_multicall_argv(os(&["pnpx", "cowsay", "hi"])),
             os(&["aube", "dlx", "cowsay", "hi"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "aube",
+                "__aube-shim",
+                "pnpm",
+                "install",
+                "--frozen-lockfile",
+            ])),
+            os(&["aube", "install", "--frozen-lockfile"])
+        );
+    }
+
+    #[test]
+    fn dispatcher_marker_rejects_unknown_tool_names() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&["aube", "__aube-shim", "shell", "arg"])),
+            os(&["aube", "__aube-shim", "shell", "arg"])
         );
     }
 
