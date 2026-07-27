@@ -1,7 +1,17 @@
 # Trust policy downgrades
 
-<script setup>
+<script setup lang="ts">
 import { data as packages } from './trust-policy-exceptions.data.ts'
+
+function packageUrl(packageSpec: string): string {
+  const versionSeparator = packageSpec.lastIndexOf('@')
+  if (versionSeparator > 0) {
+    const name = packageSpec.slice(0, versionSeparator)
+    const version = packageSpec.slice(versionSeparator + 1)
+    return `https://www.npmjs.com/package/${name}/v/${version}`
+  }
+  return `https://www.npmjs.com/package/${packageSpec}`
+}
 </script>
 
 `trustPolicy = no-downgrade` stops an install when the selected package
@@ -45,6 +55,17 @@ failure.
 Do not treat an allowlist entry as proof that a package is safe. It only records
 that someone chose to bypass this particular signal.
 
+Inspect an exact version without installing it:
+
+```sh
+aube trust check package-name@1.2.3
+```
+
+The report shows its publish time and trust evidence, the strongest evidence
+on an earlier release, and whether a built-in exception applies. Add
+`--ignore-default-excludes` to enforce the underlying policy even when aube
+normally exempts that version, or `--json` for machine-readable output.
+
 ## Choosing the narrowest workaround
 
 Prefer these options in order:
@@ -77,7 +98,7 @@ exception list because their published metadata has triggered legitimate
 
 <ul>
   <li v-for="packageName in packages" :key="packageName">
-    <a :href="`https://www.npmjs.com/package/${packageName}`">{{ packageName }}</a>
+    <a :href="packageUrl(packageName)">{{ packageName }}</a>
   </li>
 </ul>
 

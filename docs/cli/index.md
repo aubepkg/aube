@@ -206,6 +206,8 @@ Run from the workspace root regardless of the current package
 - [`aube store prune`](/cli/store/prune.md)
 - [`aube store status`](/cli/store/status.md)
 - [`aube test [FLAGS] [ARGS]…`](/cli/test.md)
+- [`aube trust <SUBCOMMAND>`](/cli/trust.md)
+- [`aube trust check [FLAGS] <PACKAGE@VERSION>`](/cli/trust/check.md)
 - [`aube undeprecate [FLAGS] <PACKAGE>`](/cli/undeprecate.md)
 - [`aube unlink [-g --global] [PACKAGE]`](/cli/unlink.md)
 - [`aube unpublish [FLAGS] [SPEC]`](/cli/unpublish.md)

@@ -3909,6 +3909,81 @@ Use this npm registry URL for package metadata, tarballs, audit requests, dist-t
     }
     arg "[ARGS]…" help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints" required=#false double_dash=automatic var=#true hide=#true
 }
+cmd trust subcommand_required=#true help="Inspect npm package publishing trust" effect=read {
+    cmd check help="Check one package version for a publishing-trust downgrade" effect=read {
+        after_long_help #"""
+Examples:
+
+  $ aube trust check @hono/node-server@1.19.17
+  @hono/node-server@1.19.17: pass
+  published: 2026-07-27T03:07:48.993Z
+  current evidence: trusted publisher
+  strongest earlier evidence: trusted publisher (2.0.10)
+
+  # Evaluate the underlying policy even when aube has a built-in exception
+  $ aube trust check @hono/node-server@1.19.15 --ignore-default-excludes
+
+  # Machine-readable report
+  $ aube trust check @hono/node-server@1.19.17 --json
+
+"""#
+        flag --ignore-default-excludes help="Evaluate the policy without aube's built-in package exceptions"
+        flag --json help="Emit a JSON report"
+        flag --fetch-retries help="Number of retry attempts for failed registry fetches" {
+            long_help #"""
+Number of retry attempts for failed registry fetches.
+
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
+"""#
+            arg <N>
+        }
+        flag --fetch-retry-factor help="Exponential backoff factor between retry attempts" {
+            long_help #"""
+Exponential backoff factor between retry attempts.
+
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap.
+"""#
+            arg <N>
+        }
+        flag --fetch-retry-maxtimeout help="Upper bound (ms) on the computed retry backoff" {
+            long_help #"""
+Upper bound (ms) on the computed retry backoff.
+
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+"""#
+            arg <MS>
+        }
+        flag --fetch-retry-mintimeout help="Lower bound (ms) on the computed retry backoff" {
+            long_help #"""
+Lower bound (ms) on the computed retry backoff.
+
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+"""#
+            arg <MS>
+        }
+        flag --fetch-timeout help="Per-request HTTP timeout in milliseconds" {
+            long_help #"""
+Per-request HTTP timeout in milliseconds.
+
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+"""#
+            arg <MS>
+        }
+        flag --registry help="Override the default registry URL for this invocation" {
+            long_help #"""
+Override the default registry URL for this invocation.
+
+Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
+"""#
+            arg <URL>
+        }
+        arg <PACKAGE@VERSION> help="Exact npm package version to inspect" help_long=#"""
+Exact npm package version to inspect
+
+Example: `@hono/node-server@1.19.17`.
+"""#
+    }
+}
 cmd undeprecate help="Clear an existing deprecation on the registry" effect=write {
     flag --dry-run help="Don't PUT anything — print which versions would be touched and exit"
     flag --otp help="One-time password from a 2FA authenticator; sent as `npm-otp`" {

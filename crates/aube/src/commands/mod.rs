@@ -67,6 +67,7 @@ pub mod sbom;
 pub mod security_scanner;
 pub mod sponsors;
 pub mod store;
+pub mod trust;
 pub mod undeprecate;
 pub mod unlink;
 pub mod unpublish;

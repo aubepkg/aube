@@ -144,6 +144,8 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
     // The store is content-addressed and refetched on demand.
     ("store prune", Write),
     ("store status", Read),
+    ("trust", Read),
+    ("trust check", Read),
     ("undeprecate", Write),
     // Removes linked entries from node_modules; `link` restores them.
     ("unlink", Write),

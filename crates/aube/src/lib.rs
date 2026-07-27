@@ -507,6 +507,8 @@ enum Commands {
     /// Manage registry auth tokens (not implemented — use `npm token`)
     #[command(hide = true)]
     Token(commands::npm_fallback::FallbackArgs),
+    /// Inspect npm package publishing trust
+    Trust(commands::trust::TrustArgs),
     /// Clear an existing deprecation on the registry
     Undeprecate(commands::undeprecate::UndeprecateArgs),
     /// Unlink a package (remove linked entries from node_modules)
@@ -1180,6 +1182,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         Some(Commands::Token(args)) => {
             return Ok(Some(commands::npm_fallback::run("token", &args)?));
         }
+        Some(Commands::Trust(args)) => commands::trust::run(args).await?,
         Some(Commands::Undeprecate(args)) => commands::undeprecate::run(args).await?,
         Some(Commands::Unlink(args)) => commands::unlink::run(args).await?,
         Some(Commands::Unpublish(args)) => commands::unpublish::run(args).await?,
