@@ -65,14 +65,7 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
         {
             continue;
         }
-        let replace = best.as_ref().is_none_or(|(cur, _)| {
-            if pick_lowest {
-                version < *cur
-            } else {
-                version > *cur
-            }
-        });
-        if replace {
+        if crate::semver_util::outranks(&version, meta, best.as_ref(), pick_lowest) {
             best = Some((version, meta));
         }
     }

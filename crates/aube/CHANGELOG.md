@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.0](https://github.com/jdx/aube/compare/v1.33.1...v1.34.0) - 2026-07-27
+
+### Added
+
+- *(completion)* add aubx and dynamic value completers ([#1130](https://github.com/jdx/aube/pull/1130))
+- *(usage)* declare what each command does to the world ([#1122](https://github.com/jdx/aube/pull/1122))
+
+### Fixed
+
+- *(resolver)* never prefer a deprecated version inside a range ([#1136](https://github.com/jdx/aube/pull/1136))
+- *(install)* clear progress row for no-op installs ([#1132](https://github.com/jdx/aube/pull/1132))
+- *(runtime)* replace activated shims atomically ([#1131](https://github.com/jdx/aube/pull/1131))
+- *(runtime)* keep activated shims stable across upgrades ([#1129](https://github.com/jdx/aube/pull/1129))
+- *(run)* complete package scripts through aubr ([#1128](https://github.com/jdx/aube/pull/1128))
+
+### Other
+
+- *(install)* prioritize opencode-ai builds ([#1127](https://github.com/jdx/aube/pull/1127))
+
 ## [1.33.1](https://github.com/jdx/aube/compare/v1.33.0...v1.33.1) - 2026-07-25
 
 ### Fixed

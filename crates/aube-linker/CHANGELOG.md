@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.0](https://github.com/jdx/aube/compare/aube-linker-v1.33.1...aube-linker-v1.34.0) - 2026-07-27
+
+### Fixed
+
+- *(linker)* execute native bin targets directly ([#1138](https://github.com/jdx/aube/pull/1138))
+
 ## [1.33.0](https://github.com/jdx/aube/compare/aube-linker-v1.32.0...aube-linker-v1.33.0) - 2026-07-25
 
 ### Fixed

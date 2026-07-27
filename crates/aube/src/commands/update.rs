@@ -1043,8 +1043,7 @@ async fn pick_update_interactively(
             .and_then(|g| lookup_pkg(g, existing_importers, key, &real_name))
             .map(|p| p.version.as_str());
         let registry_latest = packument.dist_tags.get("latest").map(String::as_str);
-        let wanted =
-            super::max_satisfying_version(packument, spec).or_else(|| current.map(str::to_owned));
+        let wanted = super::wanted_version(packument, spec).or_else(|| current.map(str::to_owned));
         // `--latest` rewrites past the manifest range, so the picker
         // shows the dist-tag latest as the target. Without `--latest`
         // we only refresh inside the range, so target = wanted.

@@ -93,6 +93,33 @@ EOF
 	refute_output --partial "is-odd  "
 }
 
+@test "aube outdated does not propose a downgrade off a deprecated latest" {
+	# is-odd@3.0.1 is both the `latest` dist-tag and deprecated
+	# ("please use is-even") in the fixture registry. pnpm returns the
+	# tagged version before it ever looks at deprecation, so install
+	# lands on 3.0.1 and `Wanted` must say 3.0.1 too — reporting the
+	# non-deprecated 3.0.0 would offer a downgrade no install produces.
+	cat >package.json <<-'EOF'
+		{
+		  "name": "outdated-deprecated-latest",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "^3.0.0" }
+		}
+	EOF
+	run aube install
+	assert_success
+
+	# `--long --json` keeps the up-to-date row in the report (the table
+	# would drop it) without echoing the `^3.0.0` specifier, so a stray
+	# 3.0.0 anywhere in the output means `wanted` proposed the
+	# downgrade.
+	run aube outdated --long --json
+	assert_success
+	assert_output --partial '"current": "3.0.1"'
+	assert_output --partial '"wanted": "3.0.1"'
+	refute_output --partial "3.0.0"
+}
+
 @test "aube outdated skips registry for package.json workspace deps" {
 	cat >package.json <<'EOF'
 {"workspaces":["sub"],"dependencies":{"happy-sunny-hippo":"workspace:"}}

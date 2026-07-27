@@ -13430,7 +13430,7 @@
   "config": {
     "props": {}
   },
-  "version": "1.33.1",
+  "version": "1.34.0",
   "usage": "Usage: aube [OPTIONS] [COMMAND]",
   "complete": {
     "script": {
