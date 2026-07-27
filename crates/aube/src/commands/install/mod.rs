@@ -53,6 +53,14 @@ pub(crate) use lifecycle::{
 use lifecycle::{
     resolve_link_strategy, run_import_on_blocking, run_root_lifecycle, validate_required_scripts,
 };
+
+pub(crate) fn resolve_active_lockfile_dir(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+    settings_ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<std::path::PathBuf> {
+    layout::resolve_lockfile_location(cwd, manifest, settings_ctx).map(|(dir, _)| dir)
+}
 use lockfile_dir::{
     parse_lockfile_dir_remapped_with_kind_and_options, write_lockfile_dir_remapped,
 };
