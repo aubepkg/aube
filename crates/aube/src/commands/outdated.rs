@@ -480,7 +480,7 @@ async fn collect_rows(
         let wanted = dep
             .specifier
             .as_deref()
-            .and_then(|spec| super::max_satisfying_version(&packument, spec))
+            .and_then(|spec| super::wanted_version(&packument, spec))
             .unwrap_or_else(|| current.clone());
 
         let latest_known = latest.is_some();

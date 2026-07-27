@@ -124,7 +124,7 @@ pub(crate) use manifest_io::{
     write_manifest_dep_sections, write_manifest_json,
 };
 pub(crate) use package_spec::{
-    encode_package_name, max_satisfying_version, resolve_version, split_name_spec,
+    encode_package_name, resolve_version, split_name_spec, wanted_version,
 };
 pub(crate) use project_lock::take_install_project_lock;
 pub(crate) use project_lock::take_project_lock;
