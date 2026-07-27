@@ -69,13 +69,19 @@ pub const PACKUMENT_FULL_CACHE_SUBDIR: &str = "packuments-full-v1";
 ///   single backup/mount captures the whole store; matches pnpm's
 ///   `~/.pnpm-store/v11/{files,index.db}` grouping)
 ///
-/// `cache_dir` (the `cacheDir` setting, default `$XDG_CACHE_HOME/aube`)
-/// still holds genuinely regenerable caches: the global virtual store
-/// and packument metadata.
+/// `cache_dir` (the `cacheDir` setting, default: the platform cache
+/// dir) still holds genuinely regenerable caches: the global virtual
+/// store and packument metadata.
 #[derive(Clone)]
 pub struct Store {
     root: PathBuf,
     cache_dir: PathBuf,
+    /// Root of the global virtual store. Defaults to
+    /// `<cache_dir>/virtual-store` and is overridden wholesale by the
+    /// `globalVirtualStoreDir` setting, which users point at the
+    /// `storeDir` volume so materialized packages can be hardlinked
+    /// out of the CAS.
+    virtual_store_dir: PathBuf,
     /// When set, `create_cas_file` writes directly to the final
     /// content-addressed path on non-Linux platforms instead of the
     /// tempfile-then-rename dance. Caller must guarantee no concurrent
@@ -86,13 +92,6 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open the store at the default location (see [`dirs::store_dir`]).
-    pub fn default_location() -> Result<Self, Error> {
-        let root = dirs::store_dir().ok_or(Error::NoHome)?;
-        let cache_dir = dirs::cache_dir().ok_or(Error::NoHome)?;
-        Ok(Self::with_dirs(root, cache_dir))
-    }
-
     /// Open the store with an explicit CAS root and cache dir. Used when
     /// a user overrides `storeDir` (the CAS) and/or `cacheDir` (the
     /// global virtual store + packument caches); the two are independent
@@ -101,10 +100,12 @@ impl Store {
     /// hardlink fast path.
     ///
     /// `root` is the CAS shard directory (`<storeDir>/v1/files`), not the
-    /// user-facing store dir.
+    /// user-facing store dir. The global virtual store lands under
+    /// `cache_dir` unless [`Store::with_virtual_store_dir`] moves it.
     pub fn with_dirs(root: PathBuf, cache_dir: PathBuf) -> Self {
         let store = Self {
             root,
+            virtual_store_dir: cache_dir.join(VIRTUAL_STORE_SUBDIR),
             cache_dir,
             fast_path: Arc::new(AtomicBool::new(false)),
         };
@@ -112,13 +113,23 @@ impl Store {
         store
     }
 
+    /// Point the global virtual store somewhere other than
+    /// `<cache_dir>/virtual-store` (the `globalVirtualStoreDir`
+    /// setting). The path is used verbatim.
+    #[must_use]
+    pub fn with_virtual_store_dir(mut self, dir: PathBuf) -> Self {
+        self.virtual_store_dir = dir;
+        self
+    }
+
     /// Open the store at a specific path (cache dir derived from store root).
     /// Used by tests that need a fully isolated layout; production code
-    /// should prefer `default_location` or `with_root`.
+    /// should prefer `with_dirs`.
     pub fn at(root: PathBuf) -> Self {
         let cache_dir = root.parent().unwrap_or(&root).join(CACHE_DIR_NAME);
         Self {
             root,
+            virtual_store_dir: cache_dir.join(VIRTUAL_STORE_SUBDIR),
             cache_dir,
             fast_path: Arc::new(AtomicBool::new(false)),
         }
@@ -256,9 +267,10 @@ impl Store {
     }
 
     /// Directory for the global virtual store (materialized packages).
-    /// `<cacheDir>/virtual-store/`, so it moves with `cacheDir`.
+    /// `<cacheDir>/virtual-store/` unless `globalVirtualStoreDir`
+    /// moved it, so it follows `cacheDir` by default.
     pub fn virtual_store_dir(&self) -> PathBuf {
-        self.cache_dir.join(VIRTUAL_STORE_SUBDIR)
+        self.virtual_store_dir.clone()
     }
 
     /// Directory for cached packument metadata (abbreviated/corgi format).
@@ -332,6 +344,7 @@ mod tests {
     fn store_for_migration_test(root: PathBuf, cache_dir: PathBuf) -> Store {
         Store {
             root,
+            virtual_store_dir: cache_dir.join(VIRTUAL_STORE_SUBDIR),
             cache_dir,
             fast_path: Arc::new(AtomicBool::new(false)),
         }

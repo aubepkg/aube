@@ -309,9 +309,11 @@ pub(super) fn resolve_link_strategy(
                     store = %sd.display(),
                     gvs_dir = %probe_dst.display(),
                     "global virtual store dir is on a different volume than `storeDir`; \
-                     install will fall back to per-file copy. Point `cacheDir` \
-                     (`AUBE_CACHE_DIR`) or `storeDir` (`AUBE_STORE_DIR`) at a path \
-                     on the same volume as the other."
+                     install will fall back to per-file copy. Move the two onto one \
+                     volume with `globalVirtualStoreDir` \
+                     (`AUBE_GLOBAL_VIRTUAL_STORE_DIR`, virtual store only), \
+                     `cacheDir` (`AUBE_CACHE_DIR`, the whole cache), or `storeDir` \
+                     (`AUBE_STORE_DIR`)."
                 );
             } else {
                 tracing::debug!(

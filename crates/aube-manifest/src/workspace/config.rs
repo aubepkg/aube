@@ -187,6 +187,14 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub store_dir: Option<String>,
 
+    /// Path to the global virtual store — the shared tree of
+    /// materialized packages every project symlinks into. Defaults to
+    /// `<cacheDir>/virtual-store`; set it to keep the virtual store on
+    /// the same volume as `storeDir` without moving the rest of the
+    /// cache.
+    #[serde(default)]
+    pub global_virtual_store_dir: Option<String>,
+
     // -- Lockfile Settings --
     /// Whether to use a lockfile (default: true).
     #[serde(default)]

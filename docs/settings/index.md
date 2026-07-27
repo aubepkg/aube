@@ -57,6 +57,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`modulesCacheMaxAge`](#setting-modulescachemaxage) | `int` | Minutes before orphan packages are removed from the virtual store. |
 | [`dlxCacheMaxAge`](#setting-dlxcachemaxage) | `int` | Minutes before the dlx cache is considered stale. |
 | [`enableGlobalVirtualStore`](#setting-enableglobalvirtualstore) | `bool` | Use a per-user virtual store for all projects. |
+| [`globalVirtualStoreDir`](#setting-globalvirtualstoredir) | `path` | Location of the shared virtual store used by every project. |
 | [`disableGlobalVirtualStoreForPackages`](#setting-disableglobalvirtualstoreforpackages) | `list<string>` | Package names whose presence in any importer forces per-project materialization. |
 | [`storeDir`](#setting-storedir) | `path` | Location where packages are saved on disk (content-addressable store). |
 | [`verifyStoreIntegrity`](#setting-verifystoreintegrity) | `bool` | Check store file integrity before linking. |
@@ -1178,6 +1179,42 @@ Examples:
 - `echo 'enableGlobalVirtualStore=false' >> .npmrc`
 - `aube --disable-global-virtual-store install`
 - `aube dlx --enable-gvs create-vite`
+
+### `globalVirtualStoreDir` {#setting-globalvirtualstoredir}
+
+Location of the shared virtual store used by every project.
+
+- Type: `path`
+- Default: `undefined`
+- Environment: `npm_config_global_virtual_store_dir`, `NPM_CONFIG_GLOBAL_VIRTUAL_STORE_DIR`, `AUBE_GLOBAL_VIRTUAL_STORE_DIR`
+- .npmrc keys: `globalVirtualStoreDir`, `global-virtual-store-dir`
+- Workspace YAML keys: `globalVirtualStoreDir`
+
+Relocates the global virtual store — the shared tree of materialized
+package directories that `node_modules/.aube/<dep>` symlinks into when
+`enableGlobalVirtualStore` is on. Unset, it lives at
+`<cacheDir>/virtual-store/`.
+
+Set this when the global virtual store belongs somewhere other than
+the rest of the cache — typically to put it on the same volume as
+`storeDir` while leaving packument metadata on the system disk.
+Setting `cacheDir` moves the virtual store too, so reach for that one
+when you want the whole cache to travel together and this one when you
+want to split them.
+
+Entries in the global virtual store are hardlinked out of the content
+store, so keep this on the same volume as `storeDir`. When they land
+on different filesystems aube warns (`WARN_AUBE_GVS_CROSS_VOLUME`) and
+every install falls back to a per-file copy.
+
+Path interpretation matches `storeDir`: `~` expands to the user's home
+directory and relative paths resolve against the project root. The
+path is used verbatim — no schema suffix is appended — so point it at
+a directory aube can own.
+
+Examples:
+
+- `AUBE_GLOBAL_VIRTUAL_STORE_DIR=/mnt/dev/aube-virtual-store aube install`
 
 ### `disableGlobalVirtualStoreForPackages` {#setting-disableglobalvirtualstoreforpackages}
 
@@ -2626,27 +2663,34 @@ Overrides the directory that holds the `.aube-state` install-state file. Default
 Directory for the global virtual store and cached package metadata.
 
 - Type: `path`
-- Default: `$XDG_CACHE_HOME/aube`
+- Default: `` platform cache dir (`$XDG_CACHE_HOME/aube`) ``
 - Environment: `npm_config_cache_dir`, `NPM_CONFIG_CACHE_DIR`, `AUBE_CACHE_DIR`
 - .npmrc keys: `cache-dir`, `cacheDir`
 
-Overrides the cache directory. `XDG_CACHE_HOME` is honored by the
-platform default (`aube_store::dirs::cache_dir`), which appends
-`/aube`; this setting takes a complete path, so
+Overrides the cache directory. Unset, aube derives it per platform
+(`aube_store::dirs::cache_dir`): `$XDG_CACHE_HOME/aube` when
+`XDG_CACHE_HOME` is set, `%LOCALAPPDATA%\aube` on Windows, else
+`~/.cache/aube`. Those are all *base* directories that aube appends
+its own name to; this setting takes a complete path instead, so
 `AUBE_CACHE_DIR=/mnt/fast/aube` puts the cache directly there.
 
-Everything regenerable lives under this directory: the global virtual
-store (`<cacheDir>/virtual-store/`) and cached packument metadata
-(`<cacheDir>/packuments-v1/`, `<cacheDir>/packuments-full-v1/`). The
+The global virtual store (`<cacheDir>/virtual-store/`) and cached
+packument metadata (`<cacheDir>/packuments-v1/`,
+`<cacheDir>/packuments-full-v1/`) live under this directory. The
 content-addressable store is *not* here — it is `storeDir`, which
-defaults under `$XDG_DATA_HOME` instead.
+defaults under `$XDG_DATA_HOME` instead. A few smaller caches (the OSV
+advisory mirror, the bootstrapped `node-gyp`, git clones) still follow
+the platform cache dir regardless of this setting.
 
 Set this alongside `storeDir` when the store lives on a non-default
-volume. The global virtual store hardlinks out of the CAS, so if
-`cacheDir` and `storeDir` land on different filesystems every install
-degrades to a per-file copy and aube warns about it. Pointing both at
-the same volume (`AUBE_CACHE_DIR=/mnt/dev/cache/aube` plus
+volume. Entries in the global virtual store are hardlinked out of the
+CAS, so on installs with the global virtual store enabled, a `cacheDir`
+and `storeDir` split across filesystems degrades every install to a
+per-file copy and aube warns about it. Pointing both at the same volume
+(`AUBE_CACHE_DIR=/mnt/dev/cache/aube` plus
 `AUBE_STORE_DIR=/mnt/dev/stores/aube`) keeps the hardlink fast path.
+Use `globalVirtualStoreDir` to move only the virtual store and leave
+the metadata caches where they are.
 
 Examples:
 
