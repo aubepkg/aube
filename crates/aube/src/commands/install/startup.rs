@@ -110,11 +110,7 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
     let expected = match layout.linker {
         state::InstallLayoutMode::Hoisted => Some(aube_dir),
         state::InstallLayoutMode::Isolated => {
-            let Some(global_virtual_store) =
-                aube_store::dirs::cache_dir().map(|dir| dir.join(aube_store::VIRTUAL_STORE_SUBDIR))
-            else {
-                return false;
-            };
+            let global_virtual_store = super::super::global_virtual_store_dir(cwd);
             match super::gvs::detect_existing_global_virtual_store(
                 cwd,
                 &aube_dir,

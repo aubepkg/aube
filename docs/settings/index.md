@@ -131,7 +131,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`globalBinDir`](#setting-globalbindir) | `path` | Directory where global binaries are symlinked. |
 | [`npmrcAuthFile`](#setting-npmrcauthfile) | `path` | Path to an additional .npmrc file consulted for registry authentication tokens. |
 | [`stateDir`](#setting-statedir) | `path` | Directory for aube install-state files. |
-| [`cacheDir`](#setting-cachedir) | `path` | Directory for package metadata and dlx cache. |
+| [`cacheDir`](#setting-cachedir) | `path` | Directory for the global virtual store and cached package metadata. |
 | [`useStderr`](#setting-usestderr) | `bool` | Write all output to stderr instead of stdout. |
 | [`updateNotifier`](#setting-updatenotifier) | `bool` | Show an update notification when a newer aube is available. |
 | [`updateRewritesSpecifier`](#setting-updaterewritesspecifier) | `bool` | Rewrite caret/tilde manifest specifiers on `aube update` without `--latest`. |
@@ -2623,14 +2623,34 @@ Overrides the directory that holds the `.aube-state` install-state file. Default
 
 ### `cacheDir` {#setting-cachedir}
 
-Directory for package metadata and dlx cache.
+Directory for the global virtual store and cached package metadata.
 
 - Type: `path`
-- Default: `~/.cache/aube`
+- Default: `$XDG_CACHE_HOME/aube`
 - Environment: `npm_config_cache_dir`, `NPM_CONFIG_CACHE_DIR`, `AUBE_CACHE_DIR`
 - .npmrc keys: `cache-dir`, `cacheDir`
 
-Overrides the cache directory. `XDG_CACHE_HOME` is honored by the platform default (`aube_store::dirs::cache_dir`) which appends `/aube`; this setting takes a complete path.
+Overrides the cache directory. `XDG_CACHE_HOME` is honored by the
+platform default (`aube_store::dirs::cache_dir`), which appends
+`/aube`; this setting takes a complete path, so
+`AUBE_CACHE_DIR=/mnt/fast/aube` puts the cache directly there.
+
+Everything regenerable lives under this directory: the global virtual
+store (`<cacheDir>/virtual-store/`) and cached packument metadata
+(`<cacheDir>/packuments-v1/`, `<cacheDir>/packuments-full-v1/`). The
+content-addressable store is *not* here — it is `storeDir`, which
+defaults under `$XDG_DATA_HOME` instead.
+
+Set this alongside `storeDir` when the store lives on a non-default
+volume. The global virtual store hardlinks out of the CAS, so if
+`cacheDir` and `storeDir` land on different filesystems every install
+degrades to a per-file copy and aube warns about it. Pointing both at
+the same volume (`AUBE_CACHE_DIR=/mnt/dev/cache/aube` plus
+`AUBE_STORE_DIR=/mnt/dev/stores/aube`) keeps the hardlink fast path.
+
+Examples:
+
+- `AUBE_CACHE_DIR=/mnt/dev/cache/aube AUBE_STORE_DIR=/mnt/dev/stores/aube aube install`
 
 ### `useStderr` {#setting-usestderr}
 

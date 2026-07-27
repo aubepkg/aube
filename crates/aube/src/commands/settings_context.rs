@@ -199,6 +199,10 @@ pub(crate) fn ensure_registry_auth_for_package(
 /// back to the aube-owned default under `$XDG_DATA_HOME/aube/store/`
 /// (see [`aube_store::dirs::store_dir`] for exact resolution).
 ///
+/// The store's cache dir — global virtual store, packument caches —
+/// comes from [`resolved_cache_dir`], so `cacheDir` and `storeDir` can
+/// be pointed at the same volume without touching `XDG_CACHE_HOME`.
+///
 /// Path interpretation matches pnpm: a leading `~` expands to the
 /// user's home directory; relative paths are resolved against `cwd`
 /// (so each project sees a consistent store regardless of where the
@@ -207,15 +211,14 @@ pub(crate) fn ensure_registry_auth_for_package(
 /// across versions of aube and never collides with a pnpm store rooted
 /// at the same path.
 pub(crate) fn open_store(cwd: &std::path::Path) -> miette::Result<aube_store::Store> {
-    if let Some(custom) = resolved_store_dir(cwd) {
-        aube_store::Store::with_root(custom.join("v1").join("files"))
+    let root = match resolved_store_dir(cwd) {
+        Some(custom) => custom.join("v1").join("files"),
+        None => aube_store::dirs::store_dir()
+            .ok_or(aube_store::Error::NoHome)
             .into_diagnostic()
-            .wrap_err("failed to open store")
-    } else {
-        aube_store::Store::default_location()
-            .into_diagnostic()
-            .wrap_err("failed to open store")
-    }
+            .wrap_err("failed to open store")?,
+    };
+    Ok(aube_store::Store::with_dirs(root, resolved_cache_dir(cwd)))
 }
 
 /// Resolve the configured `storeDir` for `cwd`, returning `None` if
@@ -419,32 +422,42 @@ pub(crate) fn resolve_fetch_policy(cwd: &std::path::Path) -> aube_registry::conf
     aube_registry::config::FetchPolicy::from_ctx(&ctx)
 }
 
-/// Resolve the `cacheDir` setting for `cwd`. If an explicit override
-/// is set in `.npmrc`, expands it and returns that path. Otherwise
-/// falls back to the XDG-aware platform default (`~/.cache/aube`).
+/// Resolve the `cacheDir` setting for `cwd`. When set (via
+/// `AUBE_CACHE_DIR` / `npm_config_cache_dir`, or `cache-dir` in
+/// `.npmrc` / `aube-config.toml`), expands it and returns that path.
+/// Otherwise falls back to the XDG-aware platform default
+/// (`$XDG_CACHE_HOME/aube`, else `~/.cache/aube`).
 ///
-/// Note: `XDG_CACHE_HOME` is intentionally *not* a source for this
-/// setting — it's a base directory, and `aube_store::dirs::cache_dir()`
-/// already appends `/aube`. Routing it through the settings accessor
-/// would lose the subdirectory.
+/// `cacheDir` has no default baked into the generated accessor (see the
+/// exclusion list in `aube-settings/build.rs`) precisely so this
+/// function can tell "not configured" from "configured to the literal
+/// default path": `XDG_CACHE_HOME` is a *base* directory that the
+/// platform default appends `/aube` to, so routing it through the
+/// settings accessor would lose the subdirectory.
+///
+/// Everything derived from the cache dir — the global virtual store,
+/// the packument caches, `dlx` — flows through here, so a user who
+/// moves the cache to another volume moves all of it at once.
 pub(crate) fn resolved_cache_dir(cwd: &std::path::Path) -> std::path::PathBuf {
     let platform_default =
         || aube_store::dirs::cache_dir().unwrap_or_else(|| std::env::temp_dir().join("aube"));
-    // Check whether .npmrc explicitly sets cacheDir, rather than comparing
-    // the resolved value against the default string — a user who writes
-    // `cacheDir=~/.cache/aube` explicitly should get that literal path,
-    // not the XDG_CACHE_HOME-aware platform default.
-    let npmrc = aube_registry::config::load_npmrc_entries(cwd);
-    let has_explicit = npmrc
-        .iter()
-        .any(|(k, _)| k == "cacheDir" || k == "cache-dir");
-    if !has_explicit {
-        return platform_default();
-    }
-    with_settings_ctx(cwd, |ctx| {
-        let raw = aube_settings::resolved::cache_dir(ctx);
-        expand_setting_path(&raw, cwd).unwrap_or_else(platform_default)
+    with_settings_ctx(cwd, |ctx| match aube_settings::resolved::cache_dir(ctx) {
+        Some(raw) => expand_setting_path(&raw, cwd).unwrap_or_else(platform_default),
+        None => platform_default(),
     })
+}
+
+/// Absolute path of the global virtual store — the shared tree of
+/// materialized packages that project `node_modules/.aube/<dep_path>`
+/// entries symlink into. Lives under the resolved [`resolved_cache_dir`]
+/// so `cacheDir` moves it along with the rest of the regenerable state.
+///
+/// Every read-side caller (layout detection, mode-change reset) must
+/// resolve it the same way the install write path does, otherwise a
+/// custom `cacheDir` makes them look at an empty directory and
+/// silently re-materialize.
+pub(crate) fn global_virtual_store_dir(cwd: &std::path::Path) -> std::path::PathBuf {
+    resolved_cache_dir(cwd).join(aube_store::VIRTUAL_STORE_SUBDIR)
 }
 
 /// Resolve the `virtualStoreDirMaxLength` setting, falling back to the

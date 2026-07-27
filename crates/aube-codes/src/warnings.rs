@@ -27,6 +27,7 @@ pub const WARN_AUBE_LTHASH_MISMATCH: &str = "WARN_AUBE_LTHASH_MISMATCH";
 pub const WARN_AUBE_DELTA_INVALIDATE_FAILED: &str = "WARN_AUBE_DELTA_INVALIDATE_FAILED";
 pub const WARN_AUBE_GVS_INCOMPATIBLE: &str = "WARN_AUBE_GVS_INCOMPATIBLE";
 pub const WARN_AUBE_GVS_MODE_CHANGED: &str = "WARN_AUBE_GVS_MODE_CHANGED";
+pub const WARN_AUBE_GVS_CROSS_VOLUME: &str = "WARN_AUBE_GVS_CROSS_VOLUME";
 
 // ── settings / config validation ────────────────────────────────────
 pub const WARN_AUBE_INVALID_CONCURRENCY: &str = "WARN_AUBE_INVALID_CONCURRENCY";
@@ -239,6 +240,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_GVS_MODE_CHANGED,
         category: category::INSTALL_LIFECYCLE,
         description: "Switching between gvs-on and gvs-off; removing `node_modules` and reinstalling from scratch.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_GVS_CROSS_VOLUME,
+        category: category::INSTALL_LIFECYCLE,
+        description: "`cacheDir` (global virtual store) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
         exit_code: None,
     },
     // Settings / config validation

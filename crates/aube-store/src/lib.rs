@@ -69,8 +69,9 @@ pub const PACKUMENT_FULL_CACHE_SUBDIR: &str = "packuments-full-v1";
 ///   single backup/mount captures the whole store; matches pnpm's
 ///   `~/.pnpm-store/v11/{files,index.db}` grouping)
 ///
-/// `cache_dir` ($XDG_CACHE_HOME/aube) still holds genuinely
-/// regenerable caches: the virtual store and packument metadata.
+/// `cache_dir` (the `cacheDir` setting, default `$XDG_CACHE_HOME/aube`)
+/// still holds genuinely regenerable caches: the global virtual store
+/// and packument metadata.
 #[derive(Clone)]
 pub struct Store {
     root: PathBuf,
@@ -89,29 +90,26 @@ impl Store {
     pub fn default_location() -> Result<Self, Error> {
         let root = dirs::store_dir().ok_or(Error::NoHome)?;
         let cache_dir = dirs::cache_dir().ok_or(Error::NoHome)?;
-        let store = Self {
-            root,
-            cache_dir,
-            fast_path: Arc::new(AtomicBool::new(false)),
-        };
-        store.migrate_legacy_index_dir();
-        Ok(store)
+        Ok(Self::with_dirs(root, cache_dir))
     }
 
-    /// Open the store with an explicit root, keeping the default
-    /// cache dir (`$XDG_CACHE_HOME/aube`). Used when a user overrides
-    /// `storeDir` via `.npmrc` / `pnpm-workspace.yaml` — only the CAS
-    /// moves; the packument and virtual-store caches stay where the
-    /// rest of aube expects them.
-    pub fn with_root(root: PathBuf) -> Result<Self, Error> {
-        let cache_dir = dirs::cache_dir().ok_or(Error::NoHome)?;
+    /// Open the store with an explicit CAS root and cache dir. Used when
+    /// a user overrides `storeDir` (the CAS) and/or `cacheDir` (the
+    /// global virtual store + packument caches); the two are independent
+    /// settings, but the global virtual store hardlinks out of the CAS,
+    /// so a caller pointing them at different volumes gives up the
+    /// hardlink fast path.
+    ///
+    /// `root` is the CAS shard directory (`<storeDir>/v1/files`), not the
+    /// user-facing store dir.
+    pub fn with_dirs(root: PathBuf, cache_dir: PathBuf) -> Self {
         let store = Self {
             root,
             cache_dir,
             fast_path: Arc::new(AtomicBool::new(false)),
         };
         store.migrate_legacy_index_dir();
-        Ok(store)
+        store
     }
 
     /// Open the store at a specific path (cache dir derived from store root).
@@ -258,6 +256,7 @@ impl Store {
     }
 
     /// Directory for the global virtual store (materialized packages).
+    /// `<cacheDir>/virtual-store/`, so it moves with `cacheDir`.
     pub fn virtual_store_dir(&self) -> PathBuf {
         self.cache_dir.join(VIRTUAL_STORE_SUBDIR)
     }

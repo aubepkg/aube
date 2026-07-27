@@ -500,11 +500,7 @@ pub(super) fn reset_on_mode_change(
     modules_dir_name: &str,
     planned_gvs: bool,
 ) -> miette::Result<()> {
-    let Some(global_virtual_store) =
-        aube_store::dirs::cache_dir().map(|dir| dir.join(aube_store::VIRTUAL_STORE_SUBDIR))
-    else {
-        return Ok(());
-    };
+    let global_virtual_store = crate::commands::global_virtual_store_dir(cwd);
     let Some(existing_gvs) = detect_existing_global_virtual_store(
         cwd,
         aube_dir,

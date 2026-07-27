@@ -1657,6 +1657,44 @@ mod tests {
     }
 
     #[test]
+    fn cache_dir_is_unset_until_configured() {
+        // `cacheDir` deliberately carries no baked-in default so the
+        // caller can tell "not configured" (fall back to the
+        // XDG_CACHE_HOME-aware platform path, which appends `/aube`)
+        // from "configured to a literal path". A default here would
+        // have every install read `~/.cache/aube` and ignore
+        // `XDG_CACHE_HOME`.
+        let npmrc: Vec<(String, String)> = Vec::new();
+        let ws: std::collections::BTreeMap<String, yaml_serde::Value> =
+            std::collections::BTreeMap::new();
+        let ctx = ResolveCtx::files_only(&npmrc, &ws);
+        assert_eq!(resolved::cache_dir(&ctx), None);
+    }
+
+    #[test]
+    fn cache_dir_reads_aube_env_alias() {
+        let npmrc: Vec<(String, String)> = Vec::new();
+        let ws: std::collections::BTreeMap<String, yaml_serde::Value> =
+            std::collections::BTreeMap::new();
+        let env = entries(&[("AUBE_CACHE_DIR", "/mnt/dev/cache/aube")]);
+        let ctx = ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &npmrc,
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &env,
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(
+            resolved::cache_dir(&ctx),
+            Some("/mnt/dev/cache/aube".to_string())
+        );
+    }
+
+    #[test]
     fn generated_string_accessor_reads_workspace_yaml() {
         // `storeDir` is a string setting with a workspaceYaml source.
         // Before the generator learned about `string_from_workspace_yaml`,

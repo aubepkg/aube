@@ -193,6 +193,58 @@ _make_env_probe_project() {
 	# setting (tested in the config-get test above).
 }
 
+# --- cacheDir relocates the global virtual store ---
+#
+# The global virtual store is the biggest thing under `cacheDir`, and
+# it hardlinks out of the CAS, so users who move `storeDir` to another
+# volume need to move this with it. Before `cacheDir` was honored here,
+# the only lever was `XDG_CACHE_HOME`.
+
+@test "AUBE_CACHE_DIR relocates the global virtual store" {
+	_setup_basic_fixture
+	local custom_cache="$TEST_TEMP_DIR/custom-cache"
+
+	AUBE_CACHE_DIR="$custom_cache" run aube install
+	assert_success
+
+	assert_dir_exists "$custom_cache/virtual-store"
+	# `.aube/<dep_path>` is a symlink into the relocated global store,
+	# not into the XDG default.
+	[ -L node_modules/.aube/is-odd@3.0.1 ]
+	run readlink node_modules/.aube/is-odd@3.0.1
+	assert_success
+	[[ "$output" == "$custom_cache/virtual-store/"* ]]
+	[ ! -d "$HOME/.cache/aube/virtual-store" ]
+}
+
+@test "cacheDir in .npmrc relocates the global virtual store" {
+	_setup_basic_fixture
+	local custom_cache="$TEST_TEMP_DIR/npmrc-cache"
+	echo "cacheDir=$custom_cache" >>"$HOME/.npmrc"
+
+	run aube install
+	assert_success
+	assert_dir_exists "$custom_cache/virtual-store"
+	[ ! -d "$HOME/.cache/aube/virtual-store" ]
+}
+
+@test "reinstall under AUBE_CACHE_DIR keeps the layout, no gvs transition wipe" {
+	_setup_basic_fixture
+	local custom_cache="$TEST_TEMP_DIR/custom-cache"
+
+	AUBE_CACHE_DIR="$custom_cache" run aube install
+	assert_success
+
+	# The warm-path layout check must resolve the same relocated global
+	# store the install wrote to. If it looked at the XDG default it
+	# would see an empty dir, decide the layout flipped, and wipe
+	# `node_modules/` on every install.
+	AUBE_CACHE_DIR="$custom_cache" run aube install
+	assert_success
+	refute_output --partial "global virtual store"
+	[ -L node_modules/.aube/is-odd@3.0.1 ]
+}
+
 @test "linkConcurrency in .npmrc is read during install" {
 	_setup_basic_fixture
 	echo "linkConcurrency=0" >>"$HOME/.npmrc"

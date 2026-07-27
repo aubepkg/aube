@@ -8,7 +8,8 @@ This is separate from the global content store:
 - The **global content store** (`$XDG_DATA_HOME/aube/store/v1/`) stores
   package files by BLAKE3 hash. Every install uses it.
 - The **global virtual store**
-  (`$XDG_CACHE_HOME/aube/virtual-store/`, defaulting to
+  (`<cacheDir>/virtual-store/`, defaulting to
+  `$XDG_CACHE_HOME/aube/virtual-store/`, then
   `~/.cache/aube/virtual-store/`) stores package directory trees keyed by
   dependency graph. Project `node_modules` entries symlink into it.
 
@@ -106,6 +107,30 @@ Override a single command with:
 aube install --enable-global-virtual-store
 aube install --disable-global-virtual-store
 ```
+
+### Moving it off the default volume
+
+The global virtual store lives under [`cacheDir`](/settings/#setting-cachedir),
+so point that at the volume you want — no need to move `XDG_CACHE_HOME`, which
+also relocates every other tool's cache:
+
+```sh
+export AUBE_CACHE_DIR=/Volumes/Mini/dev/cache/aube
+export AUBE_STORE_DIR=/Volumes/Mini/dev/stores/aube
+```
+
+Keep both on the *same* volume. Entries in the global virtual store are
+hardlinked out of the content store, so a `cacheDir` and `storeDir` split across
+filesystems makes every install fall back to a per-file copy. aube warns
+(`WARN_AUBE_GVS_CROSS_VOLUME`) when it detects that split:
+
+```text
+global virtual store dir is on a different volume than `storeDir`; install will
+fall back to per-file copy.
+```
+
+`aube doctor` prints both resolved paths under `dirs` so you can confirm the
+settings took effect.
 
 ## Limitations
 

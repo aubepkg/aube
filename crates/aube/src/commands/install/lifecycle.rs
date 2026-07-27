@@ -293,8 +293,8 @@ pub(super) fn resolve_link_strategy(
         // Two distinct cross-volume regimes, two different messages.
         // With GVS on, the probe targets the GVS dir (always same FS
         // as the store in a sane setup), so Copy here means the user
-        // pointed `storeDir` and `XDG_CACHE_HOME` at different volumes
-        // — a real misconfiguration that costs per-file copies. Warn.
+        // pointed `storeDir` and `cacheDir` at different volumes — a
+        // real misconfiguration that costs per-file copies. Warn.
         // With GVS off, the probe targets `cwd`; a cross-volume verdict
         // there is the documented "project lives on an external mount"
         // regime where aube still outperforms other PMs, so log at
@@ -305,11 +305,13 @@ pub(super) fn resolve_link_strategy(
         {
             if gvs_dir.is_some() {
                 tracing::warn!(
+                    code = aube_codes::warnings::WARN_AUBE_GVS_CROSS_VOLUME,
                     store = %sd.display(),
                     gvs_dir = %probe_dst.display(),
                     "global virtual store dir is on a different volume than `storeDir`; \
-                     install will fall back to per-file copy. Move `XDG_CACHE_HOME` \
-                     (or `storeDir`) so both live on the same volume."
+                     install will fall back to per-file copy. Point `cacheDir` \
+                     (`AUBE_CACHE_DIR`) or `storeDir` (`AUBE_STORE_DIR`) at a path \
+                     on the same volume as the other."
                 );
             } else {
                 tracing::debug!(
