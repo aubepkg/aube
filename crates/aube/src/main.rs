@@ -19,7 +19,28 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// CANARY — DO NOT MERGE.
+///
+/// A deliberate instruction-count regression, to prove the perf gate actually
+/// blocks a pull request. Every failure the gate has produced so far has been
+/// a missing baseline or a broken build; it has never once stopped a real
+/// regression in CI, which is the only thing it exists to do.
+///
+/// ~600k retired instructions against a `startup` baseline of 7,605,183 — about
+/// 8%, comfortably over the 1% gate and far above the ~0.02% noise floor.
+/// `black_box` keeps the optimiser from deleting it.
+#[inline(never)]
+fn canary_burn() {
+    let mut sink = 0u64;
+    for i in 0..200_000u64 {
+        sink = sink.wrapping_add(i ^ sink);
+    }
+    std::hint::black_box(sink);
+}
+
 fn main() {
+    canary_burn();
+
     // The standalone `aube` binary runs with aube's own embedder profile.
     // Embedders call `aube::cli_main` with their own `&'static Embedder`
     // instead (and `cli_main_with_defaults` to also seed setting defaults).
