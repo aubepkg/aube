@@ -45,6 +45,12 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # The branch commit, not the merge commit actions/checkout defaults to
+          # for a pull_request event. That default is synthetic: it exists only
+          # for the run, changes whenever main advances, and measuring it would
+          # attribute a number to a commit nobody can check out. It would also
+          # make the footer below name a commit the measurement is not of.
+          ref: ${{ github.event.pull_request.head.sha }}
           # Needed twice over: to find the merge base, and for the sparkline,
           # which walks twenty commits of trunk history.
           fetch-depth: 0
@@ -135,8 +141,17 @@ jobs:
               --field body="$(cat /tmp/tak-comment.md)"
           fi
 
+      # `always()` because a step that fails stops the ones after it, and the
+      # gate is the reason this workflow exists. Without it, a `gh api` hiccup
+      # in the comment step would skip the gate entirely: the job would still go
+      # red, but for the wrong reason and with no regression error to read.
       - name: Fail on a regression
+        if: always()
         run: |
+          if [ ! -f /tmp/tak-gate-status ]; then
+            echo "::error::the comparison never ran — nothing was gated"
+            exit 1
+          fi
           status=$(cat /tmp/tak-gate-status)
           if [ "$status" -ne 0 ]; then
             echo "::error::an instruction count rose beyond the gate — see the table in the comment or the job summary"
