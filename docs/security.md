@@ -237,6 +237,9 @@ aube add supabase-javascript
 
 In non-interactive contexts the prompt becomes a hard refusal with
 `ERR_AUBE_LOW_DOWNLOAD_PACKAGE` unless `--allow-low-downloads` is passed.
+Packages already present in the active lockfile are trusted for this
+download-count check, regardless of which supported lockfile format the
+project uses. Lockfile membership does not bypass the OSV check.
 
 **Private packages skip both gates automatically.** Any package routed
 through a non-`registry.npmjs.org` registry — whether by a scoped

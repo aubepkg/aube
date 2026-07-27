@@ -88,7 +88,13 @@ pub async fn add_to_project(
             _ = mutation_control.cancelled() => mutation_control.check_cancelled(),
             result = async {
                 if !options.offline {
-                    supply_chain::run_cli_name_gates(project_dir, packages, false).await?;
+                    supply_chain::run_cli_name_gates(
+                        lock.project_dir(),
+                        packages,
+                        false,
+                        false,
+                    )
+                    .await?;
                 }
                 update_manifest_for_add(
                     project_dir,
@@ -514,7 +520,7 @@ pub async fn run(
     // full resolved graph (matching Bun's contract), with
     // concrete versions + transitives the OSV/downloads probes
     // wouldn't see at this stage.
-    supply_chain::run_cli_name_gates(&cwd, packages, allow_low_downloads).await?;
+    supply_chain::run_cli_name_gates(&cwd, packages, allow_low_downloads, true).await?;
 
     update_manifest_for_add(
         &cwd,

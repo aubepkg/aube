@@ -1,14 +1,17 @@
 use super::manifest::collect_workspace_versions;
 use super::spec::parse_pkg_spec;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 pub(super) async fn run_cli_name_gates(
     cwd: &Path,
     packages: &[String],
     allow_low_downloads: bool,
+    allow_prompt: bool,
 ) -> miette::Result<()> {
     let registry_inputs = registry_bound_inputs_for_supply_chain(cwd, packages);
-    let (advisory_check, low_download_threshold, allowed_unpopular) =
+    let locked_registry_names = locked_registry_names(cwd);
+    let (advisory_check, low_download_threshold, mut allowed_unpopular) =
         crate::commands::with_settings_ctx(cwd, |ctx| {
             let policy = if aube_settings::resolved::paranoid(ctx) {
                 aube_settings::resolved::AdvisoryCheck::Required
@@ -21,16 +24,43 @@ pub(super) async fn run_cli_name_gates(
                 aube_settings::resolved::allowed_unpopular_packages(ctx).unwrap_or_default(),
             )
         });
+    allowed_unpopular.extend(
+        locked_registry_names
+            .iter()
+            .map(|name| glob::Pattern::escape(name)),
+    );
     crate::commands::add_supply_chain::run_gates(
         &registry_inputs.name_only_advisory_names,
         &registry_inputs.exact_advisory_pairs,
         &registry_inputs.download_names,
         advisory_check,
         low_download_threshold,
-        allow_low_downloads,
+        crate::commands::add_supply_chain::LowDownloadPolicy {
+            allow: allow_low_downloads,
+            prompt: allow_prompt,
+        },
         &allowed_unpopular,
     )
     .await
+}
+
+fn locked_registry_names(cwd: &Path) -> BTreeSet<String> {
+    let Ok(manifest) = crate::commands::load_manifest_or_default(cwd) else {
+        return BTreeSet::new();
+    };
+    match aube_lockfile::parse_lockfile_with_kind(cwd, &manifest) {
+        Ok((graph, _)) => graph
+            .packages
+            .values()
+            .filter(|pkg| pkg.local_source.is_none())
+            .map(|pkg| pkg.registry_name().to_string())
+            .collect(),
+        Err(aube_lockfile::Error::NotFound(_)) => BTreeSet::new(),
+        Err(err) => {
+            tracing::debug!("could not read package names from active lockfile: {err}");
+            BTreeSet::new()
+        }
+    }
 }
 
 #[derive(Default)]
@@ -212,5 +242,50 @@ mod tests {
             vec![("nx".to_string(), "23.0.0".to_string())],
         );
         assert_eq!(inputs.download_names, vec!["nx".to_string()]);
+    }
+
+    #[test]
+    fn active_lockfile_packages_are_trusted_for_download_gate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("package.json"), "{}\n").expect("write package.json");
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.packages.insert(
+            "tiny-package@1.0.0".to_string(),
+            aube_lockfile::LockedPackage {
+                name: "tiny-package".to_string(),
+                version: "1.0.0".to_string(),
+                ..Default::default()
+            },
+        );
+        aube_lockfile::write_lockfile(tmp.path(), &graph, &aube_manifest::PackageJson::default())
+            .expect("write lockfile");
+
+        assert_eq!(
+            locked_registry_names(tmp.path()),
+            BTreeSet::from(["tiny-package".to_string()])
+        );
+    }
+
+    #[test]
+    fn lockfile_alias_trusts_the_registry_package_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("package.json"), "{}\n").expect("write package.json");
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.packages.insert(
+            "tiny-alias@1.0.0".to_string(),
+            aube_lockfile::LockedPackage {
+                name: "tiny-alias".to_string(),
+                alias_of: Some("tiny-package".to_string()),
+                version: "1.0.0".to_string(),
+                ..Default::default()
+            },
+        );
+        aube_lockfile::write_lockfile(tmp.path(), &graph, &aube_manifest::PackageJson::default())
+            .expect("write lockfile");
+
+        assert_eq!(
+            locked_registry_names(tmp.path()),
+            BTreeSet::from(["tiny-package".to_string()])
+        );
     }
 }

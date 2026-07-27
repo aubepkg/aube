@@ -39,6 +39,12 @@ use aube_settings::resolved::{AdvisoryBloomCheck, AdvisoryCheck, AdvisoryCheckOn
 use miette::miette;
 use std::io::{BufRead, IsTerminal, Write};
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LowDownloadPolicy {
+    pub(crate) allow: bool,
+    pub(crate) prompt: bool,
+}
+
 /// Run both supply-chain gates against the registry-bound specs the
 /// user passed to `aube add`. Inputs should already be filtered to
 /// packages that resolve via the public npm registry — workspace, git,
@@ -46,22 +52,23 @@ use std::io::{BufRead, IsTerminal, Write};
 /// version-aware query; ranges and dist-tags stay on the name-only
 /// query until the resolver picks a concrete version.
 ///
-/// `allow_low_downloads` is the per-invocation `--allow-low-downloads`
-/// override; when `true` the download gate is skipped entirely (the
-/// advisory check still runs).
+/// `low_download_policy` controls the per-invocation
+/// `--allow-low-downloads` override and whether the caller permits a
+/// terminal prompt. Embedded callers disable prompting so an in-process
+/// install can never block on aube's stdin.
 ///
 /// `allowed_unpopular_globs` are the `allowedUnpopularPackages`
 /// setting entries: full-name globs that exempt matching names from
 /// the downloads gate only. The advisory check still runs against
 /// every package regardless — exempting confirmed-malicious advisories
 /// is not what this list is for.
-pub async fn run_gates(
+pub(crate) async fn run_gates(
     name_only_advisory_names: &[String],
     exact_advisory_pairs: &[(String, String)],
     download_names: &[String],
     advisory_check: AdvisoryCheck,
     low_download_threshold: u64,
-    allow_low_downloads: bool,
+    low_download_policy: LowDownloadPolicy,
     allowed_unpopular_globs: &[String],
 ) -> miette::Result<()> {
     if name_only_advisory_names.is_empty()
@@ -111,15 +118,16 @@ pub async fn run_gates(
         "refusing to add malicious package(s):",
     )
     .await?;
-    if !allow_low_downloads && low_download_threshold > 0 {
-        let patterns = compile_allowed_unpopular(allowed_unpopular_globs);
-        let gated: Vec<String> = download_names
-            .iter()
-            .filter(|n| !patterns.iter().any(|p| p.matches(n)))
-            .cloned()
-            .collect();
+    if !low_download_policy.allow && low_download_threshold > 0 {
+        let gated = download_names_to_gate(download_names, allowed_unpopular_globs);
         if !gated.is_empty() {
-            downloads_gate(&client, &gated, low_download_threshold).await?;
+            downloads_gate(
+                &client,
+                &gated,
+                low_download_threshold,
+                low_download_policy.prompt,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -574,6 +582,15 @@ fn compile_allowed_unpopular(raw: &[String]) -> Vec<glob::Pattern> {
         .collect()
 }
 
+fn download_names_to_gate(names: &[String], allowed_unpopular_globs: &[String]) -> Vec<String> {
+    let patterns = compile_allowed_unpopular(allowed_unpopular_globs);
+    names
+        .iter()
+        .filter(|name| !patterns.iter().any(|pattern| pattern.matches(name)))
+        .cloned()
+        .collect()
+}
+
 async fn osv_gate(
     client: &reqwest::Client,
     names: &[String],
@@ -686,8 +703,9 @@ async fn downloads_gate(
     client: &reqwest::Client,
     names: &[String],
     threshold: u64,
+    allow_prompt: bool,
 ) -> miette::Result<()> {
-    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let interactive = prompt_is_interactive(allow_prompt);
     let mut set: tokio::task::JoinSet<(String, Result<DownloadCount, _>)> =
         tokio::task::JoinSet::new();
     for name in names {
@@ -760,6 +778,10 @@ async fn downloads_gate(
     Ok(())
 }
 
+fn prompt_is_interactive(allow_prompt: bool) -> bool {
+    allow_prompt && std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
+
 fn prompt_continue(name: &str, weekly: u64, threshold: u64) -> miette::Result<bool> {
     let mut stderr = std::io::stderr().lock();
     writeln!(stderr, "  ⚠ {name} looks suspicious:").ok();
@@ -806,9 +828,36 @@ mod tests {
         // registry-name list. The function must be a no-op in that
         // case (no network, no error) so those code paths stay free.
         assert!(
-            run_gates(&[], &[], &[], AdvisoryCheck::Required, 1000, false, &[])
-                .await
-                .is_ok()
+            run_gates(
+                &[],
+                &[],
+                &[],
+                AdvisoryCheck::Required,
+                1000,
+                LowDownloadPolicy {
+                    allow: false,
+                    prompt: true,
+                },
+                &[],
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn embedded_callers_cannot_enable_terminal_prompts() {
+        assert!(!prompt_is_interactive(false));
+    }
+
+    #[test]
+    fn exact_allowed_names_skip_only_the_download_gate() {
+        let names = vec!["locked[tiny]".to_string(), "new-tiny".to_string()];
+        let allowed = vec![glob::Pattern::escape("locked[tiny]")];
+
+        assert_eq!(
+            download_names_to_gate(&names, &allowed),
+            vec!["new-tiny".to_string()]
         );
     }
 
