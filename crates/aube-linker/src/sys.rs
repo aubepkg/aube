@@ -1737,7 +1737,10 @@ mod tests {
             Some(
                 std::env::join_paths([
                     dir.path().join("node_modules"),
-                    dir.path().join("node_modules/.aube/node_modules"),
+                    dir.path()
+                        .join("node_modules")
+                        .join(".aube")
+                        .join("node_modules"),
                 ])
                 .unwrap()
             )
