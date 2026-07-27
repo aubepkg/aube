@@ -1,11 +1,11 @@
-//! `aube trust check <package>@<version>` — inspect npm publishing evidence.
+//! Inspect npm publishing evidence for one exact package version.
 
 use crate::commands::{make_client, packument_full_cache_dir, split_name_spec};
-use clap::{Args, Subcommand};
+use clap::Args;
 use miette::{IntoDiagnostic, WrapErr, miette};
 use serde::Serialize;
 
-pub const AFTER_LONG_HELP: &str = "\
+pub(super) const AFTER_LONG_HELP: &str = "\
 Examples:
 
   $ aube trust check @hono/node-server@1.19.17
@@ -22,20 +22,7 @@ Examples:
 ";
 
 #[derive(Debug, Args)]
-pub struct TrustArgs {
-    #[command(subcommand)]
-    pub command: TrustCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum TrustCommand {
-    /// Check one package version for a publishing-trust downgrade
-    #[command(after_long_help = AFTER_LONG_HELP)]
-    Check(TrustCheckArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct TrustCheckArgs {
+pub(super) struct CheckArgs {
     /// Exact npm package version to inspect
     ///
     /// Example: `@hono/node-server@1.19.17`.
@@ -82,13 +69,7 @@ struct TrustReport {
     underlying_status: CheckStatus,
 }
 
-pub async fn run(args: TrustArgs) -> miette::Result<()> {
-    match args.command {
-        TrustCommand::Check(args) => run_check(args).await,
-    }
-}
-
-async fn run_check(args: TrustCheckArgs) -> miette::Result<()> {
+pub(super) async fn run(args: CheckArgs) -> miette::Result<()> {
     args.network.install_overrides();
     let (name, version) = split_name_spec(&args.package);
     let Some(version) = version else {
