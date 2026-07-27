@@ -808,6 +808,7 @@ mod tests {
               @IF EXIST \"%~dp0\\node.exe\" (\r\n\
               \x20 \"%~dp0\\node.exe\" \"%~dp0\\pkg\\bin.js\" %*\r\n\
               ) ELSE (\r\n\
+              \x20 @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n\
               \x20 node \"%~dp0\\pkg\\bin.js\" %*\r\n\
               )\r\n",
         )
