@@ -92,6 +92,27 @@ pub struct Store {
 }
 
 impl Store {
+    /// Open the store at the platform default location (see
+    /// [`dirs::store_dir`] and [`dirs::cache_dir`]).
+    ///
+    /// aube's own CLI resolves `storeDir` / `cacheDir` /
+    /// `globalVirtualStoreDir` first and goes through [`Store::with_dirs`];
+    /// this is the entry point for embedders that just want the same
+    /// directories a default install would use.
+    pub fn default_location() -> Result<Self, Error> {
+        let root = dirs::store_dir().ok_or(Error::NoHome)?;
+        let cache_dir = dirs::cache_dir().ok_or(Error::NoHome)?;
+        Ok(Self::with_dirs(root, cache_dir))
+    }
+
+    /// Open the store with an explicit CAS root, keeping the platform
+    /// cache dir for the global virtual store and packument caches.
+    /// Equivalent to `with_dirs(root, dirs::cache_dir())`.
+    pub fn with_root(root: PathBuf) -> Result<Self, Error> {
+        let cache_dir = dirs::cache_dir().ok_or(Error::NoHome)?;
+        Ok(Self::with_dirs(root, cache_dir))
+    }
+
     /// Open the store with an explicit CAS root and cache dir. Used when
     /// a user overrides `storeDir` (the CAS) and/or `cacheDir` (the
     /// global virtual store + packument caches); the two are independent
