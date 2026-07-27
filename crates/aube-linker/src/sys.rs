@@ -543,9 +543,9 @@ enum BinLaunch {
 
 /// Read the shebang line of `target` to determine how a bin shim
 /// launches it. Known script extensions retain their interpreter
-/// fallback. An existing, no-shebang target with any other extension
-/// is launched directly so native executables work even when their
-/// filename looks foreign to the host platform.
+/// fallback. Existing targets with native executable magic are launched
+/// directly, as are `.exe` targets that a postinstall may replace with a
+/// host-native executable after the shim has already been written.
 ///
 /// Only reads the first 256 bytes — enough for any realistic shebang
 /// line without pulling large bundled scripts into memory.
@@ -596,7 +596,11 @@ fn detect_bin_launch(target: &Path) -> BinLaunch {
         // escaped literals rather than acted on by the terminal.
         tracing::warn!("ignoring unsafe shebang interpreter in {target:?}: {prog:?}");
     }
-    default_launch_for_extension(target, target_exists && !content.starts_with(b"#!"))
+    default_launch_for_target(
+        target,
+        content,
+        target_exists && !content.starts_with(b"#!"),
+    )
 }
 
 /// The character class `prog` is allowed to draw from. Derived from
@@ -622,15 +626,34 @@ fn is_safe_prog(prog: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
-fn default_launch_for_extension(target: &Path, allow_direct: bool) -> BinLaunch {
+fn default_launch_for_target(target: &Path, content: &[u8], allow_direct: bool) -> BinLaunch {
     match target.extension().and_then(|e| e.to_str()) {
         Some("js" | "cjs" | "mjs") => BinLaunch::Interpreter("node".to_string()),
         Some("cmd" | "bat") => BinLaunch::Interpreter("cmd".to_string()),
         Some("ps1") => BinLaunch::Interpreter("pwsh".to_string()),
         Some("sh") => BinLaunch::Interpreter("sh".to_string()),
-        _ if allow_direct => BinLaunch::Direct,
+        Some(ext) if allow_direct && ext.eq_ignore_ascii_case("exe") => BinLaunch::Direct,
+        _ if allow_direct && has_native_executable_magic(content) => BinLaunch::Direct,
         _ => BinLaunch::Interpreter("node".to_string()),
     }
+}
+
+fn has_native_executable_magic(content: &[u8]) -> bool {
+    const FOUR_BYTE_MAGICS: [[u8; 4]; 9] = [
+        *b"\x7fELF",
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xce, 0xfa, 0xed, 0xfe],
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xcf, 0xfa, 0xed, 0xfe],
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xbe, 0xba, 0xfe, 0xca],
+        [0xca, 0xfe, 0xba, 0xbf],
+        [0xbf, 0xba, 0xfe, 0xca],
+    ];
+    content.starts_with(b"MZ")
+        || content
+            .get(..4)
+            .is_some_and(|magic| FOUR_BYTE_MAGICS.iter().any(|candidate| magic == candidate))
 }
 
 /// Run-time substitute for any `prog` that reaches a shim generator
@@ -1068,11 +1091,33 @@ mod tests {
     }
 
     #[test]
-    fn detect_launch_uses_direct_mode_for_extensionless_target() {
+    fn detect_launch_uses_direct_mode_for_extensionless_native_target() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("native");
         std::fs::write(&target, b"\xcf\xfa\xed\xfe").unwrap();
         assert_eq!(detect_bin_launch(&target), BinLaunch::Direct);
+    }
+
+    #[test]
+    fn detect_launch_keeps_extensionless_javascript_on_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("cli");
+        std::fs::write(&target, b"console.log('hi')\n").unwrap();
+        assert_eq!(
+            detect_bin_launch(&target),
+            BinLaunch::Interpreter("node".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_launch_keeps_unknown_text_extension_on_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("cli.custom");
+        std::fs::write(&target, b"console.log('hi')\n").unwrap();
+        assert_eq!(
+            detect_bin_launch(&target),
+            BinLaunch::Interpreter("node".to_string())
+        );
     }
 
     #[test]
