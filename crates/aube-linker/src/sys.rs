@@ -53,7 +53,8 @@
 //! `cmd-shim`, and it avoids the need for Developer Mode or admin
 //! rights entirely.
 
-use std::io;
+use std::ffi::OsString;
+use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
 /// Create a directory link from `link` to `target`.
@@ -143,6 +144,16 @@ pub struct BinShimOptions<'a> {
     /// shims (whose `bin_dir` is nowhere near `.aube/`) get the same
     /// resolution shape as the root importer's `.bin/`.
     pub hidden_modules_dir: Option<&'a Path>,
+}
+
+/// Target and environment recovered from an aube-generated bin wrapper.
+///
+/// Paths are resolved against the wrapper's parent. `node_path` is an
+/// OS-native path list ready to pass to [`std::process::Command::env`].
+#[derive(Debug, PartialEq, Eq)]
+pub struct ResolvedBinShim {
+    pub target: PathBuf,
+    pub node_path: Option<OsString>,
 }
 
 /// Create bin shims for a package binary.
@@ -538,7 +549,6 @@ fn shim_node_path(
 /// Only reads the first 256 bytes — enough for any realistic shebang
 /// line without pulling large bundled scripts into memory.
 fn detect_interpreter(target: &Path) -> String {
-    use std::io::Read;
     let mut buf = [0u8; 256];
     let n = std::fs::File::open(target)
         .and_then(|mut f| f.read(&mut buf))
@@ -776,6 +786,161 @@ pub fn parse_posix_shim_target(content: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// Maximum wrapper size accepted by [`resolve_bin_shim`]. Generated wrappers
+/// are normally under 2 KiB; the larger cap accommodates long Windows paths
+/// without reading arbitrary foreign files into memory.
+const MAX_BIN_SHIM_BYTES: u64 = 64 * 1024;
+
+#[derive(Clone, Copy)]
+enum BinShimStyle {
+    Posix,
+    Cmd,
+}
+
+/// Decode an aube-generated wrapper without executing it.
+///
+/// Only regular files at most 64 KiB are inspected. POSIX wrappers must carry
+/// aube's versioned marker; cmd wrappers must match the generated `@SETLOCAL`
+/// and local-interpreter branch shape. Symlinks and unrecognized wrappers
+/// return `Ok(None)`.
+pub fn resolve_bin_shim(path: &Path) -> io::Result<Option<ResolvedBinShim>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_BIN_SHIM_BYTES {
+        return Ok(None);
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    std::fs::File::open(path)?
+        .take(MAX_BIN_SHIM_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BIN_SHIM_BYTES {
+        return Ok(None);
+    }
+    let Ok(content) = std::str::from_utf8(&bytes) else {
+        return Ok(None);
+    };
+    let Some(parent) = path.parent() else {
+        return Ok(None);
+    };
+
+    let parsed = if let Some(target) = parse_posix_shim_target(content) {
+        Some((
+            BinShimStyle::Posix,
+            target,
+            content.lines().find_map(|line| {
+                line.strip_prefix("export NODE_PATH=\"")
+                    .and_then(|value| value.strip_suffix('"'))
+            }),
+        ))
+    } else {
+        parse_cmd_shim_target(content).map(|target| {
+            (
+                BinShimStyle::Cmd,
+                target,
+                content
+                    .lines()
+                    .find_map(|line| line.strip_prefix("@SET NODE_PATH="))
+                    .map(|value| value.trim_end_matches('\r')),
+            )
+        })
+    };
+    let Some((style, target, raw_node_path)) = parsed else {
+        return Ok(None);
+    };
+    let Some(target) = resolve_shim_relative_path(parent, target, style) else {
+        return Ok(None);
+    };
+
+    let node_path = match raw_node_path {
+        Some(value) => {
+            let Some(node_path) = resolve_shim_node_path(parent, value, style) else {
+                return Ok(None);
+            };
+            Some(node_path)
+        }
+        None => None,
+    };
+
+    Ok(Some(ResolvedBinShim { target, node_path }))
+}
+
+fn parse_cmd_shim_target(content: &str) -> Option<&str> {
+    let mut lines = content.lines();
+    if lines.next()?.trim_end_matches('\r') != "@SETLOCAL" {
+        return None;
+    }
+
+    let mut line = lines.next()?.trim_end_matches('\r');
+    if line.starts_with("@SET NODE_PATH=") {
+        line = lines.next()?.trim_end_matches('\r');
+    }
+
+    let if_prefix = "@IF EXIST \"%~dp0\\";
+    let program = line.strip_prefix(if_prefix)?.strip_suffix(".exe\" (")?;
+    if !is_safe_prog(program) {
+        return None;
+    }
+
+    let local_line = lines.next()?.trim_end_matches('\r');
+    let target = local_line
+        .strip_prefix("  \"%~dp0\\")?
+        .strip_prefix(program)?
+        .strip_prefix(".exe\" \"%~dp0\\")?
+        .strip_suffix("\" %*")?;
+    if lines.next()?.trim_end_matches('\r') != ") ELSE ("
+        || lines.next()?.trim_end_matches('\r') != "  @SET PATHEXT=%PATHEXT:;.JS;=;%"
+    {
+        return None;
+    }
+
+    let fallback_target = lines
+        .next()?
+        .trim_end_matches('\r')
+        .strip_prefix("  ")?
+        .strip_prefix(program)?
+        .strip_prefix(" \"%~dp0\\")?
+        .strip_suffix("\" %*")?;
+    if fallback_target != target || lines.next()?.trim_end_matches('\r') != ")" {
+        return None;
+    }
+    lines.next().is_none().then_some(target)
+}
+
+fn resolve_shim_relative_path(
+    parent: &Path,
+    relative: &str,
+    style: BinShimStyle,
+) -> Option<PathBuf> {
+    if relative.is_empty()
+        || relative.contains('\0')
+        || relative.starts_with('/')
+        || relative.starts_with('\\')
+        || relative.len() >= 2 && relative.as_bytes()[1] == b':'
+    {
+        return None;
+    }
+    let relative = match style {
+        BinShimStyle::Posix => relative.to_string(),
+        BinShimStyle::Cmd => relative.replace('\\', std::path::MAIN_SEPARATOR_STR),
+    };
+    Some(normalize_path(&parent.join(relative)))
+}
+
+fn resolve_shim_node_path(parent: &Path, value: &str, style: BinShimStyle) -> Option<OsString> {
+    let (separator, prefix) = match style {
+        BinShimStyle::Posix => (':', "$basedir/"),
+        BinShimStyle::Cmd => (';', "%~dp0"),
+    };
+    let paths = value
+        .split(separator)
+        .map(|entry| {
+            let relative = entry.strip_prefix(prefix)?;
+            resolve_shim_relative_path(parent, relative, style)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    std::env::join_paths(paths).ok()
 }
 
 /// Collapse `.` / `..` components without touching the filesystem.
@@ -1296,6 +1461,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_bin_shim_rejects_oversized_and_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let oversized = dir.path().join("oversized");
+        std::fs::write(&oversized, vec![b'x'; MAX_BIN_SHIM_BYTES as usize + 1]).unwrap();
+        assert_eq!(resolve_bin_shim(&oversized).unwrap(), None);
+
+        let foreign = dir.path().join("foreign.cmd");
+        std::fs::write(
+            &foreign,
+            "@SETLOCAL\r\n\
+             @IF EXIST \"%~dp0\\node.exe\" (\r\n\
+             \x20 \"%~dp0\\node.exe\" \"%~dp0\\payload.exe\" %*\r\n\
+             ) ELSE (\r\n\
+             \x20 @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n\
+             \x20 node \"%~dp0\\payload.exe\" %*\r\n\
+             )\r\n\
+             @ECHO foreign behavior\r\n",
+        )
+        .unwrap();
+        assert_eq!(resolve_bin_shim(&foreign).unwrap(), None);
+
+        let malformed_env = dir.path().join("malformed-env");
+        std::fs::write(
+            &malformed_env,
+            "#!/bin/sh\n\
+             # aube-bin-shim v1 target=pkg/tool\n\
+             export NODE_PATH=\"not-basedir-relative\"\n",
+        )
+        .unwrap();
+        assert_eq!(resolve_bin_shim(&malformed_env).unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_bin_shim_decodes_cmd_target_and_multi_entry_node_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let shim = bin_dir.join("tool.cmd");
+        std::fs::write(
+            &shim,
+            "@SETLOCAL\r\n\
+             @SET NODE_PATH=%~dp0..;%~dp0..\\.aube\\node_modules\r\n\
+             @IF EXIST \"%~dp0\\node.exe\" (\r\n\
+             \x20 \"%~dp0\\node.exe\" \"%~dp0\\..\\pkg\\tool.exe\" %*\r\n\
+             ) ELSE (\r\n\
+             \x20 @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n\
+             \x20 node \"%~dp0\\..\\pkg\\tool.exe\" %*\r\n\
+             )\r\n",
+        )
+        .unwrap();
+
+        let resolved = resolve_bin_shim(&shim).unwrap().unwrap();
+        assert_eq!(
+            resolved.target,
+            dir.path().join("node_modules/pkg/tool.exe")
+        );
+        assert_eq!(
+            resolved.node_path,
+            Some(
+                std::env::join_paths([
+                    dir.path().join("node_modules"),
+                    dir.path().join("node_modules/.aube/node_modules"),
+                ])
+                .unwrap()
+            )
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn create_bin_shim_injects_node_path_in_posix_shim() {
@@ -1358,6 +1592,12 @@ mod tests {
         assert!(
             content.contains("export NODE_PATH=\"$basedir/..:$basedir/../.aube/node_modules\""),
             "expected two-entry NODE_PATH, got:\n{content}"
+        );
+        let resolved = resolve_bin_shim(&bin_dir.join("mycli")).unwrap().unwrap();
+        assert_eq!(resolved.target, script);
+        assert_eq!(
+            resolved.node_path,
+            Some(std::env::join_paths([dir.path().join("node_modules"), hidden]).unwrap())
         );
     }
 

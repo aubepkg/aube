@@ -283,25 +283,14 @@ pub async fn run_in(
                 aube_util::cmd("dlx")
             ));
         }
-        // The linker writes three shims for every bin on Windows:
-        // `<name>.cmd`, `<name>.ps1`, and a bare extensionless sh shim
-        // (for use under bash / git-bash). CreateProcess can only
-        // launch real PE executables and `.cmd`/`.bat` files — handing
-        // it the sh shim fails with `%1 is not a valid Win32 application`
-        // (os error 193). Prefer the `.cmd` shim on Windows; on Unix
-        // the bare shim is the executable.
-        let exec_path = super::exec::resolve_exec_shim(&bin_path);
-        let mut cmd = tokio::process::Command::new(&exec_path);
-        cmd.args(&bin_args)
-            .current_dir(&prev_cwd)
-            .stderr(aube_scripts::child_stderr());
-        // Shebang shims resolve `node` through PATH — give them the
-        // switched runtime.
-        let runtime_dirs = crate::runtime::path_entries();
-        if !runtime_dirs.is_empty() {
-            cmd.env("PATH", aube_scripts::prepend_paths(&runtime_dirs));
-        }
-        crate::runtime::apply_child_env(&mut cmd);
+        let cmd = super::exec::build_bin_command(
+            &prev_cwd,
+            &bin_path,
+            &resolved_bin_name,
+            &bin_args,
+            &[],
+            false,
+        );
         crate::process_guard::spawn_and_wait(cmd)
             .await
             .into_diagnostic()
