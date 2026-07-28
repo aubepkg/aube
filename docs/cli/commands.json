@@ -6519,7 +6519,6 @@
             "name": "lockfile-only",
             "usage": "--lockfile-only",
             "help": "List packages from the lockfile only, without checking node_modules",
-            "help_long": "List packages from the lockfile only, without checking node_modules.\n\nThis is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.",
             "help_first_line": "List packages from the lockfile only, without checking node_modules",
             "short": [],
             "long": [
@@ -6947,7 +6946,6 @@
             "name": "lockfile-only",
             "usage": "--lockfile-only",
             "help": "List packages from the lockfile only, without checking node_modules",
-            "help_long": "List packages from the lockfile only, without checking node_modules.\n\nThis is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.",
             "help_first_line": "List packages from the lockfile only, without checking node_modules",
             "short": [],
             "long": [
@@ -7125,7 +7123,6 @@
             "name": "lockfile-only",
             "usage": "--lockfile-only",
             "help": "List packages from the lockfile only, without checking node_modules",
-            "help_long": "List packages from the lockfile only, without checking node_modules.\n\nThis is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.",
             "help_first_line": "List packages from the lockfile only, without checking node_modules",
             "short": [],
             "long": [

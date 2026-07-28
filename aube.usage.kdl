@@ -2238,13 +2238,7 @@ Shortcut for `--format json`.
 Emit a JSON array of package entries.
 """#
     }
-    flag --lockfile-only help="List packages from the lockfile only, without checking node_modules" {
-        long_help #"""
-List packages from the lockfile only, without checking node_modules.
-
-This is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.
-"""#
-    }
+    flag --lockfile-only help="List packages from the lockfile only, without checking node_modules"
     flag --long help="Show version and path for each entry" {
         long_help #"""
 Show version and path for each entry.
@@ -2419,13 +2413,7 @@ Shortcut for `--format json`.
 Emit a JSON array of package entries.
 """#
     }
-    flag --lockfile-only help="List packages from the lockfile only, without checking node_modules" {
-        long_help #"""
-List packages from the lockfile only, without checking node_modules.
-
-This is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.
-"""#
-    }
+    flag --lockfile-only help="List packages from the lockfile only, without checking node_modules"
     flag --long help="Show version and path for each entry" {
         long_help #"""
 Show version and path for each entry.
@@ -2466,13 +2454,7 @@ Shortcut for `--format json`.
 Emit a JSON array of package entries.
 """#
     }
-    flag --lockfile-only help="List packages from the lockfile only, without checking node_modules" {
-        long_help #"""
-List packages from the lockfile only, without checking node_modules.
-
-This is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.
-"""#
-    }
+    flag --lockfile-only help="List packages from the lockfile only, without checking node_modules"
     flag --long help="Show version and path for each entry" {
         long_help #"""
 Show version and path for each entry.

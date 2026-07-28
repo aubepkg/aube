@@ -93,10 +93,8 @@ pub struct ListArgs {
     #[arg(long, conflicts_with = "format")]
     pub json: bool,
 
+    // Compatibility flag: aube already reads exclusively from the canonical lockfile.
     /// List packages from the lockfile only, without checking node_modules.
-    ///
-    /// This is a pnpm compatibility flag: aube's list implementation
-    /// already reads exclusively from the canonical lockfile.
     #[arg(long)]
     pub lockfile_only: bool,
 

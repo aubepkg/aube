@@ -55,9 +55,7 @@ Emit a JSON array of package entries.
 
 ### `--lockfile-only`
 
-List packages from the lockfile only, without checking node_modules.
-
-This is a pnpm compatibility flag: aube's list implementation already reads exclusively from the canonical lockfile.
+List packages from the lockfile only, without checking node_modules
 
 ### `--long`
 
