@@ -93,19 +93,19 @@ pub struct ListArgs {
     #[arg(long, conflicts_with = "format")]
     pub json: bool,
 
-    /// Show version and path for each entry.
-    ///
-    /// Default output is already name + version; `--long` adds the
-    /// store path for debugging.
-    #[arg(long)]
-    pub long: bool,
-
     /// List packages from the lockfile only, without checking node_modules.
     ///
     /// This is a pnpm compatibility flag: aube's list implementation
     /// already reads exclusively from the canonical lockfile.
     #[arg(long)]
     pub lockfile_only: bool,
+
+    /// Show version and path for each entry.
+    ///
+    /// Default output is already name + version; `--long` adds the
+    /// store path for debugging.
+    #[arg(long)]
+    pub long: bool,
 
     /// Shortcut for `--format parseable`.
     ///
