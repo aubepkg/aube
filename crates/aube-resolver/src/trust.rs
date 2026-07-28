@@ -471,11 +471,15 @@ impl TrustExcludeRules {
         false
     }
 
-    /// Used when the picked version string fails semver parse — only a
-    /// no-version rule can match in that case (pnpm behavior:
-    /// `evaluateVersionPolicy` returns `true` for name-only rules
-    /// before the version array branch is taken).
-    pub(crate) fn matches_name_only(&self, name: &str) -> bool {
+    /// Return whether a rule exempts the package name without needing
+    /// a resolved version.
+    ///
+    /// Used both when a picked version fails semver parsing and by
+    /// pre-resolution package-name gates. Only a no-version rule can
+    /// match in either case (pnpm behavior: `evaluateVersionPolicy`
+    /// returns `true` for name-only rules before the version array
+    /// branch is taken).
+    pub fn matches_name_only(&self, name: &str) -> bool {
         self.rules
             .iter()
             .any(|r| r.version_ranges.is_none() && r.name_matcher.matches(name))

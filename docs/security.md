@@ -185,8 +185,11 @@ Settings: [`trustPolicy`](/settings/#setting-trustpolicy),
 
 ## Minimum release age
 
-Wait a configurable period before installing newly published versions. Catches
-typo-squat and dependency-confusion attacks that get unpublished within hours.
+Wait a configurable period before installing newly published versions. On
+`aube add`, the same window also applies to the registry's package-name
+creation time. This catches slopsquatting names registered shortly before an
+AI assistant recommends them, even when the resolver's version fallback would
+otherwise admit the package's first release.
 
 ```yaml
 minimumReleaseAge: 4320  # 3 days
@@ -212,7 +215,7 @@ already pin. Plain reinstalls (where the lockfile was authoritative) skip
 the live API for latency; two opt-in local backends cover that path — see
 [Install-time OSV check](#install-time-osv-check) below.
 
-Two signals, with different response levels:
+Three signals, with different response levels:
 
 **Known-malicious advisories.** aube batch-queries [OSV](https://osv.dev) for
 `MAL-*` advisories on every name about to be added. A hit fails the install
@@ -241,16 +244,25 @@ Packages already present in the active lockfile are trusted for this
 download-count check, regardless of which supported lockfile format the
 project uses. Lockfile membership does not bypass the OSV check.
 
-**Private packages skip both gates automatically.** Any package routed
+**New package name.** Before adding a direct dependency, aube reads npm's
+`time.created` timestamp and challenges names registered within
+`minimumReleaseAge`. Interactive sessions require confirmation;
+non-interactive sessions fail with `ERR_AUBE_NEW_PACKAGE_NAME`. Packages
+already present in the active lockfile and names matched by
+`allowedUnpopularPackages` or a bare-name `minimumReleaseAgeExclude` entry are
+trusted. `--allow-low-downloads` bypasses both reputation challenges after the
+package has been verified out of band.
+
+**Private packages skip all three gates automatically.** Any package routed
 through a non-`registry.npmjs.org` registry — whether by a scoped
 override (`@myorg:registry=https://npm.internal.example/`) or by
 replacing the default `registry=` URL outright — is exempted from
-the OSV check and the downloads gate, because npmjs has no signal on
+the OSV check and the reputation gates, because npmjs has no signal on
 it. Workspace deps and git/local specs are also skipped.
 
 For names that *do* route through public npmjs but are known-internal
 (e.g. you publish a low-traffic helper under your own brand), list
-them in `allowedUnpopularPackages` to skip the downloads gate alone:
+them in `allowedUnpopularPackages` to skip both reputation gates:
 
 ```yaml
 advisoryCheck: on            # default; fail open on network error

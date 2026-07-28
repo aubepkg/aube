@@ -11,6 +11,10 @@
 //!   have near-zero downloads on day one regardless of how cleverly
 //!   they're named, so a download floor catches the long tail of
 //!   reported-after-the-fact malicious names.
+//! - [`fetch_package_created_with`] reads the registry's immutable
+//!   `time.created` timestamp. A newly registered name is the signal
+//!   specific to slopsquatting: an attacker claimed a hallucinated
+//!   package shortly before the victim tried to install it.
 //!
 //! Both probes target public hosts and use their own reqwest client
 //! rather than [`crate::client::RegistryClient`] — they don't need
@@ -46,6 +50,14 @@ const OSV_BATCH_LIMIT: usize = 500;
 /// friendly compared to the `range` endpoint.
 const NPM_DOWNLOADS_BASE: &str = "https://api.npmjs.org/downloads/point/last-week";
 
+/// Public npm registry packument endpoint. These probes only run for
+/// names that upstream routing already confirmed use npmjs.
+const NPM_REGISTRY_BASE: &str = "https://registry.npmjs.org";
+
+/// Match the default `packumentMaxBytes` boundary for this unauthenticated
+/// public-registry probe.
+const PACKAGE_TIME_BODY_CAP: u64 = 200 * 1024 * 1024;
+
 /// One malicious-package advisory hit. We surface the OSV id and the
 /// candidate package name; the caller composes a link of the form
 /// `https://osv.dev/vulnerability/{id}`.
@@ -74,6 +86,8 @@ pub enum SupplyChainError {
     Decode(#[from] serde_json::Error),
     #[error("supply-chain probe returned non-success status: {0}")]
     Status(reqwest::StatusCode),
+    #[error("supply-chain probe response exceeds {cap} bytes")]
+    BodyTooLarge { cap: u64 },
     /// OSV's batch endpoint contract guarantees one `results[i]` per
     /// `queries[i]`. A short response means a trailing subset of
     /// candidate names was never actually checked — silently
@@ -157,6 +171,18 @@ struct NpmDownloadsResponse {
     /// scoped packages, which the downloads API doesn't support.
     #[serde(default)]
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct NpmPackageTimeResponse {
+    #[serde(default)]
+    time: NpmPackageTime,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct NpmPackageTime {
+    #[serde(default)]
+    created: Option<String>,
 }
 
 /// Build the shared probe `reqwest::Client`. Centralized so the OSV
@@ -427,6 +453,16 @@ pub enum DownloadCount {
     Unknown,
 }
 
+/// First-seen timestamp for an npm package name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageCreated {
+    /// Registry-provided ISO-8601 `time.created` timestamp.
+    Known(String),
+    /// The registry omitted `time.created`; callers should treat this
+    /// as no signal rather than guessing an age.
+    Unknown,
+}
+
 /// Look up `name`'s weekly download count using a caller-supplied
 /// shared client. The caller is expected to reuse one
 /// [`build_probe_client`] across every probe in an invocation so
@@ -452,6 +488,50 @@ pub async fn fetch_weekly_downloads_with(
     let bytes = resp.bytes().await?;
     let parsed: NpmDownloadsResponse = serde_json::from_slice(&bytes)?;
     Ok(parse_downloads(&parsed))
+}
+
+/// Fetch the immutable creation time for a public npm package name.
+///
+/// The full packument is required because the abbreviated install-v1
+/// representation omits the top-level `time` map. Deserialize only the
+/// two fields this gate needs so popular packages do not allocate their
+/// complete version histories a second time.
+pub async fn fetch_package_created_with(
+    client: &reqwest::Client,
+    name: &str,
+) -> Result<PackageCreated, SupplyChainError> {
+    let encoded = name.replace('/', "%2F");
+    let url = format!("{NPM_REGISTRY_BASE}/{encoded}");
+    let mut resp = client
+        .get(&url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(PackageCreated::Unknown);
+    }
+    if !status.is_success() {
+        return Err(SupplyChainError::Status(status));
+    }
+    let initial = resp
+        .content_length()
+        .map(|len| len.min(PACKAGE_TIME_BODY_CAP) as usize)
+        .unwrap_or(64 * 1024);
+    let mut bytes = bytes::BytesMut::with_capacity(initial);
+    while let Some(chunk) = resp.chunk().await? {
+        if (bytes.len() as u64).saturating_add(chunk.len() as u64) > PACKAGE_TIME_BODY_CAP {
+            return Err(SupplyChainError::BodyTooLarge {
+                cap: PACKAGE_TIME_BODY_CAP,
+            });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let parsed: NpmPackageTimeResponse = serde_json::from_slice(&bytes)?;
+    Ok(match parsed.time.created {
+        Some(created) => PackageCreated::Known(created),
+        None => PackageCreated::Unknown,
+    })
 }
 
 fn parse_downloads(resp: &NpmDownloadsResponse) -> DownloadCount {
@@ -631,6 +711,23 @@ mod tests {
             error: None,
         };
         assert_eq!(parse_downloads(&resp), DownloadCount::Known(42_000_000));
+    }
+
+    #[test]
+    fn package_time_response_reads_created_timestamp() {
+        let parsed: NpmPackageTimeResponse = serde_json::from_value(serde_json::json!({
+            "name": "plausible-ai-package",
+            "time": {
+                "created": "2026-07-28T10:00:00.000Z",
+                "modified": "2026-07-28T10:01:00.000Z",
+                "1.0.0": "2026-07-28T10:00:00.000Z"
+            }
+        }))
+        .expect("package time response");
+        assert_eq!(
+            parsed.time.created.as_deref(),
+            Some("2026-07-28T10:00:00.000Z")
+        );
     }
 
     #[test]

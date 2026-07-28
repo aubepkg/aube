@@ -12,24 +12,27 @@ pub(super) async fn run_cli_name_gates(
     let project_dir = supply_chain_project_dir(cwd);
     let manifest = crate::commands::load_manifest_or_default(&project_dir)?;
     let registry_inputs = registry_bound_inputs_for_supply_chain(&project_dir, packages);
-    let (advisory_check, low_download_threshold, mut allowed_unpopular, lockfile_dir) =
-        crate::commands::with_settings_ctx(&project_dir, |ctx| {
-            let policy = if aube_settings::resolved::paranoid(ctx) {
-                aube_settings::resolved::AdvisoryCheck::Required
-            } else {
-                aube_settings::resolved::advisory_check(ctx)
-            };
-            Ok::<_, miette::Report>((
-                policy,
-                aube_settings::resolved::low_download_threshold(ctx),
-                aube_settings::resolved::allowed_unpopular_packages(ctx).unwrap_or_default(),
-                crate::commands::install::resolve_active_lockfile_dir(
-                    &project_dir,
-                    &manifest,
-                    ctx,
-                )?,
-            ))
-        })?;
+    let (
+        advisory_check,
+        low_download_threshold,
+        minimum_release_age,
+        mut allowed_unpopular,
+        lockfile_dir,
+    ) = crate::commands::with_settings_ctx(&project_dir, |ctx| {
+        let policy = if aube_settings::resolved::paranoid(ctx) {
+            aube_settings::resolved::AdvisoryCheck::Required
+        } else {
+            aube_settings::resolved::advisory_check(ctx)
+        };
+        let minimum_release_age = crate::commands::install::resolve_minimum_release_age(ctx, None);
+        Ok::<_, miette::Report>((
+            policy,
+            aube_settings::resolved::low_download_threshold(ctx),
+            minimum_release_age,
+            aube_settings::resolved::allowed_unpopular_packages(ctx).unwrap_or_default(),
+            crate::commands::install::resolve_active_lockfile_dir(&project_dir, &manifest, ctx)?,
+        ))
+    })?;
     let locked_registry_names = locked_registry_names(&lockfile_dir, &manifest);
     allowed_unpopular.extend(
         locked_registry_names
@@ -42,9 +45,10 @@ pub(super) async fn run_cli_name_gates(
         &registry_inputs.download_names,
         advisory_check,
         low_download_threshold,
-        crate::commands::add_supply_chain::LowDownloadPolicy {
+        crate::commands::add_supply_chain::ReputationPolicy {
             allow: allow_low_downloads,
             prompt,
+            minimum_release_age,
         },
         &allowed_unpopular,
     )

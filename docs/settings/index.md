@@ -33,7 +33,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`advisoryBloomCheck`](#setting-advisorybloomcheck) | `"on" \| "required" \| "off"` | Bloom-filter prefilter for OSV `MAL-*` advisories on lockfile-driven installs. |
 | [`advisoryCheckEveryInstall`](#setting-advisorycheckeveryinstall) | `bool` | Force the live-API OSV `MAL-*` check on every install (including frozen reinstalls). |
 | [`lowDownloadThreshold`](#setting-lowdownloadthreshold) | `int` | Weekly-download floor for `aube add` (typosquat prompt). |
-| [`allowedUnpopularPackages`](#setting-allowedunpopularpackages) | `list<string>` | Glob patterns exempted from the `lowDownloadThreshold` gate. |
+| [`allowedUnpopularPackages`](#setting-allowedunpopularpackages) | `list<string>` | Glob patterns exempted from add-time package reputation gates. |
 | [`paranoid`](#setting-paranoid) | `bool` | Turn on the strict-security setting bundle in one switch. |
 | [`trustPolicy`](#setting-trustpolicy) | `"no-downgrade" \| "off"` | Fail install when a package's trust evidence weakens between releases. |
 | [`trustPolicyExclude`](#setting-trustpolicyexclude) | `list<string>` | Packages exempt from `trustPolicy` checks. |
@@ -379,9 +379,11 @@ Delay installation of newly published versions (minutes).
 - Workspace YAML keys: `minimumReleaseAge`
 - Managed policy: `max`
 
-Supply-chain attack mitigation: packages published within the last N
-minutes are skipped by the resolver. By default the resolver falls back
-to the next-oldest version that satisfies the range; set
+Supply-chain attack mitigation: versions published within the last N
+minutes are skipped by the resolver. `aube add` also challenges package
+names first registered inside this window, preventing a newly registered
+slopsquat from bypassing the version fallback. By default the resolver falls
+back to the next-oldest version that satisfies the range; set
 `minimumReleaseAgeStrict=true` to fail the install instead. Defaults to
 24 hours, matching pnpm v11. Set to `0` to disable.
 
@@ -623,7 +625,7 @@ Packages that route through a non-`registry.npmjs.org` registry are
 skipped automatically: a scoped override like
 `@myorg:registry=https://npm.internal.example/` or a swapped-out
 default registry both mean npmjs has no signal on the package, so
-neither the downloads gate nor the OSV `MAL-*` check fires.
+neither the reputation gates nor the OSV `MAL-*` check fires.
 Workspace deps and git/local specs are also skipped. To exempt
 specific names that *do* resolve through npmjs (e.g. you publish a
 low-download but trusted package internally), see
@@ -633,7 +635,7 @@ Set to `0` to disable.
 
 ### `allowedUnpopularPackages` {#setting-allowedunpopularpackages}
 
-Glob patterns exempted from the `lowDownloadThreshold` gate.
+Glob patterns exempted from add-time package reputation gates.
 
 - Type: `list<string>`
 - Default: `undefined`
@@ -643,9 +645,9 @@ Glob patterns exempted from the `lowDownloadThreshold` gate.
 - Managed policy: `managedWins`
 
 Each pattern is matched against the registry name (`@scope/foo` or
-`bar`) of every candidate the `lowDownloadThreshold` gate would
-otherwise probe. Matches skip the weekly-downloads lookup entirely,
-so internal/low-traffic packages don't trip the prompt in CI or the
+`bar`) of every candidate the package-age and `lowDownloadThreshold`
+gates would otherwise probe. Matches skip both lookups, so
+internal/low-traffic packages don't trip the prompt in CI or the
 `y/N` prompt locally.
 
 Patterns are full-name globs (the [`glob`](https://docs.rs/glob)

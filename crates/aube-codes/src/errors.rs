@@ -43,6 +43,7 @@ pub const ERR_AUBE_INVALID_PACKAGE_NAME: &str = "ERR_AUBE_INVALID_PACKAGE_NAME";
 pub const ERR_AUBE_REGISTRY_WRITE_REJECTED: &str = "ERR_AUBE_REGISTRY_WRITE_REJECTED";
 pub const ERR_AUBE_MALICIOUS_PACKAGE: &str = "ERR_AUBE_MALICIOUS_PACKAGE";
 pub const ERR_AUBE_LOW_DOWNLOAD_PACKAGE: &str = "ERR_AUBE_LOW_DOWNLOAD_PACKAGE";
+pub const ERR_AUBE_NEW_PACKAGE_NAME: &str = "ERR_AUBE_NEW_PACKAGE_NAME";
 pub const ERR_AUBE_ADVISORY_CHECK_FAILED: &str = "ERR_AUBE_ADVISORY_CHECK_FAILED";
 pub const ERR_AUBE_SECURITY_SCANNER_FATAL: &str = "ERR_AUBE_SECURITY_SCANNER_FATAL";
 pub const ERR_AUBE_SECURITY_SCANNER_FAILED: &str = "ERR_AUBE_SECURITY_SCANNER_FAILED";
@@ -331,6 +332,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::REGISTRY_NETWORK,
         description: "`aube add` refused a package whose weekly downloads fall below `lowDownloadThreshold` in a non-interactive context (or when stdin is not a TTY). Pass `--allow-low-downloads` to bypass.",
         exit_code: Some(47),
+    },
+    CodeMeta {
+        name: ERR_AUBE_NEW_PACKAGE_NAME,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` refused a package name first published within `minimumReleaseAge`. This protects against newly registered slopsquatting names.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_ADVISORY_CHECK_FAILED,

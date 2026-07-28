@@ -70,6 +70,11 @@ pub enum InstallPrompt {
         weekly_downloads: u64,
         threshold: u64,
     },
+    NewPackageName {
+        package: String,
+        created_at: String,
+        minimum_age_minutes: u64,
+    },
 }
 
 /// Future returned by an [`InstallPromptHandler`].
