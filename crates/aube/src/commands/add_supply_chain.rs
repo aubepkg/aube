@@ -79,10 +79,9 @@ pub(crate) enum LowDownloadPrompt {
 ///
 /// `allowed_unpopular_globs` are the `allowedUnpopularPackages`
 /// setting entries: full-name globs that exempt matching names from
-/// the package-age and downloads gates. The advisory check still runs against
-/// every package regardless — exempting confirmed-malicious advisories
-/// is not what this list is for.
-#[allow(clippy::too_many_arguments)]
+/// the similar-name, package-age, and downloads gates. The advisory
+/// check still runs against every package regardless — exempting
+/// confirmed-malicious advisories is not what this list is for.
 pub(crate) async fn run_gates(
     name_only_advisory_names: &[String],
     exact_advisory_pairs: &[(String, String)],
@@ -1137,7 +1136,7 @@ async fn confirm_new_package(
     let refusal = || {
         miette!(
             code = ERR_AUBE_NEW_PACKAGE_NAME,
-            "refusing to add {name}: the package name was first published at {created}, within the configured minimum release age of {minimum_age_minutes} minutes. Pass --allow-low-downloads to approve this new name explicitly."
+            "refusing to add {name}: the package name was first published at {created}, within the configured `minimumPackageAge` of {minimum_age_minutes} minutes. Pass --allow-low-downloads to approve this new name explicitly."
         )
     };
     match prompt {
@@ -1301,6 +1300,25 @@ mod tests {
                 created_at: "2026-07-28T10:00:00.000Z".to_string(),
                 minimum_age_minutes: 1440,
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn new_package_refusal_names_the_governing_setting() {
+        let prompt = LowDownloadPrompt::Host(InstallControl::silent());
+        let error = confirm_new_package(
+            &prompt,
+            "plausible-ai-package",
+            "2026-07-28T10:00:00.000Z",
+            43_200,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("`minimumPackageAge`"));
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(ERR_AUBE_NEW_PACKAGE_NAME)
         );
     }
 
