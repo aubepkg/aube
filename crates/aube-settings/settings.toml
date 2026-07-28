@@ -283,10 +283,8 @@ type = "int"
 default = "1440"
 docs = """
 Supply-chain attack mitigation: versions published within the last N
-minutes are skipped by the resolver. `aube add` also challenges package
-names first registered inside this window, preventing a newly registered
-slopsquat from bypassing the version fallback. By default the resolver falls
-back to the next-oldest version that satisfies the range; set
+minutes are skipped by the resolver. By default the resolver falls back
+to the next-oldest version that satisfies the range; set
 `minimumReleaseAgeStrict=true` to fail the install instead. Defaults to
 24 hours, matching pnpm v11. Set to `0` to disable.
 """
@@ -296,6 +294,28 @@ sources.npmrc = ["minimumReleaseAge"]
 sources.workspaceYaml = ["minimumReleaseAge"]
 # pnpm v11 documents this as a workspace-level setting, so
 # pnpm-workspace.yaml wins over a stale .npmrc entry.
+precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "max"
+examples = []
+
+[minimumPackageAge]
+description = "Challenge newly registered package names during `aube add` (minutes)."
+type = "int"
+default = "43200"
+docs = """
+Slopsquatting mitigation: `aube add` challenges public npm package names
+first registered within the last N minutes. Interactive sessions prompt
+for confirmation; non-interactive sessions fail with
+`ERR_AUBE_NEW_PACKAGE_NAME`. Defaults to 30 days, deliberately much
+longer than the 24-hour `minimumReleaseAge` quarantine for ordinary new
+versions. Existing lockfile entries and `allowedUnpopularPackages` are
+trusted. Set to `0` to disable, or pass `--allow-low-downloads` after
+verifying one new name out of band.
+"""
+sources.cli = []
+sources.env = ["npm_config_minimum_package_age", "NPM_CONFIG_MINIMUM_PACKAGE_AGE", "AUBE_MINIMUM_PACKAGE_AGE"]
+sources.npmrc = ["minimumPackageAge"]
+sources.workspaceYaml = ["minimumPackageAge"]
 precedence = ["workspaceYaml", "npmrc"]
 managedPolicy = "max"
 examples = []

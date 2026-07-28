@@ -552,7 +552,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: WARN_AUBE_NEW_PACKAGE_NAME,
         category: category::SUPPLY_CHAIN,
-        description: "`aube add` flagged a package name first published within `minimumReleaseAge`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_NEW_PACKAGE_NAME` unless explicitly allowed.",
+        description: "`aube add` flagged a package name first published within `minimumPackageAge`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_NEW_PACKAGE_NAME` unless explicitly allowed.",
         exit_code: None,
     },
     CodeMeta {

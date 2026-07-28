@@ -15,7 +15,7 @@
 //!    `allowedUnpopularPackages` setting (glob patterns) bypasses
 //!    this gate for opted-in names, leaving the OSV check intact.
 //!
-//! 3. **Package-name age** — applies `minimumReleaseAge` to the
+//! 3. **Package-name age** — applies `minimumPackageAge` to the
 //!    registry's `time.created` timestamp. This closes the
 //!    slopsquatting window where an attacker registers a plausible
 //!    AI-hallucinated name immediately before a victim installs it.
@@ -49,7 +49,7 @@ use std::io::{BufRead, IsTerminal, Write};
 pub(crate) struct ReputationPolicy {
     pub(crate) allow: bool,
     pub(crate) prompt: LowDownloadPrompt,
-    pub(crate) minimum_release_age: Option<aube_resolver::MinimumReleaseAge>,
+    pub(crate) minimum_package_age_minutes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -131,18 +131,21 @@ pub(crate) async fn run_gates(
     )
     .await?;
     if !reputation_policy.allow
-        && (low_download_threshold > 0 || reputation_policy.minimum_release_age.is_some())
+        && (low_download_threshold > 0 || reputation_policy.minimum_package_age_minutes > 0)
     {
         let gated = download_names_to_gate(download_names, allowed_unpopular_globs);
         if !gated.is_empty() {
-            if let Some(minimum_release_age) = reputation_policy.minimum_release_age.as_ref() {
-                let package_age_names =
-                    package_age_names_to_gate(&gated, &minimum_release_age.exclude);
+            if reputation_policy.minimum_package_age_minutes > 0 {
+                let cutoff = aube_resolver::MinimumReleaseAge {
+                    minutes: reputation_policy.minimum_package_age_minutes,
+                    ..Default::default()
+                }
+                .cutoff();
                 package_age_gate(
                     &client,
-                    &package_age_names,
-                    minimum_release_age.minutes,
-                    minimum_release_age.cutoff().as_deref(),
+                    &gated,
+                    reputation_policy.minimum_package_age_minutes,
+                    cutoff.as_deref(),
                     &reputation_policy.prompt,
                 )
                 .await?;
@@ -223,17 +226,6 @@ async fn package_age_gate(
 
 fn is_new_package_name(created: &str, cutoff: &str) -> bool {
     created > cutoff
-}
-
-fn package_age_names_to_gate(
-    names: &[String],
-    exclude: &aube_resolver::PackageVersionPolicy,
-) -> Vec<String> {
-    names
-        .iter()
-        .filter(|name| !exclude.matches_name_only(name))
-        .cloned()
-        .collect()
 }
 
 /// Single entry point for the post-resolve OSV `MAL-*` routing
@@ -1027,10 +1019,7 @@ mod tests {
                 ReputationPolicy {
                     allow: false,
                     prompt: LowDownloadPrompt::Terminal,
-                    minimum_release_age: Some(aube_resolver::MinimumReleaseAge {
-                        minutes: 1440,
-                        ..Default::default()
-                    }),
+                    minimum_package_age_minutes: 43_200,
                 },
                 &[],
             )
@@ -1123,20 +1112,6 @@ mod tests {
         assert!(is_new_package_name("2026-07-27T00:00:00.001Z", cutoff));
         assert!(!is_new_package_name(cutoff, cutoff));
         assert!(!is_new_package_name("2026-07-26T23:59:59.999Z", cutoff));
-    }
-
-    #[test]
-    fn bare_minimum_release_age_exclude_trusts_package_name() {
-        let names = vec![
-            "trusted-new-package".to_string(),
-            "unknown-new-package".to_string(),
-        ];
-        let exclude = aube_resolver::PackageVersionPolicy::parse(["trusted-new-package"])
-            .expect("valid exclude");
-        assert_eq!(
-            package_age_names_to_gate(&names, &exclude),
-            vec!["unknown-new-package".to_string()]
-        );
     }
 
     #[test]

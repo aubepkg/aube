@@ -1249,6 +1249,37 @@ mod tests {
     }
 
     #[test]
+    fn minimum_package_age_defaults_to_thirty_days_and_honors_workspace() {
+        let ws = raw_yaml("minimumPackageAge: 86400\n");
+        let ctx = ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &ws,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::minimum_package_age(&ctx), 86_400);
+
+        let empty = BTreeMap::new();
+        let ctx = ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &empty,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+        assert_eq!(resolved::minimum_package_age(&ctx), 43_200);
+    }
+
+    #[test]
     fn managed_max_policy_enforces_larger_integer() {
         let local = entries(&[("minimumReleaseAge", "0")]);
         let managed = entries(&[("minimumReleaseAge", "1440")]);

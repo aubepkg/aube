@@ -189,7 +189,7 @@
     {
       "name": "ERR_AUBE_NEW_PACKAGE_NAME",
       "category": "Supply chain (add-time)",
-      "description": "`aube add` refused a package name first published within `minimumReleaseAge`. This protects against newly registered slopsquatting names.",
+      "description": "`aube add` refused a package name first published within `minimumPackageAge`. This protects against newly registered slopsquatting names.",
       "exit_code": null
     },
     {
@@ -905,7 +905,7 @@
     {
       "name": "WARN_AUBE_NEW_PACKAGE_NAME",
       "category": "Supply chain (add-time)",
-      "description": "`aube add` flagged a package name first published within `minimumReleaseAge`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_NEW_PACKAGE_NAME` unless explicitly allowed.",
+      "description": "`aube add` flagged a package name first published within `minimumPackageAge`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_NEW_PACKAGE_NAME` unless explicitly allowed.",
       "exit_code": null
     },
     {

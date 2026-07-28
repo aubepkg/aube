@@ -15,7 +15,7 @@ pub(super) async fn run_cli_name_gates(
     let (
         advisory_check,
         low_download_threshold,
-        minimum_release_age,
+        minimum_package_age_minutes,
         mut allowed_unpopular,
         lockfile_dir,
     ) = crate::commands::with_settings_ctx(&project_dir, |ctx| {
@@ -24,11 +24,10 @@ pub(super) async fn run_cli_name_gates(
         } else {
             aube_settings::resolved::advisory_check(ctx)
         };
-        let minimum_release_age = crate::commands::install::resolve_minimum_release_age(ctx, None);
         Ok::<_, miette::Report>((
             policy,
             aube_settings::resolved::low_download_threshold(ctx),
-            minimum_release_age,
+            aube_settings::resolved::minimum_package_age(ctx),
             aube_settings::resolved::allowed_unpopular_packages(ctx).unwrap_or_default(),
             crate::commands::install::resolve_active_lockfile_dir(&project_dir, &manifest, ctx)?,
         ))
@@ -48,7 +47,7 @@ pub(super) async fn run_cli_name_gates(
         crate::commands::add_supply_chain::ReputationPolicy {
             allow: allow_low_downloads,
             prompt,
-            minimum_release_age,
+            minimum_package_age_minutes,
         },
         &allowed_unpopular,
     )

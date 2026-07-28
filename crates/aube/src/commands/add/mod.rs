@@ -213,7 +213,7 @@ pub struct AddArgs {
     /// `aube add` looks up each candidate's weekly download count and
     /// prompts (interactive) or fails (CI) when the count is below
     /// [`lowDownloadThreshold`] or the package name is newer than
-    /// [`minimumReleaseAge`]. The flag is intended for cases where
+    /// [`minimumPackageAge`]. The flag is intended for cases where
     /// you've already verified the package out-of-band. It does not
     /// affect the OSV malicious-package check, which remains a hard
     /// block.

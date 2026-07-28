@@ -336,7 +336,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_NEW_PACKAGE_NAME,
         category: category::SUPPLY_CHAIN,
-        description: "`aube add` refused a package name first published within `minimumReleaseAge`. This protects against newly registered slopsquatting names.",
+        description: "`aube add` refused a package name first published within `minimumPackageAge`. This protects against newly registered slopsquatting names.",
         exit_code: None,
     },
     CodeMeta {

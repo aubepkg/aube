@@ -25,6 +25,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`pnpmfilePath`](#setting-pnpmfilepath) | `string` | Location of the pnpmfile hook file. |
 | [`globalPnpmfile`](#setting-globalpnpmfile) | `string` | Path to a second pnpmfile that runs before the project's pnpmfile. |
 | [`minimumReleaseAge`](#setting-minimumreleaseage) | `int` | Delay installation of newly published versions (minutes). |
+| [`minimumPackageAge`](#setting-minimumpackageage) | `int` | Challenge newly registered package names during `aube add` (minutes). |
 | [`minimumReleaseAgeExclude`](#setting-minimumreleaseageexclude) | `list<string>` | Packages exempt from the minimumReleaseAge requirement. |
 | [`minimumReleaseAgeStrict`](#setting-minimumreleaseagestrict) | `bool` | Fail the install when no version satisfies the minimumReleaseAge cutoff. |
 | [`securityScanner`](#setting-securityscanner) | `string` | Bun-compatible security scanner module. |
@@ -380,12 +381,30 @@ Delay installation of newly published versions (minutes).
 - Managed policy: `max`
 
 Supply-chain attack mitigation: versions published within the last N
-minutes are skipped by the resolver. `aube add` also challenges package
-names first registered inside this window, preventing a newly registered
-slopsquat from bypassing the version fallback. By default the resolver falls
-back to the next-oldest version that satisfies the range; set
+minutes are skipped by the resolver. By default the resolver falls back
+to the next-oldest version that satisfies the range; set
 `minimumReleaseAgeStrict=true` to fail the install instead. Defaults to
 24 hours, matching pnpm v11. Set to `0` to disable.
+
+### `minimumPackageAge` {#setting-minimumpackageage}
+
+Challenge newly registered package names during `aube add` (minutes).
+
+- Type: `int`
+- Default: `43200`
+- Environment: `npm_config_minimum_package_age`, `NPM_CONFIG_MINIMUM_PACKAGE_AGE`, `AUBE_MINIMUM_PACKAGE_AGE`
+- .npmrc keys: `minimumPackageAge`, `minimum-package-age`
+- Workspace YAML keys: `minimumPackageAge`
+- Managed policy: `max`
+
+Slopsquatting mitigation: `aube add` challenges public npm package names
+first registered within the last N minutes. Interactive sessions prompt
+for confirmation; non-interactive sessions fail with
+`ERR_AUBE_NEW_PACKAGE_NAME`. Defaults to 30 days, deliberately much
+longer than the 24-hour `minimumReleaseAge` quarantine for ordinary new
+versions. Existing lockfile entries and `allowedUnpopularPackages` are
+trusted. Set to `0` to disable, or pass `--allow-low-downloads` after
+verifying one new name out of band.
 
 ### `minimumReleaseAgeExclude` {#setting-minimumreleaseageexclude}
 

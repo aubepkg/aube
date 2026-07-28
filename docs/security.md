@@ -185,11 +185,9 @@ Settings: [`trustPolicy`](/settings/#setting-trustpolicy),
 
 ## Minimum release age
 
-Wait a configurable period before installing newly published versions. On
-`aube add`, the same window also applies to the registry's package-name
-creation time. This catches slopsquatting names registered shortly before an
-AI assistant recommends them, even when the resolver's version fallback would
-otherwise admit the package's first release.
+Wait a configurable period before installing newly published versions. This
+24-hour release quarantine is intentionally separate from the longer
+package-name quarantine used for slopsquatting protection.
 
 ```yaml
 minimumReleaseAge: 4320  # 3 days
@@ -246,12 +244,16 @@ project uses. Lockfile membership does not bypass the OSV check.
 
 **New package name.** Before adding a direct dependency, aube reads npm's
 `time.created` timestamp and challenges names registered within
-`minimumReleaseAge`. Interactive sessions require confirmation;
-non-interactive sessions fail with `ERR_AUBE_NEW_PACKAGE_NAME`. Packages
-already present in the active lockfile and names matched by
-`allowedUnpopularPackages` or a bare-name `minimumReleaseAgeExclude` entry are
-trusted. `--allow-low-downloads` bypasses both reputation challenges after the
-package has been verified out of band.
+`minimumPackageAge` (30 days by default). Interactive sessions require
+confirmation; non-interactive sessions fail with
+`ERR_AUBE_NEW_PACKAGE_NAME`. Packages already present in the active lockfile
+and names matched by `allowedUnpopularPackages` are trusted.
+`--allow-low-downloads` bypasses both reputation challenges after the package
+has been verified out of band.
+
+```yaml
+minimumPackageAge: 43200 # 30 days
+```
 
 **Private packages skip all three gates automatically.** Any package routed
 through a non-`registry.npmjs.org` registry — whether by a scoped

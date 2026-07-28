@@ -534,6 +534,12 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub minimum_release_age: Option<u64>,
 
+    /// Minimum age in minutes that a public npm package name must
+    /// have before `aube add` accepts it without confirmation.
+    /// Default: 43200 (30 days).
+    #[serde(default)]
+    pub minimum_package_age: Option<u64>,
+
     /// Package names exempt from `minimum_release_age`.
     #[serde(default)]
     pub minimum_release_age_exclude: Option<Vec<String>>,
