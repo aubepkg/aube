@@ -500,7 +500,11 @@ export function fixRenovateConfig(body: string): string {
   } catch {
     return body
   }
-  const existing = /^(\s*)"minimumReleaseAge"\s*:\s*"[^"]*"(,?)\s*$/m
+  // [ \t] on the trailing match, not \s: under /m, `\s*$` consumes the
+  // NEWLINES after the value, so a replace here silently deletes the blank
+  // line that follows — the same defect fixed in fixNpmrc/fixWorkspaceYaml,
+  // which this fixer had kept.
+  const existing = /^([ \t]*)"minimumReleaseAge"\s*:\s*"[^"]*"(,?)[ \t]*$/m
   if (SOAK_DAYS === 0) {
     // Drop the line (and its newline) when the soak is disabled.
     return body.replace(new RegExp(`${existing.source}\n`, 'm'), '')
