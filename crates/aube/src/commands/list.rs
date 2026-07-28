@@ -100,6 +100,13 @@ pub struct ListArgs {
     #[arg(long)]
     pub long: bool,
 
+    /// List packages from the lockfile only, without checking node_modules.
+    ///
+    /// This is a pnpm compatibility flag: aube's list implementation
+    /// already reads exclusively from the canonical lockfile.
+    #[arg(long)]
+    pub lockfile_only: bool,
+
     /// Shortcut for `--format parseable`.
     ///
     /// Emit one tab-separated line per package.
@@ -162,6 +169,8 @@ pub async fn run(
     args: ListArgs,
     filter: aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<()> {
+    let _ = args.lockfile_only;
+
     if args.global {
         return run_global(&args);
     }
@@ -1005,6 +1014,7 @@ mod tests {
             format: ListFormat::Json,
             json: true,
             long: false,
+            lockfile_only: false,
             parseable: false,
         };
 
