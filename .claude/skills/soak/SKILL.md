@@ -63,6 +63,13 @@ update`. Everything else — every CI job, every shipped binary — builds on
 stable. If you need the cargo soak somewhere new, call `cargo +nightly`
 there; do not add a toolchain file.
 
+**A merely-old nightly is not enough.** Cargo treats an `[unstable]` key
+it does not implement as a warning and exits 0, so an old nightly
+resolves with NO window while looking successful (measured: nightly
+2026-03-21 has no such `-Z`). `deps:update` detects that warning and
+fails with the fix (`rustup update nightly`) — if you see it, the
+lockfile changes it just made are unsoaked.
+
 ## Change the window (one place)
 
 1. Edit `SOAK_DAYS` in `scripts/soak/constants.mts`.
