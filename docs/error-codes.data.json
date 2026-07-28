@@ -181,10 +181,28 @@
       "exit_code": 46
     },
     {
+      "name": "ERR_AUBE_SIMILAR_PACKAGE_NAME",
+      "category": "Supply chain (add-time)",
+      "description": "`aube add` refused a package whose name closely resembles a more popular npm package. This protects against typosquatting and slopsquatting.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_LOW_DOWNLOAD_PACKAGE",
       "category": "Registry / network",
       "description": "`aube add` refused a package whose weekly downloads fall below `lowDownloadThreshold` in a non-interactive context (or when stdin is not a TTY). Pass `--allow-low-downloads` to bypass.",
       "exit_code": 47
+    },
+    {
+      "name": "ERR_AUBE_NEW_PACKAGE_NAME",
+      "category": "Supply chain (add-time)",
+      "description": "`aube add` refused a package name first published within `minimumPackageAge`. This protects against newly registered slopsquatting names.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_PACKAGE_AGE_CHECK_FAILED",
+      "category": "Supply chain (add-time)",
+      "description": "`aube add` couldn't verify a package name's registry creation time while `minimumPackageAge` was enabled, so the package-age gate failed closed.",
+      "exit_code": null
     },
     {
       "name": "ERR_AUBE_ADVISORY_CHECK_FAILED",
@@ -891,9 +909,21 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_SIMILAR_PACKAGE_NAME",
+      "category": "Supply chain (add-time)",
+      "description": "`aube add` flagged a package whose name closely resembles a top-100,000 npm package. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_SIMILAR_PACKAGE_NAME` unless explicitly allowed.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_LOW_DOWNLOAD_PACKAGE",
       "category": "Supply chain (add-time)",
       "description": "`aube add` flagged a package whose weekly downloads fall below `lowDownloadThreshold`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_LOW_DOWNLOAD_PACKAGE` unless `--allow-low-downloads` is passed.",
+      "exit_code": null
+    },
+    {
+      "name": "WARN_AUBE_NEW_PACKAGE_NAME",
+      "category": "Supply chain (add-time)",
+      "description": "`aube add` flagged a package name first published within `minimumPackageAge`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_NEW_PACKAGE_NAME` unless explicitly allowed.",
       "exit_code": null
     },
     {

@@ -65,10 +65,21 @@ pub trait InstallReporter: Send + Sync + 'static {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum InstallPrompt {
+    SimilarPackageName {
+        package: String,
+        suggested_package: String,
+        popularity_rank: usize,
+        edit_distance: u8,
+    },
     LowDownloadPackage {
         package: String,
         weekly_downloads: u64,
         threshold: u64,
+    },
+    NewPackageName {
+        package: String,
+        created_at: String,
+        minimum_age_minutes: u64,
     },
 }
 

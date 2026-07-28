@@ -42,7 +42,10 @@ pub const ERR_AUBE_OFFLINE: &str = "ERR_AUBE_OFFLINE";
 pub const ERR_AUBE_INVALID_PACKAGE_NAME: &str = "ERR_AUBE_INVALID_PACKAGE_NAME";
 pub const ERR_AUBE_REGISTRY_WRITE_REJECTED: &str = "ERR_AUBE_REGISTRY_WRITE_REJECTED";
 pub const ERR_AUBE_MALICIOUS_PACKAGE: &str = "ERR_AUBE_MALICIOUS_PACKAGE";
+pub const ERR_AUBE_SIMILAR_PACKAGE_NAME: &str = "ERR_AUBE_SIMILAR_PACKAGE_NAME";
 pub const ERR_AUBE_LOW_DOWNLOAD_PACKAGE: &str = "ERR_AUBE_LOW_DOWNLOAD_PACKAGE";
+pub const ERR_AUBE_NEW_PACKAGE_NAME: &str = "ERR_AUBE_NEW_PACKAGE_NAME";
+pub const ERR_AUBE_PACKAGE_AGE_CHECK_FAILED: &str = "ERR_AUBE_PACKAGE_AGE_CHECK_FAILED";
 pub const ERR_AUBE_ADVISORY_CHECK_FAILED: &str = "ERR_AUBE_ADVISORY_CHECK_FAILED";
 pub const ERR_AUBE_SECURITY_SCANNER_FATAL: &str = "ERR_AUBE_SECURITY_SCANNER_FATAL";
 pub const ERR_AUBE_SECURITY_SCANNER_FAILED: &str = "ERR_AUBE_SECURITY_SCANNER_FAILED";
@@ -327,10 +330,28 @@ pub const ALL: &[CodeMeta] = &[
         exit_code: Some(46),
     },
     CodeMeta {
+        name: ERR_AUBE_SIMILAR_PACKAGE_NAME,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` refused a package whose name closely resembles a more popular npm package. This protects against typosquatting and slopsquatting.",
+        exit_code: None,
+    },
+    CodeMeta {
         name: ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
         category: category::REGISTRY_NETWORK,
         description: "`aube add` refused a package whose weekly downloads fall below `lowDownloadThreshold` in a non-interactive context (or when stdin is not a TTY). Pass `--allow-low-downloads` to bypass.",
         exit_code: Some(47),
+    },
+    CodeMeta {
+        name: ERR_AUBE_NEW_PACKAGE_NAME,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` refused a package name first published within `minimumPackageAge`. This protects against newly registered slopsquatting names.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` couldn't verify a package name's registry creation time while `minimumPackageAge` was enabled, so the package-age gate failed closed.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_ADVISORY_CHECK_FAILED,

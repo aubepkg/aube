@@ -25,6 +25,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`pnpmfilePath`](#setting-pnpmfilepath) | `string` | Location of the pnpmfile hook file. |
 | [`globalPnpmfile`](#setting-globalpnpmfile) | `string` | Path to a second pnpmfile that runs before the project's pnpmfile. |
 | [`minimumReleaseAge`](#setting-minimumreleaseage) | `int` | Delay installation of newly published versions (minutes). |
+| [`minimumPackageAge`](#setting-minimumpackageage) | `int` | Challenge newly registered package names during `aube add` (minutes). |
 | [`minimumReleaseAgeExclude`](#setting-minimumreleaseageexclude) | `list<string>` | Packages exempt from the minimumReleaseAge requirement. |
 | [`minimumReleaseAgeStrict`](#setting-minimumreleaseagestrict) | `bool` | Fail the install when no version satisfies the minimumReleaseAge cutoff. |
 | [`securityScanner`](#setting-securityscanner) | `string` | Bun-compatible security scanner module. |
@@ -33,7 +34,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`advisoryBloomCheck`](#setting-advisorybloomcheck) | `"on" \| "required" \| "off"` | Bloom-filter prefilter for OSV `MAL-*` advisories on lockfile-driven installs. |
 | [`advisoryCheckEveryInstall`](#setting-advisorycheckeveryinstall) | `bool` | Force the live-API OSV `MAL-*` check on every install (including frozen reinstalls). |
 | [`lowDownloadThreshold`](#setting-lowdownloadthreshold) | `int` | Weekly-download floor for `aube add` (typosquat prompt). |
-| [`allowedUnpopularPackages`](#setting-allowedunpopularpackages) | `list<string>` | Glob patterns exempted from the `lowDownloadThreshold` gate. |
+| [`allowedUnpopularPackages`](#setting-allowedunpopularpackages) | `list<string>` | Glob patterns exempted from add-time package reputation gates. |
 | [`paranoid`](#setting-paranoid) | `bool` | Turn on the strict-security setting bundle in one switch. |
 | [`trustPolicy`](#setting-trustpolicy) | `"no-downgrade" \| "off"` | Fail install when a package's trust evidence weakens between releases. |
 | [`trustPolicyExclude`](#setting-trustpolicyexclude) | `list<string>` | Packages exempt from `trustPolicy` checks. |
@@ -379,11 +380,33 @@ Delay installation of newly published versions (minutes).
 - Workspace YAML keys: `minimumReleaseAge`
 - Managed policy: `max`
 
-Supply-chain attack mitigation: packages published within the last N
+Supply-chain attack mitigation: versions published within the last N
 minutes are skipped by the resolver. By default the resolver falls back
 to the next-oldest version that satisfies the range; set
 `minimumReleaseAgeStrict=true` to fail the install instead. Defaults to
 24 hours, matching pnpm v11. Set to `0` to disable.
+
+### `minimumPackageAge` {#setting-minimumpackageage}
+
+Challenge newly registered package names during `aube add` (minutes).
+
+- Type: `int`
+- Default: `43200`
+- Environment: `npm_config_minimum_package_age`, `NPM_CONFIG_MINIMUM_PACKAGE_AGE`, `AUBE_MINIMUM_PACKAGE_AGE`
+- .npmrc keys: `minimumPackageAge`, `minimum-package-age`
+- Workspace YAML keys: `minimumPackageAge`
+- Managed policy: `max`
+
+Slopsquatting mitigation: `aube add` challenges public npm package names
+first registered within the last N minutes. Interactive sessions prompt
+for confirmation; non-interactive sessions fail with
+`ERR_AUBE_NEW_PACKAGE_NAME`. Defaults to 30 days, deliberately much
+longer than the 24-hour `minimumReleaseAge` quarantine for ordinary new
+versions. Existing lockfile entries and `allowedUnpopularPackages` are
+trusted. Set to `0` to disable, or pass `--allow-low-downloads` after
+verifying one new name out of band.
+If npm's creation-time metadata is missing or unavailable, the check fails
+closed with `ERR_AUBE_PACKAGE_AGE_CHECK_FAILED`.
 
 ### `minimumReleaseAgeExclude` {#setting-minimumreleaseageexclude}
 
@@ -623,7 +646,7 @@ Packages that route through a non-`registry.npmjs.org` registry are
 skipped automatically: a scoped override like
 `@myorg:registry=https://npm.internal.example/` or a swapped-out
 default registry both mean npmjs has no signal on the package, so
-neither the downloads gate nor the OSV `MAL-*` check fires.
+neither the reputation gates nor the OSV `MAL-*` check fires.
 Workspace deps and git/local specs are also skipped. To exempt
 specific names that *do* resolve through npmjs (e.g. you publish a
 low-download but trusted package internally), see
@@ -633,7 +656,7 @@ Set to `0` to disable.
 
 ### `allowedUnpopularPackages` {#setting-allowedunpopularpackages}
 
-Glob patterns exempted from the `lowDownloadThreshold` gate.
+Glob patterns exempted from add-time package reputation gates.
 
 - Type: `list<string>`
 - Default: `undefined`
@@ -643,10 +666,10 @@ Glob patterns exempted from the `lowDownloadThreshold` gate.
 - Managed policy: `managedWins`
 
 Each pattern is matched against the registry name (`@scope/foo` or
-`bar`) of every candidate the `lowDownloadThreshold` gate would
-otherwise probe. Matches skip the weekly-downloads lookup entirely,
-so internal/low-traffic packages don't trip the prompt in CI or the
-`y/N` prompt locally.
+`bar`) of every candidate the similar-name, package-age, and
+`lowDownloadThreshold` gates would otherwise probe. Matches skip all
+three checks, so internal/low-traffic packages don't trip the prompt
+in CI or the `y/N` prompt locally.
 
 Patterns are full-name globs (the [`glob`](https://docs.rs/glob)
 crate's syntax — `*`, `?`, `[…]`). Match-everything (`*`) is allowed
@@ -2393,7 +2416,6 @@ Explicitly allow or disallow script execution per package.
 
 - Type: `object`
 - Default: `undefined`
-- .npmrc keys: `allowBuilds`, `allow-builds`
 - Workspace YAML keys: `allowBuilds`
 
 Per-package review map for dependency lifecycle scripts. Read from

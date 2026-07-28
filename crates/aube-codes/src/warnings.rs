@@ -104,6 +104,8 @@ pub const WARN_AUBE_WORKSPACE_TOPO_CYCLE: &str = "WARN_AUBE_WORKSPACE_TOPO_CYCLE
 
 // ── supply chain (add-time) ─────────────────────────────────────────
 pub const WARN_AUBE_LOW_DOWNLOAD_PACKAGE: &str = "WARN_AUBE_LOW_DOWNLOAD_PACKAGE";
+pub const WARN_AUBE_SIMILAR_PACKAGE_NAME: &str = "WARN_AUBE_SIMILAR_PACKAGE_NAME";
+pub const WARN_AUBE_NEW_PACKAGE_NAME: &str = "WARN_AUBE_NEW_PACKAGE_NAME";
 pub const WARN_AUBE_ADVISORY_CHECK_FAILED: &str = "WARN_AUBE_ADVISORY_CHECK_FAILED";
 pub const WARN_AUBE_OSV_MIRROR_REFRESH_FAILED: &str = "WARN_AUBE_OSV_MIRROR_REFRESH_FAILED";
 pub const WARN_AUBE_OSV_BLOOM_REFRESH_FAILED: &str = "WARN_AUBE_OSV_BLOOM_REFRESH_FAILED";
@@ -543,9 +545,21 @@ pub const ALL: &[CodeMeta] = &[
     },
     // Supply chain (add-time)
     CodeMeta {
+        name: WARN_AUBE_SIMILAR_PACKAGE_NAME,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` flagged a package whose name closely resembles a top-100,000 npm package. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_SIMILAR_PACKAGE_NAME` unless explicitly allowed.",
+        exit_code: None,
+    },
+    CodeMeta {
         name: WARN_AUBE_LOW_DOWNLOAD_PACKAGE,
         category: category::SUPPLY_CHAIN,
         description: "`aube add` flagged a package whose weekly downloads fall below `lowDownloadThreshold`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_LOW_DOWNLOAD_PACKAGE` unless `--allow-low-downloads` is passed.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_NEW_PACKAGE_NAME,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` flagged a package name first published within `minimumPackageAge`. Interactive sessions prompt for confirmation; non-interactive contexts fail with `ERR_AUBE_NEW_PACKAGE_NAME` unless explicitly allowed.",
         exit_code: None,
     },
     CodeMeta {
