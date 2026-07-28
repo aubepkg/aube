@@ -19,8 +19,10 @@ if [ -n "${__SENTINEL__:-}" ] || [ -z "$REAL" ] || ! command -v sfw >/dev/null 2
 	exit 127
 fi
 export __SENTINEL__=1
-# Enterprise sfw defaults to BLOCK for non-registry hosts, which breaks
-# ordinary dev flows the day a Socket key lands; free tier hardcodes
-# ignore and disregards the var, so setting it is always safe.
+# Enterprise sfw defaults to BLOCK for non-registry hosts
+# (SFW_UNKNOWN_HOST_ACTION, parsed by the enterprise config), which
+# breaks ordinary dev flows the day a Socket key lands. Only the
+# enterprise build reads the var — it is inert for the free tier — so
+# setting it unconditionally is safe.
 export SFW_UNKNOWN_HOST_ACTION=ignore
 exec sfw '__CMD__' "$@"
