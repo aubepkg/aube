@@ -43,7 +43,7 @@ jobs:
     permissions:
       contents: read # listing releases and downloading assets; no write here
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # tak resolves each release tag to the commit it points at, so a
           # measurement lands on the commit that produced it rather than on
@@ -135,7 +135,7 @@ jobs:
     permissions:
       contents: write # pushing refs/notes/tak is a write to this repository
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Tags, so the validation below can check that every note attaches to
           # a commit some release tag points at. Fetched here rather than
