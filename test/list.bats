@@ -185,6 +185,7 @@ JSON
 
 	run aube list --json --lockfile-only is-odd
 	assert_success
+	[ ! -e node_modules ]
 	assert_output --partial '"is-odd"'
 	assert_output --partial '"version": "3.0.1"'
 }
