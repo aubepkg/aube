@@ -1,6 +1,6 @@
 //! Supply-chain gates that run at the top of `aube add`.
 //!
-//! Three checks, layered by signal strength:
+//! Four checks, layered by signal strength:
 //!
 //! 1. **OSV `MAL-*` advisory check** — hard block via
 //!    `ERR_AUBE_MALICIOUS_PACKAGE`. Confirmed malicious advisories
@@ -8,14 +8,18 @@
 //!    (so offline workflows still install); `advisoryCheck=required`
 //!    flips that to fail closed for hardened CI.
 //!
-//! 2. **Weekly-downloads floor** — interactive confirm prompt below
+//! 2. **Popular-name similarity** — namespace-aware edit-distance
+//!    comparison against the top 100,000 npm packages catches names
+//!    designed to look like an established dependency.
+//!
+//! 3. **Weekly-downloads floor** — interactive confirm prompt below
 //!    the threshold, hard refusal in non-interactive contexts unless
 //!    `--allow-low-downloads` is passed. Catches typosquats and
 //!    impersonations that haven't been reported to OSV yet. The
 //!    `allowedUnpopularPackages` setting (glob patterns) bypasses
 //!    this gate for opted-in names, leaving the OSV check intact.
 //!
-//! 3. **Package-name age** — applies `minimumPackageAge` to the
+//! 4. **Package-name age** — applies `minimumPackageAge` to the
 //!    registry's `time.created` timestamp. This closes the
 //!    slopsquatting window where an attacker registers a plausible
 //!    AI-hallucinated name immediately before a victim installs it.
@@ -29,11 +33,12 @@
 
 use aube_codes::errors::{
     ERR_AUBE_ADVISORY_CHECK_FAILED, ERR_AUBE_LOW_DOWNLOAD_PACKAGE, ERR_AUBE_MALICIOUS_PACKAGE,
-    ERR_AUBE_NEW_PACKAGE_NAME, ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
+    ERR_AUBE_NEW_PACKAGE_NAME, ERR_AUBE_PACKAGE_AGE_CHECK_FAILED, ERR_AUBE_SIMILAR_PACKAGE_NAME,
 };
 use aube_codes::warnings::{
     WARN_AUBE_ADVISORY_CHECK_FAILED, WARN_AUBE_LOW_DOWNLOAD_PACKAGE, WARN_AUBE_NEW_PACKAGE_NAME,
     WARN_AUBE_OSV_BLOOM_REFRESH_FAILED, WARN_AUBE_OSV_MIRROR_REFRESH_FAILED,
+    WARN_AUBE_SIMILAR_PACKAGE_NAME,
 };
 use aube_registry::osv_bloom_client::OsvBloomClient;
 use aube_registry::osv_mirror::OsvMirror;
@@ -77,6 +82,7 @@ pub(crate) enum LowDownloadPrompt {
 /// the package-age and downloads gates. The advisory check still runs against
 /// every package regardless — exempting confirmed-malicious advisories
 /// is not what this list is for.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_gates(
     name_only_advisory_names: &[String],
     exact_advisory_pairs: &[(String, String)],
@@ -92,9 +98,7 @@ pub(crate) async fn run_gates(
     {
         return Ok(());
     }
-    let gated_reputation_names = if !reputation_policy.allow
-        && (low_download_threshold > 0 || reputation_policy.minimum_package_age_minutes > 0)
-    {
+    let gated_reputation_names = if !reputation_policy.allow {
         download_names_to_gate(download_names, allowed_unpopular_globs)
     } else {
         Vec::new()
@@ -142,6 +146,13 @@ pub(crate) async fn run_gates(
         .await?;
     }
     if !gated_reputation_names.is_empty() {
+        let approved_similar_names =
+            similar_name_gate(&gated_reputation_names, &reputation_policy.prompt).await?;
+        let remaining_reputation_names = gated_reputation_names
+            .iter()
+            .filter(|name| !approved_similar_names.contains(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
         if reputation_policy.minimum_package_age_minutes > 0 {
             let cutoff = aube_resolver::MinimumReleaseAge {
                 minutes: reputation_policy.minimum_package_age_minutes,
@@ -151,7 +162,7 @@ pub(crate) async fn run_gates(
             package_age_gate(
                 reputation_policy.registry_client,
                 reputation_policy.full_packument_cache,
-                &gated_reputation_names,
+                &remaining_reputation_names,
                 reputation_policy.minimum_package_age_minutes,
                 cutoff.as_deref(),
                 &reputation_policy.prompt,
@@ -163,7 +174,7 @@ pub(crate) async fn run_gates(
         {
             downloads_gate(
                 client,
-                &gated_reputation_names,
+                &remaining_reputation_names,
                 low_download_threshold,
                 &reputation_policy.prompt,
             )
@@ -801,6 +812,195 @@ fn format_malicious_message(header: &str, hits: &[MaliciousAdvisory], footer: &s
     lines.join("\n")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PackageNameSuggestion {
+    name: String,
+    rank: usize,
+    distance: u8,
+}
+
+async fn similar_name_gate(
+    names: &[String],
+    prompt: &LowDownloadPrompt,
+) -> miette::Result<std::collections::HashSet<String>> {
+    let corpus = aube_resolver::popular_package_names();
+    let mut approved = std::collections::HashSet::new();
+    for name in names {
+        let Some(suggestion) = find_similar_package_name(name, corpus) else {
+            continue;
+        };
+        tracing::warn!(
+            code = WARN_AUBE_SIMILAR_PACKAGE_NAME,
+            "{name} resembles {} (popularity rank #{}, edit distance {})",
+            suggestion.name,
+            suggestion.rank,
+            suggestion.distance
+        );
+        if !confirm_similar_package(prompt, name, &suggestion).await? {
+            return Err(miette!(
+                code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
+                "user aborted `{} {name}`",
+                aube_util::cmd("add")
+            ));
+        }
+        approved.insert(name.clone());
+    }
+    Ok(approved)
+}
+
+fn find_similar_package_name(name: &str, corpus: &str) -> Option<PackageNameSuggestion> {
+    let mut best: Option<PackageNameSuggestion> = None;
+    for (index, candidate) in corpus.lines().enumerate() {
+        if name == candidate {
+            continue;
+        }
+        let Some((requested_part, candidate_part)) = comparable_name_parts(name, candidate) else {
+            continue;
+        };
+        let threshold = if requested_part.len().max(candidate_part.len()) >= 5 {
+            2
+        } else {
+            1
+        };
+        let Some(distance) = bounded_damerau_levenshtein(requested_part, candidate_part, threshold)
+        else {
+            continue;
+        };
+        let suggestion = PackageNameSuggestion {
+            name: candidate.to_string(),
+            rank: index + 1,
+            distance,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| (distance, index) < (current.distance, current.rank - 1))
+        {
+            best = Some(suggestion);
+        }
+    }
+    best
+}
+
+fn comparable_name_parts<'a>(requested: &'a str, candidate: &'a str) -> Option<(&'a str, &'a str)> {
+    let requested_scoped = requested
+        .strip_prefix('@')
+        .and_then(|name| name.split_once('/'));
+    let candidate_scoped = candidate
+        .strip_prefix('@')
+        .and_then(|name| name.split_once('/'));
+    match (requested_scoped, candidate_scoped) {
+        (None, None) => Some((requested, candidate)),
+        (Some((requested_scope, requested_name)), Some((candidate_scope, candidate_name)))
+            if requested_scope == candidate_scope =>
+        {
+            Some((requested_name, candidate_name))
+        }
+        (Some(_), Some(_)) => Some((requested, candidate)),
+        _ => None,
+    }
+}
+
+/// Optimal-string-alignment distance with an upper bound. npm package
+/// names are ASCII and capped at 214 characters, so fixed rows avoid
+/// allocating while scanning the embedded popularity corpus.
+fn bounded_damerau_levenshtein(left: &str, right: &str, limit: u8) -> Option<u8> {
+    const MAX_NAME_LEN: usize = 214;
+    if !left.is_ascii()
+        || !right.is_ascii()
+        || left.len() > MAX_NAME_LEN
+        || right.len() > MAX_NAME_LEN
+        || left.len().abs_diff(right.len()) > usize::from(limit)
+    {
+        return None;
+    }
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut previous_previous = [0_u16; MAX_NAME_LEN + 1];
+    let mut previous = [0_u16; MAX_NAME_LEN + 1];
+    let mut current = [0_u16; MAX_NAME_LEN + 1];
+    for (j, cell) in previous.iter_mut().take(right.len() + 1).enumerate() {
+        *cell = j as u16;
+    }
+    for i in 1..=left.len() {
+        current[0] = i as u16;
+        let mut row_min = current[0];
+        for j in 1..=right.len() {
+            let substitution = previous[j - 1] + u16::from(left[i - 1] != right[j - 1]);
+            current[j] = (previous[j] + 1).min(current[j - 1] + 1).min(substitution);
+            if i > 1 && j > 1 && left[i - 1] == right[j - 2] && left[i - 2] == right[j - 1] {
+                current[j] = current[j].min(previous_previous[j - 2] + 1);
+            }
+            row_min = row_min.min(current[j]);
+        }
+        if row_min > u16::from(limit) {
+            return None;
+        }
+        previous_previous = previous;
+        previous = current;
+    }
+    let distance = previous[right.len()];
+    (distance <= u16::from(limit)).then_some(distance as u8)
+}
+
+async fn confirm_similar_package(
+    prompt: &LowDownloadPrompt,
+    name: &str,
+    suggestion: &PackageNameSuggestion,
+) -> miette::Result<bool> {
+    let refusal = || {
+        miette!(
+            code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
+            "refusing to add {name}: did you mean {} (top-100,000 rank #{}, edit distance {})? Pass --allow-low-downloads after verifying the package name.",
+            suggestion.name,
+            suggestion.rank,
+            suggestion.distance
+        )
+    };
+    match prompt {
+        LowDownloadPrompt::Terminal
+            if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() =>
+        {
+            prompt_similar_package(name, suggestion)
+        }
+        LowDownloadPrompt::Terminal => Err(refusal()),
+        LowDownloadPrompt::Host(control) => control
+            .confirm(
+                crate::commands::install::InstallPrompt::SimilarPackageName {
+                    package: name.to_string(),
+                    suggested_package: suggestion.name.clone(),
+                    popularity_rank: suggestion.rank,
+                    edit_distance: suggestion.distance,
+                },
+            )
+            .await
+            .unwrap_or_else(|| Err(refusal())),
+    }
+}
+
+fn prompt_similar_package(name: &str, suggestion: &PackageNameSuggestion) -> miette::Result<bool> {
+    let mut stderr = std::io::stderr().lock();
+    writeln!(stderr, "  ⚠ {name} resembles a popular package:").ok();
+    writeln!(
+        stderr,
+        "    • did you mean {}? (top-100,000 rank #{}, edit distance {})",
+        suggestion.name, suggestion.rank, suggestion.distance
+    )
+    .ok();
+    write!(stderr, "  Continue adding {name}? [y/N] ").ok();
+    stderr.flush().ok();
+    drop(stderr);
+
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).map_err(|e| {
+        miette!(
+            code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
+            "failed to read confirmation: {e}"
+        )
+    })?;
+    let answer = line.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
+}
+
 async fn downloads_gate(
     client: &reqwest::Client,
     names: &[String],
@@ -1101,6 +1301,106 @@ mod tests {
                 created_at: "2026-07-28T10:00:00.000Z".to_string(),
                 minimum_age_minutes: 1440,
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn embedded_similar_name_confirmation_is_routed_to_the_host() {
+        let handler = Arc::new(RecordingPromptHandler {
+            answer: true,
+            prompts: Mutex::new(Vec::new()),
+        });
+        let prompt =
+            LowDownloadPrompt::Host(InstallControl::silent().with_prompt_handler(handler.clone()));
+        let suggestion = PackageNameSuggestion {
+            name: "lodash".to_string(),
+            rank: 12,
+            distance: 1,
+        };
+
+        assert!(
+            confirm_similar_package(&prompt, "lodahs", &suggestion)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            *handler.prompts.lock().unwrap(),
+            vec![InstallPrompt::SimilarPackageName {
+                package: "lodahs".to_string(),
+                suggested_package: "lodash".to_string(),
+                popularity_rank: 12,
+                edit_distance: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn similar_name_detects_adjacent_transposition() {
+        assert_eq!(
+            find_similar_package_name("lodahs", "react\nlodash\nexpress\n"),
+            Some(PackageNameSuggestion {
+                name: "lodash".to_string(),
+                rank: 2,
+                distance: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn bundled_corpus_detects_common_package_typo() {
+        let suggestion =
+            find_similar_package_name("lodahs", aube_resolver::popular_package_names())
+                .expect("lodash should be present in the popularity corpus");
+        assert_eq!(suggestion.name, "lodash");
+        assert_eq!(suggestion.distance, 1);
+    }
+
+    #[test]
+    fn similar_name_compares_basename_within_same_scope() {
+        assert_eq!(
+            find_similar_package_name("@babel/parserr", "@types/node\n@babel/parser\n"),
+            Some(PackageNameSuggestion {
+                name: "@babel/parser".to_string(),
+                rank: 2,
+                distance: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn similar_name_compares_full_name_across_scopes() {
+        assert_eq!(
+            find_similar_package_name("@type/node", "@types/node\n"),
+            Some(PackageNameSuggestion {
+                name: "@types/node".to_string(),
+                rank: 1,
+                distance: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn similar_name_does_not_compare_scoped_with_unscoped() {
+        assert_eq!(find_similar_package_name("@example/react", "react\n"), None);
+    }
+
+    #[test]
+    fn similar_name_skips_exact_and_distant_names() {
+        assert_eq!(
+            find_similar_package_name("lodash", "lodash\nexpress\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn similar_name_prefers_distance_then_popularity_rank() {
+        assert_eq!(
+            find_similar_package_name("foobarz", "foobars\nfoobaz\n"),
+            Some(PackageNameSuggestion {
+                name: "foobars".to_string(),
+                rank: 1,
+                distance: 1,
+            })
         );
     }
 

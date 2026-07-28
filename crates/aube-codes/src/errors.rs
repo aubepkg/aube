@@ -42,6 +42,7 @@ pub const ERR_AUBE_OFFLINE: &str = "ERR_AUBE_OFFLINE";
 pub const ERR_AUBE_INVALID_PACKAGE_NAME: &str = "ERR_AUBE_INVALID_PACKAGE_NAME";
 pub const ERR_AUBE_REGISTRY_WRITE_REJECTED: &str = "ERR_AUBE_REGISTRY_WRITE_REJECTED";
 pub const ERR_AUBE_MALICIOUS_PACKAGE: &str = "ERR_AUBE_MALICIOUS_PACKAGE";
+pub const ERR_AUBE_SIMILAR_PACKAGE_NAME: &str = "ERR_AUBE_SIMILAR_PACKAGE_NAME";
 pub const ERR_AUBE_LOW_DOWNLOAD_PACKAGE: &str = "ERR_AUBE_LOW_DOWNLOAD_PACKAGE";
 pub const ERR_AUBE_NEW_PACKAGE_NAME: &str = "ERR_AUBE_NEW_PACKAGE_NAME";
 pub const ERR_AUBE_PACKAGE_AGE_CHECK_FAILED: &str = "ERR_AUBE_PACKAGE_AGE_CHECK_FAILED";
@@ -327,6 +328,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::REGISTRY_NETWORK,
         description: "`aube add` refused a package because OSV reports it as malicious (`MAL-*` advisory). Hard block — confirmed-malicious advisories aren't a judgement call.",
         exit_code: Some(46),
+    },
+    CodeMeta {
+        name: ERR_AUBE_SIMILAR_PACKAGE_NAME,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` refused a package whose name closely resembles a more popular npm package. This protects against typosquatting and slopsquatting.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_LOW_DOWNLOAD_PACKAGE,

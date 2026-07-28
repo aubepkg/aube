@@ -207,16 +207,16 @@ pub struct AddArgs {
         value_parser = parse_allow_build_value,
     )]
     pub allow_build: Vec<String>,
-    /// Bypass the new-name and [`lowDownloadThreshold`] confirm prompts
-    /// / refusals for this invocation.
+    /// Bypass the similar-name, new-name, and [`lowDownloadThreshold`]
+    /// confirm prompts / refusals for this invocation.
     ///
     /// `aube add` looks up each candidate's weekly download count and
     /// prompts (interactive) or fails (CI) when the count is below
-    /// [`lowDownloadThreshold`] or the package name is newer than
-    /// [`minimumPackageAge`]. The flag is intended for cases where
-    /// you've already verified the package out-of-band. It does not
-    /// affect the OSV malicious-package check, which remains a hard
-    /// block.
+    /// [`lowDownloadThreshold`], resembles a top-100,000 npm package,
+    /// or is newer than [`minimumPackageAge`]. The flag is intended
+    /// for cases where you've already verified the package out-of-band.
+    /// It does not affect the OSV malicious-package check, which remains
+    /// a hard block.
     #[arg(long)]
     pub allow_low_downloads: bool,
     /// Allow every dependency's lifecycle scripts to run.

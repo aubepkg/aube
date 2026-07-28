@@ -148,6 +148,7 @@ fn deterministic_tarball_url(name: &str, version: &str) -> String {
 
 static GENERATED_AT: OnceLock<Option<String>> = OnceLock::new();
 static AUTO_PRUNED: OnceLock<()> = OnceLock::new();
+static POPULAR_NAMES: OnceLock<Option<String>> = OnceLock::new();
 
 pub(crate) fn get(name: &str) -> Option<Seed> {
     let (_, offset, len) = PRIMER_INDEX
@@ -163,6 +164,21 @@ pub(crate) fn get(name: &str) -> Option<Seed> {
 
 pub(crate) fn covers_cutoff(cutoff: &str) -> bool {
     generated_at().is_some_and(|generated_at| generated_at.as_str() >= cutoff)
+}
+
+/// Ranked public npm package names used as typo/squatting reference data.
+///
+/// Release builds embed the top 100,000 names. Development and downstream
+/// builds without the generated artifact fall back to the metadata-primer
+/// names, so callers always get a valid newline-delimited corpus.
+pub fn popular_package_names() -> &'static str {
+    POPULAR_NAMES
+        .get_or_init(|| {
+            let decoded = zstd::stream::decode_all(Cursor::new(POPULAR_NAMES_BLOB)).ok()?;
+            String::from_utf8(decoded).ok()
+        })
+        .as_deref()
+        .unwrap_or_default()
 }
 
 fn generated_at() -> Option<&'static String> {
@@ -298,6 +314,15 @@ mod tests {
             return;
         };
         assert!(super::get(name).is_some());
+    }
+
+    #[test]
+    fn bundled_popular_names_load() {
+        let names = popular_package_names();
+        if !PRIMER_INDEX.is_empty() {
+            assert!(!names.is_empty());
+        }
+        assert!(names.lines().all(|name| !name.is_empty()));
     }
 
     #[test]

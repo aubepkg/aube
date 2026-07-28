@@ -666,10 +666,10 @@ Glob patterns exempted from add-time package reputation gates.
 - Managed policy: `managedWins`
 
 Each pattern is matched against the registry name (`@scope/foo` or
-`bar`) of every candidate the package-age and `lowDownloadThreshold`
-gates would otherwise probe. Matches skip both lookups, so
-internal/low-traffic packages don't trip the prompt in CI or the
-`y/N` prompt locally.
+`bar`) of every candidate the similar-name, package-age, and
+`lowDownloadThreshold` gates would otherwise probe. Matches skip all
+three checks, so internal/low-traffic packages don't trip the prompt
+in CI or the `y/N` prompt locally.
 
 Patterns are full-name globs (the [`glob`](https://docs.rs/glob)
 crate's syntax — `*`, `?`, `[…]`). Match-everything (`*`) is allowed
