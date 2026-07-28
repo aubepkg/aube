@@ -407,7 +407,7 @@ enum Commands {
     /// Link a local package globally, or into the current project
     #[command(visible_alias = "ln")]
     Link(commands::link::LinkArgs),
-    /// Print the installed dependency tree
+    /// Print the resolved dependency tree
     #[command(visible_alias = "ls", after_long_help = commands::list::AFTER_LONG_HELP)]
     List(commands::list::ListArgs),
     /// Alias for `list --long` (hidden; prefer `list --long`)

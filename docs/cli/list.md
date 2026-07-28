@@ -5,7 +5,7 @@
 - **Aliases**: `ls`
 - **Effect**: read-only
 
-Print the installed dependency tree
+Print the resolved dependency tree
 
 ## Arguments
 

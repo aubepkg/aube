@@ -6984,7 +6984,7 @@
         "mounts": [],
         "effect": "read",
         "hide": false,
-        "help": "Print the installed dependency tree",
+        "help": "Print the resolved dependency tree",
         "name": "list",
         "aliases": [
           "ls"

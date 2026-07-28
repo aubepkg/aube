@@ -2350,7 +2350,7 @@ The registry lives at `$AUBE_HOME/global-links`. Default behavior for bare `aube
     }
     arg "[PACKAGE]" help="Package name, or path to a local directory" required=#false
 }
-cmd list help="Print the installed dependency tree" effect=read {
+cmd list help="Print the resolved dependency tree" effect=read {
     alias ls
     after_long_help #"""
 Examples:

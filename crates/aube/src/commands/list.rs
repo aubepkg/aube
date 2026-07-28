@@ -1,4 +1,4 @@
-//! `aube list` / `ls` — print the installed dependency tree.
+//! `aube list` / `ls` — print the resolved dependency tree.
 //!
 //! Reads `package.json` and the lockfile, walks the resolved graph, and
 //! prints the root importer's direct deps (and optionally their transitive
