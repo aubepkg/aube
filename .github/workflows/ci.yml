@@ -102,7 +102,9 @@ jobs:
       # aube-registry tests hit local mocks ADDRESSED AS
       # registry.npmjs.org:<port>, and sfw's loopback NO_PROXY exemption
       # keys on the address, not the socket — a hostname-addressed mock
-      # still routes into the proxy, which 405s the mock's write endpoints.
+      # still routes into the proxy, whose absolute-form plain-HTTP
+      # handling 405s the mock traffic (fixed upstream in
+      # SocketDev/firewall#147; the ordering stays as defense in depth).
       # GITHUB_PATH only affects steps after this one, so the firewall
       # covers exactly the network-installing step below (docs:build).
       - name: pinned package managers + socket firewall
