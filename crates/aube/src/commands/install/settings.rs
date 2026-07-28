@@ -874,21 +874,18 @@ pub(crate) fn configure_resolver(
     // pnpm-lock.yaml, aube-lock.yaml, bun.lock, package-lock.json, and
     // npm-shrinkwrap.json are committed, cross-platform artifacts that
     // carry per-package os/cpu metadata.
-    // When the user hasn't declared `pnpm.supportedArchitectures`, record
-    // EVERY optional-dep variant a package declares (`accept_all`) so the
-    // committed lockfile installs cleanly on every contributor's platform
-    // — withholding variants leaves teammates with "Cannot find native
-    // binding". This matches what npm, pnpm, and bun write verbatim (all
-    // 26 `@esbuild/*` / `@rollup/rollup-*` natives, freebsd/ppc64/s390x
-    // and all), so a lockfile aube regenerates stays diff-clean against the
-    // native tool. Install-time filtering (`filter_graph`) and the
-    // streaming-fetch gate run against the unmodified host triple, so
-    // `node_modules` and tarball downloads stay trimmed to the host — the
-    // wider lockfile costs only bytes, never extra installs. Yarn lockfiles
-    // don't carry the same per-package os/cpu metadata, so widening there
-    // would only bloat them — keep the host-only default.
-    let manifest_set_supported_arch =
-        !(sup_os.is_empty() && sup_cpu.is_empty() && sup_libc.is_empty());
+    // Record EVERY optional-dep variant a package declares (`accept_all`) in
+    // portable lockfiles, even when the user configured
+    // `supportedArchitectures`. pnpm applies that setting when deciding what
+    // to install, not when deciding what its lockfile records; narrowing the
+    // resolver here silently removes the variants another platform needs.
+    // This also matches what npm and bun write verbatim (all 26 `@esbuild/*`
+    // / `@rollup/rollup-*` natives, freebsd/ppc64/s390x and all), so a
+    // lockfile aube regenerates stays diff-clean against the native tool.
+    // Install-time filtering (`filter_graph`) and the streaming-fetch gate
+    // still use the configured architectures, so the wider lockfile costs
+    // only bytes, never extra installs. Yarn lockfiles don't carry the same
+    // per-package os/cpu metadata, so widening there would only bloat them.
     let writes_cross_platform_lock = matches!(
         target_lockfile_kind,
         Some(
@@ -899,14 +896,7 @@ pub(crate) fn configure_resolver(
                 | aube_lockfile::LockfileKind::NpmShrinkwrap
         )
     );
-    let supported_architectures = if manifest_set_supported_arch {
-        aube_resolver::SupportedArchitectures {
-            os: sup_os,
-            cpu: sup_cpu,
-            libc: sup_libc,
-            ..Default::default()
-        }
-    } else if writes_cross_platform_lock {
+    let supported_architectures = if writes_cross_platform_lock {
         aube_resolver::SupportedArchitectures {
             accept_all: true,
             ..Default::default()
