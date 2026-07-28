@@ -235,9 +235,16 @@ deps:
   policy: minimize, prefer std over external, every added dep must justify >=20 LOC saved
   tls: rustls (no OpenSSL / native-tls)
   reqwest_features: minimal (rustls-tls + http2 + json + stream + charset + system-proxy)
-  supply_chain[2]:
+  supply_chain[4]:
     - cargo audit: CVE database scan (RustSec advisories) before every release, required in CI
     - cargo deny: license policy, banned crates, duplicate detection, approved sources. deny.toml checked in
+    - cargo min-publish-age: 7-day soak on new crate versions (.cargo/config.toml [registry] global-min-publish-age; unstable feature — honored only by `cargo +nightly update` in scripts/soak/update-deps.mts, NEVER via a repo toolchain file, see #1039)
+    - external tools: pnpm/npm/sfw/zizmor/agentshield/skillspector pinned exact with sha512 SRI in external-tools.json; installed/verified only via scripts/soak/external-tools.mts (mise run tools:install / tools:check)
+
+soak:
+  window: SOAK_DAYS=7 in scripts/soak/constants.mts — the ONE source; every surface derives or is parity-checked against it (mise run soak, CI soak-gate)
+  msrv_ceiling: Cargo.toml rust-version must stay <= PPA_RUST_CEILING (scripts/soak/paths.mts, 1.93 = Launchpad's rustc) — the #1039 guard; raise only after Launchpad ships newer
+  expiry: expired soak annotations WARN (stale is not unsafe) and are pruned by mise run soak:fix / tools:fix or the daily soak-autofix workflow; missing/malformed annotations FAIL
 
 git:
   forbidden[2]:

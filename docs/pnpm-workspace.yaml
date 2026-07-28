@@ -1,0 +1,25 @@
+# Workspace config for the docs package — also the npm-side soak + catalog
+# surface aube itself reads when installing docs deps (minimumReleaseAge in
+# MINUTES; workspace yaml wins over .npmrc). Lives in docs/ on purpose: a
+# repo-root pnpm-workspace.yaml would re-anchor the docs install (lockfile +
+# virtual store) at the repo root.
+#
+# Managed by scripts/soak/soak.mts (`mise run soak` / `mise run soak:fix`).
+
+catalog:
+  taze: 19.14.1
+
+# Cooldown (minutes) before newly published packages install — value managed
+# by soak:fix; the window is SOAK_DAYS in scripts/soak/constants.mts.
+minimumReleaseAge: 10080
+
+# Exclusions: bare names / scope globs express standing trust; version pins
+# are dated soak bypasses and REQUIRE, on the line above:
+#   # published: YYYY-MM-DD | removable: YYYY-MM-DD   (removable = published + 7d)
+# `mise run soak` rejects unannotated pins (and flow-style [..] lists,
+# which the gate can't validate); expired ones warn until `soak:fix` /
+# the soak-autofix workflow prunes them. Schematic example (use the REAL
+# registry publish date, never these placeholders):
+# minimumReleaseAgeExclude:
+#   # published: YYYY-MM-DD | removable: YYYY-MM-DD
+#   - 'example@1.2.3'

@@ -156,3 +156,32 @@ run = [
   "cargo run -p aube-settings --bin generate-settings-docs",
   "cargo run -p aube-codes --bin generate-error-codes-docs",
 ]
+
+# --- supply-chain soak (scripts/soak/; see .claude/skills/soak/SKILL.md) ---
+
+[tasks.soak]
+run = "node scripts/soak/soak.mts --check"
+
+[tasks."soak:fix"]
+run = "node scripts/soak/soak.mts --fix"
+
+[tasks."deps:update"]
+run = "node scripts/soak/update-deps.mts"
+
+[tasks."tools:check"]
+run = "node scripts/soak/external-tools.mts --check"
+
+[tasks."tools:fix"]
+run = "node scripts/soak/external-tools.mts --fix"
+
+[tasks."tools:install"]
+run = "node scripts/soak/external-tools.mts --install-all --shims"
+
+[tasks."remotes:check"]
+run = "node scripts/soak/remotes.mts --check"
+
+[tasks."remotes:fix"]
+run = "node scripts/soak/remotes.mts --fix"
+
+[tasks."test:scripts"]
+run = "node --test scripts/soak/*.test.mts"

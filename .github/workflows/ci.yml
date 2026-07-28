@@ -82,6 +82,25 @@ jobs:
       - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
         with:
           cache: false
+      - name: pinned package managers + socket firewall
+        env:
+          # Until the SOCKET_SECURITY_KEY repo secret lands this is empty
+          # and sfw runs its keyless free tier — the firewall is active
+          # either way and upgrades itself to enterprise when the secret
+          # appears. No cargo escape hatch is needed: sfw >= 1.14.0 exempts
+          # loopback in the child NO_PROXY, so tests talking to local
+          # registry mocks are never proxied.
+          SOCKET_SECURITY_KEY: ${{ secrets.SOCKET_SECURITY_KEY }}
+          # download() attaches this to github.com fetches only (release
+          # assets) — avoids unauthenticated rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/soak/external-tools.mts --install pnpm --install npm --install sfw --shims
+          node scripts/soak/external-tools.mts --print-bin >> "$GITHUB_PATH"
+      - name: assert pinned pms resolve through the shims
+        run: |
+          pnpm --version
+          npm --version
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -340,6 +359,33 @@ jobs:
   # blocked. Lets the branch-protection rule depend on one name instead of ten.
   # Exception: jobs in SKIP_OK below (api-stability, a PR-only gate) are allowed
   # to skip on push/tag/dispatch runs without failing the aggregate.
+  # Supply-chain soak parity + external-tool pin gates + the #1039 MSRV
+  # ceiling. Always-run (deliberately NOT path-filtered — a gate that only
+  # runs when tooling files change misses the drift it exists to catch)
+  # and required via `final`.
+  soak-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          # v7 caches by default; this workflow also runs on tag pushes
+          # (release artifacts), so no cache — the soak scripts are
+          # dep-free and never npm-install anyway.
+          package-manager-cache: false
+      - name: soak window parity (mise run soak)
+        run: node scripts/soak/soak.mts --check
+      - name: external-tool pins valid (mise run tools:check)
+        run: node scripts/soak/external-tools.mts --check
+      - name: soak script unit tests (mise run test:scripts)
+        run: node --test scripts/soak/*.test.mts
+
   final:
     needs:
       - build
@@ -348,6 +394,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
+      - soak-gate
     runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 2
     permissions: {}
