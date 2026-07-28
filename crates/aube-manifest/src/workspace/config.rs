@@ -719,6 +719,19 @@ fn typed_cache_insert(project_dir: &Path, value: WorkspaceConfig) {
     }
 }
 
+pub(super) fn invalidate_cache(project_dir: &Path) {
+    if let Some(cache) = TYPED_CACHE.get()
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.remove(project_dir);
+    }
+    if let Some(cache) = RAW_CACHE.get()
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.remove(project_dir);
+    }
+}
+
 /// Load the workspace yaml as a raw top-level key/value map, without
 /// coercing into `WorkspaceConfig`'s typed fields. Intended for
 /// metadata-driven setting resolution (see `aube-settings`), where

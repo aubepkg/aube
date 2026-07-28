@@ -4,6 +4,14 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::IsTerminal;
 
+#[derive(Debug)]
+struct CatalogUpdateTarget {
+    manifest_key: String,
+    catalog: String,
+    original_range: String,
+    source: super::CatalogSource,
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct UpdateArgs {
     /// Package(s) to update (all if empty)
@@ -474,6 +482,36 @@ pub async fn run(
         .map(|k| resolve_real_name(k))
         .collect();
 
+    let mut workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
+    let mut catalog_targets = Vec::new();
+    if effective_latest {
+        for key in &manifest_keys_to_update {
+            if !should_rewrite_key(key) || preserve_pin.contains(key) {
+                continue;
+            }
+            let original = all_specifiers.get(key).map(String::as_str).unwrap_or("");
+            let Some(catalog) = catalog_name_from_spec(original) else {
+                continue;
+            };
+            let Some(entries) = workspace_catalogs.get_mut(catalog) else {
+                continue;
+            };
+            let Some(original_range) = entries.get(key).cloned() else {
+                continue;
+            };
+            let Some(source) = super::catalog_entry_source(&cwd, catalog, key) else {
+                continue;
+            };
+            entries.insert(key.clone(), "latest".to_string());
+            catalog_targets.push(CatalogUpdateTarget {
+                manifest_key: key.clone(),
+                catalog: catalog.to_string(),
+                original_range,
+                source,
+            });
+        }
+    }
+
     if update_all {
         eprintln!("Updating all dependencies...");
     } else {
@@ -615,7 +653,6 @@ pub async fn run(
             Some((h, f)) => (Some(h), f),
             None => (None, Vec::new()),
         };
-    let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let workspace_package_versions = workspace_package_versions(&cwd)?;
     let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
     if let Some(host) = read_package_host {
@@ -637,6 +674,47 @@ pub async fn run(
     // records flush to stdout before afterAllResolved emits its own.
     crate::pnpmfile::ReadPackageHostChain::drain_forwarders(read_package_forwarders).await;
     crate::pnpmfile::run_after_all_resolved_chain(&pnpmfile_paths, &cwd, &mut graph).await?;
+
+    let mut catalog_updates: BTreeMap<super::CatalogSource, Vec<super::catalogs::CatalogUpdate>> =
+        BTreeMap::new();
+    for target in &catalog_targets {
+        let real_name = resolve_real_name(&target.manifest_key);
+        let Some(resolved) = lookup_pkg(&graph, &["."], &target.manifest_key, &real_name)
+            .map(|pkg| pkg.version.clone())
+        else {
+            continue;
+        };
+        let persisted_range = if no_save {
+            target.original_range.clone()
+        } else {
+            rewrite_specifier(&target.original_range, &real_name, &resolved, args.exact)
+        };
+        if let Some(entry) = graph
+            .catalogs
+            .get_mut(&target.catalog)
+            .and_then(|entries| entries.get_mut(&target.manifest_key))
+        {
+            entry.specifier = persisted_range.clone();
+        }
+        if !no_save && persisted_range != target.original_range {
+            catalog_updates
+                .entry(target.source.clone())
+                .or_default()
+                .push(super::catalogs::CatalogUpdate {
+                    catalog: target.catalog.clone(),
+                    package: target.manifest_key.clone(),
+                    range: persisted_range,
+                });
+        }
+    }
+    for (source, updates) in &catalog_updates {
+        super::catalogs::update_catalog_entries(source, updates)?;
+        let path = match source {
+            super::CatalogSource::WorkspaceYaml(path)
+            | super::CatalogSource::PackageJson { path, .. } => path,
+        };
+        eprintln!("Updated {}", path.display());
+    }
 
     // Report what changed. Aliased direct deps (`"alias": "npm:real@x"`)
     // land in the lockfile graph with `pkg.name == "alias"` and
@@ -1108,6 +1186,12 @@ fn real_name_from_spec(manifest_key: &str, specifier: Option<&String>) -> String
         return rest.to_string();
     }
     manifest_key.to_string()
+}
+
+fn catalog_name_from_spec(specifier: &str) -> Option<&str> {
+    specifier
+        .strip_prefix("catalog:")
+        .map(|name| if name.is_empty() { "default" } else { name })
 }
 
 /// Look up the LockedPackage for a direct dep of the current importer.
