@@ -50,9 +50,9 @@ jobs:
       - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         with:
           cache: rust
-      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
-          cache: false
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -79,9 +79,9 @@ jobs:
       - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         with:
           cache: rust
-      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
-          cache: false
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -134,9 +134,9 @@ jobs:
       - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         with:
           cache: rust
-      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
-          cache: false
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
       - name: Fetch semver baseline
         run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
       - name: Determine breaking-change override
@@ -251,9 +251,9 @@ jobs:
       - name: Install GNU parallel (macos)
         if: startsWith(matrix.os, 'macos')
         run: brew install parallel
-      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
-          cache: false
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: aube-${{ matrix.os }}
@@ -296,9 +296,9 @@ jobs:
       - name: Install GNU parallel (macos)
         if: startsWith(matrix.os, 'macos')
         run: brew install parallel
-      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
-          cache: false
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: aube-${{ matrix.os }}
