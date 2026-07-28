@@ -18,6 +18,7 @@ pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
 pub use aube_manifest::{Error as ManifestError, PackageJson, Workspaces};
 pub use aube_registry::NetworkMode;
 pub use aube_util::{AUBE, Embedder as Host};
+pub use aube_workspace::{WorkspaceBoundary, WorkspaceDiscoveryOptions};
 
 /// Options for an in-process install.
 ///
@@ -105,6 +106,29 @@ pub fn initialize(host: &'static Host, setting_defaults: Vec<(String, String)>) 
 /// Return the process's active host profile.
 pub fn host() -> &'static Host {
     aube_util::embedder()
+}
+
+/// Whether `project_dir` declares a Node workspace.
+///
+/// This recognizes Aube and pnpm workspace YAML plus the npm/Yarn/Bun
+/// `package.json#workspaces` field. Invalid or unrelated package manifests are
+/// treated as non-workspaces, making this suitable for repository-wide
+/// provider probing.
+pub fn is_workspace_project_root(project_dir: &Path) -> bool {
+    aube_workspace::is_workspace_project_root(project_dir)
+}
+
+/// Discover packages declared by a Node workspace.
+///
+/// Use [`WorkspaceBoundary::ConfinedToRoot`] when `project_dir` is a security
+/// or repository boundary chosen by the host. The default preserves
+/// package-manager compatibility with parent-relative pnpm workspace globs.
+pub fn discover_workspace_packages(
+    project_dir: &Path,
+    options: WorkspaceDiscoveryOptions,
+) -> Result<Vec<PathBuf>> {
+    aube_workspace::find_workspace_packages_with_options(project_dir, options)
+        .map_err(miette::Report::new)
 }
 
 /// Install the dependencies declared by a project.
