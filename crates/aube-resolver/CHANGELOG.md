@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0](https://github.com/jdx/aube/compare/aube-resolver-v1.34.0...aube-resolver-v1.35.0) - 2026-07-28
+
+### Added
+
+- *(add)* block new and lookalike package names ([#1157](https://github.com/jdx/aube/pull/1157))
+- *(trust)* add package publishing checks ([#1144](https://github.com/jdx/aube/pull/1144))
+
+### Other
+
+- refresh benchmarks for v1.34.0 ([#1124](https://github.com/jdx/aube/pull/1124))
+
 ## [1.34.0](https://github.com/jdx/aube/compare/aube-resolver-v1.33.1...aube-resolver-v1.34.0) - 2026-07-27
 
 ### Fixed

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0](https://github.com/jdx/aube/compare/v1.34.0...v1.35.0) - 2026-07-28
+
+### Added
+
+- *(embed)* add configurable workspace discovery ([#1169](https://github.com/jdx/aube/pull/1169))
+- *(embed)* expose package manifest types ([#1168](https://github.com/jdx/aube/pull/1168))
+- *(add)* block new and lookalike package names ([#1157](https://github.com/jdx/aube/pull/1157))
+- *(add)* route embedded confirmations through host handlers ([#1154](https://github.com/jdx/aube/pull/1154))
+- *(settings)* let cacheDir relocate the global virtual store ([#1146](https://github.com/jdx/aube/pull/1146))
+- *(trust)* add package publishing checks ([#1144](https://github.com/jdx/aube/pull/1144))
+
+### Fixed
+
+- *(update)* update catalog entries selected for upgrade ([#1166](https://github.com/jdx/aube/pull/1166))
+- *(list)* accept --lockfile-only ([#1161](https://github.com/jdx/aube/pull/1161))
+- *(clean)* preserve third-party caches ([#1163](https://github.com/jdx/aube/pull/1163))
+- *(config)* ignore unsupported allowBuilds npmrc values ([#1159](https://github.com/jdx/aube/pull/1159))
+- *(install)* preserve platform optionals with supported architectures ([#1156](https://github.com/jdx/aube/pull/1156))
+- *(add)* trust locked packages without embedded prompts ([#1143](https://github.com/jdx/aube/pull/1143))
+- launch native package bins directly ([#1141](https://github.com/jdx/aube/pull/1141))
+
+### Other
+
+- refresh benchmarks for v1.34.0 ([#1124](https://github.com/jdx/aube/pull/1124))
+
 ## [1.34.0](https://github.com/jdx/aube/compare/v1.33.1...v1.34.0) - 2026-07-27
 
 ### Added
