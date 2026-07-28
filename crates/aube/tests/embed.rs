@@ -185,8 +185,12 @@ fn facade_discovers_confined_workspace_packages() {
     assert_eq!(
         packages,
         vec![
-            workspace.path().join("apps/web"),
-            workspace.path().join("packages/lib"),
+            workspace.path().join("apps/web").canonicalize().unwrap(),
+            workspace
+                .path()
+                .join("packages/lib")
+                .canonicalize()
+                .unwrap(),
         ]
     );
 }
