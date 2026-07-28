@@ -20,8 +20,11 @@ RUST_TEST_THREADS = "1"
 # soak-window rule aube offers npm users via minimumReleaseAge: crate
 # versions younger than the window are pubtime-incompatible and the
 # resolver skips them unless already in Cargo.lock
-# (resolver.incompatible-publish-age defaults to "deny"). The unstable
-# feature is active because rust-toolchain.toml pins a nightly.
+# (resolver.incompatible-publish-age defaults to "deny"). min-publish-age
+# is an [unstable] feature and the repo deliberately ships NO
+# rust-toolchain.toml (#1039) — the soak bites only where a nightly is
+# requested per-invocation: `cargo +nightly update` in
+# scripts/soak/update-deps.mts, the one step that picks crate versions.
 [unstable]
 min-publish-age = true
 

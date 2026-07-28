@@ -82,25 +82,6 @@ jobs:
       - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
         with:
           cache: false
-      - name: pinned package managers + socket firewall
-        env:
-          # Until the SOCKET_SECURITY_KEY repo secret lands this is empty
-          # and sfw runs its keyless free tier — the firewall is active
-          # either way and upgrades itself to enterprise when the secret
-          # appears. No cargo escape hatch is needed: sfw >= 1.14.0 exempts
-          # loopback in the child NO_PROXY, so tests talking to local
-          # registry mocks are never proxied.
-          SOCKET_SECURITY_KEY: ${{ secrets.SOCKET_SECURITY_KEY }}
-          # download() attaches this to github.com fetches only (release
-          # assets) — avoids unauthenticated rate limits.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          node scripts/soak/external-tools.mts --install pnpm --install npm --install sfw --shims
-          node scripts/soak/external-tools.mts --print-bin >> "$GITHUB_PATH"
-      - name: assert pinned pms resolve through the shims
-        run: |
-          pnpm --version
-          npm --version
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -117,6 +98,30 @@ jobs:
             git diff
             exit 1
           fi
+      # Firewall + pinned PMs are staged HERE, after the cargo suite: the
+      # aube-registry tests hit local mocks ADDRESSED AS
+      # registry.npmjs.org:<port>, and sfw's loopback NO_PROXY exemption
+      # keys on the address, not the socket — a hostname-addressed mock
+      # still routes into the proxy, which 405s the mock's write endpoints.
+      # GITHUB_PATH only affects steps after this one, so the firewall
+      # covers exactly the network-installing step below (docs:build).
+      - name: pinned package managers + socket firewall
+        env:
+          # Until the SOCKET_SECURITY_KEY repo secret lands this is empty
+          # and sfw runs its keyless free tier — the firewall is active
+          # either way and upgrades itself to enterprise when the secret
+          # appears.
+          SOCKET_SECURITY_KEY: ${{ secrets.SOCKET_SECURITY_KEY }}
+          # download() attaches this to github.com fetches only (release
+          # assets) — avoids unauthenticated rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/soak/external-tools.mts --install pnpm --install npm --install sfw --shims
+          node scripts/soak/external-tools.mts --print-bin >> "$GITHUB_PATH"
+      - name: assert pinned pms resolve through the shims
+        run: |
+          pnpm --version
+          npm --version
       - run: mise run docs:build
 
   # Guards the embedding API surfaces `embed` introduced against
