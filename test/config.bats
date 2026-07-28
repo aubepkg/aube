@@ -36,15 +36,23 @@ teardown() {
 }
 
 @test "config inspection ignores allowBuilds from .npmrc" {
-	echo 'allowBuilds={"esbuild":true}' >"$HOME/.npmrc"
+	cat >"$HOME/.npmrc" <<-'NPMRC'
+		allowBuilds={"esbuild":true}
+		allow-builds={"sharp":true}
+	NPMRC
 
 	run aube config get allowBuilds
+	assert_success
+	assert_output "undefined"
+
+	run aube config get allow-builds
 	assert_success
 	assert_output "undefined"
 
 	run aube config list --location user
 	assert_success
 	refute_output --partial "allowBuilds"
+	refute_output --partial "allow-builds"
 
 	run aube config explain allowBuilds
 	assert_success

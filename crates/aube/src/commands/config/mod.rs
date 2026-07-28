@@ -269,6 +269,13 @@ pub(super) fn setting_for_key(key: &str) -> Option<&'static settings_meta::Setti
 /// config still round-trips through `config get`; known settings are only
 /// surfaced when their metadata declares the matching `.npmrc` alias.
 fn npmrc_entry_is_supported(key: &str) -> bool {
+    // `allow-builds` was auto-generated from the old `allowBuilds` metadata,
+    // so keep that historical spelling hidden after removing the unsupported
+    // `.npmrc` source. Do not normalize arbitrary keys here: unknown
+    // free-form entries must continue to round-trip.
+    if key == "allow-builds" {
+        return false;
+    }
     setting_for_key(key)
         .is_none_or(|meta| meta.npmrc_keys.iter().any(|candidate| candidate == &key))
 }
@@ -447,7 +454,7 @@ mod tests {
     #[test]
     fn npmrc_entries_only_surface_declared_sources() {
         assert!(!npmrc_entry_is_supported("allowBuilds"));
-        assert!(npmrc_entry_is_supported("allow-builds"));
+        assert!(!npmrc_entry_is_supported("allow-builds"));
         assert!(npmrc_entry_is_supported("autoInstallPeers"));
         assert!(npmrc_entry_is_supported("auto-install-peers"));
         assert!(npmrc_entry_is_supported("some-experimental-flag"));
