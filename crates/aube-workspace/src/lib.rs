@@ -114,8 +114,8 @@ pub fn find_workspace_packages_with_options(
         let (negated, pattern) = raw
             .strip_prefix('!')
             .map_or((false, raw.as_str()), |pattern| (true, pattern));
-        validate_workspace_pattern(&definition_path, pattern, options.boundary)?;
         for expanded in expand_braces(pattern) {
+            validate_workspace_pattern(&definition_path, &expanded, options.boundary)?;
             if negated {
                 let mk = |p: &str| {
                     glob::Pattern::new(p)
@@ -496,6 +496,25 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, Error::Parse(_, _)));
+        assert!(err.to_string().contains("cannot escape the workspace root"));
+    }
+
+    #[test]
+    fn confined_discovery_validates_expanded_brace_alternatives() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("package.json"),
+            r#"{"workspaces":["{../outside,packages}/*"]}"#,
+        );
+
+        let err = find_workspace_packages_with_options(
+            dir.path(),
+            WorkspaceDiscoveryOptions::confined_to_root(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, Error::Parse(_, _)));
+        assert!(err.to_string().contains("../outside/*"));
         assert!(err.to_string().contains("cannot escape the workspace root"));
     }
 
