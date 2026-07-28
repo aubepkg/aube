@@ -396,35 +396,71 @@ export function checkRenovateConfig(body: string, file: string): Finding[] {
       },
     ]
   }
+  const out: Finding[] = []
   const wanted = `${SOAK_DAYS} days`
   const saw = config['minimumReleaseAge']
-  if (SOAK_DAYS === 0 ? saw === undefined : saw === wanted) {
-    return []
-  }
-  return [
-    {
+  if (!(SOAK_DAYS === 0 ? saw === undefined : saw === wanted)) {
+    out.push({
       file,
       what: 'renovate minimumReleaseAge window',
       saw: saw === undefined ? '(missing — an extends: preset does not count)' : String(saw),
       wanted: SOAK_DAYS === 0 ? '(absent — soak disabled)' : wanted,
       fix: `set "minimumReleaseAge": "${wanted}" at the top level (or run --fix)`,
-    },
-  ]
+    })
+  }
+  // Without strict, renovate's default "flexible" internal-checks mode
+  // will raise an update that has NOT cleared minimumReleaseAge when no
+  // other update is pending — i.e. the window silently stops biting.
+  if (SOAK_DAYS !== 0 && config['internalChecksFilter'] !== 'strict') {
+    out.push({
+      file,
+      what: 'renovate internalChecksFilter',
+      saw: config['internalChecksFilter'] === undefined
+        ? '(missing — defaults to "flexible")'
+        : String(config['internalChecksFilter']),
+      wanted: '"strict" so minimumReleaseAge is never bypassed',
+      fix: 'set "internalChecksFilter": "strict" at the top level',
+    })
+  }
+  return out
 }
 
+/**
+ * Rewrite ONLY the minimumReleaseAge line, textually. A JSON.parse +
+ * re-stringify round-trip reformats the whole file (collapsing the
+ * hand-written single-line arrays other rules use) — 20 lines of churn
+ * for a 1-line change, and a standing fight with whatever formatter the
+ * repo runs. The window is the only key this fixer owns; every other
+ * byte, including packageRules like the decmpfs musl hold, is left
+ * untouched.
+ */
 export function fixRenovateConfig(body: string): string {
-  let config: Record<string, unknown>
+  // Bail on unparseable input: never rewrite blind.
   try {
-    config = JSON.parse(body)
+    JSON.parse(body)
   } catch {
     return body
   }
+  const existing = /^(\s*)"minimumReleaseAge"\s*:\s*"[^"]*"(,?)\s*$/m
   if (SOAK_DAYS === 0) {
-    delete config['minimumReleaseAge']
-  } else {
-    config['minimumReleaseAge'] = `${SOAK_DAYS} days`
+    // Drop the line (and its newline) when the soak is disabled.
+    return body.replace(new RegExp(`${existing.source}\n`, 'm'), '')
   }
-  return `${JSON.stringify(config, null, 2)}\n`
+  if (existing.test(body)) {
+    return body.replace(existing, `$1"minimumReleaseAge": "${SOAK_DAYS} days"$2`)
+  }
+  // Absent: insert as the last top-level key, matching the file's own
+  // indentation, without touching anything else.
+  const lastBrace = body.lastIndexOf('}')
+  if (lastBrace === -1) {
+    return body
+  }
+  const head = body.slice(0, lastBrace).replace(/\s*$/, '')
+  const indent = /\n([ \t]+)\S/.exec(body)?.[1] ?? '  '
+  // No separator after `{` (an empty object) or an existing trailing
+  // comma — otherwise `{}` would become the invalid `{,\n...}`.
+  const comma = head.endsWith('{') || head.endsWith(',') ? '' : ','
+  return `${head}${comma}\n${indent}"minimumReleaseAge": "${SOAK_DAYS} days"\n${body.slice(lastBrace)}`
 }
 
 export function fixCargoConfig(body: string): string {
@@ -435,15 +471,19 @@ export function fixCargoConfig(body: string): string {
 }
 
 export function fixNpmrc(body: string): string {
-  if (/^min-release-age=\d+\s*$/m.test(body)) {
-    return body.replace(/^min-release-age=\d+\s*$/m, `min-release-age=${SOAK_DAYS}`)
+  // [ \t] not \s: `\s` matches newlines, so `\s*$` under /m swallowed the
+  // blank lines that follow the key (silent reformatting of the file).
+  if (/^min-release-age=\d+[ \t]*$/m.test(body)) {
+    return body.replace(/^min-release-age=\d+[ \t]*$/m, `min-release-age=${SOAK_DAYS}`)
   }
   return `${body.trimEnd()}\nmin-release-age=${SOAK_DAYS}\n`
 }
 
 export function fixWorkspaceYaml(body: string): string {
+  // [ \t] not \s on the trailing match: `\s*$` under /m consumes the
+  // newlines after the value, deleting following blank lines.
   let out = body.replace(
-    /^(minimumReleaseAge:\s*)\d+\s*$/m,
+    /^(minimumReleaseAge:[ \t]*)\d+[ \t]*$/m,
     `$1${SOAK_MINUTES}`,
   )
   // Prune expired pins together with their annotation line.

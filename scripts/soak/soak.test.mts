@@ -186,14 +186,66 @@ test('fix rewrites a drifted cargo window and leaves a clean one alone', () => {
 })
 
 test('renovate: window must be explicit in-repo; preset inheritance is drift', () => {
-  const good = `{ "extends": ["some>preset"], "minimumReleaseAge": "${SOAK_DAYS} days" }`
+  const good = `{ "extends": ["some>preset"], "minimumReleaseAge": "${SOAK_DAYS} days", "internalChecksFilter": "strict" }`
   assert.equal(checkRenovateConfig(good, 'r').length, 0)
+  // internalChecksFilter is load-bearing: renovate's default "flexible"
+  // mode raises updates that have NOT cleared minimumReleaseAge.
+  const noStrict = `{ "minimumReleaseAge": "${SOAK_DAYS} days" }`
+  assert.match(checkRenovateConfig(noStrict, 'r')[0]!.what, /internalChecksFilter/)
+  const flexible = `{ "minimumReleaseAge": "${SOAK_DAYS} days", "internalChecksFilter": "flexible" }`
+  assert.match(checkRenovateConfig(flexible, 'r')[0]!.what, /internalChecksFilter/)
   // Missing key = inherited-at-best: the preset can change without a
   // commit here, so the gate demands the explicit value.
-  assert.equal(checkRenovateConfig('{ "extends": ["some>preset"] }', 'r').length, 1)
-  assert.equal(checkRenovateConfig('{ "minimumReleaseAge": "3 days" }', 'r').length, 1)
-  assert.equal(checkRenovateConfig('{ "minimumReleaseAge": 7 }', 'r').length, 1)
+  // These fixtures each miss BOTH the window and the strict filter, so
+  // both findings fire; assert on the window one specifically.
+  for (const bad of [
+    '{ "extends": ["some>preset"] }',
+    '{ "minimumReleaseAge": "3 days" }',
+    '{ "minimumReleaseAge": 7 }',
+  ]) {
+    const findings = checkRenovateConfig(bad, 'r')
+    assert.ok(findings.some(f => /minimumReleaseAge window/.test(f.what)), bad)
+  }
+  // Unparseable input is a single parse finding, not a pile of key checks.
   assert.equal(checkRenovateConfig('not json', 'r').length, 1)
+})
+
+test('renovate fix touches ONLY the window line — no reformatting churn', () => {
+  // A JSON round-trip would collapse these hand-written single-line
+  // arrays and rewrite unrelated rules (e.g. the decmpfs musl hold).
+  const original = [
+    '{',
+    '  "extends": ["local>preset"],',
+    '  "packageRules": [',
+    '    {',
+    '      "matchPackageNames": ["decmpfs"],',
+    '      "allowedVersions": "<=0.1.0"',
+    '    }',
+    '  ],',
+    `  "minimumReleaseAge": "3 days"`,
+    '}',
+    '',
+  ].join('\n')
+  const fixed = fixRenovateConfig(original)
+  assert.equal(JSON.parse(fixed).minimumReleaseAge, `${SOAK_DAYS} days`)
+  // Every other line is byte-identical.
+  const changed = original
+    .split('\n')
+    .map((line, i) => [line, fixed.split('\n')[i]])
+    .filter(([a, b]) => a !== b)
+  assert.equal(changed.length, 1)
+  assert.match(changed[0]![1]!, /minimumReleaseAge/)
+  // Rules survive verbatim, arrays stay inline.
+  assert.ok(fixed.includes('"matchPackageNames": ["decmpfs"]'))
+  assert.ok(fixed.includes('"allowedVersions": "<=0.1.0"'))
+  assert.ok(fixed.includes('"extends": ["local>preset"]'))
+})
+
+test('renovate fix inserts the window into a minimal object without breaking JSON', () => {
+  // Regression: the naive insert produced the invalid `{,\n ... }`.
+  const fixed = fixRenovateConfig('{}')
+  assert.equal(JSON.parse(fixed).minimumReleaseAge, `${SOAK_DAYS} days`)
+  assert.equal(fixRenovateConfig(fixed), fixed)
 })
 
 test('renovate fix sets the window, preserves other keys, and is idempotent', () => {
