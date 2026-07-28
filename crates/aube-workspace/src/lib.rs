@@ -108,6 +108,13 @@ pub fn find_workspace_packages_with_options(
     }
 
     let definition_path = workspace_yaml.unwrap_or_else(|| project_dir.join("package.json"));
+    let confined_root = (options.boundary == WorkspaceBoundary::ConfinedToRoot)
+        .then(|| {
+            project_dir
+                .canonicalize()
+                .map_err(|error| Error::Io(project_dir.to_path_buf(), error))
+        })
+        .transpose()?;
     let mut neg_matchers = Vec::new();
     let mut positives = Vec::new();
     for raw in &patterns {
@@ -158,6 +165,20 @@ pub fn find_workspace_packages_with_options(
             let rel = rel_owned.as_deref().unwrap_or(&pkg_dir);
             if neg_matchers.iter().any(|m| m.matches_path(rel)) {
                 continue;
+            }
+            if let Some(confined_root) = &confined_root {
+                let canonical_package = pkg_dir
+                    .canonicalize()
+                    .map_err(|error| Error::Io(pkg_dir.clone(), error))?;
+                if !canonical_package.starts_with(confined_root) {
+                    return Err(Error::Parse(
+                        definition_path.clone(),
+                        format!(
+                            "workspace package {} resolves outside the workspace root",
+                            pkg_dir.display()
+                        ),
+                    ));
+                }
             }
             if seen.insert(pkg_dir.clone()) {
                 packages.push(pkg_dir);
@@ -516,6 +537,30 @@ mod tests {
         assert!(matches!(err, Error::Parse(_, _)));
         assert!(err.to_string().contains("../outside/*"));
         assert!(err.to_string().contains("cannot escape the workspace root"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_discovery_rejects_symlinks_outside_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let outside = dir.path().join("outside");
+        write(
+            &workspace.join("package.json"),
+            r#"{"workspaces":["packages/*"]}"#,
+        );
+        write(&outside.join("package.json"), "{}");
+        std::fs::create_dir_all(workspace.join("packages")).unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("packages/linked")).unwrap();
+
+        let err = find_workspace_packages_with_options(
+            &workspace,
+            WorkspaceDiscoveryOptions::confined_to_root(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, Error::Parse(_, _)));
+        assert!(err.to_string().contains("resolves outside"));
     }
 
     #[test]
