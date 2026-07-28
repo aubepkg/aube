@@ -1,9 +1,12 @@
 [env]
 _.path = ["./bin"]
 
+[settings]
+experimental = true
+cargo.binstall_native = true
+
 [tools]
 actionlint = "latest"
-cargo-binstall = "latest"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
 "github:foresterre/cargo-msrv" = "latest"
