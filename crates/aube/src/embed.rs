@@ -123,6 +123,8 @@ pub fn is_workspace_project_root(project_dir: &Path) -> bool {
 /// Use [`WorkspaceBoundary::ConfinedToRoot`] when `project_dir` is a security
 /// or repository boundary chosen by the host. The default preserves
 /// package-manager compatibility with parent-relative pnpm workspace globs.
+/// Confined discovery returns canonical package paths; other modes preserve
+/// the package-manager-facing lexical paths.
 pub fn discover_workspace_packages(
     project_dir: &Path,
     options: WorkspaceDiscoveryOptions,

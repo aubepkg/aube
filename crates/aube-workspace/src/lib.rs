@@ -86,6 +86,8 @@ pub fn find_workspace_packages(project_dir: &Path) -> Result<Vec<PathBuf>, Error
 /// This has the same source precedence and matching behavior as
 /// [`find_workspace_packages`]. The options only constrain behavior that an
 /// embedding host may need to make stricter than the package-manager CLI.
+/// [`WorkspaceBoundary::ConfinedToRoot`] returns canonical package paths so a
+/// validated symlink cannot be redirected before the host consumes the result.
 pub fn find_workspace_packages_with_options(
     project_dir: &Path,
     options: WorkspaceDiscoveryOptions,
@@ -166,7 +168,7 @@ pub fn find_workspace_packages_with_options(
             if neg_matchers.iter().any(|m| m.matches_path(rel)) {
                 continue;
             }
-            if let Some(confined_root) = &confined_root {
+            let package_path = if let Some(confined_root) = &confined_root {
                 let canonical_package = pkg_dir
                     .canonicalize()
                     .map_err(|error| Error::Io(pkg_dir.clone(), error))?;
@@ -179,9 +181,12 @@ pub fn find_workspace_packages_with_options(
                         ),
                     ));
                 }
-            }
-            if seen.insert(pkg_dir.clone()) {
-                packages.push(pkg_dir);
+                canonical_package
+            } else {
+                pkg_dir
+            };
+            if seen.insert(package_path.clone()) {
+                packages.push(package_path);
             }
         }
     }
@@ -561,6 +566,35 @@ mod tests {
 
         assert!(matches!(err, Error::Parse(_, _)));
         assert!(err.to_string().contains("resolves outside"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_discovery_returns_the_validated_canonical_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let package = workspace.join("packages/app");
+        let link = workspace.join("aliases/app");
+        let outside = dir.path().join("outside");
+        write(
+            &workspace.join("package.json"),
+            r#"{"workspaces":["aliases/*"]}"#,
+        );
+        write(&package.join("package.json"), "{}");
+        write(&outside.join("package.json"), "{}");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&package, &link).unwrap();
+
+        let found = find_workspace_packages_with_options(
+            &workspace,
+            WorkspaceDiscoveryOptions::confined_to_root(),
+        )
+        .unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        assert_eq!(found, vec![package.canonicalize().unwrap()]);
+        assert_ne!(found, vec![link.canonicalize().unwrap()]);
     }
 
     #[test]
