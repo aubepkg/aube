@@ -405,6 +405,8 @@ longer than the 24-hour `minimumReleaseAge` quarantine for ordinary new
 versions. Existing lockfile entries and `allowedUnpopularPackages` are
 trusted. Set to `0` to disable, or pass `--allow-low-downloads` after
 verifying one new name out of band.
+If npm's creation-time metadata is missing or unavailable, the check fails
+closed with `ERR_AUBE_PACKAGE_AGE_CHECK_FAILED`.
 
 ### `minimumReleaseAgeExclude` {#setting-minimumreleaseageexclude}
 

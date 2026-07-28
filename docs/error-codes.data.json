@@ -193,6 +193,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_PACKAGE_AGE_CHECK_FAILED",
+      "category": "Supply chain (add-time)",
+      "description": "`aube add` couldn't verify a package name's registry creation time while `minimumPackageAge` was enabled, so the package-age gate failed closed.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_ADVISORY_CHECK_FAILED",
       "category": "Registry / network",
       "description": "`aube add` couldn't reach the OSV advisory API and `advisoryCheck = required` is set. Distinct from `ERR_AUBE_MALICIOUS_PACKAGE` so CI tooling can tell a network outage from a confirmed malicious advisory.",

@@ -29,7 +29,7 @@
 
 use aube_codes::errors::{
     ERR_AUBE_ADVISORY_CHECK_FAILED, ERR_AUBE_LOW_DOWNLOAD_PACKAGE, ERR_AUBE_MALICIOUS_PACKAGE,
-    ERR_AUBE_NEW_PACKAGE_NAME,
+    ERR_AUBE_NEW_PACKAGE_NAME, ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
 };
 use aube_codes::warnings::{
     WARN_AUBE_ADVISORY_CHECK_FAILED, WARN_AUBE_LOW_DOWNLOAD_PACKAGE, WARN_AUBE_NEW_PACKAGE_NAME,
@@ -38,8 +38,9 @@ use aube_codes::warnings::{
 use aube_registry::osv_bloom_client::OsvBloomClient;
 use aube_registry::osv_mirror::OsvMirror;
 use aube_registry::supply_chain::{
-    DownloadCount, MaliciousAdvisory, PackageCreated, advisory_url, fetch_malicious_advisories,
-    fetch_malicious_advisories_versioned, fetch_package_created_with, fetch_weekly_downloads_with,
+    DownloadCount, MaliciousAdvisory, PackageCreated, SupplyChainError, advisory_url,
+    fetch_malicious_advisories, fetch_malicious_advisories_versioned, fetch_package_created_with,
+    fetch_weekly_downloads_with,
 };
 use aube_settings::resolved::{AdvisoryBloomCheck, AdvisoryCheck, AdvisoryCheckOnInstall};
 use miette::miette;
@@ -89,9 +90,17 @@ pub(crate) async fn run_gates(
     {
         return Ok(());
     }
+    let gated_reputation_names = if !reputation_policy.allow
+        && (low_download_threshold > 0 || reputation_policy.minimum_package_age_minutes > 0)
+    {
+        download_names_to_gate(download_names, allowed_unpopular_globs)
+    } else {
+        Vec::new()
+    };
     // One client shared across all gates and every per-package
-    // probe so the OSV POST and the (potentially parallel) downloads
-    // GETs all reuse the same connection pool + TLS session.
+    // probe so the OSV POST, sequential package-age GETs, and
+    // parallel downloads GETs all reuse the same connection pool +
+    // TLS session.
     //
     // Builder failure (TLS init, no root certs, etc.) routes through
     // the same `advisoryCheck` policy `osv_gate` applies to HTTP
@@ -103,6 +112,14 @@ pub(crate) async fn run_gates(
     let client = match aube_registry::supply_chain::build_probe_client() {
         Ok(c) => c,
         Err(e) => {
+            if reputation_policy.minimum_package_age_minutes > 0
+                && !gated_reputation_names.is_empty()
+            {
+                return Err(miette!(
+                    code = ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
+                    "could not initialise the package-name age check; refusing to bypass `minimumPackageAge`: {e}"
+                ));
+            }
             if matches!(advisory_check, AdvisoryCheck::Off) {
                 tracing::debug!(
                     "supply-chain probe client init failed; OSV is off, skipping all gates: {e}"
@@ -130,35 +147,30 @@ pub(crate) async fn run_gates(
         "refusing to add malicious package(s):",
     )
     .await?;
-    if !reputation_policy.allow
-        && (low_download_threshold > 0 || reputation_policy.minimum_package_age_minutes > 0)
-    {
-        let gated = download_names_to_gate(download_names, allowed_unpopular_globs);
-        if !gated.is_empty() {
-            if reputation_policy.minimum_package_age_minutes > 0 {
-                let cutoff = aube_resolver::MinimumReleaseAge {
-                    minutes: reputation_policy.minimum_package_age_minutes,
-                    ..Default::default()
-                }
-                .cutoff();
-                package_age_gate(
-                    &client,
-                    &gated,
-                    reputation_policy.minimum_package_age_minutes,
-                    cutoff.as_deref(),
-                    &reputation_policy.prompt,
-                )
-                .await?;
+    if !gated_reputation_names.is_empty() {
+        if reputation_policy.minimum_package_age_minutes > 0 {
+            let cutoff = aube_resolver::MinimumReleaseAge {
+                minutes: reputation_policy.minimum_package_age_minutes,
+                ..Default::default()
             }
-            if low_download_threshold > 0 {
-                downloads_gate(
-                    &client,
-                    &gated,
-                    low_download_threshold,
-                    &reputation_policy.prompt,
-                )
-                .await?;
-            }
+            .cutoff();
+            package_age_gate(
+                &client,
+                &gated_reputation_names,
+                reputation_policy.minimum_package_age_minutes,
+                cutoff.as_deref(),
+                &reputation_policy.prompt,
+            )
+            .await?;
+        }
+        if low_download_threshold > 0 {
+            downloads_gate(
+                &client,
+                &gated_reputation_names,
+                low_download_threshold,
+                &reputation_policy.prompt,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -174,38 +186,11 @@ async fn package_age_gate(
     let Some(cutoff) = cutoff else {
         return Ok(());
     };
-    let mut set: tokio::task::JoinSet<(String, Result<PackageCreated, _>)> =
-        tokio::task::JoinSet::new();
     for name in names {
-        let client = client.clone();
-        let name = name.clone();
-        set.spawn(async move {
-            let result = fetch_package_created_with(&client, &name).await;
-            (name, result)
-        });
-    }
-    let mut by_name: std::collections::HashMap<String, _> =
-        std::collections::HashMap::with_capacity(names.len());
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            Ok((name, result)) => {
-                by_name.insert(name, result);
-            }
-            Err(e) => tracing::debug!("package-age probe task join failed: {e}"),
-        }
-    }
-    for name in names {
-        let Some(result) = by_name.remove(name) else {
-            continue;
-        };
-        let created = match result {
-            Ok(PackageCreated::Known(created)) => created,
-            Ok(PackageCreated::Unknown) => continue,
-            Err(e) => {
-                tracing::debug!("package-age probe failed for {name}: {e}");
-                continue;
-            }
-        };
+        // Full npm packuments can be large. Probe sequentially so a multi-package
+        // add never retains several response bodies at once.
+        let created =
+            verified_package_created(name, fetch_package_created_with(client, name).await)?;
         if !is_new_package_name(&created, cutoff) {
             continue;
         }
@@ -222,6 +207,23 @@ async fn package_age_gate(
         }
     }
     Ok(())
+}
+
+fn verified_package_created(
+    name: &str,
+    result: Result<PackageCreated, SupplyChainError>,
+) -> miette::Result<String> {
+    match result {
+        Ok(PackageCreated::Known(created)) => Ok(created),
+        Ok(PackageCreated::Unknown) => Err(miette!(
+            code = ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
+            "npm did not return a creation timestamp for {name}; refusing to bypass `minimumPackageAge`"
+        )),
+        Err(error) => Err(miette!(
+            code = ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
+            "could not verify the package-name age for {name}; refusing to bypass `minimumPackageAge`: {error}"
+        )),
+    }
 }
 
 fn is_new_package_name(created: &str, cutoff: &str) -> bool {
@@ -1112,6 +1114,33 @@ mod tests {
         assert!(is_new_package_name("2026-07-27T00:00:00.001Z", cutoff));
         assert!(!is_new_package_name(cutoff, cutoff));
         assert!(!is_new_package_name("2026-07-26T23:59:59.999Z", cutoff));
+    }
+
+    #[test]
+    fn package_age_probe_requires_a_creation_timestamp() {
+        let error =
+            verified_package_created("missing-time", Ok(PackageCreated::Unknown)).unwrap_err();
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(ERR_AUBE_PACKAGE_AGE_CHECK_FAILED)
+        );
+    }
+
+    #[test]
+    fn package_age_probe_fails_closed_on_registry_errors() {
+        let error = verified_package_created(
+            "unreachable",
+            Err(SupplyChainError::Status(
+                reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            )),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(ERR_AUBE_PACKAGE_AGE_CHECK_FAILED)
+        );
     }
 
     #[test]

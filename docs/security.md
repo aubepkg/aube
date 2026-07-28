@@ -248,6 +248,8 @@ project uses. Lockfile membership does not bypass the OSV check.
 confirmation; non-interactive sessions fail with
 `ERR_AUBE_NEW_PACKAGE_NAME`. Packages already present in the active lockfile
 and names matched by `allowedUnpopularPackages` are trusted.
+Missing or unavailable creation-time metadata fails closed with
+`ERR_AUBE_PACKAGE_AGE_CHECK_FAILED`.
 `--allow-low-downloads` bypasses both reputation challenges after the package
 has been verified out of band.
 

@@ -70,12 +70,13 @@ _common_setup() {
 	# `aube add` runs supply-chain gates against public APIs
 	# (api.osv.dev for MAL-* advisories, api.npmjs.org for weekly
 	# downloads, and npmjs packuments for package-name age). Bats
-	# tests target the local Verdaccio mirror and
-	# can't depend on outbound network reachability, so disable
-	# public reputation gates wholesale. Tests that specifically exercise the
-	# gates can re-enable them in-test.
+	# tests target the local Verdaccio mirror and can't depend on
+	# outbound network reachability, so disable public reputation
+	# gates wholesale. Tests that specifically exercise the gates
+	# can re-enable them in-test.
 	export AUBE_ADVISORY_CHECK=off
 	export AUBE_LOW_DOWNLOAD_THRESHOLD=0
+	export AUBE_MINIMUM_PACKAGE_AGE=0
 }
 
 _common_teardown() {

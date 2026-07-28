@@ -44,6 +44,7 @@ pub const ERR_AUBE_REGISTRY_WRITE_REJECTED: &str = "ERR_AUBE_REGISTRY_WRITE_REJE
 pub const ERR_AUBE_MALICIOUS_PACKAGE: &str = "ERR_AUBE_MALICIOUS_PACKAGE";
 pub const ERR_AUBE_LOW_DOWNLOAD_PACKAGE: &str = "ERR_AUBE_LOW_DOWNLOAD_PACKAGE";
 pub const ERR_AUBE_NEW_PACKAGE_NAME: &str = "ERR_AUBE_NEW_PACKAGE_NAME";
+pub const ERR_AUBE_PACKAGE_AGE_CHECK_FAILED: &str = "ERR_AUBE_PACKAGE_AGE_CHECK_FAILED";
 pub const ERR_AUBE_ADVISORY_CHECK_FAILED: &str = "ERR_AUBE_ADVISORY_CHECK_FAILED";
 pub const ERR_AUBE_SECURITY_SCANNER_FATAL: &str = "ERR_AUBE_SECURITY_SCANNER_FATAL";
 pub const ERR_AUBE_SECURITY_SCANNER_FAILED: &str = "ERR_AUBE_SECURITY_SCANNER_FAILED";
@@ -337,6 +338,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_NEW_PACKAGE_NAME,
         category: category::SUPPLY_CHAIN,
         description: "`aube add` refused a package name first published within `minimumPackageAge`. This protects against newly registered slopsquatting names.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_PACKAGE_AGE_CHECK_FAILED,
+        category: category::SUPPLY_CHAIN,
+        description: "`aube add` couldn't verify a package name's registry creation time while `minimumPackageAge` was enabled, so the package-age gate failed closed.",
         exit_code: None,
     },
     CodeMeta {
