@@ -45,10 +45,11 @@ EOF
 	cat >package.json <<'EOF'
 {"name":"demo","version":"1.0.0"}
 EOF
-	mkdir -p node_modules/foo node_modules/.aube node_modules/.bin \
+	mkdir -p node_modules/foo node_modules/.aube node_modules/.bin node_modules/.pnpm \
 		node_modules/.aube-state node_modules/.vite/deps node_modules/.vite-temp
 	: >node_modules/.modules.yaml
 	: >node_modules/.aube-applied-patches.json
+	: >node_modules/.pnpm-workspace-state-v1.json
 	: >node_modules/.vite/deps/cache
 	: >node_modules/.vite-temp/cache
 
@@ -61,6 +62,8 @@ EOF
 	assert [ ! -e node_modules/.aube-state ]
 	assert [ ! -e node_modules/.modules.yaml ]
 	assert [ ! -e node_modules/.aube-applied-patches.json ]
+	assert [ ! -e node_modules/.pnpm ]
+	assert [ ! -e node_modules/.pnpm-workspace-state-v1.json ]
 	assert [ -e node_modules/.vite/deps/cache ]
 	assert [ -e node_modules/.vite-temp/cache ]
 }

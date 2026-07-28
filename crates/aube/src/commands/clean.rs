@@ -56,6 +56,8 @@ fn is_managed_modules_entry(name: &std::ffi::OsStr) -> bool {
     let embedder_name = aube_util::embedder().name;
     hidden_name == "bin"
         || hidden_name == "modules.yaml"
+        || hidden_name == "pnpm"
+        || hidden_name == "pnpm-workspace-state-v1.json"
         || hidden_name
             .strip_prefix(embedder_name)
             .is_some_and(|suffix| matches!(suffix, "" | "-state" | "-applied-patches.json"))
@@ -145,7 +147,7 @@ async fn run_as(invoked_as: &str, args: CleanArgs) -> miette::Result<Option<i32>
 
         // A non-directory or directory link is wholly install-managed.
         // Remove the entry itself without traversing a symlink/junction target.
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        if !metadata.is_dir() || super::is_link_or_junction_metadata(&metadata) {
             eprintln!("Removing {}", nm.display());
             super::remove_existing(&nm)?;
             removed_nm += 1;

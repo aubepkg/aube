@@ -119,7 +119,9 @@ pub(crate) fn settings_hoisting_limits_to_linker(
 }
 pub(crate) use catalog_discovery::{CatalogMap, discover_catalogs, load_workspace_catalogs};
 pub(crate) use dep_filter::DepFilter;
-pub(crate) use fs_helpers::{format_virtual_store_display_prefix, remove_existing, symlink_dir};
+pub(crate) use fs_helpers::{
+    format_virtual_store_display_prefix, is_link_or_junction_metadata, remove_existing, symlink_dir,
+};
 pub(crate) use manifest_io::{
     load_manifest, load_manifest_or_default, update_manifest_json_object,
     write_manifest_dep_sections, write_manifest_json,
