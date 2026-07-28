@@ -2392,7 +2392,7 @@ install adds unreviewed build packages to workspace `allowBuilds` as
 """
 sources.cli = []
 sources.env = []
-sources.npmrc = ["allowBuilds"]
+sources.npmrc = []
 sources.workspaceYaml = ["allowBuilds"]
 examples = ['pnpm.allowBuilds: { esbuild: true, "@some/pkg": false }']
 

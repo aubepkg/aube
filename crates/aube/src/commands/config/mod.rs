@@ -264,6 +264,25 @@ pub(super) fn setting_for_key(key: &str) -> Option<&'static settings_meta::Setti
     })
 }
 
+/// True when an entry read from `.npmrc` is a source install actually
+/// consumes for that setting. Unknown keys remain visible so free-form
+/// config still round-trips through `config get`; known settings are only
+/// surfaced when their metadata declares the matching `.npmrc` alias.
+///
+/// The canonical-name comparison also recognizes a kebab-case spelling for
+/// settings with no `.npmrc` aliases. This keeps stale entries such as both
+/// `allowBuilds` and `allow-builds` from being reported after the setting's
+/// `.npmrc` source is removed.
+fn npmrc_entry_is_supported(key: &str) -> bool {
+    let meta = setting_for_key(key).or_else(|| {
+        let normalized = key.replace('-', "").to_ascii_lowercase();
+        settings_meta::all()
+            .iter()
+            .find(|meta| meta.name.replace('-', "").to_ascii_lowercase() == normalized)
+    });
+    meta.is_none_or(|meta| meta.npmrc_keys.iter().any(|candidate| candidate == &key))
+}
+
 pub(super) fn setting_default_value(meta: &settings_meta::SettingMeta) -> Option<String> {
     if meta.default == "undefined" || meta.default == "null" {
         return None;
@@ -381,7 +400,11 @@ pub(super) fn read_single(path: &std::path::Path) -> miette::Result<Vec<(String,
         return Ok(Vec::new());
     }
     let edit = NpmrcEdit::load(path)?;
-    Ok(edit.entries())
+    Ok(edit
+        .entries()
+        .into_iter()
+        .filter(|(key, _)| npmrc_entry_is_supported(key))
+        .collect())
 }
 
 #[cfg(test)]
@@ -429,6 +452,15 @@ mod tests {
         let aliases = resolve_aliases("autoInstallPeers");
         assert!(aliases.iter().any(|a| a == "auto-install-peers"));
         assert!(aliases.iter().any(|a| a == "autoInstallPeers"));
+    }
+
+    #[test]
+    fn npmrc_entries_only_surface_declared_sources() {
+        assert!(!npmrc_entry_is_supported("allowBuilds"));
+        assert!(!npmrc_entry_is_supported("allow-builds"));
+        assert!(npmrc_entry_is_supported("autoInstallPeers"));
+        assert!(npmrc_entry_is_supported("auto-install-peers"));
+        assert!(npmrc_entry_is_supported("some-experimental-flag"));
     }
 
     #[test]

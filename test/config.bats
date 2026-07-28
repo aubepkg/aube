@@ -35,6 +35,23 @@ teardown() {
 	assert_output "true"
 }
 
+@test "config inspection ignores allowBuilds from .npmrc" {
+	echo 'allowBuilds={"esbuild":true}' >"$HOME/.npmrc"
+
+	run aube config get allowBuilds
+	assert_success
+	assert_output "undefined"
+
+	run aube config list --location user
+	assert_success
+	refute_output --partial "allowBuilds"
+
+	run aube config explain allowBuilds
+	assert_success
+	refute_output --partial ".npmrc keys"
+	assert_output --partial "Workspace YAML keys: allowBuilds"
+}
+
 @test "config get and list prefer user config.toml over user .npmrc" {
 	# Aube's own user config wins over ~/.npmrc so values aube wrote
 	# via `aube config set` are authoritative — they are not silently

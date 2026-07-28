@@ -2393,7 +2393,6 @@ Explicitly allow or disallow script execution per package.
 
 - Type: `object`
 - Default: `undefined`
-- .npmrc keys: `allowBuilds`, `allow-builds`
 - Workspace YAML keys: `allowBuilds`
 
 Per-package review map for dependency lifecycle scripts. Read from
