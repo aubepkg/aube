@@ -268,19 +268,9 @@ pub(super) fn setting_for_key(key: &str) -> Option<&'static settings_meta::Setti
 /// consumes for that setting. Unknown keys remain visible so free-form
 /// config still round-trips through `config get`; known settings are only
 /// surfaced when their metadata declares the matching `.npmrc` alias.
-///
-/// The canonical-name comparison also recognizes a kebab-case spelling for
-/// settings with no `.npmrc` aliases. This keeps stale entries such as both
-/// `allowBuilds` and `allow-builds` from being reported after the setting's
-/// `.npmrc` source is removed.
 fn npmrc_entry_is_supported(key: &str) -> bool {
-    let meta = setting_for_key(key).or_else(|| {
-        let normalized = key.replace('-', "").to_ascii_lowercase();
-        settings_meta::all()
-            .iter()
-            .find(|meta| meta.name.replace('-', "").to_ascii_lowercase() == normalized)
-    });
-    meta.is_none_or(|meta| meta.npmrc_keys.iter().any(|candidate| candidate == &key))
+    setting_for_key(key)
+        .is_none_or(|meta| meta.npmrc_keys.iter().any(|candidate| candidate == &key))
 }
 
 pub(super) fn setting_default_value(meta: &settings_meta::SettingMeta) -> Option<String> {
@@ -457,10 +447,11 @@ mod tests {
     #[test]
     fn npmrc_entries_only_surface_declared_sources() {
         assert!(!npmrc_entry_is_supported("allowBuilds"));
-        assert!(!npmrc_entry_is_supported("allow-builds"));
+        assert!(npmrc_entry_is_supported("allow-builds"));
         assert!(npmrc_entry_is_supported("autoInstallPeers"));
         assert!(npmrc_entry_is_supported("auto-install-peers"));
         assert!(npmrc_entry_is_supported("some-experimental-flag"));
+        assert!(npmrc_entry_is_supported("hoistworkspacepackages"));
     }
 
     #[test]

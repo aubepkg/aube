@@ -52,6 +52,18 @@ teardown() {
 	assert_output --partial "Workspace YAML keys: allowBuilds"
 }
 
+@test "config inspection preserves unknown keys that resemble known settings" {
+	echo "hoistworkspacepackages=legacy" >"$HOME/.npmrc"
+
+	run aube config get hoistworkspacepackages
+	assert_success
+	assert_output "legacy"
+
+	run aube config list --location user
+	assert_success
+	assert_line "hoistworkspacepackages=legacy"
+}
+
 @test "config get and list prefer user config.toml over user .npmrc" {
 	# Aube's own user config wins over ~/.npmrc so values aube wrote
 	# via `aube config set` are authoritative — they are not silently
