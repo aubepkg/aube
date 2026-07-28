@@ -145,13 +145,7 @@ pub(crate) async fn run_gates(
         .await?;
     }
     if !gated_reputation_names.is_empty() {
-        let approved_similar_names =
-            similar_name_gate(&gated_reputation_names, &reputation_policy.prompt).await?;
-        let remaining_reputation_names = gated_reputation_names
-            .iter()
-            .filter(|name| !approved_similar_names.contains(name.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
+        similar_name_gate(&gated_reputation_names, &reputation_policy.prompt).await?;
         if reputation_policy.minimum_package_age_minutes > 0 {
             let cutoff = aube_resolver::MinimumReleaseAge {
                 minutes: reputation_policy.minimum_package_age_minutes,
@@ -161,7 +155,7 @@ pub(crate) async fn run_gates(
             package_age_gate(
                 reputation_policy.registry_client,
                 reputation_policy.full_packument_cache,
-                &remaining_reputation_names,
+                &gated_reputation_names,
                 reputation_policy.minimum_package_age_minutes,
                 cutoff.as_deref(),
                 &reputation_policy.prompt,
@@ -173,7 +167,7 @@ pub(crate) async fn run_gates(
         {
             downloads_gate(
                 client,
-                &remaining_reputation_names,
+                &gated_reputation_names,
                 low_download_threshold,
                 &reputation_policy.prompt,
             )
@@ -818,12 +812,8 @@ struct PackageNameSuggestion {
     distance: u8,
 }
 
-async fn similar_name_gate(
-    names: &[String],
-    prompt: &LowDownloadPrompt,
-) -> miette::Result<std::collections::HashSet<String>> {
+async fn similar_name_gate(names: &[String], prompt: &LowDownloadPrompt) -> miette::Result<()> {
     let corpus = aube_resolver::popular_package_names();
-    let mut approved = std::collections::HashSet::new();
     for name in names {
         let Some(suggestion) = find_similar_package_name(name, corpus) else {
             continue;
@@ -842,9 +832,8 @@ async fn similar_name_gate(
                 aube_util::cmd("add")
             ));
         }
-        approved.insert(name.clone());
     }
-    Ok(approved)
+    Ok(())
 }
 
 fn find_similar_package_name(name: &str, corpus: &str) -> Option<PackageNameSuggestion> {
