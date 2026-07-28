@@ -7,7 +7,7 @@ pub(super) async fn run_cli_name_gates(
     cwd: &Path,
     packages: &[String],
     allow_low_downloads: bool,
-    allow_prompt: bool,
+    prompt: crate::commands::add_supply_chain::LowDownloadPrompt,
 ) -> miette::Result<()> {
     let project_dir = supply_chain_project_dir(cwd);
     let manifest = crate::commands::load_manifest_or_default(&project_dir)?;
@@ -44,7 +44,7 @@ pub(super) async fn run_cli_name_gates(
         low_download_threshold,
         crate::commands::add_supply_chain::LowDownloadPolicy {
             allow: allow_low_downloads,
-            prompt: allow_prompt,
+            prompt,
         },
         &allowed_unpopular,
     )

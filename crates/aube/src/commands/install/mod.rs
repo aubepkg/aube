@@ -37,7 +37,8 @@ pub use args::{InstallArgs, InstallOptions};
 pub(crate) use bin_linking::{PkgJsonCache, link_dep_bins, materialized_pkg_dir};
 pub use control::{
     InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode, InstallPhase,
-    InstallProgressSnapshot, InstallReporter,
+    InstallProgressSnapshot, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
+    InstallReporter,
 };
 pub use dep_selection::DepSelection;
 pub(super) use fetch::fetch_packages;

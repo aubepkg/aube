@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 pub use crate::commands::add::AddToProjectOptions;
 pub use crate::commands::install::{
     DepSelection, FrozenMode, InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode,
-    InstallPhase, InstallProgressSnapshot, InstallReporter,
+    InstallPhase, InstallProgressSnapshot, InstallPrompt, InstallPromptFuture,
+    InstallPromptHandler, InstallReporter,
 };
 pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
 pub use aube_registry::NetworkMode;

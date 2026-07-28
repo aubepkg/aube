@@ -39,10 +39,16 @@ use aube_settings::resolved::{AdvisoryBloomCheck, AdvisoryCheck, AdvisoryCheckOn
 use miette::miette;
 use std::io::{BufRead, IsTerminal, Write};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct LowDownloadPolicy {
     pub(crate) allow: bool,
-    pub(crate) prompt: bool,
+    pub(crate) prompt: LowDownloadPrompt,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum LowDownloadPrompt {
+    Terminal,
+    Host(crate::commands::install::InstallControl),
 }
 
 /// Run both supply-chain gates against the registry-bound specs the
@@ -54,8 +60,7 @@ pub(crate) struct LowDownloadPolicy {
 ///
 /// `low_download_policy` controls the per-invocation
 /// `--allow-low-downloads` override and whether the caller permits a
-/// terminal prompt. Embedded callers disable prompting so an in-process
-/// install can never block on aube's stdin.
+/// terminal prompt or delegates confirmation to an embedding host.
 ///
 /// `allowed_unpopular_globs` are the `allowedUnpopularPackages`
 /// setting entries: full-name globs that exempt matching names from
@@ -125,7 +130,7 @@ pub(crate) async fn run_gates(
                 &client,
                 &gated,
                 low_download_threshold,
-                low_download_policy.prompt,
+                &low_download_policy.prompt,
             )
             .await?;
         }
@@ -703,9 +708,8 @@ async fn downloads_gate(
     client: &reqwest::Client,
     names: &[String],
     threshold: u64,
-    allow_prompt: bool,
+    prompt: &LowDownloadPrompt,
 ) -> miette::Result<()> {
-    let interactive = prompt_is_interactive(allow_prompt);
     let mut set: tokio::task::JoinSet<(String, Result<DownloadCount, _>)> =
         tokio::task::JoinSet::new();
     for name in names {
@@ -761,13 +765,7 @@ async fn downloads_gate(
             code = WARN_AUBE_LOW_DOWNLOAD_PACKAGE,
             "{name}: {weekly} weekly downloads (threshold: {threshold})"
         );
-        if !interactive {
-            return Err(miette!(
-                code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
-                "refusing to add {name}: only {weekly} weekly downloads (threshold: {threshold}). Pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`."
-            ));
-        }
-        if !prompt_continue(name, weekly, threshold)? {
+        if !confirm_low_download(prompt, name, weekly, threshold).await? {
             return Err(miette!(
                 code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
                 "user aborted `{} {name}`",
@@ -778,8 +776,36 @@ async fn downloads_gate(
     Ok(())
 }
 
-fn prompt_is_interactive(allow_prompt: bool) -> bool {
-    allow_prompt && std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+async fn confirm_low_download(
+    prompt: &LowDownloadPrompt,
+    name: &str,
+    weekly: u64,
+    threshold: u64,
+) -> miette::Result<bool> {
+    let refusal = || {
+        miette!(
+            code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
+            "refusing to add {name}: only {weekly} weekly downloads (threshold: {threshold}). Pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`."
+        )
+    };
+    match prompt {
+        LowDownloadPrompt::Terminal
+            if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() =>
+        {
+            prompt_continue(name, weekly, threshold)
+        }
+        LowDownloadPrompt::Terminal => Err(refusal()),
+        LowDownloadPrompt::Host(control) => control
+            .confirm(
+                crate::commands::install::InstallPrompt::LowDownloadPackage {
+                    package: name.to_string(),
+                    weekly_downloads: weekly,
+                    threshold,
+                },
+            )
+            .await
+            .unwrap_or_else(|| Err(refusal())),
+    }
 }
 
 fn prompt_continue(name: &str, weekly: u64, threshold: u64) -> miette::Result<bool> {
@@ -808,6 +834,22 @@ fn prompt_continue(name: &str, weekly: u64, threshold: u64) -> miette::Result<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::install::{
+        InstallControl, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
+    };
+    use std::sync::{Arc, Mutex};
+
+    struct RecordingPromptHandler {
+        answer: bool,
+        prompts: Mutex<Vec<InstallPrompt>>,
+    }
+
+    impl InstallPromptHandler for RecordingPromptHandler {
+        fn confirm(&self, prompt: InstallPrompt) -> InstallPromptFuture<'_> {
+            self.prompts.lock().unwrap().push(prompt);
+            Box::pin(async move { Ok(self.answer) })
+        }
+    }
 
     #[tokio::test]
     async fn osv_gate_off_skips_network() {
@@ -836,7 +878,7 @@ mod tests {
                 1000,
                 LowDownloadPolicy {
                     allow: false,
-                    prompt: true,
+                    prompt: LowDownloadPrompt::Terminal,
                 },
                 &[],
             )
@@ -845,9 +887,42 @@ mod tests {
         );
     }
 
-    #[test]
-    fn embedded_callers_cannot_enable_terminal_prompts() {
-        assert!(!prompt_is_interactive(false));
+    #[tokio::test]
+    async fn embedded_confirmation_is_routed_to_the_host() {
+        let handler = Arc::new(RecordingPromptHandler {
+            answer: true,
+            prompts: Mutex::new(Vec::new()),
+        });
+        let prompt =
+            LowDownloadPrompt::Host(InstallControl::silent().with_prompt_handler(handler.clone()));
+
+        assert!(
+            confirm_low_download(&prompt, "@scope/tiny", 12, 1000)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            *handler.prompts.lock().unwrap(),
+            vec![InstallPrompt::LowDownloadPackage {
+                package: "@scope/tiny".to_string(),
+                weekly_downloads: 12,
+                threshold: 1000,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn embedded_confirmation_without_a_handler_fails_closed() {
+        let prompt = LowDownloadPrompt::Host(InstallControl::silent());
+
+        let error = confirm_low_download(&prompt, "tiny", 12, 1000)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(ERR_AUBE_LOW_DOWNLOAD_PACKAGE)
+        );
     }
 
     #[test]

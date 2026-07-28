@@ -92,7 +92,9 @@ pub async fn add_to_project(
                         lock.project_dir(),
                         packages,
                         false,
-                        false,
+                        crate::commands::add_supply_chain::LowDownloadPrompt::Host(
+                            options.control.clone(),
+                        ),
                     )
                     .await?;
                 }
@@ -520,7 +522,13 @@ pub async fn run(
     // full resolved graph (matching Bun's contract), with
     // concrete versions + transitives the OSV/downloads probes
     // wouldn't see at this stage.
-    supply_chain::run_cli_name_gates(&cwd, packages, allow_low_downloads, true).await?;
+    supply_chain::run_cli_name_gates(
+        &cwd,
+        packages,
+        allow_low_downloads,
+        crate::commands::add_supply_chain::LowDownloadPrompt::Terminal,
+    )
+    .await?;
 
     update_manifest_for_add(
         &cwd,
