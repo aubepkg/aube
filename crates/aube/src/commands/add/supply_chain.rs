@@ -38,6 +38,8 @@ pub(super) async fn run_cli_name_gates(
             .iter()
             .map(|name| glob::Pattern::escape(name)),
     );
+    let registry_client = crate::commands::make_client(&project_dir);
+    let full_packument_cache = crate::commands::packument_full_cache_dir_for_cwd(&project_dir);
     crate::commands::add_supply_chain::run_gates(
         &registry_inputs.name_only_advisory_names,
         &registry_inputs.exact_advisory_pairs,
@@ -48,6 +50,8 @@ pub(super) async fn run_cli_name_gates(
             allow: allow_low_downloads,
             prompt,
             minimum_package_age_minutes,
+            registry_client: &registry_client,
+            full_packument_cache: &full_packument_cache,
         },
         &allowed_unpopular,
     )
