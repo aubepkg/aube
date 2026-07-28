@@ -69,7 +69,42 @@ function updateCargo(dryRun: boolean): number {
     return 1
   }
   const args = dryRun ? ['+nightly', 'update', '--dry-run'] : ['+nightly', 'update']
-  return run(RUSTUP_CARGO, args, REPO_ROOT)
+  // VERIFY the soak actually applied. `[unstable] min-publish-age` is a
+  // warning-only unused key on any cargo that does not implement it yet
+  // (checked: nightly 2026-03-21 does not) — so a nightly that is merely
+  // OLD updates every crate with no window at all, silently, and the run
+  // still exits 0. Capture stderr and treat that warning as a failure:
+  // claiming a protection we did not apply is worse than no protection.
+  console.log(`[update-deps] ${RUSTUP_CARGO} ${args.join(' ')} (in .)`)
+  const res = spawnSync(RUSTUP_CARGO, args, {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    stdio: ['inherit', 'inherit', 'pipe'],
+  })
+  const stderr = res.stderr ?? ''
+  process.stderr.write(stderr)
+  if (res.error) {
+    console.error(`[update-deps] ${RUSTUP_CARGO}: ${res.error.message}`)
+    return 1
+  }
+  if (isMinPublishAgeUnsupported(stderr)) {
+    console.error(
+      '[update-deps] cargo ignored [unstable] min-publish-age — this nightly does not\n' +
+        '  implement it, so the update ran with NO soak window. Update the nightly\n' +
+        '  (`rustup update nightly`) and re-run; the lockfile changes are unsoaked.',
+    )
+    return 1
+  }
+  return res.status ?? 1
+}
+
+/**
+ * cargo emits `unused config key ...` (a warning, exit 0) for an
+ * `[unstable]` key it does not implement, so the ONLY signal that the soak
+ * silently did not apply is this line on stderr. Exported for the tests.
+ */
+export function isMinPublishAgeUnsupported(stderr: string): boolean {
+  return /unused config key `unstable\.min-publish-age`/.test(stderr)
 }
 
 // No flag = both; naming both explicitly also means both — a naive
