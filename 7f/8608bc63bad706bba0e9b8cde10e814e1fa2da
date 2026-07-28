@@ -1,0 +1,1 @@
+{"v":1,"bench":"release-graph","tool":"aube","version":"1.8.0","runner":"gha-linux-x64","ts":"2026-05-03T20:55:23Z","metrics":{"instructions":18188059.0,"wall_max_ms":8.598461,"wall_mean_ms":4.8312766,"wall_min_ms":4.211806999999999,"wall_n":10.0,"wall_p50_ms":4.389639}}
