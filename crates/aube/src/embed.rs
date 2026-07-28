@@ -15,6 +15,7 @@ pub use crate::commands::install::{
     InstallPromptHandler, InstallReporter,
 };
 pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
+pub use aube_manifest::{Error as ManifestError, PackageJson, Workspaces};
 pub use aube_registry::NetworkMode;
 pub use aube_util::{AUBE, Embedder as Host};
 
@@ -251,4 +252,38 @@ pub async fn node(
 /// Extract a stable `ERR_AUBE_*` identifier from a failed operation.
 pub fn error_code(error: &miette::Report) -> Option<String> {
     error.code().map(|code| code.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_manifest_types_keep_tolerant_parsing() {
+        let manifest: PackageJson = serde_json::from_str(
+            r#"{
+                "name": "app",
+                "workspaces": "packages/*",
+                "dependencies": null,
+                "devDependencies": {"local": "workspace:*", "junk": false}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.name.as_deref(), Some("app"));
+        assert_eq!(
+            manifest.workspaces.as_ref().map(|workspaces| workspaces
+                .patterns()
+                .iter()
+                .map(String::as_str)
+                .collect()),
+            Some(vec!["packages/*"])
+        );
+        assert!(manifest.dependencies.is_empty());
+        assert_eq!(
+            manifest.dev_dependencies.get("local").map(String::as_str),
+            Some("workspace:*")
+        );
+        assert!(!manifest.dev_dependencies.contains_key("junk"));
+    }
 }
