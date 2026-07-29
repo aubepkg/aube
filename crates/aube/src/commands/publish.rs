@@ -353,6 +353,14 @@ struct PublishOutcome {
     status: PublishStatus,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PublishTarget {
+    name: String,
+    version: String,
+    registry_url: String,
+    tag: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PublishStatus {
     Published,
@@ -372,58 +380,45 @@ async fn publish_one(
     fanout: bool,
     registry_override: Option<&str>,
 ) -> miette::Result<PublishOutcome> {
-    // Lifecycle hooks may rewrite the published name, version, registry,
-    // or tag. Run them before resolving the registry target so the
-    // already-published check and eventual upload use the same identity.
-    // We still defer file collection and gzip/SHA hashing until after the
-    // preflight, keeping recursive no-op publishes cheaper than packing.
+    // Resolve the initial target before lifecycle hooks so the common
+    // already-published package with no pre-publish hooks keeps its
+    // script-free, archive-free fast path.
     let manifest = PackageJson::from_path(&pkg_dir.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to read {}/package.json", pkg_dir.display()))?;
+    let initial_target =
+        resolve_publish_target(&manifest, pkg_dir, config, args, registry_override)?;
+    let has_pre_publish_hooks = !args.ignore_scripts
+        && ["prepublishOnly", "prepublish", "prepack", "prepare"]
+            .iter()
+            .any(|hook| manifest.scripts.contains_key(*hook));
+    let initial_already_published = !args.dry_run
+        && !args.force
+        && version_on_registry(
+            client,
+            &initial_target.registry_url,
+            &initial_target.name,
+            &initial_target.version,
+        )
+        .await;
+    if initial_already_published && !has_pre_publish_hooks {
+        if fanout {
+            return Ok(PublishOutcome {
+                name: initial_target.name,
+                version: initial_target.version,
+                registry_url: initial_target.registry_url,
+                archive: None,
+                status: PublishStatus::AlreadyPublished,
+            });
+        }
+        return Err(already_published_error(&initial_target));
+    }
+
+    // Hooks may rewrite name, version, registry, or tag. Re-resolve the
+    // complete target afterward and recheck the registry if it changed.
     run_publish_lifecycle_pre(pkg_dir, &manifest, args.ignore_scripts).await?;
     let manifest = super::pack::read_root_manifest(pkg_dir)?;
-
-    let name = published_name(&manifest)
-        .wrap_err_with(|| format!("publish: invalid {}/package.json", pkg_dir.display()))?;
-    let version = normalize_publish_version(manifest.version.as_deref().ok_or_else(|| {
-        miette!(
-            "publish: {}/package.json has no `version`",
-            pkg_dir.display()
-        )
-    })?);
-
-    // publishConfig in package.json overrides the published name and,
-    // when the user has not passed CLI flags, the registry and tag.
-    // The manifest's own name remains the workspace identity; only
-    // registry-facing operations use `publishConfig.name`. pnpm and npm
-    // both honor this field, so without it migrating users would silently
-    // publish to the wrong place. Most common case: scoped private
-    // registries like `{"publishConfig": {"registry": "https://npm.pkg.github.com"}}`
-    // and `{"publishConfig": {"access": "public"}}` for first-time
-    // scoped-public publishes. CLI override still wins over the
-    // manifest setting, matching pnpm precedence.
-    let publish_config = manifest
-        .extra
-        .get("publishConfig")
-        .and_then(|v| v.as_object());
-    let pc_registry = publish_config
-        .and_then(|p| p.get("registry"))
-        .and_then(|v| v.as_str());
-    let pc_tag = publish_config
-        .and_then(|p| p.get("tag"))
-        .and_then(|v| v.as_str());
-
-    let registry_url = registry_override
-        .map(normalize_registry_url_pub)
-        .or_else(|| pc_registry.map(normalize_registry_url_pub))
-        .unwrap_or_else(|| config.registry_for(&name).to_string());
-
-    let tag = args
-        .tag
-        .as_deref()
-        .or(pc_tag)
-        .unwrap_or("latest")
-        .to_string();
+    let target = resolve_publish_target(&manifest, pkg_dir, config, args, registry_override)?;
 
     if args.dry_run {
         // Dry-run has already run the pre-publish chain so users can
@@ -445,7 +440,7 @@ async fn publish_one(
         return Ok(PublishOutcome {
             name: archive.name.clone(),
             version: archive.version.clone(),
-            registry_url,
+            registry_url: target.registry_url,
             archive: Some(archive),
             status: PublishStatus::DryRun,
         });
@@ -458,22 +453,24 @@ async fn publish_one(
     // opts out of both: it turns the skip into a PUT and suppresses
     // the single-package error, leaving the registry to decide whether
     // a republish is allowed (npm refuses, Verdaccio usually accepts).
-    if !args.force && version_on_registry(client, &registry_url, &name, &version).await {
+    let already_published = if args.force {
+        false
+    } else if target == initial_target {
+        initial_already_published
+    } else {
+        version_on_registry(client, &target.registry_url, &target.name, &target.version).await
+    };
+    if already_published {
         if fanout {
             return Ok(PublishOutcome {
-                name,
-                version,
-                registry_url,
+                name: target.name,
+                version: target.version,
+                registry_url: target.registry_url,
                 archive: None,
                 status: PublishStatus::AlreadyPublished,
             });
         }
-        return Err(miette!(
-            "{}: {name}@{version} is already on {}\n\
-             help: pass --force to republish (the registry must allow it; npm's public registry does not)",
-            aube_util::cmd("publish"),
-            aube_util::url::redact_url(&registry_url),
-        ));
+        return Err(already_published_error(&target));
     }
 
     // The tarball build only happens now that we know we're actually
@@ -529,22 +526,23 @@ async fn publish_one(
     let body = build_publish_body(
         &archive,
         &manifest,
-        &registry_url,
-        &tag,
+        &target.registry_url,
+        &target.tag,
         effective_access,
         provenance_bundle.as_deref(),
     )?;
 
-    let url = put_url(&registry_url, &archive.name);
-    let trusted_publish_token = trusted_publish_token(client, &registry_url, &archive.name).await?;
+    let url = put_url(&target.registry_url, &archive.name);
+    let trusted_publish_token =
+        trusted_publish_token(client, &target.registry_url, &archive.name).await?;
     if trusted_publish_token.is_none() {
-        ensure_registry_auth_for_package(client, &registry_url, &archive.name)?;
+        ensure_registry_auth_for_package(client, &target.registry_url, &archive.name)?;
     }
     let body_bytes = serde_json::to_vec(&body).into_diagnostic()?;
     match send_publish_put(
         client,
         &url,
-        &registry_url,
+        &target.registry_url,
         &archive.name,
         body_bytes.clone(),
         trusted_publish_token.as_deref(),
@@ -558,7 +556,7 @@ async fn publish_one(
             if let Err(second) = send_publish_put(
                 client,
                 &url,
-                &registry_url,
+                &target.registry_url,
                 &archive.name,
                 body_bytes,
                 trusted_publish_token.as_deref(),
@@ -577,7 +575,7 @@ async fn publish_one(
     Ok(PublishOutcome {
         name: archive.name.clone(),
         version: archive.version.clone(),
-        registry_url,
+        registry_url: target.registry_url,
         archive: Some(archive),
         status: PublishStatus::Published,
     })
@@ -602,6 +600,69 @@ fn published_name(manifest: &PackageJson) -> miette::Result<String> {
         .and_then(|value| value.as_str())
         .unwrap_or(manifest_name)
         .to_string())
+}
+
+fn resolve_publish_target(
+    manifest: &PackageJson,
+    pkg_dir: &Path,
+    config: &NpmConfig,
+    args: &PublishArgs,
+    registry_override: Option<&str>,
+) -> miette::Result<PublishTarget> {
+    let name = published_name(manifest)
+        .wrap_err_with(|| format!("publish: invalid {}/package.json", pkg_dir.display()))?;
+    let version = normalize_publish_version(manifest.version.as_deref().ok_or_else(|| {
+        miette!(
+            "publish: {}/package.json has no `version`",
+            pkg_dir.display()
+        )
+    })?);
+
+    // publishConfig overrides the published name and, when the user has
+    // not passed CLI flags, the registry and tag. The manifest name stays
+    // the workspace identity; only registry-facing operations use the
+    // published target.
+    let publish_config = manifest
+        .extra
+        .get("publishConfig")
+        .and_then(|value| value.as_object());
+    let registry_url = registry_override
+        .map(normalize_registry_url_pub)
+        .or_else(|| {
+            publish_config
+                .and_then(|config| config.get("registry"))
+                .and_then(|value| value.as_str())
+                .map(normalize_registry_url_pub)
+        })
+        .unwrap_or_else(|| config.registry_for(&name).to_string());
+    let tag = args
+        .tag
+        .as_deref()
+        .or_else(|| {
+            publish_config
+                .and_then(|config| config.get("tag"))
+                .and_then(|value| value.as_str())
+        })
+        .unwrap_or("latest")
+        .to_string();
+
+    Ok(PublishTarget {
+        name,
+        version,
+        registry_url,
+        tag,
+    })
+}
+
+fn already_published_error(target: &PublishTarget) -> miette::Report {
+    miette!(
+        "{}: {}@{} is already on {}\n\
+         help: pass --force to republish (the registry must allow it; npm's public registry does not)",
+        aube_util::cmd("publish"),
+        target.name,
+        target.version,
+        aube_util::url::redact_url(&target.registry_url),
+    )
 }
 
 fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
@@ -873,9 +934,10 @@ fn read_publish_otp(name: &str, version: &str) -> miette::Result<String> {
 }
 
 /// Pre-pack chain for publish: `prepublishOnly` → `prepublish` →
-/// `prepack` → `prepare`. Runs only for packages that are actually
-/// being uploaded — the "already on registry" skip path avoids all of
-/// this so `aube -r publish` remains idempotent. `prepublish` is
+/// `prepack` → `prepare`. Packages without these hooks retain the
+/// script-free "already on registry" fast path. When hooks exist they
+/// run before the final preflight because they may rewrite the publish
+/// identity. `prepublish` is
 /// deprecated by npm but pnpm still runs it on publish, so we match
 /// pnpm for the common case the discussion in #253 flagged. The
 /// manifest is threaded through so the whole chain shares a single
