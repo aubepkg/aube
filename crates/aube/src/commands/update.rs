@@ -76,12 +76,13 @@ pub struct UpdateArgs {
     pub ignore_pnpmfile: bool,
     /// Skip lifecycle scripts.
     ///
-    /// Accepted for pnpm parity — dep scripts are already gated by
-    /// `allowBuilds`, so the flag is currently a no-op, but scripts
-    /// that wrap `pnpm update --ignore-scripts` keep working without
-    /// complaint.
+    /// Skips the root `pnpm:devPreinstall` hook and all approved
+    /// dependency build scripts in the chained install.
     #[arg(long, hide = true)]
     pub ignore_scripts: bool,
+    /// Internal recursive-update marker: the workspace root hook already ran.
+    #[arg(skip)]
+    dev_preinstall_already_run: bool,
     /// Refresh the lockfile without populating `node_modules`.
     ///
     /// Re-resolves the full graph (direct + transitive) and writes
@@ -123,7 +124,6 @@ pub async fn run(
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();
-    let _ = args.ignore_scripts; // parity no-op: dep scripts already gated by allowBuilds
     if let Some(depth) = args.depth.as_deref() {
         // pnpm's `--depth Infinity` is the only useful value; the
         // intermediate ones (`--depth 1`, `--depth 2`) have semantics
@@ -188,6 +188,9 @@ pub async fn run(
         cwd = root;
     }
     let lock = super::take_install_project_lock(&cwd)?;
+    if !args.dev_preinstall_already_run {
+        install::run_dev_preinstall(&cwd, args.ignore_scripts, false, args.lockfile_only).await?;
+    }
     let manifest_path = cwd.join("package.json");
 
     let mut manifest = aube_manifest::PackageJson::from_path(&manifest_path)
@@ -859,7 +862,7 @@ pub async fn run(
     chained.ignore_pnpmfile = args.ignore_pnpmfile;
     chained.pnpmfile = args.pnpmfile.clone();
     chained.global_pnpmfile = args.global_pnpmfile.clone();
-    chained.run_dev_preinstall = true;
+    chained.ignore_scripts = args.ignore_scripts;
     // `aube update` is one of the canonical fresh-resolution
     // entry points — by design it pulls newer versions than the
     // lockfile pins. Route the post-resolve transitive set
@@ -1318,12 +1321,14 @@ fn with_update_settings_ctx<T>(
 }
 
 async fn run_filtered(
-    args: UpdateArgs,
+    mut args: UpdateArgs,
     filter: &aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<Option<i32>> {
     reject_unsupported_pkg_specs(&args.packages)?;
     let cwd = crate::dirs::cwd()?;
     let (root, matched) = super::select_workspace_packages(&cwd, filter, "update")?;
+    install::run_dev_preinstall(&root, args.ignore_scripts, false, args.lockfile_only).await?;
+    args.dev_preinstall_already_run = true;
     let shared_workspace_lockfile = resolve_shared_workspace_lockfile(&root)?;
     let root_manifest = if shared_workspace_lockfile {
         Some(super::load_manifest_or_default(&root)?)

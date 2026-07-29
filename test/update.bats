@@ -68,24 +68,70 @@ EOF
 	assert_file_exists node_modules/is-odd/index.js
 }
 
-@test "aube update runs pnpm:devPreinstall" {
-	_setup_outdated_project
+@test "aube update runs pnpm:devPreinstall before resolution" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-update",
+  "version": "0.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").mkdirSync(\"generated\"); require(\"fs\").writeFileSync(\"generated/package.json\", JSON.stringify({name:\"generated\",version:\"1.0.0\"}))'"
+  },
+  "dependencies": {
+    "generated": "file:./generated"
+  }
+}
+EOF
+
+	run aube update
+	assert_success
+	assert_file_exists generated/package.json
+}
+
+@test "aube update --ignore-scripts skips pnpm:devPreinstall" {
 	cat >package.json <<'EOF'
 {
   "name": "test-update",
   "version": "0.0.0",
   "scripts": {
     "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"dev.marker\", \"ran\")'"
-  },
-  "dependencies": {
-    "is-odd": ">=0.1.0"
   }
 }
 EOF
 
-	run aube update is-odd
+	run aube update --ignore-scripts
 	assert_success
-	assert_file_exists dev.marker
+	assert_file_not_exists dev.marker
+}
+
+@test "aube update from a workspace member runs only the root pnpm:devPreinstall" {
+	mkdir -p packages/app
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - packages/*
+YAML
+	cat >package.json <<'JSON'
+{
+  "name": "root",
+  "version": "1.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"root.marker\", \"ran\")'"
+  }
+}
+JSON
+	cat >packages/app/package.json <<'JSON'
+{
+  "name": "app",
+  "version": "1.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"member.marker\", \"ran\")'"
+  }
+}
+JSON
+
+	run bash -c "cd packages/app && aube update"
+	assert_success
+	assert_file_exists root.marker
+	assert_file_not_exists packages/app/member.marker
 }
 
 @test "aube update: reports version change in output" {

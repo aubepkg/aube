@@ -744,22 +744,12 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // lockfile/workspace root and never fans out to member manifests.
     // The warm fast path returned above, so an already-current repeat
     // install naturally skips it.
-    if !opts.dry_run && !opts.ignore_scripts && !lockfile_only_effective && opts.run_dev_preinstall
-    {
-        // Normal CLI installs already normalize `cwd` to the workspace root.
-        // Explicit `project_dir` calls from embedders or chained commands may
-        // still point at a member, so resolve the root again at this boundary.
-        let root_dir = crate::dirs::find_workspace_root(&cwd).unwrap_or_else(|| cwd.clone());
-        let root_manifest = if root_dir == cwd {
-            None
-        } else {
-            Some(super::load_manifest_or_default(&root_dir)?)
-        };
-        run_root_lifecycle_script(
-            &root_dir,
-            &modules_dir_name,
-            root_manifest.as_ref().unwrap_or(&manifest),
-            "pnpm:devPreinstall",
+    if opts.run_dev_preinstall {
+        run_dev_preinstall(
+            &cwd,
+            opts.ignore_scripts,
+            opts.dry_run,
+            lockfile_only_effective,
         )
         .await?;
     }
@@ -2515,6 +2505,32 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         );
     }
     Ok(())
+}
+
+/// Run pnpm's root-only pre-resolution hook from the workspace/lockfile root.
+///
+/// Kept as a command-level boundary because `update` resolves before chaining
+/// into the install pipeline and must invoke the same hook before its resolver.
+pub(crate) async fn run_dev_preinstall(
+    project_dir: &std::path::Path,
+    ignore_scripts: bool,
+    dry_run: bool,
+    lockfile_only: bool,
+) -> miette::Result<()> {
+    if ignore_scripts || dry_run || lockfile_only {
+        return Ok(());
+    }
+    let root_dir =
+        crate::dirs::find_workspace_root(project_dir).unwrap_or_else(|| project_dir.to_path_buf());
+    let root_manifest = super::load_manifest_or_default(&root_dir)?;
+    let modules_dir_name = super::resolve_modules_dir_name_for_cwd(&root_dir);
+    run_root_lifecycle_script(
+        &root_dir,
+        &modules_dir_name,
+        &root_manifest,
+        "pnpm:devPreinstall",
+    )
+    .await
 }
 
 #[cfg(test)]
