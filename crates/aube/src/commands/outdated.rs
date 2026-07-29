@@ -216,8 +216,8 @@ async fn run_filtered(
         }
         let ctx = files.ctx(&raw_workspace, env, &[]);
         let ignored = super::update::ignored_update_dependencies_from_ctx(&ctx, &pkg.manifest);
-        let selected_roots: Vec<DirectDep> = roots
-            .iter()
+        let selected_roots: Vec<DirectDep> = direct_manifest_deps(roots, &pkg.manifest)
+            .into_iter()
             .filter(|dep| !ignored.contains(&dep.name))
             .cloned()
             .collect();
@@ -361,13 +361,26 @@ async fn run_one(cwd: &Path, args: OutdatedArgs, importer: Option<String>) -> mi
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
     };
 
-    let roots: Vec<DirectDep> = graph
-        .root_deps()
-        .iter()
+    let roots: Vec<DirectDep> = direct_manifest_deps(graph.root_deps(), &manifest)
+        .into_iter()
         .filter(|dep| !ignored.contains(&dep.name))
         .cloned()
         .collect();
     run_graph(cwd, args, &graph, &roots, importer).await
+}
+
+fn direct_manifest_deps<'a>(
+    roots: &'a [DirectDep],
+    manifest: &aube_manifest::PackageJson,
+) -> Vec<&'a DirectDep> {
+    roots
+        .iter()
+        .filter(|dep| {
+            manifest.dependencies.contains_key(&dep.name)
+                || manifest.dev_dependencies.contains_key(&dep.name)
+                || manifest.optional_dependencies.contains_key(&dep.name)
+        })
+        .collect()
 }
 
 async fn run_graph(
@@ -743,8 +756,8 @@ fn render_no_checkable_global_json() -> miette::Result<()> {
 
 #[cfg(test)]
 mod colorize_tests {
-    use super::{Row, colorize_diff};
-    use aube_lockfile::DepType;
+    use super::{Row, colorize_diff, direct_manifest_deps};
+    use aube_lockfile::{DepType, DirectDep};
 
     fn strip_ansi(s: &str) -> String {
         // Strip CSI sequences for assertion purposes — the renderer
@@ -764,6 +777,33 @@ mod colorize_tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn direct_manifest_deps_excludes_auto_installed_peers() {
+        let mut manifest = aube_manifest::PackageJson::default();
+        manifest
+            .dependencies
+            .insert("vite".to_string(), "^8.0.0".to_string());
+        let roots = vec![
+            DirectDep {
+                name: "vite".to_string(),
+                dep_path: "vite@8.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("^8.0.0".to_string()),
+            },
+            DirectDep {
+                name: "esbuild".to_string(),
+                dep_path: "esbuild@0.28.1".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("^0.28.0".to_string()),
+            },
+        ];
+
+        let selected = direct_manifest_deps(&roots, &manifest);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "vite");
     }
 
     #[test]
