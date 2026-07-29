@@ -74,7 +74,7 @@ YAML
   }
 }
 JSON
-	run aube install
+	run bash -c "cd packages/app && aube install"
 	assert_success
 	assert_file_exists root.marker
 	assert_file_not_exists packages/app/member.marker

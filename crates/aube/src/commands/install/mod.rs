@@ -749,7 +749,22 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         && !lockfile_only_effective
         && !opts.skip_root_lifecycle
     {
-        run_root_lifecycle_script(&cwd, &modules_dir_name, &manifest, "pnpm:devPreinstall").await?;
+        // Normal CLI installs already normalize `cwd` to the workspace root.
+        // Explicit `project_dir` calls from embedders or chained commands may
+        // still point at a member, so resolve the root again at this boundary.
+        let root_dir = crate::dirs::find_workspace_root(&cwd).unwrap_or_else(|| cwd.clone());
+        let root_manifest = if root_dir == cwd {
+            None
+        } else {
+            Some(super::load_manifest_or_default(&root_dir)?)
+        };
+        run_root_lifecycle_script(
+            &root_dir,
+            &modules_dir_name,
+            root_manifest.as_ref().unwrap_or(&manifest),
+            "pnpm:devPreinstall",
+        )
+        .await?;
     }
 
     // 1b. Project `preinstall` lifecycle hooks.
