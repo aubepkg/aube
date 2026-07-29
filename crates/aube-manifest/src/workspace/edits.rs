@@ -39,6 +39,7 @@ pub fn remove_setting_entry(cwd: &Path, key: &str, entry_key: &str) -> Result<bo
         return Ok(false);
     }
     let raw = std::fs::read_to_string(&path).map_err(|e| crate::Error::Io(path.clone(), e))?;
+    let indent = crate::detect_json_indent(&raw).to_string();
     let mut value = crate::parse_json::<serde_json::Value>(&path, raw)?;
     let obj = value.as_object_mut().ok_or_else(|| {
         crate::Error::YamlParse(path.clone(), "package.json is not an object".to_string())
@@ -68,7 +69,7 @@ pub fn remove_setting_entry(cwd: &Path, key: &str, entry_key: &str) -> Result<bo
         return Ok(existed);
     }
 
-    let mut out = serde_json::to_string_pretty(&value)
+    let mut out = crate::serialize_json_with_indent(&value, &indent)
         .map_err(|e| crate::Error::YamlParse(path.clone(), format!("failed to serialize: {e}")))?;
     out.push('\n');
     std::fs::write(&path, out).map_err(|e| crate::Error::Io(path, e))?;
@@ -101,6 +102,7 @@ where
 {
     let path = cwd.join("package.json");
     let raw = std::fs::read_to_string(&path).map_err(|e| crate::Error::Io(path.clone(), e))?;
+    let indent = crate::detect_json_indent(&raw).to_string();
     let mut value = crate::parse_json::<serde_json::Value>(&path, raw)?;
 
     let obj = value.as_object_mut().ok_or_else(|| {
@@ -225,7 +227,7 @@ where
         return Ok(());
     }
 
-    let mut out = serde_json::to_string_pretty(&value)
+    let mut out = crate::serialize_json_with_indent(&value, &indent)
         .map_err(|e| crate::Error::YamlParse(path.clone(), format!("failed to serialize: {e}")))?;
     out.push('\n');
     std::fs::write(&path, out).map_err(|e| crate::Error::Io(path, e))?;

@@ -1256,9 +1256,81 @@ fn line_col_to_byte_offset(content: &str, line: usize, column: usize) -> usize {
     content.len()
 }
 
+/// Detect the indentation style used in a JSON string.
+///
+/// Returns a slice of `raw` representing one level of indentation
+/// (e.g. `"  "`, `"   "`, `"    "`, `"\t"`), or `"  "` if no indentation
+/// could be detected.
+pub fn detect_json_indent(raw: &str) -> &str {
+    let mut root_indent: Option<&str> = None;
+
+    for line in raw.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") {
+            continue;
+        }
+
+        let indent_len = line.len() - trimmed.len();
+        let current_indent = &line[..indent_len];
+
+        match root_indent {
+            None => {
+                root_indent = Some(current_indent);
+            }
+            Some(root) => {
+                if current_indent.len() > root.len() && current_indent.starts_with(root) {
+                    return &current_indent[root.len()..];
+                }
+            }
+        }
+    }
+
+    "  "
+}
+
+/// Serialize `value` as pretty JSON using `indent` for indentation.
+pub fn serialize_json_with_indent<T: serde::Serialize>(
+    value: &T,
+    indent: &str,
+) -> Result<String, serde_json::Error> {
+    let mut buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value.serialize(&mut serializer)?;
+    String::from_utf8(buf).map_err(|e| {
+        serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_detect_json_indent() {
+        assert_eq!(detect_json_indent("{\n  \"name\": \"foo\"\n}"), "  ");
+        assert_eq!(detect_json_indent("{\n   \"name\": \"foo\"\n}"), "   ");
+        assert_eq!(detect_json_indent("{\n    \"name\": \"foo\"\n}"), "    ");
+        assert_eq!(detect_json_indent("{\n\t\"name\": \"foo\"\n}"), "\t");
+        assert_eq!(detect_json_indent("  {\n    \"name\": \"foo\"\n  }"), "  ");
+        assert_eq!(detect_json_indent("{\"name\":\"foo\"}"), "  ");
+    }
+
+    #[test]
+    fn test_serialize_json_with_indent() {
+        let val = serde_json::json!({
+            "name": "foo",
+            "version": "1.0.0"
+        });
+        assert_eq!(
+            serialize_json_with_indent(&val, "   ").unwrap(),
+            "{\n   \"name\": \"foo\",\n   \"version\": \"1.0.0\"\n}"
+        );
+        assert_eq!(
+            serialize_json_with_indent(&val, "\t").unwrap(),
+            "{\n\t\"name\": \"foo\",\n\t\"version\": \"1.0.0\"\n}"
+        );
+    }
 
     fn parse(json: &str) -> PackageJson {
         serde_json::from_str(json).unwrap()

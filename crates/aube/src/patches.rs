@@ -280,6 +280,7 @@ fn remove_bun_patched_dependency(cwd: &Path, key: &str) -> Result<bool> {
     let raw = std::fs::read_to_string(&path)
         .into_diagnostic()
         .map_err(|e| miette!("failed to read {}: {e}", path.display()))?;
+    let indent = aube_manifest::detect_json_indent(&raw).to_string();
     let mut value =
         aube_manifest::parse_json::<serde_json::Value>(&path, raw).map_err(miette::Report::new)?;
     let obj = value
@@ -307,7 +308,7 @@ fn remove_bun_patched_dependency(cwd: &Path, key: &str) -> Result<bool> {
         return Ok(removed);
     }
 
-    let mut out = serde_json::to_string_pretty(&value)
+    let mut out = aube_manifest::serialize_json_with_indent(&value, &indent)
         .into_diagnostic()
         .map_err(|e| miette!("failed to serialize {}: {e}", path.display()))?;
     out.push('\n');
