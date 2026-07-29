@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0](https://github.com/jdx/aube/compare/aube-resolver-v1.35.0...aube-resolver-v1.36.0) - 2026-07-29
+
+### Fixed
+
+- *(resolver)* use local root version for peer context ([#1179](https://github.com/jdx/aube/pull/1179))
+
+### Other
+
+- refresh benchmarks for v1.35.0 ([#1172](https://github.com/jdx/aube/pull/1172))
+
 ## [1.35.0](https://github.com/jdx/aube/compare/aube-resolver-v1.34.0...aube-resolver-v1.35.0) - 2026-07-28
 
 ### Added

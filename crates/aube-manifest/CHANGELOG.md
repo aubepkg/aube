@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0](https://github.com/jdx/aube/compare/aube-manifest-v1.35.0...aube-manifest-v1.36.0) - 2026-07-29
+
+### Added
+
+- *(manifest)* preserve existing indentation in package.json ([#1171](https://github.com/jdx/aube/pull/1171))
+
+### Other
+
+- refresh benchmarks for v1.35.0 ([#1172](https://github.com/jdx/aube/pull/1172))
+
 ## [1.35.0](https://github.com/jdx/aube/compare/aube-manifest-v1.34.0...aube-manifest-v1.35.0) - 2026-07-28
 
 ### Added

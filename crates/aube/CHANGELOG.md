@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0](https://github.com/jdx/aube/compare/v1.35.0...v1.36.0) - 2026-07-29
+
+### Added
+
+- *(publish)* support publishConfig.name ([#1176](https://github.com/jdx/aube/pull/1176))
+- *(install)* run pnpm devPreinstall hook ([#1177](https://github.com/jdx/aube/pull/1177))
+- *(manifest)* preserve existing indentation in package.json ([#1171](https://github.com/jdx/aube/pull/1171))
+
+### Fixed
+
+- *(update)* stabilize recursive workspace updates ([#1180](https://github.com/jdx/aube/pull/1180))
+- *(outdated)* exclude auto-installed peers ([#1178](https://github.com/jdx/aube/pull/1178))
+
+### Other
+
+- refresh benchmarks for v1.35.0 ([#1172](https://github.com/jdx/aube/pull/1172))
+
+### Security
+
+- strip Unicode formatting from terminal output ([#1181](https://github.com/jdx/aube/pull/1181))
+
 ## [1.35.0](https://github.com/jdx/aube/compare/v1.34.0...v1.35.0) - 2026-07-28
 
 ### Added
