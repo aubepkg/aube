@@ -280,7 +280,7 @@ Conflicts with `--no-save`, which only snapshots `package.json` and the lockfile
 """#
         arg <PKG>
     }
-    flag --ignore-scripts help="Skip lifecycle scripts (no-op; aube already skips by default)" hide=#true
+    flag --ignore-scripts help="Skip root and approved dependency lifecycle scripts" hide=#true
     flag --no-save help="Install without persisting the dependency to `package.json`" {
         long_help #"""
 Install without persisting the dependency to `package.json`.

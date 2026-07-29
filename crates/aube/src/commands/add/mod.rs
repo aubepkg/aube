@@ -246,7 +246,7 @@ pub struct AddArgs {
         value_parser = parse_deny_build_value,
     )]
     pub deny_build: Vec<String>,
-    /// Skip lifecycle scripts (no-op; aube already skips by default).
+    /// Skip root and approved dependency lifecycle scripts.
     #[arg(long, hide = true)]
     pub ignore_scripts: bool,
     /// Install without persisting the dependency to `package.json`.
@@ -365,7 +365,7 @@ pub async fn run(
         save_workspace_protocol,
         no_save_workspace_protocol,
         workspace,
-        ignore_scripts: _,
+        ignore_scripts,
         no_save,
         ignore_workspace_root_check,
         save_catalog,
@@ -568,6 +568,7 @@ pub async fn run(
     let mut install_opts =
         install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Fix));
     apply_dangerously_allow_all_builds(&mut install_opts, dangerously_allow_all_builds);
+    install_opts.ignore_scripts = ignore_scripts;
     install_opts.run_dev_preinstall = true;
     install_opts.osv_transitive_check = true;
     let pipeline_result: miette::Result<()> =

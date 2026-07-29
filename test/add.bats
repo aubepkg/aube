@@ -278,6 +278,32 @@ EOF
 	assert_failure
 }
 
+@test "aube add --filter --ignore-scripts skips root pnpm:devPreinstall" {
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	cat >package.json <<-'EOF'
+		{
+		  "name": "root",
+		  "version": "0.0.0",
+		  "private": true,
+		  "scripts": {
+		    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"dev-preinstall.marker\", \"ran\")'"
+		  }
+		}
+	EOF
+	mkdir -p packages/dashboard
+	cat >packages/dashboard/package.json <<-'EOF'
+		{"name": "dashboard", "version": "0.0.0", "private": true}
+	EOF
+
+	run aube add is-odd --filter=dashboard --ignore-scripts
+	assert_success
+	assert_file_exists packages/dashboard/node_modules/is-odd/index.js
+	assert_file_not_exists dev-preinstall.marker
+}
+
 @test "aube add -D: moves dep from dependencies to devDependencies" {
 	cat >package.json <<'EOF'
 {
