@@ -381,9 +381,10 @@ async fn publish_one(
     registry_override: Option<&str>,
 ) -> miette::Result<PublishOutcome> {
     // Resolve the initial target before lifecycle hooks so an
-    // already-published package keeps its script-free, archive-free
-    // fast path. Hooks only run after this identity needs publishing;
-    // if they change it, the post-hook target gets a second preflight.
+    // already-published package in a recursive fanout keeps its
+    // script-free, archive-free fast path, matching pnpm. A direct
+    // publish must still run hooks before deciding which final target
+    // is already published because a hook can rewrite that identity.
     let manifest = PackageJson::from_path(&pkg_dir.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to read {}/package.json", pkg_dir.display()))?;
@@ -398,17 +399,14 @@ async fn publish_one(
             &initial_target.version,
         )
         .await;
-    if initial_already_published {
-        if fanout {
-            return Ok(PublishOutcome {
-                name: initial_target.name,
-                version: initial_target.version,
-                registry_url: initial_target.registry_url,
-                archive: None,
-                status: PublishStatus::AlreadyPublished,
-            });
-        }
-        return Err(already_published_error(&initial_target));
+    if initial_already_published && fanout {
+        return Ok(PublishOutcome {
+            name: initial_target.name,
+            version: initial_target.version,
+            registry_url: initial_target.registry_url,
+            archive: None,
+            status: PublishStatus::AlreadyPublished,
+        });
     }
 
     // Hooks may rewrite name, version, registry, or tag. Re-resolve the

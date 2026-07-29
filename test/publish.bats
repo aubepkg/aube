@@ -405,7 +405,12 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(existing));
     return;
   }
-  if (req.method === 'PUT' && req.url === '/publish-smoke') {
+  if (req.method === 'GET' && req.url === '/publish-renamed') {
+    res.statusCode = 404;
+    res.end('{}');
+    return;
+  }
+  if (req.method === 'PUT' && (req.url === '/publish-smoke' || req.url === '/publish-renamed')) {
     let size = 0;
     req.on('data', (c) => { size += c.length; });
     req.on('end', () => {
@@ -439,7 +444,7 @@ _stop_publish_server() {
 	fi
 }
 
-@test "aube publish refuses to re-publish a version already on the registry" {
+@test "aube publish runs hooks before refusing to re-publish a version" {
 	_write_publishable_pkg
 	node -e "const fs=require('fs'); const m=require('./package.json'); m.scripts={prepublishOnly:'node -e \\'require(\\\"fs\\\").writeFileSync(\\\"lifecycle.marker\\\", \\\"ran\\\")\\''}; fs.writeFileSync('package.json', JSON.stringify(m, null, 2))"
 	_start_publish_server
@@ -452,13 +457,63 @@ _stop_publish_server() {
 	[ "$rc" -ne 0 ]
 	assert_output --partial "publish-smoke@0.1.0 is already on"
 	assert_output --partial "--force"
-	assert_file_not_exists lifecycle.marker
-	# The pre-flight must short-circuit before the PUT; the mock
+	assert_file_exists lifecycle.marker
+	# The final pre-flight must short-circuit before the PUT; the mock
 	# server only logs PUTs to this file.
 	[ ! -s publish-server-put.log ] || {
 		echo "unexpected PUT: $(cat publish-server-put.log)" >&2
 		false
 	}
+}
+
+@test "aube publish uses a hook-mutated target when the initial version exists" {
+	_write_publishable_pkg
+	cat >rewrite-name.mjs <<'NODE'
+import fs from 'node:fs';
+const m = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+m.publishConfig = { name: 'publish-renamed' };
+fs.writeFileSync('package.json', JSON.stringify(m, null, 2));
+NODE
+	node -e "const fs=require('fs'); const m=require('./package.json'); m.scripts={prepublishOnly:'node ./rewrite-name.mjs'}; fs.writeFileSync('package.json', JSON.stringify(m, null, 2))"
+	_start_publish_server
+	port="$(cat publish-server-port)"
+	echo "//127.0.0.1:${port}/:_authToken=fake" >.npmrc
+
+	run aube publish --no-git-checks --registry "http://127.0.0.1:${port}/"
+	rc=$status
+	_stop_publish_server
+	[ "$rc" -eq 0 ]
+	assert_output --partial "+ publish-renamed@0.1.0"
+	run grep -c "^/publish-renamed " publish-server-put.log
+	assert_success
+	[ "$output" = "1" ]
+}
+
+@test "aube publish -r skips hooks for an already-published version" {
+	mkdir -p packages/smoke
+	cat >package.json <<-'EOF'
+		{"name":"root","version":"0.0.0","private":true}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	(
+		cd packages/smoke
+		_write_publishable_pkg
+		node -e "const fs=require('fs'); const m=require('./package.json'); m.scripts={prepublishOnly:'node -e \\'require(\\\"fs\\\").writeFileSync(\\\"lifecycle.marker\\\", \\\"ran\\\")\\''}; fs.writeFileSync('package.json', JSON.stringify(m, null, 2))"
+	)
+	_start_publish_server
+	port="$(cat publish-server-port)"
+	echo "//127.0.0.1:${port}/:_authToken=fake" >.npmrc
+
+	run aube publish -r --no-git-checks --registry "http://127.0.0.1:${port}/"
+	rc=$status
+	_stop_publish_server
+	[ "$rc" -eq 0 ]
+	assert_output --partial "= publish-smoke@0.1.0 (already on registry, skipping)"
+	assert_file_not_exists packages/smoke/lifecycle.marker
+	[ ! -s publish-server-put.log ]
 }
 
 @test "aube publish --force re-publishes past the existence check" {
