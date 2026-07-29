@@ -98,7 +98,7 @@ JSON
 	assert_success
 	run aube install
 	assert_success
-	run wc -l <runs.log
+	run grep -c '^run$' runs.log
 	assert_output "1"
 }
 
