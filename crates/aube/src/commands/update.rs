@@ -1517,12 +1517,24 @@ async fn run_filtered(
         }
         // A later picker cancellation does not roll back importer updates the
         // user already confirmed, so materialize those completed updates before
-        // returning 130. If the install itself fails, surface that error instead
-        // of hiding a potentially inconsistent on-disk tree behind cancellation.
+        // returning 130. Cancellation remains the command's exit status even if
+        // this best-effort install fails, but keep that failure visible.
         if shared_workspace_lockfile && completed_update {
             super::retarget_cwd(&root)?;
             let lock = super::take_install_project_lock(&root)?;
-            install::run_with_project_lock(chained_install_options(&args), &lock).await?;
+            if let Err(error) =
+                install::run_with_project_lock(chained_install_options(&args), &lock).await
+            {
+                if exit_code == Some(130) {
+                    tracing::error!(
+                        code = aube_codes::errors::ERR_AUBE_INSTALL_CANCELLED,
+                        %error,
+                        "deferred install failed while finalizing updates before cancellation"
+                    );
+                } else {
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
