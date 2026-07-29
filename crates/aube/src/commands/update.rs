@@ -12,6 +12,8 @@ struct CatalogUpdateTarget {
     source: super::CatalogSource,
 }
 
+type RecursiveCatalogChoices = BTreeMap<(String, String), bool>;
+
 #[derive(Debug, Clone, Args)]
 pub struct UpdateArgs {
     /// Package(s) to update (all if empty)
@@ -118,7 +120,16 @@ pub struct UpdateArgs {
 
 pub async fn run(
     args: UpdateArgs,
+    filter: aube_workspace::selector::EffectiveFilter,
+) -> miette::Result<Option<i32>> {
+    run_inner(args, filter, true, None).await
+}
+
+async fn run_inner(
+    args: UpdateArgs,
     mut filter: aube_workspace::selector::EffectiveFilter,
+    chain_install: bool,
+    mut recursive_catalog_choices: Option<&mut RecursiveCatalogChoices>,
 ) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
     args.lockfile.install_overrides();
@@ -454,22 +465,43 @@ pub async fn run(
     };
 
     if args.interactive && !manifest_keys_to_update.is_empty() {
-        let selected = match pick_update_interactively(
-            &manifest_keys_to_update,
-            &manifest,
-            &all_specifiers,
-            existing.as_ref(),
-            &existing_importers,
-            &preserve_pin,
-            &cwd,
-            latest,
-        )
-        .await?
-        {
-            Some(sel) => sel,
-            // Picker cancelled (Ctrl-C / Esc): exit 130 via the return path.
-            None => return Ok(Some(130)),
+        let mut picker_keys = manifest_keys_to_update.clone();
+        let previously_selected = recursive_catalog_choices
+            .as_deref()
+            .map(|choices| {
+                apply_previous_catalog_choices(&mut picker_keys, &all_specifiers, choices)
+            })
+            .unwrap_or_default();
+        let selected = if picker_keys.is_empty() {
+            BTreeSet::new()
+        } else {
+            match pick_update_interactively(
+                &picker_keys,
+                &manifest,
+                &all_specifiers,
+                existing.as_ref(),
+                &existing_importers,
+                &preserve_pin,
+                &cwd,
+                latest,
+            )
+            .await?
+            {
+                Some(sel) => sel,
+                // Picker cancelled (Ctrl-C / Esc): exit 130 via the return path.
+                None => return Ok(Some(130)),
+            }
         };
+        if let Some(choices) = recursive_catalog_choices.as_mut() {
+            for key in &picker_keys {
+                let original = all_specifiers.get(key).map(String::as_str).unwrap_or("");
+                let Some(catalog) = catalog_name_from_spec(original) else {
+                    continue;
+                };
+                choices.insert((catalog.to_string(), key.clone()), selected.contains(key));
+            }
+        }
+        let selected: BTreeSet<String> = selected.into_iter().chain(previously_selected).collect();
         if selected.is_empty() && indirect_arg_names.is_empty() {
             eprintln!("No packages selected.");
             return Ok(None);
@@ -854,24 +886,9 @@ pub async fn run(
     // sync (drift, manual edits, future chained calls) the install would
     // re-resolve and re-attach the pnpmfile hook — silently overriding
     // the flags the user passed to `aube update`.
-    let mut chained =
-        install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Prefer));
-    chained.ignore_pnpmfile = args.ignore_pnpmfile;
-    chained.pnpmfile = args.pnpmfile.clone();
-    chained.global_pnpmfile = args.global_pnpmfile.clone();
-    // `aube update` is one of the canonical fresh-resolution
-    // entry points — by design it pulls newer versions than the
-    // lockfile pins. Route the post-resolve transitive set
-    // through the live OSV API so the freshest `MAL-*` advisories
-    // apply at the moment a human is changing what's installed,
-    // matching `aube add`'s behavior.
-    chained.osv_transitive_check = true;
-    // `--lockfile-only`: lockfile is already written above; tell the
-    // chained install to skip linking `node_modules` so the on-disk
-    // tree stays as-is. Mirrors `aube install --lockfile-only` and
-    // closes the gap with `npm update --package-lock-only`.
-    chained.lockfile_only = args.lockfile_only;
-    install::run_with_project_lock(chained, &lock).await?;
+    if chain_install {
+        install::run_with_project_lock(chained_install_options(&args), &lock).await?;
+    }
 
     Ok(None)
 }
@@ -1329,7 +1346,9 @@ async fn run_filtered(
     } else {
         None
     };
+    let mut exit_code = None;
     let result = async {
+        let mut catalog_choices = RecursiveCatalogChoices::new();
         for pkg in matched {
             let root_graph = if let Some(root_manifest) = root_manifest.as_ref() {
                 Some(read_workspace_lockfile(&root, root_manifest)?)
@@ -1450,11 +1469,16 @@ async fn run_filtered(
                     continue;
                 }
             }
-            Box::pin(run(
+            exit_code = Box::pin(run_inner(
                 per_pkg,
                 aube_workspace::selector::EffectiveFilter::default(),
+                !shared_workspace_lockfile,
+                args.interactive.then_some(&mut catalog_choices),
             ))
             .await?;
+            if exit_code.is_some() {
+                return Ok(());
+            }
             if let (Some(root_manifest), Some(root_graph)) = (root_manifest.as_ref(), root_graph) {
                 merge_filtered_update_lockfile(
                     &root,
@@ -1468,11 +1492,53 @@ async fn run_filtered(
                 .await?;
             }
         }
+        if shared_workspace_lockfile {
+            super::retarget_cwd(&root)?;
+            let lock = super::take_install_project_lock(&root)?;
+            install::run_with_project_lock(chained_install_options(&args), &lock).await?;
+        }
         Ok(())
     }
     .await;
     super::finish_filtered_workspace(&cwd, result)?;
-    Ok(None)
+    Ok(exit_code)
+}
+
+fn chained_install_options(args: &UpdateArgs) -> install::InstallOptions {
+    let mut chained =
+        install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Prefer));
+    chained.ignore_pnpmfile = args.ignore_pnpmfile;
+    chained.pnpmfile = args.pnpmfile.clone();
+    chained.global_pnpmfile = args.global_pnpmfile.clone();
+    // Fresh update resolutions should receive the same live OSV check
+    // whether the install is per-project or deferred to the workspace root.
+    chained.osv_transitive_check = true;
+    // `--lockfile-only` keeps the post-update install from linking modules.
+    chained.lockfile_only = args.lockfile_only;
+    chained
+}
+
+fn apply_previous_catalog_choices(
+    picker_keys: &mut Vec<String>,
+    specifiers: &BTreeMap<String, String>,
+    choices: &RecursiveCatalogChoices,
+) -> BTreeSet<String> {
+    let mut selected = BTreeSet::new();
+    picker_keys.retain(|key| {
+        let original = specifiers.get(key).map(String::as_str).unwrap_or("");
+        let Some(catalog) = catalog_name_from_spec(original) else {
+            return true;
+        };
+        match choices.get(&(catalog.to_string(), key.clone())) {
+            Some(true) => {
+                selected.insert(key.clone());
+                false
+            }
+            Some(false) => false,
+            None => true,
+        }
+    });
+    selected
 }
 
 fn resolve_shared_workspace_lockfile(cwd: &std::path::Path) -> miette::Result<bool> {
@@ -1600,7 +1666,13 @@ async fn merge_update_graph_into_workspace_lockfile(
     }
     root_graph.packages.extend(pkg_graph.packages);
     root_graph.times.extend(pkg_graph.times);
-    root_graph.catalogs.extend(pkg_graph.catalogs);
+    for (catalog, entries) in pkg_graph.catalogs {
+        root_graph
+            .catalogs
+            .entry(catalog)
+            .or_default()
+            .extend(entries);
+    }
     root_graph
         .patched_dependencies
         .extend(pkg_graph.patched_dependencies);
@@ -1788,6 +1860,39 @@ fn exact_pin_version(spec: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recursive_catalog_choice_is_reused_without_reprompting() {
+        let mut picker_keys = vec!["lighthouse".to_string(), "local-only".to_string()];
+        let specifiers = BTreeMap::from([
+            ("lighthouse".to_string(), "catalog:".to_string()),
+            ("local-only".to_string(), "^1.0.0".to_string()),
+        ]);
+        let choices = RecursiveCatalogChoices::from([(
+            ("default".to_string(), "lighthouse".to_string()),
+            true,
+        )]);
+
+        let selected = apply_previous_catalog_choices(&mut picker_keys, &specifiers, &choices);
+
+        assert_eq!(selected, BTreeSet::from(["lighthouse".to_string()]));
+        assert_eq!(picker_keys, vec!["local-only"]);
+    }
+
+    #[test]
+    fn rejected_recursive_catalog_choice_stays_rejected() {
+        let mut picker_keys = vec!["lighthouse".to_string()];
+        let specifiers = BTreeMap::from([("lighthouse".to_string(), "catalog:".to_string())]);
+        let choices = RecursiveCatalogChoices::from([(
+            ("default".to_string(), "lighthouse".to_string()),
+            false,
+        )]);
+
+        let selected = apply_previous_catalog_choices(&mut picker_keys, &specifiers, &choices);
+
+        assert!(selected.is_empty());
+        assert!(picker_keys.is_empty());
+    }
 
     #[test]
     fn canonical_update_ignores_replace_package_json_legacy_values() {

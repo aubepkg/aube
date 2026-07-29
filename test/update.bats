@@ -166,6 +166,8 @@ EOF
 
 	run aube update -r --latest is-odd --lockfile-only
 	assert_success
+	install_runs="$(printf '%s\n' "$output" | grep -c 'Lockfile is up to date')"
+	[ "$install_runs" -eq 1 ]
 
 	run grep 'is-odd: 3.0.1' aube-workspace.yaml
 	assert_success
@@ -178,6 +180,35 @@ EOF
 		run grep '"is-odd":"catalog:"' "packages/$pkg/package.json"
 		assert_success
 	done
+}
+
+@test "aube update -r --latest preserves unrelated shared catalog entries" {
+	mkdir -p packages/a packages/b
+	cat >package.json <<'EOF'
+{"name":"catalog-update-root","private":true}
+EOF
+	cat >aube-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+catalog:
+  is-odd: 0.1.2
+  is-even: 1.0.0
+EOF
+	cat >packages/a/package.json <<'EOF'
+{"name":"a","private":true,"dependencies":{"is-odd":"catalog:"}}
+EOF
+	cat >packages/b/package.json <<'EOF'
+{"name":"b","private":true,"dependencies":{"is-even":"catalog:"}}
+EOF
+	run aube install --lockfile-only
+	assert_success
+
+	run aube update -r --latest is-odd --lockfile-only
+	assert_success
+
+	run grep -A8 '^catalogs:' aube-lock.yaml
+	assert_output --partial 'is-odd:'
+	assert_output --partial 'is-even:'
 }
 
 @test "aube update -r --latest --no-save leaves the catalog range unchanged" {
