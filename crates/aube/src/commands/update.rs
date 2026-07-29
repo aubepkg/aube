@@ -1139,9 +1139,10 @@ async fn pick_update_interactively(
             continue;
         }
         let label = format!("{} {key} {current} → {target}", dep_bucket(manifest, key),);
+        let label = aube_util::terminal::sanitize_inline(&label);
         picker = picker.option(
             demand::DemandOption::new((*key).clone())
-                .label(&label)
+                .label(label.as_ref())
                 .selected(true),
         );
         shown += 1;

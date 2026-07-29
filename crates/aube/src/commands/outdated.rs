@@ -94,7 +94,7 @@ pub struct OutdatedArgs {
     pub network: crate::cli_args::NetworkArgs,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct Row {
     // Skipped on serialize — the outer `render_json` map is keyed by
     // name, so duplicating it inside each entry would diverge from
@@ -623,6 +623,25 @@ fn render_table(rows: &[Row], long: bool) {
         println!("All dependencies up to date.");
         return;
     }
+
+    let rows: Vec<Row> = rows
+        .iter()
+        .cloned()
+        .map(|mut row| {
+            row.name = aube_util::terminal::sanitize_inline(&row.name).into_owned();
+            row.current = aube_util::terminal::sanitize_inline(&row.current).into_owned();
+            row.wanted = aube_util::terminal::sanitize_inline(&row.wanted).into_owned();
+            row.latest = aube_util::terminal::sanitize_inline(&row.latest).into_owned();
+            row.specifier = row
+                .specifier
+                .map(|value| aube_util::terminal::sanitize_inline(&value).into_owned());
+            row.importer = row
+                .importer
+                .map(|value| aube_util::terminal::sanitize_inline(&value).into_owned());
+            row
+        })
+        .collect();
+    let rows = rows.as_slice();
 
     // Compute column widths.
     let name_w = rows.iter().map(|r| r.name.len()).max().unwrap_or(7).max(7);

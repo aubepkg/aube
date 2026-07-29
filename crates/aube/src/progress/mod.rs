@@ -934,10 +934,12 @@ impl InstallProgress {
                 if st.visible < TTY_MAX_VISIBLE_FETCH_ROWS {
                     st.visible += 1;
                     drop(st);
+                    let label = format!("{name}@{version}");
+                    let label = aube_util::terminal::sanitize_inline(&label);
                     let child = ProgressJobBuilder::new()
                         .body("  {{spinner()}} {{label | flex}}")
                         .body_text(None::<String>)
-                        .prop("label", &format!("{name}@{version}"))
+                        .prop("label", label.as_ref())
                         .status(ProgressStatus::Running)
                         .on_done(ProgressJobDoneBehavior::Hide)
                         .build();
@@ -1368,6 +1370,7 @@ impl Drop for FetchRow {
 /// instead, but this works without one.
 pub fn safe_eprintln(msg: &str) {
     use std::io::Write;
+    let msg = aube_util::terminal::sanitize(msg);
     let was_paused = clx::progress::is_paused();
     if !was_paused {
         clx::progress::pause();
@@ -1417,6 +1420,8 @@ impl Drop for PausingWriterGuard {
             return;
         }
         let buf = std::mem::take(&mut self.buf);
+        let text = String::from_utf8_lossy(&buf);
+        let sanitized = aube_util::terminal::strip_formatting(&text);
         // Pause *before* taking `TERM_LOCK`: `pause()` internally
         // calls `clear()`, which also grabs `TERM_LOCK`, and
         // `std::sync::Mutex` isn't reentrant — taking the lock first
@@ -1444,7 +1449,7 @@ impl Drop for PausingWriterGuard {
         // explicit annotation silences its `#[must_use]`.
         let _: () = clx::progress::with_terminal_lock(|| {
             let mut stderr = std::io::stderr().lock();
-            let _ = stderr.write_all(&buf);
+            let _ = stderr.write_all(sanitized.as_bytes());
             let _ = stderr.flush();
         });
         if !was_paused {

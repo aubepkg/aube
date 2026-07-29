@@ -475,6 +475,8 @@ fn run_global(args: &ListArgs) -> miette::Result<()> {
             println!("{}", layout.pkg_dir.display());
             let last_idx = rows.len().saturating_sub(1);
             for (i, (name, version, path)) in rows.iter().enumerate() {
+                let name = aube_util::terminal::sanitize_inline(name);
+                let version = aube_util::terminal::sanitize_inline(version);
                 let connector = if i == last_idx {
                     "└── "
                 } else {
@@ -537,6 +539,8 @@ fn render_default_for_importer(
 ) -> miette::Result<()> {
     let project_name = manifest.name.as_deref().unwrap_or("(unnamed)");
     let project_version = manifest.version.as_deref().unwrap_or("");
+    let project_name = aube_util::terminal::sanitize_inline(project_name);
+    let project_version = aube_util::terminal::sanitize_inline(project_version);
     let project_path = cwd.display();
     println!("{project_name}@{project_version} {project_path}");
     println!();
@@ -640,6 +644,8 @@ fn render_section(
         let connector = if is_last { "└── " } else { "├── " };
         let pkg = graph.get_package(&dep.dep_path);
         let version = pkg.map(|p| p.version.as_str()).unwrap_or("?");
+        let name = aube_util::terminal::sanitize_inline(&dep.name);
+        let version = aube_util::terminal::sanitize_inline(version);
         let extra = if args.long {
             format!(
                 "  ({vstore_prefix}{})",
@@ -651,7 +657,7 @@ fn render_section(
         } else {
             String::new()
         };
-        println!("{connector}{} {version}{extra}", dep.name);
+        println!("{connector}{name} {version}{extra}");
 
         if args.depth.includes_transitive()
             && let Some(pkg) = pkg
@@ -696,6 +702,8 @@ fn render_subtree(
         let is_last = i == last;
         let connector = if is_last { "└── " } else { "├── " };
         let dep_path = format!("{name}@{version}");
+        let display_name = aube_util::terminal::sanitize_inline(name);
+        let display_version = aube_util::terminal::sanitize_inline(version);
         let extra = if args.long {
             format!(
                 "  ({vstore_prefix}{})",
@@ -711,7 +719,7 @@ fn render_subtree(
         } else {
             ""
         };
-        println!("{prefix}{connector}{name} {version}{extra}{cycle_marker}");
+        println!("{prefix}{connector}{display_name} {display_version}{extra}{cycle_marker}");
 
         if cycle_marker.is_empty() {
             visited.insert(dep_path.clone());
