@@ -672,13 +672,16 @@ fn render_section(
             std::borrow::Cow::Borrowed(version)
         };
         let extra = if args.long {
-            format!(
-                "  ({vstore_prefix}{})",
-                aube_lockfile::dep_path_filename::dep_path_to_filename(
-                    &dep.dep_path,
-                    vstore_max_len,
-                )
-            )
+            let filename = aube_lockfile::dep_path_filename::dep_path_to_filename(
+                &dep.dep_path,
+                vstore_max_len,
+            );
+            let filename = if sanitize_tree {
+                aube_util::terminal::sanitize_inline(&filename)
+            } else {
+                std::borrow::Cow::Borrowed(filename.as_str())
+            };
+            format!("  ({vstore_prefix}{filename})")
         } else {
             String::new()
         };
@@ -741,10 +744,14 @@ fn render_subtree(
             )
         };
         let extra = if args.long {
-            format!(
-                "  ({vstore_prefix}{})",
-                aube_lockfile::dep_path_filename::dep_path_to_filename(&dep_path, vstore_max_len,)
-            )
+            let filename =
+                aube_lockfile::dep_path_filename::dep_path_to_filename(&dep_path, vstore_max_len);
+            let filename = if sanitize_tree {
+                aube_util::terminal::sanitize_inline(&filename)
+            } else {
+                std::borrow::Cow::Borrowed(filename.as_str())
+            };
+            format!("  ({vstore_prefix}{filename})")
         } else {
             String::new()
         };
@@ -779,18 +786,16 @@ fn render_subtree(
 }
 
 fn graph_needs_terminal_sanitization(graph: &LockfileGraph) -> bool {
-    graph
-        .importers
-        .values()
-        .flatten()
-        .any(|dep| aube_util::terminal::needs_inline_sanitization(&dep.name))
-        || graph.packages.values().any(|pkg| {
-            aube_util::terminal::needs_inline_sanitization(&pkg.version)
-                || pkg.dependencies.iter().any(|(name, version)| {
-                    aube_util::terminal::needs_inline_sanitization(name)
-                        || aube_util::terminal::needs_inline_sanitization(version)
-                })
-        })
+    graph.importers.values().flatten().any(|dep| {
+        aube_util::terminal::needs_inline_sanitization(&dep.name)
+            || aube_util::terminal::needs_inline_sanitization(&dep.dep_path)
+    }) || graph.packages.values().any(|pkg| {
+        aube_util::terminal::needs_inline_sanitization(&pkg.version)
+            || pkg.dependencies.iter().any(|(name, version)| {
+                aube_util::terminal::needs_inline_sanitization(name)
+                    || aube_util::terminal::needs_inline_sanitization(version)
+            })
+    })
 }
 
 /// JSON output: a single array with one entry per root importer (matching
@@ -1106,6 +1111,20 @@ mod tests {
             ..Default::default()
         };
         assert!(!graph_needs_terminal_sanitization(&safe));
+
+        let unsafe_path_graph = LockfileGraph {
+            importers: BTreeMap::from([(
+                ".".to_string(),
+                vec![DirectDep {
+                    name: "child".to_string(),
+                    dep_path: "child@2.0.0\u{202E}".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("2.0.0".to_string()),
+                }],
+            )]),
+            ..Default::default()
+        };
+        assert!(graph_needs_terminal_sanitization(&unsafe_path_graph));
 
         let unsafe_graph = LockfileGraph {
             packages: BTreeMap::from([(
