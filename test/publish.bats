@@ -441,6 +441,7 @@ _stop_publish_server() {
 
 @test "aube publish refuses to re-publish a version already on the registry" {
 	_write_publishable_pkg
+	node -e "const fs=require('fs'); const m=require('./package.json'); m.scripts={prepublishOnly:'node -e \\'require(\\\"fs\\\").writeFileSync(\\\"lifecycle.marker\\\", \\\"ran\\\")\\''}; fs.writeFileSync('package.json', JSON.stringify(m, null, 2))"
 	_start_publish_server
 	port="$(cat publish-server-port)"
 	echo "//127.0.0.1:${port}/:_authToken=fake" >.npmrc
@@ -451,6 +452,7 @@ _stop_publish_server() {
 	[ "$rc" -ne 0 ]
 	assert_output --partial "publish-smoke@0.1.0 is already on"
 	assert_output --partial "--force"
+	assert_file_not_exists lifecycle.marker
 	# The pre-flight must short-circuit before the PUT; the mock
 	# server only logs PUTs to this file.
 	[ ! -s publish-server-put.log ] || {

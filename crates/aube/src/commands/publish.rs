@@ -380,18 +380,15 @@ async fn publish_one(
     fanout: bool,
     registry_override: Option<&str>,
 ) -> miette::Result<PublishOutcome> {
-    // Resolve the initial target before lifecycle hooks so the common
-    // already-published package with no pre-publish hooks keeps its
-    // script-free, archive-free fast path.
+    // Resolve the initial target before lifecycle hooks so an
+    // already-published package keeps its script-free, archive-free
+    // fast path. Hooks only run after this identity needs publishing;
+    // if they change it, the post-hook target gets a second preflight.
     let manifest = PackageJson::from_path(&pkg_dir.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to read {}/package.json", pkg_dir.display()))?;
     let initial_target =
         resolve_publish_target(&manifest, pkg_dir, config, args, registry_override)?;
-    let has_pre_publish_hooks = !args.ignore_scripts
-        && ["prepublishOnly", "prepublish", "prepack", "prepare"]
-            .iter()
-            .any(|hook| manifest.scripts.contains_key(*hook));
     let initial_already_published = !args.dry_run
         && !args.force
         && version_on_registry(
@@ -401,7 +398,7 @@ async fn publish_one(
             &initial_target.version,
         )
         .await;
-    if initial_already_published && !has_pre_publish_hooks {
+    if initial_already_published {
         if fanout {
             return Ok(PublishOutcome {
                 name: initial_target.name,
@@ -934,10 +931,9 @@ fn read_publish_otp(name: &str, version: &str) -> miette::Result<String> {
 }
 
 /// Pre-pack chain for publish: `prepublishOnly` → `prepublish` →
-/// `prepack` → `prepare`. Packages without these hooks retain the
-/// script-free "already on registry" fast path. When hooks exist they
-/// run before the final preflight because they may rewrite the publish
-/// identity. `prepublish` is
+/// `prepack` → `prepare`. The initial "already on registry" fast path
+/// returns before this chain. When hooks run they are followed by a
+/// second preflight if they rewrote the publish identity. `prepublish` is
 /// deprecated by npm but pnpm still runs it on publish, so we match
 /// pnpm for the common case the discussion in #253 flagged. The
 /// manifest is threaded through so the whole chain shares a single
