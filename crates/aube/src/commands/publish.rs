@@ -372,15 +372,17 @@ async fn publish_one(
     fanout: bool,
     registry_override: Option<&str>,
 ) -> miette::Result<PublishOutcome> {
-    // Read the manifest *first* so the name/version needed for the
-    // existence check are available without touching the filesystem
-    // for file collection or the CPU for gzip/SHA hashing. This is the
-    // whole reason re-running `aube publish -r` on a mostly-published
-    // workspace is cheap — the happy-path skip must not pay the cost
-    // of a packed tarball.
+    // Lifecycle hooks may rewrite the published name, version, registry,
+    // or tag. Run them before resolving the registry target so the
+    // already-published check and eventual upload use the same identity.
+    // We still defer file collection and gzip/SHA hashing until after the
+    // preflight, keeping recursive no-op publishes cheaper than packing.
     let manifest = PackageJson::from_path(&pkg_dir.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to read {}/package.json", pkg_dir.display()))?;
+    run_publish_lifecycle_pre(pkg_dir, &manifest, args.ignore_scripts).await?;
+    let manifest = super::pack::read_root_manifest(pkg_dir)?;
+
     let name = published_name(&manifest)
         .wrap_err_with(|| format!("publish: invalid {}/package.json", pkg_dir.display()))?;
     let version = normalize_publish_version(manifest.version.as_deref().ok_or_else(|| {
@@ -424,11 +426,9 @@ async fn publish_one(
         .to_string();
 
     if args.dry_run {
-        // Dry-run still runs the pre-publish chain so users can smoke-test
-        // their `prepublishOnly` / `prepack` / `prepare` scripts without
-        // hitting the registry, matching pnpm. `publish` / `postpublish`
-        // are skipped — nothing was actually uploaded.
-        run_publish_lifecycle_pre(pkg_dir, &manifest, args.ignore_scripts).await?;
+        // Dry-run has already run the pre-publish chain so users can
+        // smoke-test it without hitting the registry, matching pnpm.
+        // `publish` / `postpublish` are skipped — nothing was uploaded.
         let archive = build_archive_for_publish(pkg_dir)?;
         super::pack::run_pack_lifecycle_post(pkg_dir, args.ignore_scripts).await?;
         // `--dry-run --provenance` is a common "does my CI actually have
@@ -476,11 +476,9 @@ async fn publish_one(
         ));
     }
 
-    // Lifecycle hooks + tarball build only happen now that we know
-    // we're actually going to PUT. For a re-run of `-r publish` where
-    // every package is already on the registry, the loop never reaches
-    // this point and the whole fanout is script-free and gzip-free.
-    run_publish_lifecycle_pre(pkg_dir, &manifest, args.ignore_scripts).await?;
+    // The tarball build only happens now that we know we're actually
+    // going to PUT. A recursive no-op publish still avoids file
+    // collection, gzip, and body hashing.
     let archive = build_archive_for_publish(pkg_dir)?;
     super::pack::run_pack_lifecycle_post(pkg_dir, args.ignore_scripts).await?;
 

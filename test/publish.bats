@@ -205,7 +205,7 @@ NODE
 	assert_output "Bearer fallback-token"
 }
 
-@test "aube publish exchanges OIDC token for post-hook package name" {
+@test "aube publish preflights and exchanges OIDC token for post-hook package name" {
 	_write_publishable_pkg
 	cat >rewrite-name.mjs <<'NODE'
 import fs from 'node:fs';
@@ -220,7 +220,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/publish-smoke') {
+  if (req.method === 'GET' && req.url === '/publish-renamed') {
     res.statusCode = 404;
     res.end('{}');
     return;
