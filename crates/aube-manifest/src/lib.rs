@@ -1263,6 +1263,7 @@ fn line_col_to_byte_offset(content: &str, line: usize, column: usize) -> usize {
 /// could be detected.
 pub fn detect_json_indent(raw: &str) -> &str {
     let mut root_indent: Option<&str> = None;
+    let mut detected: Option<&str> = None;
 
     for line in raw.lines() {
         let trimmed = line.trim_start();
@@ -1279,13 +1280,16 @@ pub fn detect_json_indent(raw: &str) -> &str {
             }
             Some(root) => {
                 if current_indent.len() > root.len() && current_indent.starts_with(root) {
-                    return &current_indent[root.len()..];
+                    let candidate = &current_indent[root.len()..];
+                    if detected.is_none_or(|indent| candidate.len() < indent.len()) {
+                        detected = Some(candidate);
+                    }
                 }
             }
         }
     }
 
-    "  "
+    detected.unwrap_or("  ")
 }
 
 /// Serialize `value` as pretty JSON using `indent` for indentation.
@@ -1311,8 +1315,20 @@ mod tests {
         assert_eq!(detect_json_indent("{\n   \"name\": \"foo\"\n}"), "   ");
         assert_eq!(detect_json_indent("{\n    \"name\": \"foo\"\n}"), "    ");
         assert_eq!(detect_json_indent("{\n\t\"name\": \"foo\"\n}"), "\t");
+        assert_eq!(
+            detect_json_indent("\u{FEFF}{\n\t\"name\": \"foo\"\n}"),
+            "\t"
+        );
         assert_eq!(detect_json_indent("  {\n    \"name\": \"foo\"\n  }"), "  ");
         assert_eq!(detect_json_indent("{\"name\":\"foo\"}"), "  ");
+    }
+
+    #[test]
+    fn detect_json_indent_uses_shallowest_indented_line() {
+        assert_eq!(
+            detect_json_indent("{\"dependencies\": {\n    \"foo\": \"1.0.0\"\n  }\n}"),
+            "  "
+        );
     }
 
     #[test]
