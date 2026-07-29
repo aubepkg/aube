@@ -15,23 +15,30 @@ pub(super) async fn run_root_lifecycle(
     manifest: &aube_manifest::PackageJson,
     hook: aube_scripts::LifecycleHook,
 ) -> miette::Result<()> {
+    run_root_lifecycle_script(project_dir, modules_dir_name, manifest, hook.script_name()).await
+}
+
+/// Run a named root-package lifecycle script.
+///
+/// Most install hooks use [`aube_scripts::LifecycleHook`], but pnpm's
+/// root-only `pnpm:devPreinstall` hook is intentionally outside the npm
+/// lifecycle enum. Keeping the spawn and error path here makes the special
+/// hook behave exactly like the ordinary root lifecycle.
+pub(super) async fn run_root_lifecycle_script(
+    project_dir: &std::path::Path,
+    modules_dir_name: &str,
+    manifest: &aube_manifest::PackageJson,
+    script_name: &str,
+) -> miette::Result<()> {
     // Only announce when the hook is actually defined, so projects without
     // lifecycle scripts don't get noise in their install output.
-    if !manifest.scripts.contains_key(hook.script_name()) {
+    if !manifest.scripts.contains_key(script_name) {
         return Ok(());
     }
-    tracing::debug!("Running {} script...", hook.script_name());
-    aube_scripts::run_root_hook(project_dir, modules_dir_name, manifest, hook)
+    tracing::debug!("Running {script_name} script...");
+    aube_scripts::run_root_script_by_name(project_dir, modules_dir_name, manifest, script_name)
         .await
-        .map_err(|e| {
-            // Old message was just the bare error string. User got
-            // a cryptic "exit status 1" with no hook name, no script
-            // path, nothing. Tag with which hook fired so the log
-            // line is self-documenting. This is the common case
-            // (failed preinstall on `aube install`) so the regression
-            // really hurt triage.
-            miette!("root {} script failed: {e}", hook.script_name())
-        })?;
+        .map_err(|e| miette!("root {script_name} script failed: {e}"))?;
     Ok(())
 }
 

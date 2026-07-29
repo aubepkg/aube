@@ -52,7 +52,8 @@ pub(crate) use lifecycle::{
     run_dep_lifecycle_scripts,
 };
 use lifecycle::{
-    resolve_link_strategy, run_import_on_blocking, run_root_lifecycle, validate_required_scripts,
+    resolve_link_strategy, run_import_on_blocking, run_root_lifecycle, run_root_lifecycle_script,
+    validate_required_scripts,
 };
 
 pub(crate) fn resolve_active_lockfile_dir(
@@ -737,6 +738,19 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             (build_policy, policy_warnings)
         };
     let inherited_build_policy_for_git_prepare = Some(std::sync::Arc::new(build_policy.clone()));
+
+    // pnpm's root-only pre-resolution hook. Unlike the ordinary
+    // `preinstall` lifecycle below, this runs exactly once from the
+    // lockfile/workspace root and never fans out to member manifests.
+    // The warm fast path returned above, so an already-current repeat
+    // install naturally skips it.
+    if !opts.dry_run
+        && !opts.ignore_scripts
+        && !lockfile_only_effective
+        && !opts.skip_root_lifecycle
+    {
+        run_root_lifecycle_script(&cwd, &modules_dir_name, &manifest, "pnpm:devPreinstall").await?;
+    }
 
     // 1b. Project `preinstall` lifecycle hooks.
     //     Workspace installs run the hook for every physical importer

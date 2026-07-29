@@ -1035,6 +1035,7 @@ JSON
   "name": "preinstall-test",
   "version": "1.0.0",
   "scripts": {
+    "pnpm:devPreinstall": "echo DEV_PREINSTALL_RAN > dev-preinstall.marker",
     "preinstall": "echo PREINSTALL_RAN > preinstall.marker"
   },
   "dependencies": { "is-odd": "^3.0.1" }
@@ -1043,6 +1044,7 @@ JSON
 	run aube install --lockfile-only
 	assert_success
 	assert_file_exists aube-lock.yaml
+	assert [ ! -e dev-preinstall.marker ]
 	assert [ ! -e preinstall.marker ]
 }
 
