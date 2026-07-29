@@ -1515,7 +1515,11 @@ async fn run_filtered(
             }
             completed_update = true;
         }
-        if shared_workspace_lockfile && (exit_code.is_none() || completed_update) {
+        // A later picker cancellation does not roll back importer updates the
+        // user already confirmed, so materialize those completed updates before
+        // returning 130. If the install itself fails, surface that error instead
+        // of hiding a potentially inconsistent on-disk tree behind cancellation.
+        if shared_workspace_lockfile && completed_update {
             super::retarget_cwd(&root)?;
             let lock = super::take_install_project_lock(&root)?;
             install::run_with_project_lock(chained_install_options(&args), &lock).await?;

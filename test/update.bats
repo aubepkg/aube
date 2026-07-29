@@ -211,6 +211,14 @@ EOF
 	assert_output --partial 'is-even:'
 }
 
+@test "aube update -r skips deferred install when no importer updates" {
+	_setup_catalog_update_workspace
+
+	run aube update -r --latest does-not-exist --lockfile-only
+	assert_success
+	refute_output --partial 'Lockfile is up to date'
+}
+
 @test "aube update -r --latest --no-save leaves the catalog range unchanged" {
 	_setup_catalog_update_workspace
 
