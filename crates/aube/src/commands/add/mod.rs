@@ -127,6 +127,7 @@ pub async fn add_to_project(
             let mut install_options = install::InstallOptions::with_mode(install::FrozenMode::Fix);
             install_options.project_dir = Some(project_dir.to_path_buf());
             install_options.ignore_scripts = options.ignore_scripts;
+            install_options.run_dev_preinstall = true;
             install_options.force = options.force;
             install_options.dep_selection = options.dep_selection;
             install_options.osv_transitive_check = options.osv_transitive_check && !options.offline;

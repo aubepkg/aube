@@ -750,6 +750,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             opts.ignore_scripts,
             opts.dry_run,
             lockfile_only_effective,
+            None,
         )
         .await?;
     }
@@ -2516,12 +2517,17 @@ pub(crate) async fn run_dev_preinstall(
     ignore_scripts: bool,
     dry_run: bool,
     lockfile_only: bool,
+    initialize_environment_for: Option<&str>,
 ) -> miette::Result<()> {
     if ignore_scripts || dry_run || lockfile_only {
         return Ok(());
     }
     let root_dir =
         crate::dirs::find_workspace_root(project_dir).unwrap_or_else(|| project_dir.to_path_buf());
+    if let Some(command) = initialize_environment_for {
+        crate::runtime::ensure_for_cwd(&root_dir).await?;
+        super::configure_script_settings_for_cwd(&root_dir, Some(command))?;
+    }
     let root_manifest = super::load_manifest_or_default(&root_dir)?;
     let modules_dir_name = super::resolve_modules_dir_name_for_cwd(&root_dir);
     run_root_lifecycle_script(

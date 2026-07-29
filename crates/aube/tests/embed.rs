@@ -121,6 +121,42 @@ async fn facade_adds_local_package_to_workspace_member() {
 }
 
 #[tokio::test]
+async fn facade_add_runs_root_dev_preinstall() {
+    initialize_test_host();
+    let (workspace, app) = workspace_fixture();
+    std::fs::write(
+        workspace.path().join("package.json"),
+        r#"{
+  "private": true,
+  "scripts": {
+    "pnpm:devPreinstall": "printf ran > embedded-dev-preinstall.marker"
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    aube::embed::add(
+        &app,
+        &["library@workspace:*".to_string()],
+        aube::embed::AddToProjectOptions {
+            offline: true,
+            control: InstallControl::silent(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        workspace
+            .path()
+            .join("embedded-dev-preinstall.marker")
+            .is_file()
+    );
+}
+
+#[tokio::test]
 async fn cancelled_manifest_mutation_is_rolled_back() {
     initialize_test_host();
     let (workspace, app) = workspace_fixture();

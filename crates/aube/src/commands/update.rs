@@ -205,7 +205,14 @@ async fn run_inner(
     }
     let lock = super::take_install_project_lock(&cwd)?;
     if !args.dev_preinstall_already_run {
-        install::run_dev_preinstall(&cwd, args.ignore_scripts, false, args.lockfile_only).await?;
+        install::run_dev_preinstall(
+            &cwd,
+            args.ignore_scripts,
+            false,
+            args.lockfile_only,
+            Some("update"),
+        )
+        .await?;
     }
     let manifest_path = cwd.join("package.json");
 
@@ -1364,7 +1371,14 @@ async fn run_filtered(
     reject_unsupported_pkg_specs(&args.packages)?;
     let cwd = crate::dirs::cwd()?;
     let (root, matched) = super::select_workspace_packages(&cwd, filter, "update")?;
-    install::run_dev_preinstall(&root, args.ignore_scripts, false, args.lockfile_only).await?;
+    install::run_dev_preinstall(
+        &root,
+        args.ignore_scripts,
+        false,
+        args.lockfile_only,
+        Some("update"),
+    )
+    .await?;
     args.dev_preinstall_already_run = true;
     let shared_workspace_lockfile = resolve_shared_workspace_lockfile(&root)?;
     let root_manifest = if shared_workspace_lockfile {

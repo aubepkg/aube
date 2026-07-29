@@ -103,6 +103,25 @@ EOF
 	assert_file_not_exists dev.marker
 }
 
+@test "aube update configures the devPreinstall script environment" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-update",
+  "version": "0.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"env.marker\", `${process.env.npm_command}\\n${process.env.npm_node_execpath}\\n`)'"
+  }
+}
+EOF
+
+	run aube update
+	assert_success
+	run sed -n '1p' env.marker
+	assert_output "update"
+	run sed -n '2p' env.marker
+	assert_output --regexp '.+node.*'
+}
+
 @test "aube update from a workspace member runs only the root pnpm:devPreinstall" {
 	mkdir -p packages/app
 	cat >pnpm-workspace.yaml <<'YAML'
