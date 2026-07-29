@@ -28,9 +28,7 @@
 //! "already published" error, leaving the registry itself to decide
 //! whether a republish is allowed.
 
-use crate::commands::pack::{
-    BuiltArchive, build_archive, build_archive_with_package_json, tarball_filename,
-};
+use crate::commands::pack::{BuiltArchive, build_archive_with_package_json, tarball_filename};
 use crate::commands::{encode_package_name, ensure_registry_auth_for_package};
 use aube_manifest::PackageJson;
 use aube_registry::client::RegistryClient;
@@ -383,11 +381,8 @@ async fn publish_one(
     let manifest = PackageJson::from_path(&pkg_dir.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to read {}/package.json", pkg_dir.display()))?;
-    let name = manifest
-        .name
-        .as_deref()
-        .ok_or_else(|| miette!("publish: {}/package.json has no `name`", pkg_dir.display()))?
-        .to_string();
+    let name = published_name(&manifest)
+        .wrap_err_with(|| format!("publish: invalid {}/package.json", pkg_dir.display()))?;
     let version = normalize_publish_version(manifest.version.as_deref().ok_or_else(|| {
         miette!(
             "publish: {}/package.json has no `version`",
@@ -395,9 +390,11 @@ async fn publish_one(
         )
     })?);
 
-    // publishConfig in package.json overrides both registry and tag
-    // if the user has not passed CLI flags. pnpm and npm both honor
-    // this field, so without it migrating users would silently
+    // publishConfig in package.json overrides the published name and,
+    // when the user has not passed CLI flags, the registry and tag.
+    // The manifest's own name remains the workspace identity; only
+    // registry-facing operations use `publishConfig.name`. pnpm and npm
+    // both honor this field, so without it migrating users would silently
     // publish to the wrong place. Most common case: scoped private
     // registries like `{"publishConfig": {"registry": "https://npm.pkg.github.com"}}`
     // and `{"publishConfig": {"access": "public"}}` for first-time
@@ -590,10 +587,23 @@ async fn publish_one(
 
 fn normalize_archive_for_publish(archive: &mut BuiltArchive) {
     let version = normalize_publish_version(&archive.version);
-    if version != archive.version {
-        archive.version = version;
-        archive.filename = tarball_filename(&archive.name, &archive.version);
-    }
+    archive.version = version;
+    archive.filename = tarball_filename(&archive.name, &archive.version);
+}
+
+fn published_name(manifest: &PackageJson) -> miette::Result<String> {
+    let manifest_name = manifest
+        .name
+        .as_deref()
+        .ok_or_else(|| miette!("package.json has no `name`"))?;
+    Ok(manifest
+        .extra
+        .get("publishConfig")
+        .and_then(|value| value.as_object())
+        .and_then(|config| config.get("name"))
+        .and_then(|value| value.as_str())
+        .unwrap_or(manifest_name)
+        .to_string())
 }
 
 fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
@@ -601,16 +611,26 @@ fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
     let manifest_bytes = std::fs::read(&manifest_path)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: PackageJson = serde_json::from_slice(&manifest_bytes)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse {}", manifest_path.display()))?;
+    let name = published_name(&manifest)
+        .wrap_err_with(|| format!("publish: invalid {}", manifest_path.display()))?;
     let mut manifest_json: serde_json::Value =
         serde_json::from_slice(&manifest_bytes).into_diagnostic()?;
+    if let Some(obj) = manifest_json.as_object_mut() {
+        obj.insert("name".into(), name.clone().into());
+    }
     let Some(raw_version) = manifest_json.get("version").and_then(|v| v.as_str()) else {
-        return build_archive(pkg_dir);
+        let mut archive = build_archive_with_package_json(
+            pkg_dir,
+            Some(serde_json::to_vec_pretty(&manifest_json).into_diagnostic()?),
+        )?;
+        archive.name = name;
+        archive.filename = tarball_filename(&archive.name, &archive.version);
+        return Ok(archive);
     };
     let version = normalize_publish_version(raw_version);
-    if version == raw_version {
-        return build_archive(pkg_dir);
-    }
-
     if let Some(obj) = manifest_json.as_object_mut() {
         obj.insert("version".into(), version.into());
     }
@@ -618,6 +638,7 @@ fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
     package_json.push(b'\n');
 
     let mut archive = build_archive_with_package_json(pkg_dir, Some(package_json))?;
+    archive.name = name;
     normalize_archive_for_publish(&mut archive);
     Ok(archive)
 }
@@ -1059,6 +1080,7 @@ fn build_publish_body(
     let obj = version_doc
         .as_object_mut()
         .ok_or_else(|| miette!("manifest did not serialize to a JSON object"))?;
+    obj.insert("name".into(), archive.name.clone().into());
     obj.insert("version".into(), archive.version.clone().into());
     obj.insert(
         "_id".into(),
@@ -1584,6 +1606,45 @@ mod tests {
         assert_eq!(archive.version, "2026.5.16");
         assert_eq!(archive.filename, "jdxcode-mise-linux-x64-2026.5.16.tgz");
         assert_eq!(package_json["version"], "2026.5.16");
+    }
+
+    #[test]
+    fn publish_config_name_renames_only_the_published_artifact() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{
+                "name": "workspace-name",
+                "version": "1.2.3",
+                "publishConfig": {"name": "@scope/published-name"}
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("README.md"), "renamed").unwrap();
+
+        let manifest = PackageJson::from_path(&tmp.path().join("package.json")).unwrap();
+        assert_eq!(manifest.name.as_deref(), Some("workspace-name"));
+        assert_eq!(published_name(&manifest).unwrap(), "@scope/published-name");
+
+        let archive = build_archive_for_publish(tmp.path()).unwrap();
+        let gz = flate2::read::GzDecoder::new(archive.tarball.as_slice());
+        let mut tar = tar::Archive::new(gz);
+        let mut package_json = None;
+        for entry in tar.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap() == std::path::Path::new("package/package.json") {
+                let mut contents = String::new();
+                std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+                package_json = Some(contents);
+                break;
+            }
+        }
+        let package_json: serde_json::Value =
+            serde_json::from_str(&package_json.expect("package.json in tarball")).unwrap();
+
+        assert_eq!(archive.name, "@scope/published-name");
+        assert_eq!(archive.filename, "scope-published-name-1.2.3.tgz");
+        assert_eq!(package_json["name"], "@scope/published-name");
     }
 
     #[test]
