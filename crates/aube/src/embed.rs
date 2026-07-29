@@ -141,6 +141,7 @@ pub async fn install(options: InstallOptions) -> Result<()> {
     command_options.dep_selection = options.dep_selection;
     command_options.ignore_scripts = options.ignore_scripts;
     command_options.skip_root_lifecycle = !options.run_root_lifecycle;
+    command_options.run_dev_preinstall = options.run_root_lifecycle;
     command_options.dry_run = options.dry_run;
     command_options.lockfile_only = options.lockfile_only;
     command_options.force = options.force;

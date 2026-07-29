@@ -102,6 +102,24 @@ JSON
 	assert_output "1"
 }
 
+@test "aube add runs pnpm:devPreinstall without ordinary root hooks" {
+	cat >package.json <<'JSON'
+{
+  "name": "dev-preinstall-add",
+  "version": "1.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"dev.marker\", \"ran\")'",
+    "postinstall": "node -e 'require(\"fs\").writeFileSync(\"postinstall.marker\", \"ran\")'"
+  }
+}
+JSON
+	echo "trustPolicy=off" >>.npmrc
+	run aube add is-odd
+	assert_success
+	assert_file_exists dev.marker
+	assert_file_not_exists postinstall.marker
+}
+
 @test "aube install runs root postinstall hook after deps are linked" {
 	cat >package.json <<'JSON'
 {

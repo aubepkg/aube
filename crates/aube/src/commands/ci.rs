@@ -90,6 +90,7 @@ pub async fn run(args: CiArgs) -> miette::Result<()> {
         build_policy_override: None,
         workspace_filter: aube_workspace::selector::EffectiveFilter::default(),
         skip_root_lifecycle: false,
+        run_dev_preinstall: true,
         // `aube ci` is the canonical "lockfile is law" path —
         // strict frozen, no drift allowed. Don't force the live
         // API; install::run's fresh-resolution detection and the

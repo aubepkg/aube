@@ -567,6 +567,7 @@ pub async fn run(
     let mut install_opts =
         install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Fix));
     apply_dangerously_allow_all_builds(&mut install_opts, dangerously_allow_all_builds);
+    install_opts.run_dev_preinstall = true;
     install_opts.osv_transitive_check = true;
     let pipeline_result: miette::Result<()> =
         install::run_with_project_lock(install_opts, &lock).await;

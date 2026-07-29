@@ -859,6 +859,7 @@ pub async fn run(
     chained.ignore_pnpmfile = args.ignore_pnpmfile;
     chained.pnpmfile = args.pnpmfile.clone();
     chained.global_pnpmfile = args.global_pnpmfile.clone();
+    chained.run_dev_preinstall = true;
     // `aube update` is one of the canonical fresh-resolution
     // entry points — by design it pulls newer versions than the
     // lockfile pins. Route the post-resolve transitive set

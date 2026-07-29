@@ -68,6 +68,26 @@ EOF
 	assert_file_exists node_modules/is-odd/index.js
 }
 
+@test "aube update runs pnpm:devPreinstall" {
+	_setup_outdated_project
+	cat >package.json <<'EOF'
+{
+  "name": "test-update",
+  "version": "0.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"dev.marker\", \"ran\")'"
+  },
+  "dependencies": {
+    "is-odd": ">=0.1.0"
+  }
+}
+EOF
+
+	run aube update is-odd
+	assert_success
+	assert_file_exists dev.marker
+}
+
 @test "aube update: reports version change in output" {
 	_setup_outdated_project
 

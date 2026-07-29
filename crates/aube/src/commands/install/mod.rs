@@ -744,10 +744,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // lockfile/workspace root and never fans out to member manifests.
     // The warm fast path returned above, so an already-current repeat
     // install naturally skips it.
-    if !opts.dry_run
-        && !opts.ignore_scripts
-        && !lockfile_only_effective
-        && !opts.skip_root_lifecycle
+    if !opts.dry_run && !opts.ignore_scripts && !lockfile_only_effective && opts.run_dev_preinstall
     {
         // Normal CLI installs already normalize `cwd` to the workspace root.
         // Explicit `project_dir` calls from embedders or chained commands may
