@@ -234,6 +234,13 @@ impl From<&InstallState> for FreshnessState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallLayoutState {
     pub linker: InstallLayoutMode,
+    /// Tree-shaping settings captured from the successful install. Commands
+    /// that inspect the materialized tree must not reconstruct it from current
+    /// settings because `.npmrc` may have changed since installation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub modules_dir_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hoisting_limits: Option<InstallHoistingLimits>,
     pub direct_entries: BTreeMap<String, Vec<String>>,
     pub packages: BTreeMap<String, InstalledPackageState>,
 }
@@ -243,6 +250,14 @@ pub struct InstallLayoutState {
 pub enum InstallLayoutMode {
     Isolated,
     Hoisted,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallHoistingLimits {
+    None,
+    Workspaces,
+    Dependencies,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -604,6 +619,7 @@ fn member_lockfiles_stale(project_dir: &Path, state: &FreshnessState) -> Option<
 pub struct WriteStateLayout<'a> {
     pub graph: &'a aube_lockfile::LockfileGraph,
     pub node_linker: aube_linker::NodeLinker,
+    pub hoisting_limits: aube_linker::HoistingLimits,
     pub modules_dir_name: &'a str,
     pub aube_dir: &'a Path,
     pub virtual_store_dir_max_length: usize,
@@ -638,15 +654,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     let (lockfile_hash, lockfile_snapshot_name) =
         snapshot_active_lockfile(project_dir, &state_path)?;
     let settings_hash = hash_settings(project_dir, cli_flags);
-    let install_layout = InstallLayoutState::from_graph(
-        project_dir,
-        layout.graph,
-        layout.node_linker,
-        layout.modules_dir_name,
-        layout.aube_dir,
-        layout.virtual_store_dir_max_length,
-        layout.placements,
-    );
+    let install_layout = InstallLayoutState::from_graph(project_dir, &layout);
 
     let package_json_shape_digests: BTreeMap<String, String> = package_json_hashes
         .keys()
@@ -776,6 +784,15 @@ pub fn read_state_package_content_hashes(project_dir: &Path) -> Option<BTreeMap<
 /// should take the normal path once to refresh derived metadata.
 pub fn read_state_layout(project_dir: &Path) -> Option<InstallLayoutState> {
     read_state(&state_dir(project_dir))?.layout
+}
+
+/// Read layout state from the default `node_modules` location.
+///
+/// This fallback is useful after `modulesDir` changes: resolving the current
+/// state path then points at the new, not-yet-installed tree while the state
+/// describing the materialized tree remains under `node_modules`.
+pub fn read_default_state_layout(project_dir: &Path) -> Option<InstallLayoutState> {
+    read_state(&project_dir.join(DEFAULT_STATE_DIR).join(state_dir_name()))?.layout
 }
 
 /// Read the LtHash accumulator digest the last install wrote, if
@@ -934,19 +951,17 @@ fn remove_legacy_state_file(state_path: &Path) -> Result<(), std::io::Error> {
 }
 
 impl InstallLayoutState {
-    fn from_graph(
-        project_dir: &Path,
-        graph: &aube_lockfile::LockfileGraph,
-        node_linker: aube_linker::NodeLinker,
-        modules_dir_name: &str,
-        aube_dir: &Path,
-        virtual_store_dir_max_length: usize,
-        placements: Option<&aube_linker::HoistedPlacements>,
-    ) -> Self {
-        let linker = match node_linker {
+    fn from_graph(project_dir: &Path, layout: &WriteStateLayout<'_>) -> Self {
+        let linker = match layout.node_linker {
             aube_linker::NodeLinker::Isolated => InstallLayoutMode::Isolated,
             aube_linker::NodeLinker::Hoisted => InstallLayoutMode::Hoisted,
         };
+        let hoisting_limits = matches!(layout.node_linker, aube_linker::NodeLinker::Hoisted)
+            .then_some(match layout.hoisting_limits {
+                aube_linker::HoistingLimits::None => InstallHoistingLimits::None,
+                aube_linker::HoistingLimits::Workspaces => InstallHoistingLimits::Workspaces,
+                aube_linker::HoistingLimits::Dependencies => InstallHoistingLimits::Dependencies,
+            });
         // Record each importer's direct-dependency symlinks — the root
         // (`.`) *and* every workspace member — relative to `project_dir`.
         // `verify_install_layout` walks these, so tracking members means a
@@ -955,11 +970,11 @@ impl InstallLayoutState {
         // <member>/node_modules && aube install` short-circuited to
         // "Already up to date" and never relinked the member.
         let mut direct_entries = BTreeMap::new();
-        for (importer, deps) in &graph.importers {
+        for (importer, deps) in &layout.graph.importers {
             let modules_base = if importer == "." {
-                project_dir.join(modules_dir_name)
+                project_dir.join(layout.modules_dir_name)
             } else {
-                project_dir.join(importer).join(modules_dir_name)
+                project_dir.join(importer).join(layout.modules_dir_name)
             };
             let entries = deps
                 .iter()
@@ -969,14 +984,15 @@ impl InstallLayoutState {
         }
 
         let mut packages = BTreeMap::new();
-        let direct_dep_paths: std::collections::BTreeSet<String> = graph
+        let direct_dep_paths: std::collections::BTreeSet<String> = layout
+            .graph
             .importers
             .get(".")
             .into_iter()
             .flat_map(|deps| deps.iter().map(|dep| dep.dep_path.clone()))
             .collect();
         for dep_path in direct_dep_paths {
-            let Some(pkg) = graph.packages.get(&dep_path) else {
+            let Some(pkg) = layout.graph.packages.get(&dep_path) else {
                 continue;
             };
             let is_link = matches!(
@@ -988,11 +1004,11 @@ impl InstallLayoutState {
                     project_dir.join(path).join("package.json")
                 }
                 _ => crate::commands::install::materialized_pkg_dir(
-                    aube_dir,
+                    layout.aube_dir,
                     &dep_path,
                     &pkg.name,
-                    virtual_store_dir_max_length,
-                    placements,
+                    layout.virtual_store_dir_max_length,
+                    layout.placements,
                 )
                 .join("package.json"),
             };
@@ -1010,6 +1026,8 @@ impl InstallLayoutState {
 
         Self {
             linker,
+            modules_dir_name: layout.modules_dir_name.to_string(),
+            hoisting_limits,
             direct_entries,
             packages,
         }
@@ -1354,9 +1372,10 @@ fn empty_blake3_hash() -> &'static str {
 mod tests {
     use super::{
         InstallLayoutMode, InstallLayoutState, InstallState, InstalledPackageState,
-        collect_package_json_hashes_from_manifests, empty_blake3_hash, fresh_state_file, hash_file,
-        hash_settings, install_state_file, member_lockfiles_stale, read_or_migrate_fresh_state,
-        relative_path_or_original, remove_state, verify_install_layout,
+        WriteStateLayout, collect_package_json_hashes_from_manifests, empty_blake3_hash,
+        fresh_state_file, hash_file, hash_settings, install_state_file, member_lockfiles_stale,
+        read_or_migrate_fresh_state, relative_path_or_original, remove_state,
+        verify_install_layout,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -1392,6 +1411,8 @@ mod tests {
             package_json_shape_digests: BTreeMap::new(),
             layout: Some(InstallLayoutState {
                 linker: InstallLayoutMode::Isolated,
+                modules_dir_name: String::new(),
+                hoisting_limits: None,
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::from([(
                     "is-odd@3.0.1".to_string(),
@@ -1437,6 +1458,8 @@ mod tests {
 
         let state = InstallLayoutState {
             linker: InstallLayoutMode::Isolated,
+            modules_dir_name: String::new(),
+            hoisting_limits: None,
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1466,6 +1489,8 @@ mod tests {
 
         let state = InstallLayoutState {
             linker: InstallLayoutMode::Isolated,
+            modules_dir_name: String::new(),
+            hoisting_limits: None,
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1499,12 +1524,15 @@ mod tests {
 
         let layout = InstallLayoutState::from_graph(
             &project_dir,
-            &graph,
-            aube_linker::NodeLinker::Isolated,
-            "node_modules",
-            &aube_dir,
-            120,
-            None,
+            &WriteStateLayout {
+                graph: &graph,
+                node_linker: aube_linker::NodeLinker::Isolated,
+                hoisting_limits: aube_linker::HoistingLimits::None,
+                modules_dir_name: "node_modules",
+                aube_dir: &aube_dir,
+                virtual_store_dir_max_length: 120,
+                placements: None,
+            },
         );
 
         // The root importer's direct symlink sits under the workspace
@@ -1579,6 +1607,8 @@ mod tests {
             package_json_shape_digests: BTreeMap::from([(".".to_string(), "shape".to_string())]),
             layout: Some(InstallLayoutState {
                 linker: InstallLayoutMode::Isolated,
+                modules_dir_name: String::new(),
+                hoisting_limits: None,
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::new(),
             }),

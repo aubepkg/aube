@@ -391,6 +391,9 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 layout: state::WriteStateLayout {
                     graph: graph_for_link,
                     node_linker,
+                    hoisting_limits: crate::commands::settings_hoisting_limits_to_linker(
+                        aube_settings::resolved::hoisting_limits(settings_ctx),
+                    ),
                     modules_dir_name,
                     aube_dir,
                     virtual_store_dir_max_length,

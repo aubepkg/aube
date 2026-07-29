@@ -108,7 +108,10 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
     let aube_dir = super::resolve_virtual_store_dir_for_cwd(&cwd);
     // Prefer the recorded layout over current config: the install may have
     // used a one-shot `--node-linker=hoisted` override.
-    let installed_hoisted = crate::state::read_state_layout(&cwd)
+    let installed_layout = crate::state::read_state_layout(&cwd)
+        .or_else(|| crate::state::read_default_state_layout(&cwd));
+    let installed_hoisted = installed_layout
+        .as_ref()
         .map(|layout| matches!(layout.linker, crate::state::InstallLayoutMode::Hoisted))
         .unwrap_or_else(|| {
             super::with_settings_ctx(&cwd, |ctx| {
@@ -119,10 +122,31 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
             })
         });
     let hoisted_placements = if installed_hoisted {
-        let modules_dir_name = super::resolve_modules_dir_name_for_cwd(&cwd);
-        let hoisting_limits = super::with_settings_ctx(&cwd, |ctx| {
-            super::settings_hoisting_limits_to_linker(aube_settings::resolved::hoisting_limits(ctx))
-        });
+        let modules_dir_name = installed_layout
+            .as_ref()
+            .map(|layout| layout.modules_dir_name.as_str())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| super::resolve_modules_dir_name_for_cwd(&cwd));
+        let hoisting_limits = installed_layout
+            .as_ref()
+            .and_then(|layout| layout.hoisting_limits)
+            .map(|limits| match limits {
+                crate::state::InstallHoistingLimits::None => aube_linker::HoistingLimits::None,
+                crate::state::InstallHoistingLimits::Workspaces => {
+                    aube_linker::HoistingLimits::Workspaces
+                }
+                crate::state::InstallHoistingLimits::Dependencies => {
+                    aube_linker::HoistingLimits::Dependencies
+                }
+            })
+            .unwrap_or_else(|| {
+                super::with_settings_ctx(&cwd, |ctx| {
+                    super::settings_hoisting_limits_to_linker(
+                        aube_settings::resolved::hoisting_limits(ctx),
+                    )
+                })
+            });
         // Reconstruct from the full installed graph. Filtering first could
         // change which conflicting version won a hoisted placement.
         Some(aube_linker::HoistedPlacements::from_graph(

@@ -156,6 +156,27 @@ EOF
 	refute_output --partial '"license": "UNKNOWN"'
 }
 
+@test "aube licenses uses the recorded hoisted layout after settings change" {
+	_setup_basic_fixture
+	cat >.npmrc <<'EOF'
+node-linker=hoisted
+hoisting-limits=dependencies
+EOF
+	aube install
+
+	cat >.npmrc <<'EOF'
+node-linker=isolated
+modules-dir=other_modules
+hoisting-limits=none
+EOF
+	run aube licenses --long --json
+	assert_success
+	assert_output --partial "/node_modules/is-odd"
+	assert_output --partial "/node_modules/is-even/node_modules/is-odd"
+	refute_output --partial "/other_modules/"
+	refute_output --partial '"license": "UNKNOWN"'
+}
+
 @test "aube licenses with no lockfile is a friendly no-op" {
 	cat >package.json <<'EOF'
 { "name": "lic-empty", "version": "0.0.0" }
