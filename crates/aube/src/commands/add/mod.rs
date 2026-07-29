@@ -128,6 +128,7 @@ pub async fn add_to_project(
             install_options.project_dir = Some(project_dir.to_path_buf());
             install_options.ignore_scripts = options.ignore_scripts;
             install_options.run_dev_preinstall = true;
+            install_options.script_command = "add";
             install_options.force = options.force;
             install_options.dep_selection = options.dep_selection;
             install_options.osv_transitive_check = options.osv_transitive_check && !options.offline;
@@ -570,6 +571,7 @@ pub async fn run(
     apply_dangerously_allow_all_builds(&mut install_opts, dangerously_allow_all_builds);
     install_opts.ignore_scripts = ignore_scripts;
     install_opts.run_dev_preinstall = true;
+    install_opts.script_command = "add";
     install_opts.osv_transitive_check = true;
     let pipeline_result: miette::Result<()> =
         install::run_with_project_lock(install_opts, &lock).await;

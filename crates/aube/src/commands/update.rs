@@ -1569,6 +1569,7 @@ fn chained_install_options(args: &UpdateArgs) -> install::InstallOptions {
     chained.pnpmfile = args.pnpmfile.clone();
     chained.global_pnpmfile = args.global_pnpmfile.clone();
     chained.ignore_scripts = args.ignore_scripts;
+    chained.script_command = "update";
     // Fresh update resolutions should receive the same live OSV check
     // whether the install is per-project or deferred to the workspace root.
     chained.osv_transitive_check = true;

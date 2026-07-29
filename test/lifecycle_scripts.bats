@@ -108,7 +108,7 @@ JSON
   "name": "dev-preinstall-add",
   "version": "1.0.0",
   "scripts": {
-    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"dev.marker\", \"ran\")'",
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"dev.marker\", process.env.npm_command)'",
     "postinstall": "node -e 'require(\"fs\").writeFileSync(\"postinstall.marker\", \"ran\")'"
   }
 }
@@ -116,7 +116,8 @@ JSON
 	echo "trustPolicy=off" >>.npmrc
 	run aube add is-odd
 	assert_success
-	assert_file_exists dev.marker
+	run cat dev.marker
+	assert_output "add"
 	assert_file_not_exists postinstall.marker
 }
 

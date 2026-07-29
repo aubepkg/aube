@@ -301,6 +301,7 @@ impl InstallArgs {
             // with package args opt into skipping them.
             skip_root_lifecycle: false,
             run_dev_preinstall: true,
+            script_command: "install",
             // Argumentless `aube install` doesn't force the live-API
             // transitive gate by itself. `install::run` still runs
             // the gate when it detects fresh resolution (no
@@ -434,6 +435,10 @@ pub struct InstallOptions {
     /// Unlike ordinary root lifecycle hooks, pnpm also runs this for
     /// `add` and `update`; other chained install callers leave it disabled.
     pub run_dev_preinstall: bool,
+    /// Top-level package-manager command exposed to lifecycle scripts as
+    /// `npm_command`. Chained callers override the install default so hooks
+    /// can distinguish `add` and `update`.
+    pub script_command: &'static str,
     /// Run the post-resolve transitive OSV `MAL-*` gate against
     /// the live OSV API (not the mirror). Flipped on by commands
     /// whose whole point is fresh resolution — `aube add` and
@@ -497,6 +502,7 @@ impl InstallOptions {
             // Chained callers opt in individually. pnpm runs this hook for
             // add/update, but not for unrelated internal installs.
             run_dev_preinstall: false,
+            script_command: "install",
             // Default `false`. `aube add` and `aube update` flip
             // this on at construction. Other chained callers
             // (remove, dedupe, patch_commit, ...) leave it off so
