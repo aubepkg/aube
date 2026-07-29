@@ -5,6 +5,9 @@ use std::borrow::Cow;
 /// Strip Unicode formatting characters while preserving terminal styling
 /// emitted by trusted formatters.
 pub fn strip_formatting(text: &str) -> Cow<'_, str> {
+    if text.is_ascii() {
+        return Cow::Borrowed(text);
+    }
     if text.chars().any(is_format_character) {
         Cow::Owned(
             text.chars()
@@ -19,6 +22,9 @@ pub fn strip_formatting(text: &str) -> Cow<'_, str> {
 /// Strip control and Unicode formatting characters before displaying text,
 /// preserving newlines and tabs for multi-line output.
 pub fn sanitize(text: &str) -> Cow<'_, str> {
+    if is_safe_ascii::<true>(text) {
+        return Cow::Borrowed(text);
+    }
     if text
         .chars()
         .any(|ch| is_format_character(ch) || ch.is_control() && ch != '\n' && ch != '\t')
@@ -38,10 +44,7 @@ pub fn sanitize(text: &str) -> Cow<'_, str> {
 /// Strip every control and Unicode formatting character from a single-line
 /// terminal field.
 pub fn sanitize_inline(text: &str) -> Cow<'_, str> {
-    if text
-        .chars()
-        .any(|ch| ch.is_control() || is_format_character(ch))
-    {
+    if needs_inline_sanitization(text) {
         Cow::Owned(
             text.chars()
                 .filter(|ch| !ch.is_control() && !is_format_character(*ch))
@@ -50,6 +53,22 @@ pub fn sanitize_inline(text: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(text)
     }
+}
+
+/// Whether a single-line terminal field needs sanitization.
+pub fn needs_inline_sanitization(text: &str) -> bool {
+    !is_safe_ascii::<false>(text)
+        && text
+            .chars()
+            .any(|ch| ch.is_control() || is_format_character(ch))
+}
+
+#[inline]
+fn is_safe_ascii<const MULTILINE: bool>(text: &str) -> bool {
+    text.bytes().all(|byte| {
+        byte.is_ascii()
+            && (!byte.is_ascii_control() || MULTILINE && (byte == b'\n' || byte == b'\t'))
+    })
 }
 
 fn is_format_character(ch: char) -> bool {
