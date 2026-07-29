@@ -527,11 +527,11 @@ async fn publish_one(
         provenance_bundle.as_deref(),
     )?;
 
-    let url = put_url(&target.registry_url, &archive.name);
+    let url = put_url(&target.registry_url, &target.name);
     let trusted_publish_token =
-        trusted_publish_token(client, &target.registry_url, &archive.name).await?;
+        trusted_publish_token(client, &target.registry_url, &target.name).await?;
     if trusted_publish_token.is_none() {
-        ensure_registry_auth_for_package(client, &target.registry_url, &archive.name)?;
+        ensure_registry_auth_for_package(client, &target.registry_url, &target.name)?;
     }
     let body_bytes = serde_json::to_vec(&body).into_diagnostic()?;
     match send_publish_put(
@@ -1699,6 +1699,8 @@ mod tests {
         assert_eq!(archive.name, "@scope/published-name");
         assert_eq!(archive.filename, "scope-published-name-1.2.3.tgz");
         assert_eq!(package_json["name"], "@scope/published-name");
+        let on_disk = PackageJson::from_path(&tmp.path().join("package.json")).unwrap();
+        assert_eq!(on_disk.name.as_deref(), Some("workspace-name"));
     }
 
     #[test]
