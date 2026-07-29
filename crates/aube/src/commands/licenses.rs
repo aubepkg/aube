@@ -127,8 +127,16 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
             .map(|layout| layout.modules_dir_name.as_str())
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| super::resolve_modules_dir_name_for_cwd(&cwd));
-        let hoisting_limits = installed_layout
+            .or_else(|| {
+                installed_layout
+                    .as_ref()
+                    .and_then(|layout| infer_legacy_modules_dir_name(layout, &graph))
+            })
+            // A dependency-free legacy snapshot has no direct entry from
+            // which to infer the directory. The value is immaterial because
+            // there are no placements, so use the historical default.
+            .unwrap_or_else(|| "node_modules".to_string());
+        let recorded_hoisting_limits = installed_layout
             .as_ref()
             .and_then(|layout| layout.hoisting_limits)
             .map(|limits| match limits {
@@ -139,22 +147,15 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
                 crate::state::InstallHoistingLimits::Dependencies => {
                     aube_linker::HoistingLimits::Dependencies
                 }
-            })
-            .unwrap_or_else(|| {
-                super::with_settings_ctx(&cwd, |ctx| {
-                    super::settings_hoisting_limits_to_linker(
-                        aube_settings::resolved::hoisting_limits(ctx),
-                    )
-                })
             });
         // Reconstruct from the full installed graph. Filtering first could
         // change which conflicting version won a hoisted placement.
-        Some(aube_linker::HoistedPlacements::from_graph(
-            &cwd,
-            &graph,
-            &modules_dir_name,
-            hoisting_limits,
-        )?)
+        Some(match recorded_hoisting_limits {
+            Some(limits) => {
+                aube_linker::HoistedPlacements::from_graph(&cwd, &graph, &modules_dir_name, limits)?
+            }
+            None => legacy_hoisted_placements(&cwd, &graph, &modules_dir_name)?,
+        })
     } else {
         None
     };
@@ -167,6 +168,59 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
     }
 
     Ok(())
+}
+
+/// Infer `modulesDir` from the root importer's recorded direct entries in
+/// state written before the field was persisted explicitly.
+fn infer_legacy_modules_dir_name(
+    layout: &crate::state::InstallLayoutState,
+    graph: &LockfileGraph,
+) -> Option<String> {
+    let entries = layout.direct_entries.get(".")?;
+    let deps = graph.importers.get(".")?;
+    entries.iter().zip(deps).find_map(|(entry, dep)| {
+        let mut modules_dir = PathBuf::from(entry);
+        for _ in Path::new(&dep.name).components() {
+            if !modules_dir.pop() {
+                return None;
+            }
+        }
+        Some(modules_dir.to_string_lossy().into_owned())
+    })
+}
+
+/// Legacy layout state did not record `hoistingLimits`. Reconstruct every
+/// possible plan and choose the one that matches the most package directories
+/// on disk, instead of consulting mutable current settings.
+fn legacy_hoisted_placements(
+    cwd: &Path,
+    graph: &LockfileGraph,
+    modules_dir_name: &str,
+) -> Result<aube_linker::HoistedPlacements, aube_linker::Error> {
+    let mut best = None;
+    for limits in [
+        aube_linker::HoistingLimits::None,
+        aube_linker::HoistingLimits::Workspaces,
+        aube_linker::HoistingLimits::Dependencies,
+    ] {
+        let placements =
+            aube_linker::HoistedPlacements::from_graph(cwd, graph, modules_dir_name, limits)?;
+        let matches = graph
+            .packages
+            .keys()
+            .filter(|dep_path| placements.package_dir(dep_path).is_some())
+            .count();
+        if best
+            .as_ref()
+            .is_none_or(|(best_matches, _)| matches > *best_matches)
+        {
+            best = Some((matches, placements));
+        }
+    }
+    Ok(best.map_or_else(
+        aube_linker::HoistedPlacements::default,
+        |(_, placements)| placements,
+    ))
 }
 
 /// Walk every package in the filtered graph and read its installed manifest,
