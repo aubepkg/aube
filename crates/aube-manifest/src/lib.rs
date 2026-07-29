@@ -1293,13 +1293,12 @@ pub fn serialize_json_with_indent<T: serde::Serialize>(
     value: &T,
     indent: &str,
 ) -> Result<String, serde_json::Error> {
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(128);
     let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
     let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);
     value.serialize(&mut serializer)?;
-    String::from_utf8(buf).map_err(|e| {
-        serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-    })
+    String::from_utf8(buf)
+        .map_err(|e| serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
 }
 
 #[cfg(test)]

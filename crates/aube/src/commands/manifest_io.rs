@@ -30,14 +30,21 @@ pub(crate) fn write_manifest_json<T: serde::Serialize>(
     path: &Path,
     value: &T,
 ) -> miette::Result<()> {
-    let indent = if let Ok(content) = std::fs::read_to_string(path) {
-        aube_manifest::detect_json_indent(&content).to_string()
-    } else {
-        "  ".to_string()
+    let existing = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error)
+                .into_diagnostic()
+                .wrap_err("failed to read package.json");
+        }
     };
-    let json = aube_manifest::serialize_json_with_indent(value, &indent)
-        .into_diagnostic()
-        .wrap_err("failed to serialize package.json")?;
+    let json = aube_manifest::serialize_json_with_indent(
+        value,
+        aube_manifest::detect_json_indent(&existing),
+    )
+    .into_diagnostic()
+    .wrap_err("failed to serialize package.json")?;
     write_manifest_atomic(path, format!("{json}\n").as_bytes())
         .wrap_err("failed to write package.json")
 }
@@ -180,35 +187,42 @@ mod tests {
     }
 
     #[test]
+    fn write_manifest_json_rejects_invalid_utf8_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.json");
+        let invalid_utf8 = [0xff];
+        std::fs::write(&path, invalid_utf8).unwrap();
+
+        let result = write_manifest_json(&path, &serde_json::json!({ "name": "example" }));
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), invalid_utf8);
+    }
+
+    #[test]
     fn write_manifest_dep_sections_preserves_indentation() {
         let dir = tempfile::tempdir().unwrap();
+        for (name, indent) in [
+            ("tabs", "\t"),
+            ("four-spaces", "    "),
+            ("three-spaces", "   "),
+        ] {
+            let path = dir.path().join(format!("package-{name}.json"));
+            std::fs::write(&path, format!("{{\n{indent}\"name\": \"{name}\"\n}}\n")).unwrap();
+            let mut manifest = aube_manifest::PackageJson::from_path(&path).unwrap();
+            manifest
+                .dependencies
+                .insert("foo".to_string(), "1.0.0".to_string());
 
-        // 1. Tabs
-        let path_tabs = dir.path().join("package_tabs.json");
-        std::fs::write(&path_tabs, "{\n\t\"name\": \"tabs-pkg\"\n}\n").unwrap();
-        let mut manifest_tabs = aube_manifest::PackageJson::from_path(&path_tabs).unwrap();
-        manifest_tabs.dependencies.insert("foo".to_string(), "1.0.0".to_string());
-        write_manifest_dep_sections(&path_tabs, &manifest_tabs).unwrap();
-        let written_tabs = std::fs::read_to_string(&path_tabs).unwrap();
-        assert!(written_tabs.contains("{\n\t\"name\": \"tabs-pkg\",\n\t\"dependencies\": {\n\t\t\"foo\": \"1.0.0\"\n\t}\n}"));
+            write_manifest_dep_sections(&path, &manifest).unwrap();
 
-        // 2. 4 spaces
-        let path_4sp = dir.path().join("package_4sp.json");
-        std::fs::write(&path_4sp, "{\n    \"name\": \"4sp-pkg\"\n}\n").unwrap();
-        let mut manifest_4sp = aube_manifest::PackageJson::from_path(&path_4sp).unwrap();
-        manifest_4sp.dependencies.insert("foo".to_string(), "1.0.0".to_string());
-        write_manifest_dep_sections(&path_4sp, &manifest_4sp).unwrap();
-        let written_4sp = std::fs::read_to_string(&path_4sp).unwrap();
-        assert!(written_4sp.contains("{\n    \"name\": \"4sp-pkg\",\n    \"dependencies\": {\n        \"foo\": \"1.0.0\"\n    }\n}"));
-
-        // 3. 3 spaces
-        let path_3sp = dir.path().join("package_3sp.json");
-        std::fs::write(&path_3sp, "{\n   \"name\": \"3sp-pkg\"\n}\n").unwrap();
-        let mut manifest_3sp = aube_manifest::PackageJson::from_path(&path_3sp).unwrap();
-        manifest_3sp.dependencies.insert("foo".to_string(), "1.0.0".to_string());
-        write_manifest_dep_sections(&path_3sp, &manifest_3sp).unwrap();
-        let written_3sp = std::fs::read_to_string(&path_3sp).unwrap();
-        assert!(written_3sp.contains("{\n   \"name\": \"3sp-pkg\",\n   \"dependencies\": {\n      \"foo\": \"1.0.0\"\n   }\n}"));
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                format!(
+                    "{{\n{indent}\"name\": \"{name}\",\n{indent}\"dependencies\": {{\n{indent}{indent}\"foo\": \"1.0.0\"\n{indent}}}\n}}\n"
+                )
+            );
+        }
     }
 
     fn root_key_order(raw: &str) -> Vec<String> {
