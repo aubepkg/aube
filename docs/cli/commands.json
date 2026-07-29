@@ -12434,7 +12434,7 @@
             "name": "ignore-scripts",
             "usage": "--ignore-scripts",
             "help": "Skip lifecycle scripts",
-            "help_long": "Skip lifecycle scripts.\n\nAccepted for pnpm parity — dep scripts are already gated by `allowBuilds`, so the flag is currently a no-op, but scripts that wrap `pnpm update --ignore-scripts` keep working without complaint.",
+            "help_long": "Skip lifecycle scripts.\n\nSkips the root `pnpm:devPreinstall` hook and all approved dependency build scripts in the chained install.",
             "help_first_line": "Skip lifecycle scripts",
             "short": [],
             "long": [
