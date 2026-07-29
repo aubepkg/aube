@@ -143,6 +143,19 @@ EOF
 	refute_output --partial "UNKNOWN"
 }
 
+@test "aube licenses resolves packages from a hoisted install" {
+	_setup_basic_fixture
+	aube install --node-linker=hoisted
+
+	run aube licenses --long --json
+	assert_success
+	assert_output --partial '"name": "is-odd"'
+	assert_output --partial "/node_modules/is-odd"
+	assert_output --partial "/node_modules/is-even/node_modules/is-odd"
+	refute_output --partial "/node_modules/.aube/"
+	refute_output --partial '"license": "UNKNOWN"'
+}
+
 @test "aube licenses with no lockfile is a friendly no-op" {
 	cat >package.json <<'EOF'
 { "name": "lic-empty", "version": "0.0.0" }

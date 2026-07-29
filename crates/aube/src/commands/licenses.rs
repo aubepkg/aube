@@ -106,7 +106,35 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
     let filtered = graph.filter_deps(|d| filter.keeps(d.dep_type));
 
     let aube_dir = super::resolve_virtual_store_dir_for_cwd(&cwd);
-    let rows = collect_rows(&aube_dir, &filtered, args.long);
+    // Prefer the recorded layout over current config: the install may have
+    // used a one-shot `--node-linker=hoisted` override.
+    let installed_hoisted = crate::state::read_state_layout(&cwd)
+        .map(|layout| matches!(layout.linker, crate::state::InstallLayoutMode::Hoisted))
+        .unwrap_or_else(|| {
+            super::with_settings_ctx(&cwd, |ctx| {
+                matches!(
+                    aube_settings::resolved::node_linker(ctx),
+                    aube_settings::resolved::NodeLinker::Hoisted
+                )
+            })
+        });
+    let hoisted_placements = if installed_hoisted {
+        let modules_dir_name = super::resolve_modules_dir_name_for_cwd(&cwd);
+        let hoisting_limits = super::with_settings_ctx(&cwd, |ctx| {
+            super::settings_hoisting_limits_to_linker(aube_settings::resolved::hoisting_limits(ctx))
+        });
+        // Reconstruct from the full installed graph. Filtering first could
+        // change which conflicting version won a hoisted placement.
+        Some(aube_linker::HoistedPlacements::from_graph(
+            &cwd,
+            &graph,
+            &modules_dir_name,
+            hoisting_limits,
+        )?)
+    } else {
+        None
+    };
+    let rows = collect_rows(&aube_dir, &filtered, hoisted_placements.as_ref(), args.long);
 
     if args.json {
         render_json(&rows)?;
@@ -117,11 +145,16 @@ pub async fn run(args: LicensesArgs) -> miette::Result<()> {
     Ok(())
 }
 
-/// Walk every package in the filtered graph and read its license from the
-/// virtual-store manifest. Packages whose manifest can't be read (e.g.,
-/// `node_modules` not materialized yet) fall back to "UNKNOWN" so one
-/// missing file doesn't sink the whole report.
-fn collect_rows(aube_dir: &Path, graph: &LockfileGraph, long: bool) -> Vec<Row> {
+/// Walk every package in the filtered graph and read its installed manifest,
+/// using hoisted placements when applicable. Packages whose manifest can't be
+/// read (e.g., `node_modules` not materialized yet) fall back to "UNKNOWN" so
+/// one missing file doesn't sink the whole report.
+fn collect_rows(
+    aube_dir: &Path,
+    graph: &LockfileGraph,
+    hoisted_placements: Option<&aube_linker::HoistedPlacements>,
+    long: bool,
+) -> Vec<Row> {
     // Deduplicate by (name, version) so peer-context duplicates
     // (`react@18.2.0` vs `react@18.2.0(prop-types@15.8.1)`) only show once.
     let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
@@ -131,7 +164,10 @@ fn collect_rows(aube_dir: &Path, graph: &LockfileGraph, long: bool) -> Vec<Row> 
         if !seen.insert((pkg.name.clone(), pkg.version.clone())) {
             continue;
         }
-        let pkg_dir = virtual_store_pkg_dir(aube_dir, &pkg.dep_path, &pkg.name);
+        let pkg_dir = hoisted_placements
+            .and_then(|placements| placements.package_dir(&pkg.dep_path))
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| virtual_store_pkg_dir(aube_dir, &pkg.dep_path, &pkg.name));
         let license = read_license(&pkg_dir);
         rows.push(Row {
             name: pkg.name.clone(),
