@@ -36,15 +36,9 @@ pub struct ScriptSettings {
     pub script_shell: Option<PathBuf>,
     pub unsafe_perm: Option<bool>,
     pub shell_emulator: bool,
-    /// Directory of the project's resolved Node runtime. Selectors place it
-    /// after project `.bin` directories; wrappers can move it ahead via
-    /// `node_bin_dir_precedes_project_bins`. `None` when no runtime switching
-    /// is active.
+    /// Directory of the project's resolved Node runtime. `None` when no
+    /// runtime switching is active.
     pub node_bin_dir: Option<PathBuf>,
-    /// Put `node_bin_dir` before project-local `.bin` directories.
-    /// Wrapping runtimes need this so a local `node` cannot bypass their shim;
-    /// selectors leave this false so project-local binaries still win.
-    pub node_bin_dir_precedes_project_bins: bool,
     /// The node exported as `NODE` (npm parity) — the program a
     /// script's `$NODE` / bare `node` re-spawns. A wrapper's shim; the
     /// real binary otherwise.
@@ -148,10 +142,16 @@ impl Drop for ScriptJailHomeCleanup {
     }
 }
 
-static SCRIPT_SETTINGS: std::sync::OnceLock<std::sync::RwLock<ScriptSettings>> =
+#[derive(Debug, Clone, Default)]
+struct ScriptSettingsState {
+    settings: ScriptSettings,
+    node_bin_dir_precedes_project_bins: bool,
+}
+
+static SCRIPT_SETTINGS: std::sync::OnceLock<std::sync::RwLock<ScriptSettingsState>> =
     std::sync::OnceLock::new();
 
-type ScriptSettingsSlot = std::sync::Arc<std::sync::RwLock<ScriptSettings>>;
+type ScriptSettingsSlot = std::sync::Arc<std::sync::RwLock<ScriptSettingsState>>;
 
 tokio::task_local! {
     static INSTALL_SCRIPT_SETTINGS: ScriptSettingsSlot;
@@ -161,7 +161,7 @@ tokio::task_local! {
 pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
     INSTALL_SCRIPT_SETTINGS
         .scope(
-            std::sync::Arc::new(std::sync::RwLock::new(ScriptSettings::default())),
+            std::sync::Arc::new(std::sync::RwLock::new(ScriptSettingsState::default())),
             future,
         )
         .await
@@ -180,39 +180,58 @@ pub fn scope_current<F: std::future::Future>(
     }
 }
 
-fn script_settings_lock() -> &'static std::sync::RwLock<ScriptSettings> {
-    SCRIPT_SETTINGS.get_or_init(|| std::sync::RwLock::new(ScriptSettings::default()))
+fn script_settings_lock() -> &'static std::sync::RwLock<ScriptSettingsState> {
+    SCRIPT_SETTINGS.get_or_init(|| std::sync::RwLock::new(ScriptSettingsState::default()))
 }
 
 /// Replace the current install's script settings snapshot, or the process-wide
 /// fallback when called outside an install scope.
 pub fn set_script_settings(settings: ScriptSettings) {
+    set_script_settings_with_path_order(settings, false);
+}
+
+/// Replace the script settings and control whether the runtime bin directory
+/// precedes project-local bins. Wrapping runtimes use `true` so a local `node`
+/// cannot bypass their shim; selectors use `false`.
+#[doc(hidden)]
+pub fn set_script_settings_with_path_order(
+    settings: ScriptSettings,
+    node_bin_dir_precedes_project_bins: bool,
+) {
+    let state = ScriptSettingsState {
+        settings,
+        node_bin_dir_precedes_project_bins,
+    };
     if INSTALL_SCRIPT_SETTINGS
         .try_with(|slot| match slot.write() {
-            Ok(mut guard) => *guard = settings.clone(),
-            Err(poisoned) => *poisoned.into_inner() = settings.clone(),
+            Ok(mut guard) => *guard = state.clone(),
+            Err(poisoned) => *poisoned.into_inner() = state.clone(),
         })
         .is_ok()
     {
         return;
     }
     match script_settings_lock().write() {
-        Ok(mut guard) => *guard = settings,
-        Err(poisoned) => *poisoned.into_inner() = settings,
+        Ok(mut guard) => *guard = state,
+        Err(poisoned) => *poisoned.into_inner() = state,
     }
 }
 
-fn script_settings() -> ScriptSettings {
-    if let Ok(settings) = INSTALL_SCRIPT_SETTINGS.try_with(|slot| match slot.read() {
+fn script_settings_state() -> ScriptSettingsState {
+    if let Ok(state) = INSTALL_SCRIPT_SETTINGS.try_with(|slot| match slot.read() {
         Ok(guard) => guard.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     }) {
-        return settings;
+        return state;
     }
     match script_settings_lock().read() {
         Ok(guard) => guard.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     }
+}
+
+fn script_settings() -> ScriptSettings {
+    script_settings_state().settings
 }
 
 #[cfg(test)]
@@ -226,14 +245,23 @@ mod scoped_settings_tests {
         let second_barrier = std::sync::Arc::clone(&barrier);
 
         let first = scope(async move {
-            set_script_settings(ScriptSettings {
-                command: Some("first".to_string()),
-                ..ScriptSettings::default()
-            });
+            set_script_settings_with_path_order(
+                ScriptSettings {
+                    command: Some("first".to_string()),
+                    ..ScriptSettings::default()
+                },
+                true,
+            );
             first_barrier.wait().await;
-            tokio::spawn(scope_current(async { script_settings().command }))
-                .await
-                .unwrap()
+            tokio::spawn(scope_current(async {
+                let state = script_settings_state();
+                (
+                    state.settings.command,
+                    state.node_bin_dir_precedes_project_bins,
+                )
+            }))
+            .await
+            .unwrap()
         });
         let second = scope(async move {
             set_script_settings(ScriptSettings {
@@ -241,14 +269,22 @@ mod scoped_settings_tests {
                 ..ScriptSettings::default()
             });
             second_barrier.wait().await;
-            tokio::spawn(scope_current(async { script_settings().command }))
-                .await
-                .unwrap()
+            tokio::spawn(scope_current(async {
+                let state = script_settings_state();
+                (
+                    state.settings.command,
+                    state.node_bin_dir_precedes_project_bins,
+                )
+            }))
+            .await
+            .unwrap()
         });
 
         let (first, second) = tokio::join!(first, second);
-        assert_eq!(first.as_deref(), Some("first"));
-        assert_eq!(second.as_deref(), Some("second"));
+        assert_eq!(first.0.as_deref(), Some("first"));
+        assert!(first.1);
+        assert_eq!(second.0.as_deref(), Some("second"));
+        assert!(!second.1);
     }
 }
 
@@ -1132,7 +1168,8 @@ pub async fn run_script(
     // `"node_modules"` at the call site, but a workspace may have
     // configured something else.
     let project_bin = project_root.join(modules_dir_name).join(".bin");
-    let settings = script_settings();
+    let state = script_settings_state();
+    let settings = &state.settings;
     let path = std::env::var_os("PATH").unwrap_or_default();
     let mut project_bins: Vec<PathBuf> = Vec::with_capacity(extra_bin_dirs.len() + 1);
     for dir in extra_bin_dirs {
@@ -1142,7 +1179,7 @@ pub async fn run_script(
     let mut entries = order_path_entries(
         project_bins,
         settings.node_bin_dir.as_deref(),
-        settings.node_bin_dir_precedes_project_bins,
+        state.node_bin_dir_precedes_project_bins,
     );
     entries.extend(std::env::split_paths(&path));
     let new_path = std::env::join_paths(entries).unwrap_or(path);
@@ -1152,8 +1189,8 @@ pub async fn run_script(
             .map_err(|e| Error::Spawn(script_name.to_string(), e.to_string()))?;
     }
     let mut cmd = match (jail, jail_home.as_deref()) {
-        (Some(jail), Some(home)) => spawn_jailed_shell(script_cmd, &settings, jail, home),
-        _ => spawn_shell_with_settings(script_cmd, &settings),
+        (Some(jail), Some(home)) => spawn_jailed_shell(script_cmd, settings, jail, home),
+        _ => spawn_shell_with_settings(script_cmd, settings),
     };
     cmd.current_dir(script_dir)
         .stderr(child_stderr())
@@ -1180,7 +1217,7 @@ pub async fn run_script(
             script_name,
             &jail.env,
         );
-        apply_script_settings_env(&mut cmd, &settings);
+        apply_script_settings_env(&mut cmd, settings);
     }
 
     // npm-compat manifest env, applied last so it survives the jail's

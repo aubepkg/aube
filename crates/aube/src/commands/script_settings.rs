@@ -38,34 +38,36 @@ pub(crate) fn configure_script_settings(
         .and_then(non_empty_string)
         .or_else(|| https_proxy.clone());
     let no_proxy = aube_settings::resolved::no_proxy(ctx).and_then(non_empty_string);
-    aube_scripts::set_script_settings(aube_scripts::ScriptSettings {
-        node_options,
-        script_shell,
-        unsafe_perm,
-        shell_emulator,
-        node_bin_dir: runtime.as_ref().and_then(|r| r.bin_dir.clone()),
-        node_bin_dir_precedes_project_bins: runtime
+    aube_scripts::set_script_settings_with_path_order(
+        aube_scripts::ScriptSettings {
+            node_options,
+            script_shell,
+            unsafe_perm,
+            shell_emulator,
+            node_bin_dir: runtime.as_ref().and_then(|r| r.bin_dir.clone()),
+            node_program: runtime
+                .as_ref()
+                .and_then(|r| r.node_program.clone())
+                .or_else(aube_runtime::node_on_path),
+            node_execpath: runtime
+                .as_ref()
+                .and_then(|r| r.node_execpath.clone().or_else(|| r.node_program.clone()))
+                .or_else(aube_runtime::node_on_path),
+            extra_env: crate::runtime::embedder_extra_env(),
+            command: command.map(str::to_string),
+            // `npm_config_node_gyp` parity: hand every lifecycle script a
+            // runnable node-gyp stand-in. The shim is written once into
+            // aube's cache; a write failure here is non-fatal (the var just
+            // stays unset, matching pre-parity behavior).
+            node_gyp_js: super::install::node_gyp_bootstrap::lazy_js_shim_path().ok(),
+            http_proxy,
+            https_proxy,
+            no_proxy,
+        },
+        runtime
             .as_ref()
             .is_some_and(|r| r.bin_dir_precedes_project_bins),
-        node_program: runtime
-            .as_ref()
-            .and_then(|r| r.node_program.clone())
-            .or_else(aube_runtime::node_on_path),
-        node_execpath: runtime
-            .as_ref()
-            .and_then(|r| r.node_execpath.clone().or_else(|| r.node_program.clone()))
-            .or_else(aube_runtime::node_on_path),
-        extra_env: crate::runtime::embedder_extra_env(),
-        command: command.map(str::to_string),
-        // `npm_config_node_gyp` parity: hand every lifecycle script a
-        // runnable node-gyp stand-in. The shim is written once into
-        // aube's cache; a write failure here is non-fatal (the var just
-        // stays unset, matching pre-parity behavior).
-        node_gyp_js: super::install::node_gyp_bootstrap::lazy_js_shim_path().ok(),
-        http_proxy,
-        https_proxy,
-        no_proxy,
-    });
+    );
 }
 
 /// Load `.npmrc` + workspace settings for `cwd` and push them into the

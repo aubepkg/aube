@@ -1130,9 +1130,8 @@ async fn build_script_command(
         project_bins.push(dir);
     }
     let mut entries = crate::runtime::path_entries_with_project_bins(project_bins);
-    entries.reserve(
-        usize::from(activated_shim_dir.is_some()) + std::env::split_paths(&path).count(),
-    );
+    entries
+        .reserve(usize::from(activated_shim_dir.is_some()) + std::env::split_paths(&path).count());
     // Startup removes the activated shim directory from aube's own PATH
     // so internal runtime probes cannot rediscover aube recursively. Package
     // scripts are user commands, though, and must retain the shell activation
