@@ -22,5 +22,4 @@ paths:
     # actionlint 1.7.12 predates GitHub's native parallel step groups.
     # Remove this once actionlint recognizes the `parallel` keyword.
     ignore:
-      - 'step must run script with "run" section or run action with "uses" section'
-      - 'property "(semver|ffi)" is not defined in object type'
+      - '^step must run script with "run" section or run action with "uses" section$'
