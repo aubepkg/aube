@@ -10,7 +10,6 @@ on:
   pull_request:
   push:
     branches: ["main"]
-    tags: ["*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -199,7 +198,8 @@ jobs:
   # tests assert native OS sandbox behavior that does not match the
   # Namespace runner profiles.
   # Each shard downloads the OS-matched debug binary from `build` and
-  # invokes mise-task ci:bats:nonserial with its shard index.
+  # invokes mise-task ci:bats:nonserial with its shard index. mise provisions
+  # rush as the parallel driver on both platforms.
   #
   # retry handles the rare BATS flake (process teardown racing npm
   # cache writes, etc.); the Buildkite side has the same retry:1.
@@ -245,12 +245,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install GNU parallel (ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y parallel
-      - name: Install GNU parallel (macos)
-        if: startsWith(matrix.os, 'macos')
-        run: brew install parallel
       - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -290,12 +284,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install GNU parallel (ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y parallel
-      - name: Install GNU parallel (macos)
-        if: startsWith(matrix.os, 'macos')
-        run: brew install parallel
       - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}

@@ -5,6 +5,7 @@ on:
     paths:
       - "crates/aube-ffi/**"
       - "crates/aube-codes/**"
+      - "!crates/aube-codes/CHANGELOG.md"
       - "crates/aube/src/lib.rs"
       - "crates/aube/src/embed.rs"
       - "crates/aube/src/commands/add/mod.rs"
@@ -19,6 +20,7 @@ on:
     paths:
       - "crates/aube-ffi/**"
       - "crates/aube-codes/**"
+      - "!crates/aube-codes/CHANGELOG.md"
       - "crates/aube/src/lib.rs"
       - "crates/aube/src/embed.rs"
       - "crates/aube/src/commands/add/mod.rs"

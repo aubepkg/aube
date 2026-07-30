@@ -32,7 +32,9 @@ env:
 jobs:
   compare:
     name: Compare instruction counts
-    if: github.event_name == 'pull_request'
+    # release-plz PRs only contain generated release metadata and changelogs.
+    # Measuring them repeats the same binary already measured on main.
+    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-')
     # Same runner class as perf.yml and perf-backfill.yml. Absolute counts shift
     # between machine types by more than a real regression does, so a comparison
     # across runner classes is not a comparison — tak refuses to make one, and
