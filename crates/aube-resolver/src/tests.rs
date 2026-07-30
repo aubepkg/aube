@@ -4586,7 +4586,7 @@ fn direct_dep_info_empty_when_no_packument_cached() {
 }
 
 #[test]
-fn age_gated_updates_reports_hidden_direct_release() {
+fn age_gated_updates_reports_hidden_aliased_direct_release() {
     let mut packument = make_packument("foo", &["1.0.0", "2.0.0"], "2.0.0");
     packument
         .time
@@ -4602,13 +4602,17 @@ fn age_gated_updates_reports_hidden_direct_release() {
         }));
     resolver.cache.insert("foo".to_string(), packument);
 
-    let pkg = mk_locked("foo", "1.0.0", &[], &[]);
-    let graph = direct_dep_info_graph(&[("foo", "foo@1.0.0", "latest")], &[pkg]);
+    let mut pkg = mk_locked("foo-alias", "1.0.0", &[], &[]);
+    pkg.alias_of = Some("foo".to_string());
+    let graph = direct_dep_info_graph(
+        &[("foo-alias", "foo-alias@1.0.0", "npm:foo@latest")],
+        &[pkg],
+    );
 
     assert_eq!(
         resolver.age_gated_updates(&graph),
         vec![AgeGatedUpdate {
-            name: "foo".to_string(),
+            name: "foo-alias".to_string(),
             version: "2.0.0".to_string(),
         }]
     );

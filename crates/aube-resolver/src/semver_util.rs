@@ -50,6 +50,7 @@ pub fn pick_version_for_add<'a>(
     minimum_release_age: Option<&crate::MinimumReleaseAge>,
 ) -> PickResult<'a> {
     let cutoff = minimum_release_age.and_then(|m| m.cutoff());
+    let range = registry_alias_range(range);
     let range = if range == "latest" && cutoff.is_some() {
         "*"
     } else {
@@ -76,6 +77,20 @@ pub fn pick_version_for_add<'a>(
         strict,
         is_age_exempt,
     )
+}
+
+/// Return the version tail from an `npm:` alias spec. Resolution preprocesses
+/// this protocol before picking; report-only callers use this entry point
+/// directly, so normalize it here as well.
+fn registry_alias_range(range: &str) -> &str {
+    if let Some(rest) = range.strip_prefix("npm:") {
+        match rest.rfind('@') {
+            Some(at) if at > 0 => &rest[at + 1..],
+            _ => "latest",
+        }
+    } else {
+        range
+    }
 }
 
 /// Pick the best version from a packument that satisfies the given range.

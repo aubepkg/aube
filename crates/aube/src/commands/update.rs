@@ -1192,8 +1192,13 @@ async fn pick_update_interactively(
         let current = existing
             .and_then(|g| lookup_pkg(g, existing_importers, key, &real_name))
             .map(|p| p.version.as_str());
-        let wanted_info =
-            super::policy_version_info(packument, &real_name, spec, minimum_release_age.as_ref());
+        let wanted_info = super::policy_version_info(
+            packument,
+            &real_name,
+            spec,
+            minimum_release_age.as_ref(),
+            current,
+        );
         // `--latest` rewrites past the manifest range, so the picker
         // shows the newest policy-eligible release. Without `--latest`
         // we only refresh inside the range, so target = wanted.
@@ -1203,6 +1208,7 @@ async fn pick_update_interactively(
                 &real_name,
                 "latest",
                 minimum_release_age.as_ref(),
+                current,
             )
         } else {
             wanted_info.clone()

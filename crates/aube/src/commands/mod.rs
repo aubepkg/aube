@@ -129,8 +129,8 @@ pub(crate) use manifest_io::{
     write_manifest_dep_sections, write_manifest_json,
 };
 pub(crate) use package_spec::{
-    encode_package_name, policy_version_info, resolve_version, split_name_spec,
-    warn_age_gated_updates,
+    encode_package_name, policy_version_info, record_age_gated_update, resolve_version,
+    split_name_spec, warn_age_gated_updates,
 };
 pub(crate) use project_lock::take_install_project_lock;
 pub(crate) use project_lock::take_project_lock;

@@ -16,6 +16,7 @@ pub(crate) fn policy_version_info(
     registry_name: &str,
     range_str: &str,
     minimum_release_age: Option<&aube_resolver::MinimumReleaseAge>,
+    current_version: Option<&str>,
 ) -> PolicyVersion {
     // Human-facing update reports preserve an absent `latest` tag as
     // unknown. The resolver itself may fall back to the highest stable
@@ -27,7 +28,7 @@ pub(crate) fn policy_version_info(
             blocked: None,
         };
     }
-    let selected = match aube_resolver::pick_version_for_add(
+    let policy_selected = match aube_resolver::pick_version_for_add(
         packument,
         registry_name,
         range_str,
@@ -36,27 +37,49 @@ pub(crate) fn policy_version_info(
         aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
         aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
     };
+    // An already-installed young release is allowed to remain in place.
+    // Never advertise a downgrade or call that same release "hidden".
+    let selected = match (policy_selected, current_version) {
+        (Some(selected), Some(current)) if is_newer(current, &selected) => {
+            Some(current.to_string())
+        }
+        (None, Some(current)) => Some(current.to_string()),
+        (selected, _) => selected,
+    };
     let blocked = minimum_release_age.and_then(|_| {
         let ungated =
             match aube_resolver::pick_version_for_add(packument, registry_name, range_str, None) {
                 aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
                 aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
             }?;
-        is_newer_than_selected(&ungated, selected.as_deref()).then_some(ungated)
+        selected
+            .as_deref()
+            .is_some_and(|baseline| is_newer(&ungated, baseline))
+            .then_some(ungated)
     });
     PolicyVersion { selected, blocked }
 }
 
-fn is_newer_than_selected(candidate: &str, selected: Option<&str>) -> bool {
-    let Some(selected) = selected else {
-        return true;
-    };
+fn is_newer(candidate: &str, selected: &str) -> bool {
     match (
         node_semver::Version::parse(candidate),
         node_semver::Version::parse(selected),
     ) {
         (Ok(candidate), Ok(selected)) => candidate > selected,
         _ => candidate != selected,
+    }
+}
+
+pub(crate) fn record_age_gated_update(
+    blocked: &mut std::collections::BTreeMap<String, String>,
+    name: String,
+    version: String,
+) {
+    let replace = blocked
+        .get(&name)
+        .is_none_or(|existing| is_newer(&version, existing));
+    if replace {
+        blocked.insert(name, version);
     }
 }
 
@@ -155,7 +178,7 @@ mod tests {
     use super::*;
 
     fn wanted_version(packument: &aube_registry::Packument, range: &str) -> Option<String> {
-        policy_version_info(packument, &packument.name, range, None).selected
+        policy_version_info(packument, &packument.name, range, None, None).selected
     }
 
     fn packument(json: serde_json::Value) -> aube_registry::Packument {
@@ -288,19 +311,49 @@ mod tests {
         };
 
         assert_eq!(
-            policy_version_info(&package, "demo", "latest", Some(&minimum_release_age))
+            policy_version_info(&package, "demo", "latest", Some(&minimum_release_age), None,)
                 .selected
                 .as_deref(),
             Some("1.0.0")
         );
         assert_eq!(
-            policy_version_info(&package, "demo", "*", Some(&minimum_release_age))
+            policy_version_info(&package, "demo", "*", Some(&minimum_release_age), None)
                 .selected
                 .as_deref(),
             Some("1.0.0")
         );
-        let info = policy_version_info(&package, "demo", "latest", Some(&minimum_release_age));
+        let info =
+            policy_version_info(&package, "demo", "latest", Some(&minimum_release_age), None);
         assert_eq!(info.blocked.as_deref(), Some("2.0.0"));
+
+        let installed = policy_version_info(
+            &package,
+            "demo",
+            "latest",
+            Some(&minimum_release_age),
+            Some("2.0.0"),
+        );
+        assert_eq!(installed.selected.as_deref(), Some("2.0.0"));
+        assert_eq!(installed.blocked, None);
+
+        let alias = policy_version_info(
+            &package,
+            "demo",
+            "npm:demo@latest",
+            Some(&minimum_release_age),
+            None,
+        );
+        assert_eq!(alias.selected.as_deref(), Some("1.0.0"));
+        assert_eq!(alias.blocked.as_deref(), Some("2.0.0"));
+    }
+
+    #[test]
+    fn blocked_update_map_keeps_the_newest_version() {
+        let mut blocked = std::collections::BTreeMap::new();
+        record_age_gated_update(&mut blocked, "demo".to_string(), "2.0.0".to_string());
+        record_age_gated_update(&mut blocked, "demo".to_string(), "3.0.0".to_string());
+        record_age_gated_update(&mut blocked, "demo".to_string(), "1.0.0".to_string());
+        assert_eq!(blocked.get("demo").map(String::as_str), Some("3.0.0"));
     }
 
     #[test]
