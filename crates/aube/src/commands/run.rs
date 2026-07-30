@@ -1123,9 +1123,13 @@ async fn build_script_command(
     let bin_dir = super::project_modules_dir(cwd).join(".bin");
     let node_gyp_bin_dir = super::install::node_gyp_bootstrap::lazy_shim_bin_dir(&bin_dir)?;
     let runtime_bin_dirs = crate::runtime::path_entries();
+    let activated_shim_dir = crate::tool_shims::activated_shim_dir();
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let mut entries =
-        Vec::with_capacity(2 + usize::from(node_gyp_bin_dir.is_some()) + runtime_bin_dirs.len());
+    let mut entries = Vec::with_capacity(
+        2 + usize::from(node_gyp_bin_dir.is_some())
+            + usize::from(activated_shim_dir.is_some())
+            + runtime_bin_dirs.len(),
+    );
     entries.push(bin_dir);
     if let Some(dir) = node_gyp_bin_dir {
         entries.push(dir);
@@ -1134,6 +1138,14 @@ async fn build_script_command(
     // project-local bins — scripts running `node` get the pinned
     // version.
     entries.extend(runtime_bin_dirs);
+    // Startup removes the activated shim directory from aube's own PATH
+    // so internal runtime probes cannot rediscover aube recursively. Package
+    // scripts are user commands, though, and must retain the shell activation
+    // contract so `pnpm` / `npm` / `yarn` continue to route through aube.
+    // A nested shim invocation sanitizes its own process PATH before probing.
+    if let Some(dir) = activated_shim_dir {
+        entries.push(dir);
+    }
     entries.extend(std::env::split_paths(&path));
     let new_path = std::env::join_paths(entries).unwrap_or(path);
     let script_dir = if cwd.is_absolute() {

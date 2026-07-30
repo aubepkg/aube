@@ -28,6 +28,12 @@ pub(crate) fn shim_dir() -> Option<PathBuf> {
     Some(data_home.join(ns).join("shims"))
 }
 
+pub(crate) fn activated_shim_dir() -> Option<PathBuf> {
+    std::env::var_os(SHIM_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 pub(crate) fn sanitize_process_path() {
     let Some(path) = path_without_shim_dir(std::env::var_os("PATH")) else {
         return;
@@ -40,8 +46,8 @@ pub(crate) fn sanitize_process_path() {
 }
 
 fn path_without_shim_dir(path: Option<OsString>) -> Option<OsString> {
-    let shim_dir = std::env::var_os(SHIM_DIR_ENV).filter(|v| !v.is_empty())?;
-    strip_path_entry(path?, Path::new(&shim_dir))
+    let shim_dir = activated_shim_dir()?;
+    strip_path_entry(path?, &shim_dir)
 }
 
 fn strip_path_entry(path: OsString, entry_to_remove: &Path) -> Option<OsString> {
