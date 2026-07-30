@@ -484,6 +484,7 @@ async fn collect_rows(
     }
 
     let mut rows: Vec<Row> = Vec::new();
+    let mut blocked_updates = BTreeMap::new();
     for dep in &roots {
         let packument = packuments.remove(&dep.name);
         let current = match graph.get_package(&dep.dep_path) {
@@ -502,22 +503,30 @@ async fn collect_rows(
         // `latest` dist-tag (common on private registries) doesn't get
         // silently flagged as outdated. Drift detection treats an
         // unknown latest the same as "matches current".
-        let latest = super::policy_version(
+        let latest_info = super::policy_version_info(
             &packument,
             &dep.name,
             "latest",
             minimum_release_age.as_ref(),
         );
+        if let Some(blocked) = latest_info.blocked {
+            blocked_updates.insert(dep.name.clone(), blocked);
+        }
+        let latest = latest_info.selected;
 
         // Wanted = the version an update would resolve inside the manifest
         // range after applying minimumReleaseAge. Fall back to `current` when
         // the range is unparseable so we don't lie.
-        let wanted = dep
-            .specifier
-            .as_deref()
-            .and_then(|spec| {
-                super::policy_version(&packument, &dep.name, spec, minimum_release_age.as_ref())
-            })
+        let wanted_info = dep.specifier.as_deref().map(|spec| {
+            super::policy_version_info(&packument, &dep.name, spec, minimum_release_age.as_ref())
+        });
+        if let Some(blocked) = wanted_info.as_ref().and_then(|info| info.blocked.as_ref()) {
+            blocked_updates
+                .entry(dep.name.clone())
+                .or_insert_with(|| blocked.clone());
+        }
+        let wanted = wanted_info
+            .and_then(|info| info.selected)
             .unwrap_or_else(|| current.clone());
 
         let latest_known = latest.is_some();
@@ -537,6 +546,7 @@ async fn collect_rows(
             });
         }
     }
+    super::warn_age_gated_updates(&blocked_updates);
 
     Ok((rows, true))
 }

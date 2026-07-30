@@ -722,7 +722,19 @@ async fn run_inner(
         .await
         .map_err(miette::Report::new)
         .wrap_err("failed to resolve dependencies")?;
+    let age_gated_updates = if args.interactive {
+        Vec::new()
+    } else {
+        resolver.age_gated_updates(&graph)
+    };
     drop(resolver);
+    let targeted: BTreeSet<&str> = manifest_keys_to_update.iter().map(String::as_str).collect();
+    let blocked_updates = age_gated_updates
+        .into_iter()
+        .filter(|update| targeted.contains(update.name.as_str()))
+        .map(|update| (update.name, update.version))
+        .collect();
+    super::warn_age_gated_updates(&blocked_updates);
     // Drain the readPackage stderr forwarders so resolve-time `ctx.log`
     // records flush to stdout before afterAllResolved emits its own.
     crate::pnpmfile::ReadPackageHostChain::drain_forwarders(read_package_forwarders).await;
@@ -1167,6 +1179,7 @@ async fn pick_update_interactively(
         .description("Space to toggle, Enter to confirm")
         .filterable(true);
     let mut shown = BTreeSet::new();
+    let mut blocked_updates = BTreeMap::new();
     for key in &registry_keys {
         let spec = specifiers
             .get(key.as_str())
@@ -1179,23 +1192,28 @@ async fn pick_update_interactively(
         let current = existing
             .and_then(|g| lookup_pkg(g, existing_importers, key, &real_name))
             .map(|p| p.version.as_str());
-        let wanted =
-            super::policy_version(packument, &real_name, spec, minimum_release_age.as_ref())
-                .or_else(|| current.map(str::to_owned));
+        let wanted_info =
+            super::policy_version_info(packument, &real_name, spec, minimum_release_age.as_ref());
         // `--latest` rewrites past the manifest range, so the picker
         // shows the newest policy-eligible release. Without `--latest`
         // we only refresh inside the range, so target = wanted.
-        let target = if latest {
-            super::policy_version(
+        let target_info = if latest {
+            super::policy_version_info(
                 packument,
                 &real_name,
                 "latest",
                 minimum_release_age.as_ref(),
             )
-            .or_else(|| wanted.clone())
         } else {
-            wanted.clone()
+            wanted_info.clone()
         };
+        if let Some(blocked) = target_info.blocked {
+            blocked_updates.insert((*key).clone(), blocked);
+        }
+        let target = target_info
+            .selected
+            .or(wanted_info.selected)
+            .or_else(|| current.map(str::to_owned));
         let (Some(current), Some(target)) = (current, target.as_deref()) else {
             continue;
         };
@@ -1211,6 +1229,7 @@ async fn pick_update_interactively(
         );
         shown.insert((*key).clone());
     }
+    super::warn_age_gated_updates(&blocked_updates);
     if shown.is_empty() {
         return Ok(Some(InteractiveSelection {
             selected: BTreeSet::new(),

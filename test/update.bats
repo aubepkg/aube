@@ -68,6 +68,24 @@ EOF
 	assert_file_exists node_modules/is-odd/index.js
 }
 
+@test "aube update warns when minimumReleaseAge hides a newer version" {
+	_setup_outdated_project
+	# Put the cutoff between is-odd@3.0.0 and 3.0.1.
+	age_minutes="$(node -e "console.log(Math.floor((Date.now() - Date.parse('2018-05-31T08:00:00.000Z')) / 60000))")"
+	cat >pnpm-workspace.yaml <<EOF
+packages:
+  - "."
+minimumReleaseAge: $age_minutes
+minimumReleaseAgeStrict: true
+EOF
+
+	run aube update --latest --lockfile-only is-odd
+	assert_success
+	assert_output --partial "updates hidden by minimumReleaseAge: is-odd@3.0.1"
+	run grep 'is-odd@3.0.0' aube-lock.yaml
+	assert_success
+}
+
 @test "aube update runs pnpm:devPreinstall before resolution" {
 	cat >package.json <<'EOF'
 {

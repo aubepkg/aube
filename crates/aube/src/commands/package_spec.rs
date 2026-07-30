@@ -1,3 +1,9 @@
+#[derive(Debug, Clone)]
+pub(crate) struct PolicyVersion {
+    pub(crate) selected: Option<String>,
+    pub(crate) blocked: Option<String>,
+}
+
 /// Pick the version a policy-aware update would actually resolve.
 ///
 /// This delegates to the resolver's picker so dist-tag preference,
@@ -5,20 +11,23 @@
 /// failures cannot drift between resolution and the human-facing commands.
 /// Both `outdated` and the interactive update picker use it so neither
 /// advertises a version that the resolver will reject moments later.
-pub(crate) fn policy_version(
+pub(crate) fn policy_version_info(
     packument: &aube_registry::Packument,
     registry_name: &str,
     range_str: &str,
     minimum_release_age: Option<&aube_resolver::MinimumReleaseAge>,
-) -> Option<String> {
+) -> PolicyVersion {
     // Human-facing update reports preserve an absent `latest` tag as
     // unknown. The resolver itself may fall back to the highest stable
     // release so installs remain possible, but presenting that fallback as
     // the publisher's `latest` tag would make the report misleading.
     if range_str == "latest" && !packument.dist_tags.contains_key("latest") {
-        return None;
+        return PolicyVersion {
+            selected: None,
+            blocked: None,
+        };
     }
-    match aube_resolver::pick_version_for_add(
+    let selected = match aube_resolver::pick_version_for_add(
         packument,
         registry_name,
         range_str,
@@ -26,7 +35,46 @@ pub(crate) fn policy_version(
     ) {
         aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
         aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
+    };
+    let blocked = minimum_release_age.and_then(|_| {
+        let ungated =
+            match aube_resolver::pick_version_for_add(packument, registry_name, range_str, None) {
+                aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
+                aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
+            }?;
+        is_newer_than_selected(&ungated, selected.as_deref()).then_some(ungated)
+    });
+    PolicyVersion { selected, blocked }
+}
+
+fn is_newer_than_selected(candidate: &str, selected: Option<&str>) -> bool {
+    let Some(selected) = selected else {
+        return true;
+    };
+    match (
+        node_semver::Version::parse(candidate),
+        node_semver::Version::parse(selected),
+    ) {
+        (Ok(candidate), Ok(selected)) => candidate > selected,
+        _ => candidate != selected,
     }
+}
+
+pub(crate) fn warn_age_gated_updates(blocked: &std::collections::BTreeMap<String, String>) {
+    if blocked.is_empty() {
+        return;
+    }
+    let packages = blocked
+        .iter()
+        .map(|(name, version)| format!("{name}@{version}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    tracing::warn!(
+        code = aube_codes::warnings::WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE,
+        count = blocked.len(),
+        packages,
+        "updates hidden by minimumReleaseAge: {packages}"
+    );
 }
 
 /// Resolve a version spec against a full packument. Returns the concrete
@@ -107,7 +155,7 @@ mod tests {
     use super::*;
 
     fn wanted_version(packument: &aube_registry::Packument, range: &str) -> Option<String> {
-        policy_version(packument, &packument.name, range, None)
+        policy_version_info(packument, &packument.name, range, None).selected
     }
 
     fn packument(json: serde_json::Value) -> aube_registry::Packument {
@@ -240,13 +288,19 @@ mod tests {
         };
 
         assert_eq!(
-            policy_version(&package, "demo", "latest", Some(&minimum_release_age)).as_deref(),
+            policy_version_info(&package, "demo", "latest", Some(&minimum_release_age))
+                .selected
+                .as_deref(),
             Some("1.0.0")
         );
         assert_eq!(
-            policy_version(&package, "demo", "*", Some(&minimum_release_age)).as_deref(),
+            policy_version_info(&package, "demo", "*", Some(&minimum_release_age))
+                .selected
+                .as_deref(),
             Some("1.0.0")
         );
+        let info = policy_version_info(&package, "demo", "latest", Some(&minimum_release_age));
+        assert_eq!(info.blocked.as_deref(), Some("2.0.0"));
     }
 
     #[test]

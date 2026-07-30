@@ -44,6 +44,8 @@ pub const WARN_AUBE_MANAGED_CONFIG_ENFORCED: &str = "WARN_AUBE_MANAGED_CONFIG_EN
 
 // ── update / prerelease ─────────────────────────────────────────────
 pub const WARN_AUBE_PRERELEASE_CHECK_SKIPPED: &str = "WARN_AUBE_PRERELEASE_CHECK_SKIPPED";
+pub const WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE: &str =
+    "WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE";
 pub const WARN_AUBE_WORKSPACE_PACKAGE_MISSING_NAME: &str =
     "WARN_AUBE_WORKSPACE_PACKAGE_MISSING_NAME";
 
@@ -310,6 +312,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_PRERELEASE_CHECK_SKIPPED,
         category: category::UPDATE_PRERELEASE,
         description: "`aube update` couldn't fetch the packument or got a non-semver `latest` tag; preserved-prerelease check skipped for that package.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE,
+        category: category::UPDATE_PRERELEASE,
+        description: "One or more newer package versions were hidden because they have not satisfied `minimumReleaseAge` yet.",
         exit_code: None,
     },
     CodeMeta {

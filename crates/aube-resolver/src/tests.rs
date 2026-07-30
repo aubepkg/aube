@@ -4585,6 +4585,35 @@ fn direct_dep_info_empty_when_no_packument_cached() {
     assert!(info.is_empty(), "no packument cached → empty map");
 }
 
+#[test]
+fn age_gated_updates_reports_hidden_direct_release() {
+    let mut packument = make_packument("foo", &["1.0.0", "2.0.0"], "2.0.0");
+    packument
+        .time
+        .insert("1.0.0".to_string(), "2000-01-01T00:00:00.000Z".to_string());
+    packument
+        .time
+        .insert("2.0.0".to_string(), "2999-01-01T00:00:00.000Z".to_string());
+
+    let mut resolver =
+        direct_dep_info_resolver().with_minimum_release_age(Some(MinimumReleaseAge {
+            minutes: 1440,
+            ..Default::default()
+        }));
+    resolver.cache.insert("foo".to_string(), packument);
+
+    let pkg = mk_locked("foo", "1.0.0", &[], &[]);
+    let graph = direct_dep_info_graph(&[("foo", "foo@1.0.0", "latest")], &[pkg]);
+
+    assert_eq!(
+        resolver.age_gated_updates(&graph),
+        vec![AgeGatedUpdate {
+            name: "foo".to_string(),
+            version: "2.0.0".to_string(),
+        }]
+    );
+}
+
 #[tokio::test]
 async fn optional_dep_is_skipped_while_required_dep_resolves() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

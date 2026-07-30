@@ -20,7 +20,7 @@ mod semver_util;
 mod trust;
 mod types;
 
-pub use direct_dep_info::DirectDepInfo;
+pub use direct_dep_info::{AgeGatedUpdate, DirectDepInfo};
 pub use error::{AgeGateDetails, CatalogDetails, Error, ExoticSubdepDetails, NoMatchDetails};
 pub use local_source::resolve_exec_script_path;
 pub use package_ext::is_deprecation_allowed;

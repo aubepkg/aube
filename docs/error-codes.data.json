@@ -687,6 +687,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE",
+      "category": "Update / prerelease",
+      "description": "One or more newer package versions were hidden because they have not satisfied `minimumReleaseAge` yet.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_WORKSPACE_PACKAGE_MISSING_NAME",
       "category": "Update / prerelease",
       "description": "A discovered workspace package had no `name` field, so update skipped local workspace version registration for it.",

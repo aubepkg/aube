@@ -106,7 +106,7 @@ EOF
 	run aube outdated
 	assert_success
 	assert_output --partial "up to date"
-	refute_output --partial "3.0.1"
+	assert_output --partial "updates hidden by minimumReleaseAge: is-odd@3.0.1"
 }
 
 @test "aube outdated does not propose a downgrade off a deprecated latest" {
