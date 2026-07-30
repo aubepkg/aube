@@ -232,6 +232,7 @@ pub struct EmbedderEnv {
 #[derive(Debug, Clone, Default)]
 pub struct EmbedderRuntime {
     bin_dir: Option<PathBuf>,
+    path_unchanged: bool,
     bin_dir_precedes_project_bins: bool,
     node_program: Option<PathBuf>,
     node_execpath: Option<PathBuf>,
@@ -274,6 +275,15 @@ impl EmbedderRuntime {
     /// program's parent (e.g. a shim dir separate from the real bin).
     pub fn path_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.bin_dir = Some(dir.into());
+        self.path_unchanged = false;
+        self
+    }
+
+    /// Leave PATH unchanged while still using `node_program` for direct
+    /// spawns and exporting it as `NODE`. Bare `node` commands then resolve
+    /// from the inherited PATH by explicit host choice.
+    pub fn without_path(mut self) -> Self {
+        self.path_unchanged = true;
         self
     }
 
@@ -336,18 +346,19 @@ impl EmbedderRuntime {
         let node_program = self
             .node_program
             .clone()
-            .or_else(|| self.bin_dir.as_ref().map(|d| d.join(node_exe)))
+            .or_else(|| self.bin_dir.as_ref().map(|dir| dir.join(node_exe)))
             .map(|p| abs(&p));
-        let bin_dir = self
-            .bin_dir
-            .clone()
-            .or_else(|| {
+        let bin_dir = if self.path_unchanged {
+            None
+        } else {
+            self.bin_dir.clone().or_else(|| {
                 node_program
                     .as_ref()
                     .and_then(|p| p.parent())
                     .map(Path::to_path_buf)
             })
-            .map(|p| abs(&p));
+        }
+        .map(|p| abs(&p));
         let node_execpath = self
             .node_execpath
             .clone()
@@ -1300,6 +1311,56 @@ mod tests {
         assert_eq!(ctx.version.as_deref(), Some("24.4.1"));
         assert_eq!(ctx.env.len(), 1);
         assert_eq!(ctx.env[0].merge, EnvMerge::Append);
+    }
+
+    #[test]
+    fn wrapper_can_leave_path_unchanged() {
+        let ctx = EmbedderRuntime::wrapper("/shim/node")
+            .real_node("/real/node")
+            .without_path()
+            .resolve();
+        assert_eq!(ctx.bin_dir, None);
+        assert_eq!(
+            ctx.node_program.as_deref(),
+            Some(abs("/shim/node").as_path())
+        );
+        assert_eq!(
+            ctx.node_execpath.as_deref(),
+            Some(abs("/real/node").as_path())
+        );
+        assert!(ctx.bin_dir_precedes_project_bins);
+    }
+
+    #[test]
+    fn last_path_builder_call_wins() {
+        let explicit = EmbedderRuntime::wrapper("/shim/node")
+            .without_path()
+            .path_dir("/custom/bin")
+            .resolve();
+        assert_eq!(
+            explicit.bin_dir.as_deref(),
+            Some(abs("/custom/bin").as_path())
+        );
+
+        let unchanged = EmbedderRuntime::wrapper("/shim/node")
+            .path_dir("/custom/bin")
+            .without_path()
+            .resolve();
+        assert_eq!(unchanged.bin_dir, None);
+    }
+
+    #[test]
+    fn selector_without_path_keeps_selected_node() {
+        let node_exe = if cfg!(windows) { "node.exe" } else { "node" };
+        let ctx = EmbedderRuntime::selector("/opt/node/bin")
+            .without_path()
+            .resolve();
+        assert_eq!(ctx.bin_dir, None);
+        assert_eq!(
+            ctx.node_program.as_deref(),
+            Some(abs("/opt/node/bin").join(node_exe).as_path())
+        );
+        assert_eq!(ctx.node_execpath, ctx.node_program);
     }
 
     #[tokio::test]

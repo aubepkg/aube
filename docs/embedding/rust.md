@@ -132,6 +132,11 @@ let runtime = EmbedderRuntime::wrapper("/opt/mytool/shim/node")
     .env_append("NODE_OPTIONS", "--import /opt/mytool/preload.mjs");
 ```
 
+Use `.without_path()` when the host should set `NODE` and use the wrapper for
+direct aube spawns but intentionally leave bare `node` resolution to the
+inherited `PATH`. Calling `.path_dir(...)` later restores an explicit PATH
+entry; the last path builder call wins.
+
 `internal_node` splits off the node aube's *internal* machinery spawns —
 pnpmfile hooks, the security scanner, version probes — so those hot paths run
 on the real binary while user-facing spawns (scripts, `NODE`, `aube node`)
