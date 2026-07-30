@@ -8,7 +8,7 @@
 //!
 //! Pure read: no state changes, no `node_modules/` writes, no project lock.
 
-use super::{DepFilter, make_client, packument_cache_dir};
+use super::{DepFilter, make_client};
 use aube_lockfile::{DepType, DirectDep, dep_type_label};
 use aube_registry::Packument;
 use clap::Args;
@@ -445,7 +445,18 @@ async fn collect_rows(
     }
 
     let client = std::sync::Arc::new(make_client(cwd));
-    let cache_dir = packument_cache_dir();
+    let (minimum_release_age, registry_supports_time) = super::with_settings_ctx(cwd, |ctx| {
+        (
+            super::install::resolve_minimum_release_age(ctx, None),
+            aube_settings::resolved::registry_supports_time_field(ctx),
+        )
+    });
+    let needs_time = minimum_release_age.is_some() && !registry_supports_time;
+    let cache_dir = if needs_time {
+        super::packument_full_cache_dir_for_cwd(cwd)
+    } else {
+        super::packument_cache_dir_for_cwd(cwd)
+    };
 
     // Fetch every packument in parallel via a JoinSet. Failures are surfaced
     // per-row so a single missing package doesn't sink the whole report.
@@ -455,7 +466,13 @@ async fn collect_rows(
         let cache_dir = cache_dir.clone();
         let name = dep.name.clone();
         set.spawn(async move {
-            let result = client.fetch_packument_cached(&name, &cache_dir).await;
+            let result = if needs_time {
+                client
+                    .fetch_packument_with_time_cached(&name, &cache_dir)
+                    .await
+            } else {
+                client.fetch_packument_cached(&name, &cache_dir).await
+            };
             (name, result)
         });
     }
@@ -485,15 +502,22 @@ async fn collect_rows(
         // `latest` dist-tag (common on private registries) doesn't get
         // silently flagged as outdated. Drift detection treats an
         // unknown latest the same as "matches current".
-        let latest: Option<String> = packument.dist_tags.get("latest").cloned();
+        let latest = super::policy_version(
+            &packument,
+            &dep.name,
+            "latest",
+            minimum_release_age.as_ref(),
+        );
 
-        // Wanted = highest version in the packument that still satisfies the
-        // manifest range. Fall back to `current` when the range is unparseable
-        // (workspace:/file: specifiers, git URLs, etc.) so we don't lie.
+        // Wanted = the version an update would resolve inside the manifest
+        // range after applying minimumReleaseAge. Fall back to `current` when
+        // the range is unparseable so we don't lie.
         let wanted = dep
             .specifier
             .as_deref()
-            .and_then(|spec| super::wanted_version(&packument, spec))
+            .and_then(|spec| {
+                super::policy_version(&packument, &dep.name, spec, minimum_release_age.as_ref())
+            })
             .unwrap_or_else(|| current.clone());
 
         let latest_known = latest.is_some();

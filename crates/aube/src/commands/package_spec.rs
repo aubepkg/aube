@@ -1,63 +1,32 @@
-/// Pick the version of `packument` that an install would land on for
-/// `range_str` — the `Wanted` column of `aube outdated` and the upgrade
-/// target `aube update` offers.
+/// Pick the version a policy-aware update would actually resolve.
 ///
-/// Mirrors pnpm's `pickVersionByVersionRange`, which is also what the
-/// resolver's own `pick_version` implements, so the report can't promise
-/// a version the install won't produce:
-///
-/// 1. `dist-tags.latest` wins whenever it falls inside the range — the
-///    publisher used the tag to anchor the canonical install, and a
-///    higher version outside it is usually a hotfix on an old line or an
-///    unwithdrawn experiment.
-/// 2. Otherwise the highest satisfying version that isn't deprecated.
-/// 3. Otherwise the highest satisfying version, deprecated and all —
-///    the deprecation rule is a tiebreak, not a filter, so a range that
-///    only reaches deprecated versions still resolves.
-///
-/// Step 2 is what keeps `codemirror@6.65.7` — an accidentally mis-tagged
-/// republish of `5.65.7` that sorts above every genuine 6.x — from being
-/// offered as an upgrade to everyone on `^6`.
-///
-/// Returns the *original packument key* (not a round-tripped `Version`
-/// display string) so string comparisons against the lockfile's
-/// `current` — which also comes from a packument key — stay stable
-/// for versions whose `Display` differs from their original form
-/// (e.g. leading zeros in prerelease identifiers, build metadata
-/// that `Version` drops). Returns `None` for unparseable ranges
-/// (workspace:/file: specs, git URLs, etc.) so callers can fall
-/// back to the locked version.
-pub(crate) fn wanted_version(
+/// This delegates to the resolver's picker so dist-tag preference,
+/// deprecation handling, `minimumReleaseAge` exclusions, and strict-mode
+/// failures cannot drift between resolution and the human-facing commands.
+/// Both `outdated` and the interactive update picker use it so neither
+/// advertises a version that the resolver will reject moments later.
+pub(crate) fn policy_version(
     packument: &aube_registry::Packument,
+    registry_name: &str,
     range_str: &str,
+    minimum_release_age: Option<&aube_resolver::MinimumReleaseAge>,
 ) -> Option<String> {
-    let range = node_semver::Range::parse(range_str).ok()?;
-    if let Some(latest) = packument.dist_tags.get("latest")
-        && packument.versions.contains_key(latest)
-        && let Ok(v) = node_semver::Version::parse(latest)
-        && v.satisfies(&range)
-    {
-        return Some(latest.clone());
+    // Human-facing update reports preserve an absent `latest` tag as
+    // unknown. The resolver itself may fall back to the highest stable
+    // release so installs remain possible, but presenting that fallback as
+    // the publisher's `latest` tag would make the report misleading.
+    if range_str == "latest" && !packument.dist_tags.contains_key("latest") {
+        return None;
     }
-    let mut best: Option<(&str, node_semver::Version, bool)> = None;
-    for (ver_str, meta) in &packument.versions {
-        let Ok(v) = node_semver::Version::parse(ver_str) else {
-            continue;
-        };
-        if !v.satisfies(&range) {
-            continue;
-        }
-        let live = meta.deprecated.is_none();
-        let outranks = match &best {
-            None => true,
-            Some((_, _, best_live)) if live != *best_live => live,
-            Some((_, best_v, _)) => v > *best_v,
-        };
-        if outranks {
-            best = Some((ver_str.as_str(), v, live));
-        }
+    match aube_resolver::pick_version_for_add(
+        packument,
+        registry_name,
+        range_str,
+        minimum_release_age,
+    ) {
+        aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
+        aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
     }
-    best.map(|(key, _, _)| key.to_string())
 }
 
 /// Resolve a version spec against a full packument. Returns the concrete
@@ -136,6 +105,10 @@ pub(crate) fn encode_package_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wanted_version(packument: &aube_registry::Packument, range: &str) -> Option<String> {
+        policy_version(packument, &packument.name, range, None)
+    }
 
     fn packument(json: serde_json::Value) -> aube_registry::Packument {
         serde_json::from_value(json).expect("test packument parses")
@@ -244,6 +217,36 @@ mod tests {
             Some("4.2.11")
         );
         assert_eq!(wanted_version(&codemirror(), "*").as_deref(), Some("6.0.2"));
+    }
+
+    #[test]
+    fn policy_version_skips_fresh_latest_release() {
+        let package = packument(serde_json::json!({
+            "name": "demo",
+            "dist-tags": { "latest": "2.0.0" },
+            "versions": {
+                "1.0.0": { "name": "demo", "version": "1.0.0" },
+                "2.0.0": { "name": "demo", "version": "2.0.0" }
+            },
+            "time": {
+                "1.0.0": "2000-01-01T00:00:00.000Z",
+                "2.0.0": "2999-01-01T00:00:00.000Z"
+            }
+        }));
+        let minimum_release_age = aube_resolver::MinimumReleaseAge {
+            minutes: 1440,
+            exclude: aube_resolver::PackageVersionPolicy::default(),
+            strict: false,
+        };
+
+        assert_eq!(
+            policy_version(&package, "demo", "latest", Some(&minimum_release_age)).as_deref(),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            policy_version(&package, "demo", "*", Some(&minimum_release_age)).as_deref(),
+            Some("1.0.0")
+        );
     }
 
     #[test]

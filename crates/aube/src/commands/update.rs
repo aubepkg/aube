@@ -1118,7 +1118,18 @@ async fn pick_update_interactively(
     }
 
     let client = std::sync::Arc::new(super::make_client(cwd));
-    let cache_dir = super::packument_cache_dir();
+    let (minimum_release_age, registry_supports_time) = super::with_settings_ctx(cwd, |ctx| {
+        (
+            super::install::resolve_minimum_release_age(ctx, None),
+            aube_settings::resolved::registry_supports_time_field(ctx),
+        )
+    });
+    let needs_time = minimum_release_age.is_some() && !registry_supports_time;
+    let cache_dir = if needs_time {
+        super::packument_full_cache_dir_for_cwd(cwd)
+    } else {
+        super::packument_cache_dir_for_cwd(cwd)
+    };
     let mut set = tokio::task::JoinSet::new();
     for key in &registry_keys {
         let real_name = real_name_from_spec(key, specifiers.get(key.as_str()));
@@ -1126,7 +1137,13 @@ async fn pick_update_interactively(
         let client = client.clone();
         let cache_dir = cache_dir.clone();
         set.spawn(async move {
-            let result = client.fetch_packument_cached(&real_name, &cache_dir).await;
+            let result = if needs_time {
+                client
+                    .fetch_packument_with_time_cached(&real_name, &cache_dir)
+                    .await
+            } else {
+                client.fetch_packument_cached(&real_name, &cache_dir).await
+            };
             (key_owned, result)
         });
     }
@@ -1162,15 +1179,20 @@ async fn pick_update_interactively(
         let current = existing
             .and_then(|g| lookup_pkg(g, existing_importers, key, &real_name))
             .map(|p| p.version.as_str());
-        let registry_latest = packument.dist_tags.get("latest").map(String::as_str);
-        let wanted = super::wanted_version(packument, spec).or_else(|| current.map(str::to_owned));
+        let wanted =
+            super::policy_version(packument, &real_name, spec, minimum_release_age.as_ref())
+                .or_else(|| current.map(str::to_owned));
         // `--latest` rewrites past the manifest range, so the picker
-        // shows the dist-tag latest as the target. Without `--latest`
+        // shows the newest policy-eligible release. Without `--latest`
         // we only refresh inside the range, so target = wanted.
         let target = if latest {
-            registry_latest
-                .map(str::to_owned)
-                .or_else(|| wanted.clone())
+            super::policy_version(
+                packument,
+                &real_name,
+                "latest",
+                minimum_release_age.as_ref(),
+            )
+            .or_else(|| wanted.clone())
         } else {
             wanted.clone()
         };
