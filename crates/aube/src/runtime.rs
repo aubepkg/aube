@@ -68,6 +68,10 @@ pub struct RuntimeContext {
     /// Directory to prepend to PATH for child processes. `None` means
     /// no switching (ambient node already satisfies, or no config).
     pub bin_dir: Option<PathBuf>,
+    /// Whether `bin_dir` must precede project-local `.bin` directories.
+    /// Wrappers require this so a dependency-provided `node` cannot bypass
+    /// the shim; selectors deliberately keep project-local binaries first.
+    pub bin_dir_precedes_project_bins: bool,
     /// The node aube spawns and exports as `NODE`: the program a
     /// script's bare `node` / `$NODE` resolves to. For a selector this
     /// is the real binary; for a wrapper it is the shim. `None` falls
@@ -112,6 +116,7 @@ impl RuntimeContext {
     fn path_fallback() -> RuntimeContext {
         RuntimeContext {
             bin_dir: None,
+            bin_dir_precedes_project_bins: false,
             node_program: None,
             node_execpath: None,
             internal_node: None,
@@ -227,6 +232,7 @@ pub struct EmbedderEnv {
 #[derive(Debug, Clone, Default)]
 pub struct EmbedderRuntime {
     bin_dir: Option<PathBuf>,
+    bin_dir_precedes_project_bins: bool,
     node_program: Option<PathBuf>,
     node_execpath: Option<PathBuf>,
     internal_node: Option<PathBuf>,
@@ -253,6 +259,7 @@ impl EmbedderRuntime {
     pub fn wrapper(node_program: impl Into<PathBuf>) -> Self {
         Self {
             node_program: Some(node_program.into()),
+            bin_dir_precedes_project_bins: true,
             ..Default::default()
         }
     }
@@ -349,6 +356,7 @@ impl EmbedderRuntime {
         let internal_node = self.internal_node.clone().map(|p| abs(&p));
         RuntimeContext {
             bin_dir,
+            bin_dir_precedes_project_bins: self.bin_dir_precedes_project_bins,
             node_program,
             node_execpath,
             internal_node,
@@ -475,6 +483,20 @@ pub fn path_entries() -> Vec<PathBuf> {
         .and_then(|c| c.bin_dir.clone())
         .into_iter()
         .collect()
+}
+
+/// Place the active runtime PATH entry around project-local `.bin`
+/// directories. Wrappers lead so a local `node` cannot bypass the shim;
+/// selectors follow so package-provided commands retain normal precedence.
+pub fn path_entries_with_project_bins(project_bins: Vec<PathBuf>) -> Vec<PathBuf> {
+    let Some(context) = current() else {
+        return project_bins;
+    };
+    aube_scripts::order_path_entries(
+        project_bins,
+        context.bin_dir.as_deref(),
+        context.bin_dir_precedes_project_bins,
+    )
 }
 
 /// The binary to probe for a node version when one wasn't supplied: the
@@ -859,6 +881,7 @@ async fn resolve_context(
         }
         Some(res) => RuntimeContext {
             bin_dir: res.bin_dir.clone(),
+            bin_dir_precedes_project_bins: false,
             // A resolved runtime is a selector: `NODE` and
             // `npm_node_execpath` are the same binary.
             node_program: Some(res.node_bin.clone()),
@@ -1245,6 +1268,7 @@ mod tests {
             Some(bin.join(node_exe).as_path())
         );
         assert_eq!(ctx.node_execpath, ctx.node_program);
+        assert!(!ctx.bin_dir_precedes_project_bins);
         assert_eq!(ctx.source, RuntimeSource::Embedder);
     }
 
@@ -1260,6 +1284,7 @@ mod tests {
         // execpath is the real binary node-gyp reads; internal spawns
         // (pnpmfile, scanner) skip the wrapper hop.
         assert_eq!(ctx.bin_dir.as_deref(), Some(abs("/shim").as_path()));
+        assert!(ctx.bin_dir_precedes_project_bins);
         assert_eq!(
             ctx.node_program.as_deref(),
             Some(abs("/shim/node").as_path())
@@ -1380,6 +1405,25 @@ mod tests {
             assert_eq!(node_program(), bin.join(node_exe));
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn wrapper_path_leads_while_selector_follows_project_bins() {
+        let project_bin = abs("/project/node_modules/.bin");
+
+        let wrapper_entries =
+            with_embedder_runtime(Some(EmbedderRuntime::wrapper("/shim/node")), async {
+                path_entries_with_project_bins(vec![project_bin.clone()])
+            })
+            .await;
+        assert_eq!(wrapper_entries, vec![abs("/shim"), project_bin.clone()]);
+
+        let selector_entries =
+            with_embedder_runtime(Some(EmbedderRuntime::selector("/opt/node/bin")), async {
+                path_entries_with_project_bins(vec![project_bin.clone()])
+            })
+            .await;
+        assert_eq!(selector_entries, vec![project_bin, abs("/opt/node/bin")]);
     }
 
     #[test]

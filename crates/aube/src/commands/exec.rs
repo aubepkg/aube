@@ -411,8 +411,7 @@ pub(crate) fn build_bin_command(
                 .collect::<Vec<_>>()
                 .join(" ");
             let bin_dir = super::project_modules_dir(cwd).join(".bin");
-            let mut path_dirs = vec![bin_dir];
-            path_dirs.extend(crate::runtime::path_entries());
+            let path_dirs = crate::runtime::path_entries_with_project_bins(vec![bin_dir]);
             let new_path = aube_scripts::prepend_paths(&path_dirs);
             let mut cmd = aube_scripts::spawn_shell(&line);
             cmd.env("PATH", &new_path);

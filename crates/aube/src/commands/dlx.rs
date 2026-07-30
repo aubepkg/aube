@@ -250,8 +250,7 @@ pub async fn run_in(
         // globally. Read the same setting here so the scratch bin dir
         // matches where the install actually wrote the bins.
         let bin_dir = super::project_modules_dir(&project_dir).join(".bin");
-        let mut path_dirs = vec![bin_dir];
-        path_dirs.extend(crate::runtime::path_entries());
+        let path_dirs = crate::runtime::path_entries_with_project_bins(vec![bin_dir]);
         let new_path = aube_scripts::prepend_paths(&path_dirs);
         let mut cmd = aube_scripts::spawn_shell(&line);
         crate::runtime::apply_child_env(&mut cmd);

@@ -1122,22 +1122,17 @@ async fn build_script_command(
 
     let bin_dir = super::project_modules_dir(cwd).join(".bin");
     let node_gyp_bin_dir = super::install::node_gyp_bootstrap::lazy_shim_bin_dir(&bin_dir)?;
-    let runtime_bin_dirs = crate::runtime::path_entries();
     let activated_shim_dir = crate::tool_shims::activated_shim_dir();
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let mut entries = Vec::with_capacity(
-        2 + usize::from(node_gyp_bin_dir.is_some())
-            + usize::from(activated_shim_dir.is_some())
-            + runtime_bin_dirs.len(),
-    );
-    entries.push(bin_dir);
+    let mut project_bins = Vec::with_capacity(1 + usize::from(node_gyp_bin_dir.is_some()));
+    project_bins.push(bin_dir);
     if let Some(dir) = node_gyp_bin_dir {
-        entries.push(dir);
+        project_bins.push(dir);
     }
-    // The switched Node runtime beats the inherited PATH but loses to
-    // project-local bins — scripts running `node` get the pinned
-    // version.
-    entries.extend(runtime_bin_dirs);
+    let mut entries = crate::runtime::path_entries_with_project_bins(project_bins);
+    entries.reserve(
+        usize::from(activated_shim_dir.is_some()) + std::env::split_paths(&path).count(),
+    );
     // Startup removes the activated shim directory from aube's own PATH
     // so internal runtime probes cannot rediscover aube recursively. Package
     // scripts are user commands, though, and must retain the shell activation

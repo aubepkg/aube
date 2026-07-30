@@ -36,11 +36,15 @@ pub struct ScriptSettings {
     pub script_shell: Option<PathBuf>,
     pub unsafe_perm: Option<bool>,
     pub shell_emulator: bool,
-    /// Directory of the project's resolved Node runtime, prepended to
-    /// PATH after the project `.bin` so the switched node beats the
-    /// system one while project-local binaries still win. `None` when
-    /// no runtime switching is active.
+    /// Directory of the project's resolved Node runtime. Selectors place it
+    /// after project `.bin` directories; wrappers can move it ahead via
+    /// `node_bin_dir_precedes_project_bins`. `None` when no runtime switching
+    /// is active.
     pub node_bin_dir: Option<PathBuf>,
+    /// Put `node_bin_dir` before project-local `.bin` directories.
+    /// Wrapping runtimes need this so a local `node` cannot bypass their shim;
+    /// selectors leave this false so project-local binaries still win.
+    pub node_bin_dir_precedes_project_bins: bool,
     /// The node exported as `NODE` (npm parity) — the program a
     /// script's `$NODE` / bare `node` re-spawns. A wrapper's shim; the
     /// real binary otherwise.
@@ -260,6 +264,50 @@ pub fn prepend_paths(bin_dirs: &[PathBuf]) -> std::ffi::OsString {
     let mut entries: Vec<PathBuf> = bin_dirs.to_vec();
     entries.extend(std::env::split_paths(&path));
     std::env::join_paths(entries).unwrap_or(path)
+}
+
+/// Place a runtime bin directory around project-local bin directories.
+/// Wrappers lead so a local `node` cannot bypass their shim; selectors follow
+/// so package-provided commands retain normal precedence.
+pub fn order_path_entries(
+    mut project_bins: Vec<PathBuf>,
+    runtime_bin: Option<&Path>,
+    runtime_precedes_project_bins: bool,
+) -> Vec<PathBuf> {
+    let Some(runtime_bin) = runtime_bin else {
+        return project_bins;
+    };
+    if runtime_precedes_project_bins {
+        project_bins.insert(0, runtime_bin.to_path_buf());
+    } else {
+        project_bins.push(runtime_bin.to_path_buf());
+    }
+    project_bins
+}
+
+#[cfg(test)]
+mod path_entry_tests {
+    use super::*;
+
+    #[test]
+    fn wrapper_runtime_leads_project_bins() {
+        let runtime = Path::new("/shim");
+        let project = PathBuf::from("/project/node_modules/.bin");
+        assert_eq!(
+            order_path_entries(vec![project.clone()], Some(runtime), true),
+            vec![runtime.to_path_buf(), project]
+        );
+    }
+
+    #[test]
+    fn selector_runtime_follows_project_bins() {
+        let runtime = Path::new("/opt/node/bin");
+        let project = PathBuf::from("/project/node_modules/.bin");
+        assert_eq!(
+            order_path_entries(vec![project.clone()], Some(runtime), false),
+            vec![project, runtime.to_path_buf()]
+        );
+    }
 }
 
 /// Spawn a shell command line. On Unix we go through `sh -c`, on
@@ -1086,18 +1134,16 @@ pub async fn run_script(
     let project_bin = project_root.join(modules_dir_name).join(".bin");
     let settings = script_settings();
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let mut entries: Vec<PathBuf> = Vec::with_capacity(extra_bin_dirs.len() + 2);
+    let mut project_bins: Vec<PathBuf> = Vec::with_capacity(extra_bin_dirs.len() + 1);
     for dir in extra_bin_dirs {
-        entries.push(dir.to_path_buf());
+        project_bins.push(dir.to_path_buf());
     }
-    entries.push(project_bin);
-    // The switched Node runtime sits between project bins and the
-    // inherited PATH: scripts spawning `node` (directly or via
-    // `#!/usr/bin/env node`) get the project's pinned version, while
-    // anything installed into `.bin` still wins.
-    if let Some(dir) = &settings.node_bin_dir {
-        entries.push(dir.clone());
-    }
+    project_bins.push(project_bin);
+    let mut entries = order_path_entries(
+        project_bins,
+        settings.node_bin_dir.as_deref(),
+        settings.node_bin_dir_precedes_project_bins,
+    );
     entries.extend(std::env::split_paths(&path));
     let new_path = std::env::join_paths(entries).unwrap_or(path);
     let jail_home = jail.map(|j| jail_home(&j.package_dir));

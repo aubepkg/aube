@@ -44,6 +44,9 @@ pub(crate) fn configure_script_settings(
         unsafe_perm,
         shell_emulator,
         node_bin_dir: runtime.as_ref().and_then(|r| r.bin_dir.clone()),
+        node_bin_dir_precedes_project_bins: runtime
+            .as_ref()
+            .is_some_and(|r| r.bin_dir_precedes_project_bins),
         node_program: runtime
             .as_ref()
             .and_then(|r| r.node_program.clone())
