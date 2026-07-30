@@ -303,7 +303,7 @@ _basic_project() {
 		{
 		  "name": "runtime-test",
 		  "version": "0.0.0",
-		  "scripts": { "nested-pnpm": "pnpm --version" }
+		  "scripts": { "nested-pnpm": "command -v pnpm" }
 		}
 	JSON
 	run aube activate bash
@@ -312,7 +312,7 @@ _basic_project() {
 
 	run aube run --no-install nested-pnpm
 	assert_success
-	assert_output --regexp '^[0-9]+\.[0-9]+\.[0-9]+'
+	assert_output "$AUBE_SHIM_DIR/pnpm"
 }
 
 @test "pnpm-11 lockfile with a runtime pin installs without fetching node from the registry" {
