@@ -154,23 +154,26 @@ jobs:
           if printf '%s' "$PR_LABELS" | grep -q '"breaking-api"'; then breaking=true; fi
           echo "breaking=$breaking" >> "$GITHUB_OUTPUT"
           echo "breaking override: $breaking"
-      - name: Rust embedding API — cargo-semver-checks
-        id: semver
-        continue-on-error: true
-        # Version pinned in bin/cargo-semver-checks (mise tool-stub).
-        run: |
-          ./bin/cargo-semver-checks semver-checks \
-            --baseline-rev origin/main \
-            --package aube-codes --package aube-settings --package aube-util
-      - name: C ABI — frozen export set
-        id: ffi
-        continue-on-error: true
-        run: |
-          cargo build --locked --profile ffi -p aube-ffi
-          grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt
-          nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
-            | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt
-          diff -u /tmp/abi-expected.txt /tmp/abi-actual.txt
+      # These checks use independent build profiles and outputs. Keep them on
+      # one Namespace runner while overlapping their work.
+      - parallel:
+          - name: Rust embedding API — cargo-semver-checks
+            id: semver
+            continue-on-error: true
+            # Version pinned in bin/cargo-semver-checks (mise tool-stub).
+            run: |
+              ./bin/cargo-semver-checks semver-checks \
+                --baseline-rev origin/main \
+                --package aube-codes --package aube-settings --package aube-util
+          - name: C ABI — frozen export set
+            id: ffi
+            continue-on-error: true
+            run: |
+              cargo build --locked --profile ffi -p aube-ffi
+              grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt
+              nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
+                | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt
+              diff -u /tmp/abi-expected.txt /tmp/abi-actual.txt
       - name: Enforce API stability
         if: always()
         env:
