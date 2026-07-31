@@ -101,10 +101,15 @@ pub async fn run(args: PatchCommitArgs) -> Result<()> {
     if !combined_patch.is_empty() && !combined_patch.ends_with('\n') {
         combined_patch.push('\n');
     }
-    combined_patch.push_str(&patch);
-    aube_util::fs_atomic::atomic_write(&abs_path, combined_patch.as_bytes())
-        .into_diagnostic()
-        .map_err(|e| miette!("failed to write {}: {e}", abs_path.display()))?;
+    // A failed best-effort snapshot cleanup can leave the edit tree
+    // behind. Make retrying the exact patch-commit idempotent instead
+    // of appending its incremental hunks a second time.
+    if !had_existing_patch || !combined_patch.ends_with(&patch) {
+        combined_patch.push_str(&patch);
+        aube_util::fs_atomic::atomic_write(&abs_path, combined_patch.as_bytes())
+            .into_diagnostic()
+            .map_err(|e| miette!("failed to write {}: {e}", abs_path.display()))?;
+    }
 
     // Manifest write failure means the patch on disk is not
     // referenced anywhere. Restore the prior patch if there was one

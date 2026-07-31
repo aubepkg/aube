@@ -71,6 +71,20 @@ pub async fn run(args: PatchArgs) -> Result<()> {
     let vstore_max_len = super::resolve_virtual_store_dir_max_length_for_cwd(&cwd);
     let pkg_dir = find_pnpm_entry(&pnpm_dir, &name, &version, vstore_max_len)?;
 
+    // The edit snapshot must represent the currently declared patch.
+    // In particular, a prior patch-commit can have updated the patch
+    // and lockfile before its convenience relink failed. Refuse to
+    // snapshot that stale tree: appending a diff based on it would
+    // produce hunks against the wrong baseline.
+    if let Some(reason) = crate::state::check_needs_install(&cwd) {
+        return Err(miette!(
+            code = aube_codes::errors::ERR_AUBE_PATCH_FAILED,
+            "installed package tree is out of date ({reason}); run `{}` before `{}`",
+            aube_util::cmd("install"),
+            aube_util::cmd("patch")
+        ));
+    }
+
     // Build the edit + source dirs. Defaults live under
     // `<tmp>/aube-patch-<name>-<version>-<pid>/` so concurrent
     // `aube patch` runs in different terminals don't collide.

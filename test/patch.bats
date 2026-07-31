@@ -94,6 +94,8 @@ EOF
 	mv "$generated_patch" "$declared_patch"
 	sed -i.bak "s#$generated_patch#$declared_patch#" pnpm-workspace.yaml
 	rm pnpm-workspace.yaml.bak
+	run aube install --ignore-scripts
+	assert_success
 
 	run aube patch is-odd@3.0.1
 	assert_success
@@ -101,15 +103,19 @@ EOF
 	run grep -q "existing-patch-marker" "$edit_dir/index.js"
 	assert_success
 	echo "// second-patch-marker" >>"$edit_dir/index.js"
+	retry_parent="$BATS_TEST_TMPDIR/retry-edit"
+	cp -R "$(dirname "$edit_dir")" "$retry_parent"
 
 	run aube patch-commit "$edit_dir"
+	assert_success
+	run aube patch-commit "$retry_parent/user"
 	assert_success
 	assert [ -f "$declared_patch" ]
 	assert [ ! -f "patches/is-odd@3.0.1.patch" ]
 	run grep -q '^+// existing-patch-marker' "$declared_patch"
 	assert_success
-	run grep -q '^+// second-patch-marker' "$declared_patch"
-	assert_success
+	run grep -c '^+// second-patch-marker' "$declared_patch"
+	assert_output "1"
 	run grep -Fq "$declared_patch" pnpm-workspace.yaml
 	assert_success
 
