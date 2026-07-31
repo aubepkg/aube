@@ -9,10 +9,7 @@
 //! through `git apply` as well as aube's own applier in `aube-linker`.
 
 use crate::commands::patch::{PatchState, read_state};
-use crate::patches::{
-    is_safe_patch_rel, read_patched_dependencies, remove_patched_dependency,
-    upsert_patched_dependency,
-};
+use crate::patches::{is_safe_patch_rel, read_patched_dependencies, upsert_patched_dependency};
 use clap::Args;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::BTreeSet;
@@ -142,35 +139,20 @@ pub async fn run(args: PatchCommitArgs) -> Result<()> {
         eprintln!("Updated {key} at {rel_path}");
     }
 
+    // The patch and declaration are now committed. Drop the edit
+    // snapshot before relinking so an unrelated install failure cannot
+    // lead the user to recommit the same incremental diff.
+    if let Some(parent) = state.user_dir.parent() {
+        let _ = std::fs::remove_dir_all(parent);
+    }
+
     // Re-run install so the new patch is applied. We deliberately
     // avoid touching the lockfile here — the patch only changes
     // file contents, not the resolved graph.
     let opts = crate::commands::install::InstallOptions::with_mode(
         crate::commands::install::FrozenMode::Prefer,
     );
-    if let Err(e) = crate::commands::install::run(opts).await {
-        if had_existing_patch {
-            if let Some(bytes) = prior_patch {
-                let _ = aube_util::fs_atomic::atomic_write(&abs_path, &bytes);
-            }
-        } else if remove_patched_dependency(&cwd, &key).is_ok() {
-            match prior_patch {
-                Some(bytes) => {
-                    let _ = aube_util::fs_atomic::atomic_write(&abs_path, &bytes);
-                }
-                None => {
-                    let _ = std::fs::remove_file(&abs_path);
-                }
-            }
-        }
-        return Err(e);
-    }
-
-    // Keep the edit snapshot available until both the patch write and
-    // relink succeed so a failed commit remains recoverable.
-    if let Some(parent) = state.user_dir.parent() {
-        let _ = std::fs::remove_dir_all(parent);
-    }
+    crate::commands::install::run(opts).await?;
 
     Ok(())
 }

@@ -92,7 +92,8 @@ EOF
 	generated_patch="patches/custom/is-odd@3.0.1.patch"
 	declared_patch="patches/is-odd__3.0.1.patch"
 	mv "$generated_patch" "$declared_patch"
-	sed -i "s#$generated_patch#$declared_patch#" pnpm-workspace.yaml
+	sed -i.bak "s#$generated_patch#$declared_patch#" pnpm-workspace.yaml
+	rm pnpm-workspace.yaml.bak
 
 	run aube patch is-odd@3.0.1
 	assert_success
