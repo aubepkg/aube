@@ -379,8 +379,8 @@ pub struct WorkspaceConfig {
     /// Per-package allowlist for dependency lifecycle scripts. Keys are
     /// pnpm-style patterns (`name`, `name@version`, `name@v1 || v2`);
     /// values are `true` to allow or `false` to deny. Merged with
-    /// `package.json`'s `pnpm.allowBuilds` — workspace-level entries
-    /// take precedence for the same key.
+    /// `package.json`'s `pnpm.allowBuilds`; an explicit denial from
+    /// either source takes precedence for the same key.
     #[serde(default)]
     pub allow_builds: BTreeMap<String, yaml_serde::Value>,
 

@@ -227,10 +227,10 @@ When more than one lockfile exists, prefer keeping one canonical lockfile for th
 
 ## Dependency Scripts
 
-aube skips dependency lifecycle scripts by default, except for esbuild's binary
-installer. That protects installs from unexpected build steps in transitive
-packages while keeping esbuild functional out of the box. An explicit deny rule
-still overrides the built-in trust.
+aube skips dependency lifecycle scripts by default, except for packages on its
+built-in trusted-dependencies list. That protects installs from unexpected build
+steps while keeping packages that require an installer functional out of the
+box. An explicit deny rule always overrides the built-in trust.
 
 To allow packages that need build scripts:
 

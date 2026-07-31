@@ -414,6 +414,15 @@ jobs:
           echo "Forced patch bump ${old_version} -> ${new_version}"
           echo "bump=true" >> "$GITHUB_OUTPUT"
 
+      # Keep the offline, reproducible lifecycle trust policy aligned with
+      # pnpm's maintained list. The generated source metadata pins the exact
+      # upstream commit included in each release.
+      - name: Refresh trusted dependencies
+        if: steps.update.outputs.bump == 'true' || steps.force.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+        run: scripts/update-trusted-dependencies.bash
+
       - name: Capture release version
         id: version
         run: |
