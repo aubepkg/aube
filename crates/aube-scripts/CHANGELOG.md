@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.0](https://github.com/jdx/aube/compare/aube-scripts-v1.36.0...aube-scripts-v1.37.0) - 2026-07-31
+
+### Added
+
+- *(scripts)* use pnpm trusted dependency list ([#1199](https://github.com/jdx/aube/pull/1199))
+
+### Fixed
+
+- *(embed)* keep wrapper node first on PATH ([#1188](https://github.com/jdx/aube/pull/1188))
+
+### Other
+
+- refresh benchmarks for v1.36.0 ([#1185](https://github.com/jdx/aube/pull/1185))
+
 ## [1.36.0](https://github.com/jdx/aube/compare/aube-scripts-v1.35.0...aube-scripts-v1.36.0) - 2026-07-29
 
 ### Other
