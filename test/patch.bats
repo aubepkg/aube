@@ -122,6 +122,59 @@ EOF
 	assert_success
 }
 
+@test "pnpm patch hash drift fails frozen install and refreshes plain install" {
+	cat >package.json <<'EOF'
+{
+  "name": "patch-hash-drift-test",
+  "version": "1.0.0",
+  "dependencies": { "is-odd": "3.0.1" }
+}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - .
+patchedDependencies:
+  is-odd@3.0.1: patches/is-odd@3.0.1.patch
+EOF
+	mkdir patches
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	cat >pnpm-lock.yaml <<'EOF'
+lockfileVersion: '9.0'
+importers:
+  .: {}
+EOF
+
+	run aube install --no-frozen-lockfile --ignore-scripts
+	assert_success
+	old_hash="$(awk '$1 == "is-odd@3.0.1:" && NF == 2 { print $2; exit }' pnpm-lock.yaml)"
+	assert_equal "${#old_hash}" 64
+
+	sed -i.bak "s/patched = 'v1'/patched = 'v2'/" patches/is-odd@3.0.1.patch
+	rm patches/is-odd@3.0.1.patch.bak
+
+	run aube install --frozen-lockfile --ignore-scripts
+	assert_failure
+	assert_output --partial "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH"
+
+	run aube install --ignore-scripts
+	assert_success
+	new_hash="$(awk '$1 == "is-odd@3.0.1:" && NF == 2 { print $2; exit }' pnpm-lock.yaml)"
+	assert_equal "${#new_hash}" 64
+	[ "$new_hash" != "$old_hash" ]
+	run grep -Fq "version: 3.0.1(patch_hash=$new_hash)" pnpm-lock.yaml
+	assert_success
+	run node -e 'if (require("is-odd").patched !== "v2") process.exit(1)'
+	assert_success
+}
+
 # A patch declared against a package's registry name must apply when the
 # package is installed under an npm alias. Regression for discussion
 # #1082: the patch map is keyed by the registry selector

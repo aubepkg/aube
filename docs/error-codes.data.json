@@ -25,6 +25,12 @@
       "exit_code": 13
     },
     {
+      "name": "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH",
+      "category": "Lockfile",
+      "description": "A frozen install found configuration, such as patch-file content, that no longer matches the lockfile.",
+      "exit_code": 14
+    },
+    {
       "name": "ERR_AUBE_NO_MATCHING_VERSION",
       "category": "Resolver",
       "description": "No published version of the named package satisfies the requested range.",

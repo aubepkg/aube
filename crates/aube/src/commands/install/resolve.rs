@@ -170,6 +170,10 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         }
     }
     let fresh = !force_resolve
+        && match parsed {
+            Ok((g, k)) => matches!(check_patch_drift(cwd, g, k)?, DriftStatus::Fresh),
+            Err(_) => true,
+        }
         && matches!(
             parsed,
             Ok((g, k))
@@ -295,6 +299,9 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         }
     }
     let lo_write_kind = source_kind_before.unwrap_or(LockfileKind::Aube);
+    if matches!(lo_write_kind, LockfileKind::Pnpm) {
+        graph.patched_dependencies = crate::patches::read_patched_dependencies(cwd)?;
+    }
     // Same runtime-pin recording as the main install path.
     crate::runtime::refresh_lockfile_pin(
         &mut graph,
@@ -443,6 +450,13 @@ pub(super) fn select_lockfile_result(
                          help: run without --frozen-lockfile to update the lockfile"
                     ));
                 }
+                if let DriftStatus::Stale { reason } = check_patch_drift(cwd, graph, kind)? {
+                    return Err(miette!(
+                        code = aube_codes::errors::ERR_AUBE_LOCKFILE_CONFIG_MISMATCH,
+                        "lockfile is out of date with patchedDependencies: {reason}\n\
+                         help: run without --frozen-lockfile to update the lockfile"
+                    ));
+                }
                 if let DriftStatus::Stale { reason } = graph.check_drift_workspace_for_kind(
                     manifests,
                     &ws_config.overrides,
@@ -477,6 +491,13 @@ pub(super) fn select_lockfile_result(
                             "Lockfile out of date with workspace catalogs ({reason}), re-resolving..."
                         );
                         Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
+                    } else if let DriftStatus::Stale { reason } =
+                        check_patch_drift(cwd, graph, *kind)?
+                    {
+                        tracing::debug!(
+                            "Lockfile out of date with patchedDependencies ({reason}), re-resolving..."
+                        );
+                        Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
                     } else {
                         match graph.check_drift_workspace_for_kind(
                             manifests,
@@ -498,6 +519,22 @@ pub(super) fn select_lockfile_result(
             }
         }
     }
+}
+
+fn check_patch_drift(
+    cwd: &Path,
+    graph: &LockfileGraph,
+    kind: LockfileKind,
+) -> miette::Result<DriftStatus> {
+    if !matches!(kind, LockfileKind::Pnpm) {
+        return Ok(DriftStatus::Fresh);
+    }
+    Ok(
+        match crate::patches::pnpm_patch_hash_drift(cwd, &graph.patched_dependencies)? {
+            Some(reason) => DriftStatus::Stale { reason },
+            None => DriftStatus::Fresh,
+        },
+    )
 }
 
 fn active_lockfile_has_conflict_markers(lockfile_dir: &Path) -> bool {
