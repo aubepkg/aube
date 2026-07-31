@@ -25,6 +25,7 @@ mod slow_tarball_tests;
 pub use cache::CachedPackumentLookup;
 use dist_tags::*;
 pub use endpoints::PackageSearchResult;
+pub(crate) use http::probe_client_builder;
 use http::*;
 use parse::parse_full_response;
 
