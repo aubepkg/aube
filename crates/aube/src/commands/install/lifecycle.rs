@@ -6,6 +6,10 @@ use super::side_effects_cache::{
     SideEffectsCacheConfig, SideEffectsCacheEntry, SideEffectsCacheRestore,
 };
 
+/// Packages whose install scripts are trusted without per-project approval.
+/// Explicit deny rules from a project or workspace still take precedence.
+const DEFAULT_TRUSTED_DEPENDENCIES: &[&str] = &["esbuild"];
+
 /// Run a root-package lifecycle hook, announcing it to the user if defined
 /// and turning aube_scripts::Error into a miette::Report with context.
 /// Silent when the hook isn't defined in package.json.
@@ -81,7 +85,10 @@ pub(crate) fn build_policy_from_manifest_sources<'a>(
     Vec<aube_scripts::BuildPolicyError>,
 ) {
     let mut merged = std::collections::BTreeMap::new();
-    let mut only_built = Vec::new();
+    let mut only_built = DEFAULT_TRUSTED_DEPENDENCIES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
     let mut never_built = Vec::new();
     for manifest in manifests {
         for (pattern, allow) in manifest.pnpm_allow_builds() {
@@ -1207,6 +1214,36 @@ pub(super) fn unreviewed_dep_builds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn esbuild_is_allowed_by_default() {
+        let manifest = aube_manifest::PackageJson::default();
+        let workspace = aube_manifest::WorkspaceConfig::default();
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            policy.decide("esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Allow
+        );
+        assert_eq!(
+            policy.decide("not-esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Unspecified
+        );
+    }
+
+    #[test]
+    fn explicit_esbuild_deny_overrides_default_trust() {
+        let manifest = manifest_with_allow_build("esbuild", false);
+        let workspace = aube_manifest::WorkspaceConfig::default();
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            policy.decide("esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Deny
+        );
+    }
 
     #[test]
     fn member_allow_build_conflict_denies() {

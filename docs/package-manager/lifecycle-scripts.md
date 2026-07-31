@@ -15,7 +15,9 @@ aube install --ignore-scripts
 ## Dependency scripts
 
 Dependency lifecycle scripts follow the pnpm v11 build approval model. Packages
-must be explicitly allowlisted before their install-time scripts run.
+must be explicitly allowlisted before their install-time scripts run. `esbuild`
+is trusted by default because its installer selects the platform-specific binary;
+an explicit deny rule still disables it.
 
 ```sh
 aube ignored-builds
