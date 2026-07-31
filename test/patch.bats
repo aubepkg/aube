@@ -64,6 +64,63 @@ EOF
 	assert_failure
 }
 
+@test "patch-commit extends an existing patch at its declared path" {
+	cat >package.json <<'EOF'
+{
+  "name": "patch-existing-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1"
+  }
+}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - .
+EOF
+
+	run aube install --ignore-scripts
+	assert_success
+
+	run aube patch is-odd@3.0.1
+	assert_success
+	edit_dir="$(echo "$output" | grep -oE '/[^ ]*/user' | head -1)"
+	echo "// existing-patch-marker" >>"$edit_dir/index.js"
+
+	run aube patch-commit --patches-dir patches/custom "$edit_dir"
+	assert_success
+	generated_patch="patches/custom/is-odd@3.0.1.patch"
+	declared_patch="patches/is-odd__3.0.1.patch"
+	mv "$generated_patch" "$declared_patch"
+	sed -i "s#$generated_patch#$declared_patch#" pnpm-workspace.yaml
+
+	run aube patch is-odd@3.0.1
+	assert_success
+	edit_dir="$(echo "$output" | grep -oE '/[^ ]*/user' | head -1)"
+	run grep -q "existing-patch-marker" "$edit_dir/index.js"
+	assert_success
+	echo "// second-patch-marker" >>"$edit_dir/index.js"
+
+	run aube patch-commit "$edit_dir"
+	assert_success
+	assert [ -f "$declared_patch" ]
+	assert [ ! -f "patches/is-odd@3.0.1.patch" ]
+	run grep -q '^+// existing-patch-marker' "$declared_patch"
+	assert_success
+	run grep -q '^+// second-patch-marker' "$declared_patch"
+	assert_success
+	run grep -Fq "$declared_patch" pnpm-workspace.yaml
+	assert_success
+
+	rm -rf node_modules
+	run aube install --ignore-scripts
+	assert_success
+	run grep -q "existing-patch-marker" node_modules/is-odd/index.js
+	assert_success
+	run grep -q "second-patch-marker" node_modules/is-odd/index.js
+	assert_success
+}
+
 # A patch declared against a package's registry name must apply when the
 # package is installed under an npm alias. Regression for discussion
 # #1082: the patch map is keyed by the registry selector

@@ -44,7 +44,7 @@ impl ResolvedPatch {
 /// prefixes, NUL bytes, and any `..` component. Used as a read-side
 /// guard so a hostile manifest cannot point the patch loader at
 /// arbitrary files (e.g. `/etc/passwd` or `\\server\share\secret`).
-fn is_safe_patch_rel(rel: &str) -> bool {
+pub(crate) fn is_safe_patch_rel(rel: &str) -> bool {
     if rel.is_empty() || rel.contains('\0') {
         return false;
     }

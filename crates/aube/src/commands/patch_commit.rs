@@ -1,7 +1,7 @@
 //! `aube patch-commit <dir>` — diff a `aube patch` edit directory
-//! against its frozen source snapshot, write the unified diff to
-//! `<project>/<patches-dir>/<name>@<version>.patch`, record the entry
-//! under `pnpm.patchedDependencies` in `package.json`, and re-run
+//! against its frozen source snapshot, write the unified diff to the
+//! package's declared patch path (or a new file under `patches-dir`),
+//! record a new `patchedDependencies` entry when needed, and re-run
 //! install so the patched files land in the linked tree.
 //!
 //! The patch format is git-compatible: each per-file hunk is wrapped
@@ -9,7 +9,10 @@
 //! through `git apply` as well as aube's own applier in `aube-linker`.
 
 use crate::commands::patch::{PatchState, read_state};
-use crate::patches::upsert_patched_dependency;
+use crate::patches::{
+    is_safe_patch_rel, read_patched_dependencies, remove_patched_dependency,
+    upsert_patched_dependency,
+};
 use clap::Args;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::BTreeSet;
@@ -52,60 +55,91 @@ pub async fn run(args: PatchCommitArgs) -> Result<()> {
         ));
     }
 
-    let safe_name = state.name.replace('/', "+");
-    let file_name = format!("{safe_name}@{}.patch", state.version);
-    let rel_dir = args.patches_dir.clone();
-    let abs_dir = cwd.join(&rel_dir);
-    std::fs::create_dir_all(&abs_dir)
+    let key = format!("{}@{}", state.name, state.version);
+    let declared = read_patched_dependencies(&cwd)?;
+    let existing_rel_path = declared.get(&key);
+    let had_existing_patch = existing_rel_path.is_some();
+    let rel_path = existing_rel_path.cloned().unwrap_or_else(|| {
+        let safe_name = state.name.replace('/', "+");
+        let file_name = format!("{safe_name}@{}.patch", state.version);
+        format!(
+            "{}/{file_name}",
+            args.patches_dir.to_string_lossy().replace('\\', "/")
+        )
+    });
+    if !is_safe_patch_rel(&rel_path) {
+        return Err(miette!(
+            "refusing unsafe patch path for {key}: {rel_path:?} (absolute, UNC, or contains `..`)"
+        ));
+    }
+    let abs_path = cwd.join(&rel_path);
+    let abs_dir = abs_path
+        .parent()
+        .ok_or_else(|| miette!("patch path {} has no parent", abs_path.display()))?;
+    std::fs::create_dir_all(abs_dir)
         .into_diagnostic()
         .map_err(|e| miette!("failed to create {}: {e}", abs_dir.display()))?;
-    let abs_path = abs_dir.join(&file_name);
+
     // Snapshot any existing patch so a re-patch can be rolled back to
     // the previous content if the manifest write fails. atomic_write
     // replaces unconditionally, so without the snapshot a re-patch
     // failure would leave the manifest pointing at a path that lost
     // its old content.
-    let prior_patch = std::fs::read(&abs_path).ok();
-    aube_util::fs_atomic::atomic_write(&abs_path, patch.as_bytes())
+    let prior_patch = match std::fs::read(&abs_path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !had_existing_patch => None,
+        Err(e) => {
+            return Err(miette!(
+                "failed to read existing patch {}: {e}",
+                abs_path.display()
+            ));
+        }
+    };
+    let mut combined_patch = match &prior_patch {
+        Some(bytes) if had_existing_patch => String::from_utf8(bytes.clone())
+            .into_diagnostic()
+            .map_err(|e| miette!("existing patch {} is not UTF-8: {e}", abs_path.display()))?,
+        _ => String::new(),
+    };
+    if !combined_patch.is_empty() && !combined_patch.ends_with('\n') {
+        combined_patch.push('\n');
+    }
+    combined_patch.push_str(&patch);
+    aube_util::fs_atomic::atomic_write(&abs_path, combined_patch.as_bytes())
         .into_diagnostic()
         .map_err(|e| miette!("failed to write {}: {e}", abs_path.display()))?;
 
-    // Use forward slashes in the manifest entry. Field is portable
-    // across platforms and pnpm always writes it that way.
-    let rel_path = format!(
-        "{}/{file_name}",
-        rel_dir.to_string_lossy().replace('\\', "/")
-    );
-    let key = format!("{}@{}", state.name, state.version);
     // Manifest write failure means the patch on disk is not
     // referenced anywhere. Restore the prior patch if there was one
     // (re-patch path), else remove the orphan.
-    let manifest_path = match upsert_patched_dependency(&cwd, &key, &rel_path) {
-        Ok(p) => p,
-        Err(e) => {
-            match prior_patch {
-                Some(bytes) => {
-                    let _ = aube_util::fs_atomic::atomic_write(&abs_path, &bytes);
+    let manifest_path = if had_existing_patch {
+        None
+    } else {
+        match upsert_patched_dependency(&cwd, &key, &rel_path) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                match &prior_patch {
+                    Some(bytes) => {
+                        let _ = aube_util::fs_atomic::atomic_write(&abs_path, bytes);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(&abs_path);
+                    }
                 }
-                None => {
-                    let _ = std::fs::remove_file(&abs_path);
-                }
+                return Err(e);
             }
-            return Err(e);
         }
     };
 
-    let manifest_label = manifest_path
-        .file_name()
-        .map(|f| f.to_string_lossy().into_owned())
-        .unwrap_or_else(|| manifest_path.display().to_string());
     eprintln!("Wrote {}", abs_path.display());
-    eprintln!("Recorded {key} -> {rel_path} in {manifest_label}");
-
-    // Drop the snapshot tempdir now that we've captured the diff —
-    // matches pnpm's behavior of cleaning up after a successful commit.
-    if let Some(parent) = state.user_dir.parent() {
-        let _ = std::fs::remove_dir_all(parent);
+    if let Some(manifest_path) = manifest_path {
+        let manifest_label = manifest_path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| manifest_path.display().to_string());
+        eprintln!("Recorded {key} -> {rel_path} in {manifest_label}");
+    } else {
+        eprintln!("Updated {key} at {rel_path}");
     }
 
     // Re-run install so the new patch is applied. We deliberately
@@ -114,7 +148,29 @@ pub async fn run(args: PatchCommitArgs) -> Result<()> {
     let opts = crate::commands::install::InstallOptions::with_mode(
         crate::commands::install::FrozenMode::Prefer,
     );
-    crate::commands::install::run(opts).await?;
+    if let Err(e) = crate::commands::install::run(opts).await {
+        if had_existing_patch {
+            if let Some(bytes) = prior_patch {
+                let _ = aube_util::fs_atomic::atomic_write(&abs_path, &bytes);
+            }
+        } else if remove_patched_dependency(&cwd, &key).is_ok() {
+            match prior_patch {
+                Some(bytes) => {
+                    let _ = aube_util::fs_atomic::atomic_write(&abs_path, &bytes);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&abs_path);
+                }
+            }
+        }
+        return Err(e);
+    }
+
+    // Keep the edit snapshot available until both the patch write and
+    // relink succeed so a failed commit remains recoverable.
+    if let Some(parent) = state.user_dir.parent() {
+        let _ = std::fs::remove_dir_all(parent);
+    }
 
     Ok(())
 }
