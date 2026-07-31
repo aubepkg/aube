@@ -8192,7 +8192,7 @@
             "name": "patches-dir",
             "usage": "--patches-dir <DIR>",
             "help": "Where to write the generated `.patch` file, relative to the project root",
-            "help_long": "Where to write the generated `.patch` file, relative to the project root.\n\nDefaults to `patches`.",
+            "help_long": "Where to write the generated `.patch` file, relative to the project root.\n\nDefaults to `patches`.\n\nIgnored when the dependency already has a declared patch path; the existing path is always reused in that case.",
             "help_first_line": "Where to write the generated `.patch` file, relative to the project root",
             "short": [],
             "long": [

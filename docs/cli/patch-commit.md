@@ -22,4 +22,6 @@ Where to write the generated `.patch` file, relative to the project root.
 
 Defaults to `patches`.
 
+Ignored when the dependency already has a declared patch path; the existing path is always reused in that case.
+
 **Default:** `patches`
