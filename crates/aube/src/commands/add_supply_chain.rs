@@ -840,7 +840,11 @@ fn find_similar_package_name(name: &str, corpus: &str) -> Option<PackageNameSugg
     let mut best: Option<PackageNameSuggestion> = None;
     for (index, candidate) in corpus.lines().enumerate() {
         if name == candidate {
-            continue;
+            // A name in the popularity corpus is established in its own
+            // right. Do not flag it because it also resembles a lower-ranked
+            // package (for example, esbuild -> msbuild or @types/node ->
+            // @types/code).
+            return None;
         }
         let Some((requested_part, candidate_part)) = comparable_name_parts(name, candidate) else {
             continue;
@@ -1395,6 +1399,18 @@ mod tests {
     fn similar_name_skips_exact_and_distant_names() {
         assert_eq!(
             find_similar_package_name("lodash", "lodash\nexpress\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn popular_package_is_not_flagged_by_a_lower_ranked_similar_name() {
+        assert_eq!(
+            find_similar_package_name("esbuild", "esbuild\nmsbuild\n"),
+            None
+        );
+        assert_eq!(
+            find_similar_package_name("@types/node", "@types/node\n@types/code\n"),
             None
         );
     }
