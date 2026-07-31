@@ -41,13 +41,17 @@ const stageRoot = resolve(npmDir, '.stage');
 // `libc` is only set on Linux targets; it feeds both the published
 // package name suffix (`-musl`) and the `libc` field in the generated
 // package.json so npm picks the right variant if ever listed as an
-// optional dep. Absence of `libc` = not applicable (darwin/win32).
+// optional dep. Absence of `libc` = not applicable (darwin/win32/android).
 const TARGETS = [
     { triple: 'aarch64-apple-darwin',       os: 'darwin', cpu: 'arm64',                 ext: '.tar.gz', exe: '' },
     { triple: 'x86_64-unknown-linux-gnu',   os: 'linux',  cpu: 'x64',   libc: 'glibc',  ext: '.tar.gz', exe: '' },
     { triple: 'aarch64-unknown-linux-gnu',  os: 'linux',  cpu: 'arm64', libc: 'glibc',  ext: '.tar.gz', exe: '' },
     { triple: 'x86_64-unknown-linux-musl',  os: 'linux',  cpu: 'x64',   libc: 'musl',   ext: '.tar.gz', exe: '' },
     { triple: 'aarch64-unknown-linux-musl', os: 'linux',  cpu: 'arm64', libc: 'musl',   ext: '.tar.gz', exe: '' },
+    // Termux reports platform `android` and links bionic, so npm resolves
+    // its libc as undefined. Reuse the musl artifact under a dedicated
+    // package with no `libc` field, which npm can install there.
+    { triple: 'aarch64-unknown-linux-musl', os: 'android', cpu: 'arm64',                ext: '.tar.gz', exe: '' },
     { triple: 'x86_64-pc-windows-msvc',     os: 'win32',  cpu: 'x64',                   ext: '.zip',    exe: '.exe' },
     { triple: 'aarch64-pc-windows-msvc',    os: 'win32',  cpu: 'arm64',                 ext: '.zip',    exe: '.exe' },
 ];

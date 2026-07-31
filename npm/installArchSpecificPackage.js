@@ -24,7 +24,10 @@ function main() {
     // into the global prefix when the user ran `npm i -g @endevco/aube`.
     process.env.npm_config_global = 'false';
 
-    var platform = process.platform; // darwin | linux | win32
+    // Android (Termux) resolves to `@endevco/aube-android-arm64`, which
+    // carries the static musl binary. Do not remap it onto `linux`: the
+    // glibc build cannot load under bionic.
+    var platform = process.platform; // android | darwin | linux | win32
     var arch = process.arch;         // arm64 | x64
     // On Linux, `process.report` exposes `glibcVersionRuntime` when the
     // runtime linked against glibc; its absence means musl (Alpine,
