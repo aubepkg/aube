@@ -28,6 +28,9 @@ pub struct PatchCommitArgs {
     /// project root.
     ///
     /// Defaults to `patches`.
+    ///
+    /// Ignored when the dependency already has a declared patch path;
+    /// the existing path is always reused in that case.
     #[arg(long, value_name = "DIR", default_value = "patches")]
     pub patches_dir: PathBuf,
 }
@@ -101,6 +104,20 @@ pub async fn run(args: PatchCommitArgs) -> Result<()> {
     if !combined_patch.is_empty() && !combined_patch.ends_with('\n') {
         combined_patch.push('\n');
     }
+
+    // Invalidate freshness before mutating the patch. Declared patch
+    // paths can live outside the default patches/ directory covered by
+    // the settings fingerprint, and an install failure before a
+    // lockfile rewrite must not leave run/exec treating old linked
+    // contents as current.
+    crate::state::remove_state(&cwd).map_err(|e| {
+        miette!(
+            code = aube_codes::errors::ERR_AUBE_PATCH_FAILED,
+            "failed to invalidate install state before updating {}: {e}",
+            abs_path.display()
+        )
+    })?;
+
     // A failed best-effort snapshot cleanup can leave the edit tree
     // behind. Make retrying the exact patch-commit idempotent instead
     // of appending its incremental hunks a second time.
@@ -122,10 +139,26 @@ pub async fn run(args: PatchCommitArgs) -> Result<()> {
             Err(e) => {
                 match &prior_patch {
                     Some(bytes) => {
-                        let _ = aube_util::fs_atomic::atomic_write(&abs_path, bytes);
+                        if let Err(restore_err) =
+                            aube_util::fs_atomic::atomic_write(&abs_path, bytes)
+                        {
+                            eprintln!(
+                                "warning: failed to restore prior patch {}: {restore_err}; \
+                                 check the patch file and manifest manually",
+                                abs_path.display()
+                            );
+                        }
                     }
                     None => {
-                        let _ = std::fs::remove_file(&abs_path);
+                        if let Err(remove_err) = std::fs::remove_file(&abs_path)
+                            && remove_err.kind() != std::io::ErrorKind::NotFound
+                        {
+                            eprintln!(
+                                "warning: failed to remove orphaned patch {}: {remove_err}; \
+                                 check the patch file and manifest manually",
+                                abs_path.display()
+                            );
+                        }
                     }
                 }
                 return Err(e);
