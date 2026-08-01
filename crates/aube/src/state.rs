@@ -1017,7 +1017,9 @@ impl InstallLayoutState {
                     layout.placements,
                 ),
             };
-            if let Some(license) = crate::commands::licenses::read_license(&package_dir) {
+            if let Some(license) = crate::commands::licenses::read_license(&package_dir)
+                .or_else(|| pkg.license.clone())
+            {
                 package_licenses.insert(dep_path.clone(), license);
             }
             if !direct_dep_paths.contains(dep_path) {

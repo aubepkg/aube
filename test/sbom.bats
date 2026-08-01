@@ -66,11 +66,9 @@ JSON
 	assert_success
 }
 
-@test "aube sbom falls back to lockfile license metadata" {
+@test "aube sbom falls back to install-state license metadata" {
 	_setup_mixed_fixture
 	run find node_modules/.aube -path '*/node_modules/is-odd/package.json' -delete
-	assert_success
-	run rm -rf node_modules/.aube-state
 	assert_success
 
 	run bash -c 'aube sbom | jq -e "
