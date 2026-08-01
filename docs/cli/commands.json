@@ -6793,7 +6793,7 @@
             "name": "global",
             "usage": "-g --global",
             "help": "Register into (or resolve from) the global link registry",
-            "help_long": "Register into (or resolve from) the global link registry.\n\nThe registry lives at `$AUBE_HOME/global-links`. Default behavior for bare `aube link` / `aube link <name>` — the flag exists for pnpm parity and makes the intent explicit.",
+            "help_long": "Register into (or resolve from) the global link registry.\n\nThe registry lives at `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links` when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\\aube\\global-links` on Windows. Default behavior for bare `aube link` / `aube link <name>` — the flag exists for pnpm parity and makes the intent explicit.",
             "help_first_line": "Register into (or resolve from) the global link registry",
             "short": [
               "g"
@@ -12037,7 +12037,7 @@
             "name": "global",
             "usage": "-g --global",
             "help": "Operate on the global link registry instead of the current project",
-            "help_long": "Operate on the global link registry instead of the current project.\n\n`aube unlink -g` removes the current package's entry from `$AUBE_HOME/global-links`; `aube unlink -g <name>` removes the named entry.",
+            "help_long": "Operate on the global link registry instead of the current project.\n\n`aube unlink -g` removes the current package's entry from `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links` when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\\aube\\global-links` on Windows; `aube unlink -g <name>` removes the named entry.",
             "help_first_line": "Operate on the global link registry instead of the current project",
             "short": [
               "g"

@@ -8,9 +8,12 @@ pub struct LinkArgs {
     pub package: Option<String>,
     /// Register into (or resolve from) the global link registry.
     ///
-    /// The registry lives at `$AUBE_HOME/global-links`. Default
-    /// behavior for bare `aube link` / `aube link <name>` — the flag
-    /// exists for pnpm parity and makes the intent explicit.
+    /// The registry lives at `$XDG_CACHE_HOME/aube/global-links`,
+    /// `$HOME/.cache/aube/global-links` when `XDG_CACHE_HOME` is
+    /// unset, or `%LOCALAPPDATA%\aube\global-links` on Windows.
+    /// Default behavior for bare `aube link` /
+    /// `aube link <name>` — the flag exists for pnpm parity and makes
+    /// the intent explicit.
     #[arg(short = 'g', long)]
     pub global: bool,
 }

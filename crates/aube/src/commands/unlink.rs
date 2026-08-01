@@ -9,8 +9,9 @@ pub struct UnlinkArgs {
     /// project.
     ///
     /// `aube unlink -g` removes the current package's entry from
-    /// `$AUBE_HOME/global-links`; `aube unlink -g <name>` removes the
-    /// named entry.
+    /// `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links`
+    /// when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\aube\global-links`
+    /// on Windows; `aube unlink -g <name>` removes the named entry.
     #[arg(short = 'g', long)]
     pub global: bool,
 }
