@@ -246,6 +246,11 @@ pub struct InstallLayoutState {
     /// longer be present when a later command inspects the installed tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub virtual_store_dir_max_length: Option<usize>,
+    /// Licenses captured from installed manifests. Inspection commands use
+    /// this snapshot instead of reopening every package manifest, while older
+    /// state files fall back to the materialized tree.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub package_licenses: BTreeMap<String, String>,
     pub direct_entries: BTreeMap<String, Vec<String>>,
     pub packages: BTreeMap<String, InstalledPackageState>,
 }
@@ -996,29 +1001,31 @@ impl InstallLayoutState {
             .into_iter()
             .flat_map(|deps| deps.iter().map(|dep| dep.dep_path.clone()))
             .collect();
-        for dep_path in direct_dep_paths {
-            let Some(pkg) = layout.graph.packages.get(&dep_path) else {
-                continue;
-            };
+        let mut package_licenses = BTreeMap::new();
+        for (dep_path, pkg) in &layout.graph.packages {
             let is_link = matches!(
                 pkg.local_source.as_ref(),
                 Some(aube_lockfile::LocalSource::Link(_))
             );
-            let package_json_path = match pkg.local_source.as_ref() {
-                Some(aube_lockfile::LocalSource::Link(path)) => {
-                    project_dir.join(path).join("package.json")
-                }
+            let package_dir = match pkg.local_source.as_ref() {
+                Some(aube_lockfile::LocalSource::Link(path)) => project_dir.join(path),
                 _ => crate::commands::install::materialized_pkg_dir(
                     layout.aube_dir,
-                    &dep_path,
+                    dep_path,
                     &pkg.name,
                     layout.virtual_store_dir_max_length,
                     layout.placements,
-                )
-                .join("package.json"),
+                ),
             };
+            if let Some(license) = crate::commands::licenses::read_license(&package_dir) {
+                package_licenses.insert(dep_path.clone(), license);
+            }
+            if !direct_dep_paths.contains(dep_path) {
+                continue;
+            }
+            let package_json_path = package_dir.join("package.json");
             packages.insert(
-                dep_path,
+                dep_path.clone(),
                 InstalledPackageState {
                     name: pkg.name.clone(),
                     version: pkg.version.clone(),
@@ -1034,6 +1041,7 @@ impl InstallLayoutState {
             modules_dir_name: layout.modules_dir_name.to_string(),
             hoisting_limits,
             virtual_store_dir_max_length: Some(layout.virtual_store_dir_max_length),
+            package_licenses,
             direct_entries,
             packages,
         }
@@ -1420,6 +1428,7 @@ mod tests {
                 modules_dir_name: String::new(),
                 hoisting_limits: None,
                 virtual_store_dir_max_length: None,
+                package_licenses: BTreeMap::new(),
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::from([(
                     "is-odd@3.0.1".to_string(),
@@ -1468,6 +1477,7 @@ mod tests {
             modules_dir_name: String::new(),
             hoisting_limits: None,
             virtual_store_dir_max_length: None,
+            package_licenses: BTreeMap::new(),
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1500,6 +1510,7 @@ mod tests {
             modules_dir_name: String::new(),
             hoisting_limits: None,
             virtual_store_dir_max_length: None,
+            package_licenses: BTreeMap::new(),
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1619,6 +1630,7 @@ mod tests {
                 modules_dir_name: String::new(),
                 hoisting_limits: None,
                 virtual_store_dir_max_length: None,
+                package_licenses: BTreeMap::new(),
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::new(),
             }),

@@ -201,7 +201,12 @@ pub(super) fn collect_installed_metadata<'a>(
         metadata.insert(
             dep_path.to_string(),
             InstalledPackageMetadata {
-                license: read_license(&path).or_else(|| pkg.license.clone()),
+                license: installed_layout
+                    .as_ref()
+                    .and_then(|layout| layout.package_licenses.get(dep_path))
+                    .cloned()
+                    .or_else(|| read_license(&path))
+                    .or_else(|| pkg.license.clone()),
                 path,
             },
         );
@@ -337,7 +342,7 @@ fn virtual_store_pkg_dir(
 /// - `"licenses": [ { "type": "MIT" }, ... ]` — legacy array
 ///
 /// Returns `None` when the manifest is unreadable or the field is missing.
-fn read_license(pkg_dir: &Path) -> Option<String> {
+pub(crate) fn read_license(pkg_dir: &Path) -> Option<String> {
     let bytes = std::fs::read(pkg_dir.join("package.json")).ok()?;
     let manifest: ManifestLicenseFields = serde_json::from_slice(&bytes).ok()?;
     license_from_values(manifest.license.as_ref(), manifest.licenses.as_ref())
