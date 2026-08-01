@@ -132,6 +132,7 @@ pub(super) fn collect_installed_metadata<'a>(
     // used a one-shot `--node-linker=hoisted` override.
     let installed_layout = crate::state::read_state_layout(cwd)
         .or_else(|| crate::state::read_default_state_layout(cwd));
+    let installed_licenses = crate::state::read_state_package_licenses(cwd);
     let virtual_store_dir_max_length = installed_layout
         .as_ref()
         .and_then(|layout| layout.virtual_store_dir_max_length)
@@ -221,10 +222,7 @@ pub(super) fn collect_installed_metadata<'a>(
                     )
                 }),
         };
-        let recorded_license = installed_layout
-            .as_ref()
-            .and_then(|layout| layout.package_licenses.get(dep_path))
-            .cloned();
+        let recorded_license = installed_licenses.get(dep_path).cloned();
         metadata.insert(
             dep_path.to_string(),
             InstalledPackageMetadata {

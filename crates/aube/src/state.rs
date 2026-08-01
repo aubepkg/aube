@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT_STATE_DIR: &str = "node_modules";
 const INSTALL_STATE_FILE_NAME: &str = "state.json";
 const FRESH_STATE_FILE_NAME: &str = "fresh.json";
+const LICENSE_STATE_FILE_NAME: &str = "licenses.json";
 
 /// The install-state directory name, `.<name>-state`. Standalone aube:
 /// `.aube-state`.
@@ -246,11 +247,6 @@ pub struct InstallLayoutState {
     /// longer be present when a later command inspects the installed tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub virtual_store_dir_max_length: Option<usize>,
-    /// Licenses captured from installed manifests. Inspection commands use
-    /// this snapshot instead of reopening every package manifest, while older
-    /// state files fall back to the materialized tree.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub package_licenses: BTreeMap<String, String>,
     pub direct_entries: BTreeMap<String, Vec<String>>,
     pub packages: BTreeMap<String, InstalledPackageState>,
 }
@@ -664,7 +660,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     let (lockfile_hash, lockfile_snapshot_name) =
         snapshot_active_lockfile(project_dir, &state_path)?;
     let settings_hash = hash_settings(project_dir, cli_flags);
-    let install_layout = InstallLayoutState::from_graph(project_dir, &layout);
+    let (install_layout, package_licenses) = InstallLayoutState::from_graph(project_dir, &layout);
 
     let package_json_shape_digests: BTreeMap<String, String> = package_json_hashes
         .keys()
@@ -725,6 +721,8 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     };
 
     let fresh_state = FreshnessState::from(&state);
+    let license_json = serde_json::to_vec(&package_licenses)?;
+    aube_util::fs_atomic::atomic_write(&license_state_file(&state_path), &license_json)?;
     let json = serde_json::to_string_pretty(&state)?;
     aube_util::fs_atomic::atomic_write(&install_state_file(&state_path), json.as_bytes())?;
     write_fresh_state(&state_path, &fresh_state)?;
@@ -794,6 +792,17 @@ pub fn read_state_package_content_hashes(project_dir: &Path) -> Option<BTreeMap<
 /// should take the normal path once to refresh derived metadata.
 pub fn read_state_layout(project_dir: &Path) -> Option<InstallLayoutState> {
     read_state(&state_dir(project_dir))?.layout
+}
+
+/// Read licenses captured at install time without adding them to the main
+/// freshness state parsed by every warm install.
+pub fn read_state_package_licenses(project_dir: &Path) -> BTreeMap<String, String> {
+    let state_path = state_dir(project_dir);
+    read_package_licenses(&state_path)
+        .or_else(|| {
+            read_package_licenses(&project_dir.join(DEFAULT_STATE_DIR).join(state_dir_name()))
+        })
+        .unwrap_or_default()
 }
 
 /// Read layout state from the default `node_modules` location.
@@ -926,6 +935,15 @@ fn install_state_file(state_path: &Path) -> PathBuf {
     state_path.join(INSTALL_STATE_FILE_NAME)
 }
 
+fn license_state_file(state_path: &Path) -> PathBuf {
+    state_path.join(LICENSE_STATE_FILE_NAME)
+}
+
+fn read_package_licenses(state_path: &Path) -> Option<BTreeMap<String, String>> {
+    let content = std::fs::read(license_state_file(state_path)).ok()?;
+    serde_json::from_slice(&content).ok()
+}
+
 fn fresh_state_file(state_path: &Path) -> PathBuf {
     state_path.join(FRESH_STATE_FILE_NAME)
 }
@@ -961,7 +979,10 @@ fn remove_legacy_state_file(state_path: &Path) -> Result<(), std::io::Error> {
 }
 
 impl InstallLayoutState {
-    fn from_graph(project_dir: &Path, layout: &WriteStateLayout<'_>) -> Self {
+    fn from_graph(
+        project_dir: &Path,
+        layout: &WriteStateLayout<'_>,
+    ) -> (Self, BTreeMap<String, String>) {
         let linker = match layout.node_linker {
             aube_linker::NodeLinker::Isolated => InstallLayoutMode::Isolated,
             aube_linker::NodeLinker::Hoisted => InstallLayoutMode::Hoisted,
@@ -1038,15 +1059,17 @@ impl InstallLayoutState {
             );
         }
 
-        Self {
-            linker,
-            modules_dir_name: layout.modules_dir_name.to_string(),
-            hoisting_limits,
-            virtual_store_dir_max_length: Some(layout.virtual_store_dir_max_length),
+        (
+            Self {
+                linker,
+                modules_dir_name: layout.modules_dir_name.to_string(),
+                hoisting_limits,
+                virtual_store_dir_max_length: Some(layout.virtual_store_dir_max_length),
+                direct_entries,
+                packages,
+            },
             package_licenses,
-            direct_entries,
-            packages,
-        }
+        )
     }
 }
 
@@ -1430,7 +1453,6 @@ mod tests {
                 modules_dir_name: String::new(),
                 hoisting_limits: None,
                 virtual_store_dir_max_length: None,
-                package_licenses: BTreeMap::new(),
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::from([(
                     "is-odd@3.0.1".to_string(),
@@ -1479,7 +1501,6 @@ mod tests {
             modules_dir_name: String::new(),
             hoisting_limits: None,
             virtual_store_dir_max_length: None,
-            package_licenses: BTreeMap::new(),
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1512,7 +1533,6 @@ mod tests {
             modules_dir_name: String::new(),
             hoisting_limits: None,
             virtual_store_dir_max_length: None,
-            package_licenses: BTreeMap::new(),
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1544,7 +1564,7 @@ mod tests {
             ..Default::default()
         };
 
-        let layout = InstallLayoutState::from_graph(
+        let (layout, _) = InstallLayoutState::from_graph(
             &project_dir,
             &WriteStateLayout {
                 graph: &graph,
@@ -1632,7 +1652,6 @@ mod tests {
                 modules_dir_name: String::new(),
                 hoisting_limits: None,
                 virtual_store_dir_max_length: None,
-                package_licenses: BTreeMap::new(),
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::new(),
             }),
