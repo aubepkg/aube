@@ -54,6 +54,7 @@ napi-build = "2.3.2"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+spdx = "0.13.4"
 yaml_serde = "0.10.4"
 # Comment- and format-preserving YAML edits. Used by aube-manifest /
 # aube to surgically rewrite user-authored workspace YAML files

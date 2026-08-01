@@ -1,9 +1,9 @@
 //! `aube sbom` — emit a Software Bill of Materials for the installed graph.
 //!
-//! Reads the lockfile (no network, no linking), walks the root importer's
-//! direct deps transitively, and serializes the closure as either CycloneDX
-//! 1.5 JSON or SPDX 2.3 JSON. Pure read; does not touch `node_modules/` or
-//! take the project lock.
+//! Reads the lockfile and installed package manifests (no network, no linking),
+//! walks the root importer's direct deps transitively, and serializes the
+//! closure as either CycloneDX 1.5 JSON or SPDX 2.3 JSON. Pure read; does not
+//! modify `node_modules/` or take the project lock.
 
 use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
 use clap::Args;
@@ -73,13 +73,24 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
     } else {
         closure
     };
+    let installed_metadata = super::licenses::collect_installed_metadata(
+        &cwd,
+        &graph,
+        closure.keys().map(String::as_str),
+    )?;
 
     let json = match args.format {
         SbomFormat::Cyclonedx => {
             let dev_only = collect_dev_only_packages(&graph, graph.importers.values().flatten());
-            render_cyclonedx(&manifest, &closure, &dev_only, args.exclude_peers)?
+            render_cyclonedx(
+                &manifest,
+                &closure,
+                &installed_metadata,
+                &dev_only,
+                args.exclude_peers,
+            )?
         }
-        SbomFormat::Spdx => render_spdx(&manifest, &graph, filter, &closure)?,
+        SbomFormat::Spdx => render_spdx(&manifest, &graph, filter, &closure, &installed_metadata)?,
     };
 
     println!("{json}");
@@ -90,6 +101,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
 fn render_cyclonedx(
     manifest: &aube_manifest::PackageJson,
     closure: &BTreeMap<String, &LockedPackage>,
+    installed_metadata: &BTreeMap<String, super::licenses::InstalledPackageMetadata>,
     dev_only: &BTreeMap<String, bool>,
     exclude_peers: bool,
 ) -> miette::Result<String> {
@@ -105,6 +117,12 @@ fn render_cyclonedx(
         c.insert("name".into(), pkg.name.clone().into());
         c.insert("version".into(), pkg.version.clone().into());
         c.insert("purl".into(), purl(&pkg.name, &pkg.version).into());
+        if let Some(license) = installed_metadata
+            .get(dep_path)
+            .and_then(|metadata| metadata.license.as_deref())
+        {
+            c.insert("licenses".into(), cyclonedx_licenses(license));
+        }
         if let Some(bugs_url) = bugs_url_from_extra(&pkg.extra_meta) {
             c.insert("externalReferences".into(), external_references(bugs_url));
         }
@@ -127,6 +145,9 @@ fn render_cyclonedx(
     root_component.insert("name".into(), root_name.into());
     if !root_version.is_empty() {
         root_component.insert("version".into(), root_version.clone().into());
+    }
+    if let Some(license) = manifest_license(manifest) {
+        root_component.insert("licenses".into(), cyclonedx_licenses(&license));
     }
     if let Some(bugs_url) = bugs_url_from_extra(&manifest.extra) {
         root_component.insert("externalReferences".into(), external_references(bugs_url));
@@ -171,6 +192,23 @@ fn cyclonedx_exclude_peers_property() -> serde_json::Value {
         "name": "cdx:npm:package:excludePeers",
         "value": "true",
     }])
+}
+
+fn cyclonedx_licenses(license: &str) -> serde_json::Value {
+    if spdx::license_id(license).is_some() {
+        serde_json::json!([{ "license": { "id": license } }])
+    } else if spdx::Expression::parse(license).is_ok() {
+        serde_json::json!([{ "expression": license }])
+    } else {
+        serde_json::json!([{ "license": { "name": license } }])
+    }
+}
+
+fn manifest_license(manifest: &aube_manifest::PackageJson) -> Option<String> {
+    super::licenses::license_from_values(
+        manifest.extra.get("license"),
+        manifest.extra.get("licenses"),
+    )
 }
 
 fn external_references(url: &str) -> serde_json::Value {
@@ -271,6 +309,7 @@ fn render_spdx(
     graph: &LockfileGraph,
     filter: DepFilter,
     closure: &BTreeMap<String, &LockedPackage>,
+    installed_metadata: &BTreeMap<String, super::licenses::InstalledPackageMetadata>,
 ) -> miette::Result<String> {
     let root_name = manifest.name.clone().unwrap_or_else(|| "(unnamed)".into());
     let root_version = manifest.version.clone().unwrap_or_default();
@@ -285,11 +324,11 @@ fn render_spdx(
     }
     root_pkg.insert("downloadLocation".into(), "NOASSERTION".into());
     root_pkg.insert("filesAnalyzed".into(), false.into());
-    // SPDX 2.3 §7.13/§7.15/§7.17 require these for every package, including
-    // the root. We don't read license info from the store yet, so everything
-    // is NOASSERTION.
     root_pkg.insert("licenseConcluded".into(), "NOASSERTION".into());
-    root_pkg.insert("licenseDeclared".into(), "NOASSERTION".into());
+    root_pkg.insert(
+        "licenseDeclared".into(),
+        spdx_declared_license(manifest_license(manifest).as_deref()).into(),
+    );
     root_pkg.insert("copyrightText".into(), "NOASSERTION".into());
     packages.push(serde_json::Value::Object(root_pkg));
 
@@ -319,7 +358,15 @@ fn render_spdx(
         p.insert("downloadLocation".into(), "NOASSERTION".into());
         p.insert("filesAnalyzed".into(), false.into());
         p.insert("licenseConcluded".into(), "NOASSERTION".into());
-        p.insert("licenseDeclared".into(), "NOASSERTION".into());
+        p.insert(
+            "licenseDeclared".into(),
+            spdx_declared_license(
+                installed_metadata
+                    .get(dep_path)
+                    .and_then(|metadata| metadata.license.as_deref()),
+            )
+            .into(),
+        );
         p.insert("copyrightText".into(), "NOASSERTION".into());
         p.insert(
             "externalRefs".into(),
@@ -397,6 +444,12 @@ fn render_spdx(
     serde_json::to_string_pretty(&doc)
         .into_diagnostic()
         .wrap_err("failed to serialize SPDX SBOM")
+}
+
+fn spdx_declared_license(license: Option<&str>) -> &str {
+    license
+        .filter(|license| spdx::Expression::parse(license).is_ok())
+        .unwrap_or("NOASSERTION")
 }
 
 /// Build a purl for an npm package. Scoped names encode the leading `@` as
@@ -482,6 +535,37 @@ mod tests {
     #[test]
     fn sanitize_spdx_id_strips_unsafe() {
         assert_eq!(sanitize_spdx_id("@babel/core@7.0.0"), "-babel-core-7.0.0");
+    }
+
+    #[test]
+    fn cyclonedx_licenses_distinguishes_ids_expressions_and_names() {
+        assert_eq!(
+            cyclonedx_licenses("MIT"),
+            serde_json::json!([{ "license": { "id": "MIT" } }])
+        );
+        assert_eq!(
+            cyclonedx_licenses("MIT OR Apache-2.0"),
+            serde_json::json!([{ "expression": "MIT OR Apache-2.0" }])
+        );
+        assert_eq!(
+            cyclonedx_licenses("SEE LICENSE IN LICENSE.md"),
+            serde_json::json!([{
+                "license": { "name": "SEE LICENSE IN LICENSE.md" }
+            }])
+        );
+    }
+
+    #[test]
+    fn spdx_declared_license_rejects_non_spdx_names() {
+        assert_eq!(
+            spdx_declared_license(Some("MIT OR Apache-2.0")),
+            "MIT OR Apache-2.0"
+        );
+        assert_eq!(
+            spdx_declared_license(Some("SEE LICENSE IN LICENSE.md")),
+            "NOASSERTION"
+        );
+        assert_eq!(spdx_declared_license(None), "NOASSERTION");
     }
 
     #[test]

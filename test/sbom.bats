@@ -14,6 +14,7 @@ _setup_mixed_fixture() {
 {
   "name": "sbom-test",
   "version": "1.2.3",
+  "license": "Apache-2.0",
   "dependencies": {
     "is-odd": "^3.0.1"
   },
@@ -36,6 +37,16 @@ JSON
 	assert_output --partial '"pkg:npm/is-number@7.0.0"'
 }
 
+@test "aube sbom emits CycloneDX licenses for root and dependency components" {
+	_setup_mixed_fixture
+	run bash -c 'aube sbom | jq -e "
+	  .metadata.component.licenses[0].license.id == \"Apache-2.0\"
+	  and
+	  any(.components[]; .name == \"is-odd\" and .licenses[0].license.id == \"MIT\")
+	"'
+	assert_success
+}
+
 @test "aube sbom --format spdx emits SPDX 2.3 JSON" {
 	_setup_mixed_fixture
 	run aube sbom --format spdx
@@ -48,6 +59,16 @@ JSON
 	# not just inter-package edges between closure entries.
 	assert_output --partial '"spdxElementId": "SPDXRef-Root"'
 	assert_output --partial 'aube.jdx.dev/spdx/'
+}
+
+@test "aube sbom --format spdx emits declared but not concluded licenses" {
+	_setup_mixed_fixture
+	run bash -c 'aube sbom --format spdx | jq -e "
+	  any(.packages[]; .SPDXID == \"SPDXRef-Root\" and .licenseDeclared == \"Apache-2.0\" and .licenseConcluded == \"NOASSERTION\")
+	  and
+	  any(.packages[]; .name == \"is-odd\" and .licenseDeclared == \"MIT\" and .licenseConcluded == \"NOASSERTION\")
+	"'
+	assert_success
 }
 
 @test "aube sbom --prod drops devDependencies" {
