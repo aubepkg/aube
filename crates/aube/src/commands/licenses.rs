@@ -191,22 +191,49 @@ pub(super) fn collect_installed_metadata<'a>(
         let Some(pkg) = graph.get_package(dep_path) else {
             continue;
         };
-        let path = hoisted_placements
+        let recorded_link_dir = installed_layout
             .as_ref()
-            .and_then(|placements| placements.package_dir(dep_path))
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| {
-                virtual_store_pkg_dir(&aube_dir, dep_path, &pkg.name, virtual_store_dir_max_length)
+            .and_then(|layout| layout.packages.get(dep_path))
+            .filter(|package| package.link)
+            .and_then(|package| {
+                cwd.join(&package.package_json_path)
+                    .parent()
+                    .map(Path::to_path_buf)
             });
+        let linked = recorded_link_dir.is_some()
+            || matches!(
+                pkg.local_source.as_ref(),
+                Some(aube_lockfile::LocalSource::Link(_))
+            );
+        let path = match (pkg.local_source.as_ref(), recorded_link_dir) {
+            (Some(aube_lockfile::LocalSource::Link(path)), _) => cwd.join(path),
+            (None, Some(path)) => path,
+            _ => hoisted_placements
+                .as_ref()
+                .and_then(|placements| placements.package_dir(dep_path))
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| {
+                    virtual_store_pkg_dir(
+                        &aube_dir,
+                        dep_path,
+                        &pkg.name,
+                        virtual_store_dir_max_length,
+                    )
+                }),
+        };
+        let recorded_license = installed_layout
+            .as_ref()
+            .and_then(|layout| layout.package_licenses.get(dep_path))
+            .cloned();
         metadata.insert(
             dep_path.to_string(),
             InstalledPackageMetadata {
-                license: installed_layout
-                    .as_ref()
-                    .and_then(|layout| layout.package_licenses.get(dep_path))
-                    .cloned()
-                    .or_else(|| read_license(&path))
-                    .or_else(|| pkg.license.clone()),
+                license: if linked {
+                    read_license(&path).or(recorded_license)
+                } else {
+                    recorded_license.or_else(|| read_license(&path))
+                }
+                .or_else(|| pkg.license.clone()),
                 path,
             },
         );

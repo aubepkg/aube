@@ -79,6 +79,26 @@ JSON
 	assert_success
 }
 
+@test "aube sbom reads current license metadata from linked packages" {
+	mkdir linked
+	cat >linked/package.json <<'JSON'
+{"name":"linked","version":"1.0.0","license":"MIT"}
+JSON
+	cat >package.json <<'JSON'
+{"name":"sbom-linked","version":"1.0.0","dependencies":{"linked":"link:./linked"}}
+JSON
+	run aube install
+	assert_success
+	cat >linked/package.json <<'JSON'
+{"name":"linked","version":"1.0.0","license":"Apache-2.0"}
+JSON
+
+	run bash -c 'aube sbom | jq -e "
+	  any(.components[]; .name == \"linked\" and .licenses[0].license.id == \"Apache-2.0\")
+	"'
+	assert_success
+}
+
 @test "aube sbom --format spdx emits SPDX 2.3 JSON" {
 	_setup_mixed_fixture
 	run aube sbom --format spdx
