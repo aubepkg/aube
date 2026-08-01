@@ -251,6 +251,14 @@ pub struct InstallLayoutState {
     pub packages: BTreeMap<String, InstalledPackageState>,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct InstallLicenseState {
+    fingerprint: String,
+    pub licenses: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub linked_package_dirs: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InstallLayoutMode {
@@ -660,7 +668,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     let (lockfile_hash, lockfile_snapshot_name) =
         snapshot_active_lockfile(project_dir, &state_path)?;
     let settings_hash = hash_settings(project_dir, cli_flags);
-    let (install_layout, package_licenses) = InstallLayoutState::from_graph(project_dir, &layout);
+    let install_layout = InstallLayoutState::from_graph(project_dir, &layout);
 
     let package_json_shape_digests: BTreeMap<String, String> = package_json_hashes
         .keys()
@@ -700,6 +708,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     // to verify; empty for the default shared layout.
     let (member_lockfile_hashes, member_lockfile_meta) = collect_member_lockfile_state(project_dir);
     let local_directory_hashes = collect_local_directory_hashes(project_dir, layout.graph)?;
+    let license_fingerprint = license_state_fingerprint(&graph_lthash, &package_content_hashes);
 
     let state = InstallState {
         lockfile_hash,
@@ -721,13 +730,72 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     };
 
     let fresh_state = FreshnessState::from(&state);
-    let license_json = serde_json::to_vec(&package_licenses)?;
-    aube_util::fs_atomic::atomic_write(&license_state_file(&state_path), &license_json)?;
+    if read_package_licenses(&state_path)
+        .as_ref()
+        .is_none_or(|licenses| licenses.fingerprint != license_fingerprint)
+    {
+        let license_state =
+            collect_package_license_state(project_dir, &layout, license_fingerprint);
+        let license_json = serde_json::to_vec(&license_state)?;
+        aube_util::fs_atomic::atomic_write(&license_state_file(&state_path), &license_json)?;
+    }
     let json = serde_json::to_string_pretty(&state)?;
     aube_util::fs_atomic::atomic_write(&install_state_file(&state_path), json.as_bytes())?;
     write_fresh_state(&state_path, &fresh_state)?;
 
     Ok(())
+}
+
+fn license_state_fingerprint(
+    graph_lthash: &str,
+    package_content_hashes: &BTreeMap<String, String>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(graph_lthash.as_bytes());
+    for (dep_path, content_hash) in package_content_hashes {
+        hasher.update(&(dep_path.len() as u64).to_le_bytes());
+        hasher.update(dep_path.as_bytes());
+        hasher.update(content_hash.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+fn collect_package_license_state(
+    project_dir: &Path,
+    layout: &WriteStateLayout<'_>,
+    fingerprint: String,
+) -> InstallLicenseState {
+    let mut licenses = BTreeMap::new();
+    let mut linked_package_dirs = BTreeMap::new();
+    for (dep_path, pkg) in &layout.graph.packages {
+        let package_dir = match pkg.local_source.as_ref() {
+            Some(aube_lockfile::LocalSource::Link(path)) => {
+                let package_dir = project_dir.join(path);
+                linked_package_dirs.insert(
+                    dep_path.clone(),
+                    relative_path_or_original(&package_dir, project_dir),
+                );
+                package_dir
+            }
+            _ => crate::commands::install::materialized_pkg_dir(
+                layout.aube_dir,
+                dep_path,
+                &pkg.name,
+                layout.virtual_store_dir_max_length,
+                layout.placements,
+            ),
+        };
+        if let Some(license) =
+            crate::commands::licenses::read_license(&package_dir).or_else(|| pkg.license.clone())
+        {
+            licenses.insert(dep_path.clone(), license);
+        }
+    }
+    InstallLicenseState {
+        fingerprint,
+        licenses,
+        linked_package_dirs,
+    }
 }
 
 fn collect_local_directory_hashes(
@@ -796,7 +864,7 @@ pub fn read_state_layout(project_dir: &Path) -> Option<InstallLayoutState> {
 
 /// Read licenses captured at install time without adding them to the main
 /// freshness state parsed by every warm install.
-pub fn read_state_package_licenses(project_dir: &Path) -> BTreeMap<String, String> {
+pub fn read_state_package_licenses(project_dir: &Path) -> InstallLicenseState {
     let state_path = state_dir(project_dir);
     read_package_licenses(&state_path)
         .or_else(|| {
@@ -939,7 +1007,7 @@ fn license_state_file(state_path: &Path) -> PathBuf {
     state_path.join(LICENSE_STATE_FILE_NAME)
 }
 
-fn read_package_licenses(state_path: &Path) -> Option<BTreeMap<String, String>> {
+fn read_package_licenses(state_path: &Path) -> Option<InstallLicenseState> {
     let content = std::fs::read(license_state_file(state_path)).ok()?;
     serde_json::from_slice(&content).ok()
 }
@@ -979,10 +1047,7 @@ fn remove_legacy_state_file(state_path: &Path) -> Result<(), std::io::Error> {
 }
 
 impl InstallLayoutState {
-    fn from_graph(
-        project_dir: &Path,
-        layout: &WriteStateLayout<'_>,
-    ) -> (Self, BTreeMap<String, String>) {
+    fn from_graph(project_dir: &Path, layout: &WriteStateLayout<'_>) -> Self {
         let linker = match layout.node_linker {
             aube_linker::NodeLinker::Isolated => InstallLayoutMode::Isolated,
             aube_linker::NodeLinker::Hoisted => InstallLayoutMode::Hoisted,
@@ -1022,7 +1087,6 @@ impl InstallLayoutState {
             .into_iter()
             .flat_map(|deps| deps.iter().map(|dep| dep.dep_path.clone()))
             .collect();
-        let mut package_licenses = BTreeMap::new();
         for (dep_path, pkg) in &layout.graph.packages {
             let is_link = matches!(
                 pkg.local_source.as_ref(),
@@ -1038,11 +1102,6 @@ impl InstallLayoutState {
                     layout.placements,
                 ),
             };
-            if let Some(license) = crate::commands::licenses::read_license(&package_dir)
-                .or_else(|| pkg.license.clone())
-            {
-                package_licenses.insert(dep_path.clone(), license);
-            }
             if !direct_dep_paths.contains(dep_path) {
                 continue;
             }
@@ -1059,17 +1118,14 @@ impl InstallLayoutState {
             );
         }
 
-        (
-            Self {
-                linker,
-                modules_dir_name: layout.modules_dir_name.to_string(),
-                hoisting_limits,
-                virtual_store_dir_max_length: Some(layout.virtual_store_dir_max_length),
-                direct_entries,
-                packages,
-            },
-            package_licenses,
-        )
+        Self {
+            linker,
+            modules_dir_name: layout.modules_dir_name.to_string(),
+            hoisting_limits,
+            virtual_store_dir_max_length: Some(layout.virtual_store_dir_max_length),
+            direct_entries,
+            packages,
+        }
     }
 }
 
@@ -1564,7 +1620,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (layout, _) = InstallLayoutState::from_graph(
+        let layout = InstallLayoutState::from_graph(
             &project_dir,
             &WriteStateLayout {
                 graph: &graph,

@@ -73,7 +73,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
     } else {
         closure
     };
-    let installed_metadata = super::licenses::collect_installed_metadata(
+    let installed_metadata = super::licenses::collect_installed_licenses(
         &cwd,
         &graph,
         closure.keys().map(String::as_str),

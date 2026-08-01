@@ -222,7 +222,7 @@ pub(super) fn collect_installed_metadata<'a>(
                     )
                 }),
         };
-        let recorded_license = installed_licenses.get(dep_path).cloned();
+        let recorded_license = installed_licenses.licenses.get(dep_path).cloned();
         metadata.insert(
             dep_path.to_string(),
             InstalledPackageMetadata {
@@ -235,6 +235,42 @@ pub(super) fn collect_installed_metadata<'a>(
                 path,
             },
         );
+    }
+    Ok(metadata)
+}
+
+pub(super) fn collect_installed_licenses<'a>(
+    cwd: &Path,
+    graph: &LockfileGraph,
+    dep_paths: impl IntoIterator<Item = &'a str>,
+) -> miette::Result<BTreeMap<String, InstalledPackageMetadata>> {
+    let installed = crate::state::read_state_package_licenses(cwd);
+    let mut metadata = BTreeMap::new();
+    let mut fallback_paths = Vec::new();
+    for dep_path in dep_paths {
+        let Some(pkg) = graph.get_package(dep_path) else {
+            continue;
+        };
+        let cached = installed.licenses.get(dep_path).cloned();
+        let license = if let Some(path) = installed.linked_package_dirs.get(dep_path) {
+            read_license(&cwd.join(path)).or(cached)
+        } else if cached.is_some() {
+            cached
+        } else {
+            fallback_paths.push(dep_path);
+            continue;
+        }
+        .or_else(|| pkg.license.clone());
+        metadata.insert(
+            dep_path.to_string(),
+            InstalledPackageMetadata {
+                license,
+                path: PathBuf::new(),
+            },
+        );
+    }
+    if !fallback_paths.is_empty() {
+        metadata.extend(collect_installed_metadata(cwd, graph, fallback_paths)?);
     }
     Ok(metadata)
 }
