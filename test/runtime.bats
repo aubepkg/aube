@@ -315,6 +315,33 @@ _basic_project() {
 	assert_output "$AUBE_SHIM_DIR/pnpm"
 }
 
+@test "activated pnpm shim remains available to node descendants" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "runtime-test",
+		  "version": "0.0.0",
+		  "scripts": {
+		    "nested-pnpm": "\"$AUBE_SHIM_DIR/node\""
+		  }
+		}
+	JSON
+	mkdir -p "$TEST_TEMP_DIR/real-node"
+	cat >"$TEST_TEMP_DIR/real-node/node" <<'SH'
+#!/bin/sh
+command -v pnpm
+pnpm --version >/dev/null
+SH
+	chmod +x "$TEST_TEMP_DIR/real-node/node"
+	export PATH="$TEST_TEMP_DIR/real-node:$PATH"
+	run aube activate bash
+	assert_success
+	eval "$output"
+
+	run aube run --no-install nested-pnpm
+	assert_success
+	assert_output "$AUBE_SHIM_DIR/pnpm"
+}
+
 @test "pnpm-11 lockfile with a runtime pin installs without fetching node from the registry" {
 	# Compat: the synthetic `node` importer dep must be routed into the
 	# runtime-pin table, not resolved as an npm package. The pinned

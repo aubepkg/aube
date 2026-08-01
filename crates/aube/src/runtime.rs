@@ -496,6 +496,28 @@ pub fn path_entries() -> Vec<PathBuf> {
         .collect()
 }
 
+/// PATH entries for a Node process dispatched through the activated tool
+/// shim. The real Node executable is resolved before these entries are
+/// applied, so restoring the tool shim cannot recurse into `aube node`.
+/// Wrapping embedder runtimes still lead so their descendant `node` spawns
+/// remain wrapped; selectors leave the activated package-manager shims first.
+pub(crate) fn node_child_path_entries() -> Vec<PathBuf> {
+    let context = current();
+    let mut entries = context
+        .as_ref()
+        .and_then(|c| c.bin_dir.clone())
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(dir) = crate::tool_shims::activated_shim_dir() {
+        if context.is_some_and(|c| c.bin_dir_precedes_project_bins) {
+            entries.push(dir);
+        } else {
+            entries.insert(0, dir);
+        }
+    }
+    entries
+}
+
 /// Place the active runtime PATH entry around project-local `.bin`
 /// directories. Wrappers lead so a local `node` cannot bypass the shim;
 /// selectors follow so package-provided commands retain normal precedence.

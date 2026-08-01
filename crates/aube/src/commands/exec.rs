@@ -1,7 +1,7 @@
 use super::ensure_installed_in;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Args)]
 pub struct ExecArgs {
@@ -140,7 +140,7 @@ pub async fn run_in(
         return run_filtered(&cwd, &bin, &args, shell_mode, parallel, &filter, recursive).await;
     }
 
-    let bin_path = super::project_modules_dir(&cwd).join(".bin").join(&bin);
+    let bin_path = bin_path_for_project(&cwd, &bin);
     // Non-recursive `aube exec` is a terminal single-tool run with no
     // post-run work, so the standalone binary hands off via image
     // replacement; embedded hosts / Windows fall back to a supervised child.
@@ -175,7 +175,7 @@ async fn run_filtered(
     }
 
     for pkg in matched {
-        let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
+        let bin_path = bin_path_for_project(&pkg.dir, bin);
         // Sequential fanout bails on the first non-zero exit, matching the
         // previous behavior where the inner `exec` terminated the process.
         if let Some(code) = exec_bin(&pkg.dir, &bin_path, bin, args, shell_mode).await? {
@@ -200,7 +200,7 @@ async fn run_filtered_parallel(
 
     if !shell_mode {
         for pkg in &matched {
-            let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
+            let bin_path = bin_path_for_project(&pkg.dir, bin);
             if !bin_path.exists() {
                 let name = pkg
                     .name
@@ -249,7 +249,7 @@ async fn run_filtered_parallel(
         };
         let prereq_rxs = prereq_rxs_iter.next().expect("one rx vec per package");
         let done_tx = senders_iter.next().expect("one sender per package");
-        let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
+        let bin_path = bin_path_for_project(&pkg.dir, bin);
         let dir = pkg.dir.clone();
         let bin = bin.to_string();
         let args = args.to_vec();
@@ -391,6 +391,27 @@ fn bin_not_found_error(bin: &str) -> miette::Report {
     )
 }
 
+fn project_bin_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let local = super::project_modules_dir(cwd).join(".bin");
+    let mut dirs = vec![local.clone()];
+    if let Some(root) = crate::dirs::find_workspace_root(cwd) {
+        let root = super::project_modules_dir(&root).join(".bin");
+        if root != local {
+            dirs.push(root);
+        }
+    }
+    dirs
+}
+
+fn bin_path_for_project(cwd: &Path, bin: &str) -> PathBuf {
+    let local = super::project_modules_dir(cwd).join(".bin").join(bin);
+    let dirs = project_bin_dirs(cwd);
+    dirs.iter()
+        .map(|dir| dir.join(bin))
+        .find(|path| path.exists())
+        .unwrap_or(local)
+}
+
 /// Assemble the `tokio::process::Command` that runs `bin`, shared by the
 /// supervised (`spawn_and_wait`) and image-replacing (`exec_bin_terminal`)
 /// paths. Callers own the bin-exists check.
@@ -410,24 +431,15 @@ pub(crate) fn build_bin_command(
                 .chain(args.iter().map(|arg| aube_scripts::shell_quote_arg(arg)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let bin_dir = super::project_modules_dir(cwd).join(".bin");
-            let path_dirs = crate::runtime::path_entries_with_project_bins(vec![bin_dir]);
-            let new_path = aube_scripts::prepend_paths(&path_dirs);
-            let mut cmd = aube_scripts::spawn_shell(&line);
-            cmd.env("PATH", &new_path);
-            cmd
+            aube_scripts::spawn_shell(&line)
         } else {
             let exec_path = resolve_exec_shim(bin_path);
             let mut cmd = tokio::process::Command::new(exec_path);
             cmd.args(args);
-            // `#!/usr/bin/env node` shebangs resolve through the child's PATH
-            // so the generated shim must see the project's switched runtime.
-            let runtime_dirs = crate::runtime::path_entries();
-            if !runtime_dirs.is_empty() {
-                cmd.env("PATH", aube_scripts::prepend_paths(&runtime_dirs));
-            }
             cmd
         };
+    let path_dirs = crate::runtime::path_entries_with_project_bins(project_bin_dirs(cwd));
+    command.env("PATH", aube_scripts::prepend_paths(&path_dirs));
     crate::runtime::apply_child_env(&mut command);
     command
         .current_dir(cwd)
