@@ -110,6 +110,7 @@ fn render_cyclonedx(
     let root_ref = format!("{root_name}@{root_version}");
 
     let mut components = Vec::new();
+    let mut license_cache = BTreeMap::new();
     for (dep_path, pkg) in closure {
         let mut c = serde_json::Map::new();
         c.insert("type".into(), "library".into());
@@ -121,7 +122,11 @@ fn render_cyclonedx(
             .get(dep_path)
             .and_then(|metadata| metadata.license.as_deref())
         {
-            c.insert("licenses".into(), cyclonedx_licenses(license));
+            let licenses = license_cache
+                .entry(license)
+                .or_insert_with(|| cyclonedx_licenses(license))
+                .clone();
+            c.insert("licenses".into(), licenses);
         }
         if let Some(bugs_url) = bugs_url_from_extra(&pkg.extra_meta) {
             c.insert("externalReferences".into(), external_references(bugs_url));

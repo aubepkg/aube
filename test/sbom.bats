@@ -47,6 +47,26 @@ JSON
 	assert_success
 }
 
+@test "aube sbom finds licenses with a custom virtual store filename limit" {
+	cat >package.json <<'JSON'
+{
+  "name": "sbom-custom-limit",
+  "version": "1.0.0",
+  "dependencies": {
+    "@pnpm.e2e/pre-and-postinstall-scripts-example": "2.0.0"
+  }
+}
+JSON
+	echo "virtualStoreDirMaxLength=40" >>.npmrc
+	run aube install
+	assert_success
+
+	run bash -c 'aube sbom | jq -e "
+	  any(.components[]; .name == \"@pnpm.e2e/pre-and-postinstall-scripts-example\" and .licenses[0].license.id == \"MIT\")
+	"'
+	assert_success
+}
+
 @test "aube sbom --format spdx emits SPDX 2.3 JSON" {
 	_setup_mixed_fixture
 	run aube sbom --format spdx

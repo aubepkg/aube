@@ -9,7 +9,7 @@ use super::DepFilter;
 use aube_lockfile::LockfileGraph;
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -128,6 +128,7 @@ pub(super) fn collect_installed_metadata<'a>(
     dep_paths: impl IntoIterator<Item = &'a str>,
 ) -> miette::Result<BTreeMap<String, InstalledPackageMetadata>> {
     let aube_dir = super::resolve_virtual_store_dir_for_cwd(cwd);
+    let virtual_store_dir_max_length = super::resolve_virtual_store_dir_max_length_for_cwd(cwd);
     // Prefer the recorded layout over current config: the install may have
     // used a one-shot `--node-linker=hoisted` override.
     let installed_layout = crate::state::read_state_layout(cwd)
@@ -191,7 +192,9 @@ pub(super) fn collect_installed_metadata<'a>(
             .as_ref()
             .and_then(|placements| placements.package_dir(dep_path))
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| virtual_store_pkg_dir(&aube_dir, dep_path, &pkg.name));
+            .unwrap_or_else(|| {
+                virtual_store_pkg_dir(&aube_dir, dep_path, &pkg.name, virtual_store_dir_max_length)
+            });
         metadata.insert(
             dep_path.to_string(),
             InstalledPackageMetadata {
@@ -310,15 +313,15 @@ fn collect_rows(
 /// `aube_dir` is the resolved `virtualStoreDir` — the caller threads
 /// it in via `commands::resolve_virtual_store_dir_for_cwd` so a
 /// custom override lands on the same path the linker wrote to.
-fn virtual_store_pkg_dir(aube_dir: &Path, dep_path: &str, name: &str) -> PathBuf {
-    use aube_lockfile::dep_path_filename::{
-        DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, dep_path_to_filename,
-    };
+fn virtual_store_pkg_dir(
+    aube_dir: &Path,
+    dep_path: &str,
+    name: &str,
+    virtual_store_dir_max_length: usize,
+) -> PathBuf {
+    use aube_lockfile::dep_path_filename::dep_path_to_filename;
     aube_dir
-        .join(dep_path_to_filename(
-            dep_path,
-            DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
-        ))
+        .join(dep_path_to_filename(dep_path, virtual_store_dir_max_length))
         .join("node_modules")
         .join(name)
 }
@@ -333,12 +336,43 @@ fn virtual_store_pkg_dir(aube_dir: &Path, dep_path: &str, name: &str) -> PathBuf
 /// Returns `None` when the manifest is unreadable or the field is missing.
 fn read_license(pkg_dir: &Path) -> Option<String> {
     let bytes = std::fs::read(pkg_dir.join("package.json")).ok()?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    license_from_manifest(&value)
+    let manifest: ManifestLicenseFields = serde_json::from_slice(&bytes).ok()?;
+    manifest
+        .license
+        .and_then(LicenseField::into_string)
+        .or_else(|| {
+            manifest
+                .licenses
+                .into_iter()
+                .next()
+                .and_then(LicenseField::into_string)
+        })
 }
 
-pub(super) fn license_from_manifest(value: &serde_json::Value) -> Option<String> {
-    license_from_values(value.get("license"), value.get("licenses"))
+#[derive(Deserialize)]
+struct ManifestLicenseFields {
+    license: Option<LicenseField>,
+    #[serde(default)]
+    licenses: Vec<LicenseField>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LicenseField {
+    String(String),
+    Object {
+        #[serde(rename = "type")]
+        kind: Option<String>,
+    },
+}
+
+impl LicenseField {
+    fn into_string(self) -> Option<String> {
+        match self {
+            Self::String(license) => Some(license),
+            Self::Object { kind } => kind,
+        }
+    }
 }
 
 pub(super) fn license_from_values(
@@ -428,5 +462,20 @@ mod tests {
     fn extract_license_missing_type() {
         let v = serde_json::json!({ "url": "..." });
         assert!(extract_license(&v).is_none());
+    }
+
+    #[test]
+    fn manifest_license_fields_skip_unrelated_manifest_data() {
+        let manifest: ManifestLicenseFields = serde_json::from_value(serde_json::json!({
+            "name": "example",
+            "dependencies": {"dep": "1.0.0"},
+            "scripts": {"postinstall": "node build.js"},
+            "license": {"type": "Apache-2.0", "url": "https://example.com/license"}
+        }))
+        .unwrap();
+        assert_eq!(
+            manifest.license.and_then(LicenseField::into_string),
+            Some("Apache-2.0".to_string())
+        );
     }
 }
