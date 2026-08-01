@@ -241,6 +241,11 @@ pub struct InstallLayoutState {
     pub modules_dir_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hoisting_limits: Option<InstallHoistingLimits>,
+    /// Filename limit used when materializing the virtual store. This must be
+    /// read from install state because an environment or CLI override may no
+    /// longer be present when a later command inspects the installed tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub virtual_store_dir_max_length: Option<usize>,
     pub direct_entries: BTreeMap<String, Vec<String>>,
     pub packages: BTreeMap<String, InstalledPackageState>,
 }
@@ -1028,6 +1033,7 @@ impl InstallLayoutState {
             linker,
             modules_dir_name: layout.modules_dir_name.to_string(),
             hoisting_limits,
+            virtual_store_dir_max_length: Some(layout.virtual_store_dir_max_length),
             direct_entries,
             packages,
         }
@@ -1413,6 +1419,7 @@ mod tests {
                 linker: InstallLayoutMode::Isolated,
                 modules_dir_name: String::new(),
                 hoisting_limits: None,
+                virtual_store_dir_max_length: None,
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::from([(
                     "is-odd@3.0.1".to_string(),
@@ -1460,6 +1467,7 @@ mod tests {
             linker: InstallLayoutMode::Isolated,
             modules_dir_name: String::new(),
             hoisting_limits: None,
+            virtual_store_dir_max_length: None,
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1491,6 +1499,7 @@ mod tests {
             linker: InstallLayoutMode::Isolated,
             modules_dir_name: String::new(),
             hoisting_limits: None,
+            virtual_store_dir_max_length: None,
             direct_entries: BTreeMap::from([(
                 ".".to_string(),
                 vec!["node_modules/@scope/api".to_string()],
@@ -1609,6 +1618,7 @@ mod tests {
                 linker: InstallLayoutMode::Isolated,
                 modules_dir_name: String::new(),
                 hoisting_limits: None,
+                virtual_store_dir_max_length: None,
                 direct_entries: BTreeMap::new(),
                 packages: BTreeMap::new(),
             }),

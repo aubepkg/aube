@@ -128,11 +128,14 @@ pub(super) fn collect_installed_metadata<'a>(
     dep_paths: impl IntoIterator<Item = &'a str>,
 ) -> miette::Result<BTreeMap<String, InstalledPackageMetadata>> {
     let aube_dir = super::resolve_virtual_store_dir_for_cwd(cwd);
-    let virtual_store_dir_max_length = super::resolve_virtual_store_dir_max_length_for_cwd(cwd);
     // Prefer the recorded layout over current config: the install may have
     // used a one-shot `--node-linker=hoisted` override.
     let installed_layout = crate::state::read_state_layout(cwd)
         .or_else(|| crate::state::read_default_state_layout(cwd));
+    let virtual_store_dir_max_length = installed_layout
+        .as_ref()
+        .and_then(|layout| layout.virtual_store_dir_max_length)
+        .unwrap_or_else(|| super::resolve_virtual_store_dir_max_length_for_cwd(cwd));
     let installed_hoisted = installed_layout
         .as_ref()
         .map(|layout| matches!(layout.linker, crate::state::InstallLayoutMode::Hoisted))
@@ -331,48 +334,19 @@ fn virtual_store_pkg_dir(
 /// Accepts every shape real packages use in the wild:
 /// - `"license": "MIT"` — SPDX string
 /// - `"license": { "type": "MIT" }` — legacy object form still found on npm
-/// - `"licenses": [ { "type": "MIT" }, ... ]` — legacy array, pick the first
+/// - `"licenses": [ { "type": "MIT" }, ... ]` — legacy array
 ///
 /// Returns `None` when the manifest is unreadable or the field is missing.
 fn read_license(pkg_dir: &Path) -> Option<String> {
     let bytes = std::fs::read(pkg_dir.join("package.json")).ok()?;
     let manifest: ManifestLicenseFields = serde_json::from_slice(&bytes).ok()?;
-    manifest
-        .license
-        .and_then(LicenseField::into_string)
-        .or_else(|| {
-            manifest
-                .licenses
-                .into_iter()
-                .next()
-                .and_then(LicenseField::into_string)
-        })
+    license_from_values(manifest.license.as_ref(), manifest.licenses.as_ref())
 }
 
 #[derive(Deserialize)]
 struct ManifestLicenseFields {
-    license: Option<LicenseField>,
-    #[serde(default)]
-    licenses: Vec<LicenseField>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LicenseField {
-    String(String),
-    Object {
-        #[serde(rename = "type")]
-        kind: Option<String>,
-    },
-}
-
-impl LicenseField {
-    fn into_string(self) -> Option<String> {
-        match self {
-            Self::String(license) => Some(license),
-            Self::Object { kind } => kind,
-        }
-    }
+    license: Option<serde_json::Value>,
+    licenses: Option<serde_json::Value>,
 }
 
 pub(super) fn license_from_values(
@@ -382,8 +356,9 @@ pub(super) fn license_from_values(
     license.and_then(extract_license).or_else(|| {
         licenses
             .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(extract_license)
+            .map(|arr| arr.iter().filter_map(extract_license).collect::<Vec<_>>())
+            .filter(|licenses| !licenses.is_empty())
+            .map(|licenses| licenses.join(" OR "))
     })
 }
 
@@ -474,8 +449,34 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            manifest.license.and_then(LicenseField::into_string),
+            license_from_values(manifest.license.as_ref(), manifest.licenses.as_ref()),
             Some("Apache-2.0".to_string())
+        );
+    }
+
+    #[test]
+    fn manifest_license_fields_keep_valid_primary_when_legacy_field_is_malformed() {
+        let manifest: ManifestLicenseFields = serde_json::from_value(serde_json::json!({
+            "license": "MIT",
+            "licenses": "not-an-array"
+        }))
+        .unwrap();
+        assert_eq!(
+            license_from_values(manifest.license.as_ref(), manifest.licenses.as_ref()),
+            Some("MIT".to_string())
+        );
+    }
+
+    #[test]
+    fn legacy_license_array_preserves_every_license() {
+        let value = serde_json::json!([
+            {"type": "MIT"},
+            {"type": "Apache-2.0"},
+            {"url": "ignored"}
+        ]);
+        assert_eq!(
+            license_from_values(None, Some(&value)),
+            Some("MIT OR Apache-2.0".to_string())
         );
     }
 }
