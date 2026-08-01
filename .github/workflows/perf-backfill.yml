@@ -38,8 +38,10 @@ jobs:
     # Same runner class as perf.yml. Absolute instruction counts shift between
     # machine types by more than a real regression does, so the backfilled
     # series and the ongoing one have to come from the same kind of machine.
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: bamboo-perf
     timeout-minutes: 60
+    env:
+      TAK_RUNNER: bamboo-v1-ubuntu24.04-x64-rust1.97.1
     permissions:
       contents: read # listing releases and downloading assets; no write here
     steps:
