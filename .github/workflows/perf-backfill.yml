@@ -41,7 +41,7 @@ jobs:
     runs-on: bamboo-perf
     timeout-minutes: 60
     env:
-      TAK_RUNNER: bamboo-v1-ubuntu24.04-x64-rust1.97.1
+      TAK_RUNNER: bamboo-v2-ubuntu24.04-x64-30vcpu-24gb-rust1.97.1
     permissions:
       contents: read # listing releases and downloading assets; no write here
     steps:
