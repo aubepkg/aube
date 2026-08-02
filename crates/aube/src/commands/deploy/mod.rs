@@ -407,8 +407,16 @@ fn patches_for_importer<'a>(
     let Some(subset) = graph.subset_to_importer(&importer_path, keep_dep) else {
         return Ok(all());
     };
-    let relevant: std::collections::HashSet<String> =
-        subset.packages.values().map(|pkg| pkg.spec_key()).collect();
+    let relevant: std::collections::HashSet<String> = subset
+        .packages
+        .values()
+        .flat_map(|pkg| {
+            [
+                pkg.spec_key(),
+                format!("{}@{}", pkg.registry_name(), pkg.version),
+            ]
+        })
+        .collect();
     Ok(patches
         .values()
         .filter(|patch| relevant.contains(&patch.key))

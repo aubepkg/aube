@@ -58,6 +58,33 @@ EOF
 	assert_success
 }
 
+@test "aube deploy: preserves registry-name patches for npm aliases" {
+	_setup_workspace_fixture
+	sed -i 's/"is-odd": "\^3\.0\.1"/"odd-alias": "npm:is-odd@3.0.1"/' packages/lib/package.json
+	mkdir -p patches
+	printf '\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n' >>pnpm-workspace.yaml
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -8,1 +8,2 @@
+ 'use strict';
++// deployed-alias-patch-marker
+EOF
+
+	# Exercise importer filtering against an existing lockfile, where the
+	# package key uses the alias but patchedDependencies uses the real name.
+	run aube install
+	assert_success
+	run aube deploy --filter @test/lib ./out
+	assert_success
+
+	run grep -q "deployed-alias-patch-marker" out/node_modules/odd-alias/index.js
+	assert_success
+	run grep -Fq '"is-odd@3.0.1": ".aube-deploy-patches/' out/package.json
+	assert_success
+}
+
 @test "aube deploy: excludes patches outside the selected package closure" {
 	_setup_workspace_fixture
 	mkdir -p patches packages/lib/patches
