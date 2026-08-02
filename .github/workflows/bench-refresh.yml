@@ -73,6 +73,7 @@ jobs:
     needs: check
     if: needs.check.outputs.drift == 'true'
     runs-on: bamboo-perf
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write
