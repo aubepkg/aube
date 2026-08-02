@@ -71,8 +71,15 @@ pub(super) fn stage_one(
     } else {
         collect_package_files(source_pkg_dir, &manifest)?
     };
+    let deploy_patch_dir = PathBuf::from(format!(".{}-deploy-patches", aube_util::embedder().name));
 
     for (src, rel) in &files {
+        // Patch metadata owns this directory whenever the deployed closure
+        // contains patches. A package file at the generated content-addressed
+        // path must not prevent an otherwise valid standalone deployment.
+        if !patches.is_empty() && Path::new(rel).starts_with(&deploy_patch_dir) {
+            continue;
+        }
         let dst = target.join(rel);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)

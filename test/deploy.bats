@@ -85,6 +85,36 @@ EOF
 	assert_success
 }
 
+@test "aube deploy: reserves generated patch metadata paths" {
+	_setup_workspace_fixture
+	mkdir -p patches
+	printf '\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n' >>pnpm-workspace.yaml
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -8,1 +8,2 @@
+ 'use strict';
++// deployed-metadata-collision-marker
+EOF
+
+	# Discover the generated content-addressed name, then make the selected
+	# package publish conflicting bytes at that exact reserved path.
+	run aube deploy --filter @test/lib ./seed
+	assert_success
+	metadata_file="$(find seed/.aube-deploy-patches -type f -name '*.patch' | head -n 1)"
+	metadata_rel="${metadata_file#seed/}"
+	mkdir -p packages/lib/.aube-deploy-patches
+	printf 'selected package conflict\n' >"packages/lib/$metadata_rel"
+
+	run aube deploy --filter @test/lib ./out
+	assert_success
+	run grep -q "deployed-metadata-collision-marker" out/node_modules/is-odd/index.js
+	assert_success
+	run grep -q "selected package conflict" "out/$metadata_rel"
+	assert_failure
+}
+
 @test "aube deploy: excludes patches outside the selected package closure" {
 	_setup_workspace_fixture
 	mkdir -p patches packages/lib/patches
