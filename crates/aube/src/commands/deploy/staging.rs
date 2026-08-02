@@ -71,13 +71,18 @@ pub(super) fn stage_one(
     } else {
         collect_package_files(source_pkg_dir, &manifest)?
     };
-    let deploy_patch_dir = PathBuf::from(format!(".{}-deploy-patches", aube_util::embedder().name));
+    let deploy_patch_paths: std::collections::HashSet<PathBuf> = patches
+        .iter()
+        .map(|patch| {
+            PathBuf::from(format!(".{}-deploy-patches", aube_util::embedder().name))
+                .join(format!("{}.patch", patch.content_hash()))
+        })
+        .collect();
 
     for (src, rel) in &files {
-        // Patch metadata owns this directory whenever the deployed closure
-        // contains patches. A package file at the generated content-addressed
-        // path must not prevent an otherwise valid standalone deployment.
-        if !patches.is_empty() && Path::new(rel).starts_with(&deploy_patch_dir) {
+        // Patch metadata owns its exact generated paths. Other package assets
+        // in the same directory remain part of the deploy payload.
+        if deploy_patch_paths.contains(Path::new(rel)) {
             continue;
         }
         let dst = target.join(rel);

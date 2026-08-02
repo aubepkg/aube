@@ -106,6 +106,7 @@ EOF
 	metadata_rel="${metadata_file#seed/}"
 	mkdir -p packages/lib/.aube-deploy-patches
 	printf 'selected package conflict\n' >"packages/lib/$metadata_rel"
+	printf 'selected package asset\n' >packages/lib/.aube-deploy-patches/asset.txt
 
 	run aube deploy --filter @test/lib ./out
 	assert_success
@@ -113,6 +114,8 @@ EOF
 	assert_success
 	run grep -q "selected package conflict" "out/$metadata_rel"
 	assert_failure
+	run grep -q "selected package asset" out/.aube-deploy-patches/asset.txt
+	assert_success
 }
 
 @test "aube deploy: excludes patches outside the selected package closure" {
@@ -141,6 +144,8 @@ EOF
 	run grep -q "selected package file" out/patches/is-even@1.0.0.patch
 	assert_success
 	run grep -q 'is-even@1.0.0' out/package.json
+	assert_failure
+	run grep -q 'is-even@1.0.0' out/aube-lock.yaml
 	assert_failure
 }
 

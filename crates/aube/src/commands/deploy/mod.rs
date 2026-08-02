@@ -407,7 +407,15 @@ fn patches_for_importer<'a>(
     let Some(subset) = graph.subset_to_importer(&importer_path, keep_dep) else {
         return Ok(all());
     };
-    let relevant: std::collections::HashSet<String> = subset
+    let relevant = package_patch_keys(&subset);
+    Ok(patches
+        .values()
+        .filter(|patch| relevant.contains(&patch.key))
+        .collect())
+}
+
+fn package_patch_keys(graph: &aube_lockfile::LockfileGraph) -> std::collections::HashSet<String> {
+    graph
         .packages
         .values()
         .flat_map(|pkg| {
@@ -416,11 +424,7 @@ fn patches_for_importer<'a>(
                 format!("{}@{}", pkg.registry_name(), pkg.version),
             ]
         })
-        .collect();
-    Ok(patches
-        .values()
-        .filter(|patch| relevant.contains(&patch.key))
-        .collect())
+        .collect()
 }
 
 /// Attempt to seed `target` with a subset of the source workspace's
@@ -519,6 +523,10 @@ fn seed_target_lockfile(
     subset.overrides.clear();
     subset.ignored_optional_dependencies.clear();
     subset.catalogs.clear();
+    let relevant_patch_keys = package_patch_keys(&subset);
+    subset
+        .patched_dependencies
+        .retain(|key, _| relevant_patch_keys.contains(key));
 
     // Prune `times` to match the subset's `packages`. `times` isn't
     // part of drift detection, so keeping the source workspace's
