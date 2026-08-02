@@ -60,7 +60,7 @@ EOF
 
 @test "aube deploy: preserves registry-name patches for npm aliases" {
 	_setup_workspace_fixture
-	sed -i 's/"is-odd": "\^3\.0\.1"/"odd-alias": "npm:is-odd@3.0.1"/' packages/lib/package.json
+	perl -0pi -e 's/"is-odd": "\^3\.0\.1"/"odd-alias": "npm:is-odd\@3.0.1"/' packages/lib/package.json
 	mkdir -p patches
 	printf '\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n' >>pnpm-workspace.yaml
 	cat >patches/is-odd@3.0.1.patch <<'EOF'
