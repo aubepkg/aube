@@ -135,6 +135,12 @@ pub async fn run(
         ));
     }
     let source_root = crate::dirs::cwd().wrap_err("failed to read current directory")?;
+    // A deploy install runs from the standalone target, so workspace-root
+    // patch declarations and files would otherwise disappear when staging
+    // copies only the selected package. Resolve them before creating any
+    // targets, both to fail atomically on a missing patch and to reuse the
+    // loaded content across multi-package fanout.
+    let patches = crate::patches::load_declared_patches(&source_root)?;
 
     // Resolve `deployAllFiles` from the source workspace root, before
     // we chdir into any per-match target. `.npmrc` and
@@ -260,6 +266,7 @@ pub async fn run(
             target,
             &ws_index,
             &catalogs,
+            &patches,
             &args,
             deploy_all_files,
         )?);

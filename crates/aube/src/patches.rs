@@ -25,6 +25,8 @@ pub struct ResolvedPatch {
     pub version: String,
     #[allow(dead_code)]
     pub path: PathBuf,
+    /// Safe project-relative path from the declaring workspace root.
+    pub rel_path: String,
     pub content: String,
 }
 
@@ -148,9 +150,16 @@ pub fn load_patches_for_linker(
     Ok((patches, hashes))
 }
 
+/// Resolve patch declarations from the project manifest and workspace config.
+/// Deploy uses the original relative path to make each patch self-contained in
+/// its staged target.
+pub(crate) fn load_declared_patches(cwd: &Path) -> Result<BTreeMap<String, ResolvedPatch>> {
+    load_patches_with_lockfile_entries(cwd, &BTreeMap::new())
+}
+
 #[cfg(test)]
 fn load_patches(cwd: &Path) -> Result<BTreeMap<String, ResolvedPatch>> {
-    load_patches_with_lockfile_entries(cwd, &BTreeMap::new())
+    load_declared_patches(cwd)
 }
 
 fn load_patches_with_lockfile_entries(
@@ -204,6 +213,7 @@ fn load_patches_with_lockfile_entries(
                 name,
                 version,
                 path,
+                rel_path: rel,
                 content,
             },
         );

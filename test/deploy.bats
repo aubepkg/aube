@@ -31,6 +31,29 @@ _setup_workspace_fixture() {
 	[ ! -f out/pnpm-workspace.yaml ]
 }
 
+@test "aube deploy: preserves workspace-root dependency patches" {
+	_setup_workspace_fixture
+	mkdir -p patches
+	printf '\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n' >>pnpm-workspace.yaml
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -8,1 +8,2 @@
+ 'use strict';
++// deployed-patch-marker
+EOF
+
+	run aube deploy --filter @test/lib ./out
+	assert_success
+	assert_file_exists out/patches/is-odd@3.0.1.patch
+
+	run grep -q "deployed-patch-marker" out/node_modules/is-odd/index.js
+	assert_success
+	run grep -Fq '"is-odd@3.0.1": "patches/is-odd@3.0.1.patch"' out/package.json
+	assert_success
+}
+
 @test "aube deploy: subsets the source lockfile into the target" {
 	_setup_workspace_fixture
 

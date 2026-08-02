@@ -9,6 +9,7 @@ use super::injection::{materialize_injections, plan_injections};
 use super::rewrite::{DeployRoot, rewrite_local_refs};
 use crate::commands::CatalogMap;
 use crate::commands::pack::collect_package_files;
+use crate::patches::ResolvedPatch;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,7 @@ pub(super) fn stage_one(
     target: &Path,
     ws_index: &BTreeMap<String, (PathBuf, Option<String>)>,
     catalogs: &CatalogMap,
+    patches: &BTreeMap<String, ResolvedPatch>,
     args: &DeployArgs,
     deploy_all_files: bool,
 ) -> miette::Result<StagedDeploy> {
@@ -127,6 +129,7 @@ pub(super) fn stage_one(
             root,
         )?;
     }
+    stage_patches(patches, target)?;
 
     Ok(StagedDeploy {
         name,
@@ -134,6 +137,44 @@ pub(super) fn stage_one(
         target: target.to_path_buf(),
         bundled_local_refs: !plan.is_empty(),
     })
+}
+
+/// Carry workspace-root patches into the standalone deploy target.
+///
+/// Preserve each declared relative path so the copied declaration has the
+/// same shape as the source workspace. A selected package may publish a file
+/// at that path already; identical content is harmless, while differing
+/// content is an ambiguous deploy artifact and must fail instead of silently
+/// overwriting a package file.
+fn stage_patches(patches: &BTreeMap<String, ResolvedPatch>, target: &Path) -> miette::Result<()> {
+    for (key, patch) in patches {
+        let rel = Path::new(&patch.rel_path);
+        let dst = target.join(rel);
+        if dst.exists() {
+            let existing = std::fs::read_to_string(&dst)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("deploy: failed to read {}", dst.display()))?;
+            if existing != patch.content {
+                return Err(miette!(
+                    code = aube_codes::errors::ERR_AUBE_PATCH_FAILED,
+                    "deploy: patch for {key} conflicts with staged file {}",
+                    dst.display()
+                ));
+            }
+        } else {
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
+            }
+            std::fs::write(&dst, &patch.content)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("deploy: failed to write {}", dst.display()))?;
+        }
+        let rel = patch.rel_path.replace('\\', "/");
+        crate::patches::upsert_patched_dependency(target, key, &rel)?;
+    }
+    Ok(())
 }
 
 /// Walk `source` recursively and collect every file path. Skips only
