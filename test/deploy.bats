@@ -136,6 +136,7 @@ EOF
 	# not from the selected @test/lib importer.
 	run aube install
 	assert_success
+	rm patches/is-even@1.0.0.patch
 	run aube deploy --filter @test/lib ./out
 	assert_success
 
