@@ -40,7 +40,7 @@ pub(super) fn stage_one(
     target: &Path,
     ws_index: &BTreeMap<String, (PathBuf, Option<String>)>,
     catalogs: &CatalogMap,
-    patches: &BTreeMap<String, ResolvedPatch>,
+    patches: &[&ResolvedPatch],
     args: &DeployArgs,
     deploy_all_files: bool,
 ) -> miette::Result<StagedDeploy> {
@@ -141,15 +141,15 @@ pub(super) fn stage_one(
 
 /// Carry workspace-root patches into the standalone deploy target.
 ///
-/// Preserve each declared relative path so the copied declaration has the
-/// same shape as the source workspace. A selected package may publish a file
-/// at that path already; identical content is harmless, while differing
-/// content is an ambiguous deploy artifact and must fail instead of silently
-/// overwriting a package file.
-fn stage_patches(patches: &BTreeMap<String, ResolvedPatch>, target: &Path) -> miette::Result<()> {
-    for (key, patch) in patches {
-        let rel = Path::new(&patch.rel_path);
-        let dst = target.join(rel);
+/// Patch files use a content-addressed path in aube's reserved deploy metadata
+/// directory. This avoids colliding with a selected package that publishes a
+/// file at the source workspace's declared patch path.
+fn stage_patches(patches: &[&ResolvedPatch], target: &Path) -> miette::Result<()> {
+    for patch in patches {
+        let key = &patch.key;
+        let rel = PathBuf::from(format!(".{}-deploy-patches", aube_util::embedder().name))
+            .join(format!("{}.patch", patch.content_hash()));
+        let dst = target.join(&rel);
         if dst.exists() {
             let existing = std::fs::read_to_string(&dst)
                 .into_diagnostic()
@@ -171,7 +171,7 @@ fn stage_patches(patches: &BTreeMap<String, ResolvedPatch>, target: &Path) -> mi
                 .into_diagnostic()
                 .wrap_err_with(|| format!("deploy: failed to write {}", dst.display()))?;
         }
-        let rel = patch.rel_path.replace('\\', "/");
+        let rel = rel.to_string_lossy().replace('\\', "/");
         crate::patches::upsert_patched_dependency(target, key, &rel)?;
     }
     Ok(())

@@ -33,7 +33,7 @@ _setup_workspace_fixture() {
 
 @test "aube deploy: preserves workspace-root dependency patches" {
 	_setup_workspace_fixture
-	mkdir -p patches
+	mkdir -p patches packages/lib/patches
 	printf '\npatchedDependencies:\n  is-odd@3.0.1: patches/is-odd@3.0.1.patch\n' >>pnpm-workspace.yaml
 	cat >patches/is-odd@3.0.1.patch <<'EOF'
 diff --git a/index.js b/index.js
@@ -43,15 +43,48 @@ diff --git a/index.js b/index.js
  'use strict';
 +// deployed-patch-marker
 EOF
+	printf 'selected package file\n' >packages/lib/patches/is-odd@3.0.1.patch
 
 	run aube deploy --filter @test/lib ./out
 	assert_success
-	assert_file_exists out/patches/is-odd@3.0.1.patch
+	run find out/.aube-deploy-patches -type f -name '*.patch'
+	assert_success
 
 	run grep -q "deployed-patch-marker" out/node_modules/is-odd/index.js
 	assert_success
-	run grep -Fq '"is-odd@3.0.1": "patches/is-odd@3.0.1.patch"' out/package.json
+	run grep -q "selected package file" out/patches/is-odd@3.0.1.patch
 	assert_success
+	run grep -Fq '"is-odd@3.0.1": ".aube-deploy-patches/' out/package.json
+	assert_success
+}
+
+@test "aube deploy: excludes patches outside the selected package closure" {
+	_setup_workspace_fixture
+	mkdir -p patches packages/lib/patches
+	printf '\npatchedDependencies:\n  is-even@1.0.0: patches/is-even@1.0.0.patch\n' >>pnpm-workspace.yaml
+	cat >patches/is-even@1.0.0.patch <<'EOF'
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -2,1 +2,2 @@
+ 'use strict';
++// unrelated-workspace-patch
+EOF
+	printf 'selected package file\n' >packages/lib/patches/is-even@1.0.0.patch
+
+	# Populate a lockfile where is-even is reachable only from @test/app,
+	# not from the selected @test/lib importer.
+	run aube install
+	assert_success
+	run aube deploy --filter @test/lib ./out
+	assert_success
+
+	# The unrelated workspace patch neither collides with nor replaces the
+	# selected package's publishable file at the same relative path.
+	run grep -q "selected package file" out/patches/is-even@1.0.0.patch
+	assert_success
+	run grep -q 'is-even@1.0.0' out/package.json
+	assert_failure
 }
 
 @test "aube deploy: subsets the source lockfile into the target" {
