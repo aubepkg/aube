@@ -780,7 +780,7 @@ pub enum Error {
     #[diagnostic(
         code(ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY),
         help(
-            "run `pnpm install` with pnpm 11.20 or newer for this project until aube supports named registries"
+            "aube cannot install this lockfile yet; use pnpm 11.20 or newer instead for this project"
         )
     )]
     UnsupportedNamedRegistry {
