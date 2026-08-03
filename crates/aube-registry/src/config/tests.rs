@@ -1124,6 +1124,47 @@ fn test_explicit_https_proxy_wins_over_npmrc_proxy() {
 }
 
 #[test]
+fn test_legacy_proxy_false_disables_environment_fallback() {
+    let mut config = NpmConfig::default();
+    config.apply(vec![("proxy".to_string(), "false".to_string())]);
+    config.apply_proxy_env();
+
+    assert_eq!(config.npmrc_proxy.as_deref(), Some("false"));
+    assert!(config.https_proxy.is_none());
+    assert!(config.http_proxy.is_none());
+}
+
+#[test]
+fn test_scheme_specific_proxy_overrides_legacy_false() {
+    let mut config = NpmConfig::default();
+    config.apply(vec![
+        ("proxy".to_string(), "false".to_string()),
+        (
+            "https-proxy".to_string(),
+            "http://explicit:8080".to_string(),
+        ),
+    ]);
+    config.apply_proxy_env();
+
+    assert_eq!(config.https_proxy.as_deref(), Some("http://explicit:8080"));
+    assert_eq!(config.http_proxy.as_deref(), Some("http://explicit:8080"));
+}
+
+#[test]
+fn test_false_and_null_scheme_proxy_values_are_unset() {
+    let mut config = NpmConfig::default();
+    config.apply(vec![
+        ("https-proxy".to_string(), "false".to_string()),
+        ("http-proxy".to_string(), "null".to_string()),
+        ("no-proxy".to_string(), "false".to_string()),
+    ]);
+
+    assert!(config.https_proxy.is_none());
+    assert!(config.http_proxy.is_none());
+    assert!(config.no_proxy.is_none());
+}
+
+#[test]
 fn test_default_strict_ssl_is_true() {
     // Regression: `NpmConfig::default()` must not leave
     // `strict_ssl = false` (bool::default), because
