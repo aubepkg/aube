@@ -1,5 +1,5 @@
 use super::{
-    dep_path::{parse_dep_path, version_to_dep_path},
+    dep_path::{parse_dep_path, registry_name_from_qualified_version, version_to_dep_path},
     parse, parse_with_options, write,
 };
 use crate::{
@@ -62,6 +62,55 @@ fn test_parse_dep_path_prerelease() {
 #[test]
 fn test_parse_dep_path_no_at() {
     assert!(parse_dep_path("invalid").is_none());
+}
+
+#[test]
+fn registry_qualified_version_requires_non_reserved_alias_and_semver() {
+    assert_eq!(
+        registry_name_from_qualified_version("work:1.0.0"),
+        Some("work")
+    );
+    assert_eq!(
+        registry_name_from_qualified_version("gh:2.1.0-beta.1"),
+        Some("gh")
+    );
+    for version in [
+        "file:1.0.0",
+        "runtime:24.0.0",
+        "work:^1.0.0",
+        "9work:1.0.0",
+        "1.0.0",
+    ] {
+        assert_eq!(registry_name_from_qualified_version(version), None);
+    }
+}
+
+#[test]
+fn parser_rejects_registry_qualified_package_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        r#"lockfileVersion: '9.0'
+importers: {}
+packages:
+  foo@work:1.0.0:
+    resolution: {integrity: sha512-test}
+snapshots:
+  foo@work:1.0.0: {}
+"#,
+    )
+    .unwrap();
+
+    let err = parse(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        crate::Error::UnsupportedNamedRegistry {
+            ref dep_path,
+            ref registry_name,
+            ..
+        } if dep_path == "foo@work:1.0.0" && registry_name == "work"
+    ));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use super::dep_path::{
-    parse_dep_path, peerless_alias_target, rewrite_peer_suffix, rewrite_snapshot_alias_deps,
-    version_to_dep_path,
+    parse_dep_path, peerless_alias_target, registry_name_from_qualified_version,
+    rewrite_peer_suffix, rewrite_snapshot_alias_deps, version_to_dep_path,
 };
 use super::raw::{
     RawBinSpec, RawDepSpec, RawRuntimeVariant, local_source_from_resolution, parse_raw_lockfile,
@@ -41,6 +41,18 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     let content = crate::read_lockfile(path)?;
     let raw = parse_raw_lockfile(&content)
         .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
+
+    for dep_path in raw.packages.keys().chain(raw.snapshots.keys()) {
+        if let Some((_, version)) = parse_dep_path(dep_path)
+            && let Some(registry_name) = registry_name_from_qualified_version(&version)
+        {
+            return Err(Error::UnsupportedNamedRegistry {
+                path: path.to_path_buf(),
+                dep_path: dep_path.clone(),
+                registry_name: registry_name.to_string(),
+            });
+        }
+    }
 
     // Parse importers (direct deps of each workspace package).
     // We track synthesized LockedPackages for local (`file:` / `link:`)

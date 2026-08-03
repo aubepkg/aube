@@ -31,6 +31,12 @@
       "exit_code": 14
     },
     {
+      "name": "ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY",
+      "category": "Lockfile",
+      "description": "A pnpm lockfile contains registry-qualified package identities that aube cannot safely resolve yet.",
+      "exit_code": 15
+    },
+    {
       "name": "ERR_AUBE_NO_MATCHING_VERSION",
       "category": "Resolver",
       "description": "No published version of the named package satisfies the requested range.",
