@@ -42,18 +42,6 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     let raw = parse_raw_lockfile(&content)
         .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
 
-    for dep_path in raw.packages.keys().chain(raw.snapshots.keys()) {
-        if let Some((_, version)) = parse_dep_path(dep_path)
-            && let Some(registry_name) = registry_name_from_qualified_version(&version)
-        {
-            return Err(Error::UnsupportedNamedRegistry {
-                path: path.to_path_buf(),
-                dep_path: dep_path.clone(),
-                registry_name: registry_name.to_string(),
-            });
-        }
-    }
-
     // Parse importers (direct deps of each workspace package).
     // We track synthesized LockedPackages for local (`file:` / `link:`)
     // deps here so the main packages loop below doesn't try to process
@@ -498,6 +486,13 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         }
         let (name, version) = parse_dep_path(&dep_path)
             .ok_or_else(|| Error::parse(path, format!("invalid dep path: {dep_path}")))?;
+        if let Some(registry_name) = registry_name_from_qualified_version(&version) {
+            return Err(Error::UnsupportedNamedRegistry {
+                path: path.to_path_buf(),
+                dep_path,
+                registry_name: registry_name.to_string(),
+            });
+        }
         // Runtime pin entries (`node@runtime:24.4.1`) are not packages
         // — they're absorbed into `graph.runtimes` below. Skipping them
         // here keeps them out of the package table so the fetch/link

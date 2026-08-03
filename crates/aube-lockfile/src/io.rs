@@ -779,7 +779,9 @@ pub enum Error {
     )]
     #[diagnostic(
         code(ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY),
-        help("use pnpm 11.20 or newer to install this lockfile")
+        help(
+            "run `pnpm install` with pnpm 11.20 or newer for this project until aube supports named registries"
+        )
     )]
     UnsupportedNamedRegistry {
         path: std::path::PathBuf,
