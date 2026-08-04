@@ -136,7 +136,7 @@ foldhash = "0.2"
 smallvec = { version = "1", features = ["serde"] }
 
 # Encoding
-base64 = "0.22"
+base64 = "0.23"
 
 # Sigstore (provenance attestation on `publish`)
 sigstore-sign = "0.11"
