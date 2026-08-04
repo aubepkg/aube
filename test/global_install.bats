@@ -45,11 +45,87 @@ teardown() {
 	assert_output "$AUBE_HOME"
 }
 
-@test "aube bin -g honors PNPM_HOME when AUBE_HOME is unset" {
+@test "aube bin -g ignores PNPM_HOME" {
+	# aube owns its global layout; it never links bins into pnpm's
+	# directory, even when PNPM_HOME is the only home-ish var set.
 	unset AUBE_HOME
 	PNPM_HOME="$TEST_TEMP_DIR/pnpm-home" run aube bin -g
 	assert_success
-	assert_output "$TEST_TEMP_DIR/pnpm-home"
+	assert_output "$XDG_DATA_HOME/aube/bin"
+}
+
+@test "aube -g dirs default under the data root, honoring XDG_DATA_HOME" {
+	unset AUBE_HOME
+
+	run aube prefix -g
+	assert_success
+	assert_output "$XDG_DATA_HOME/aube"
+
+	run aube bin -g
+	assert_success
+	assert_output "$XDG_DATA_HOME/aube/bin"
+
+	# Package installs are a *sibling* of the PATH dir, not a child of it.
+	run aube root -g
+	assert_success
+	assert_output "$XDG_DATA_HOME/aube/global-aube"
+}
+
+@test "aube -g dirs fall back to ~/.local/share without XDG_DATA_HOME" {
+	unset AUBE_HOME
+	unset XDG_DATA_HOME
+
+	run aube bin -g
+	assert_success
+	assert_output "$HOME/.local/share/aube/bin"
+}
+
+@test "aube list -g warns when globals are stranded in the pnpm-era location" {
+	unset AUBE_HOME
+	# A hash pointer under the legacy pnpm-named home is what a pre-2.0
+	# aube left behind. Nothing is installed in the new location, so the
+	# migration warning fires.
+	legacy="$XDG_DATA_HOME/pnpm/global-aube"
+	mkdir -p "$legacy/2d8d9b-19fcea7c050"
+	ln -s "$legacy/2d8d9b-19fcea7c050" "$legacy/deadbeef"
+
+	run aube list -g
+	assert_success
+	assert_output --partial "WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION"
+	# The message points at the legacy *home*, since that's what the user
+	# would hand to AUBE_HOME to keep the old location working.
+	assert_output --partial "$XDG_DATA_HOME/pnpm"
+	# Read-only: aube warns about the pnpm-era directory, never touches it.
+	assert_link_exists "$legacy/deadbeef"
+}
+
+@test "aube list -g stays quiet about the legacy dir once globals are installed" {
+	unset AUBE_HOME
+	legacy="$XDG_DATA_HOME/pnpm/global-aube"
+	mkdir -p "$legacy/2d8d9b-19fcea7c050"
+	ln -s "$legacy/2d8d9b-19fcea7c050" "$legacy/deadbeef"
+
+	run aube add -g semver@7.7.4
+	assert_success
+
+	run aube list -g
+	assert_success
+	refute_output --partial "WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION"
+}
+
+@test "aube add -g warns when the global bin dir is not on PATH" {
+	# AUBE_HOME is not on PATH in the bats env, so the bin aube just
+	# linked is unreachable — say so rather than reporting plain success.
+	run aube add -g semver@7.7.4
+	assert_success
+	assert_output --partial "WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH"
+	assert_output --partial "$AUBE_HOME"
+}
+
+@test "aube add -g stays quiet when the global bin dir is on PATH" {
+	PATH="$AUBE_HOME:$PATH" run aube add -g semver@7.7.4
+	assert_success
+	refute_output --partial "WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH"
 }
 
 @test "aube list -g reports nothing on an empty global dir" {

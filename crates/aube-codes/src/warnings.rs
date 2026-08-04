@@ -101,6 +101,10 @@ pub const WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX: &str =
     "WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX";
 pub const WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE: &str = "WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE";
 
+// ── global installs ─────────────────────────────────────────────────
+pub const WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION: &str = "WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION";
+pub const WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH: &str = "WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH";
+
 // ── progress UI ─────────────────────────────────────────────────────
 pub const WARN_AUBE_PROGRESS_OVERFLOW: &str = "WARN_AUBE_PROGRESS_OVERFLOW";
 
@@ -140,6 +144,7 @@ pub mod category {
     pub const WORKSPACE_RECURSION: &str = "Workspace recursion";
     pub const SUPPLY_CHAIN: &str = "Supply chain (add-time)";
     pub const NODE_RUNTIME: &str = "Node runtime";
+    pub const GLOBAL_INSTALLS: &str = "Global installs";
 }
 
 /// Registry of every warning code with its category and description.
@@ -557,6 +562,19 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE,
         category: category::LOCKFILE,
         description: "`aube outdated -g` found a global install without a lockfile and skipped that install.",
+        exit_code: None,
+    },
+    // Global installs
+    CodeMeta {
+        name: WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION,
+        category: category::GLOBAL_INSTALLS,
+        description: "Global packages were found under the pnpm-named directory aube used before it owned its own global layout (`$PNPM_HOME`, `$XDG_DATA_HOME/pnpm`, `~/Library/pnpm`, `%LOCALAPPDATA%\\pnpm`), while the current global directory holds none. Those installs are no longer visible to `aube list -g` / `remove -g`; reinstall them with `aube add -g`, or point `AUBE_HOME` at the old directory.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH,
+        category: category::GLOBAL_INSTALLS,
+        description: "`aube add -g` linked a bin into a directory that is not on `$PATH`, so the command it installed won't be found. Add the directory to `PATH`, or point `globalBinDir` / `AUBE_HOME` at one that already is.",
         exit_code: None,
     },
     // Progress UI

@@ -345,6 +345,10 @@ async fn run_global_inner(
             pluralizer::pluralize("bin", linked.len() as isize, true),
             layout.bin_dir.display()
         );
+        // Linking a bin into a directory that isn't on `$PATH` produces a
+        // successful install whose command is not found — the symptom the
+        // user reports is "aube add -g did nothing". Say so here instead.
+        global::warn_if_bin_dir_not_on_path(&layout.bin_dir);
     }
 
     Ok(())

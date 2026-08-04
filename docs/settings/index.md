@@ -2667,7 +2667,14 @@ Directory where globally installed packages live.
 - Environment: `npm_config_global_dir`, `NPM_CONFIG_GLOBAL_DIR`, `AUBE_GLOBAL_DIR`
 - .npmrc keys: `globalDir`, `global-dir`
 
-Overrides the directory where globally installed packages live. Falls back to `AUBE_HOME` / `PNPM_HOME` / platform default.
+Overrides the directory holding the physical per-package install dirs
+for `aube add -g`. Falls back to `AUBE_HOME` (when set, installs go in
+a `global-aube/` subdir of it), otherwise `<dataDir>/global-aube` —
+`$XDG_DATA_HOME/aube/global-aube`, `~/.local/share/aube/global-aube`,
+or `%LOCALAPPDATA%\aube\global-aube` on Windows.
+
+`PNPM_HOME` is not consulted: aube keeps its global layout under its
+own data root rather than installing into pnpm's directories.
 
 ### `globalBinDir` {#setting-globalbindir}
 
@@ -2678,7 +2685,13 @@ Directory where global binaries are symlinked.
 - Environment: `npm_config_global_bin_dir`, `NPM_CONFIG_GLOBAL_BIN_DIR`, `AUBE_GLOBAL_BIN_DIR`
 - .npmrc keys: `globalBinDir`, `global-bin-dir`
 
-Overrides the directory where global binaries are symlinked. Independent of `globalDir`; falls back to `AUBE_HOME` / `PNPM_HOME` / platform default.
+Overrides the directory global binaries are symlinked into — the one
+you put on `$PATH`. Independent of `globalDir`; falls back to
+`AUBE_HOME`, otherwise `<dataDir>/bin` (`$XDG_DATA_HOME/aube/bin`,
+`~/.local/share/aube/bin`, or `%LOCALAPPDATA%\aube\bin` on Windows).
+
+`PNPM_HOME` is not consulted: aube keeps its global layout under its
+own data root rather than installing into pnpm's directories.
 
 ### `npmrcAuthFile` {#setting-npmrcauthfile}
 

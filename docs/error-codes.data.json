@@ -975,6 +975,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION",
+      "category": "Global installs",
+      "description": "Global packages were found under the pnpm-named directory aube used before it owned its own global layout (`$PNPM_HOME`, `$XDG_DATA_HOME/pnpm`, `~/Library/pnpm`, `%LOCALAPPDATA%\\pnpm`), while the current global directory holds none. Those installs are no longer visible to `aube list -g` / `remove -g`; reinstall them with `aube add -g`, or point `AUBE_HOME` at the old directory.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_PROGRESS_OVERFLOW",
       "category": "Progress UI",
       "description": "Install progress numerator exceeded the resolved-package denominator. Display clamps to total; the warning surfaces the bookkeeping mismatch so the underlying race can be diagnosed.",
@@ -1073,6 +1079,7 @@
       "Registry TLS / proxy",
       "Resolver",
       "Lockfile",
+      "Global installs",
       "Progress UI",
       "Workspace recursion",
       "Supply chain (add-time)",
