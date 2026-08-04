@@ -162,6 +162,18 @@ fn unlink_global(cwd: &std::path::Path, explicit_name: Option<&str>) -> miette::
 /// If `path` is a symlink whose target is outside `project_dir/node_modules/.aube`,
 /// remove it and return `true`. Symlinks pointing into `.aube/` (regular install symlinks)
 /// are left alone and return `false`.
+///
+/// The "internal" test is textual first. With the global virtual store
+/// enabled, `.aube/<dep_path>` is itself a symlink into
+/// `<cacheDir>/virtual-store/<dep>-<hash>`, so canonicalizing the
+/// target escapes the project's virtual store and every ordinary
+/// registry dep would look like a user `aube link`. Comparing the
+/// lex-normalized raw target against the resolved virtual-store dir
+/// keeps a `.aube/<dep>` target internal regardless of where that
+/// entry points; the GVS root is checked too, for entries recorded as
+/// absolute paths into the shared store. Canonicalization stays as the
+/// fallback so a symlinked project path (macOS `/tmp` →
+/// `/private/tmp`) still compares correctly without GVS.
 fn remove_if_external_symlink(
     project_dir: &std::path::Path,
     path: &std::path::Path,
@@ -184,11 +196,29 @@ fn remove_if_external_symlink(
         target.clone()
     };
 
-    // Canonicalize both sides so symlinked project paths (e.g. macOS /tmp → /private/tmp)
-    // compare correctly. Honors `virtualStoreDir` so a custom-path
-    // `.aube/` still classifies as internal.
+    // Honors `virtualStoreDir` so a custom-path `.aube/` still
+    // classifies as internal.
     let pnpm_raw = super::resolve_virtual_store_dir_for_cwd(project_dir);
-    let pnpm_dir = std::fs::canonicalize(&pnpm_raw).unwrap_or_else(|_| pnpm_raw.clone());
+    let pnpm_lex = aube_linker::normalize_path(&pnpm_raw);
+    // Shared virtual store (`enableGlobalVirtualStore`). Targets under
+    // it belong to an install, not to `aube link`.
+    let gvs_raw = super::global_virtual_store_dir(project_dir);
+    let gvs_lex = aube_linker::normalize_path(&gvs_raw);
+
+    // An empty anchor would make `starts_with` true for every target and
+    // turn genuine user links into "internal", so never match on one.
+    let contains = |target: &std::path::Path, anchor: &std::path::Path| {
+        !anchor.as_os_str().is_empty() && target.starts_with(anchor)
+    };
+
+    // Textual pass: collapse `.`/`..` without following symlinks, so a
+    // relative `.aube/<dep>/node_modules/<name>` target stays anchored
+    // inside the project's virtual store.
+    let target_lex = aube_linker::normalize_path(&abs_target);
+    if contains(&target_lex, &pnpm_lex) || contains(&target_lex, &gvs_lex) {
+        return Ok(false);
+    }
+
     // Derive the virtual-store dir's leaf name from the resolved path
     // so the dangling-symlink fallback below matches regardless of
     // whether the user overrode `virtualStoreDir` to `.custom-vs`,
@@ -200,7 +230,11 @@ fn remove_if_external_symlink(
 
     match std::fs::canonicalize(&abs_target) {
         Ok(canonical) => {
-            if canonical.starts_with(&pnpm_dir) {
+            // Canonicalize the anchors too, so symlinked project paths
+            // (e.g. macOS `/tmp` → `/private/tmp`) compare correctly.
+            let pnpm_dir = std::fs::canonicalize(&pnpm_raw).unwrap_or(pnpm_raw);
+            let gvs_dir = std::fs::canonicalize(&gvs_raw).unwrap_or(gvs_raw);
+            if contains(&canonical, &pnpm_dir) || contains(&canonical, &gvs_dir) {
                 return Ok(false);
             }
         }

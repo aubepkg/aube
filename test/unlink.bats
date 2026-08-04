@@ -175,6 +175,50 @@ EOF
 	assert_failure
 }
 
+@test "aube unlink (no args) keeps registry deps installed through the global virtual store" {
+	# Regression: with GVS on (the default here — _common_setup unsets CI),
+	# `node_modules/.aube/<dep>` is itself a symlink into
+	# <cacheDir>/virtual-store/. Canonicalizing a dep's target escaped the
+	# project's virtual store, so every ordinary dep looked like an
+	# `aube link` and bare `aube unlink` emptied node_modules/.
+	cat >package.json <<'EOF'
+{"name": "consumer", "version": "1.0.0", "dependencies": {"semver": "7.7.4"}}
+EOF
+
+	run aube install
+	assert_success
+	run test -L node_modules/semver
+	assert_success
+	# Confirm GVS is actually in play, otherwise this asserts nothing.
+	run test -L "node_modules/.aube/semver@7.7.4"
+	assert_success
+
+	run aube unlink
+	assert_success
+	assert_output --partial "No linked packages found"
+	refute_output --partial "Unlinked semver"
+
+	run test -L node_modules/semver
+	assert_success
+	assert_file_exists node_modules/semver/package.json
+}
+
+@test "aube unlink <pkg> refuses to remove a GVS-backed registry dep" {
+	cat >package.json <<'EOF'
+{"name": "consumer", "version": "1.0.0", "dependencies": {"semver": "7.7.4"}}
+EOF
+
+	run aube install
+	assert_success
+
+	run aube unlink semver
+	assert_failure
+	assert_output --partial "not a linked package"
+
+	run test -L node_modules/semver
+	assert_success
+}
+
 @test "aube unlink <pkg> refuses to remove non-symlink entries" {
 	cat >package.json <<'EOF'
 {"name": "consumer", "version": "1.0.0"}
