@@ -3784,6 +3784,7 @@ It keeps files referenced by cached package indexes and, on hardlink filesystems
 
 On reflink filesystems such as APFS or btrfs, link counts cannot prove project reachability, so pruning relies on cached package indexes.
 """#
+        flag --dry-run help="Do not actually delete anything; report what would be pruned"
     }
     cmd status help="Verify the store against cached package indexes" effect=read {
         long_help #"""

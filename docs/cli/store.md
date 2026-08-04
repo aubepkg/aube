@@ -10,5 +10,5 @@ Manage the global store
 
 - [`aube store add <PACKAGES>…`](/cli/store/add.md)
 - [`aube store path`](/cli/store/path.md)
-- [`aube store prune`](/cli/store/prune.md)
+- [`aube store prune [--dry-run]`](/cli/store/prune.md)
 - [`aube store status`](/cli/store/status.md)

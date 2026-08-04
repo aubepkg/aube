@@ -18,7 +18,8 @@
 //!   independent inodes so the nlink count is always 1 and pruning there
 //!   can't safely tell referenced from unreferenced files; in that case we
 //!   fall back to removing only files that no cached package index in
-//!   `<store>/v1/index/` points at.
+//!   `<store>/v1/index/` points at. `--dry-run` reports the same totals
+//!   without unlinking anything.
 //! - `aube store status` — verify every file referenced by a cached package
 //!   index still exists in the store and its BLAKE3 hash matches. Exits 0
 //!   when everything is consistent, 1 when any corruption is found.
@@ -62,7 +63,7 @@ pub enum StoreCommand {
     ///
     /// On reflink filesystems such as APFS or btrfs, link counts cannot prove
     /// project reachability, so pruning relies on cached package indexes.
-    Prune,
+    Prune(PruneArgs),
     /// Verify the store against cached package indexes.
     ///
     /// Confirms every file referenced by a cached package index is
@@ -71,11 +72,18 @@ pub enum StoreCommand {
     Status,
 }
 
+#[derive(Debug, Args)]
+pub struct PruneArgs {
+    /// Do not actually delete anything; report what would be pruned.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
 pub async fn run(args: StoreArgs) -> miette::Result<()> {
     match args.command {
         StoreCommand::Add { packages } => add(packages).await,
         StoreCommand::Path => path(),
-        StoreCommand::Prune => prune(),
+        StoreCommand::Prune(a) => prune(a),
         StoreCommand::Status => status(),
     }
 }
@@ -211,7 +219,7 @@ fn collect_hashes_from_dir(dir: &std::path::Path, seen: &mut std::collections::H
     }
 }
 
-fn prune() -> miette::Result<()> {
+fn prune(args: PruneArgs) -> miette::Result<()> {
     let store = open_store()?;
     let root = store.root().to_path_buf();
     if !root.exists() {
@@ -277,16 +285,24 @@ fn prune() -> miette::Result<()> {
 
             // Only credit the byte counter after the unlink actually
             // succeeds, otherwise a permission-denied failure would
-            // inflate the "freed" number in the summary.
-            if std::fs::remove_file(&file_path).is_ok() && !is_exec_marker {
+            // inflate the "freed" number in the summary. A dry run has no
+            // unlink to check, so it credits every candidate and its total
+            // is an upper bound — hence the "up to" in the summary below.
+            let unlinked = args.dry_run || std::fs::remove_file(&file_path).is_ok();
+            if unlinked && !is_exec_marker {
                 removed_files += 1;
                 removed_bytes += content_len;
             }
         }
     }
 
+    let (verb, size_prefix) = if args.dry_run {
+        ("Would prune", "up to ")
+    } else {
+        ("Pruned", "")
+    };
     eprintln!(
-        "Pruned {} ({:.1} MB) from the store",
+        "{verb} {} ({size_prefix}{:.1} MB) from the store",
         pluralizer::pluralize("file", removed_files as isize, true),
         removed_bytes as f64 / 1_048_576.0
     );

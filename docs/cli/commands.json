@@ -11220,10 +11220,23 @@
               "store",
               "prune"
             ],
-            "usage": "store prune",
+            "usage": "store prune [--dry-run]",
             "subcommands": {},
             "args": [],
-            "flags": [],
+            "flags": [
+              {
+                "name": "dry-run",
+                "usage": "--dry-run",
+                "help": "Do not actually delete anything; report what would be pruned",
+                "help_first_line": "Do not actually delete anything; report what would be pruned",
+                "short": [],
+                "long": [
+                  "dry-run"
+                ],
+                "hide": false,
+                "global": false
+              }
+            ],
             "mounts": [],
             "effect": "write",
             "hide": false,

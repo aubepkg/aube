@@ -203,7 +203,7 @@ Run from the workspace root regardless of the current package
 - [`aube store <SUBCOMMAND>`](/cli/store.md)
 - [`aube store add <PACKAGES>…`](/cli/store/add.md)
 - [`aube store path`](/cli/store/path.md)
-- [`aube store prune`](/cli/store/prune.md)
+- [`aube store prune [--dry-run]`](/cli/store/prune.md)
 - [`aube store status`](/cli/store/status.md)
 - [`aube test [FLAGS] [ARGS]…`](/cli/test.md)
 - [`aube trust <SUBCOMMAND>`](/cli/trust.md)

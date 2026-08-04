@@ -126,3 +126,36 @@ EOF
 	assert_output --partial "Pruned"
 	refute_output --partial "Pruned 0 files"
 }
+
+@test "aube store prune --dry-run reports candidates without deleting them" {
+	run aube store add is-odd@3.0.1
+	assert_success
+
+	# Same setup as the deleting test above: drop the cached index so the
+	# files `add` just wrote become unreferenced prune candidates.
+	store_v1="$(aube store path)"
+	rm "$store_v1/index"/*/is-odd@3.0.1.json
+
+	before="$(find "$store_v1/files" -type f | wc -l)"
+
+	run aube store prune --dry-run
+	assert_success
+	assert_output --partial "Would prune"
+	refute_output --partial "Would prune 0 files"
+
+	# Nothing left the store, so the same candidates are still on disk for
+	# a real prune to remove.
+	after="$(find "$store_v1/files" -type f | wc -l)"
+	assert_equal "$before" "$after"
+
+	run aube store prune
+	assert_success
+	assert_output --partial "Pruned"
+	refute_output --partial "Pruned 0 files"
+}
+
+@test "aube store prune --dry-run on an empty store" {
+	run aube store prune --dry-run
+	assert_success
+	assert_output --partial "empty"
+}
