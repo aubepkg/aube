@@ -104,7 +104,7 @@ reflink-copy = "0.1"
 # `libc::c_ulong`, which is `libc::Ioctl` on glibc but `c_int` on musl, so it
 # fails to compile for *-unknown-linux-musl. Unpin once
 # https://github.com/SocketDev/decmpfs releases a fix.
-decmpfs = { version = "=0.1.0", features = ["addon"] }
+decmpfs = { version = "=0.1.2", features = ["addon"] }
 glob = "0.3"
 # BurntSushi's gitignore matcher (from ripgrep). Used by `aube pack` /
 # `aube publish` to honor `.npmignore` / `.gitignore` with full
