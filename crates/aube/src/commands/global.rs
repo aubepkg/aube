@@ -91,27 +91,32 @@ fn branded_home() -> Option<PathBuf> {
 /// named after another package manager. `<ns>` is the active embedder's
 /// `data_namespace` (standalone aube → `aube`).
 ///
-/// XDG is honored on every platform, macOS included — aube already does
-/// that for the store and the packument cache, and the previous
-/// `~/Library/pnpm` special case was the one place a macOS user's
-/// explicit `XDG_DATA_HOME` was ignored (Discussion #1219).
+/// XDG is honored on every Unix, macOS included — aube already does that
+/// for the store and the packument cache, and the previous `~/Library/pnpm`
+/// special case was the one place a macOS user's explicit `XDG_DATA_HOME`
+/// was ignored (Discussion #1219).
+///
+/// Precedence matches `store_dir` exactly, including `%LOCALAPPDATA%`
+/// winning over `XDG_DATA_HOME` on Windows: the global dir and the content
+/// store must not end up under different roots on the same machine.
 fn data_root() -> miette::Result<PathBuf> {
     let ns = aube_util::embedder().data_namespace;
     #[cfg(windows)]
+    if let Ok(local) = std::env::var("LOCALAPPDATA")
+        && !local.is_empty()
     {
-        let local = std::env::var("LOCALAPPDATA")
-            .map_err(|_| miette!("LOCALAPPDATA is not set; can't locate global directory"))?;
         return Ok(PathBuf::from(local).join(ns));
     }
-    #[cfg(not(windows))]
-    {
-        if let Some(xdg) = aube_util::env::xdg_data_home() {
-            return Ok(xdg.join(ns));
-        }
-        let home = aube_util::env::home_dir()
-            .ok_or_else(|| miette!("HOME is not set; can't locate global directory"))?;
-        Ok(home.join(".local/share").join(ns))
-    }
+    // Reached on every Unix, and on Windows when `%LOCALAPPDATA%` is
+    // missing — where an explicitly-set `XDG_DATA_HOME` is a better answer
+    // than failing outright, again mirroring `store_dir`.
+    let data_home = match aube_util::env::xdg_data_home() {
+        Some(xdg) => xdg,
+        None => aube_util::env::home_dir()
+            .ok_or_else(|| miette!("HOME is not set; can't locate global directory"))?
+            .join(".local/share"),
+    };
+    Ok(data_home.join(ns))
 }
 
 /// Default for `globalBinDir` — the directory the user puts on `$PATH`.
@@ -219,18 +224,24 @@ fn warn_on_legacy_global_dir(pkg_dir: &Path, pkg_subdir: &str) {
     });
 }
 
-/// Warn when `bin_dir` is absent from `$PATH`. Compared canonically so a
-/// `$PATH` entry that reaches the same directory through a symlink (or a
-/// `~`-relative vs absolute spelling) still counts as a match; entries
-/// that don't resolve are compared verbatim.
-pub fn warn_if_bin_dir_not_on_path(bin_dir: &Path) {
-    let want = std::fs::canonicalize(bin_dir).unwrap_or_else(|_| bin_dir.to_path_buf());
-    let Some(path) = std::env::var_os("PATH") else {
-        return;
+/// Whether `bin_dir` is one of the directories in `path_var`. Compared
+/// canonically so a `$PATH` entry that reaches the same directory through a
+/// symlink (or a `~`-relative vs absolute spelling) still counts as a
+/// match; entries that don't resolve are compared verbatim.
+///
+/// `None` (an unset `PATH`) is not on `PATH` — nothing is — so it answers
+/// `false` rather than being treated as "can't tell, assume fine".
+fn bin_dir_on_path(bin_dir: &Path, path_var: Option<&std::ffi::OsStr>) -> bool {
+    let Some(path) = path_var else {
+        return false;
     };
-    let on_path = std::env::split_paths(&path)
-        .any(|entry| std::fs::canonicalize(&entry).unwrap_or(entry) == want);
-    if on_path {
+    let want = std::fs::canonicalize(bin_dir).unwrap_or_else(|_| bin_dir.to_path_buf());
+    std::env::split_paths(path).any(|entry| std::fs::canonicalize(&entry).unwrap_or(entry) == want)
+}
+
+/// Warn when `bin_dir` is absent from `$PATH`.
+pub fn warn_if_bin_dir_not_on_path(bin_dir: &Path) {
+    if bin_dir_on_path(bin_dir, std::env::var_os("PATH").as_deref()) {
         return;
     }
     tracing::warn!(
@@ -657,6 +668,33 @@ mod tests {
         let a = cache_key(&["lodash".into(), "chalk".into()], &regs);
         let b = cache_key(&["chalk".into(), "lodash".into()], &regs);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn bin_dir_on_path_matches_a_listed_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let path = std::env::join_paths(["/usr/bin".as_ref(), bin.as_os_str()]).unwrap();
+        assert!(bin_dir_on_path(&bin, Some(&path)));
+    }
+
+    #[test]
+    fn bin_dir_on_path_rejects_an_absent_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let path = std::env::join_paths(["/usr/bin"]).unwrap();
+        assert!(!bin_dir_on_path(&bin, Some(&path)));
+    }
+
+    /// An unset `PATH` means the bin is unreachable, so `add -g` must still
+    /// warn — the check can't quietly pass because it has nothing to search.
+    #[test]
+    fn bin_dir_on_path_is_false_when_path_is_unset() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!bin_dir_on_path(dir.path(), None));
+        assert!(!bin_dir_on_path(dir.path(), Some(std::ffi::OsStr::new(""))));
     }
 
     #[test]

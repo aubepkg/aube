@@ -981,6 +981,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH",
+      "category": "Global installs",
+      "description": "`aube add -g` linked a bin into a directory that is not on `$PATH`, so the command it installed won't be found. Add the directory to `PATH`, or point `globalBinDir` / `AUBE_HOME` at one that already is.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_PROGRESS_OVERFLOW",
       "category": "Progress UI",
       "description": "Install progress numerator exceeded the resolved-package denominator. Display clamps to total; the warning surfaces the bookkeeping mismatch so the underlying race can be diagnosed.",
