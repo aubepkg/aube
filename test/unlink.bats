@@ -219,6 +219,35 @@ EOF
 	assert_success
 }
 
+@test "aube unlink removes a real link whose target sits under globalVirtualStoreDir" {
+	# The GVS root must not be an "internal" anchor: no visible
+	# node_modules/<name> symlink ever points into the shared store
+	# directly, so anchoring on it could only misfire — hiding a genuine
+	# `aube link` whose target happens to live under a user-configured
+	# globalVirtualStoreDir.
+	cat >package.json <<'EOF'
+{"name": "consumer", "version": "1.0.0"}
+EOF
+
+	mkdir -p shared-store/my-lib
+	cat >shared-store/my-lib/package.json <<'EOF'
+{"name": "my-lib", "version": "1.0.0"}
+EOF
+	echo "globalVirtualStoreDir=$PWD/shared-store" >>.npmrc
+
+	run aube link ./shared-store/my-lib
+	assert_success
+	run test -L node_modules/my-lib
+	assert_success
+
+	run aube unlink
+	assert_success
+	assert_output --partial "Unlinked my-lib"
+
+	run test -e node_modules/my-lib
+	assert_failure
+}
+
 @test "aube unlink <pkg> refuses to remove non-symlink entries" {
 	cat >package.json <<'EOF'
 {"name": "consumer", "version": "1.0.0"}
