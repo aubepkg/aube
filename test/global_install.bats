@@ -213,6 +213,12 @@ teardown() {
 	run aube remove -g semver
 	assert_success
 	assert_file_not_exists "$AUBE_HOME/semver"
+	# `assert_file_not_exists` is `[ -f ]`, which follows symlinks — a
+	# *dangling* symlink passes it. With the global virtual store on, the
+	# bin's canonical target lives in the shared store rather than under
+	# the install dir, so the ownership check has to stay textual or the
+	# symlink survives as a dangle (Discussion #1219).
+	[ ! -L "$AUBE_HOME/semver" ]
 
 	run aube list -g
 	assert_success
