@@ -982,9 +982,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clap_usage"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46d067625f5704e5722fe7e46407fef7e79680d6dfd045d29036149d90ec044b"
+checksum = "c3671e15a3e8444d399658989389a0eca99bee6f4aca10b836aad27882d4c4d7"
 dependencies = [
  "clap",
  "usage-lib",
@@ -5351,9 +5351,9 @@ dependencies = [
 
 [[package]]
 name = "usage-lib"
-version = "4.1.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dac9d9134f27ab0f25b2fad992b1bbf5c65704bb38c614f16c6ae4bfb034322c"
+checksum = "3dcc1e54c539da32705e0f559a0b9e308f82c69fae256530990bede0f932f3b9"
 dependencies = [
  "clap",
  "heck",

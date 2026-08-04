@@ -58,7 +58,7 @@ clap = { workspace = true }
 # (usage.jdx.dev KDL) command; the embeddable lib no longer carries it. Cargo
 # can't scope a dependency to bin-only within a crate that also has a lib, so
 # it stays here.
-clap_usage = "4"
+clap_usage = "5"
 strum = { workspace = true }
 clx = { workspace = true }
 console = "0.16"
