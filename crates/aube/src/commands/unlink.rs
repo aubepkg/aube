@@ -49,11 +49,17 @@ pub async fn run(args: UnlinkArgs) -> miette::Result<()> {
                 ));
             }
 
-            // Skip symlinks pointing into .aube — those are regular install symlinks,
-            // not user-created links. Remove via the shared guard so scope cleanup still runs.
+            // Skip symlinks pointing into the virtual store — those are regular
+            // install symlinks, not user-created links. Remove via the shared
+            // guard so scope cleanup still runs.
+            //
+            // The message stays neutral about the store's name: it defaults to
+            // `.aube`, but `virtualStoreDir` can move it (the classification
+            // resolves the leaf dynamically for that reason), so naming `.aube`
+            // outright would be wrong for anyone who overrode it.
             if !remove_if_external_symlink(&cwd, &link_path)? {
                 return Err(miette!(
-                    "{name} is not a linked package (points into .aube — run `{}` to restore)",
+                    "{name} is not a linked package (points into the virtual store — run `{}` to restore)",
                     aube_util::cmd("install")
                 ));
             }
