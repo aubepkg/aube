@@ -296,7 +296,7 @@ pub(super) fn resolve_link_strategy(
         // handle. `open_store` performs lockfile + IO work; a second
         // call to fetch `virtual_store_dir` would repeat that on the
         // hot path of every `auto`-mode install.
-        let store = super::super::open_store(cwd).ok();
+        let store = super::super::open_store_with_ctx(cwd, ctx).ok();
         let store_dir = store.as_ref().map(|s| s.root().to_path_buf());
         // Probe against the GVS dir when GVS is on. The GVS dir won't
         // exist yet on a cold install, so create it before the probe

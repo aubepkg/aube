@@ -424,6 +424,7 @@ pub(in crate::commands) async fn fetch_packages(
         progress,
         &cwd,
         &aube_dir,
+        &packument_cache_dir(),
         /*materialize_tx=*/ None,
         /*skip_already_linked_shortcut=*/ true,
         /*force_index_dep_paths=*/ &std::collections::BTreeSet::new(),
@@ -460,6 +461,7 @@ pub(super) async fn fetch_packages_with_root<F>(
     progress: Option<&InstallProgress>,
     project_root: &std::path::Path,
     aube_dir: &std::path::Path,
+    packument_cache_dir: &std::path::Path,
     // Some streams every successful (dep_path, index) so a concurrent
     // GVS-prewarm materializer can start reflinks before the full
     // batch finishes. None keeps batch-then-return for `aube fetch`.
@@ -504,6 +506,7 @@ pub(super) async fn fetch_packages_with_root<F>(
 where
     F: FnOnce() -> std::sync::Arc<aube_registry::client::RegistryClient>,
 {
+    let packument_cache_dir = packument_cache_dir.to_path_buf();
     // No-op fast path: for every package whose per-project
     // `node_modules/.aube/<dep_path>` entry already resolves to an
     // existing target, skip the package-index load entirely. The
@@ -788,6 +791,7 @@ where
             let sem = semaphore.clone();
             let store = store.clone();
             let client = client.clone();
+            let packument_cache_dir = packument_cache_dir.clone();
             let row = progress.map(|p| p.start_fetch(&display_name, &version));
             let bytes_progress = progress.cloned();
 
@@ -805,8 +809,14 @@ where
                     .clone()
                     .unwrap_or_else(|| client.tarball_url(&registry_name, &version));
                 if let Some(lockfile_url) = tarball_url_override.as_deref() {
-                    verify_lockfile_tarball_url(&client, &registry_name, &version, lockfile_url)
-                        .await?;
+                    verify_lockfile_tarball_url(
+                        &client,
+                        &registry_name,
+                        &version,
+                        lockfile_url,
+                        &packument_cache_dir,
+                    )
+                    .await?;
                 }
 
                 let dl_start = std::time::Instant::now();
@@ -1018,9 +1028,10 @@ async fn verify_lockfile_tarball_url(
     registry_name: &str,
     version: &str,
     lockfile_url: &str,
+    packument_cache_dir: &std::path::Path,
 ) -> miette::Result<()> {
     let packument = client
-        .fetch_packument_cached(registry_name, &packument_cache_dir())
+        .fetch_packument_cached(registry_name, packument_cache_dir)
         .await
         .map_err(|e| {
             miette!(

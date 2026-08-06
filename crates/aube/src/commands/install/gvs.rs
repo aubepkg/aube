@@ -499,8 +499,10 @@ pub(super) fn reset_on_mode_change(
     aube_dir: &Path,
     modules_dir_name: &str,
     planned_gvs: bool,
+    settings_ctx: &aube_settings::ResolveCtx<'_>,
 ) -> miette::Result<()> {
-    let global_virtual_store = crate::commands::global_virtual_store_dir(cwd);
+    let global_virtual_store =
+        crate::commands::global_virtual_store_dir_with_ctx(cwd, settings_ctx);
     let Some(existing_gvs) = detect_existing_global_virtual_store(
         cwd,
         aube_dir,

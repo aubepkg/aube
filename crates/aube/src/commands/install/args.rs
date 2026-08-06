@@ -316,6 +316,36 @@ impl InstallArgs {
     }
 }
 
+/// Host-owned setting overrides for one embedded install.
+///
+/// These values are injected at explicit-command precedence, above process
+/// environment variables and project/user configuration, without mutating
+/// process-global state. Standalone CLI commands leave this empty.
+#[derive(Debug, Clone, Default)]
+pub struct EmbedderInstallOverrides {
+    /// Use aube's shared global virtual store. `Some(false)` materializes
+    /// packages inside the project so the host owns their complete lifecycle.
+    pub use_global_virtual_store: Option<bool>,
+    /// Directory for regenerable metadata caches.
+    pub cache_dir: Option<std::path::PathBuf>,
+    /// Root of the content-addressable package store.
+    pub store_dir: Option<std::path::PathBuf>,
+}
+
+impl EmbedderInstallOverrides {
+    pub(crate) fn append_to(&self, settings: &mut Vec<(String, String)>) {
+        if let Some(enabled) = self.use_global_virtual_store {
+            settings.push(("enableGlobalVirtualStore".to_string(), enabled.to_string()));
+        }
+        if let Some(path) = &self.cache_dir {
+            settings.push(("cacheDir".to_string(), path.to_string_lossy().into_owned()));
+        }
+        if let Some(path) = &self.store_dir {
+            settings.push(("storeDir".to_string(), path.to_string_lossy().into_owned()));
+        }
+    }
+}
+
 /// Aggregated options for `install::run`. Grouped into a struct so we can add
 /// more flags (`--no-optional`, `--offline`, etc.) without changing every caller.
 #[derive(Debug, Clone)]
@@ -519,5 +549,61 @@ impl InstallOptions {
 impl From<FrozenMode> for InstallOptions {
     fn from(mode: FrozenMode) -> Self {
         Self::with_mode(mode)
+    }
+}
+
+#[cfg(test)]
+mod embedder_override_tests {
+    use super::EmbedderInstallOverrides;
+
+    #[test]
+    fn overrides_beat_environment_and_project_settings() {
+        let cache_dir = std::path::PathBuf::from("/host/cache");
+        let store_dir = std::path::PathBuf::from("/host/store");
+        let overrides = EmbedderInstallOverrides {
+            use_global_virtual_store: Some(false),
+            cache_dir: Some(cache_dir.clone()),
+            store_dir: Some(store_dir.clone()),
+        };
+        let mut cli = Vec::new();
+        overrides.append_to(&mut cli);
+        let env = vec![
+            (
+                "npm_config_enable_global_virtual_store".to_string(),
+                "true".to_string(),
+            ),
+            ("npm_config_cache_dir".to_string(), "/env/cache".to_string()),
+            ("npm_config_store_dir".to_string(), "/env/store".to_string()),
+        ];
+        let npmrc = vec![
+            ("enableGlobalVirtualStore".to_string(), "true".to_string()),
+            ("cacheDir".to_string(), "/project/cache".to_string()),
+            ("storeDir".to_string(), "/project/store".to_string()),
+        ];
+        let workspace = std::collections::BTreeMap::new();
+        let ctx = aube_settings::ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &npmrc,
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &workspace,
+            env: &env,
+            cli: &cli,
+            embedder_defaults: &[],
+        };
+
+        assert_eq!(
+            aube_settings::resolved::enable_global_virtual_store(&ctx),
+            Some(false)
+        );
+        assert_eq!(
+            aube_settings::resolved::cache_dir(&ctx),
+            Some(cache_dir.to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            aube_settings::resolved::store_dir(&ctx),
+            Some(store_dir.to_string_lossy().into_owned())
+        );
     }
 }

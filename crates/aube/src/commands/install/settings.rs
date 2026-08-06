@@ -1,4 +1,3 @@
-use super::super::{packument_cache_dir, packument_full_cache_dir};
 use super::version_from_dep_path;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
@@ -958,11 +957,12 @@ pub(crate) fn configure_resolver(
     }
     let git_shallow_hosts = resolve_git_shallow_hosts(settings_ctx);
     let packument_concurrency = resolve_network_concurrency(settings_ctx);
+    let cache_dir = crate::commands::resolved_cache_dir_with_ctx(cwd, settings_ctx);
     let mut resolver = resolver
         .with_packument_network_concurrency(packument_concurrency)
-        .with_packument_cache(packument_cache_dir());
+        .with_packument_cache(cache_dir.join("packuments-v1"));
     if cache_full_packuments {
-        resolver = resolver.with_packument_full_cache(packument_full_cache_dir());
+        resolver = resolver.with_packument_full_cache(cache_dir.join("packuments-full-v1"));
     }
     let mut resolver = resolver
         .with_auto_install_peers(auto_install_peers)

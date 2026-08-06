@@ -95,6 +95,33 @@ async fn facade_initializes_host_and_runs_install() {
 }
 
 #[tokio::test]
+async fn facade_install_accepts_host_storage_overrides() {
+    initialize_test_host();
+    let project = tempfile::tempdir().unwrap();
+    let host_cache = project.path().join("host-cache");
+    let host_store = project.path().join("host-store");
+    std::fs::write(project.path().join("package.json"), "{}\n").unwrap();
+
+    let mut options = InstallOptions::new(project.path());
+    options.ignore_scripts = true;
+    options.network_mode = aube::embed::NetworkMode::Offline;
+    options.control = InstallControl::silent();
+    aube::embed::install_with_overrides(
+        options,
+        aube::embed::EmbedderInstallOverrides {
+            use_global_virtual_store: Some(false),
+            cache_dir: Some(host_cache.clone()),
+            store_dir: Some(host_store.clone()),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(host_store.join("v1/files").is_dir());
+    assert!(!host_cache.join("virtual-store").exists());
+}
+
+#[tokio::test]
 async fn facade_adds_local_package_to_workspace_member() {
     initialize_test_host();
     let (workspace, app) = workspace_fixture();
@@ -118,6 +145,35 @@ async fn facade_adds_local_package_to_workspace_member() {
     assert!(manifest.contains(r#""library": "workspace:*""#));
     assert!(workspace.path().join("testhost-lock.yaml").is_file());
     assert!(!app.join("testhost-lock.yaml").exists());
+}
+
+#[tokio::test]
+async fn facade_add_honors_host_storage_and_materialization_overrides() {
+    initialize_test_host();
+    let (workspace, app) = workspace_fixture();
+    let host_cache = workspace.path().join("host-cache");
+    let host_store = workspace.path().join("host-store");
+
+    aube::embed::add_with_overrides(
+        &app,
+        &["library@workspace:*".to_string()],
+        aube::embed::AddToProjectOptions {
+            ignore_scripts: true,
+            offline: true,
+            control: InstallControl::silent(),
+            ..Default::default()
+        },
+        aube::embed::EmbedderInstallOverrides {
+            use_global_virtual_store: Some(false),
+            cache_dir: Some(host_cache.clone()),
+            store_dir: Some(host_store.clone()),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(host_store.join("v1/files").is_dir());
+    assert!(!host_cache.join("virtual-store").exists());
 }
 
 #[tokio::test]

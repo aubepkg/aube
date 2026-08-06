@@ -44,6 +44,7 @@ pub(super) async fn run(
         &args.packages,
         args.allow_low_downloads,
         crate::commands::add_supply_chain::LowDownloadPrompt::Terminal,
+        &[],
     )
     .await?;
 

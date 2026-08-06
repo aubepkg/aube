@@ -67,6 +67,21 @@ pub async fn add_to_project(
     packages: &[String],
     options: AddToProjectOptions,
 ) -> miette::Result<()> {
+    add_to_project_with_overrides(
+        project_dir,
+        packages,
+        options,
+        install::EmbedderInstallOverrides::default(),
+    )
+    .await
+}
+
+pub(crate) async fn add_to_project_with_overrides(
+    project_dir: &std::path::Path,
+    packages: &[String],
+    options: AddToProjectOptions,
+    overrides: install::EmbedderInstallOverrides,
+) -> miette::Result<()> {
     if packages.is_empty() {
         return Ok(());
     }
@@ -75,6 +90,8 @@ pub async fn add_to_project(
     // Serialize on the same root lock as the CLI add path.
     let lock = super::take_install_project_lock(project_dir)?;
     options.control.check_cancelled()?;
+    let mut setting_overrides = Vec::new();
+    overrides.append_to(&mut setting_overrides);
     let manifest_path = project_dir.join("package.json");
     let original_manifest = std::fs::read(&manifest_path)
         .into_diagnostic()
@@ -95,6 +112,7 @@ pub async fn add_to_project(
                         crate::commands::add_supply_chain::LowDownloadPrompt::Host(
                             options.control.clone(),
                         ),
+                        &setting_overrides,
                     )
                     .await?;
                 }
@@ -113,6 +131,7 @@ pub async fn add_to_project(
                         },
                         save_catalog: None,
                         workspace_protocol_override: None,
+                        setting_overrides: setting_overrides.clone(),
                     },
                     false,
                 )
@@ -138,6 +157,7 @@ pub async fn add_to_project(
             );
             install_options.control = options.control;
             install_options.embedder_runtime = options.runtime;
+            install_options.cli_flags.extend(setting_overrides);
             if options.offline {
                 install_options.network_mode = aube_registry::NetworkMode::Offline;
             }
@@ -528,6 +548,7 @@ pub async fn run(
         packages,
         allow_low_downloads,
         crate::commands::add_supply_chain::LowDownloadPrompt::Terminal,
+        &[],
     )
     .await?;
 
@@ -545,6 +566,7 @@ pub async fn run(
                 save_workspace_protocol,
                 no_save_workspace_protocol,
             ),
+            setting_overrides: Vec::new(),
         },
         !no_save,
     )

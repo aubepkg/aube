@@ -212,15 +212,27 @@ pub(crate) fn ensure_registry_auth_for_package(
 /// across versions of aube and never collides with a pnpm store rooted
 /// at the same path.
 pub(crate) fn open_store(cwd: &std::path::Path) -> miette::Result<aube_store::Store> {
-    let root = match resolved_store_dir(cwd) {
+    with_settings_ctx(cwd, |ctx| open_store_with_ctx(cwd, ctx))
+}
+
+/// Open the content store using an already-resolved invocation context.
+/// Embedded installs use this so their per-call overrides are not lost by a
+/// second file/environment-only settings load.
+pub(crate) fn open_store_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<aube_store::Store> {
+    let root = match resolved_store_dir_with_ctx(cwd, ctx) {
         Some(custom) => custom.join("v1").join("files"),
         None => aube_store::dirs::store_dir()
             .ok_or(aube_store::Error::NoHome)
             .into_diagnostic()
             .wrap_err("failed to open store")?,
     };
-    Ok(aube_store::Store::with_dirs(root, resolved_cache_dir(cwd))
-        .with_virtual_store_dir(global_virtual_store_dir(cwd)))
+    Ok(
+        aube_store::Store::with_dirs(root, resolved_cache_dir_with_ctx(cwd, ctx))
+            .with_virtual_store_dir(global_virtual_store_dir_with_ctx(cwd, ctx)),
+    )
 }
 
 /// Resolve the configured `storeDir` for `cwd`, returning `None` if
@@ -231,10 +243,15 @@ pub(crate) fn open_store(cwd: &std::path::Path) -> miette::Result<aube_store::St
 /// `v3/files` schema suffix — callers append it where needed (see
 /// [`open_store`]).
 pub(crate) fn resolved_store_dir(cwd: &std::path::Path) -> Option<std::path::PathBuf> {
-    with_settings_ctx(cwd, |ctx| {
-        let raw = aube_settings::resolved::store_dir(ctx)?;
-        expand_setting_path(&raw, cwd)
-    })
+    with_settings_ctx(cwd, |ctx| resolved_store_dir_with_ctx(cwd, ctx))
+}
+
+pub(crate) fn resolved_store_dir_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> Option<std::path::PathBuf> {
+    let raw = aube_settings::resolved::store_dir(ctx)?;
+    expand_setting_path(&raw, cwd)
 }
 
 /// Expand a path-typed setting value. `~` -> home dir, relative ->
@@ -272,6 +289,14 @@ pub(crate) fn with_settings_ctx<T>(
     cwd: &std::path::Path,
     f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
 ) -> T {
+    with_settings_ctx_and_cli(cwd, &[], f)
+}
+
+pub(crate) fn with_settings_ctx_and_cli<T>(
+    cwd: &std::path::Path,
+    cli: &[(String, String)],
+    f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
+) -> T {
     let files = FileSources::load(cwd);
     let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
     // `process_env()` returns a `&'static` borrow of the once-captured
@@ -279,7 +304,7 @@ pub(crate) fn with_settings_ctx<T>(
     // builds a ResolveCtx (the typical path hits this 5+ times per
     // `aube run`).
     let env = aube_settings::values::process_env();
-    let ctx = files.ctx(&raw_workspace, env, &[]);
+    let ctx = files.ctx(&raw_workspace, env, cli);
     f(&ctx)
 }
 
@@ -442,12 +467,19 @@ pub(crate) fn resolve_fetch_policy(cwd: &std::path::Path) -> aube_registry::conf
 /// overrides it — the global virtual store hang off this path, so a
 /// user who moves the cache to another volume moves them together.
 pub(crate) fn resolved_cache_dir(cwd: &std::path::Path) -> std::path::PathBuf {
+    with_settings_ctx(cwd, |ctx| resolved_cache_dir_with_ctx(cwd, ctx))
+}
+
+pub(crate) fn resolved_cache_dir_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> std::path::PathBuf {
     let platform_default =
         || aube_store::dirs::cache_dir().unwrap_or_else(|| std::env::temp_dir().join("aube"));
-    with_settings_ctx(cwd, |ctx| match aube_settings::resolved::cache_dir(ctx) {
+    match aube_settings::resolved::cache_dir(ctx) {
         Some(raw) => expand_setting_path(&raw, cwd).unwrap_or_else(platform_default),
         None => platform_default(),
-    })
+    }
 }
 
 /// Absolute path of the global virtual store — the shared tree of
@@ -466,11 +498,18 @@ pub(crate) fn resolved_cache_dir(cwd: &std::path::Path) -> std::path::PathBuf {
 /// relocated store makes them look at an empty directory and silently
 /// re-materialize.
 pub(crate) fn global_virtual_store_dir(cwd: &std::path::Path) -> std::path::PathBuf {
-    let from_setting = with_settings_ctx(cwd, |ctx| {
-        let raw = aube_settings::resolved::global_virtual_store_dir(ctx)?;
-        expand_setting_path(&raw, cwd)
-    });
-    from_setting.unwrap_or_else(|| resolved_cache_dir(cwd).join(aube_store::VIRTUAL_STORE_SUBDIR))
+    with_settings_ctx(cwd, |ctx| global_virtual_store_dir_with_ctx(cwd, ctx))
+}
+
+pub(crate) fn global_virtual_store_dir_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> std::path::PathBuf {
+    aube_settings::resolved::global_virtual_store_dir(ctx)
+        .and_then(|raw| expand_setting_path(&raw, cwd))
+        .unwrap_or_else(|| {
+            resolved_cache_dir_with_ctx(cwd, ctx).join(aube_store::VIRTUAL_STORE_SUBDIR)
+        })
 }
 
 /// Resolve the `virtualStoreDirMaxLength` setting, falling back to the
