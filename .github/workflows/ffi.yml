@@ -14,6 +14,8 @@ on:
       - "crates/aube/src/commands/install/frozen.rs"
       - "crates/aube-util/src/identity.rs"
       - "crates/aube-util/src/lib.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/ffi.yml"
   push:
     branches: [main]
@@ -29,6 +31,8 @@ on:
       - "crates/aube/src/commands/install/frozen.rs"
       - "crates/aube-util/src/identity.rs"
       - "crates/aube-util/src/lib.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/ffi.yml"
   release:
     types: [published]
