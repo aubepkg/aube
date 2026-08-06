@@ -499,6 +499,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
         // Enter the physical shared-store directory explicitly so the script
         // cwd and every nested dependency use the same namespace.
         let package_dir = lifecycle_package_dir(&package_dir, canonicalize_package_dir)
+            .await
             .into_diagnostic()
             .wrap_err_with(|| {
                 format!(
@@ -728,12 +729,15 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     Ok(ran)
 }
 
-fn lifecycle_package_dir(
+async fn lifecycle_package_dir(
     package_dir: &std::path::Path,
     canonicalize: bool,
 ) -> std::io::Result<std::path::PathBuf> {
     if canonicalize {
-        crate::dirs::canonicalize(package_dir)
+        let package_dir = package_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || crate::dirs::canonicalize(&package_dir))
+            .await
+            .map_err(std::io::Error::other)?
     } else {
         Ok(package_dir.to_path_buf())
     }
@@ -1253,8 +1257,8 @@ pub(super) fn unreviewed_dep_builds(
 mod tests {
     use super::*;
 
-    #[test]
-    fn global_virtual_store_lifecycle_uses_physical_package_dir() {
+    #[tokio::test]
+    async fn global_virtual_store_lifecycle_uses_physical_package_dir() {
         let temp = tempfile::tempdir().unwrap();
         let physical = temp.path().join("shared-store/pkg@1.0.0/node_modules/pkg");
         std::fs::create_dir_all(&physical).unwrap();
@@ -1281,11 +1285,13 @@ mod tests {
 
         let logical_package = logical.join("node_modules/pkg");
         assert_eq!(
-            lifecycle_package_dir(&logical_package, true).unwrap(),
+            lifecycle_package_dir(&logical_package, true).await.unwrap(),
             crate::dirs::canonicalize(&physical).unwrap()
         );
         assert_eq!(
-            lifecycle_package_dir(&logical_package, false).unwrap(),
+            lifecycle_package_dir(&logical_package, false)
+                .await
+                .unwrap(),
             logical_package
         );
     }
