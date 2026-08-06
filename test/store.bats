@@ -103,6 +103,74 @@ EOF
 	assert_output --partial "corrupt"
 }
 
+@test "aube store maintenance fails closed on a malformed package index" {
+	run aube store add is-odd@3.0.1
+	assert_success
+
+	store_v1="$(aube store path)"
+	index="$(find "$store_v1/index" -mindepth 2 -maxdepth 2 -name 'is-odd@3.0.1.json' -print -quit)"
+	assert_file_exists "$index"
+	before="$(find "$store_v1/files" -type f | wc -l)"
+	echo '{not valid JSON' >"$index"
+
+	run aube store prune --dry-run
+	assert_failure
+	assert_output --partial "ERR_AUBE_STORE_INDEX_SCAN_FAILED"
+	assert_output --partial "is-odd@3.0.1.json"
+	assert_equal "$before" "$(find "$store_v1/files" -type f | wc -l)"
+
+	run aube store prune
+	assert_failure
+	assert_output --partial "ERR_AUBE_STORE_INDEX_SCAN_FAILED"
+	assert_output --partial "is-odd@3.0.1.json"
+	assert_equal "$before" "$(find "$store_v1/files" -type f | wc -l)"
+
+	run aube store status
+	assert_failure
+	assert_output --partial "ERR_AUBE_STORE_INDEX_SCAN_FAILED"
+	assert_output --partial "is-odd@3.0.1.json"
+}
+
+@test "aube store prune preserves files when an index path is unreadable" {
+	run aube store add is-odd@3.0.1
+	assert_success
+
+	store_v1="$(aube store path)"
+	index="$(find "$store_v1/index" -mindepth 2 -maxdepth 2 -name 'is-odd@3.0.1.json' -print -quit)"
+	assert_file_exists "$index"
+	index_dir="$(dirname "$index")"
+	before="$(find "$store_v1/files" -type f | wc -l)"
+	chmod 000 "$index"
+
+	# Root can bypass mode bits, so skip rather than asserting a false
+	# negative in privileged containers.
+	if test -r "$index"; then
+		chmod 600 "$index"
+		skip "running as a user that can bypass file permissions"
+	fi
+
+	run aube store prune --dry-run
+	chmod 600 "$index"
+	assert_failure
+	assert_output --partial "ERR_AUBE_STORE_INDEX_SCAN_FAILED"
+	assert_output --partial "is-odd@3.0.1.json"
+	assert_equal "$before" "$(find "$store_v1/files" -type f | wc -l)"
+
+	chmod 000 "$index_dir"
+
+	if test -r "$index"; then
+		chmod 700 "$index_dir"
+		skip "running as a user that can bypass directory permissions"
+	fi
+
+	run aube store prune
+	chmod 700 "$index_dir"
+	assert_failure
+	assert_output --partial "ERR_AUBE_STORE_INDEX_SCAN_FAILED"
+	assert_output --partial "$(basename "$index_dir")"
+	assert_equal "$before" "$(find "$store_v1/files" -type f | wc -l)"
+}
+
 @test "aube store prune runs cleanly on an empty store" {
 	run aube store prune
 	assert_success

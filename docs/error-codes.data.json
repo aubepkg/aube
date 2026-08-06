@@ -139,6 +139,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_STORE_INDEX_SCAN_FAILED",
+      "category": "Tarball / store",
+      "description": "A store maintenance command couldn't completely read or parse the cached package indexes.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_PACKAGE_NOT_FOUND",
       "category": "Registry / network",
       "description": "Registry returned 404 for the package name.",
