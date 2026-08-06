@@ -91,7 +91,7 @@ pub(crate) async fn add_to_project_with_overrides(
     let lock = super::take_install_project_lock(project_dir)?;
     options.control.check_cancelled()?;
     let mut setting_overrides = Vec::new();
-    overrides.append_to(&mut setting_overrides);
+    overrides.append_to(&mut setting_overrides)?;
     let manifest_path = project_dir.join("package.json");
     let original_manifest = std::fs::read(&manifest_path)
         .into_diagnostic()

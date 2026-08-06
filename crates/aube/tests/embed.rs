@@ -65,6 +65,77 @@ fn workspace_fixture() -> (tempfile::TempDir, PathBuf) {
     (workspace, app)
 }
 
+fn seed_cached_registry_package(cache_dir: &std::path::Path, store_dir: &std::path::Path) {
+    let packument_cache_dir = cache_dir.join("packuments-v1");
+    let full_packument_cache_dir = cache_dir.join("packuments-full-v1");
+    std::fs::create_dir_all(&packument_cache_dir).unwrap();
+    std::fs::create_dir_all(&full_packument_cache_dir).unwrap();
+    let package = tempfile::tempdir().unwrap();
+    std::fs::write(
+        package.path().join("package.json"),
+        r#"{"name":"cached-only","version":"1.0.0"}
+"#,
+    )
+    .unwrap();
+
+    let store = aube_store::Store::with_dirs(store_dir.join("v1/files"), cache_dir.to_path_buf());
+    let index = store.import_directory(package.path()).unwrap();
+    store
+        .save_index("cached-only", "1.0.0", None, &index)
+        .unwrap();
+
+    let packument: aube_registry::Packument = serde_json::from_value(serde_json::json!({
+        "name": "cached-only",
+        "dist-tags": { "latest": "1.0.0" },
+        "versions": {
+            "1.0.0": {
+                "name": "cached-only",
+                "version": "1.0.0",
+                "dist": {
+                    "tarball": "https://registry.npmjs.org/cached-only/-/cached-only-1.0.0.tgz"
+                }
+            }
+        }
+    }))
+    .unwrap();
+    let client = aube_registry::client::RegistryClient::new("https://registry.npmjs.org/");
+    client.seed_packument_cache(
+        "cached-only",
+        &packument_cache_dir,
+        &packument,
+        None,
+        None,
+        true,
+    );
+    client.seed_full_packument_cache(
+        "cached-only",
+        &full_packument_cache_dir,
+        &packument,
+        None,
+        None,
+        true,
+    );
+    assert!(
+        client
+            .cached_packument_lookup("cached-only", &packument_cache_dir)
+            .packument
+            .is_some()
+    );
+}
+
+fn cached_package_materialization(project: &std::path::Path) -> PathBuf {
+    project.join("node_modules/cached-only/package.json")
+}
+
+fn assert_cached_package_is_project_local(
+    importer: &std::path::Path,
+    install_root: &std::path::Path,
+) {
+    let package = std::fs::canonicalize(cached_package_materialization(importer)).unwrap();
+    let virtual_store = std::fs::canonicalize(install_root.join("node_modules/.testhost")).unwrap();
+    assert!(package.starts_with(virtual_store));
+}
+
 struct CancelOnOutput(Mutex<Option<InstallControl>>);
 
 impl aube::embed::InstallReporter for CancelOnOutput {
@@ -100,7 +171,13 @@ async fn facade_install_accepts_host_storage_overrides() {
     let project = tempfile::tempdir().unwrap();
     let host_cache = project.path().join("host-cache");
     let host_store = project.path().join("host-store");
-    std::fs::write(project.path().join("package.json"), "{}\n").unwrap();
+    seed_cached_registry_package(&host_cache, &host_store);
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"dependencies":{"cached-only":"1.0.0"}}
+"#,
+    )
+    .unwrap();
 
     let mut options = InstallOptions::new(project.path());
     options.ignore_scripts = true;
@@ -118,7 +195,25 @@ async fn facade_install_accepts_host_storage_overrides() {
     .unwrap();
 
     assert!(host_store.join("v1/files").is_dir());
+    assert_cached_package_is_project_local(project.path(), project.path());
     assert!(!host_cache.join("virtual-store").exists());
+
+    let replacement_store = project.path().join("replacement-store");
+    let mut options = InstallOptions::new(project.path());
+    options.ignore_scripts = true;
+    options.network_mode = aube::embed::NetworkMode::Offline;
+    options.control = InstallControl::silent();
+    let error = aube::embed::install_with_overrides(
+        options,
+        aube::embed::EmbedderInstallOverrides {
+            use_global_virtual_store: Some(false),
+            cache_dir: Some(host_cache),
+            store_dir: Some(replacement_store),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("offline"));
 }
 
 #[tokio::test]
@@ -153,10 +248,11 @@ async fn facade_add_honors_host_storage_and_materialization_overrides() {
     let (workspace, app) = workspace_fixture();
     let host_cache = workspace.path().join("host-cache");
     let host_store = workspace.path().join("host-store");
+    seed_cached_registry_package(&host_cache, &host_store);
 
     aube::embed::add_with_overrides(
         &app,
-        &["library@workspace:*".to_string()],
+        &["cached-only".to_string()],
         aube::embed::AddToProjectOptions {
             ignore_scripts: true,
             offline: true,
@@ -173,6 +269,7 @@ async fn facade_add_honors_host_storage_and_materialization_overrides() {
     .unwrap();
 
     assert!(host_store.join("v1/files").is_dir());
+    assert_cached_package_is_project_local(&app, workspace.path());
     assert!(!host_cache.join("virtual-store").exists());
 }
 

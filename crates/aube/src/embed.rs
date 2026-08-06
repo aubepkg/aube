@@ -163,7 +163,7 @@ pub async fn install_with_overrides(
     command_options.osv_transitive_check = options.osv_transitive_check;
     command_options.control = options.control;
     command_options.embedder_runtime = options.runtime;
-    overrides.append_to(&mut command_options.cli_flags);
+    overrides.append_to(&mut command_options.cli_flags)?;
     crate::commands::install::run(command_options).await
 }
 

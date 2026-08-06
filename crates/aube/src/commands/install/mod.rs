@@ -600,6 +600,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
     let packument_cache_dir =
         super::resolved_cache_dir_with_ctx(&cwd, &settings_ctx).join("packuments-v1");
+    let explicit_store_dir_override = opts.cli_flags.iter().any(|(name, _)| name == "storeDir");
     let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx);
     // Resolve the project's Node runtime before anything can spawn
     // node: the root `preinstall` hooks below must already run on the
@@ -1197,7 +1198,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 &aube_dir,
                 &packument_cache_dir,
                 Some(lock_materialize_tx),
-                /*skip_already_linked_shortcut=*/ has_workspace,
+                /*skip_already_linked_shortcut=*/
+                has_workspace || explicit_store_dir_override,
                 &lock_project_local_dep_paths,
                 virtual_store_dir_max_length,
                 opts.ignore_scripts,
@@ -2242,7 +2244,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                         &aube_dir,
                         &packument_cache_dir,
                         /*materialize_tx=*/ None,
-                        /*skip_already_linked_shortcut=*/ has_workspace,
+                        /*skip_already_linked_shortcut=*/
+                        has_workspace || explicit_store_dir_override,
                         &project_local_dep_paths,
                         virtual_store_dir_max_length,
                         opts.ignore_scripts,

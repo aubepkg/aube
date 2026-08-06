@@ -333,16 +333,23 @@ pub struct EmbedderInstallOverrides {
 }
 
 impl EmbedderInstallOverrides {
-    pub(crate) fn append_to(&self, settings: &mut Vec<(String, String)>) {
+    pub(crate) fn append_to(&self, settings: &mut Vec<(String, String)>) -> miette::Result<()> {
         if let Some(enabled) = self.use_global_virtual_store {
             settings.push(("enableGlobalVirtualStore".to_string(), enabled.to_string()));
         }
         if let Some(path) = &self.cache_dir {
-            settings.push(("cacheDir".to_string(), path.to_string_lossy().into_owned()));
+            let path = path
+                .to_str()
+                .ok_or_else(|| miette::miette!("embedder cache directory must be valid UTF-8"))?;
+            settings.push(("cacheDir".to_string(), path.to_string()));
         }
         if let Some(path) = &self.store_dir {
-            settings.push(("storeDir".to_string(), path.to_string_lossy().into_owned()));
+            let path = path
+                .to_str()
+                .ok_or_else(|| miette::miette!("embedder store directory must be valid UTF-8"))?;
+            settings.push(("storeDir".to_string(), path.to_string()));
         }
+        Ok(())
     }
 }
 
@@ -566,7 +573,7 @@ mod embedder_override_tests {
             store_dir: Some(store_dir.clone()),
         };
         let mut cli = Vec::new();
-        overrides.append_to(&mut cli);
+        overrides.append_to(&mut cli).unwrap();
         let env = vec![
             (
                 "npm_config_enable_global_virtual_store".to_string(),
@@ -605,5 +612,21 @@ mod embedder_override_tests {
             aube_settings::resolved::store_dir(&ctx),
             Some(store_dir.to_string_lossy().into_owned())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_storage_paths_are_rejected() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let overrides = EmbedderInstallOverrides {
+            cache_dir: Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(
+                vec![b'/', 0xff],
+            ))),
+            ..Default::default()
+        };
+
+        let error = overrides.append_to(&mut Vec::new()).unwrap_err();
+        assert!(error.to_string().contains("must be valid UTF-8"));
     }
 }
