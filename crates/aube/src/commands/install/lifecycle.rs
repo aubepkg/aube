@@ -408,6 +408,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     graph: &aube_lockfile::LockfileGraph,
     policy: &aube_scripts::BuildPolicy,
     virtual_store_dir_max_length: usize,
+    canonicalize_package_dir: bool,
     child_concurrency: usize,
     placements: Option<&aube_linker::HoistedPlacements>,
     side_effects_cache: SideEffectsCacheConfig<'_>,
@@ -489,6 +490,23 @@ pub(crate) async fn run_dep_lifecycle_scripts(
             );
             continue;
         }
+        // On Windows, changing directory through an NTFS junction preserves
+        // the logical `.aube/<dep_path>` path. Native build tools such as
+        // node-gyp can then resolve a dependency to its graph-hashed GVS path
+        // but interpret that path relative to the unhashed local `.aube/`
+        // namespace, leaving an apparently missing `node_api.gyp`. POSIX
+        // `getcwd` resolves the outer symlink and masks the same mismatch.
+        // Enter the physical shared-store directory explicitly so the script
+        // cwd and every nested dependency use the same namespace.
+        let package_dir = lifecycle_package_dir(&package_dir, canonicalize_package_dir)
+            .into_diagnostic()
+            .wrap_err_with(|| {
+                format!(
+                    "failed to resolve isolated package directory for {} at {}",
+                    pkg.name,
+                    package_dir.display()
+                )
+            })?;
         // Read the dep's `package.json` directly from its materialized
         // location. Previously we looked it up via `package_indices`,
         // but the fetch phase now skips `load_index` for packages
@@ -708,6 +726,17 @@ pub(crate) async fn run_dep_lifecycle_scripts(
         ran += res.into_diagnostic()??;
     }
     Ok(ran)
+}
+
+fn lifecycle_package_dir(
+    package_dir: &std::path::Path,
+    canonicalize: bool,
+) -> std::io::Result<std::path::PathBuf> {
+    if canonicalize {
+        crate::dirs::canonicalize(package_dir)
+    } else {
+        Ok(package_dir.to_path_buf())
+    }
 }
 
 /// Verify + import + validate + save-index for a freshly fetched
@@ -1223,6 +1252,43 @@ pub(super) fn unreviewed_dep_builds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_virtual_store_lifecycle_uses_physical_package_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let physical = temp.path().join("shared-store/pkg@1.0.0/node_modules/pkg");
+        std::fs::create_dir_all(&physical).unwrap();
+        let logical = temp.path().join("project/node_modules/.aube/pkg@1.0.0");
+        std::fs::create_dir_all(logical.parent().unwrap()).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            physical.parent().and_then(std::path::Path::parent).unwrap(),
+            &logical,
+        )
+        .unwrap();
+        #[cfg(windows)]
+        {
+            let target = physical.parent().and_then(std::path::Path::parent).unwrap();
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&logical)
+                .arg(target)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        let logical_package = logical.join("node_modules/pkg");
+        assert_eq!(
+            lifecycle_package_dir(&logical_package, true).unwrap(),
+            crate::dirs::canonicalize(&physical).unwrap()
+        );
+        assert_eq!(
+            lifecycle_package_dir(&logical_package, false).unwrap(),
+            logical_package
+        );
+    }
 
     #[test]
     fn pnpm_trusted_dependencies_are_allowed_by_default() {

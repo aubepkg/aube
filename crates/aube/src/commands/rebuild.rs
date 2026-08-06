@@ -184,6 +184,7 @@ pub async fn run(
                 &graph,
                 &policy,
                 super::resolve_virtual_store_dir_max_length(&settings_ctx),
+                isolated,
                 child_concurrency,
                 hoisted_placements.as_ref(),
                 side_effects_cache_root
