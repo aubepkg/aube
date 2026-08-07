@@ -18,6 +18,8 @@ pub const WARN_AUBE_HOOK_PACKAGE_ADDED: &str = "WARN_AUBE_HOOK_PACKAGE_ADDED";
 
 // ── install lifecycle ───────────────────────────────────────────────
 pub const WARN_AUBE_IGNORED_BUILD_SCRIPTS: &str = "WARN_AUBE_IGNORED_BUILD_SCRIPTS";
+pub const WARN_AUBE_DEPRECATED_PACKAGE: &str = "WARN_AUBE_DEPRECATED_PACKAGE";
+pub const WARN_AUBE_DEPRECATED_PACKAGE_SUMMARY: &str = "WARN_AUBE_DEPRECATED_PACKAGE_SUMMARY";
 #[rustfmt::skip] pub const WARN_AUBE_SUSPICIOUS_LIFECYCLE_SCRIPT: &str = "WARN_AUBE_SUSPICIOUS_LIFECYCLE_SCRIPT";
 #[rustfmt::skip] pub const WARN_AUBE_WINDOWS_JOB_OBJECT_UNAVAILABLE: &str = "WARN_AUBE_WINDOWS_JOB_OBJECT_UNAVAILABLE";
 pub const WARN_AUBE_MISSING_INTEGRITY: &str = "WARN_AUBE_MISSING_INTEGRITY";
@@ -190,6 +192,18 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_IGNORED_BUILD_SCRIPTS,
         category: category::INSTALL_LIFECYCLE,
         description: "Dep had `preinstall`/`install`/`postinstall` scripts but isn't on the `allowBuilds` allowlist. Run `aube approve-builds`.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_DEPRECATED_PACKAGE,
+        category: category::INSTALL_LIFECYCLE,
+        description: "An installed package version is deprecated.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_DEPRECATED_PACKAGE_SUMMARY,
+        category: category::INSTALL_LIFECYCLE,
+        description: "One or more installed package versions have deprecation warnings.",
         exit_code: None,
     },
     CodeMeta {
