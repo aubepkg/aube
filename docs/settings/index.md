@@ -381,10 +381,11 @@ Delay installation of newly published versions (minutes).
 - Managed policy: `max`
 
 Supply-chain attack mitigation: versions published within the last N
-minutes are skipped by the resolver. By default the resolver falls back
-to the next-oldest version that satisfies the range; set
-`minimumReleaseAgeStrict=true` to fail the install instead. Defaults to
-24 hours, matching pnpm v11. Set to `0` to disable.
+minutes are skipped by the resolver. Existing lockfile pins remain
+authoritative and are not revalidated against publish times. The built-in
+24-hour policy uses loose mode; explicitly configuring `minimumReleaseAge`
+enables strict mode unless
+`minimumReleaseAgeStrict=false` is also set. Set to `0` to disable.
 
 ### `minimumPackageAge` {#setting-minimumpackageage}
 
@@ -437,9 +438,10 @@ Fail the install when no version satisfies the minimumReleaseAge cutoff.
 - Workspace YAML keys: `minimumReleaseAgeStrict`
 - Managed policy: `trueWins`
 
-By default the resolver falls back to the lowest satisfying version when
-every candidate is younger than `minimumReleaseAge`. With this set, the
-resolver fails the install instead.
+Fail when every matching candidate is younger than `minimumReleaseAge`.
+This is implicitly enabled when `minimumReleaseAge` is explicitly configured.
+Set it to `false` explicitly to retain loose mode, which records any immature
+selection in the lockfile. Existing lockfile pins are always respected.
 
 ### `securityScanner` {#setting-securityscanner}
 

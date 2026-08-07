@@ -24,6 +24,6 @@ pub mod values;
 
 pub use meta::{SettingMeta, all, find};
 pub use values::{
-    ResolveCtx, embedder_defaults, parse_bool, resolved, set_embedder_defaults,
+    ResolveCtx, embedder_defaults, has_explicit_value, parse_bool, resolved, set_embedder_defaults,
     set_global_cli_overrides, workspace_yaml_value,
 };

@@ -96,13 +96,107 @@ pub(crate) fn resolve_minimum_release_age(
         );
     }
     // `paranoid=true` forces the gate to be hard, not advisory.
-    let strict = aube_settings::resolved::minimum_release_age_strict(ctx)
-        || aube_settings::resolved::paranoid(ctx);
+    let strict_was_set = aube_settings::has_explicit_value("minimumReleaseAgeStrict", ctx);
+    let unmanaged_ctx = aube_settings::ResolveCtx {
+        managed_aube_config: &[],
+        embedder_defaults: &[],
+        project_aube_config: ctx.project_aube_config,
+        project_npmrc: ctx.project_npmrc,
+        user_aube_config: ctx.user_aube_config,
+        user_npmrc: ctx.user_npmrc,
+        workspace_yaml: ctx.workspace_yaml,
+        env: ctx.env,
+        cli: ctx.cli,
+    };
+    let age_was_set = cli_minutes.is_some()
+        || (aube_settings::has_explicit_value("minimumReleaseAge", ctx)
+            && aube_settings::resolved::minimum_release_age(&unmanaged_ctx) > 0);
+    let strict = aube_settings::resolved::paranoid(ctx)
+        || aube_settings::resolved::minimum_release_age_strict(ctx)
+        || (age_was_set && !strict_was_set);
     Some(aube_resolver::MinimumReleaseAge {
         minutes,
         exclude,
         strict,
     })
+}
+
+#[cfg(test)]
+mod minimum_release_age_tests {
+    use super::*;
+
+    #[test]
+    fn managed_age_raise_does_not_implicitly_enable_strict_mode() {
+        let managed = vec![("minimumReleaseAge".to_string(), "1440".to_string())];
+        let project = vec![("minimumReleaseAge".to_string(), "0".to_string())];
+        let workspace = BTreeMap::new();
+        let ctx = aube_settings::ResolveCtx {
+            managed_aube_config: &managed,
+            project_aube_config: &project,
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &workspace,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+
+        let policy = resolve_minimum_release_age(&ctx, None).unwrap();
+        assert_eq!(policy.minutes, 1440);
+        assert!(!policy.strict);
+    }
+
+    #[test]
+    fn winning_workspace_age_implicitly_enables_strict_mode() {
+        let project_npmrc = vec![("minimumReleaseAge".to_string(), "0".to_string())];
+        let workspace = BTreeMap::from([(
+            "minimumReleaseAge".to_string(),
+            yaml_serde::Value::Number(1440_u64.into()),
+        )]);
+        let ctx = aube_settings::ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &project_npmrc,
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &workspace,
+            env: &[],
+            cli: &[],
+            embedder_defaults: &[],
+        };
+
+        let policy = resolve_minimum_release_age(&ctx, None).unwrap();
+        assert_eq!(policy.minutes, 1440);
+        assert!(policy.strict);
+    }
+
+    #[test]
+    fn kebab_case_generic_cli_can_explicitly_disable_strict_mode() {
+        let workspace = BTreeMap::new();
+        let cli = vec![
+            ("minimum-release-age".to_string(), "999".to_string()),
+            (
+                "minimum-release-age-strict".to_string(),
+                "false".to_string(),
+            ),
+        ];
+        let ctx = aube_settings::ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &workspace,
+            env: &[],
+            cli: &cli,
+            embedder_defaults: &[],
+        };
+
+        let policy = resolve_minimum_release_age(&ctx, None).unwrap();
+        assert_eq!(policy.minutes, 999);
+        assert!(!policy.strict);
+    }
 }
 
 /// Resolve the effective `autoInstallPeers` setting from a

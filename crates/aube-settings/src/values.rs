@@ -134,6 +134,45 @@ impl<'a> ResolveCtx<'a> {
     }
 }
 
+/// Return whether a setting was supplied by a user-controlled configuration
+/// source, excluding managed policy, built-in defaults, and embedder defaults.
+pub fn has_explicit_value(setting: &str, ctx: &ResolveCtx<'_>) -> bool {
+    let Some(meta) = meta::find(setting) else {
+        return false;
+    };
+    let file_key_matches = |key: &str| {
+        key == meta.name
+            || meta.npmrc_keys.contains(&key)
+            || meta.workspace_yaml_keys.contains(&key)
+    };
+    let file_sources = [
+        ctx.project_aube_config,
+        ctx.project_npmrc,
+        ctx.user_aube_config,
+        ctx.user_npmrc,
+    ];
+    if file_sources
+        .into_iter()
+        .any(|entries| entries.iter().any(|(key, _)| file_key_matches(key)))
+    {
+        return true;
+    }
+    if meta
+        .workspace_yaml_keys
+        .iter()
+        .any(|key| workspace_yaml_value(ctx.workspace_yaml, key).is_some())
+    {
+        return true;
+    }
+    if raw_from_env(meta, ctx.env).is_some() {
+        return true;
+    }
+    ctx.cli
+        .iter()
+        .chain(global_cli_overrides())
+        .any(|(key, _)| cli_key_matches(key, meta))
+}
+
 /// Embedder-supplied setting defaults, registered once at startup by an
 /// embedding host. Standalone aube never registers any, so this stays empty
 /// and the per-setting built-in defaults from `settings.toml` apply. Each
@@ -1132,6 +1171,25 @@ mod tests {
 
         let screaming = vec![("STRICT_DEP_BUILDS".to_string(), "false".to_string())];
         assert_eq!(bool_from_cli("strictDepBuilds", &screaming), Some(false));
+    }
+
+    #[test]
+    fn explicit_value_matches_kebab_case_generic_cli_key() {
+        let cli = entries(&[("minimum-release-age-strict", "false")]);
+        let workspace = BTreeMap::new();
+        let ctx = ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: &workspace,
+            env: &[],
+            cli: &cli,
+            embedder_defaults: &[],
+        };
+
+        assert!(has_explicit_value("minimumReleaseAgeStrict", &ctx));
     }
 
     #[test]

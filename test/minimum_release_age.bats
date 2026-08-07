@@ -47,10 +47,33 @@ EOF
 	# (~1900 years) excludes every candidate and forces the fallback.
 	_setup_basic_fixture
 	rm aube-lock.yaml
-	echo "minimumReleaseAge=999999999" >.npmrc
+	cat >.npmrc <<EOF
+minimumReleaseAge=999999999
+minimumReleaseAgeStrict=false
+EOF
 	run aube install
 	assert_success
 	assert_file_exists aube-lock.yaml
+}
+
+@test "explicit minimumReleaseAge defaults to strict mode" {
+	_setup_basic_fixture
+	rm aube-lock.yaml
+	echo "minimumReleaseAge=999999999" >.npmrc
+	run aube install
+	assert_failure
+	assert_output --partial "ERR_AUBE_NO_MATURE_MATCHING_VERSION"
+}
+
+@test "loaded lockfile entries remain authoritative under minimumReleaseAge" {
+	_setup_basic_fixture
+	cat >pnpm-workspace.yaml <<EOF
+minimumReleaseAge: 999999999
+minimumReleaseAgeStrict: true
+trustPolicy: off
+EOF
+	run aube install
+	assert_success
 }
 
 @test "aube install with minimumReleaseAgeStrict=true and impossible cutoff fails" {
