@@ -47,6 +47,7 @@ use fetch::{
     strip_peer_context_suffix, version_from_dep_path,
 };
 pub use frozen::{FrozenMode, FrozenOverride, GlobalVirtualStoreFlags};
+pub(crate) use gvs::detect_existing_global_virtual_store;
 pub(crate) use lifecycle::{
     JailBuildPolicy, build_policy_from_manifest_sources, build_policy_from_sources,
     run_dep_lifecycle_scripts,

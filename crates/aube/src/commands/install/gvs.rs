@@ -240,7 +240,7 @@ pub(super) fn modules_metadata_is_current<'a>(
         })
 }
 
-pub(super) fn detect_existing_global_virtual_store(
+pub(crate) fn detect_existing_global_virtual_store(
     workspace_root: &Path,
     aube_dir: &Path,
     modules_dir_name: &str,

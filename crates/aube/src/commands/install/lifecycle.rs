@@ -490,24 +490,29 @@ pub(crate) async fn run_dep_lifecycle_scripts(
             );
             continue;
         }
-        // On Windows, changing directory through an NTFS junction preserves
-        // the logical `.aube/<dep_path>` path. Native build tools such as
+        // With the global virtual store on Windows, changing directory through
+        // an NTFS junction preserves the logical `.aube/<dep_path>` path.
+        // Native build tools such as
         // node-gyp can then resolve a dependency to its graph-hashed GVS path
         // but interpret that path relative to the unhashed local `.aube/`
         // namespace, leaving an apparently missing `node_api.gyp`. POSIX
         // `getcwd` resolves the outer symlink and masks the same mismatch.
         // Enter the physical shared-store directory explicitly so the script
         // cwd and every nested dependency use the same namespace.
-        let package_dir = lifecycle_package_dir(&package_dir, canonicalize_package_dir)
-            .await
-            .into_diagnostic()
-            .wrap_err_with(|| {
-                format!(
-                    "failed to resolve isolated package directory for {} at {}",
-                    pkg.name,
-                    package_dir.display()
-                )
-            })?;
+        let package_dir = if canonicalize_package_dir {
+            lifecycle_package_dir(&package_dir, true)
+                .await
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!(
+                        "failed to resolve isolated package directory for {} at {}",
+                        pkg.name,
+                        package_dir.display()
+                    )
+                })?
+        } else {
+            package_dir
+        };
         // Read the dep's `package.json` directly from its materialized
         // location. Previously we looked it up via `package_indices`,
         // but the fetch phase now skips `load_index` for packages
@@ -1260,9 +1265,19 @@ mod tests {
     #[tokio::test]
     async fn global_virtual_store_lifecycle_uses_physical_package_dir() {
         let temp = tempfile::tempdir().unwrap();
-        let physical = temp.path().join("shared-store/pkg@1.0.0/node_modules/pkg");
+        let physical = temp
+            .path()
+            .join("shared-store")
+            .join("pkg@1.0.0")
+            .join("node_modules")
+            .join("pkg");
         std::fs::create_dir_all(&physical).unwrap();
-        let logical = temp.path().join("project/node_modules/.aube/pkg@1.0.0");
+        let logical = temp
+            .path()
+            .join("project")
+            .join("node_modules")
+            .join(".aube")
+            .join("pkg@1.0.0");
         std::fs::create_dir_all(logical.parent().unwrap()).unwrap();
 
         #[cfg(unix)]
@@ -1274,10 +1289,13 @@ mod tests {
         #[cfg(windows)]
         {
             let target = physical.parent().and_then(std::path::Path::parent).unwrap();
+            let command = format!(
+                "mklink /J \"{}\" \"{}\"",
+                logical.display(),
+                target.display()
+            );
             let status = std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(&logical)
-                .arg(target)
+                .args(["/C", &command])
                 .status()
                 .unwrap();
             assert!(status.success());

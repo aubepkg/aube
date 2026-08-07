@@ -185,7 +185,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             graph_for_link,
             build_policy,
             virtual_store_dir_max_length,
-            node_linker == aube_linker::NodeLinker::Isolated,
+            cfg!(windows) && planned_gvs && node_linker == aube_linker::NodeLinker::Isolated,
             child_concurrency,
             placements_ref,
             side_effects_cache,

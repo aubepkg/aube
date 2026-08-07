@@ -159,6 +159,15 @@ pub async fn run(
                 node_linker_setting,
                 aube_settings::resolved::NodeLinker::Hoisted
             );
+            let canonicalize_package_dir = cfg!(windows)
+                && isolated
+                && super::install::detect_existing_global_virtual_store(
+                    &cwd,
+                    &aube_dir,
+                    &modules_dir_name,
+                    &super::global_virtual_store_dir(&cwd),
+                )
+                .unwrap_or(false);
             let prefer_symlinked_executables =
                 aube_settings::resolved::prefer_symlinked_executables(&settings_ctx)
                     .or(isolated.then_some(false));
@@ -184,7 +193,7 @@ pub async fn run(
                 &graph,
                 &policy,
                 super::resolve_virtual_store_dir_max_length(&settings_ctx),
-                isolated,
+                canonicalize_package_dir,
                 child_concurrency,
                 hoisted_placements.as_ref(),
                 side_effects_cache_root
