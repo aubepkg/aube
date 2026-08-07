@@ -216,6 +216,47 @@ async fn facade_install_accepts_host_storage_overrides() {
     assert!(error.to_string().contains("offline"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn facade_install_preserves_non_utf8_storage_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    initialize_test_host();
+    let project = tempfile::tempdir().unwrap();
+    let host_cache = project
+        .path()
+        .join(std::ffi::OsString::from_vec(b"host-cache-\xff".to_vec()));
+    let host_store = project
+        .path()
+        .join(std::ffi::OsString::from_vec(b"host-store-\xff".to_vec()));
+    seed_cached_registry_package(&host_cache, &host_store);
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"dependencies":{"cached-only":"1.0.0"}}
+"#,
+    )
+    .unwrap();
+
+    let mut options = InstallOptions::new(project.path());
+    options.ignore_scripts = true;
+    options.network_mode = aube::embed::NetworkMode::Offline;
+    options.control = InstallControl::silent();
+    aube::embed::install_with_overrides(
+        options,
+        aube::embed::EmbedderInstallOverrides {
+            use_global_virtual_store: Some(false),
+            cache_dir: Some(host_cache.clone()),
+            store_dir: Some(host_store.clone()),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(host_store.join("v1/files").is_dir());
+    assert!(host_cache.join("packuments-v1").is_dir());
+    assert_cached_package_is_project_local(project.path(), project.path());
+}
+
 #[tokio::test]
 async fn facade_adds_local_package_to_workspace_member() {
     initialize_test_host();

@@ -163,8 +163,12 @@ pub async fn install_with_overrides(
     command_options.osv_transitive_check = options.osv_transitive_check;
     command_options.control = options.control;
     command_options.embedder_runtime = options.runtime;
-    overrides.append_to(&mut command_options.cli_flags)?;
-    crate::commands::install::run(command_options).await
+    overrides.append_to(&mut command_options.cli_flags);
+    crate::commands::scope_embedder_install_overrides(
+        overrides,
+        crate::commands::install::run(command_options),
+    )
+    .await
 }
 
 /// Add packages to a project's manifest and install the resulting graph.
@@ -198,8 +202,16 @@ pub async fn add_with_overrides(
     options: AddToProjectOptions,
     overrides: EmbedderInstallOverrides,
 ) -> Result<()> {
-    crate::commands::add::add_to_project_with_overrides(project_dir, packages, options, overrides)
-        .await
+    crate::commands::scope_embedder_install_overrides(
+        overrides.clone(),
+        crate::commands::add::add_to_project_with_overrides(
+            project_dir,
+            packages,
+            options,
+            overrides,
+        ),
+    )
+    .await
 }
 
 /// Run a package's script (`package.json` `scripts.<name>`) in `project_dir`,

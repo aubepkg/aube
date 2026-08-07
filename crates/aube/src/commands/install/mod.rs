@@ -600,7 +600,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
     let packument_cache_dir =
         super::resolved_cache_dir_with_ctx(&cwd, &settings_ctx).join("packuments-v1");
-    let explicit_store_dir_override = opts.cli_flags.iter().any(|(name, _)| name == "storeDir");
+    let explicit_store_dir_override = has_explicit_store_dir_override(&opts.cli_flags);
     let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx);
     // Resolve the project's Node runtime before anything can spawn
     // node: the root `preinstall` hooks below must already run on the
@@ -2535,6 +2535,11 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     Ok(())
 }
 
+fn has_explicit_store_dir_override(cli_flags: &[(String, String)]) -> bool {
+    super::has_embedder_store_override()
+        || aube_settings::values::string_from_cli("storeDir", cli_flags).is_some()
+}
+
 /// Run pnpm's root-only pre-resolution hook from the workspace/lockfile root.
 ///
 /// Kept as a command-level boundary because `update` resolves before chaining
@@ -2775,5 +2780,26 @@ mod computed_integrity_tests {
             graph.packages["already@1.0.0"].integrity.as_deref(),
             Some("sha512-existing")
         );
+    }
+}
+
+#[cfg(test)]
+mod explicit_store_dir_override_tests {
+    use super::has_explicit_store_dir_override;
+
+    #[test]
+    fn recognizes_canonical_and_kebab_case_cli_keys() {
+        assert!(has_explicit_store_dir_override(&[(
+            "storeDir".into(),
+            "/store".into(),
+        )]));
+        assert!(has_explicit_store_dir_override(&[(
+            "store-dir".into(),
+            "/store".into(),
+        )]));
+        assert!(!has_explicit_store_dir_override(&[(
+            "cache-dir".into(),
+            "/cache".into(),
+        )]));
     }
 }

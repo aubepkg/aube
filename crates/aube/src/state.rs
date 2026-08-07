@@ -1292,13 +1292,15 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     hasher.update(b"enable_gvs=");
     hasher.update(format!("{enable_gvs:?}").as_bytes());
     hasher.update(b"\0");
-    let cache_dir = aube_settings::resolved::cache_dir(&ctx);
+    let cache_dir = crate::commands::resolved_cache_dir_with_ctx(project_dir, &ctx);
     hasher.update(b"cache_dir=");
-    hasher.update(format!("{cache_dir:?}").as_bytes());
+    hasher.update(cache_dir.as_os_str().as_encoded_bytes());
     hasher.update(b"\0");
-    let store_dir = aube_settings::resolved::store_dir(&ctx);
+    let store_dir = crate::commands::resolved_store_dir_with_ctx(project_dir, &ctx);
     hasher.update(b"store_dir=");
-    hasher.update(format!("{store_dir:?}").as_bytes());
+    if let Some(store_dir) = store_dir {
+        hasher.update(store_dir.as_os_str().as_encoded_bytes());
+    }
     hasher.update(b"\0");
     let lockfile_enabled = aube_settings::resolved::lockfile(&ctx);
     hasher.update(format!("lockfile={lockfile_enabled}\0").as_bytes());

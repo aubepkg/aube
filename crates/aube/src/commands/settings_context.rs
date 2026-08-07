@@ -40,6 +40,43 @@ pub(crate) struct GlobalOutputFlags {
 
 static GLOBAL_OUTPUT: OnceLock<GlobalOutputFlags> = OnceLock::new();
 
+tokio::task_local! {
+    static EMBEDDER_INSTALL_OVERRIDES: install::EmbedderInstallOverrides;
+}
+
+/// Scope native storage paths to one embedded add/install invocation. Keeping
+/// them as `PathBuf`s avoids routing filesystem identity through UTF-8 setting
+/// strings while preserving task isolation between concurrent embedders.
+pub(crate) async fn scope_embedder_install_overrides<F: std::future::Future>(
+    overrides: install::EmbedderInstallOverrides,
+    future: F,
+) -> F::Output {
+    EMBEDDER_INSTALL_OVERRIDES.scope(overrides, future).await
+}
+
+pub(crate) fn has_embedder_store_override() -> bool {
+    EMBEDDER_INSTALL_OVERRIDES
+        .try_with(|overrides| overrides.store_dir.is_some())
+        .unwrap_or(false)
+}
+
+fn embedder_storage_path(
+    cwd: &std::path::Path,
+    select: impl FnOnce(&install::EmbedderInstallOverrides) -> Option<&std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    EMBEDDER_INSTALL_OVERRIDES
+        .try_with(|overrides| select(overrides).cloned())
+        .ok()
+        .flatten()
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        })
+}
+
 pub(crate) fn set_registry_override(url: Option<String>) {
     *REGISTRY_OVERRIDE.write().expect("registry lock poisoned") =
         url.map(|u| aube_registry::config::normalize_registry_url_pub(&u));
@@ -250,6 +287,9 @@ pub(crate) fn resolved_store_dir_with_ctx(
     cwd: &std::path::Path,
     ctx: &aube_settings::ResolveCtx<'_>,
 ) -> Option<std::path::PathBuf> {
+    if let Some(path) = embedder_storage_path(cwd, |overrides| overrides.store_dir.as_ref()) {
+        return Some(path);
+    }
     let raw = aube_settings::resolved::store_dir(ctx)?;
     expand_setting_path(&raw, cwd)
 }
@@ -474,6 +514,9 @@ pub(crate) fn resolved_cache_dir_with_ctx(
     cwd: &std::path::Path,
     ctx: &aube_settings::ResolveCtx<'_>,
 ) -> std::path::PathBuf {
+    if let Some(path) = embedder_storage_path(cwd, |overrides| overrides.cache_dir.as_ref()) {
+        return path;
+    }
     let platform_default =
         || aube_store::dirs::cache_dir().unwrap_or_else(|| std::env::temp_dir().join("aube"));
     match aube_settings::resolved::cache_dir(ctx) {
