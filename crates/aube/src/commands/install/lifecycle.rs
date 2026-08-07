@@ -1289,13 +1289,10 @@ mod tests {
         #[cfg(windows)]
         {
             let target = physical.parent().and_then(std::path::Path::parent).unwrap();
-            let command = format!(
-                "mklink /J \"{}\" \"{}\"",
-                logical.display(),
-                target.display()
-            );
             let status = std::process::Command::new("cmd")
-                .args(["/C", &command])
+                .args(["/C", "mklink", "/J"])
+                .arg(&logical)
+                .arg(target)
                 .status()
                 .unwrap();
             assert!(status.success());
