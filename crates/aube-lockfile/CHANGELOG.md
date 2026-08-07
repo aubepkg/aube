@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0](https://github.com/jdx/aube/compare/aube-lockfile-v1.37.0...aube-lockfile-v1.38.0) - 2026-08-07
+
+### Fixed
+
+- *(lockfile)* reject unsupported named registry identities ([#1215](https://github.com/jdx/aube/pull/1215))
+
+### Other
+
+- refresh benchmarks for v1.37.0 ([#1211](https://github.com/jdx/aube/pull/1211))
+- refresh benchmarks for v1.37.0 ([#1206](https://github.com/jdx/aube/pull/1206))
+
 ## [1.37.0](https://github.com/jdx/aube/compare/aube-lockfile-v1.36.0...aube-lockfile-v1.37.0) - 2026-07-31
 
 ### Added

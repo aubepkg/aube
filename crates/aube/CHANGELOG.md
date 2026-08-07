@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0](https://github.com/jdx/aube/compare/v1.37.0...v1.38.0) - 2026-08-07
+
+### Added
+
+- *(embed)* add per-install storage overrides ([#1239](https://github.com/jdx/aube/pull/1239))
+- *(store)* add --dry-run to store prune ([#1228](https://github.com/jdx/aube/pull/1228))
+- *(sbom)* include package license metadata ([#1208](https://github.com/jdx/aube/pull/1208))
+
+### Fixed
+
+- *(linker)* share hoisted deps across workspace importers ([#1243](https://github.com/jdx/aube/pull/1243))
+- *(install)* canonicalize isolated dependency build paths ([#1238](https://github.com/jdx/aube/pull/1238))
+- *(store)* fail closed on incomplete index scans ([#1237](https://github.com/jdx/aube/pull/1237))
+- *(install)* route deprecation warnings through embedder output ([#1236](https://github.com/jdx/aube/pull/1236))
+- *(unlink)* keep GVS-backed deps out of bare unlink ([#1230](https://github.com/jdx/aube/pull/1230))
+- *(global)* unlink global bins when the shared virtual store is on ([#1232](https://github.com/jdx/aube/pull/1232))
+- *(deps)* update rust crate clap_usage to v5 ([#1229](https://github.com/jdx/aube/pull/1229))
+- *(deploy)* preserve workspace dependency patches ([#1213](https://github.com/jdx/aube/pull/1213))
+- *(runtime)* preserve workspace bins through nested shims ([#1207](https://github.com/jdx/aube/pull/1207))
+
+### Other
+
+- refresh benchmarks for v1.37.0 ([#1211](https://github.com/jdx/aube/pull/1211))
+- *(link)* global link registry lives in the cache dir, not $AUBE_HOME ([#1205](https://github.com/jdx/aube/pull/1205))
+- refresh benchmarks for v1.37.0 ([#1206](https://github.com/jdx/aube/pull/1206))
+
 ## [1.37.0](https://github.com/jdx/aube/compare/v1.36.0...v1.37.0) - 2026-07-31
 
 ### Added

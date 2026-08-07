@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0](https://github.com/jdx/aube/compare/aube-registry-v1.37.0...aube-registry-v1.38.0) - 2026-08-07
+
+### Fixed
+
+- *(registry)* normalize disabled proxy settings ([#1216](https://github.com/jdx/aube/pull/1216))
+- *(registry)* honor NODE_EXTRA_CA_CERTS in the supply-chain probe clients ([#1201](https://github.com/jdx/aube/pull/1201))
+
+### Other
+
+- refresh benchmarks for v1.37.0 ([#1211](https://github.com/jdx/aube/pull/1211))
+- refresh benchmarks for v1.37.0 ([#1206](https://github.com/jdx/aube/pull/1206))
+
 ## [1.37.0](https://github.com/jdx/aube/compare/aube-registry-v1.36.0...aube-registry-v1.37.0) - 2026-07-31
 
 ### Added
