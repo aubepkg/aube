@@ -375,10 +375,24 @@ fn seed_importer(
     // order. BFS makes shallower deps win placement ties over
     // deeper ones, which matches npm's first-writer-wins policy.
     for dep in root_deps {
-        if !graph.packages.contains_key(&dep.dep_path) {
+        let Some(pkg) = graph.packages.get(&dep.dep_path) else {
             continue;
-        }
-        queue.push_back((importer_idx, floor, dep.name.clone(), dep.dep_path.clone()));
+        };
+        // A direct `link:` is a live importer-relative edge, including the
+        // locked representation of `workspace:` dependencies. Keep it in the
+        // consuming importer's node_modules instead of sharing it at the
+        // workspace root like an immutable registry package.
+        let dep_floor = if matches!(pkg.local_source.as_ref(), Some(LocalSource::Link(_))) {
+            importer_idx
+        } else {
+            floor
+        };
+        queue.push_back((
+            importer_idx,
+            dep_floor,
+            dep.name.clone(),
+            dep.dep_path.clone(),
+        ));
     }
 }
 
@@ -707,6 +721,29 @@ mod tests {
                 PathBuf::from("/project/packages/app/node_modules/shared"),
                 PathBuf::from("/project/packages/lib/node_modules/shared"),
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_plan_keeps_direct_links_in_the_consuming_importer() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let importer_nm = PathBuf::from("/project/packages/app/node_modules");
+        let mut linked = pkg("linked", "0.0.0", &[]);
+        linked.local_source = Some(LocalSource::Link(PathBuf::from("packages/linked")));
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("linked@link:../linked".into(), linked);
+        let importers = vec![HoistedWorkspaceImporter {
+            modules_dir: importer_nm.clone(),
+            dependencies: vec![dep("linked", "linked@link:../linked")],
+        }];
+
+        let plan = plan_workspace(&root_nm, &importers, &graph, HoistingLimits::None).unwrap();
+
+        assert_eq!(
+            package_dir(&plan, "linked@link:../linked"),
+            importer_nm.join("linked")
         );
     }
 
