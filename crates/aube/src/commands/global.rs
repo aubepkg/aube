@@ -334,20 +334,37 @@ pub fn unlink_bins(install_dir: &Path, bin_dir: &Path, bin_names: &[String]) {
             let link = bin_dir.join(name);
             match std::fs::read_link(&link) {
                 Ok(target) => {
-                    // Symlink bin: fully resolve and check against
-                    // `install_canon`. Matches the pre-settings behavior.
+                    // Symlink bin: `link_bins` wrote the target as
+                    // `<install_dir>/node_modules/<alias>/<rel>`, so the
+                    // ownership check is textual for the same reason the
+                    // shim branch below is. Canonicalizing first resolves
+                    // through `node_modules/<alias>` and `.aube/<dep_path>`
+                    // into `<cacheDir>/virtual-store/...` whenever the
+                    // global virtual store is on (the default outside CI) —
+                    // that lands outside `install_dir`, the ownership check
+                    // reads the bin as belonging to another install, and
+                    // every global bin leaks as a dangling symlink after
+                    // `remove -g` deletes the install dir.
                     let absolute = if target.is_absolute() {
                         target
                     } else {
                         bin_dir.join(target)
                     };
-                    let Some(install_canon) = install_canon.as_ref() else {
-                        continue;
-                    };
-                    let Some(resolved) = std::fs::canonicalize(&absolute).ok() else {
-                        continue;
-                    };
-                    if resolved.starts_with(install_canon) {
+                    let resolved = aube_linker::normalize_path(&absolute);
+                    // Full canonicalization stays as a fallback: a bin
+                    // linked by an older aube (or a target reached through
+                    // a symlinked `install_dir` ancestor) only matches
+                    // once both sides are resolved.
+                    if resolved.starts_with(&install_lex)
+                        || install_canon
+                            .as_ref()
+                            .is_some_and(|canon| resolved.starts_with(canon))
+                        || std::fs::canonicalize(&absolute).is_ok_and(|resolved| {
+                            install_canon
+                                .as_ref()
+                                .is_some_and(|canon| resolved.starts_with(canon))
+                        })
+                    {
                         let _ = std::fs::remove_file(&link);
                     }
                 }
