@@ -68,8 +68,7 @@ pub enum HoistingLimits {
     /// Hoist as far as possible.
     #[default]
     None,
-    /// Aube plans hoisted installs per physical importer, so this is
-    /// currently equivalent to `None`.
+    /// Do not hoist dependencies above their workspace package.
     Workspaces,
     /// Do not hoist transitives above the direct dependency that
     /// introduced them.

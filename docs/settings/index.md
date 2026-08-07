@@ -862,9 +862,7 @@ active, mirroring Yarn's `nmHoistingLimits` and pnpm's
 `hoistingLimits` setting:
 
 - `none`: hoist as far as possible (default).
-- `workspaces`: hoist only as far as each workspace package. Aube plans
-  hoisted installs per physical importer, so this currently matches
-  `none`.
+- `workspaces`: hoist only as far as each workspace package.
 - `dependencies`: hoist only up to each workspace package's direct
   dependencies. Transitive packages stay under the direct dependency
   that introduced them instead of being promoted to the importer root.
@@ -3143,4 +3141,3 @@ Examples:
 
 - `AUBE_NO_AUTO_INSTALL=1 aube run dev`
 - `echo 'aubeNoAutoInstall=true' >> .npmrc`
-

@@ -81,6 +81,61 @@ YAML
 	assert_failure
 }
 
+@test "hoisted workspaces share compatible dependencies at the workspace root" {
+	mkdir -p packages/app packages/lib
+	cat >package.json <<'JSON'
+{"name":"root","private":true}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - packages/*
+nodeLinker: hoisted
+YAML
+	cat >packages/app/package.json <<'JSON'
+{"name":"app","private":true,"dependencies":{"is-number":"7.0.0"}}
+JSON
+	cat >packages/lib/package.json <<'JSON'
+{"name":"lib","private":true,"dependencies":{"is-number":"7.0.0"}}
+JSON
+
+	run aube install
+	assert_success
+	assert_dir_exists node_modules/is-number
+	assert_not_exists packages/app/node_modules/is-number
+	assert_not_exists packages/lib/node_modules/is-number
+	run bash -c '
+app=$(realpath packages/app/../../node_modules/is-number)
+lib=$(realpath packages/lib/../../node_modules/is-number)
+test "$app" = "$lib"
+'
+	assert_success
+}
+
+@test "hoistingLimits=workspaces keeps dependencies under each workspace" {
+	mkdir -p packages/app packages/lib
+	cat >package.json <<'JSON'
+{"name":"root","private":true}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - packages/*
+nodeLinker: hoisted
+hoistingLimits: workspaces
+YAML
+	cat >packages/app/package.json <<'JSON'
+{"name":"app","private":true,"dependencies":{"is-number":"7.0.0"}}
+JSON
+	cat >packages/lib/package.json <<'JSON'
+{"name":"lib","private":true,"dependencies":{"is-number":"7.0.0"}}
+JSON
+
+	run aube install
+	assert_success
+	assert_not_exists node_modules/is-number
+	assert_dir_exists packages/app/node_modules/is-number
+	assert_dir_exists packages/lib/node_modules/is-number
+}
+
 @test "--node-linker=pnp is rejected" {
 	_setup_basic_fixture
 	run aube install --node-linker=pnp
