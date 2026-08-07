@@ -7,6 +7,7 @@ const DEFAULT_STATE_DIR: &str = "node_modules";
 const INSTALL_STATE_FILE_NAME: &str = "state.json";
 const FRESH_STATE_FILE_NAME: &str = "fresh.json";
 const LICENSE_STATE_FILE_NAME: &str = "licenses.json";
+const HOISTED_PLACEMENTS_FILE_NAME: &str = "hoisted-placements.json";
 
 /// The install-state directory name, `.<name>-state`. Standalone aube:
 /// `.aube-state`.
@@ -862,6 +863,62 @@ pub fn read_state_layout(project_dir: &Path) -> Option<InstallLayoutState> {
     read_state(&state_dir(project_dir))?.layout
 }
 
+/// Persist the exact hoisted tree produced by the linker. This is a separate
+/// sidecar because filtered installs deliberately do not replace the main
+/// freshness state, while commands such as `rebuild` still need to inspect
+/// the tree that is actually on disk.
+pub fn write_hoisted_placements(
+    project_dir: &Path,
+    placements: Option<&aube_linker::HoistedPlacements>,
+) -> Result<(), std::io::Error> {
+    let state_path = state_dir(project_dir);
+    let Some(placements) = placements else {
+        if state_path.is_file() {
+            return Ok(());
+        }
+        let path = state_path.join(HOISTED_PLACEMENTS_FILE_NAME);
+        return match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        };
+    };
+    remove_legacy_state_file(&state_path)?;
+    let path = state_path.join(HOISTED_PLACEMENTS_FILE_NAME);
+    let mut recorded: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (dep_path, package_dir) in placements.iter() {
+        recorded
+            .entry(dep_path.to_string())
+            .or_default()
+            .push(relative_path_or_original(package_dir, project_dir));
+    }
+    let json = serde_json::to_vec(&recorded)?;
+    aube_util::fs_atomic::atomic_write(&path, &json)
+}
+
+/// Read the exact linker-produced hoisted placement map. `None` means the
+/// install predates the sidecar (or it is unreadable), so callers may use the
+/// legacy planner-based reconstruction as a compatibility fallback.
+pub fn read_hoisted_placements(project_dir: &Path) -> Option<aube_linker::HoistedPlacements> {
+    let path = state_dir(project_dir).join(HOISTED_PLACEMENTS_FILE_NAME);
+    let recorded: BTreeMap<String, Vec<String>> =
+        serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let by_dep_path = recorded
+        .into_iter()
+        .map(|(dep_path, paths)| {
+            let paths = paths
+                .into_iter()
+                .map(|path| project_dir.join(path))
+                .filter(|path| path.exists())
+                .collect();
+            (dep_path, paths)
+        })
+        .collect();
+    Some(aube_linker::HoistedPlacements::from_package_dirs(
+        by_dep_path,
+    ))
+}
+
 /// Read licenses captured at install time without adding them to the main
 /// freshness state parsed by every warm install.
 pub fn read_state_package_licenses(project_dir: &Path) -> InstallLicenseState {
@@ -1469,8 +1526,8 @@ mod tests {
         InstallLayoutMode, InstallLayoutState, InstallState, InstalledPackageState,
         WriteStateLayout, collect_package_json_hashes_from_manifests, empty_blake3_hash,
         fresh_state_file, hash_file, hash_settings, install_state_file, member_lockfiles_stale,
-        read_or_migrate_fresh_state, relative_path_or_original, remove_state,
-        verify_install_layout,
+        read_hoisted_placements, read_or_migrate_fresh_state, relative_path_or_original,
+        remove_state, verify_install_layout, write_hoisted_placements,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -1484,6 +1541,28 @@ mod tests {
             relative_path_or_original(original, base),
             original.to_string_lossy()
         );
+    }
+
+    #[test]
+    fn hoisted_placement_sidecar_preserves_exact_conflicting_version_paths() {
+        let project_dir = temp_project_dir("exact-hoisted-placements");
+        let root_v2 = project_dir.join("node_modules/foo");
+        let nested_v1 = project_dir.join("node_modules/bar/node_modules/foo");
+        std::fs::create_dir_all(&root_v2).expect("root placement should write");
+        std::fs::create_dir_all(&nested_v1).expect("nested placement should write");
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            ("foo@1.0.0".to_string(), vec![nested_v1.clone()]),
+            ("foo@2.0.0".to_string(), vec![root_v2.clone()]),
+        ]));
+
+        write_hoisted_placements(&project_dir, Some(&placements))
+            .expect("placement sidecar should write");
+        let restored =
+            read_hoisted_placements(&project_dir).expect("placement sidecar should read");
+
+        assert_eq!(restored.package_dir("foo@1.0.0"), Some(nested_v1.as_path()));
+        assert_eq!(restored.package_dir("foo@2.0.0"), Some(root_v2.as_path()));
+        remove_state(&project_dir).expect("state directory should remove");
     }
 
     #[test]

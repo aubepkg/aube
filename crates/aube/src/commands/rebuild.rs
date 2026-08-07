@@ -134,12 +134,15 @@ pub async fn run(
                     ));
                 }
                 aube_settings::resolved::NodeLinker::Hoisted => {
-                    Some(aube_linker::HoistedPlacements::from_graph(
-                        &cwd,
-                        &graph,
-                        &modules_dir_name,
-                        hoisting_limits,
-                    )?)
+                    Some(match crate::state::read_hoisted_placements(&cwd) {
+                        Some(placements) => placements,
+                        None => aube_linker::HoistedPlacements::from_graph(
+                            &cwd,
+                            &graph,
+                            &modules_dir_name,
+                            hoisting_limits,
+                        )?,
+                    })
                 }
                 aube_settings::resolved::NodeLinker::Isolated => None,
             };

@@ -104,9 +104,9 @@ JSON
 	assert_not_exists packages/app/node_modules/is-number
 	assert_not_exists packages/lib/node_modules/is-number
 	run bash -c '
-app=$(realpath packages/app/../../node_modules/is-number)
-lib=$(realpath packages/lib/../../node_modules/is-number)
-test "$app" = "$lib"
+app=$(cd packages/app && node -p '\''require.resolve("is-number/package.json")'\'')
+lib=$(cd packages/lib && node -p '\''require.resolve("is-number/package.json")'\'')
+test "$(realpath "$app")" = "$(realpath "$lib")"
 '
 	assert_success
 }

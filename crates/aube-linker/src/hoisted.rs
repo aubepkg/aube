@@ -58,6 +58,13 @@ pub struct HoistedPlacements {
 }
 
 impl HoistedPlacements {
+    /// Restore an exact placement map recorded when the tree was linked.
+    /// This avoids replaying the planner against a graph whose filtering or
+    /// iteration order may differ from the materialized install.
+    pub fn from_package_dirs(by_dep_path: BTreeMap<String, Vec<PathBuf>>) -> Self {
+        Self { by_dep_path }
+    }
+
     /// Recompute hoisted placement paths for an already-linked graph
     /// without touching disk. Used by commands like `aube rebuild`
     /// that need to find package directories after install, but must
@@ -180,16 +187,15 @@ impl PlacementPlan {
         }
     }
 
-    /// Add a workspace importer below the shared workspace root. The
-    /// synthetic node has no package directory of its own; it only
-    /// models the importer's `node_modules/` and its parent-directory
-    /// visibility into the workspace root.
-    fn add_importer(&mut self, importer_nm: PathBuf) -> usize {
+    /// Add a workspace importer to the plan. The synthetic node has no
+    /// package directory of its own; `parent` models whether Node's
+    /// ancestor lookup can reach the workspace root.
+    fn add_importer(&mut self, importer_nm: PathBuf, parent: Option<usize>) -> usize {
         let idx = self.nodes.len();
         self.nodes.push(TreeNode {
             pkg_dir: None,
             nm_dir: importer_nm,
-            parent: Some(self.root_idx),
+            parent,
             children: BTreeMap::new(),
             dep_path: None,
         });
@@ -325,15 +331,24 @@ fn plan_workspace(
 ) -> Result<PlacementPlan, Error> {
     let mut plan = PlacementPlan::new(root_nm.to_path_buf());
     let mut queue: VecDeque<(usize, usize, String, String)> = VecDeque::new();
+    let workspace_root = root_nm.parent().unwrap_or(root_nm);
 
     for importer in importers {
+        let root_reachable = importer
+            .modules_dir
+            .parent()
+            .is_some_and(|importer_dir| importer_dir.starts_with(workspace_root));
         let importer_idx = if importer.modules_dir == root_nm {
             plan.root_idx
         } else {
-            plan.add_importer(importer.modules_dir.clone())
+            plan.add_importer(
+                importer.modules_dir.clone(),
+                root_reachable.then_some(plan.root_idx),
+            )
         };
         let floor = match hoisting_limits {
-            HoistingLimits::None => plan.root_idx,
+            HoistingLimits::None if root_reachable => plan.root_idx,
+            HoistingLimits::None => importer_idx,
             HoistingLimits::Workspaces | HoistingLimits::Dependencies => importer_idx,
         };
         seed_importer(
@@ -853,5 +868,37 @@ mod tests {
             Some(shared_dir.as_path())
         );
         assert_eq!(placements.all_package_dirs("shared@1.0.0").len(), 1);
+    }
+
+    #[test]
+    fn parent_relative_importer_cannot_reuse_workspace_root_placement() {
+        let root_nm = PathBuf::from("/workspace/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("shared@1.0.0".into(), pkg("shared", "1.0.0", &[]));
+        let deps = vec![dep("shared", "shared@1.0.0")];
+        let importers = vec![
+            HoistedWorkspaceImporter {
+                modules_dir: root_nm.clone(),
+                dependencies: deps.clone(),
+            },
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/sibling/node_modules"),
+                dependencies: deps,
+            },
+        ];
+
+        let plan = plan_workspace(&root_nm, &importers, &graph, HoistingLimits::None).unwrap();
+        let dirs: Vec<_> = plan
+            .nodes
+            .iter()
+            .filter(|node| node.dep_path.as_deref() == Some("shared@1.0.0"))
+            .filter_map(|node| node.pkg_dir.as_ref())
+            .collect();
+
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs.contains(&&root_nm.join("shared")));
+        assert!(dirs.contains(&&PathBuf::from("/sibling/node_modules/shared")));
     }
 }

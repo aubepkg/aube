@@ -175,13 +175,20 @@ pub(super) fn collect_installed_metadata<'a>(
                     aube_linker::HoistingLimits::Dependencies
                 }
             });
-        // Reconstruct from the full installed graph. Filtering first could
-        // change which conflicting version won a hoisted placement.
-        Some(match recorded_hoisting_limits {
-            Some(limits) => {
-                aube_linker::HoistedPlacements::from_graph(cwd, graph, &modules_dir_name, limits)?
-            }
-            None => legacy_hoisted_placements(cwd, graph, &modules_dir_name)?,
+        // Prefer the exact linker-produced map. Replanning the full graph can
+        // change which conflicting version owns a root placement after a
+        // filtered install.
+        Some(match crate::state::read_hoisted_placements(cwd) {
+            Some(placements) => placements,
+            None => match recorded_hoisting_limits {
+                Some(limits) => aube_linker::HoistedPlacements::from_graph(
+                    cwd,
+                    graph,
+                    &modules_dir_name,
+                    limits,
+                )?,
+                None => legacy_hoisted_placements(cwd, graph, &modules_dir_name)?,
+            },
         })
     } else {
         None

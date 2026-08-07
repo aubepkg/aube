@@ -305,6 +305,16 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
     );
     phase_timings.record("link", phase_start.elapsed());
 
+    // Keep the exact hoisted placement map in a sidecar even for filtered
+    // installs, which intentionally do not replace the main freshness state.
+    // Replanning the full graph later can associate a root-level package with
+    // the wrong conflicting version.
+    if !virtual_store_only {
+        state::write_hoisted_placements(cwd, stats.hoisted_placements.as_ref())
+            .into_diagnostic()
+            .wrap_err("failed to record hoisted package placements")?;
+    }
+
     // Apply `dependenciesMeta.<name>.injected` overrides. Only runs in
     // workspace + isolated mode: hoisted layouts don't have a
     // `.aube/<dep_path>/` virtual store for `apply_injected` to
