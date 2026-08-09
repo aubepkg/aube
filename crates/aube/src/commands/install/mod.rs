@@ -1165,8 +1165,16 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             let (lock_patches, lock_patch_hashes) =
                 crate::patches::load_patches_for_linker(&cwd, &graph.patched_dependencies)?;
             let (lock_materialize_tx, lock_materialize_rx) = materialize_channel();
+            let lock_materialize_graph = filter_graph_for_install(
+                &cwd,
+                &workspace_packages,
+                &graph,
+                &opts,
+                has_workspace && !link_all_workspace_importers,
+                false,
+            )?;
             let lock_prewarm_inputs = GvsPrewarmInputs {
-                graph: std::sync::Arc::new(graph.clone()),
+                graph: std::sync::Arc::new(lock_materialize_graph),
                 store: store.clone(),
                 cwd: cwd.clone(),
                 virtual_store_dir_max_length,
@@ -1952,7 +1960,14 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             // below hits pkg_nm_dir.exists() fast path and only writes
             // the per-project .aube/<dep_path> symlink.
             let materialize_phase_start = std::time::Instant::now();
-            let materialize_graph_arc = std::sync::Arc::new(graph.clone());
+            let materialize_graph_arc = std::sync::Arc::new(filter_graph_for_install(
+                &cwd,
+                &workspace_packages,
+                &graph,
+                &opts,
+                has_workspace && !link_all_workspace_importers,
+                false,
+            )?);
             let materialize_strategy = resolve_link_strategy(&cwd, &settings_ctx, planned_gvs)?;
             let (materialize_patches, materialize_patch_hashes) =
                 crate::patches::load_patches_for_linker(&cwd, &graph.patched_dependencies)?;
@@ -2355,39 +2370,14 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     //     only reachable through them. The filtered graph is what gets passed
     //     to the linker, so node_modules won't contain the excluded deps.
     //     The lockfile on disk is untouched.
-    let mut graph_for_link = if opts.dep_selection.is_filtered() {
-        let before = graph.packages.len();
-        let sel = opts.dep_selection;
-        let filtered = graph.filter_deps(|d| {
-            if sel.prod_only() && d.dep_type == aube_lockfile::DepType::Dev {
-                return false;
-            }
-            if sel.dev_only() && d.dep_type != aube_lockfile::DepType::Dev {
-                return false;
-            }
-            if sel.skip_optional() && d.dep_type == aube_lockfile::DepType::Optional {
-                return false;
-            }
-            true
-        });
-        let dropped = before - filtered.packages.len();
-        if dropped > 0 {
-            tracing::debug!("{}: skipping {dropped} packages", sel.label());
-        }
-        filtered
-    } else {
-        graph.clone()
-    };
-    if !opts.workspace_filter.is_empty() {
-        graph_for_link = filter_graph_to_workspace_selection(
-            &cwd,
-            &workspace_packages,
-            &graph_for_link,
-            &opts.workspace_filter,
-        )?;
-    } else if has_workspace && !link_all_workspace_importers {
-        graph_for_link = filter_graph_to_importers(&graph_for_link, ["."]);
-    }
+    let graph_for_link = filter_graph_for_install(
+        &cwd,
+        &workspace_packages,
+        &graph,
+        &opts,
+        has_workspace && !link_all_workspace_importers,
+        true,
+    )?;
 
     // 5c. Validate root + dependency `engines.node` constraints against
     //     the current Node version. Runs against `graph_for_link` so
@@ -2534,6 +2524,51 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         );
     }
     Ok(())
+}
+
+fn filter_graph_for_install(
+    cwd: &std::path::Path,
+    workspace_packages: &[std::path::PathBuf],
+    graph: &aube_lockfile::LockfileGraph,
+    opts: &InstallOptions,
+    filter_to_root_importer: bool,
+    log_dropped_packages: bool,
+) -> miette::Result<aube_lockfile::LockfileGraph> {
+    let mut filtered = if opts.dep_selection.is_filtered() {
+        let sel = opts.dep_selection;
+        let selected = graph.filter_deps(|d| {
+            if sel.prod_only() && d.dep_type == aube_lockfile::DepType::Dev {
+                return false;
+            }
+            if sel.dev_only() && d.dep_type != aube_lockfile::DepType::Dev {
+                return false;
+            }
+            if sel.skip_optional() && d.dep_type == aube_lockfile::DepType::Optional {
+                return false;
+            }
+            true
+        });
+        let dropped = graph.packages.len() - selected.packages.len();
+        if log_dropped_packages && dropped > 0 {
+            tracing::debug!("{}: skipping {dropped} packages", sel.label());
+        }
+        selected
+    } else {
+        graph.clone()
+    };
+
+    if !opts.workspace_filter.is_empty() {
+        filtered = filter_graph_to_workspace_selection(
+            cwd,
+            workspace_packages,
+            &filtered,
+            &opts.workspace_filter,
+        )?;
+    } else if filter_to_root_importer {
+        filtered = filter_graph_to_importers(&filtered, ["."]);
+    }
+
+    Ok(filtered)
 }
 
 fn has_explicit_store_dir_override(cli_flags: &[(String, String)]) -> bool {
