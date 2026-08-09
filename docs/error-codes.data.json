@@ -295,6 +295,12 @@
       "exit_code": 63
     },
     {
+      "name": "ERR_AUBE_UNSAFE_MODULES_DIR",
+      "category": "Linker",
+      "description": "The configured modules directory resolves to the project root, where linker cleanup could remove project files.",
+      "exit_code": 64
+    },
+    {
       "name": "ERR_AUBE_MANIFEST_PARSE",
       "category": "Manifest / workspace",
       "description": "A `package.json` had a syntax error. miette renders a pointer at the offending byte.",

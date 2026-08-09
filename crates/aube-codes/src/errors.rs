@@ -69,6 +69,7 @@ pub const ERR_AUBE_MISSING_PACKAGE_INDEX: &str = "ERR_AUBE_MISSING_PACKAGE_INDEX
 pub const ERR_AUBE_UNSAFE_INDEX_KEY: &str = "ERR_AUBE_UNSAFE_INDEX_KEY";
 pub const ERR_AUBE_UNSAFE_PACKAGE_NAME: &str = "ERR_AUBE_UNSAFE_PACKAGE_NAME";
 pub const ERR_AUBE_MISSING_STORE_FILE: &str = "ERR_AUBE_MISSING_STORE_FILE";
+pub const ERR_AUBE_UNSAFE_MODULES_DIR: &str = "ERR_AUBE_UNSAFE_MODULES_DIR";
 
 // ── scripts ─────────────────────────────────────────────────────────
 pub const ERR_AUBE_SCRIPT_SPAWN: &str = "ERR_AUBE_SCRIPT_SPAWN";
@@ -447,6 +448,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::LINKER,
         description: "A package index references a CAS shard that doesn't exist on disk. Re-run install to re-fetch.",
         exit_code: Some(63),
+    },
+    CodeMeta {
+        name: ERR_AUBE_UNSAFE_MODULES_DIR,
+        category: category::LINKER,
+        description: "The configured modules directory resolves to the project root, where linker cleanup could remove project files.",
+        exit_code: Some(64),
     },
     // Manifest / workspace
     CodeMeta {

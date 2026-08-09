@@ -35,6 +35,46 @@ fn setup_store_with_files(dir: &Path) -> (Store, BTreeMap<String, aube_store::Pa
     (store, indices)
 }
 
+#[test]
+fn refuses_modules_dir_that_resolves_to_project_root() {
+    for modules_dir in [".", "nested/.."] {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        std::fs::create_dir_all(project_dir.join("nested")).unwrap();
+        let marker = project_dir.join("package.json");
+        std::fs::write(&marker, b"{}").unwrap();
+        let store = Store::at(dir.path().join("store/files"));
+        let linker = Linker::new(&store, LinkStrategy::Copy).with_modules_dir_name(modules_dir);
+
+        let err = linker
+            .link_all(&project_dir, &LockfileGraph::default(), &BTreeMap::new())
+            .unwrap_err();
+
+        assert!(matches!(err, Error::UnsafeModulesDir(_)));
+        assert_eq!(std::fs::read(&marker).unwrap(), b"{}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_modules_dir_symlink_to_project_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::os::unix::fs::symlink(&project_dir, project_dir.join("modules")).unwrap();
+    let marker = project_dir.join("package.json");
+    std::fs::write(&marker, b"{}").unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let linker = Linker::new(&store, LinkStrategy::Copy).with_modules_dir_name("modules");
+
+    let err = linker
+        .link_all(&project_dir, &LockfileGraph::default(), &BTreeMap::new())
+        .unwrap_err();
+
+    assert!(matches!(err, Error::UnsafeModulesDir(_)));
+    assert_eq!(std::fs::read(&marker).unwrap(), b"{}");
+}
+
 fn make_graph() -> LockfileGraph {
     let mut packages = BTreeMap::new();
 

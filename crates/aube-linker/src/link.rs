@@ -24,14 +24,26 @@ impl Linker {
         graph: &LockfileGraph,
         package_indices: &BTreeMap<String, PackageIndex>,
     ) -> Result<LinkStats, Error> {
+        let project_dir = aube_util::path::normalize_lexical(project_dir);
+        let modules_dir =
+            aube_util::path::normalize_lexical(&project_dir.join(&self.modules_dir_name));
+        let aliases_project_root = modules_dir == project_dir
+            || (project_dir
+                .canonicalize()
+                .ok()
+                .zip(modules_dir.canonicalize().ok())
+                .is_some_and(|(project, modules)| project == modules));
+        if aliases_project_root {
+            return Err(Error::UnsafeModulesDir(modules_dir));
+        }
         if matches!(self.node_linker, NodeLinker::Hoisted) {
             let mut stats = LinkStats::default();
             let mut placements = HoistedPlacements::default();
             hoisted::link_hoisted_importer(
                 self,
                 hoisted::HoistedImporterDirs {
-                    root: project_dir,
-                    importer: project_dir,
+                    root: &project_dir,
+                    importer: &project_dir,
                 },
                 graph.root_deps(),
                 graph,
@@ -48,14 +60,14 @@ impl Linker {
             // leftover `.aube/<dep_path>/` directories until their
             // eventual cleanup. Honors `virtualStoreDir`.
             let _ = crate::remove_dir_all_with_retry(
-                &self.aube_dir_for(project_dir).join("node_modules"),
+                &self.aube_dir_for(&project_dir).join("node_modules"),
             );
             stats.hoisted_placements = Some(placements);
             return Ok(stats);
         }
 
-        let nm = project_dir.join(&self.modules_dir_name);
-        let aube_dir = self.aube_dir_for(project_dir);
+        let nm = modules_dir;
+        let aube_dir = self.aube_dir_for(&project_dir);
 
         mkdirp(&aube_dir)?;
 
@@ -123,7 +135,7 @@ impl Linker {
             );
         }
 
-        let nested_link_targets = build_nested_link_targets(project_dir, graph);
+        let nested_link_targets = build_nested_link_targets(&project_dir, graph);
 
         // Step 1: Populate .aube virtual store
         //
