@@ -17,13 +17,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 impl Linker {
-    /// Link all packages into node_modules for the given project.
-    pub fn link_all(
-        &self,
-        project_dir: &Path,
-        graph: &LockfileGraph,
-        package_indices: &BTreeMap<String, PackageIndex>,
-    ) -> Result<LinkStats, Error> {
+    fn checked_modules_dir(&self, project_dir: &Path) -> Result<PathBuf, Error> {
         let project_dir = aube_util::path::normalize_lexical(project_dir);
         let modules_dir =
             aube_util::path::normalize_lexical(&project_dir.join(&self.modules_dir_name));
@@ -36,6 +30,18 @@ impl Linker {
         if aliases_project_root {
             return Err(Error::UnsafeModulesDir(modules_dir));
         }
+        Ok(modules_dir)
+    }
+
+    /// Link all packages into node_modules for the given project.
+    pub fn link_all(
+        &self,
+        project_dir: &Path,
+        graph: &LockfileGraph,
+        package_indices: &BTreeMap<String, PackageIndex>,
+    ) -> Result<LinkStats, Error> {
+        let project_dir = aube_util::path::normalize_lexical(project_dir);
+        let modules_dir = self.checked_modules_dir(&project_dir)?;
         if matches!(self.node_linker, NodeLinker::Hoisted) {
             let mut stats = LinkStats::default();
             let mut placements = HoistedPlacements::default();
@@ -661,7 +667,7 @@ impl Linker {
                 .cloned()
                 .collect();
             importers.push(hoisted::HoistedWorkspaceImporter {
-                modules_dir: importer_dir.join(&self.modules_dir_name),
+                modules_dir: self.checked_modules_dir(&importer_dir)?,
                 dependencies: planner_deps,
             });
         }
@@ -685,7 +691,7 @@ impl Linker {
             } else {
                 aube_util::path::normalize_lexical(&root_dir.join(importer_path))
             };
-            let nm = importer_dir.join(&self.modules_dir_name);
+            let nm = self.checked_modules_dir(&importer_dir)?;
             if !self.hoist_workspace_packages {
                 continue;
             }
@@ -732,12 +738,22 @@ impl Linker {
         package_indices: &BTreeMap<String, PackageIndex>,
         workspace_dirs: &BTreeMap<String, PathBuf>,
     ) -> Result<LinkStats, Error> {
-        if matches!(self.node_linker, NodeLinker::Hoisted) {
-            return self.link_workspace_hoisted(root_dir, graph, package_indices, workspace_dirs);
+        let root_dir = aube_util::path::normalize_lexical(root_dir);
+        self.checked_modules_dir(&root_dir)?;
+        for importer_path in graph.importers.keys() {
+            if !is_physical_importer(importer_path) || importer_path == "." {
+                continue;
+            }
+            let importer_dir = aube_util::path::normalize_lexical(&root_dir.join(importer_path));
+            self.checked_modules_dir(&importer_dir)?;
         }
 
-        let root_nm = root_dir.join(&self.modules_dir_name);
-        let aube_dir = self.aube_dir_for(root_dir);
+        if matches!(self.node_linker, NodeLinker::Hoisted) {
+            return self.link_workspace_hoisted(&root_dir, graph, package_indices, workspace_dirs);
+        }
+
+        let root_nm = self.checked_modules_dir(&root_dir)?;
+        let aube_dir = self.aube_dir_for(&root_dir);
 
         mkdirp(&aube_dir)?;
         mkdirp(&root_nm)?;
@@ -762,7 +778,7 @@ impl Linker {
             );
         }
 
-        let nested_link_targets = build_nested_link_targets(root_dir, graph);
+        let nested_link_targets = build_nested_link_targets(&root_dir, graph);
 
         // Step 1a: Materialize local (`file:` dir/tarball, `portal:`,
         // `exec:`) packages straight into the shared per-project

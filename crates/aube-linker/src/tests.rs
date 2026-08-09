@@ -75,6 +75,61 @@ fn refuses_modules_dir_symlink_to_project_root() {
     assert_eq!(std::fs::read(&marker).unwrap(), b"{}");
 }
 
+#[test]
+fn workspace_modes_refuse_modules_dir_that_resolves_to_root() {
+    for node_linker in [NodeLinker::Isolated, NodeLinker::Hoisted] {
+        for modules_dir in [".", "nested/.."] {
+            let dir = tempfile::tempdir().unwrap();
+            let project_dir = dir.path().join("project");
+            std::fs::create_dir_all(project_dir.join("nested")).unwrap();
+            let marker = project_dir.join("package.json");
+            std::fs::write(&marker, b"{}").unwrap();
+            let store = Store::at(dir.path().join("store/files"));
+            let linker = Linker::new(&store, LinkStrategy::Copy)
+                .with_node_linker(node_linker)
+                .with_modules_dir_name(modules_dir);
+            let mut graph = LockfileGraph::default();
+            graph.importers.insert(".".to_string(), Vec::new());
+
+            let err = linker
+                .link_workspace(&project_dir, &graph, &BTreeMap::new(), &BTreeMap::new())
+                .unwrap_err();
+
+            assert!(matches!(err, Error::UnsafeModulesDir(_)));
+            assert_eq!(std::fs::read(&marker).unwrap(), b"{}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_modes_refuse_importer_modules_dir_symlink_to_importer() {
+    for node_linker in [NodeLinker::Isolated, NodeLinker::Hoisted] {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        let importer_dir = project_dir.join("packages/app");
+        std::fs::create_dir_all(&importer_dir).unwrap();
+        std::os::unix::fs::symlink(&importer_dir, importer_dir.join("modules")).unwrap();
+        let marker = importer_dir.join("package.json");
+        std::fs::write(&marker, b"{}").unwrap();
+        let store = Store::at(dir.path().join("store/files"));
+        let linker = Linker::new(&store, LinkStrategy::Copy)
+            .with_node_linker(node_linker)
+            .with_modules_dir_name("modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .importers
+            .insert("packages/app".to_string(), Vec::new());
+
+        let err = linker
+            .link_workspace(&project_dir, &graph, &BTreeMap::new(), &BTreeMap::new())
+            .unwrap_err();
+
+        assert!(matches!(err, Error::UnsafeModulesDir(_)));
+        assert_eq!(std::fs::read(&marker).unwrap(), b"{}");
+    }
+}
+
 fn make_graph() -> LockfileGraph {
     let mut packages = BTreeMap::new();
 
