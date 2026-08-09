@@ -332,7 +332,7 @@ EOF
 	assert_success
 	run grep -A4 '^catalogs:' aube-lock.yaml
 	assert_output --partial 'specifier: 0.1.2'
-	assert_output --partial 'version: 3.0.1'
+	assert_output --partial 'version: 0.1.2'
 }
 
 @test "aube update -r --latest updates a named catalog and preserves its prefix" {
@@ -524,6 +524,23 @@ EOF
 	# The lockfile picked up a newer version than 0.1.2 (the seed pin).
 	run grep -c 'is-odd@3' aube-lock.yaml
 	assert_success
+}
+
+@test "aube update --latest --no-save: does not resolve past the kept range" {
+	_setup_outdated_project
+	sed -i.bak 's/>=0.1.0/^0.1.0/g' package.json aube-lock.yaml
+	rm package.json.bak aube-lock.yaml.bak
+
+	run aube update --latest --no-save is-odd --lockfile-only
+	assert_success
+
+	run grep '"is-odd": "^0.1.0"' package.json
+	assert_success
+	run grep -A3 'is-odd:' aube-lock.yaml
+	assert_output --partial 'specifier: ^0.1.0'
+	assert_output --partial 'version: 0.1.2'
+	run grep -c 'is-odd@3' aube-lock.yaml
+	assert_failure
 }
 
 @test "aube update --lockfile-only: refreshes lockfile without populating node_modules" {

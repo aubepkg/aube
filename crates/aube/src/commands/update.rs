@@ -102,11 +102,10 @@ pub struct UpdateArgs {
     pub no_optional: bool,
     /// Refresh the lockfile without rewriting `package.json` ranges.
     ///
-    /// Pair with `--latest` to pull a newer resolved version into the
-    /// lockfile while leaving the manifest's caret/tilde ranges
-    /// untouched. Without `--latest` this flag is a no-op (plain
-    /// `update` already doesn't touch the manifest). Mirrors
-    /// `pnpm update --no-save`.
+    /// Pair with `--latest` to refresh the lockfile to the newest
+    /// version allowed by the unchanged manifest range. Without
+    /// `--latest` this flag is a no-op (plain `update` already doesn't
+    /// touch the manifest). Mirrors `pnpm update --no-save`.
     #[arg(long)]
     pub no_save: bool,
     /// Override the local pnpmfile location.
@@ -537,7 +536,7 @@ async fn run_inner(
 
     let mut workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let mut catalog_targets = Vec::new();
-    if effective_latest {
+    if effective_latest && !no_save {
         for key in &manifest_keys_to_update {
             if !should_rewrite_key(key) || preserve_pin.contains(key) {
                 continue;
@@ -583,7 +582,7 @@ async fn run_inner(
     // pin alone. Both `--latest` (every direct dep) and `<pkg>@latest`
     // (only the named entries — see `should_rewrite_key`) flow
     // through this loop.
-    let resolver_manifest = if effective_latest {
+    let resolver_manifest = if effective_latest && !no_save {
         let mut m = manifest.clone();
         for key in &manifest_keys_to_update {
             if !should_rewrite_key(key) {
@@ -828,9 +827,9 @@ async fn run_inner(
     // they already had, so an idempotent rewrite doesn't churn the
     // manifest for no reason.
     //
-    // `--no-save` short-circuits the manifest rewrite: the resolver
-    // already pulled in the new versions for the lockfile above, so we
-    // just skip persisting any range bumps to `package.json`.
+    // `--no-save` short-circuits the manifest rewrite. The resolver kept
+    // the original range authoritative, so the refreshed lockfile cannot
+    // contradict the unchanged `package.json` specifier.
     if no_save && (effective_latest || rewrites_specifier_setting) {
         eprintln!("Skipping package.json update (--no-save)");
     } else if effective_latest || cosmetic_rewrite_eligible {
