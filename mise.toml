@@ -126,7 +126,9 @@ run = [
 # measurement on purpose — nothing tak times ever touches the registry.
 [tasks.perf]
 dir = "{{config_root}}"
-env = { npm_config_enable_global_virtual_store = "true" }
+# Cachegrind aggregates instructions from every worker. Pin the pools so idle
+# work-stealing races do not move the install count by 10%+ between runs.
+env = { npm_config_enable_global_virtual_store = "true", TOKIO_WORKER_THREADS = "1", RAYON_NUM_THREADS = "1", AUBE_LINK_CONCURRENCY = "1" }
 run = [
   "cargo build --release",
   "./target/release/aube -C fixtures/medium install --frozen-lockfile",
@@ -138,7 +140,7 @@ run = [
 # Safe to run locally — nothing leaves the machine until `tak push`.
 [tasks."perf:record"]
 dir = "{{config_root}}"
-env = { npm_config_enable_global_virtual_store = "true" }
+env = { npm_config_enable_global_virtual_store = "true", TOKIO_WORKER_THREADS = "1", RAYON_NUM_THREADS = "1", AUBE_LINK_CONCURRENCY = "1" }
 run = [
   "cargo build --release",
   "./target/release/aube -C fixtures/medium install --frozen-lockfile",
