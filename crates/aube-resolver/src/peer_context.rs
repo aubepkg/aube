@@ -156,13 +156,15 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
                 }
                 if let Some(&idx) = additions_by_name.get(peer_name) {
                     let current = additions[idx].dep_type;
-                    // Production must survive every production-mode filter.
-                    // Optional wins over dev because --production retains
-                    // optional roots unless --no-optional is also present.
+                    // A peer needed by roots from different sections cannot
+                    // safely inherit either narrower classification: the
+                    // other section's filter could then drop it while keeping
+                    // a requirer. Normalize mixed classifications to
+                    // Production, which survives both --production and
+                    // --no-optional. Matching classifications stay unchanged.
                     additions[idx].dep_type = match (current, direct_dep.dep_type) {
-                        (DepType::Production, _) | (_, DepType::Production) => DepType::Production,
-                        (DepType::Optional, _) | (_, DepType::Optional) => DepType::Optional,
-                        _ => DepType::Dev,
+                        (left, right) if left == right => left,
+                        _ => DepType::Production,
                     };
                     continue;
                 }

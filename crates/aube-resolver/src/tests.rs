@@ -2683,7 +2683,7 @@ fn hoist_auto_installed_peers_preserves_requirer_dep_type() {
 #[test]
 fn hoist_auto_installed_peers_promotes_shared_peer_dep_type() {
     for (first_type, second_type, expected) in [
-        (DepType::Dev, DepType::Optional, DepType::Optional),
+        (DepType::Dev, DepType::Optional, DepType::Production),
         (DepType::Dev, DepType::Production, DepType::Production),
         (DepType::Optional, DepType::Production, DepType::Production),
     ] {
