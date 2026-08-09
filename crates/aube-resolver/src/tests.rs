@@ -2680,6 +2680,65 @@ fn hoist_auto_installed_peers_preserves_requirer_dep_type() {
     }
 }
 
+#[test]
+fn hoist_auto_installed_peers_promotes_shared_peer_dep_type() {
+    for (first_type, second_type, expected) in [
+        (DepType::Dev, DepType::Optional, DepType::Optional),
+        (DepType::Dev, DepType::Production, DepType::Production),
+        (DepType::Optional, DepType::Production, DepType::Production),
+    ] {
+        let first = mk_locked(
+            "first",
+            "1.0.0",
+            &[("react", "18.2.0")],
+            &[("react", "^18")],
+        );
+        let second = mk_locked(
+            "second",
+            "1.0.0",
+            &[("react", "18.2.0")],
+            &[("react", "^18")],
+        );
+
+        let mut packages = BTreeMap::new();
+        packages.insert("first@1.0.0".to_string(), first);
+        packages.insert("second@1.0.0".to_string(), second);
+        packages.insert(
+            "react@18.2.0".to_string(),
+            mk_locked("react", "18.2.0", &[], &[]),
+        );
+
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![
+                DirectDep {
+                    name: "first".to_string(),
+                    dep_path: "first@1.0.0".to_string(),
+                    dep_type: first_type,
+                    specifier: Some("^1".to_string()),
+                },
+                DirectDep {
+                    name: "second".to_string(),
+                    dep_path: "second@1.0.0".to_string(),
+                    dep_type: second_type,
+                    specifier: Some("^1".to_string()),
+                },
+            ],
+        );
+
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let hoisted = hoist_auto_installed_peers(graph);
+        let root = hoisted.importers.get(".").unwrap();
+        let react = root.iter().find(|dep| dep.name == "react").unwrap();
+        assert_eq!(react.dep_type, expected);
+    }
+}
+
 // Peers declared by transitive dependencies are still resolved and
 // sibling-linked by the peer-context pass, but pnpm does not expose
 // them as root importer deps or top-level node_modules entries.

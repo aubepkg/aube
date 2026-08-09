@@ -19,7 +19,7 @@
 
 use crate::version_satisfies;
 use crate::{FxHashMap, FxHashSet};
-use aube_lockfile::{DirectDep, LocalSource, LockedPackage, LockfileGraph};
+use aube_lockfile::{DepType, DirectDep, LocalSource, LockedPackage, LockfileGraph};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A peer dependency whose declared range doesn't match the version the
@@ -120,8 +120,9 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
 ///   2. Visit only those direct dependency packages and examine their
 ///      `peer_dependencies` declarations. For each declared peer not
 ///      already satisfied by the importer, find a resolved version somewhere
-///      in the graph and synthesize a `DirectDep` entry. Mark it as
-///      satisfied so a second direct dep doesn't add a duplicate.
+///      in the graph and synthesize one `DirectDep` entry. If another direct
+///      dependency needs the same peer, promote the synthetic entry to the
+///      strongest section classification required by either package.
 ///   3. Stable: we walk in-order and take the first declared peer range
 ///      encountered per name as the specifier. Conflicting ranges across
 ///      the tree are not reconciled — first one wins. This matches pnpm
@@ -135,11 +136,13 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
         let Some(direct_deps) = graph.importers.get(&importer_path) else {
             continue;
         };
-        let mut satisfied: FxHashSet<String> = direct_deps.iter().map(|d| d.name.clone()).collect();
+        let satisfied: FxHashSet<String> = direct_deps.iter().map(|d| d.name.clone()).collect();
 
         // Additions are gathered into a separate vec so we don't mutate
         // the importer's direct-dep list while still borrowing from it.
         let mut additions: Vec<DirectDep> = Vec::new();
+        let mut additions_by_name: FxHashMap<String, usize> =
+            FxHashMap::with_capacity_and_hasher(direct_deps.len(), Default::default());
 
         for direct_dep in direct_deps {
             let Some(pkg) = graph.packages.get(&direct_dep.dep_path) else {
@@ -149,6 +152,18 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
             // Collect unmet peer declarations from this package.
             for (peer_name, peer_range) in &pkg.peer_dependencies {
                 if satisfied.contains(peer_name) {
+                    continue;
+                }
+                if let Some(&idx) = additions_by_name.get(peer_name) {
+                    let current = additions[idx].dep_type;
+                    // Production must survive every production-mode filter.
+                    // Optional wins over dev because --production retains
+                    // optional roots unless --no-optional is also present.
+                    additions[idx].dep_type = match (current, direct_dep.dep_type) {
+                        (DepType::Production, _) | (_, DepType::Production) => DepType::Production,
+                        (DepType::Optional, _) | (_, DepType::Optional) => DepType::Optional,
+                        _ => DepType::Dev,
+                    };
                     continue;
                 }
                 // Find any resolved version in the graph for this peer.
@@ -194,7 +209,7 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
                     // rather than writing a dangling DirectDep.
                     continue;
                 }
-                satisfied.insert(peer_name.clone());
+                additions_by_name.insert(peer_name.clone(), additions.len());
                 additions.push(DirectDep {
                     name: peer_name.clone(),
                     dep_path: synth_dep_path,
