@@ -528,8 +528,8 @@ EOF
 
 @test "aube update --latest --no-save: does not resolve past the kept range" {
 	_setup_outdated_project
-	sed -i.bak 's/>=0.1.0/^0.1.0/g' package.json aube-lock.yaml
-	rm package.json.bak aube-lock.yaml.bak
+	sed -i.bak 's/>=0.1.0/^0.1.0/g' package.json
+	rm package.json.bak
 
 	run aube update --latest --no-save is-odd --lockfile-only
 	assert_success

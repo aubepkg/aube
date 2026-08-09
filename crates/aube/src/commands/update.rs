@@ -104,8 +104,8 @@ pub struct UpdateArgs {
     ///
     /// Pair with `--latest` to refresh the lockfile to the newest
     /// version allowed by the unchanged manifest range. Without
-    /// `--latest` this flag is a no-op (plain `update` already doesn't
-    /// touch the manifest). Mirrors `pnpm update --no-save`.
+    /// `--latest`, it still suppresses manifest range rewrites enabled
+    /// by `updateRewritesSpecifier`. Mirrors `pnpm update --no-save`.
     #[arg(long)]
     pub no_save: bool,
     /// Override the local pnpmfile location.
