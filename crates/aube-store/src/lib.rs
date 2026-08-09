@@ -22,7 +22,8 @@ use cas::copy_dir_recursive;
 pub(crate) use cas::parse_compress_store_gate;
 #[cfg(test)]
 use git::{
-    codeload_cache_paths, extract_codeload_tarball_at, git_commit_matches, validate_git_positional,
+    codeload_cache_paths, extract_codeload_tarball_at, git_command, git_commit_matches,
+    validate_git_positional,
 };
 pub use index::{PackageIndex, StoredFile, index_content_fingerprint};
 pub use integrity::{
@@ -1569,6 +1570,16 @@ mod tests {
         // the validation runs at the public entry point.
         let err = git_resolve_ref("--upload-pack=/tmp/evil", None).unwrap_err();
         assert!(matches!(err, Error::Git(_)));
+    }
+
+    #[test]
+    fn test_git_commands_disable_terminal_prompts() {
+        let command = git_command();
+        let prompt = command
+            .get_envs()
+            .find(|(name, _)| *name == "GIT_TERMINAL_PROMPT")
+            .and_then(|(_, value)| value);
+        assert_eq!(prompt, Some(std::ffi::OsStr::new("0")));
     }
 
     #[test]
