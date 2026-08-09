@@ -6,9 +6,9 @@ use aube_util::url::redact_url;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Construct a Git subprocess that cannot stop an unattended install
-/// waiting for credentials on stdin. Credential helpers and configured
-/// tokens still work; Git only suppresses its terminal fallback.
+/// Construct a Git subprocess that disables Git's own terminal credential
+/// prompts. Credential helpers and configured tokens still work. SSH
+/// transports may still prompt independently through the user's SSH client.
 pub(crate) fn git_command() -> Command {
     let mut command = Command::new("git");
     command.env("GIT_TERMINAL_PROMPT", "0");
