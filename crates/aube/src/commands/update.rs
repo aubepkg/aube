@@ -45,11 +45,13 @@ pub struct UpdateArgs {
     /// Parsed for pnpm compatibility.
     #[arg(short = 'i', long)]
     pub interactive: bool,
-    /// Update past the manifest range.
+    /// Update past the manifest range unless paired with `--no-save`.
     ///
     /// Rewrites `package.json` specifiers to match the newly resolved
     /// versions (the registry's `latest` dist-tag, clamped by
-    /// `minimumReleaseAge` / `resolution-mode` as usual).
+    /// `minimumReleaseAge` / `resolution-mode` as usual). With
+    /// `--no-save`, leaves the manifest range unchanged and resolves
+    /// only to the newest version that range allows.
     #[arg(short = 'L', long)]
     pub latest: bool,
     /// Update only production dependencies.

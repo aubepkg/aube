@@ -38,9 +38,9 @@ Parsed for pnpm compatibility.
 
 ### `-L --latest`
 
-Update past the manifest range.
+Update past the manifest range unless paired with `--no-save`.
 
-Rewrites `package.json` specifiers to match the newly resolved versions (the registry's `latest` dist-tag, clamped by `minimumReleaseAge` / `resolution-mode` as usual).
+Rewrites `package.json` specifiers to match the newly resolved versions (the registry's `latest` dist-tag, clamped by `minimumReleaseAge` / `resolution-mode` as usual). With `--no-save`, leaves the manifest range unchanged and resolves only to the newest version that range allows.
 
 ### `-P --prod`
 

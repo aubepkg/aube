@@ -12350,9 +12350,9 @@
           {
             "name": "latest",
             "usage": "-L --latest",
-            "help": "Update past the manifest range",
-            "help_long": "Update past the manifest range.\n\nRewrites `package.json` specifiers to match the newly resolved versions (the registry's `latest` dist-tag, clamped by `minimumReleaseAge` / `resolution-mode` as usual).",
-            "help_first_line": "Update past the manifest range",
+            "help": "Update past the manifest range unless paired with `--no-save`",
+            "help_long": "Update past the manifest range unless paired with `--no-save`.\n\nRewrites `package.json` specifiers to match the newly resolved versions (the registry's `latest` dist-tag, clamped by `minimumReleaseAge` / `resolution-mode` as usual). With `--no-save`, leaves the manifest range unchanged and resolves only to the newest version that range allows.",
+            "help_first_line": "Update past the manifest range unless paired with `--no-save`",
             "short": [
               "L"
             ],
