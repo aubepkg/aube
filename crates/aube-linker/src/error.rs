@@ -23,7 +23,7 @@ pub enum Error {
     #[error("refusing to create node_modules entry for unsafe package name: {0:?}")]
     #[diagnostic(code(ERR_AUBE_UNSAFE_PACKAGE_NAME))]
     UnsafePackageName(String),
-    #[error("refusing to use the project root as the modules directory: {0}")]
+    #[error("refusing to use a modules directory that is not inside the project: {0}")]
     #[diagnostic(code(ERR_AUBE_UNSAFE_MODULES_DIR))]
     UnsafeModulesDir(PathBuf),
     #[error(

@@ -452,7 +452,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_UNSAFE_MODULES_DIR,
         category: category::LINKER,
-        description: "The configured modules directory resolves to the project root, where linker cleanup could remove project files.",
+        description: "The configured modules directory resolves to the project root or outside it, where linker cleanup could remove unrelated files.",
         exit_code: Some(64),
     },
     // Manifest / workspace

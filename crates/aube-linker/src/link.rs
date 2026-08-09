@@ -21,13 +21,24 @@ impl Linker {
         let project_dir = aube_util::path::normalize_lexical(project_dir);
         let modules_dir =
             aube_util::path::normalize_lexical(&project_dir.join(&self.modules_dir_name));
-        let aliases_project_root = modules_dir == project_dir
-            || (project_dir
-                .canonicalize()
-                .ok()
-                .zip(modules_dir.canonicalize().ok())
-                .is_some_and(|(project, modules)| project == modules));
-        if aliases_project_root {
+        let lexical_is_safe = modules_dir != project_dir && modules_dir.starts_with(&project_dir);
+        let canonical_is_safe = project_dir.canonicalize().map_or(true, |project| {
+            modules_dir
+                .ancestors()
+                .find_map(|ancestor| {
+                    ancestor.canonicalize().ok().map(|canonical_ancestor| {
+                        if ancestor == modules_dir {
+                            canonical_ancestor != project
+                                && canonical_ancestor.starts_with(&project)
+                        } else {
+                            canonical_ancestor == project
+                                || canonical_ancestor.starts_with(&project)
+                        }
+                    })
+                })
+                .unwrap_or(false)
+        });
+        if !lexical_is_safe || !canonical_is_safe {
             return Err(Error::UnsafeModulesDir(modules_dir));
         }
         Ok(modules_dir)
