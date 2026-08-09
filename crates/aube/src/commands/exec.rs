@@ -779,7 +779,7 @@ mod tests {
         std::fs::write(
             &shim,
             "#!/bin/sh\n\
-             # aube-bin-shim v1 target=pkg/bin.js\n\
+             # aube-bin-shim v2 target=pkg/bin.js\n\
              basedir=$(dirname \"$0\")\n\
              export NODE_PATH=\"$basedir/node_modules\"\n\
              exec node \"$basedir/pkg/bin.js\" \"$@\"\n",
