@@ -152,10 +152,10 @@ impl Resolver {
             pnpmfile_checksum: None,
         };
 
-        // Second pass: hoist every auto-installed peer to its importer's
-        // direct deps so pnpm-style `node_modules/<peer>` top-level
-        // symlinks get created and the lockfile's `importers.` section
-        // lists them the way pnpm does with `auto-install-peers=true`.
+        // Second pass: hoist every auto-installed peer to a synthetic
+        // importer direct dep so the isolated linker creates the required
+        // `node_modules/<peer>` top-level symlink. The synthetic root keeps
+        // the requiring direct dependency's section classification.
         // Skipped entirely when the setting is off — matches pnpm, which
         // leaves the importer's `dependencies` untouched in that mode.
         let hoisted = if self.auto_install_peers {

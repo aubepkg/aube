@@ -18,6 +18,25 @@ teardown() {
 	_common_teardown
 }
 
+@test "auto-installed peer of a dev dependency is excluded from production installs" {
+	cat >package.json <<'JSON'
+{
+  "name": "dev-peer-production-filter",
+  "version": "1.0.0",
+  "devDependencies": {
+    "react-dom": "18.3.1"
+  }
+}
+JSON
+	run aube install --lockfile-only
+	assert_success
+
+	run aube install --frozen-lockfile --production --disable-global-virtual-store
+	assert_success
+	assert_not_exists node_modules/react-dom
+	assert_not_exists node_modules/react
+}
+
 @test "required peer is auto-installed and sibling-linked with peer-suffix dep_path" {
 	# use-sync-external-store@1.2.0 declares peerDep react ^16.8 || ^17 || ^18.
 	# Intentionally do NOT list react in package.json — auto-install-peers

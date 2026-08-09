@@ -19,7 +19,7 @@
 
 use crate::version_satisfies;
 use crate::{FxHashMap, FxHashSet};
-use aube_lockfile::{DepType, DirectDep, LocalSource, LockedPackage, LockfileGraph};
+use aube_lockfile::{DirectDep, LocalSource, LockedPackage, LockfileGraph};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A peer dependency whose declared range doesn't match the version the
@@ -98,12 +98,14 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
 /// Promote direct dependencies' unmet peers to importer direct deps.
 ///
 /// Walks each importer's direct dependencies and hoists any peer they
-/// declare that isn't already a direct dep of the importer up to the
-/// importer's `dependencies` list — what pnpm's
-/// `auto-install-peers=true` produces in its v9 lockfile. Peers declared by
-/// transitive dependencies stay in the resolved graph for peer-context
-/// sibling wiring, but they are not surfaced as top-level
-/// `node_modules/<peer>` entries.
+/// declare that isn't already a direct dep of the importer into a synthetic
+/// importer entry. Aube uses that entry to create the top-level
+/// `node_modules/<peer>` symlink required by its isolated linker. The
+/// synthetic entry inherits the requiring package's dependency kind so
+/// section-filtered installs retain it only when they retain the package
+/// that needs it. Peers declared by transitive dependencies stay in the
+/// resolved graph for peer-context sibling wiring, but they are not surfaced
+/// as top-level entries.
 ///
 /// Public so lockfile-driven installs that need to re-derive peer
 /// wiring (npm/yarn/bun formats, which don't record peer contexts)
@@ -139,8 +141,8 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
         // the importer's direct-dep list while still borrowing from it.
         let mut additions: Vec<DirectDep> = Vec::new();
 
-        for dep_path in direct_deps.iter().map(|d| &d.dep_path) {
-            let Some(pkg) = graph.packages.get(dep_path) else {
+        for direct_dep in direct_deps {
+            let Some(pkg) = graph.packages.get(&direct_dep.dep_path) else {
                 continue;
             };
 
@@ -196,9 +198,7 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
                 additions.push(DirectDep {
                     name: peer_name.clone(),
                     dep_path: synth_dep_path,
-                    // Peers auto-hoisted to the root are in the prod
-                    // graph by convention — matches what pnpm writes.
-                    dep_type: DepType::Production,
+                    dep_type: direct_dep.dep_type,
                     specifier: Some(peer_range.clone()),
                 });
             }
