@@ -233,6 +233,9 @@ security[5]:
 
 deps:
   policy: minimize, prefer std over external, every added dep must justify >=20 LOC saved
+  version_requirements: use the lowest compatibility-significant specificity (for example, "1" for stable 1.x dependencies)
+  routine_updates: update Cargo.lock only when the existing Cargo.toml requirement already accepts the new version
+  lockfile_scope: keep dependency lockfile updates focused; avoid unrelated transitive churn
   tls: rustls (no OpenSSL / native-tls)
   reqwest_features: minimal (rustls-tls + http2 + json + stream + charset + system-proxy)
   supply_chain[2]:

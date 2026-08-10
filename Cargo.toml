@@ -47,28 +47,28 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 
 # Node-API bindings
-napi = { version = "3.10.5", default-features = false, features = ["napi8", "tokio_rt", "dyn-symbols"] }
-napi-derive = "3.5.10"
-napi-build = "2.3.2"
+napi = { version = "3", default-features = false, features = ["napi8", "tokio_rt", "dyn-symbols"] }
+napi-derive = "3"
+napi-build = "2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 spdx = "0.13"
-yaml_serde = "0.10.4"
+yaml_serde = "0.10"
 # Comment- and format-preserving YAML edits. Used by aube-manifest /
 # aube to surgically rewrite user-authored workspace YAML files
 # (catalogs, allowBuilds, patchedDependencies) without stripping
 # comments — yaml_serde's round-trip would otherwise destroy them.
 # yamlpatch uses yaml_serde for patch payloads; serde_yaml remains only
 # for the manual block injector that works around nested Add formatting.
-yamlpatch = "1.25"
+yamlpatch = "1"
 # yamlpath 1.28 does not declare the Rust 1.97 requirement it inherits
 # from tree-sitter-iter 1.28, so resolver 3 cannot avoid it.
 yamlpath = ">=1.25, <1.28"
 serde_yaml = "0.9"
 sonic-rs = "0.5"
-toml = "1.1"
+toml = "1"
 rkyv = "0.8"
 
 # CLI
@@ -192,19 +192,19 @@ diffy = "0.5"
 # Internal crates — `version` is required so `cargo publish` can resolve
 # transitive crate dependencies via crates.io. release-plz keeps these
 # versions in sync with [workspace.package].version during release PRs.
-aube = { path = "crates/aube", version = "1.38.1", default-features = false }
-aube-codes = { path = "crates/aube-codes", version = "1.38.1" }
-aube-settings = { path = "crates/aube-settings", version = "1.38.1" }
-aube-resolver = { path = "crates/aube-resolver", version = "1.38.1" }
-aube-registry = { path = "crates/aube-registry", version = "1.38.1" }
-aube-store = { path = "crates/aube-store", version = "1.38.1" }
-aube-linker = { path = "crates/aube-linker", version = "1.38.1" }
-aube-lockfile = { path = "crates/aube-lockfile", version = "1.38.1" }
-aube-manifest = { path = "crates/aube-manifest", version = "1.38.1" }
-aube-runtime = { path = "crates/aube-runtime", version = "1.38.1" }
-aube-scripts = { path = "crates/aube-scripts", version = "1.38.1" }
-aube-workspace = { path = "crates/aube-workspace", version = "1.38.1" }
-aube-util = { path = "crates/aube-util", version = "1.38.1" }
+aube = { path = "crates/aube", version = "1", default-features = false }
+aube-codes = { path = "crates/aube-codes", version = "1" }
+aube-settings = { path = "crates/aube-settings", version = "1" }
+aube-resolver = { path = "crates/aube-resolver", version = "1" }
+aube-registry = { path = "crates/aube-registry", version = "1" }
+aube-store = { path = "crates/aube-store", version = "1" }
+aube-linker = { path = "crates/aube-linker", version = "1" }
+aube-lockfile = { path = "crates/aube-lockfile", version = "1" }
+aube-manifest = { path = "crates/aube-manifest", version = "1" }
+aube-runtime = { path = "crates/aube-runtime", version = "1" }
+aube-scripts = { path = "crates/aube-scripts", version = "1" }
+aube-workspace = { path = "crates/aube-workspace", version = "1" }
+aube-util = { path = "crates/aube-util", version = "1" }
 
 [profile.dev]
 debug = 1
