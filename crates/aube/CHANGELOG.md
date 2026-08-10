@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.1](https://github.com/jdx/aube/compare/v1.38.0...v1.38.1) - 2026-08-10
+
+### Fixed
+
+- *(update)* keep no-save resolutions within range ([#1247](https://github.com/jdx/aube/pull/1247))
+- *(linker)* resolve symlinks in POSIX shims ([#1249](https://github.com/jdx/aube/pull/1249))
+- *(install)* filter cold per-project materialization ([#1253](https://github.com/jdx/aube/pull/1253))
+
+### Other
+
+- refresh benchmarks for v1.38.0 ([#1244](https://github.com/jdx/aube/pull/1244))
+
 ## [1.38.0](https://github.com/jdx/aube/compare/v1.37.0...v1.38.0) - 2026-08-07
 
 ### Added

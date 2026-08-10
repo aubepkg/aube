@@ -13673,7 +13673,7 @@
   "config": {
     "props": {}
   },
-  "version": "1.38.0",
+  "version": "1.38.1",
   "usage": "Usage: aube [OPTIONS] [COMMAND]",
   "complete": {
     "script": {
