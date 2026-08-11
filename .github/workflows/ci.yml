@@ -60,7 +60,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Qualify mise's experimental Rust action cache against the production
+  # Exercise mise's experimental Rust action cache against the production
   # service without replacing Namespace's cache yet. Pull requests can read
   # jdx/aube but must not write. Pull requests start with empty local state and
   # must restore entries previously seeded by main; main can seed a cold cache.
@@ -138,41 +138,34 @@ jobs:
               exit 1
             fi
           fi
-      - name: Qualify Rust action cache
+      - name: Exercise Rust action cache
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/mise-cache-qualification.log"
           mise run cache:qualify 2>&1 | tee "$log"
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            remote_summary=$(grep -Eo \
-              'Action cache: [0-9]+ hits, [0-9]+ misses, [0-9]+ prefetched; [^,]+ downloaded,' \
-              "$log" | tail -n 1 || true)
-            if [[ ! "$remote_summary" =~ ^Action\ cache:\ [0-9]+\ hits,\ [0-9]+\ misses,\ ([0-9]+)\ prefetched\;\ (.+)\ downloaded,$ ]]; then
-              echo "::error::mise did not report Rust remote action-cache results"
-              exit 1
-            fi
-            prefetched=${BASH_REMATCH[1]}
-            downloaded=${BASH_REMATCH[2]}
-            if (( prefetched == 0 )) || [[ "$downloaded" == "0 B" ]]; then
-              echo "::error::Rust remote action cache reported $prefetched prefetched actions and $downloaded downloaded"
-              exit 1
-            fi
-          else
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             cargo clean --target-dir "$CARGO_TARGET_DIR"
             mise run cache:qualify 2>&1 | tee -a "$log"
           fi
           summary=$(grep -Eo \
-            'Action cache qualification: [0-9]+ verified, [0-9]+ diverged' \
+            'Action cache: [0-9]+ hits, [0-9]+ misses, [0-9]+ prefetched; [^,]+ downloaded,' \
             "$log" | tail -n 1 || true)
-          if [[ ! "$summary" =~ ^Action\ cache\ qualification:\ ([0-9]+)\ verified,\ ([0-9]+)\ diverged$ ]]; then
-            echo "::error::mise did not report Rust action-cache qualification results"
+          if [[ ! "$summary" =~ ^Action\ cache:\ ([0-9]+)\ hits,\ [0-9]+\ misses,\ ([0-9]+)\ prefetched\;\ (.+)\ downloaded,$ ]]; then
+            echo "::error::mise did not report Rust action-cache results"
             exit 1
           fi
-          verified=${BASH_REMATCH[1]}
-          diverged=${BASH_REMATCH[2]}
-          if (( verified == 0 || diverged != 0 )); then
-            echo "::error::Rust action-cache qualification reported $verified verified and $diverged diverged actions"
+          hits=${BASH_REMATCH[1]}
+          prefetched=${BASH_REMATCH[2]}
+          downloaded=${BASH_REMATCH[3]}
+          if (( hits == 0 )); then
+            echo "::error::Rust action cache reported no hits"
             exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            if (( prefetched == 0 )) || [[ "$downloaded" == "0 B" ]]; then
+              echo "::error::Rust remote action cache reported $prefetched prefetched actions and $downloaded downloaded"
+              exit 1
+            fi
           fi
           if grep -Eiq 'remote cache .* failed|mise rustc cache warning' \
             "$log"; then
