@@ -45,7 +45,6 @@ pub(super) fn try_install_fast_path(
         return Ok(None);
     }
     opts.control.check_cancelled()?;
-    emit_up_to_date(cwd);
     let total = state::read_state_package_content_hashes(cwd)
         .map(|packages| packages.len())
         .or_else(|| {
@@ -165,7 +164,7 @@ fn trust_policy_requires_validation(cwd: &Path, opts: &InstallOptions) -> bool {
         )
 }
 
-fn emit_up_to_date(cwd: &Path) {
+pub(super) fn emit_up_to_date(cwd: &Path) {
     super::unreviewed_builds::emit_warning(&super::unreviewed_builds::from_state(cwd));
     super::print_already_up_to_date();
 }

@@ -191,6 +191,7 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
     let mut reachable = legacy.clone();
     let mut known = HashSet::new();
     let mut stale_records = Vec::new();
+    let mut legacy_changed = false;
     let projects_dir = global_virtual_store.join(PROJECTS_DIR);
     if !projects_dir.exists() {
         let has_untracked_entries = graph_entries(global_virtual_store)?
@@ -218,18 +219,28 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
             let bytes = std::fs::read(&path).map_err(|e| prune_error(&path, e))?;
             let project: RegisteredProject =
                 serde_json::from_slice(&bytes).map_err(|e| invalid_registry_error(&path, e))?;
+            if !project.project_dir.exists() || !project.aube_dir.exists() {
+                // A registry-unaware project may share any graph entry named
+                // by this stale record. There is no filesystem backlink from
+                // the GVS entry to that legacy checkout, so deleting it would
+                // be unsafe. Promote stale claims to legacy protection before
+                // dropping the record.
+                for entry in &project.entries {
+                    let entry = entry.as_os_str().to_os_string();
+                    legacy_changed |= legacy.insert(entry.clone());
+                    reachable.insert(entry);
+                }
+                if !dry_run {
+                    stale_records.push(path);
+                }
+                continue;
+            }
             known.extend(
                 project
                     .entries
                     .iter()
                     .map(|entry| entry.as_os_str().to_os_string()),
             );
-            if !project.project_dir.exists() || !project.aube_dir.exists() {
-                if !dry_run {
-                    stale_records.push(path);
-                }
-                continue;
-            }
             mark_project_entries(global_virtual_store, &project.aube_dir, &mut reachable)?;
         }
     }
@@ -246,9 +257,10 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
     if !untracked.is_empty() {
         legacy.extend(untracked);
         reachable.extend(legacy.iter().cloned());
-        if !dry_run {
-            write_legacy_entries(global_virtual_store, &legacy)?;
-        }
+        legacy_changed = true;
+    }
+    if legacy_changed && !dry_run {
+        write_legacy_entries(global_virtual_store, &legacy)?;
     }
 
     let mut removed = 0;
@@ -458,7 +470,8 @@ mod tests {
             .expect("orphan project link should be created");
         register_project(&gvs, &orphan_project, &orphan_aube_dir)
             .expect("orphan project should register");
-        std::fs::remove_dir_all(&orphan_project).expect("orphan project should be removed");
+        std::fs::remove_file(orphan_aube_dir.join("orphan@1.0.0"))
+            .expect("orphan project link should be removed");
         assert_eq!(prune(&gvs, true).expect("dry run should succeed"), 1);
         assert!(orphan.exists(), "dry run must preserve the orphan");
 
@@ -490,7 +503,8 @@ mod tests {
             .expect("orphan project link should be created");
         register_project(&gvs, &orphan_project, &orphan_aube_dir)
             .expect("orphan project should register");
-        std::fs::remove_dir_all(&orphan_project).expect("orphan project should be removed");
+        std::fs::remove_file(orphan_aube_dir.join("orphan@1.0.0"))
+            .expect("orphan project link should be removed");
         assert_eq!(prune(&gvs, false).expect("prune should succeed"), 1);
         assert!(legacy.exists(), "unregistered legacy entry must survive");
         assert!(!orphan.exists(), "post-registry orphan must be removed");
@@ -584,6 +598,38 @@ mod tests {
         .expect("legacy snapshot should parse");
         assert!(legacy.entries.iter().any(|entry| {
             entry.as_os_str() == std::ffi::OsStr::new("old-aube@1.0.0-deadbeefdeadbeef")
+        }));
+    }
+
+    #[test]
+    fn prune_preserves_stale_claims_that_a_legacy_project_may_share() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let gvs = tmp.path().join("virtual-store");
+        drop(lock_for_install(&gvs).expect("legacy snapshot should initialize"));
+        let shared = gvs.join("shared@1.0.0-deadbeefdeadbeef");
+        std::fs::create_dir_all(&shared).expect("shared entry should be created");
+        let registered_project = tmp.path().join("registered-project");
+        let registered_aube_dir = registered_project.join("node_modules/.aube");
+        std::fs::create_dir_all(&registered_aube_dir)
+            .expect("registered project virtual store should be created");
+        std::os::unix::fs::symlink(&shared, registered_aube_dir.join("shared@1.0.0"))
+            .expect("registered project link should be created");
+        register_project(&gvs, &registered_project, &registered_aube_dir)
+            .expect("project should register");
+        std::fs::remove_dir_all(&registered_project).expect("registered project should be removed");
+
+        assert_eq!(prune(&gvs, false).expect("prune should succeed"), 0);
+        assert!(
+            shared.exists(),
+            "a stale claim may still be shared by a registry-unaware project"
+        );
+        let legacy: LegacyEntries = serde_json::from_slice(
+            &std::fs::read(gvs.join(LEGACY_ENTRIES_FILE))
+                .expect("legacy snapshot should be readable"),
+        )
+        .expect("legacy snapshot should parse");
+        assert!(legacy.entries.iter().any(|entry| {
+            entry.as_os_str() == std::ffi::OsStr::new("shared@1.0.0-deadbeefdeadbeef")
         }));
     }
 

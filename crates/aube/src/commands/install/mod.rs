@@ -83,8 +83,9 @@ use settings::{
     resolve_strict_store_pkg_content_check, resolve_verify_store_integrity,
 };
 use startup::{
-    apply_force_state_reset, merge_branch_lockfiles_if_needed, modules_cache_sweep_is_default,
-    resolve_project_cwd, try_install_fast_path, warn_accepted_noop_install_settings,
+    apply_force_state_reset, emit_up_to_date, merge_branch_lockfiles_if_needed,
+    modules_cache_sweep_is_default, resolve_project_cwd, try_install_fast_path,
+    warn_accepted_noop_install_settings,
 };
 use summary::print_already_up_to_date;
 use workspace::{
@@ -562,26 +563,20 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         apply_force_state_reset(&cwd, &opts)?;
     }
 
-    // Load the workspace yaml *once* — both as the typed
-    // `WorkspaceConfig` (used below for `allow_builds_raw` and
-    // friends) and as a raw `BTreeMap` (used by
-    // `aube_settings::resolved::*` for metadata-driven lookups).
-    // Errors propagate here rather than silently defaulting later,
-    // so a malformed workspace file surfaces before we start
-    // resolving the dep graph. Also load `.npmrc` entries once so
-    // the same borrow feeds both the resolve-time settings and the
-    // later engine-check settings.
+    // The warm path historically tolerates workspace fields that cannot be
+    // deserialized into the typed config as long as the raw settings needed
+    // for freshness checks remain readable. Keep typed validation after the
+    // fast-path gate so an already-current install retains that behavior.
     let files = crate::commands::FileSources::load(&cwd);
-    let (ws_config_shared, raw_workspace) = aube_manifest::workspace::load_both(&cwd)
-        .into_diagnostic()
-        .wrap_err("failed to load workspace config")?;
-    let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    let fast_path_workspace = aube_manifest::workspace::load_raw(&cwd).unwrap_or_default();
+    let fast_path_settings_ctx =
+        files.ctx(&fast_path_workspace, &opts.env_snapshot, &opts.cli_flags);
 
     let fast_path_total = if opts.dry_run {
         None
     } else {
-        let store = super::open_store_with_ctx(&cwd, &settings_ctx)?;
-        let global_virtual_store = store.virtual_store_dir();
+        let global_virtual_store =
+            super::global_virtual_store_dir_with_ctx(&cwd, &fast_path_settings_ctx);
         let gvs_lock = global_virtual_store
             .exists()
             .then(|| super::gvs_registry::lock_for_install(&global_virtual_store))
@@ -590,7 +585,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         if total.is_some()
             && let Some(lock) = gvs_lock.as_ref()
         {
-            let aube_dir = super::resolve_virtual_store_dir(&settings_ctx, &cwd);
+            let aube_dir = super::resolve_virtual_store_dir(&fast_path_settings_ctx, &cwd);
             super::gvs_registry::register_fast_path_project(
                 lock,
                 &global_virtual_store,
@@ -604,9 +599,18 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         total
     };
     if let Some(total) = fast_path_total {
+        emit_up_to_date(&cwd);
         control::complete(total);
         return Ok(());
     }
+
+    // Full installs require typed workspace fields. Load the raw and typed
+    // views together once the warm path has been ruled out, then use the same
+    // raw map for all remaining setting resolution.
+    let (ws_config_shared, raw_workspace) = aube_manifest::workspace::load_both(&cwd)
+        .into_diagnostic()
+        .wrap_err("failed to load workspace config")?;
+    let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
 
     // Yaml-only workspace roots (`pnpm-workspace.yaml` only, no root
     // `package.json`) install with a synthesized empty manifest so

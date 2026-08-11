@@ -196,7 +196,7 @@ EOF
 	refute_output --partial "Pruned 0 files"
 }
 
-@test "aube store prune removes global virtual-store entries from deleted projects" {
+@test "aube store prune preserves stale entries that legacy projects may share" {
 	mkdir project
 	cat >project/package.json <<'JSON'
 {
@@ -222,13 +222,34 @@ JSON
 
 	run aube store prune --dry-run
 	assert_success
-	assert_output --partial "Would prune"
+	refute_output --partial "from the global virtual store"
 	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
 
 	run aube store prune
 	assert_success
-	assert_output --partial "from the global virtual store"
-	assert [ -z "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
+	refute_output --partial "from the global virtual store"
+	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
+	assert [ -z "$(find "$gvs/.projects" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]
+}
+
+@test "warm install reports success only after GVS registration succeeds" {
+	mkdir project
+	cat >project/package.json <<'JSON'
+{
+  "name": "gvs-registration-failure",
+  "version": "1.0.0",
+  "dependencies": { "is-odd": "3.0.1" }
+}
+JSON
+	run bash -c 'cd project && aube install'
+	assert_success
+
+	rm -rf "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
+	touch "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
+	run bash -c 'cd project && aube install'
+	assert_failure
+	refute_output --partial "Already up to date"
+	assert_output --partial "failed to register project with global virtual store"
 }
 
 @test "aube store prune --dry-run reports candidates without deleting them" {
