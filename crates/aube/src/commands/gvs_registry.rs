@@ -235,13 +235,22 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
                 }
                 continue;
             }
-            known.extend(
-                project
-                    .entries
-                    .iter()
-                    .map(|entry| entry.as_os_str().to_os_string()),
-            );
-            mark_project_entries(global_virtual_store, &project.aube_dir, &mut reachable)?;
+            let current = project_entries(global_virtual_store, &project.aube_dir)?;
+            reachable.extend(current.iter().cloned());
+            for entry in &project.entries {
+                let entry = entry.as_os_str().to_os_string();
+                if current.contains(&entry) {
+                    known.insert(entry);
+                } else {
+                    // An older aube can update this project without updating
+                    // its registry record. Its saved-but-unlinked claims may
+                    // therefore still be shared by another registry-unaware
+                    // checkout and need the same legacy protection as stale
+                    // project records.
+                    legacy_changed |= legacy.insert(entry.clone());
+                    reachable.insert(entry);
+                }
+            }
         }
     }
 
@@ -359,15 +368,6 @@ fn graph_entries(global_virtual_store: &Path) -> miette::Result<Vec<OsString>> {
     Ok(entries)
 }
 
-fn mark_project_entries(
-    global_virtual_store: &Path,
-    aube_dir: &Path,
-    reachable: &mut HashSet<OsString>,
-) -> miette::Result<()> {
-    reachable.extend(project_entries(global_virtual_store, aube_dir)?);
-    Ok(())
-}
-
 fn project_links_into(aube_dir: &Path, global_virtual_store: &Path) -> miette::Result<bool> {
     Ok(!project_entries(global_virtual_store, aube_dir)?.is_empty())
 }
@@ -446,7 +446,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prune_keeps_registered_entries_and_removes_orphans() {
+    fn prune_keeps_registered_and_historical_entries() {
         let tmp = tempfile::tempdir().expect("tempdir should be created");
         let gvs = tmp.path().join("virtual-store");
         std::fs::create_dir_all(&gvs).expect("global virtual store should be created");
@@ -472,16 +472,19 @@ mod tests {
             .expect("orphan project should register");
         std::fs::remove_file(orphan_aube_dir.join("orphan@1.0.0"))
             .expect("orphan project link should be removed");
-        assert_eq!(prune(&gvs, true).expect("dry run should succeed"), 1);
-        assert!(orphan.exists(), "dry run must preserve the orphan");
+        assert_eq!(prune(&gvs, true).expect("dry run should succeed"), 0);
+        assert!(orphan.exists(), "dry run must preserve historical claims");
 
-        assert_eq!(prune(&gvs, false).expect("prune should succeed"), 1);
+        assert_eq!(prune(&gvs, false).expect("prune should succeed"), 0);
         assert!(live.exists(), "registered entry must survive");
-        assert!(!orphan.exists(), "orphan entry must be removed");
+        assert!(
+            orphan.exists(),
+            "a historical claim may still be shared by a legacy project"
+        );
     }
 
     #[test]
-    fn prune_preserves_entries_that_predate_the_registry() {
+    fn prune_preserves_legacy_and_historical_entries() {
         let tmp = tempfile::tempdir().expect("tempdir should be created");
         let gvs = tmp.path().join("virtual-store");
         let legacy = gvs.join("legacy@1.0.0-deadbeefdeadbeef");
@@ -505,9 +508,12 @@ mod tests {
             .expect("orphan project should register");
         std::fs::remove_file(orphan_aube_dir.join("orphan@1.0.0"))
             .expect("orphan project link should be removed");
-        assert_eq!(prune(&gvs, false).expect("prune should succeed"), 1);
+        assert_eq!(prune(&gvs, false).expect("prune should succeed"), 0);
         assert!(legacy.exists(), "unregistered legacy entry must survive");
-        assert!(!orphan.exists(), "post-registry orphan must be removed");
+        assert!(
+            orphan.exists(),
+            "a historical claim may still be shared by a legacy project"
+        );
     }
 
     #[test]

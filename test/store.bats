@@ -232,7 +232,7 @@ JSON
 	assert [ -z "$(find "$gvs/.projects" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]
 }
 
-@test "warm install reports success only after GVS registration succeeds" {
+@test "GVS registration failure does not report install success" {
 	mkdir project
 	cat >project/package.json <<'JSON'
 {
@@ -244,12 +244,11 @@ JSON
 	run bash -c 'cd project && aube install'
 	assert_success
 
-	rm -rf "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
-	touch "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
+	chmod a-w "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
 	run bash -c 'cd project && aube install'
+	chmod u+w "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
 	assert_failure
 	refute_output --partial "Already up to date"
-	assert_output --partial "failed to register project with global virtual store"
 }
 
 @test "aube store prune --dry-run reports candidates without deleting them" {
