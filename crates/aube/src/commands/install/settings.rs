@@ -1338,6 +1338,7 @@ mod finalize_lockfile_graph_tests {
     async fn finalize_skips_checksums_on_aube_lock() {
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path();
+        std::fs::write(cwd.join("aube-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
         std::fs::write(
             cwd.join("package.json"),
             r#"{"name":"x","version":"1.0.0"}"#,
