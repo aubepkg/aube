@@ -561,35 +561,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     if !opts.dry_run {
         apply_force_state_reset(&cwd, &opts)?;
     }
-    if !opts.dry_run
-        && let Some(total) =
-            try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))?
-    {
-        let files = crate::commands::FileSources::load(&cwd);
-        let raw_workspace = aube_manifest::workspace::load_raw(&cwd)
-            .into_diagnostic()
-            .wrap_err("failed to load workspace config")?;
-        let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
-        let store = super::open_store_with_ctx(&cwd, &settings_ctx)?;
-        let aube_dir = super::resolve_virtual_store_dir(&settings_ctx, &cwd);
-        super::gvs_registry::register_fast_path_project(
-            &store.virtual_store_dir(),
-            &cwd,
-            &aube_dir,
-        )?;
-        control::complete(total);
-        return Ok(());
-    }
-
-    // Yaml-only workspace roots (`pnpm-workspace.yaml` only, no root
-    // `package.json`) install with a synthesized empty manifest so
-    // every workspace member is installed without the root carrying
-    // any deps or scripts itself. The synthesized manifest naturally
-    // skips root lifecycle hooks, has no required-scripts to validate,
-    // and threads through the rest of the pipeline as a manifest with
-    // no direct deps would.
-    let manifest = super::load_manifest_or_default(&cwd)?;
-    let project_name = manifest.name.as_deref().unwrap_or("(unnamed)");
 
     // Load the workspace yaml *once* — both as the typed
     // `WorkspaceConfig` (used below for `allow_builds_raw` and
@@ -604,13 +575,55 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     let (ws_config_shared, raw_workspace) = aube_manifest::workspace::load_both(&cwd)
         .into_diagnostic()
         .wrap_err("failed to load workspace config")?;
+    let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+
+    let fast_path_total = if opts.dry_run {
+        None
+    } else {
+        let store = super::open_store_with_ctx(&cwd, &settings_ctx)?;
+        let global_virtual_store = store.virtual_store_dir();
+        let gvs_lock = global_virtual_store
+            .exists()
+            .then(|| super::gvs_registry::lock_for_install(&global_virtual_store))
+            .transpose()?;
+        let total = try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))?;
+        if total.is_some()
+            && let Some(lock) = gvs_lock.as_ref()
+        {
+            let aube_dir = super::resolve_virtual_store_dir(&settings_ctx, &cwd);
+            super::gvs_registry::register_fast_path_project(
+                lock,
+                &global_virtual_store,
+                &cwd,
+                &aube_dir,
+            )
+            .wrap_err(
+                "install is current, but failed to register it with the global virtual store",
+            )?;
+        }
+        total
+    };
+    if let Some(total) = fast_path_total {
+        control::complete(total);
+        return Ok(());
+    }
+
+    // Yaml-only workspace roots (`pnpm-workspace.yaml` only, no root
+    // `package.json`) install with a synthesized empty manifest so
+    // every workspace member is installed without the root carrying
+    // any deps or scripts itself. The synthesized manifest naturally
+    // skips root lifecycle hooks, has no required-scripts to validate,
+    // and threads through the rest of the pipeline as a manifest with
+    // no direct deps would.
+    let manifest = super::load_manifest_or_default(&cwd)?;
+    let project_name = manifest.name.as_deref().unwrap_or("(unnamed)");
+
     // Catalog discovery walks up for the workspace yaml and also pulls
     // from package.json's `workspaces.catalog` / `pnpm.catalog`, so
     // `aube install` run from a monorepo subpackage still sees the root
     // workspace's catalog. See `discover_catalogs` for the precedence
     // order.
     let workspace_catalogs = super::discover_catalogs(&cwd)?;
-    let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
     let packument_cache_dir =
         super::resolved_cache_dir_with_ctx(&cwd, &settings_ctx).join("packuments-v1");
     let explicit_store_dir_override = has_explicit_store_dir_override(&opts.cli_flags);

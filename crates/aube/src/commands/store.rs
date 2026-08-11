@@ -56,7 +56,8 @@ pub enum StoreCommand {
     /// project node_modules directories, manifests, or lockfiles.
     ///
     /// It removes global virtual-store graph entries not referenced by any
-    /// registered project, then prunes content-store files.
+    /// registered project, except legacy entries preserved for older checkouts.
+    /// It then prunes content-store files.
     ///
     /// On reflink filesystems such as APFS or btrfs, link counts cannot prove
     /// project reachability, so content-store pruning relies on cached package
@@ -265,15 +266,17 @@ fn visit_indices_in_dir(
 fn prune(args: PruneArgs) -> miette::Result<()> {
     let store = open_store()?;
     let removed_gvs = super::gvs_registry::prune(&store.virtual_store_dir(), args.dry_run)?;
-    let gvs_verb = if args.dry_run {
-        "Would prune"
-    } else {
-        "Pruned"
-    };
-    eprintln!(
-        "{gvs_verb} {} from the global virtual store",
-        pluralizer::pluralize("package", removed_gvs as isize, true)
-    );
+    if removed_gvs > 0 {
+        let gvs_verb = if args.dry_run {
+            "Would prune"
+        } else {
+            "Pruned"
+        };
+        eprintln!(
+            "{gvs_verb} {} from the global virtual store",
+            pluralizer::pluralize("package", removed_gvs as isize, true)
+        );
+    }
     let root = store.root().to_path_buf();
     if !root.exists() {
         eprintln!("Store is empty: nothing to prune");

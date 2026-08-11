@@ -3,6 +3,7 @@
 setup() {
 	load 'test_helper/common_setup'
 	_common_setup
+	export AUBE_GLOBAL_VIRTUAL_STORE_DIR="$TEST_TEMP_DIR/global-virtual-store"
 }
 
 teardown() {
@@ -207,7 +208,7 @@ JSON
 	run bash -c 'cd project && aube install'
 	assert_success
 
-	gvs="$HOME/.cache/aube/virtual-store"
+	gvs="$AUBE_GLOBAL_VIRTUAL_STORE_DIR"
 	assert_dir_exists "$gvs"
 	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
 	# Simulate upgrading from aube before project registration existed. A warm
@@ -215,6 +216,7 @@ JSON
 	rm -rf "$gvs/.projects"
 	run bash -c 'cd project && aube install'
 	assert_success
+	assert_output --partial "Already up to date"
 	assert_dir_exists "$gvs/.projects"
 	rm -rf project
 

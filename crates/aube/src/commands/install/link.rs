@@ -314,6 +314,10 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             return Err(error).into_diagnostic().wrap_err(context);
         }
     };
+    if linker.uses_global_virtual_store() {
+        super::super::gvs_registry::register_project(&store.virtual_store_dir(), cwd, aube_dir)
+            .wrap_err("failed to record project entries in the global virtual store")?;
+    }
     tracing::debug!(
         "phase:link {:.1?} ({} files)",
         phase_start.elapsed(),

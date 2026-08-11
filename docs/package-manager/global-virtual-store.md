@@ -58,7 +58,7 @@ every checkout.
 
 ## Cleanup
 
-Run `aube store prune` to remove graph entries no registered project references.
+Run `aube store prune` to remove graph entries that are not referenced by any registered project.
 Each global-virtual-store install registers its project, and pruning removes
 records for projects that no longer exist before sweeping unreachable entries.
 On upgrade, entries that predate the project registry are preserved because
