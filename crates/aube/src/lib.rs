@@ -833,7 +833,8 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             .wrap_err_with(|| format!("failed to change directory to {}", dir.display()))?;
     }
 
-    if cli.workspace_root {
+    let print_top_level_version = should_print_top_level_version(&cli);
+    if cli.workspace_root && !print_top_level_version {
         let start = std::env::current_dir()
             .into_diagnostic()
             .wrap_err("failed to read current dir")?;
@@ -850,7 +851,24 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
     let effective_level = resolve_loglevel(&cli, settings.loglevel.as_deref());
     init_logging(&cli, effective_level);
 
-    if should_print_top_level_version(&cli) {
+    // `--silent` suppresses non-error stderr output from every command,
+    // including the ~230 direct `eprintln!` calls in command bodies. The
+    // guard restores fd 2 on drop (before main returns), so miette still
+    // prints error reports to the real stderr. We also register the
+    // saved fd with aube-scripts so child processes spawned via
+    // `aube_scripts::child_stderr()` (lifecycle scripts, `aube run`,
+    // `aube exec`, `aube dlx`) keep writing to the real terminal — only
+    // aube's own output is silenced, matching pnpm `--loglevel silent`.
+    // Install it before self-version handling, which can emit download
+    // progress even for a top-level version request.
+    let _silent_guard = matches!(effective_level, LogLevel::Silent)
+        .then(SilentStderrGuard::install)
+        .flatten();
+    if let Some(ref guard) = _silent_guard {
+        aube_scripts::set_saved_stderr_fd(guard.saved);
+    }
+
+    if print_top_level_version {
         self_version::maybe_switch(&settings).await?;
         println!("{}", crate::version::VERSION_LONG.as_str());
         let cwd =
@@ -868,21 +886,6 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         }
     }
     raise_nofile_limit();
-
-    // `--silent` suppresses non-error stderr output from every command,
-    // including the ~230 direct `eprintln!` calls in command bodies. The
-    // guard restores fd 2 on drop (before main returns), so miette still
-    // prints error reports to the real stderr. We also register the
-    // saved fd with aube-scripts so child processes spawned via
-    // `aube_scripts::child_stderr()` (lifecycle scripts, `aube run`,
-    // `aube exec`, `aube dlx`) keep writing to the real terminal — only
-    // aube's own output is silenced, matching `pnpm --loglevel silent`.
-    let _silent_guard = matches!(effective_level, LogLevel::Silent)
-        .then(SilentStderrGuard::install)
-        .flatten();
-    if let Some(ref guard) = _silent_guard {
-        aube_scripts::set_saved_stderr_fd(guard.saved);
-    }
 
     commands::set_skip_auto_install_on_package_manager_mismatch(false);
     if command_needs_package_manager_guard(cli.command.as_ref()) {

@@ -4,6 +4,8 @@
 # pinned aube. Hermetic — pinned "versions" are fabricated shell
 # scripts in the mise installs dir, so no downloads happen.
 
+bats_require_minimum_version 1.5.0
+
 setup() {
 	load 'test_helper/common_setup'
 	_common_setup
@@ -151,6 +153,38 @@ _running_version() {
 	run aube --version
 	assert_success
 	assert_output --partial "$(_running_version)"
+}
+
+@test "version flag skips workspace-root discovery outside a workspace" {
+	run aube --version --workspace-root
+	assert_success
+	assert_output --partial "$(_running_version)"
+}
+
+@test "silent version switch suppresses progress output" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "t",
+		  "version": "0.0.0",
+		  "devEngines": { "packageManager": { "name": "aube", "version": "9.8.7", "onFail": "download" } }
+		}
+	JSON
+	echo "runtime-installer=mise" >.npmrc
+	mkdir -p "$TEST_TEMP_DIR/stubbin"
+	cat >"$TEST_TEMP_DIR/stubbin/mise" <<-STUB
+		#!/bin/sh
+		dir="$XDG_DATA_HOME/mise/installs/aube/9.8.7"
+		mkdir -p "\$dir"
+		for bin in aube aubr aubx; do
+			printf '#!/bin/sh\necho "FAKE-AUBE 9.8.7 args: \$*"\n' >"\$dir/\$bin"
+			chmod +x "\$dir/\$bin"
+		done
+	STUB
+	chmod +x "$TEST_TEMP_DIR/stubbin/mise"
+	PATH="$TEST_TEMP_DIR/stubbin:$PATH" run --separate-stderr aube --version --silent
+	assert_success
+	assert_output --partial "FAKE-AUBE 9.8.7"
+	[ -z "$stderr" ]
 }
 
 @test "onFail=warn keeps the running aube" {
