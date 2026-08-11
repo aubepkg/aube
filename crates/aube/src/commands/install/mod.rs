@@ -565,7 +565,18 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         && let Some(total) =
             try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))?
     {
-        super::gvs_registry::register_fast_path_project(&cwd)?;
+        let files = crate::commands::FileSources::load(&cwd);
+        let raw_workspace = aube_manifest::workspace::load_raw(&cwd)
+            .into_diagnostic()
+            .wrap_err("failed to load workspace config")?;
+        let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+        let store = super::open_store_with_ctx(&cwd, &settings_ctx)?;
+        let aube_dir = super::resolve_virtual_store_dir(&settings_ctx, &cwd);
+        super::gvs_registry::register_fast_path_project(
+            &store.virtual_store_dir(),
+            &cwd,
+            &aube_dir,
+        )?;
         control::complete(total);
         return Ok(());
     }

@@ -147,14 +147,16 @@ fn project_record_path(projects_dir: &Path, project_dir: &Path) -> PathBuf {
     projects_dir.join(format!("{key}.json"))
 }
 
-pub(crate) fn register_fast_path_project(project_dir: &Path) -> miette::Result<()> {
-    let global_virtual_store = super::global_virtual_store_dir(project_dir);
-    let aube_dir = super::resolve_virtual_store_dir_for_cwd(project_dir);
-    if !project_links_into(&aube_dir, &global_virtual_store)? {
+pub(crate) fn register_fast_path_project(
+    global_virtual_store: &Path,
+    project_dir: &Path,
+    aube_dir: &Path,
+) -> miette::Result<()> {
+    if !project_links_into(aube_dir, global_virtual_store)? {
         return Ok(());
     }
-    let _lock = lock_for_install(&global_virtual_store)?;
-    register_project(&global_virtual_store, project_dir, &aube_dir)
+    let _lock = lock_for_install(global_virtual_store)?;
+    register_project(global_virtual_store, project_dir, aube_dir)
 }
 
 pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Result<usize> {
@@ -162,28 +164,43 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
         return Ok(0);
     }
     let _lock = lock_for_prune(global_virtual_store)?;
+    let legacy_snapshot_existed = global_virtual_store.join(LEGACY_ENTRIES_FILE).exists();
     let mut reachable = preserve_legacy_entries(global_virtual_store, dry_run)?;
     let projects_dir = global_virtual_store.join(PROJECTS_DIR);
     if !projects_dir.exists() {
-        eprintln!("No registered projects for global virtual store");
-        return Ok(0);
+        let has_untracked_entries = graph_entries(global_virtual_store)?
+            .into_iter()
+            .any(|name| !reachable.contains(&name));
+        if legacy_snapshot_existed && has_untracked_entries {
+            return Err(miette!(
+                code = aube_codes::errors::ERR_AUBE_GVS_PRUNE_FAILED,
+                "global virtual store project registry {} is missing while untracked entries exist\nhelp: run {} in active projects before pruning again",
+                projects_dir.display(),
+                aube_util::cmd("install")
+            ));
+        }
+        if !dry_run {
+            std::fs::create_dir_all(&projects_dir).map_err(|e| registry_error(&projects_dir, e))?;
+        }
     }
 
-    for entry in read_dir(&projects_dir)? {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let bytes = std::fs::read(&path).map_err(|e| prune_error(&path, e))?;
-        let project: RegisteredProject =
-            serde_json::from_slice(&bytes).map_err(|e| invalid_registry_error(&path, e))?;
-        if !project.project_dir.exists() || !project.aube_dir.exists() {
-            if !dry_run {
-                std::fs::remove_file(&path).map_err(|e| prune_error(&path, e))?;
+    if projects_dir.exists() {
+        for entry in read_dir(&projects_dir)? {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
             }
-            continue;
+            let bytes = std::fs::read(&path).map_err(|e| prune_error(&path, e))?;
+            let project: RegisteredProject =
+                serde_json::from_slice(&bytes).map_err(|e| invalid_registry_error(&path, e))?;
+            if !project.project_dir.exists() || !project.aube_dir.exists() {
+                if !dry_run {
+                    std::fs::remove_file(&path).map_err(|e| prune_error(&path, e))?;
+                }
+                continue;
+            }
+            mark_project_entries(global_virtual_store, &project.aube_dir, &mut reachable)?;
         }
-        mark_project_entries(global_virtual_store, &project.aube_dir, &mut reachable)?;
     }
 
     let mut removed = 0;
@@ -435,6 +452,38 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn first_prune_initializes_a_missing_registry_without_sweeping_legacy_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let gvs = tmp.path().join("virtual-store");
+        let legacy = gvs.join("legacy@1.0.0-deadbeefdeadbeef");
+        std::fs::create_dir_all(&legacy).expect("legacy entry should be created");
+
+        assert_eq!(
+            prune(&gvs, false).expect("migration prune should succeed"),
+            0
+        );
+        assert!(legacy.exists(), "legacy entry must survive migration");
+        assert!(gvs.join(LEGACY_ENTRIES_FILE).exists());
+        assert!(gvs.join(PROJECTS_DIR).exists());
+    }
+
+    #[test]
+    fn prune_fails_closed_when_an_initialized_registry_disappears() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let gvs = tmp.path().join("virtual-store");
+        drop(lock_for_install(&gvs).expect("legacy snapshot should initialize"));
+        let untracked = gvs.join("untracked@1.0.0-deadbeefdeadbeef");
+        std::fs::create_dir_all(&untracked).expect("untracked entry should be created");
+
+        let error = prune(&gvs, false).expect_err("missing registry must fail closed");
+        assert!(
+            error.to_string().contains("project registry"),
+            "unexpected error: {error}"
+        );
+        assert!(untracked.exists(), "failed prune must not delete entries");
     }
 
     #[test]
