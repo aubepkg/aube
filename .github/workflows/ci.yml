@@ -62,8 +62,8 @@ jobs:
 
   # Qualify mise's experimental Rust action cache against the production
   # service without replacing Namespace's cache yet. Pull requests can read
-  # jdx/aube but must not write; main uses the same job to seed verified
-  # entries for subsequent qualification runs.
+  # jdx/aube but must not write. Pull requests start with empty local state and
+  # must restore entries previously seeded by main; main can seed a cold cache.
   cache-qualification:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: namespace-profile-endev-linux-amd64
@@ -140,8 +140,24 @@ jobs:
           set -o pipefail
           log="$RUNNER_TEMP/mise-cache-qualification.log"
           mise run cache:qualify 2>&1 | tee "$log"
-          cargo clean --target-dir "$CARGO_TARGET_DIR"
-          mise run cache:qualify 2>&1 | tee -a "$log"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            remote_summary=$(grep -Eo \
+              'Action cache: [0-9]+ hits, [0-9]+ misses, [0-9]+ prefetched; [^,]+ downloaded,' \
+              "$log" | tail -n 1 || true)
+            if [[ ! "$remote_summary" =~ ^Action\ cache:\ [0-9]+\ hits,\ [0-9]+\ misses,\ ([0-9]+)\ prefetched\;\ (.+)\ downloaded,$ ]]; then
+              echo "::error::mise did not report Rust remote action-cache results"
+              exit 1
+            fi
+            prefetched=${BASH_REMATCH[1]}
+            downloaded=${BASH_REMATCH[2]}
+            if (( prefetched == 0 )) || [[ "$downloaded" == "0 B" ]]; then
+              echo "::error::Rust remote action cache reported $prefetched prefetched actions and $downloaded downloaded"
+              exit 1
+            fi
+          else
+            cargo clean --target-dir "$CARGO_TARGET_DIR"
+            mise run cache:qualify 2>&1 | tee -a "$log"
+          fi
           summary=$(grep -Eo \
             'Action cache qualification: [0-9]+ verified, [0-9]+ diverged' \
             "$log" | tail -n 1 || true)
