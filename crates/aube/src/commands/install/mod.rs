@@ -957,9 +957,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     let _gvs_lock = planned_gvs
         .then(|| super::gvs_registry::lock_for_install(&store.virtual_store_dir()))
         .transpose()?;
-    if planned_gvs {
-        super::gvs_registry::initialize_for_install(&store.virtual_store_dir())?;
-    }
     // Pre-create all 256 two-char shard directories in the CAS root.
     // `import_bytes` is called once per stored file (~7.5k for a medium
     // install) and previously did `mkdirp(parent)` per call — a stat

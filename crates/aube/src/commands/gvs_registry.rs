@@ -52,6 +52,25 @@ fn open_lock(global_virtual_store: &Path) -> miette::Result<std::fs::File> {
 
 pub(crate) fn lock_for_install(global_virtual_store: &Path) -> miette::Result<GvsLock> {
     let file = open_lock(global_virtual_store)?;
+    if !global_virtual_store.join(LEGACY_ENTRIES_FILE).exists() {
+        file.lock().map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_GVS_PRUNE_FAILED,
+                "failed to lock global virtual store {} for initialization: {e}",
+                global_virtual_store.display()
+            )
+        })?;
+        // Re-check under the exclusive lock: another installer may have
+        // initialized the snapshot while this process was waiting.
+        preserve_legacy_entries(global_virtual_store, false)?;
+        file.unlock().map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_GVS_PRUNE_FAILED,
+                "failed to unlock global virtual store {} after initialization: {e}",
+                global_virtual_store.display()
+            )
+        })?;
+    }
     file.lock_shared().map_err(|e| {
         miette!(
             code = aube_codes::errors::ERR_AUBE_GVS_PRUNE_FAILED,
@@ -74,10 +93,6 @@ fn lock_for_prune(global_virtual_store: &Path) -> miette::Result<GvsLock> {
     Ok(GvsLock(file))
 }
 
-pub(crate) fn initialize_for_install(global_virtual_store: &Path) -> miette::Result<()> {
-    preserve_legacy_entries(global_virtual_store, false).map(|_| ())
-}
-
 pub(crate) fn register_project(
     global_virtual_store: &Path,
     project_dir: &Path,
@@ -85,7 +100,6 @@ pub(crate) fn register_project(
 ) -> miette::Result<()> {
     std::fs::create_dir_all(global_virtual_store)
         .map_err(|e| registry_error(global_virtual_store, e))?;
-    preserve_legacy_entries(global_virtual_store, false)?;
     let projects_dir = global_virtual_store.join(PROJECTS_DIR);
     std::fs::create_dir_all(&projects_dir).map_err(|e| registry_error(&projects_dir, e))?;
     let project_dir = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.into());
@@ -94,7 +108,6 @@ pub(crate) fn register_project(
     } else {
         project_dir.join(aube_dir)
     };
-    let key = blake3::hash(project_dir.as_os_str().as_encoded_bytes()).to_hex();
     let record = RegisteredProject {
         project_dir,
         aube_dir,
@@ -105,8 +118,33 @@ pub(crate) fn register_project(
             "failed to encode global virtual store project registry entry: {e}"
         )
     })?;
-    aube_util::fs_atomic::atomic_write(&projects_dir.join(format!("{key}.json")), &bytes)
-        .map_err(|e| registry_error(&projects_dir, e))
+    aube_util::fs_atomic::atomic_write(
+        &project_record_path(&projects_dir, &record.project_dir),
+        &bytes,
+    )
+    .map_err(|e| registry_error(&projects_dir, e))
+}
+
+pub(crate) fn unregister_if_unreferenced(
+    global_virtual_store: &Path,
+    project_dir: &Path,
+    aube_dir: &Path,
+) -> miette::Result<()> {
+    if project_links_into(aube_dir, global_virtual_store)? {
+        return Ok(());
+    }
+    let project_dir = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.into());
+    let path = project_record_path(&global_virtual_store.join(PROJECTS_DIR), &project_dir);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(registry_error(&path, e)),
+    }
+}
+
+fn project_record_path(projects_dir: &Path, project_dir: &Path) -> PathBuf {
+    let key = blake3::hash(project_dir.as_os_str().as_encoded_bytes()).to_hex();
+    projects_dir.join(format!("{key}.json"))
 }
 
 pub(crate) fn register_fast_path_project(project_dir: &Path) -> miette::Result<()> {
@@ -325,7 +363,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir should be created");
         let gvs = tmp.path().join("virtual-store");
         std::fs::create_dir_all(&gvs).expect("global virtual store should be created");
-        initialize_for_install(&gvs).expect("legacy snapshot should initialize");
+        drop(lock_for_install(&gvs).expect("legacy snapshot should initialize"));
         let project = tmp.path().join("project");
         let aube_dir = project.join("node_modules/.aube");
         let live = gvs.join("live@1.0.0-deadbeefdeadbeef");
@@ -351,6 +389,7 @@ mod tests {
         let gvs = tmp.path().join("virtual-store");
         let legacy = gvs.join("legacy@1.0.0-deadbeefdeadbeef");
         std::fs::create_dir_all(&legacy).expect("legacy entry should be created");
+        drop(lock_for_install(&gvs).expect("legacy snapshot should initialize"));
 
         let project = tmp.path().join("project");
         let aube_dir = project.join("node_modules/.aube");
@@ -365,11 +404,45 @@ mod tests {
     }
 
     #[test]
+    fn failed_link_cleanup_removes_only_unreferenced_records() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let gvs = tmp.path().join("virtual-store");
+        drop(lock_for_install(&gvs).expect("legacy snapshot should initialize"));
+        let project = tmp.path().join("project");
+        let aube_dir = project.join("node_modules/.aube");
+        std::fs::create_dir_all(&aube_dir).expect("project virtual store should be created");
+        register_project(&gvs, &project, &aube_dir).expect("project should register");
+
+        unregister_if_unreferenced(&gvs, &project, &aube_dir)
+            .expect("empty project record should be removed");
+        assert_eq!(
+            std::fs::read_dir(gvs.join(PROJECTS_DIR))
+                .expect("registry should be readable")
+                .count(),
+            0
+        );
+
+        let live = gvs.join("live@1.0.0-deadbeefdeadbeef");
+        std::fs::create_dir_all(&live).expect("live entry should be created");
+        std::os::unix::fs::symlink(&live, aube_dir.join("live@1.0.0"))
+            .expect("project link should be created");
+        register_project(&gvs, &project, &aube_dir).expect("project should register again");
+        unregister_if_unreferenced(&gvs, &project, &aube_dir)
+            .expect("referenced project record should be preserved");
+        assert_eq!(
+            std::fs::read_dir(gvs.join(PROJECTS_DIR))
+                .expect("registry should be readable")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn prune_drops_registry_records_for_deleted_projects() {
         let tmp = tempfile::tempdir().expect("tempdir should be created");
         let gvs = tmp.path().join("virtual-store");
         std::fs::create_dir_all(&gvs).expect("global virtual store should be created");
-        initialize_for_install(&gvs).expect("legacy snapshot should initialize");
+        drop(lock_for_install(&gvs).expect("legacy snapshot should initialize"));
         let project = tmp.path().join("project");
         let aube_dir = project.join("node_modules/.aube");
         std::fs::create_dir_all(&aube_dir).expect("project virtual store should be created");

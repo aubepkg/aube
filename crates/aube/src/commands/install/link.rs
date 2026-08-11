@@ -293,13 +293,26 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
     let stats = if has_workspace {
         linker
             .link_workspace(cwd, graph_for_link, package_indices, ws_dirs)
-            .into_diagnostic()
-            .wrap_err("failed to link workspace node_modules")?
+            .map_err(|error| (error, "failed to link workspace node_modules"))
     } else {
         linker
             .link_all(cwd, graph_for_link, package_indices)
-            .into_diagnostic()
-            .wrap_err("failed to link node_modules")?
+            .map_err(|error| (error, "failed to link node_modules"))
+    };
+    let stats = match stats {
+        Ok(stats) => stats,
+        Err((error, context)) => {
+            if linker.uses_global_virtual_store()
+                && let Err(cleanup_error) = super::super::gvs_registry::unregister_if_unreferenced(
+                    &store.virtual_store_dir(),
+                    cwd,
+                    aube_dir,
+                )
+            {
+                tracing::debug!("failed to clean up GVS project registration: {cleanup_error}");
+            }
+            return Err(error).into_diagnostic().wrap_err(context);
+        }
     };
     tracing::debug!(
         "phase:link {:.1?} ({} files)",
