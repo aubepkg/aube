@@ -112,7 +112,8 @@ _running_version() {
 	refute_output --partial "FAKE-AUBE"
 }
 
-@test "onFail=error fails when the pinned version is not installed" {
+@test "onFail=error rejects a mismatch even when the pinned version is installed" {
+	_fab_aube "$(_mise_aube_dir)" "9.8.7"
 	cat >package.json <<-'JSON'
 		{
 		  "name": "t",
@@ -122,7 +123,34 @@ _running_version() {
 	JSON
 	run aube install
 	assert_failure
-	assert_output --partial "aube@9.8.7 is not installed"
+	assert_output --partial 'onFail is "error"'
+	refute_output --partial "FAKE-AUBE"
+}
+
+@test "onFail=error rejects a mismatch for the version flag" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "t",
+		  "version": "0.0.0",
+		  "devEngines": { "packageManager": { "name": "aube", "version": "9.8.7", "onFail": "error" } }
+		}
+	JSON
+	run aube --version
+	assert_failure
+	assert_output --partial 'onFail is "error"'
+}
+
+@test "non-aube devEngines package manager does not guard the version flag" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "t",
+		  "version": "0.0.0",
+		  "devEngines": { "packageManager": { "name": "pnpm", "version": "999.0.0", "onFail": "error" } }
+		}
+	JSON
+	run aube --version
+	assert_success
+	assert_output --partial "$(_running_version)"
 }
 
 @test "onFail=warn keeps the running aube" {

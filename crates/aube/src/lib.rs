@@ -833,14 +833,6 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             .wrap_err_with(|| format!("failed to change directory to {}", dir.display()))?;
     }
 
-    if should_print_top_level_version(&cli) {
-        println!("{}", crate::version::VERSION_LONG.as_str());
-        let cwd =
-            crate::dirs::project_root_or_cwd().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        update_check::check_and_notify(&cwd).await;
-        return Ok(None);
-    }
-
     if cli.workspace_root {
         let start = std::env::current_dir()
             .into_diagnostic()
@@ -857,6 +849,16 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
     let settings = load_startup_settings()?;
     let effective_level = resolve_loglevel(&cli, settings.loglevel.as_deref());
     init_logging(&cli, effective_level);
+
+    if should_print_top_level_version(&cli) {
+        self_version::maybe_switch(&settings).await?;
+        println!("{}", crate::version::VERSION_LONG.as_str());
+        let cwd =
+            crate::dirs::project_root_or_cwd().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        update_check::check_and_notify(&cwd).await;
+        return Ok(None);
+    }
+
     // Skip diag init for the `diag` subcommand itself — the analyzer
     // would otherwise truncate the JSONL file it's about to read.
     if !matches!(cli.command, Some(Commands::Diag(_))) {
