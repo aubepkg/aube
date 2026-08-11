@@ -191,8 +191,18 @@ fn should_remove_side_effects_tmp_dir(entry: &std::fs::DirEntry) -> bool {
 }
 
 pub(crate) fn side_effects_cache_root(store: &aube_store::Store) -> std::path::PathBuf {
-    store
-        .virtual_store_dir()
+    let virtual_store_dir = store.virtual_store_dir();
+    let virtual_store_root = if virtual_store_dir.file_name()
+        == Some(std::ffi::OsStr::new(
+            crate::commands::settings_context::GVS_REGISTRY_NAMESPACE_VERSION,
+        )) {
+        virtual_store_dir
+            .parent()
+            .unwrap_or(virtual_store_dir.as_path())
+    } else {
+        virtual_store_dir.as_path()
+    };
+    virtual_store_root
         .parent()
         .unwrap_or_else(|| store.root())
         .join("side-effects-v1")
@@ -424,6 +434,19 @@ fn create_symlink_like(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_root_is_a_sibling_of_the_versioned_virtual_store_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache");
+        let store = aube_store::Store::with_dirs(dir.path().join("store/files"), cache_dir.clone())
+            .with_virtual_store_dir(cache_dir.join("virtual-store/v1"));
+
+        assert_eq!(
+            side_effects_cache_root(&store),
+            cache_dir.join("side-effects-v1")
+        );
+    }
 
     #[test]
     fn cache_path_segregates_by_platform() {

@@ -110,7 +110,7 @@ JSON
 
 	run sed -n 's/.*"virtualStoreDir": "\(.*\)".*/\1/p' node_modules/.modules.yaml
 	assert_success
-	[[ "$output" == /*/aube/virtual-store ]]
+	[[ "$output" == /*/aube/virtual-store/v1 ]]
 
 	rm node_modules/.modules.yaml
 	run aube install
@@ -139,7 +139,7 @@ JSON
 
 	run sed -n 's/.*"virtualStoreDir": "\(.*\)".*/\1/p' packages/app/node_modules/.modules.yaml
 	assert_success
-	[[ "$output" == /*/aube/virtual-store ]]
+	[[ "$output" == /*/aube/virtual-store/v1 ]]
 }
 
 @test "disableGlobalVirtualStoreForPackages=[] opts out of the auto-disable" {

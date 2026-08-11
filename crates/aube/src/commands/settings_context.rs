@@ -17,6 +17,7 @@ use super::{CatalogMap, config, install};
 static GLOBAL_FROZEN: OnceLock<Option<install::FrozenOverride>> = OnceLock::new();
 static GLOBAL_VIRTUAL_STORE: OnceLock<install::GlobalVirtualStoreFlags> = OnceLock::new();
 static SKIP_AUTO_INSTALL_ON_PM_MISMATCH: AtomicBool = AtomicBool::new(false);
+pub(crate) const GVS_REGISTRY_NAMESPACE_VERSION: &str = "v1";
 
 /// Process-wide registry override from the top-level `--registry=<url>`
 /// flag. Applied in `make_client` (and any direct `NpmConfig::load`
@@ -577,8 +578,7 @@ pub(crate) fn global_virtual_store_dir_with_ctx(
         .unwrap_or_else(|| {
             resolved_cache_dir_with_ctx(cwd, ctx).join(aube_store::VIRTUAL_STORE_SUBDIR)
         });
-    const REGISTRY_NAMESPACE_VERSION: &str = "v1";
-    root.join(REGISTRY_NAMESPACE_VERSION)
+    root.join(GVS_REGISTRY_NAMESPACE_VERSION)
 }
 
 /// Resolve the `virtualStoreDirMaxLength` setting, falling back to the
