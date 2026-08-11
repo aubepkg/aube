@@ -30,6 +30,17 @@ The practical upshot:
 - Only `aube import` (or manually removing the existing lockfile) switches a
   project onto `aube-lock.yaml`.
 
+To create `pnpm-lock.yaml` when a project has no lockfile yet, set the
+creation default in `.npmrc`:
+
+```ini
+default-lockfile-format=pnpm
+```
+
+This also preserves the pnpm filename after `aube clean --lockfile` followed
+by `aube install`. The setting does not convert an existing lockfile; the
+existing supported file still wins.
+
 Keep the original lockfile while its package manager is still part of the
 workflow — aube and the original package manager both read from and write to
 the same file without conflicting.

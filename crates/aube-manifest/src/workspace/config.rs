@@ -200,6 +200,11 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub lockfile: Option<bool>,
 
+    /// Format to create when no supported lockfile exists: "aube" or
+    /// "pnpm". Existing lockfiles still take precedence.
+    #[serde(default)]
+    pub default_lockfile_format: Option<String>,
+
     /// Directory the lockfile is written to and read from. When unset
     /// or equal to the project root, behaves as before. When set to a
     /// different directory, the project becomes an importer keyed by

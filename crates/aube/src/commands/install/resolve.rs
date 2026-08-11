@@ -59,7 +59,7 @@ pub(super) struct LockfileOnlyInput<'a> {
     pub lockfile_pre_parse: Option<&'a (LockfileGraph, LockfileKind)>,
     pub lockfile_conflict_marker_warning_emitted: bool,
     pub existing_for_resolver: Option<&'a LockfileGraph>,
-    pub source_kind_before: Option<LockfileKind>,
+    pub write_kind: LockfileKind,
     pub lockfile_enabled: bool,
     pub lockfile_include_tarball_url: bool,
     pub shared_workspace_lockfile: bool,
@@ -93,7 +93,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         lockfile_pre_parse,
         lockfile_conflict_marker_warning_emitted,
         existing_for_resolver,
-        source_kind_before,
+        write_kind,
         lockfile_enabled,
         lockfile_include_tarball_url,
         shared_workspace_lockfile,
@@ -249,11 +249,9 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             // `lockfile=false` collapses to `None` so the resolver
             // doesn't waste a fetch widening a lockfile that will
             // never be written. With lockfiles enabled, a missing
-            // `source_kind_before` means "we'll create the default
-            // aube-lock.yaml", so the aube-native wide default
-            // applies.
-            target_lockfile_kind: lockfile_enabled
-                .then(|| source_kind_before.unwrap_or(LockfileKind::Aube)),
+            // With lockfiles enabled, `write_kind` is either the existing
+            // format or the configured creation default.
+            target_lockfile_kind: lockfile_enabled.then_some(write_kind),
             dependency_policy: Some(dependency_policy.clone()),
             cache_full_packuments: true,
             ignore_scripts,
@@ -298,7 +296,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             }
         }
     }
-    let lo_write_kind = source_kind_before.unwrap_or(LockfileKind::Aube);
+    let lo_write_kind = write_kind;
     if matches!(lo_write_kind, LockfileKind::Pnpm) {
         graph.patched_dependencies = crate::patches::read_patched_dependencies(cwd)?;
     }

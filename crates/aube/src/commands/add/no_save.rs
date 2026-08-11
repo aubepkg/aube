@@ -15,15 +15,14 @@ pub(super) struct Snapshot {
 /// Resolve the on-disk lockfile path that a normal `add` would write
 /// to in `project_dir`. Mirrors the `LockfileKind` -> filename mapping
 /// inside `aube_lockfile::write_lockfile_as` so the snapshot/restore
-/// path under `--no-save` lines up byte-for-byte with whatever
-/// `write_lockfile_preserving_existing` produces, including non-aube
+/// path under `--no-save` lines up byte-for-byte with the normal install
+/// write, including non-aube
 /// lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`,
 /// `bun.lock`, `npm-shrinkwrap.json`). When no lockfile exists yet the
-/// resolver falls back to aube's own format.
+/// resolver falls back to the configured default format.
 pub(super) fn lockfile_path_for_project(project_dir: &Path) -> PathBuf {
     use aube_lockfile::LockfileKind;
-    let kind =
-        aube_lockfile::detect_existing_lockfile_kind(project_dir).unwrap_or(LockfileKind::Aube);
+    let kind = crate::commands::lockfile_kind_for_write(project_dir);
     let filename = match kind {
         LockfileKind::Aube => aube_lockfile::aube_lock_filename(project_dir),
         LockfileKind::Pnpm => aube_lockfile::pnpm_lock_filename(project_dir),

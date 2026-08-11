@@ -1488,6 +1488,29 @@ examples = [
   "echo 'lockfile=false' >> .npmrc && aube install",
 ]
 
+[defaultLockfileFormat]
+description = "Lockfile format to create when a project has no supported lockfile."
+type = '"aube" | "pnpm"'
+default = '"aube"'
+docs = """
+Selects the lockfile format aube creates when none of the supported
+lockfiles already exists. The default, `aube`, writes `aube-lock.yaml`;
+`pnpm` writes `pnpm-lock.yaml` for projects that need pnpm-compatible
+tooling to recognize the generated lockfile.
+
+This is only a creation default. An existing supported lockfile still
+wins, so setting `defaultLockfileFormat=pnpm` does not convert or leave a
+second lockfile alongside an existing `aube-lock.yaml`, `package-lock.json`,
+`yarn.lock`, or `bun.lock`.
+"""
+sources.cli = []
+sources.env = ["AUBE_DEFAULT_LOCKFILE_FORMAT"]
+sources.npmrc = ["default-lockfile-format", "defaultLockfileFormat"]
+sources.workspaceYaml = ["defaultLockfileFormat"]
+examples = [
+  "echo 'default-lockfile-format=pnpm' >> .npmrc && aube install",
+]
+
 [lockfileDir]
 description = "Directory the lockfile is written to and read from."
 type = "path"

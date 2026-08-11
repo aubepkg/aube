@@ -98,13 +98,15 @@ pub(crate) fn prepare_resolved_graph_for_lockfile_write(graph: &mut aube_lockfil
     aube_resolver::platform::mark_transitive_peer_dependencies(graph);
 }
 
-/// Write lockfile preserving existing format and log the file name.
+/// Write a lockfile preserving an existing format, or using the configured
+/// creation default, and log the file name.
 pub(crate) fn write_and_log_lockfile(
     cwd: &Path,
     graph: &aube_lockfile::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<PathBuf> {
-    let written_path = aube_lockfile::write_lockfile_preserving_existing(cwd, graph, manifest)
+    let kind = super::lockfile_kind_for_write(cwd);
+    let written_path = aube_lockfile::write_lockfile_as(cwd, graph, manifest, kind)
         .into_diagnostic()
         .wrap_err("failed to write lockfile")?;
     eprintln!(

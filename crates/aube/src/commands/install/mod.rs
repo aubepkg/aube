@@ -814,6 +814,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     } else {
         None
     };
+    let write_kind =
+        source_kind_before.unwrap_or_else(|| super::default_lockfile_kind(&settings_ctx));
 
     // Hand any parseable lockfile to the resolver as `existing` so
     // unchanged specs reuse their already-pinned versions and only
@@ -918,7 +920,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             lockfile_pre_parse: lockfile_pre_parse.as_ref(),
             lockfile_conflict_marker_warning_emitted,
             existing_for_resolver,
-            source_kind_before,
+            write_kind,
             lockfile_enabled,
             lockfile_include_tarball_url,
             shared_workspace_lockfile,
@@ -1360,8 +1362,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                     // `None` only when no lockfile will be written, so
                     // widening to every common platform doesn't happen
                     // just to be discarded.
-                    target_lockfile_kind: lockfile_enabled
-                        .then(|| source_kind_before.unwrap_or(aube_lockfile::LockfileKind::Aube)),
+                    target_lockfile_kind: lockfile_enabled.then_some(write_kind),
                     dependency_policy: Some(dependency_policy.clone()),
                     cache_full_packuments: true,
                     ignore_scripts: opts.ignore_scripts,
@@ -1892,7 +1893,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             // deleted patch from the stale lockfile is neither read during
             // materialization nor written back. This also prevents pnpm 11's
             // hash-only scalar entries from being mistaken for file paths.
-            if matches!(source_kind_before, Some(aube_lockfile::LockfileKind::Pnpm)) {
+            if matches!(write_kind, aube_lockfile::LockfileKind::Pnpm) {
                 graph.patched_dependencies = crate::patches::read_patched_dependencies(&cwd)?;
             }
             tracing::debug!("Resolved {} packages", graph.packages.len());
@@ -2050,11 +2051,9 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             let mut indices = remap_indices_to_contextualized(&canonical_indices, &graph);
             apply_computed_integrities(&mut graph, &computed_integrities);
 
-            // Write the lockfile in whatever format the project was
-            // already using. If no lockfile existed, create aube's
-            // default `aube-lock.yaml`. Skipped entirely when
-            // `lockfile=false`.
-            let write_kind = source_kind_before.unwrap_or(aube_lockfile::LockfileKind::Aube);
+            // Write the lockfile in whatever format the project was already
+            // using, or the configured creation default when none existed.
+            // Skipped entirely when `lockfile=false`.
             if lockfile_enabled {
                 // When `lockfileIncludeTarballUrl=true`, record the
                 // registry tarball URL on every registry-sourced

@@ -348,6 +348,31 @@ pub(crate) fn with_settings_ctx_and_cli<T>(
     f(&ctx)
 }
 
+/// Resolve the format to create when a project has no supported lockfile.
+/// Existing lockfiles always win; this only replaces the historical Aube
+/// fallback for new or deliberately cleaned projects.
+pub(crate) fn default_lockfile_kind(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> aube_lockfile::LockfileKind {
+    match aube_settings::resolved::default_lockfile_format(ctx) {
+        aube_settings::resolved::DefaultLockfileFormat::Aube => aube_lockfile::LockfileKind::Aube,
+        aube_settings::resolved::DefaultLockfileFormat::Pnpm => aube_lockfile::LockfileKind::Pnpm,
+    }
+}
+
+/// Pick the lockfile format a mutating command should write: preserve an
+/// existing supported file, otherwise honor `defaultLockfileFormat`.
+pub(crate) fn lockfile_kind_for_write_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> aube_lockfile::LockfileKind {
+    aube_lockfile::detect_existing_lockfile_kind(cwd).unwrap_or_else(|| default_lockfile_kind(ctx))
+}
+
+pub(crate) fn lockfile_kind_for_write(cwd: &std::path::Path) -> aube_lockfile::LockfileKind {
+    with_settings_ctx(cwd, |ctx| lockfile_kind_for_write_with_ctx(cwd, ctx))
+}
+
 /// Build a registry client configured from .npmrc files in the project directory.
 ///
 /// Also resolves the `fetch*` settings (timeout + retries + backoff)
@@ -445,10 +470,7 @@ pub(crate) fn build_resolver(
     // cross-platform widening rules — native package-manager lockfiles
     // that record per-package platform metadata keep optional natives for
     // every platform, while formats without that metadata stay host-only.
-    let target_lockfile_kind = Some(
-        aube_lockfile::detect_existing_lockfile_kind(cwd)
-            .unwrap_or(aube_lockfile::LockfileKind::Aube),
-    );
+    let target_lockfile_kind = Some(lockfile_kind_for_write_with_ctx(cwd, &ctx));
     install::configure_resolver(
         aube_resolver::Resolver::new(std::sync::Arc::new(make_client(cwd))),
         cwd,

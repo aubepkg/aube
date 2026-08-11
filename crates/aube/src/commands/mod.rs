@@ -136,11 +136,12 @@ pub(crate) use project_lock::take_install_project_lock;
 pub(crate) use project_lock::take_project_lock;
 pub(crate) use script_settings::{configure_script_settings, configure_script_settings_for_cwd};
 pub(crate) use settings_context::{
-    FileSources, GlobalOutputFlags, build_resolver, chained_frozen_mode,
+    FileSources, GlobalOutputFlags, build_resolver, chained_frozen_mode, default_lockfile_kind,
     ensure_registry_auth_for_package, expand_setting_path, global_frozen_override,
     global_output_flags, global_virtual_store_dir, global_virtual_store_dir_with_ctx,
-    global_virtual_store_flags, has_embedder_store_override, load_npm_config, make_client,
-    open_store, open_store_with_ctx, packument_cache_dir, packument_cache_dir_for_cwd,
+    global_virtual_store_flags, has_embedder_store_override, load_npm_config,
+    lockfile_kind_for_write, lockfile_kind_for_write_with_ctx, make_client, open_store,
+    open_store_with_ctx, packument_cache_dir, packument_cache_dir_for_cwd,
     packument_full_cache_dir, packument_full_cache_dir_for_cwd, project_modules_dir,
     resolve_fetch_policy, resolve_modules_dir_name_for_cwd, resolve_virtual_store_dir,
     resolve_virtual_store_dir_for_cwd, resolve_virtual_store_dir_max_length,

@@ -72,6 +72,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`maxsockets`](#setting-maxsockets) | `int` | Maximum concurrent connections per origin. |
 | [`strictSsl`](#setting-strictssl) | `bool` | Validate SSL certificates for HTTPS requests. |
 | [`lockfile`](#setting-lockfile) | `bool` | Read and generate aube-lock.yaml. |
+| [`defaultLockfileFormat`](#setting-defaultlockfileformat) | `"aube" \| "pnpm"` | Lockfile format to create when a project has no supported lockfile. |
 | [`lockfileDir`](#setting-lockfiledir) | `path` | Directory the lockfile is written to and read from. |
 | [`preferFrozenLockfile`](#setting-preferfrozenlockfile) | `bool` | Perform a headless install if the lockfile already satisfies package.json. |
 | [`lockfileIncludeTarballUrl`](#setting-lockfileincludetarballurl) | `bool` | Add the full tarball URL to each lockfile entry. |
@@ -1513,6 +1514,30 @@ combined with `lockfile=false` is rejected as a contradiction.
 Examples:
 
 - `echo 'lockfile=false' >> .npmrc && aube install`
+
+### `defaultLockfileFormat` {#setting-defaultlockfileformat}
+
+Lockfile format to create when a project has no supported lockfile.
+
+- Type: `"aube" | "pnpm"`
+- Default: `"aube"`
+- Environment: `AUBE_DEFAULT_LOCKFILE_FORMAT`
+- .npmrc keys: `default-lockfile-format`, `defaultLockfileFormat`
+- Workspace YAML keys: `defaultLockfileFormat`
+
+Selects the lockfile format aube creates when none of the supported
+lockfiles already exists. The default, `aube`, writes `aube-lock.yaml`;
+`pnpm` writes `pnpm-lock.yaml` for projects that need pnpm-compatible
+tooling to recognize the generated lockfile.
+
+This is only a creation default. An existing supported lockfile still
+wins, so setting `defaultLockfileFormat=pnpm` does not convert or leave a
+second lockfile alongside an existing `aube-lock.yaml`, `package-lock.json`,
+`yarn.lock`, or `bun.lock`.
+
+Examples:
+
+- `echo 'default-lockfile-format=pnpm' >> .npmrc && aube install`
 
 ### `lockfileDir` {#setting-lockfiledir}
 

@@ -508,13 +508,13 @@ pub async fn run(
     // project state stays exactly as they wrote it.
     //
     // The lockfile path matches whatever
-    // `write_lockfile_preserving_existing` will write to: detect the
-    // existing lockfile kind on disk (pnpm, npm, yarn, bun, …) so a
+    // the install pipeline will write to: detect the existing lockfile
+    // kind on disk (pnpm, npm, yarn, bun, …) so a
     // project using `pnpm-lock.yaml` doesn't end up with both a
     // restored aube-lock.yaml *and* a leftover modified pnpm-lock.yaml.
-    // When no lockfile exists yet the resolver falls back to aube's
-    // own format, so we target that path and the restore step deletes
-    // it (since `lockfile_bytes` is `None`).
+    // When no lockfile exists yet the resolver uses the configured
+    // creation default, so we target that path and the restore step
+    // deletes it (since `lockfile_bytes` is `None`).
     let lockfile_path = no_save::lockfile_path_for_project(&cwd);
     let no_save_snapshot = if no_save {
         Some(no_save::snapshot_manifest_and_lockfile(

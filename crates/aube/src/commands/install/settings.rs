@@ -601,14 +601,13 @@ pub(crate) async fn finalize_lockfile_graph(
     ignore_pnpmfile: bool,
     cli_pnpmfile: Option<&std::path::Path>,
 ) -> miette::Result<()> {
-    let write_kind = aube_lockfile::detect_existing_lockfile_kind(cwd)
-        .unwrap_or(aube_lockfile::LockfileKind::Aube);
     let files = crate::commands::FileSources::load(cwd);
     let (ws_config, raw_workspace) = aube_manifest::workspace::load_both(cwd)
         .into_diagnostic()
         .wrap_err("failed to load workspace config for lockfile finalization")?;
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
+    let write_kind = crate::commands::lockfile_kind_for_write_with_ctx(cwd, &ctx);
     let local_pnpmfile = if ignore_pnpmfile {
         None
     } else {
