@@ -286,6 +286,10 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
     if !patches_for_linker.is_empty() {
         linker = linker.with_patches(patches_for_linker);
     }
+    if linker.uses_global_virtual_store() {
+        super::super::gvs_registry::register_project(&store.virtual_store_dir(), cwd, aube_dir)
+            .wrap_err("failed to register project with global virtual store")?;
+    }
     let stats = if has_workspace {
         linker
             .link_workspace(cwd, graph_for_link, package_indices, ws_dirs)
@@ -297,11 +301,6 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             .into_diagnostic()
             .wrap_err("failed to link node_modules")?
     };
-    if linker.uses_global_virtual_store() && !virtual_store_only {
-        super::super::gvs_registry::register_project(&store.virtual_store_dir(), cwd, aube_dir)
-            .wrap_err("failed to register project with global virtual store")?;
-    }
-
     tracing::debug!(
         "phase:link {:.1?} ({} files)",
         phase_start.elapsed(),
