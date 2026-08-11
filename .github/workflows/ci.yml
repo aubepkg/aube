@@ -173,6 +173,32 @@ jobs:
             exit 1
           fi
 
+  # Hosted-runner control for the common archive-cache setup. The first PR run
+  # seeds an isolated pull-request cache; rerunning the job measures the warm
+  # restore without relying on Namespace's attached NVMe cache volume.
+  github-cache:
+    name: GitHub Actions Rust cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning] PR entries are scoped to the PR and consumed only by this unprivileged job
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: aube-rust-${{ runner.os }}-v1-${{ hashFiles('Cargo.lock') }}
+      - run: mise run build
+
   # Linux-only test + lint + render + docs:build. Matches the
   # `linux / test` step in .buildkite/pipeline.sh. Split from `build` so
   # lint failures don't block the BATS jobs from starting against a
@@ -435,6 +461,7 @@ jobs:
     needs:
       - build
       - cache-qualification
+      - github-cache
       - test-linux
       - bats
       - bats-serial
