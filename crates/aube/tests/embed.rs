@@ -244,7 +244,7 @@ async fn facade_warm_install_registers_the_host_virtual_store() {
         .await
         .unwrap();
 
-    let projects_dir = host_cache.join("virtual-store/.projects");
+    let projects_dir = host_cache.join("virtual-store/v1/.projects");
     std::fs::remove_dir_all(&projects_dir).unwrap();
 
     let mut options = InstallOptions::new(project.path());

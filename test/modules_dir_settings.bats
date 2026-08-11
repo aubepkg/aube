@@ -100,8 +100,8 @@ teardown() {
 	assert [ ! -e node_modules/.bin ]
 	# The project still references GVS entries through `.aube`, so pruning
 	# must include it in reachability even without top-level links.
-	assert_dir_exists "$HOME/.cache/aube/virtual-store/.projects"
-	assert [ -n "$(find "$HOME/.cache/aube/virtual-store/.projects" -type f -name '*.json' -print -quit)" ]
+	assert_dir_exists "$HOME/.cache/aube/virtual-store/v1/.projects"
+	assert [ -n "$(find "$HOME/.cache/aube/virtual-store/v1/.projects" -type f -name '*.json' -print -quit)" ]
 }
 
 @test "virtualStoreOnly=false (default) writes the usual top-level symlinks" {

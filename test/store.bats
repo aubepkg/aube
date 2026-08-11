@@ -196,7 +196,7 @@ EOF
 	refute_output --partial "Pruned 0 files"
 }
 
-@test "aube store prune preserves stale entries that legacy projects may share" {
+@test "aube store prune removes entries from deleted registered projects" {
 	mkdir project
 	cat >project/package.json <<'JSON'
 {
@@ -208,11 +208,13 @@ JSON
 	run bash -c 'cd project && aube install'
 	assert_success
 
-	gvs="$AUBE_GLOBAL_VIRTUAL_STORE_DIR"
+	gvs="$AUBE_GLOBAL_VIRTUAL_STORE_DIR/v1"
+	legacy="$AUBE_GLOBAL_VIRTUAL_STORE_DIR/legacy@1.0.0-deadbeefdeadbeef"
+	mkdir -p "$legacy"
 	assert_dir_exists "$gvs"
 	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
-	# Simulate upgrading from aube before project registration existed. A warm
-	# install must register without forcing the linker to run again.
+	# A warm install must restore missing registration without forcing the
+	# linker to run again.
 	rm -rf "$gvs/.projects"
 	run bash -c 'cd project && aube install'
 	assert_success
@@ -222,14 +224,16 @@ JSON
 
 	run aube store prune --dry-run
 	assert_success
-	refute_output --partial "from the global virtual store"
+	assert_output --partial "Would prune"
+	assert_output --partial "from the global virtual store"
 	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
 
 	run aube store prune
 	assert_success
-	refute_output --partial "from the global virtual store"
-	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
+	assert_output --partial "from the global virtual store"
+	assert [ -z "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
 	assert [ -z "$(find "$gvs/.projects" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]
+	assert_dir_exists "$legacy"
 }
 
 @test "GVS registration failure does not report install success" {
@@ -244,9 +248,9 @@ JSON
 	run bash -c 'cd project && aube install'
 	assert_success
 
-	chmod a-w "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
+	chmod a-w "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/v1/.projects"
 	run bash -c 'cd project && aube install'
-	chmod u+w "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/.projects"
+	chmod u+w "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/v1/.projects"
 	assert_failure
 	refute_output --partial "Already up to date"
 }

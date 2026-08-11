@@ -56,8 +56,9 @@ pub enum StoreCommand {
     /// project node_modules directories, manifests, or lockfiles.
     ///
     /// It removes global virtual-store graph entries not referenced by any
-    /// registered project, except legacy entries preserved for older checkouts.
-    /// It then prunes content-store files.
+    /// registered project. Entries from older aube releases live outside the
+    /// registry-managed versioned namespace and are not touched. It then prunes
+    /// content-store files.
     ///
     /// On reflink filesystems such as APFS or btrfs, link counts cannot prove
     /// project reachability, so content-store pruning relies on cached package

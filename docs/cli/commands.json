@@ -11241,7 +11241,7 @@
             "effect": "write",
             "hide": false,
             "help": "Remove unreferenced packages from the global store",
-            "help_long": "Remove unreferenced packages from the global store.\n\nOperates on the store printed by `aube store path`; it does not touch project node_modules directories, manifests, or lockfiles.\n\nIt removes global virtual-store graph entries not referenced by any registered project, except legacy entries preserved for older checkouts. It then prunes content-store files.\n\nOn reflink filesystems such as APFS or btrfs, link counts cannot prove project reachability, so content-store pruning relies on cached package indexes. Global virtual-store reachability comes from project links.",
+            "help_long": "Remove unreferenced packages from the global store.\n\nOperates on the store printed by `aube store path`; it does not touch project node_modules directories, manifests, or lockfiles.\n\nIt removes global virtual-store graph entries not referenced by any registered project. Entries from older aube releases live outside the registry-managed versioned namespace and are not touched. It then prunes content-store files.\n\nOn reflink filesystems such as APFS or btrfs, link counts cannot prove project reachability, so content-store pruning relies on cached package indexes. Global virtual-store reachability comes from project links.",
             "name": "prune",
             "aliases": [],
             "hidden_aliases": [],

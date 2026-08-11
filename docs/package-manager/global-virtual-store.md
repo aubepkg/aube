@@ -8,9 +8,9 @@ This is separate from the global content store:
 - The **global content store** (`$XDG_DATA_HOME/aube/store/v1/`) stores
   package files by BLAKE3 hash. Every install uses it.
 - The **global virtual store**
-  (`<cacheDir>/virtual-store/`, defaulting to
-  `$XDG_CACHE_HOME/aube/virtual-store/`, then
-  `~/.cache/aube/virtual-store/`) stores package directory trees keyed by
+  (`<cacheDir>/virtual-store/v1/`, defaulting to
+  `$XDG_CACHE_HOME/aube/virtual-store/v1/`, then
+  `~/.cache/aube/virtual-store/v1/`) stores package directory trees keyed by
   dependency graph. Project `node_modules` entries symlink into it.
 
 ## Default behavior
@@ -45,11 +45,11 @@ shared cache. Each project points directly at that shared tree:
 ```text
 project-a/
   node_modules/
-    react -> <cacheDir>/virtual-store/react@18.2.0/<graph-hash>/node_modules/react
+    react -> <cacheDir>/virtual-store/v1/react@18.2.0/<graph-hash>/node_modules/react
 
 project-b/
   node_modules/
-    react -> <cacheDir>/virtual-store/react@18.2.0/<graph-hash>/node_modules/react
+    react -> <cacheDir>/virtual-store/v1/react@18.2.0/<graph-hash>/node_modules/react
 ```
 
 The global virtual store still imports package files from the global content

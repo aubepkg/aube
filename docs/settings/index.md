@@ -1215,7 +1215,9 @@ Location of the shared virtual store used by every project.
 Relocates the global virtual store — the shared tree of materialized
 package directories that `node_modules/.aube/<dep>` symlinks into when
 `enableGlobalVirtualStore` is on. Unset, it lives at
-`<cacheDir>/virtual-store/`.
+`<cacheDir>/virtual-store/`. Aube stores registry-managed entries in a
+versioned child directory below this root so older releases cannot share
+entries that a current `aube store prune` may remove.
 
 Set this when the global virtual store belongs somewhere other than
 the rest of the cache — typically to put it on the same volume as
