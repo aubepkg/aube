@@ -61,6 +61,7 @@ pub const ERR_AUBE_TARBALL_URL_MISMATCH: &str = "ERR_AUBE_TARBALL_URL_MISMATCH";
 pub const ERR_AUBE_NO_HOME: &str = "ERR_AUBE_NO_HOME";
 pub const ERR_AUBE_GIT_ERROR: &str = "ERR_AUBE_GIT_ERROR";
 pub const ERR_AUBE_STORE_INDEX_SCAN_FAILED: &str = "ERR_AUBE_STORE_INDEX_SCAN_FAILED";
+pub const ERR_AUBE_GVS_PRUNE_FAILED: &str = "ERR_AUBE_GVS_PRUNE_FAILED";
 
 // ── linker ──────────────────────────────────────────────────────────
 pub const ERR_AUBE_LINK_FAILED: &str = "ERR_AUBE_LINK_FAILED";
@@ -294,6 +295,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_STORE_INDEX_SCAN_FAILED,
         category: category::TARBALL_STORE,
         description: "A store maintenance command couldn't completely read or parse the cached package indexes.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_GVS_PRUNE_FAILED,
+        category: category::TARBALL_STORE,
+        description: "The global virtual store project registry or prune walk failed.",
         exit_code: None,
     },
     // Registry / network

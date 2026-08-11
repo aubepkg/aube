@@ -297,6 +297,10 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             .into_diagnostic()
             .wrap_err("failed to link node_modules")?
     };
+    if linker.uses_global_virtual_store() && !virtual_store_only {
+        super::super::gvs_registry::register_project(&store.virtual_store_dir(), cwd, aube_dir)
+            .wrap_err("failed to register project with global virtual store")?;
+    }
 
     tracing::debug!(
         "phase:link {:.1?} ({} files)",

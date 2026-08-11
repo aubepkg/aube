@@ -195,6 +195,40 @@ EOF
 	refute_output --partial "Pruned 0 files"
 }
 
+@test "aube store prune removes global virtual-store entries from deleted projects" {
+	mkdir project
+	cat >project/package.json <<'JSON'
+{
+  "name": "gvs-prune-project",
+  "version": "1.0.0",
+  "dependencies": { "is-odd": "3.0.1" }
+}
+JSON
+	run bash -c 'cd project && aube install'
+	assert_success
+
+	gvs="$HOME/.cache/aube/virtual-store"
+	assert_dir_exists "$gvs"
+	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
+	# Simulate upgrading from aube before project registration existed. A warm
+	# install must register without forcing the linker to run again.
+	rm -rf "$gvs/.projects"
+	run bash -c 'cd project && aube install'
+	assert_success
+	assert_dir_exists "$gvs/.projects"
+	rm -rf project
+
+	run aube store prune --dry-run
+	assert_success
+	assert_output --partial "Would prune"
+	assert [ -n "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
+
+	run aube store prune
+	assert_success
+	assert_output --partial "from the global virtual store"
+	assert [ -z "$(find "$gvs" -mindepth 1 -maxdepth 1 -type d ! -name node_modules ! -name '.*' -print -quit)" ]
+}
+
 @test "aube store prune --dry-run reports candidates without deleting them" {
 	run aube store add is-odd@3.0.1
 	assert_success

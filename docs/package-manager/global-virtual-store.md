@@ -56,6 +56,13 @@ The global virtual store still imports package files from the global content
 store. The win is that aube avoids rebuilding the same package directory tree in
 every checkout.
 
+## Cleanup
+
+Run `aube store prune` to remove graph entries no registered project references.
+Each global-virtual-store install registers its project, and pruning removes
+records for projects that no longer exist before sweeping unreachable entries.
+Use `aube store prune --dry-run` to report what would be removed.
+
 ## Package identity
 
 Entries are keyed by the resolved dependency graph, not just by package name and

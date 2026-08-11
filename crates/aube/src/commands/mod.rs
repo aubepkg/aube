@@ -28,6 +28,7 @@ pub mod exec;
 pub mod fetch;
 pub mod find_hash;
 pub mod global;
+pub(crate) mod gvs_registry;
 pub mod ignored_builds;
 pub mod import;
 pub mod init;

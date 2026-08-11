@@ -565,6 +565,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         && let Some(total) =
             try_install_fast_path(&cwd, &opts, mode, modules_cache_sweep_is_default(&cwd))?
     {
+        super::gvs_registry::register_fast_path_project(&cwd)?;
         control::complete(total);
         return Ok(());
     }
@@ -953,6 +954,9 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // 3. Parse or resolve lockfile, streaming tarball fetches during resolution
     let phase_start = std::time::Instant::now();
     let store = std::sync::Arc::new(super::open_store_with_ctx(&cwd, &settings_ctx)?);
+    let _gvs_lock = planned_gvs
+        .then(|| super::gvs_registry::lock_for_install(&store.virtual_store_dir()))
+        .transpose()?;
     // Pre-create all 256 two-char shard directories in the CAS root.
     // `import_bytes` is called once per stored file (~7.5k for a medium
     // install) and previously did `mkdirp(parent)` per call — a stat

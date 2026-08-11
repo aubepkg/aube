@@ -145,6 +145,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_GVS_PRUNE_FAILED",
+      "category": "Tarball / store",
+      "description": "The global virtual store project registry or prune walk failed.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_PACKAGE_NOT_FOUND",
       "category": "Registry / network",
       "description": "Registry returned 404 for the package name.",

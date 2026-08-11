@@ -12,14 +12,11 @@
 //! - `aube store add <pkg>…` — resolve each spec against the registry, fetch
 //!   the tarball, and import it into the global CAS. Pre-warms the store
 //!   without touching any project's `node_modules/`.
-//! - `aube store prune` — remove files from the store that have no remaining
-//!   hardlink references. This is a best-effort heuristic (the same one
-//!   pnpm uses on hardlink filesystems): on APFS/btrfs reflinks produce
-//!   independent inodes so the nlink count is always 1 and pruning there
-//!   can't safely tell referenced from unreferenced files; in that case we
-//!   fall back to removing only files that no cached package index in
-//!   `<store>/v1/index/` points at. `--dry-run` reports the same totals
-//!   without unlinking anything.
+//! - `aube store prune` — mark global virtual-store entries reachable from
+//!   registered projects, remove the rest, then remove unreferenced CAS files.
+//!   CAS pruning uses hardlink counts where available and cached package
+//!   indexes on reflink filesystems. `--dry-run` reports the same totals
+//!   without deleting anything.
 //! - `aube store status` — verify every file referenced by a cached package
 //!   index still exists in the store and its BLAKE3 hash matches. Exits 0
 //!   when everything is consistent, 1 when any corruption is found.
@@ -58,11 +55,12 @@ pub enum StoreCommand {
     /// Operates on the store printed by `aube store path`; it does not touch
     /// project node_modules directories, manifests, or lockfiles.
     ///
-    /// It keeps files referenced by cached package indexes and, on hardlink
-    /// filesystems, files that still have project hardlink references.
+    /// It removes global virtual-store graph entries not referenced by any
+    /// registered project, then prunes content-store files.
     ///
     /// On reflink filesystems such as APFS or btrfs, link counts cannot prove
-    /// project reachability, so pruning relies on cached package indexes.
+    /// project reachability, so content-store pruning relies on cached package
+    /// indexes. Global virtual-store reachability comes from project links.
     Prune(PruneArgs),
     /// Verify the store against cached package indexes.
     ///
@@ -266,6 +264,16 @@ fn visit_indices_in_dir(
 
 fn prune(args: PruneArgs) -> miette::Result<()> {
     let store = open_store()?;
+    let removed_gvs = super::gvs_registry::prune(&store.virtual_store_dir(), args.dry_run)?;
+    let gvs_verb = if args.dry_run {
+        "Would prune"
+    } else {
+        "Pruned"
+    };
+    eprintln!(
+        "{gvs_verb} {} from the global virtual store",
+        pluralizer::pluralize("package", removed_gvs as isize, true)
+    );
     let root = store.root().to_path_buf();
     if !root.exists() {
         eprintln!("Store is empty: nothing to prune");
