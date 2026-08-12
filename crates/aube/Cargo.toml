@@ -108,7 +108,14 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm",
 crossterm = { version = "0.29", optional = true }
 
 [features]
-default = ["mimalloc", "config-tui", "publish", "rustls", "hickory-dns"]
+default = [
+    "mimalloc",
+    "config-tui",
+    "publish",
+    "rustls",
+    "hickory-dns",
+    "workspace-yaml-preserve",
+]
 # Include the interactive `aube config tui` browser. Builds that want the
 # smallest dependency graph can disable default features and omit this.
 config-tui = ["dep:crossterm", "dep:ratatui"]
@@ -130,6 +137,9 @@ rustls = ["reqwest/rustls", "aube-registry/rustls", "aube-util/rustls"]
 # reqwest/hickory-dns directly — mirroring `rustls` — so the crate's own
 # reqwest clients keep it even if aube-registry's feature graph changes.
 hickory-dns = ["reqwest/hickory-dns", "aube-registry/hickory-dns"]
+# Preserve comments and formatting when commands mutate existing workspace
+# YAML. Embedders can omit this to avoid yamlpatch's tree-sitter dependencies.
+workspace-yaml-preserve = ["aube-manifest/workspace-yaml-preserve"]
 
 [dev-dependencies]
 clap-sort = "1"
