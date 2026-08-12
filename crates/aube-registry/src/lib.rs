@@ -740,6 +740,9 @@ pub enum Error {
     #[error("access entity not found: {0}")]
     #[diagnostic(code(ERR_AUBE_ACCESS_ENTITY_NOT_FOUND))]
     AccessEntityNotFound(String),
+    #[error("registry identity endpoint is unavailable")]
+    #[diagnostic(code(ERR_AUBE_REGISTRY_ERROR))]
+    AccessIdentityUnavailable,
     #[error("version not found: {0}@{1}")]
     #[diagnostic(code(ERR_AUBE_VERSION_NOT_FOUND))]
     VersionNotFound(String, String),

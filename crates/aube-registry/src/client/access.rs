@@ -10,6 +10,7 @@ struct AccessTarget<'a> {
 
 enum AccessNotFound<'a> {
     Entity(&'a str),
+    Identity,
     Package(&'a str),
 }
 
@@ -33,7 +34,7 @@ impl RegistryClient {
                         AccessTarget {
                             registry_url,
                             auth_package_name: None,
-                            not_found: None,
+                            not_found: Some(AccessNotFound::Identity),
                         },
                         None,
                         None,
@@ -290,6 +291,7 @@ impl RegistryClient {
                         AccessNotFound::Entity(name) => {
                             Error::AccessEntityNotFound(name.to_string())
                         }
+                        AccessNotFound::Identity => Error::AccessIdentityUnavailable,
                         AccessNotFound::Package(name) => Error::NotFound(name.to_string()),
                     });
                 }
@@ -437,6 +439,7 @@ mod tests {
                 ResponseTemplate::new(200)
                     .set_body_json(serde_json::json!({ "username": "alice" })),
             )
+            .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -445,6 +448,7 @@ mod tests {
                 ResponseTemplate::new(200)
                     .set_body_json(serde_json::json!({ "@alice/pkg": "read-write" })),
             )
+            .expect(1)
             .mount(&server)
             .await;
 
@@ -459,6 +463,26 @@ mod tests {
                 .expect("list current user's packages"),
             serde_json::json!({ "@alice/pkg": "read-write" })
         );
+    }
+
+    #[tokio::test]
+    async fn package_list_reports_an_unavailable_identity_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/-/whoami"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::from_config(NpmConfig {
+            registry: format!("{}/", server.uri()),
+            ..Default::default()
+        });
+        assert!(matches!(
+            client.access_list_packages(None).await,
+            Err(Error::AccessIdentityUnavailable)
+        ));
     }
 
     #[tokio::test]
