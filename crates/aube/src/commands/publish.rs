@@ -185,7 +185,12 @@ pub async fn run(
     let config = super::load_npm_config(&config_root);
     let policy = super::resolve_fetch_policy(&config_root);
     let client = RegistryClient::from_config_with_policy(config.clone(), policy);
-    let (archive, manifest) = read_publish_tarball(&source)?;
+    let tarball_path = source.clone();
+    let (archive, manifest) =
+        tokio::task::spawn_blocking(move || read_publish_tarball(&tarball_path))
+            .await
+            .into_diagnostic()
+            .wrap_err_with(|| format!("publish tarball task failed for {}", source.display()))??;
     let outcome = publish_tarball(
         archive,
         manifest,
