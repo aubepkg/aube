@@ -485,7 +485,7 @@ async fn publish_one(
     // opts out of both: it turns the skip into a PUT and suppresses
     // the single-package error, leaving the registry to decide whether
     // a republish is allowed (npm refuses, Verdaccio usually accepts).
-    let already_published = if args.force {
+    let already_published = if args.dry_run || args.force {
         false
     } else if target == initial_target {
         initial_already_published

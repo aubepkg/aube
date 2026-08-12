@@ -423,6 +423,9 @@ const existing = {
   versions: { '0.1.0': { name: 'publish-smoke', version: '0.1.0' } },
 };
 const server = http.createServer((req, res) => {
+  if (req.method === 'GET') {
+    fs.appendFileSync('publish-server-get.log', `${req.url}\n`);
+  }
   if (req.method === 'GET' && req.url === '/publish-smoke') {
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(existing));
@@ -749,9 +752,15 @@ m.version = '0.1.0-sha.abc123';
 fs.writeFileSync('package.json', JSON.stringify(m, null, 2));
 NODE
 
-	run bash -c "aube publish --dry-run --json --registry=https://r.example.com/ | jq -r '.version'"
+	_start_publish_server
+	port="$(cat publish-server-port)"
+	run bash -c "aube publish --dry-run --json --registry=http://127.0.0.1:${port}/ | jq -r '.version'"
+	rc=$status
+	_stop_publish_server
+	[ "$rc" -eq 0 ]
 	assert_success
 	assert_output "0.1.0-sha.abc123"
+	assert_not_exists publish-server-get.log
 }
 
 @test "aube publish --dry-run --json emits a pnpm-compatible object" {
