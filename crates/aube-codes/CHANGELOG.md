@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0](https://github.com/jdx/aube/compare/aube-codes-v1.38.1...aube-codes-v1.39.0) - 2026-08-12
+
+### Fixed
+
+- *(store)* prune unused global virtual store entries ([#1273](https://github.com/jdx/aube/pull/1273))
+
+### Other
+
+- refresh benchmarks for v1.38.1 ([#1257](https://github.com/jdx/aube/pull/1257))
+
 ## [1.38.1](https://github.com/jdx/aube/compare/aube-codes-v1.38.0...aube-codes-v1.38.1) - 2026-08-10
 
 ### Fixed

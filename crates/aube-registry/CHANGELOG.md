@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0](https://github.com/jdx/aube/compare/aube-registry-v1.38.1...aube-registry-v1.39.0) - 2026-08-12
+
+### Fixed
+
+- *(access)* resolve identity before listing own packages ([#1280](https://github.com/jdx/aube/pull/1280))
+
+### Other
+
+- refresh benchmarks for v1.38.1 ([#1257](https://github.com/jdx/aube/pull/1257))
+- *(deps)* simplify cargo version requirements ([#1254](https://github.com/jdx/aube/pull/1254))
+
 ## [1.38.1](https://github.com/jdx/aube/compare/aube-registry-v1.38.0...aube-registry-v1.38.1) - 2026-08-10
 
 ### Other

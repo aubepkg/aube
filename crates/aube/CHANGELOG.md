@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0](https://github.com/jdx/aube/compare/v1.38.1...v1.39.0) - 2026-08-12
+
+### Added
+
+- *(manifest)* make workspace yaml preservation optional ([#1278](https://github.com/jdx/aube/pull/1278))
+- *(lockfile)* add configurable creation format ([#1271](https://github.com/jdx/aube/pull/1271))
+
+### Fixed
+
+- *(store)* prune unused global virtual store entries ([#1273](https://github.com/jdx/aube/pull/1273))
+- *(runtime)* enforce aube devEngines version errors ([#1269](https://github.com/jdx/aube/pull/1269))
+
+### Other
+
+- refresh benchmarks for v1.38.1 ([#1257](https://github.com/jdx/aube/pull/1257))
+- *(deps)* simplify cargo version requirements ([#1254](https://github.com/jdx/aube/pull/1254))
+
 ## [1.38.1](https://github.com/jdx/aube/compare/v1.38.0...v1.38.1) - 2026-08-10
 
 ### Fixed
