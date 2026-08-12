@@ -417,10 +417,14 @@ fn test_parse_remote_tarball_from_declared_url() {
         .find(|dep| dep.name == "xlsx")
         .unwrap();
     let reparsed_pkg = &reparsed.packages[&reparsed_direct.dep_path];
-    assert!(matches!(
-        reparsed_pkg.local_source,
-        Some(LocalSource::RemoteTarball(_))
-    ));
+    let Some(LocalSource::RemoteTarball(reparsed_source)) = &reparsed_pkg.local_source else {
+        panic!(
+            "expected remote tarball source, got {:?}",
+            reparsed_pkg.local_source
+        );
+    };
+    assert_eq!(reparsed_source.url, url);
+    assert_eq!(reparsed_source.integrity, "sha512-sheetjs");
 }
 
 #[test]
