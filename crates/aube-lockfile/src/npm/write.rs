@@ -122,8 +122,9 @@ struct WriteNpmPeerDepMeta {
 ///  - Registry `resolved` tarball URLs are emitted when they were
 ///    present in the parsed graph. Graphs synthesized without
 ///    `tarball_url` fall back to npm's tolerated no-`resolved` form.
-///  - Non-git local source entries (`file:`, URL tarballs) aren't
-///    emitted yet. Git sources emit their pinned `resolved:` URL.
+///  - Path-backed local source entries (`file:`, `link:`) aren't
+///    emitted yet. Git and remote-tarball sources emit their pinned
+///    `resolved:` URL.
 ///    Workspace `link:` packages are emitted as importer entries plus
 ///    a root `node_modules/<name>` link record.
 pub fn write(
@@ -135,11 +136,12 @@ pub fn write(
     // lookups from parent deps resolve to one canonical entry even if
     // the graph has several contextualized variants.
     let mut canonical = crate::build_canonical_map(graph);
-    for pkg in graph
-        .packages
-        .values()
-        .filter(|pkg| matches!(pkg.local_source, Some(LocalSource::Git(_))))
-    {
+    for pkg in graph.packages.values().filter(|pkg| {
+        matches!(
+            pkg.local_source,
+            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+        )
+    }) {
         canonical
             .entry(super::canonical_key_from_dep_path(&pkg.dep_path))
             .or_insert(pkg);

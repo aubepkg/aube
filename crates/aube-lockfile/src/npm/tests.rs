@@ -351,6 +351,79 @@ fn test_parse_file_resolved_without_link() {
 }
 
 #[test]
+fn test_parse_remote_tarball_from_declared_url() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let url = "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz";
+    let content = format!(
+        r#"{{
+            "lockfileVersion": 3,
+            "packages": {{
+                "": {{
+                    "dependencies": {{
+                        "xlsx": "{url}",
+                        "semver": "^7.7.0"
+                    }}
+                }},
+                "node_modules/xlsx": {{
+                    "version": "0.20.3",
+                    "resolved": "{url}",
+                    "integrity": "sha512-sheetjs"
+                }},
+                "node_modules/semver": {{
+                    "version": "7.7.2",
+                    "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.2.tgz",
+                    "integrity": "sha512-semver"
+                }}
+            }}
+        }}"#
+    );
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let graph = parse(tmp.path()).unwrap();
+    let direct = graph.importers["."]
+        .iter()
+        .find(|dep| dep.name == "xlsx")
+        .unwrap();
+    let pkg = &graph.packages[&direct.dep_path];
+
+    assert_eq!(pkg.version, "0.20.3");
+    assert!(pkg.tarball_url.is_none());
+    let Some(LocalSource::RemoteTarball(source)) = &pkg.local_source else {
+        panic!("expected remote tarball source, got {:?}", pkg.local_source);
+    };
+    assert_eq!(source.url, url);
+    assert_eq!(source.integrity, "sha512-sheetjs");
+    let registry_pkg = graph
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "semver")
+        .unwrap();
+    assert!(registry_pkg.local_source.is_none());
+
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [
+            ("xlsx".to_string(), url.to_string()),
+            ("semver".to_string(), "^7.7.0".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+    let reparsed = parse(out.path()).unwrap();
+    let reparsed_direct = reparsed.importers["."]
+        .iter()
+        .find(|dep| dep.name == "xlsx")
+        .unwrap();
+    let reparsed_pkg = &reparsed.packages[&reparsed_direct.dep_path];
+    assert!(matches!(
+        reparsed_pkg.local_source,
+        Some(LocalSource::RemoteTarball(_))
+    ));
+}
+
+#[test]
 fn test_parse_scoped_package() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let content = r#"{
