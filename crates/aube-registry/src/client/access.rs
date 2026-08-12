@@ -20,40 +20,65 @@ impl RegistryClient {
         &self,
         entity: Option<&str>,
     ) -> Result<serde_json::Value, Error> {
-        let scope_package = entity
-            .filter(|entity| entity.starts_with('@'))
-            .map(|entity| {
-                let scope = entity.split_once(':').map_or(entity, |(scope, _)| scope);
-                format!("{scope}/access")
-            });
+        let identity;
+        let entity = match entity {
+            Some(entity) => entity,
+            None => {
+                let registry_url = self.config.registry.as_str();
+                let url = format!("{}/-/whoami", registry_url.trim_end_matches('/'));
+                let value = self
+                    .access_request(
+                        reqwest::Method::GET,
+                        &url,
+                        AccessTarget {
+                            registry_url,
+                            auth_package_name: None,
+                            not_found: None,
+                        },
+                        None,
+                        None,
+                    )
+                    .await?;
+                identity = value
+                    .get("username")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|username| !username.is_empty())
+                    .ok_or_else(|| {
+                        Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "registry returned an invalid identity",
+                        ))
+                    })?
+                    .to_string();
+                &identity
+            }
+        };
+        let scope_package = entity.starts_with('@').then(|| {
+            let scope = entity.split_once(':').map_or(entity, |(scope, _)| scope);
+            format!("{scope}/access")
+        });
         let registry_url = scope_package
             .as_deref()
             .map_or(self.config.registry.as_str(), |package| {
                 self.registry_url_for(package)
             });
-        let url = match entity {
-            None => format!(
-                "{}/-/package?format=cli",
-                registry_url.trim_end_matches('/')
+        let url = match entity.split_once(':') {
+            Some((scope, team)) => format!(
+                "{}/-/team/{}/{}/package?format=cli",
+                registry_url.trim_end_matches('/'),
+                encode_access_component(scope.trim_start_matches('@')),
+                encode_access_component(team),
             ),
-            Some(entity) => match entity.split_once(':') {
-                Some((scope, team)) => format!(
-                    "{}/-/team/{}/{}/package?format=cli",
-                    registry_url.trim_end_matches('/'),
-                    encode_access_component(scope.trim_start_matches('@')),
-                    encode_access_component(team),
-                ),
-                None if entity.starts_with('@') => format!(
-                    "{}/-/org/{}/package?format=cli",
-                    registry_url.trim_end_matches('/'),
-                    encode_access_component(entity.trim_start_matches('@')),
-                ),
-                None => format!(
-                    "{}/-/user/{}/package?format=cli",
-                    registry_url.trim_end_matches('/'),
-                    encode_access_component(entity),
-                ),
-            },
+            None if entity.starts_with('@') => format!(
+                "{}/-/org/{}/package?format=cli",
+                registry_url.trim_end_matches('/'),
+                encode_access_component(entity.trim_start_matches('@')),
+            ),
+            None => format!(
+                "{}/-/user/{}/package?format=cli",
+                registry_url.trim_end_matches('/'),
+                encode_access_component(entity),
+            ),
         };
         self.access_request(
             reqwest::Method::GET,
@@ -61,7 +86,7 @@ impl RegistryClient {
             AccessTarget {
                 registry_url,
                 auth_package_name: scope_package.as_deref(),
-                not_found: entity.map(AccessNotFound::Entity),
+                not_found: Some(AccessNotFound::Entity(entity)),
             },
             None,
             None,
@@ -401,6 +426,39 @@ mod tests {
             .access_list_packages(Some("@scope"))
             .await
             .expect("list organization packages");
+    }
+
+    #[tokio::test]
+    async fn package_list_resolves_the_current_user() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/-/whoami"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "username": "alice" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/-/user/alice/package"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "@alice/pkg": "read-write" })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = RegistryClient::from_config(NpmConfig {
+            registry: format!("{}/", server.uri()),
+            ..Default::default()
+        });
+        assert_eq!(
+            client
+                .access_list_packages(None)
+                .await
+                .expect("list current user's packages"),
+            serde_json::json!({ "@alice/pkg": "read-write" })
+        );
     }
 
     #[tokio::test]
