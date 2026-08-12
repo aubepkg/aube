@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 
 pub use crate::commands::add::AddToProjectOptions;
 pub use crate::commands::install::{
-    DepSelection, EmbedderInstallOverrides, FrozenMode, InstallControl, InstallEvent,
-    InstallOutputLevel, InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallPrompt,
-    InstallPromptFuture, InstallPromptHandler, InstallReporter,
+    DepSelection, EmbedderInstallOverrides, FrozenMode, INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT,
+    InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode, InstallPhase,
+    InstallProgressSnapshot, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
+    InstallReporter,
 };
 pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
 pub use aube_manifest::{Error as ManifestError, PackageJson, Workspaces};

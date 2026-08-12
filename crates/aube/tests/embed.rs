@@ -148,6 +148,15 @@ impl aube::embed::InstallReporter for CancelOnOutput {
     }
 }
 
+#[derive(Default)]
+struct RecordingReporter(Mutex<Vec<aube::embed::InstallEvent>>);
+
+impl aube::embed::InstallReporter for RecordingReporter {
+    fn report(&self, event: aube::embed::InstallEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
 #[tokio::test]
 async fn facade_initializes_host_and_runs_install() {
     initialize_test_host();
@@ -391,6 +400,49 @@ async fn facade_add_runs_root_dev_preinstall() {
             .join("embedded-dev-preinstall.marker")
             .is_file()
     );
+}
+
+#[tokio::test]
+async fn facade_routes_lifecycle_output_to_install_events() {
+    initialize_test_host();
+    let (workspace, app) = workspace_fixture();
+    std::fs::write(
+        workspace.path().join("package.json"),
+        r#"{
+  "private": true,
+  "scripts": {
+    "pnpm:devPreinstall": "printf lifecycle-stdout; printf lifecycle-stderr >&2"
+  }
+}
+"#,
+    )
+    .unwrap();
+    let reporter = Arc::new(RecordingReporter::default());
+
+    aube::embed::add(
+        &app,
+        &["library@workspace:*".to_string()],
+        aube::embed::AddToProjectOptions {
+            offline: true,
+            control: InstallControl::events(reporter.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let events = reporter.0.lock().unwrap();
+    for message in ["lifecycle-stdout", "lifecycle-stderr"] {
+        assert!(events.iter().any(|event| matches!(
+            event,
+            aube::embed::InstallEvent::Output {
+                level: aube::embed::InstallOutputLevel::Info,
+                code: Some(code),
+                message: event_message,
+            } if code == aube::embed::INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT
+                && event_message == message
+        )));
+    }
 }
 
 #[tokio::test]

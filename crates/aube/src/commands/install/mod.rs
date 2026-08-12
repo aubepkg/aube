@@ -36,9 +36,9 @@ use advisory::resolve_osv_routing_settings;
 pub use args::{EmbedderInstallOverrides, InstallArgs, InstallOptions};
 pub(crate) use bin_linking::{PkgJsonCache, link_dep_bins, materialized_pkg_dir};
 pub use control::{
-    InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode, InstallPhase,
-    InstallProgressSnapshot, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
-    InstallReporter,
+    INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,
+    InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallPrompt, InstallPromptFuture,
+    InstallPromptHandler, InstallReporter,
 };
 pub use dep_selection::DepSelection;
 pub(super) use fetch::fetch_packages;
@@ -552,6 +552,7 @@ async fn run_scoped(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Re
 
 async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
     opts.control.check_cancelled()?;
+    aube_scripts::set_output_reporter(opts.control.script_output_reporter());
     let mode = opts.mode;
     let start = std::time::Instant::now();
     let mut phase_timings = InstallPhaseTimings::from_env();
