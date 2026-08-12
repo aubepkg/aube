@@ -26,6 +26,9 @@ aube publish --access public
 aube publish --dry-run --json
 ```
 
+Publishing a prebuilt tarball skips lifecycle scripts and working-tree
+cleanliness checks. Publishing a package directory retains both behaviors.
+
 Workspace fanout uses the global workspace selectors:
 
 ```sh

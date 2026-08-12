@@ -403,6 +403,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_PUBLISH_SOURCE_NOT_FOUND",
+      "category": "Engine / CLI",
+      "description": "`aube publish` was given a package directory or tarball path that doesn't exist.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_SHIM_CREATE_FAILED",
       "category": "Engine / CLI",
       "description": "`aube activate <shell>` couldn't create or refresh an executable shim in aube's shim directory.",

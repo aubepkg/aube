@@ -100,6 +100,7 @@ pub const ERR_AUBE_REMOVE_PRIOR_INSTALL_DIR: &str = "ERR_AUBE_REMOVE_PRIOR_INSTA
 pub const ERR_AUBE_CONFIG_NESTED_AUBE_KEY: &str = "ERR_AUBE_CONFIG_NESTED_AUBE_KEY";
 pub const ERR_AUBE_CONFLICTING_BUILD_FLAGS: &str = "ERR_AUBE_CONFLICTING_BUILD_FLAGS";
 pub const ERR_AUBE_ACCESS_INVALID_ARGUMENT: &str = "ERR_AUBE_ACCESS_INVALID_ARGUMENT";
+pub const ERR_AUBE_PUBLISH_SOURCE_NOT_FOUND: &str = "ERR_AUBE_PUBLISH_SOURCE_NOT_FOUND";
 pub const ERR_AUBE_SHIM_CREATE_FAILED: &str = "ERR_AUBE_SHIM_CREATE_FAILED";
 pub const ERR_AUBE_SHIM_EXEC_FAILED: &str = "ERR_AUBE_SHIM_EXEC_FAILED";
 
@@ -558,6 +559,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_ACCESS_INVALID_ARGUMENT,
         category: category::ENGINE_CLI,
         description: "`aube access` received an invalid access setting, permission level, team, or package argument.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_PUBLISH_SOURCE_NOT_FOUND,
+        category: category::ENGINE_CLI,
+        description: "`aube publish` was given a package directory or tarball path that doesn't exist.",
         exit_code: None,
     },
     CodeMeta {

@@ -175,7 +175,7 @@ pub async fn run(
 
     if !source.is_file() {
         return Err(miette!(
-            code = aube_codes::errors::ERR_AUBE_TARBALL_EXTRACT,
+            code = aube_codes::errors::ERR_AUBE_PUBLISH_SOURCE_NOT_FOUND,
             "publish source does not exist: {}",
             source.display()
         ));
@@ -766,6 +766,12 @@ fn read_publish_tarball(path: &Path) -> miette::Result<(BuiltArchive, PackageJso
     let tarball = std::fs::read(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to read publish tarball {}", path.display()))?;
+    if !tarball.starts_with(&[0x1f, 0x8b]) {
+        return Err(invalid_publish_tarball(
+            path,
+            "input is not gzip-compressed",
+        ));
+    }
     let gz = flate2::read::GzDecoder::new(tarball.as_slice());
     let capped = gz.take(MAX_PUBLISH_TARBALL_DECOMPRESSED_BYTES);
     let mut archive = tar::Archive::new(capped);
@@ -1457,6 +1463,22 @@ mod tests {
     use super::*;
     use aube_registry::config::registry_uri_key_pub;
 
+    fn write_test_tarball(path: &Path, entries: &[(&str, &[u8])]) {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (entry_path, contents) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, entry_path, *contents)
+                .unwrap();
+        }
+        let encoder = builder.into_inner().unwrap();
+        std::fs::write(path, encoder.finish().unwrap()).unwrap();
+    }
+
     #[test]
     fn put_url_encodes_scoped_slash() {
         assert_eq!(
@@ -1867,6 +1889,49 @@ mod tests {
         assert_eq!(manifest.name.as_deref(), Some("prebuilt"));
         assert!(loaded.files.iter().any(|path| path == "package.json"));
         assert!(loaded.files.iter().any(|path| path == "index.js"));
+    }
+
+    #[test]
+    fn prebuilt_publish_archive_requires_top_level_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tarball_path = tmp.path().join("missing-manifest.tgz");
+        write_test_tarball(&tarball_path, &[("package/index.js", b"export {}")]);
+
+        let err = read_publish_tarball(&tarball_path).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("archive has no top-level package.json"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn prebuilt_publish_archive_requires_manifest_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tarball_path = tmp.path().join("missing-version.tgz");
+        write_test_tarball(
+            &tarball_path,
+            &[("package/package.json", br#"{"name":"missing-version"}"#)],
+        );
+
+        let err = read_publish_tarball(&tarball_path).unwrap_err();
+        assert!(
+            err.to_string().contains("package.json has no `version`"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn prebuilt_publish_archive_rejects_non_gzip_input() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tarball_path = tmp.path().join("plain-text.tgz");
+        std::fs::write(&tarball_path, "not a gzip archive").unwrap();
+
+        let err = read_publish_tarball(&tarball_path).unwrap_err();
+        assert!(
+            err.to_string().contains("input is not gzip-compressed"),
+            "{err:?}"
+        );
     }
 
     #[test]
