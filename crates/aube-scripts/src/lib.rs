@@ -28,7 +28,9 @@ use aube_manifest::PackageJson;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+
+const MAX_SCRIPT_OUTPUT_RECORD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptOutputStream {
@@ -1194,18 +1196,67 @@ async fn report_script_output<R: tokio::io::AsyncRead + Unpin>(
 ) -> std::io::Result<()> {
     let mut reader = tokio::io::BufReader::new(reader);
     let mut buffer = Vec::new();
+    let mut continued_record = false;
     loop {
         buffer.clear();
-        if reader.read_until(b'\n', &mut buffer).await? == 0 {
+        let mut limited = (&mut reader).take(MAX_SCRIPT_OUTPUT_RECORD_BYTES as u64);
+        if limited.read_until(b'\n', &mut buffer).await? == 0 {
             return Ok(());
         }
-        if buffer.last() == Some(&b'\n') {
+        let record_terminated = buffer.last() == Some(&b'\n');
+        if record_terminated {
             buffer.pop();
             if buffer.last() == Some(&b'\r') {
                 buffer.pop();
             }
         }
-        reporter.report(stream, String::from_utf8_lossy(&buffer).into_owned());
+        if !(continued_record && record_terminated && buffer.is_empty()) {
+            reporter.report(stream, String::from_utf8_lossy(&buffer).into_owned());
+        }
+        continued_record = !record_terminated;
+    }
+}
+
+#[cfg(test)]
+mod script_output_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[derive(Default)]
+    struct RecordingReporter(std::sync::Mutex<Vec<String>>);
+
+    impl ScriptOutputReporter for RecordingReporter {
+        fn report(&self, _stream: ScriptOutputStream, line: String) {
+            self.0.lock().unwrap().push(line);
+        }
+    }
+
+    #[tokio::test]
+    async fn unterminated_output_is_reported_in_bounded_chunks() {
+        let reporter = std::sync::Arc::new(RecordingReporter::default());
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let mut output = vec![b'x'; MAX_SCRIPT_OUTPUT_RECORD_BYTES * 2 + 17];
+        output.extend_from_slice(b"\nnext\n");
+        let write = tokio::spawn(async move {
+            writer.write_all(&output).await.unwrap();
+        });
+
+        report_script_output(reader, ScriptOutputStream::Stdout, reporter.clone())
+            .await
+            .unwrap();
+        write.await.unwrap();
+
+        let messages = reporter.0.lock().unwrap();
+        assert_eq!(
+            messages.iter().map(String::len).collect::<Vec<_>>(),
+            [
+                MAX_SCRIPT_OUTPUT_RECORD_BYTES,
+                MAX_SCRIPT_OUTPUT_RECORD_BYTES,
+                17,
+                4,
+            ]
+        );
+        assert_eq!(messages.last().map(String::as_str), Some("next"));
     }
 }
 

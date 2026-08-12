@@ -406,15 +406,16 @@ async fn facade_add_runs_root_dev_preinstall() {
 async fn facade_routes_lifecycle_output_to_install_events() {
     initialize_test_host();
     let (workspace, app) = workspace_fixture();
+    let manifest = serde_json::json!({
+        "private": true,
+        "scripts": {
+            "pnpm:devPreinstall":
+                "node -e \"process.stdout.write('lifecycle-stdout');process.stderr.write('lifecycle-stderr')\""
+        }
+    });
     std::fs::write(
         workspace.path().join("package.json"),
-        r#"{
-  "private": true,
-  "scripts": {
-    "pnpm:devPreinstall": "printf lifecycle-stdout; printf lifecycle-stderr >&2"
-  }
-}
-"#,
+        serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
     let reporter = Arc::new(RecordingReporter::default());
