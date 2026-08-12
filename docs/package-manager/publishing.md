@@ -20,6 +20,7 @@ entry always included.
 
 ```sh
 aube publish
+aube publish ./package-1.0.0.tgz
 aube publish --tag next
 aube publish --access public
 aube publish --dry-run --json
@@ -60,4 +61,3 @@ aube unpublish pkg --force
 ```
 
 Whole-package unpublish requires `--force`.
-

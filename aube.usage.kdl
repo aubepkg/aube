@@ -3051,6 +3051,7 @@ Use this npm registry URL for package metadata, tarballs, audit requests, dist-t
 """#
         arg <URL>
     }
+    arg "[TARBALL|FOLDER]" help="Tarball or package directory to publish (default: current package)" required=#false
 }
 cmd purge help="Alias for `clean` — remove `node_modules` across every workspace project" effect=write {
     long_help #"""

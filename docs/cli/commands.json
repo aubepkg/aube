@@ -8535,9 +8535,19 @@
         "full_cmd": [
           "publish"
         ],
-        "usage": "publish [FLAGS]",
+        "usage": "publish [FLAGS] [TARBALL|FOLDER]",
         "subcommands": {},
-        "args": [],
+        "args": [
+          {
+            "name": "TARBALL|FOLDER",
+            "usage": "[TARBALL|FOLDER]",
+            "help": "Tarball or package directory to publish (default: current package)",
+            "help_first_line": "Tarball or package directory to publish (default: current package)",
+            "required": false,
+            "double_dash": "Optional",
+            "hide": false
+          }
+        ],
         "flags": [
           {
             "name": "access",

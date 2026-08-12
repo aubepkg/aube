@@ -183,7 +183,7 @@ Run from the workspace root regardless of the current package
 - [`aube peers check [--json]`](/cli/peers/check.md)
 - [`aube prefix [-g --global]`](/cli/prefix.md)
 - [`aube prune [-P --prod] [--no-optional]`](/cli/prune.md)
-- [`aube publish [FLAGS]`](/cli/publish.md)
+- [`aube publish [FLAGS] [TARBALL|FOLDER]`](/cli/publish.md)
 - [`aube purge [-l --lockfile]`](/cli/purge.md)
 - [`aube query [FLAGS] <SELECTOR>`](/cli/query.md)
 - [`aube rebuild [PACKAGE]…`](/cli/rebuild.md)

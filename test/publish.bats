@@ -42,6 +42,29 @@ _write_publishable_pkg() {
 	assert_output --partial "index.js"
 }
 
+@test "aube publish accepts a prebuilt tarball outside a package directory" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "publish-smoke",
+		  "version": "0.1.0",
+		  "main": "index.js",
+		  "files": ["index.js"],
+		  "scripts": {"prepublishOnly": "touch publish-script-ran"}
+		}
+	EOF
+	echo 'module.exports = 1' >index.js
+	aube pack --ignore-scripts --pack-destination artifacts >/dev/null
+	rm package.json index.js
+
+	run aube publish ./artifacts/publish-smoke-0.1.0.tgz \
+		--dry-run --registry=https://r.example.com/
+	assert_success
+	assert_output --partial "publish-smoke@0.1.0"
+	assert_output --partial "package.json"
+	assert_output --partial "index.js"
+	refute [ -e publish-script-ran ]
+}
+
 @test "aube publish --dry-run URL-encodes scoped names" {
 	cat >package.json <<-'EOF'
 		{
