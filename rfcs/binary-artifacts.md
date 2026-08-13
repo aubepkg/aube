@@ -11,7 +11,7 @@
 
 Native tools and libraries should install as **declarative package artifacts selected by the package manager** — not execute code at install time to discover and fetch themselves, and not launch through a JavaScript trampoline on every invocation.
 
-This RFC proposes a new top-level manifest field, **`artifacts`**, which formalizes the platform-package pattern that esbuild, sharp, and the napi-rs ecosystem already hand-roll. A package declares named **slots**; each slot lists ordered **candidate packages** — ordinary registry packages — guarded by declarative platform predicates (`os`, `cpu`, `libc`, `napi`, `engines.node`), plus an explicit fallback tier. A conforming package manager evaluates the predicates at install time, locks *all* candidates so one lockfile serves every platform, and materializes exactly one:
+This RFC proposes a new top-level manifest field, **`artifacts`**, which formalizes the platform-package pattern that esbuild, sharp, and the napi-rs ecosystem already hand-roll. A package declares named **slots**; each slot lists ordered **candidate packages** — ordinary registry packages — guarded by declarative platform predicates (`os`, `cpu`, `libc`, `napi`, `engines.node`); a predicate-free final candidate serves as the fallback tier (WASM or pure JS). A conforming package manager evaluates the predicates at install time, locks *all* candidates so one lockfile serves every platform, and materializes exactly one:
 
 - under its real name (unchanged — it is an ordinary optional dependency),
 - at a **stable alias** (`_<slot>`) the parent package's code resolves at runtime — no try/catch over N package names, and
@@ -114,7 +114,7 @@ Rules:
 - **Unknown predicate keys cause the candidate to be treated as non-matching.** This is the forward-compatibility rule: when a future revision adds (say) `cpuFeatures`, an older conforming package manager skips those candidates and falls through to broader ones or to the fallback tier — degrading to a safe choice instead of selecting an artifact whose constraint it cannot check.
 - **First match wins, in author order.** There is no specificity scoring. Scoring would require five independent implementations to reproduce a ranking function bit-for-bit forever; author order moves the judgment to the publisher, who knows that the AVX-tuned build should be listed before the baseline build and native before WASM.
 - **CPU micro-architecture features (AVX2, NEON, …) are deliberately excluded from v1.** The install machine is not the run machine (an image built on an AVX-512 CI host may deploy anywhere); install-time selection on CPU features produces `SIGILL` in production. Feature dispatch belongs inside the artifact at runtime. The key `cpuFeatures` is reserved, and the unknown-key rule above means a future revision introducing it degrades safely on v1 implementations.
-- A predicate-free candidate is a catch-all, conventionally the **fallback tier** (WASM or pure JS) and conventionally listed last.
+- A predicate-free candidate is a catch-all: it always matches, so anything after it is unreachable. Listed last, it **is** the fallback tier (WASM or pure JS) — there is no separate fallback construct. A slot without a catch-all simply selects nothing on unmatched platforms, leaving the legacy surface in charge.
 
 #### Selection algorithm (normative sketch)
 
@@ -131,7 +131,7 @@ select(candidates, target):
     if engines.node present and
        not semver_satisfies(target.nodeVersion, range):          continue
     return candidate                        # first match wins
-  return NONE                               # → fallback / legacy surface
+  return NONE                               # → legacy surface (see onMissing)
 ```
 
 Selection never requires downloading a non-selected artifact: predicates live in the parent's manifest (already fetched), and locking candidates needs only registry metadata.
@@ -140,7 +140,7 @@ As a defense against copy-paste errors and name confusion, package managers **sh
 
 ### The `artifacts` field
 
-A new top-level manifest field declaring named **slots**. Each slot has ordered candidates, optional `bin` maps, and an explicit fallback. The parent package always installs as itself; the field tells the package manager which additional package to materialize and how to expose it.
+A new top-level manifest field declaring named **slots**. Each slot has ordered candidates and optional `bin` maps. The parent package always installs as itself; the field tells the package manager which additional package to materialize and how to expose it.
 
 ```jsonc
 {
@@ -159,9 +159,9 @@ A new top-level manifest field declaring named **slots**. Each slot has ordered 
         { "package": "@img/sharp-linux-x64",     "os": "linux",  "cpu": "x64", "libc": "glibc", "napi": 9 },
         { "package": "@img/sharp-linuxmusl-x64", "os": "linux",  "cpu": "x64", "libc": "musl",  "napi": 9 },
         { "package": "@img/sharp-darwin-arm64",  "os": "darwin", "cpu": "arm64", "napi": 9 },
-        { "package": "@img/sharp-win32-x64",     "os": "win32",  "cpu": "x64",   "napi": 9 }
+        { "package": "@img/sharp-win32-x64",     "os": "win32",  "cpu": "x64",   "napi": 9 },
+        { "package": "@img/sharp-wasm32@0.34.0" }     // predicate-free: the fallback tier
       ],
-      "fallback": { "package": "@img/sharp-wasm32@0.34.0" },
       "onMissing": "warn"                             // "warn" | "error" | "ignore"
     }
   }
@@ -173,8 +173,8 @@ Field rules:
 - **Slot names** match `[a-z0-9-]+` and derive the alias `_<slot>`.
 - **Candidate versions**: a bare `package` name takes its exact version from the parent's own `optionalDependencies` (or `dependencies`) entry, which **must** exist and **must** be exact. The `name@version` inline form pins candidates deliberately *not* listed in `optionalDependencies` — so legacy package managers never download them (see the Prisma example below). Ranges are a manifest error in either form.
 - **Candidate names must be scoped** (see *Security considerations*).
-- **`fallback`** is a predicate-free candidate tried when nothing matches, or the string `"builtin"` (the default): materialize nothing; the parent's own JS/bin is authoritative.
-- **`onMissing`** governs behavior when neither a candidate nor a declared fallback matches: `"warn"` (default), `"error"`, or `"ignore"`. With `"builtin"` the miss is silent by design — the legacy surface simply remains in charge.
+- **There is no separate fallback construct.** A predicate-free candidate listed last is the fallback tier; omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
+- **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). Unreachable when the slot ends in a predicate-free candidate.
 - Bin names in any slot **must** be a subset of the parent's top-level `bin` names — legacy installs always have the command, and no platform grows phantom commands.
 
 CLI example:
@@ -191,9 +191,9 @@ CLI example:
         { "package": "@esbuild/linux-x64",    "os": "linux",  "cpu": "x64" },
         { "package": "@esbuild/darwin-arm64", "os": "darwin", "cpu": "arm64" },
         { "package": "@esbuild/win32-x64",    "os": "win32",  "cpu": "x64",
-          "bin": { "esbuild": "esbuild.exe" } }       // per-candidate override
-      ],
-      "fallback": { "package": "esbuild-wasm@0.25.0", "bin": { "esbuild": "bin/esbuild" } }
+          "bin": { "esbuild": "esbuild.exe" } },      // per-candidate override
+        { "package": "esbuild-wasm@0.25.0" }          // fallback tier: WASM build, JS-shim bin
+      ]
     }
   }
 }
@@ -212,8 +212,8 @@ Binary-payload example (Prisma-style; note the inline pins keeping engines out o
         { "package": "@prisma/qe-linux-x64-glibc@6.5.0", "os": "linux", "cpu": "x64", "libc": "glibc" },
         { "package": "@prisma/qe-darwin-arm64@6.5.0",    "os": "darwin", "cpu": "arm64" }
       ],
-      "fallback": "builtin",                          // existing download-on-demand path remains
-      "onMissing": "ignore"
+      "onMissing": "ignore"                           // no catch-all: on a miss the parent's
+                                                      // existing download-on-demand path remains
     }
   }
 }
@@ -272,7 +272,7 @@ When a slot with `bin` selects an artifact:
 2. **Containment check**: the resolved path must not escape the artifact directory after symlink resolution (string containment, then `realpath` containment).
 3. The artifact bin **overrides** the parent's same-named top-level `bin` entry in every `.bin` directory the package manager populates.
 4. Unix: symlink/hardlink into `.bin`; ensure mode `0755`. Windows: the target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default.
-5. If the slot resolves to nothing (`"builtin"`), the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
+5. If the slot selects nothing (no candidate matched), the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
 
 ### Lockfiles
 
