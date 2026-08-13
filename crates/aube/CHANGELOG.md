@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.40.0](https://github.com/jdx/aube/compare/v1.39.0...v1.40.0) - 2026-08-13
+
+### Added
+
+- *(embed)* report lifecycle script output ([#1284](https://github.com/jdx/aube/pull/1284))
+
+### Other
+
+- refresh benchmarks for v1.39.0 ([#1285](https://github.com/jdx/aube/pull/1285))
+- Update Star History chart links with sealed tokens
+
 ## [1.39.0](https://github.com/jdx/aube/compare/v1.38.1...v1.39.0) - 2026-08-12
 
 ### Added
