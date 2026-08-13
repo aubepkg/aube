@@ -499,6 +499,69 @@ fn test_parse_multi_version_nested() {
     assert_eq!(root_bar.dep_path, "bar@2.0.0");
 }
 
+#[test]
+fn test_write_preserves_reachable_existing_root_version() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+        "lockfileVersion": 3,
+        "packages": {
+            "": { "dependencies": { "app": "1.0.0" } },
+            "node_modules/app": {
+                "version": "1.0.0",
+                "dependencies": { "a-newer": "1.0.0", "z-older": "1.0.0" }
+            },
+            "node_modules/a-newer": {
+                "version": "1.0.0",
+                "dependencies": { "shared": "^2.0.0" }
+            },
+            "node_modules/a-newer/node_modules/shared": { "version": "2.0.0" },
+            "node_modules/shared": { "version": "1.0.0" },
+            "node_modules/z-older": {
+                "version": "1.0.0",
+                "dependencies": { "shared": "^1.0.0" }
+            }
+        }
+    }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let mut graph = parse(tmp.path()).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("app".to_string(), "1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    write(tmp.path(), &graph, &manifest).unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
+    assert_eq!(json["packages"]["node_modules/shared"]["version"], "1.0.0");
+    assert_eq!(
+        json["packages"]["node_modules/a-newer/node_modules/shared"]["version"],
+        "2.0.0"
+    );
+
+    // Once the last edge to the preferred version disappears, it must not be
+    // kept merely because the previous lockfile had hoisted it.
+    graph
+        .packages
+        .get_mut("app@1.0.0")
+        .unwrap()
+        .dependencies
+        .remove("z-older");
+    graph.packages.remove("z-older@1.0.0");
+    write(tmp.path(), &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
+    assert_eq!(json["packages"]["node_modules/shared"]["version"], "2.0.0");
+    assert!(
+        json["packages"]
+            .get("node_modules/a-newer/node_modules/shared")
+            .is_none(),
+        "the stale preferred root must be replaced instead of nested"
+    );
+}
+
 /// Regression: a package reachable from both a dev root and
 /// an optional root (but *not* from any production root) must
 /// be written with `devOptional: true`, not with both `dev: true`
