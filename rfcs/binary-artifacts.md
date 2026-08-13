@@ -11,14 +11,15 @@
 
 Native tools and libraries should install as **declarative package artifacts selected by the package manager** — not execute code at install time to discover and fetch themselves, and not launch through a JavaScript trampoline on every invocation.
 
-This RFC specifies a small, shared **selection primitive**: a package declares an ordered list of candidate artifact packages — ordinary registry packages — each guarded by declarative platform predicates (`os`, `cpu`, `libc`, `napi`, `engines.node`). The package manager evaluates the predicates at install time, locks *all* candidates so one lockfile serves every platform, and materializes exactly one.
+This RFC proposes a new top-level manifest field, **`artifacts`**, which formalizes the platform-package pattern that esbuild, sharp, and the napi-rs ecosystem already hand-roll. A package declares named **slots**; each slot lists ordered **candidate packages** — ordinary registry packages — guarded by declarative platform predicates (`os`, `cpu`, `libc`, `napi`, `engines.node`), plus an explicit fallback tier. A conforming package manager evaluates the predicates at install time, locks *all* candidates so one lockfile serves every platform, and materializes exactly one:
 
-On top of that primitive, two consumption models are presented **co-equally** for the working group to decide between (or to combine):
+- under its real name (unchanged — it is an ordinary optional dependency),
+- at a **stable alias** (`_<slot>`) the parent package's code resolves at runtime — no try/catch over N package names, and
+- as **direct bin links** to the native executable, overriding the parent's legacy JS-shim bins — no Node.js trampoline at launch.
 
-- **Option A — whole-package substitution**: the selected artifact package is reified *under the parent package's name*, in the lineage of npm RFC [#519](https://github.com/npm/rfcs/pull/519) and Yarn's [Package Variants](https://github.com/yarnpkg/berry/issues/2751).
-- **Option B — artifact selection with a stable alias**: the parent package stays; the package manager links the selected artifact at a stable, unsquattable alias the parent's code and `bin` entries resolve through — formalizing what esbuild, sharp, and napi-rs hand-roll today.
+Package managers that predate the standard ignore the field and get today's working behavior; the legacy surface remains the authoritative fallback. No lifecycle scripts, no registry protocol changes, no Node.js resolver changes, no flag day.
 
-Both models satisfy the same invariants: no lifecycle scripts, no registry protocol changes, no Node.js resolver changes, cross-platform lockfiles, graceful degradation on package managers that predate the standard, and **zero runtime shim on the CLI path**.
+A whole-package substitution model in the lineage of npm RFC [#519](https://github.com/npm/rfcs/pull/519) and Yarn's [Package Variants](https://github.com/yarnpkg/berry/issues/2751) was seriously considered and is presented as an alternative in *Rationale and Alternatives*, with a full comparison.
 
 ## Motivation
 
@@ -69,17 +70,17 @@ Prior discussions of this problem have often centered on CLI tools, but the larg
 
 ### Invariants
 
-These hold regardless of which consumption model (Option A or B) is adopted. They are the contract of the standard; the options are two mechanisms that satisfy it.
+These are the contract of the standard; the `artifacts` field is a mechanism that satisfies them, and any future extension must too.
 
 1. **Artifacts are ordinary registry packages.** They resolve through normal registries, appear in lockfiles with exact versions and SHA-512 integrity, are served from caches and mirrors, work offline, and can carry npm provenance attestations. No registry protocol changes.
 2. **No lifecycle scripts.** The mechanism requires no `preinstall`/`postinstall` anywhere. Artifact packages must be passive carriers: conforming package managers **must not** execute lifecycle scripts of packages installed via artifact selection.
 3. **Selection is declarative and performed by the package manager.** The matching language is non-Turing-complete and statically analyzable. Packages do not ship platform-detection code on the conforming path.
 4. **Progressive enhancement, no flag day.** The new manifest field is ignored by package managers that predate it. A published package also ships today's compat surface (JS shim `bin`, loader chain, `optionalDependencies`), which continues to work unchanged on legacy installers. The legacy surface is the **authoritative fallback**: a conforming package manager that selects no artifact must behave exactly like a non-conforming one. Partial implementations are therefore safe by construction.
-5. **No runtime shim on the CLI path.** When an artifact is selected, conforming package managers **must** expose `bin` commands as direct links to the native executable — symlink or hardlink with the executable bit on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it. A consumption model that cannot satisfy this is non-conforming.
+5. **No runtime shim on the CLI path.** When an artifact is selected, conforming package managers **must** expose `bin` commands as direct links to the native executable — symlink or hardlink with the executable bit on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it.
 6. **One lockfile for every platform.** *All* declared candidates are resolved and locked (name, exact version, integrity — a metadata-only operation; no tarball downloads for non-selected candidates). Only the selected artifact is materialized on disk. Selection is a pure function of `(manifest, target tuple)` and is **never recorded in the lockfile** — recording it would make lockfiles platform-dirty, which is precisely the disease being cured.
 7. **Implementable by npm, pnpm, Yarn, Bun, and aube** without coordinated releases, and without changes to Node.js module resolution.
 
-### The shared selection primitive
+### The selection primitive
 
 #### Target tuple
 
@@ -137,97 +138,9 @@ Selection never requires downloading a non-selected artifact: predicates live in
 
 As a defense against copy-paste errors and name confusion, package managers **should** cross-check that the selected artifact's own manifest `os`/`cpu`/`libc` fields do not contradict the predicates it was selected under, and warn on skew.
 
----
+### The `artifacts` field
 
-### Option A — whole-package substitution
-
-*Lineage: npm RFC [#519 "Package Distributions"](https://github.com/npm/rfcs/pull/519), Yarn [Package Variants](https://github.com/yarnpkg/berry/issues/2751).*
-
-The parent declares an ordered list of **variant packages**. The selected variant is reified **in place of the parent, under the parent's name**. If none matches, the parent itself reifies — the fallback is implicit and structural.
-
-#### Manifest syntax
-
-```jsonc
-{
-  "name": "esbuild",
-  "version": "0.25.0",
-  "bin": { "esbuild": "bin/esbuild-shim.js" },       // legacy surface
-  "variants": {
-    "select": [
-      { "os": "darwin", "cpu": "arm64",                  "package": "@esbuild/darwin-arm64" },
-      { "os": "darwin", "cpu": "x64",                    "package": "@esbuild/darwin-x64" },
-      { "os": "linux",  "cpu": "x64",   "libc": "glibc", "package": "@esbuild/linux-x64" },
-      { "os": "linux",  "cpu": "x64",   "libc": "musl",  "package": "@esbuild/linux-x64-musl" },
-      { "os": "win32",  "cpu": ["x64", "arm64"],         "package": "@esbuild/win32-x64" },
-      {                                                  "package": "@esbuild/wasm" }
-    ],
-    "onMiss": "fallback"                               // or "error"
-  },
-  "optionalDependencies": {
-    "@esbuild/darwin-arm64": "0.25.0"
-    // …one entry per platform package: the legacy compat channel
-  }
-}
-```
-
-- Each entry's `package` **must** be a scoped name (squatting defense, per the Yarn RFC).
-- There is no `version` field: a variant's version **is** the parent's exact version, by construction. Parity cannot drift because there is nothing to widen.
-- `onMiss` is `"fallback"` (default — the parent itself reifies, running its legacy loader) or `"error"` (install fails; for parents that are pure manifest carriers with no working fallback).
-
-#### Substitution semantics
-
-When variant `V` is selected for parent `P`:
-
-1. `V`'s tarball is reified **verbatim** (integrity-checked, unmodified — no manifest rewriting) at the tree position where `P` would have been. In store-backed layouts the link named `P` points at `V`'s store entry; `P`'s content is not extracted on this machine.
-2. `V`'s manifest governs everything at that position: `main`, `exports`, `bin`, `dependencies`. `V`'s dependencies install; `P`'s do not (both sets are locked; the roles swap on the fallback path).
-3. `require("P")`, `require.resolve("P/…")`, and import maps against `P` resolve into `V` from anywhere in the tree. **The parent name is a stable alias for whichever variant won** — this is the model's core ergonomic payoff. Convention: variants **should** export an `"./artifacts/*"` subpath so `require.resolve("@prisma/engines/artifacts/query-engine")` works identically on every platform.
-4. Package manager UI (`ls`, `why`, audit, SBOM output) **must** present the edge as `P@version (via variant V)` — substitution-aware reporting is a conformance requirement.
-5. Variants **must** declare `peerDependencies` identical to the parent's (publish-time lintable).
-
-#### The addon case under Option A
-
-Whole-package substitution is trivially right for a binary-only CLI, but bcrypt needs the parent's JavaScript *and* the platform artifact simultaneously. Option A's answer is structural: **variants are complete, runnable packages**, and to avoid shipping N copies of the JavaScript, the JS moves to a shared core package:
-
-```jsonc
-// @node-rs/bcrypt-linux-x64-gnu/package.json (a variant)
-{
-  "name": "@node-rs/bcrypt-linux-x64-gnu",
-  "version": "1.10.4",
-  "main": "index.js",
-  "dependencies": { "@node-rs/bcrypt-core": "1.10.4" },
-  "files": ["index.js", "bcrypt.linux-x64-gnu.node"]
-}
-```
-
-```js
-// index.js — generated (napi-rs-style codegen)
-module.exports = require("@node-rs/bcrypt-core")
-  .load(require.resolve("./bcrypt.linux-x64-gnu.node"));
-```
-
-The dependency direction inverts: today the parent requires the platform package; under Option A the variant requires the shared core. The same platform tarballs continue to serve the legacy try/catch path, because the raw `.node` file remains at its historical path inside them.
-
-#### Bin entries under Option A
-
-The selected variant's `bin` map governs, and its targets may be (should be) the native executables themselves — satisfying the no-runtime-shim invariant directly. Every variant's bin *names* **must** equal the parent's bin names (targets may differ); package managers warn on mismatch, registries should reject at publish. This keeps `scripts` entries and `npx <name>` platform-invariant.
-
-#### Honest costs of Option A
-
-1. **On-disk identity mismatch.** `node_modules/esbuild/package.json` says `"name": "@esbuild/darwin-arm64"`. Version parity keeps `.version` checks working, but bundler heuristics, license scanners, jest module mappers, `patch-package`, and anything asserting *directory name == package name* needs updating. This is the model's single biggest tax and cannot be fixed without violating verbatim reification (rewriting the variant's manifest at link time would break integrity re-verification and store sharing).
-2. **Forced package restructuring.** The addon case only works cleanly if maintainers extract a `-core` package and add entry files to every platform tarball. Mechanical and codegen-able, but a real migration for the entire existing ecosystem of napi-rs/node-gyp packages.
-3. **N-way behavioral parity by discipline, not construction.** Exports, bins, peers, and API surface must agree across the parent and every variant; lint rules catch shape, not behavior.
-4. **Version-parity rigidity.** A one-platform binary hotfix requires publishing a new parent version (and re-tagging every other variant). Independently-versioned artifacts (Prisma's hash-versioned engines) fit poorly.
-5. **Exactly one variant per tree position.** Installing artifacts for several platforms into one `node_modules` (pnpm `supportedArchitectures`, mac-host/linux-container volume mounts) is structurally impossible — only one package can occupy the parent's path. Multi-tuple support can warm caches but never materialize more than one.
-
----
-
-### Option B — artifact selection with a stable alias
-
-*Lineage: the esbuild/napi-rs/sharp `optionalDependencies` pattern, formalized; the parent package always reifies as itself.*
-
-The parent declares named **slots**; each slot has ordered candidates and an explicit fallback. The package manager materializes the selected artifact three ways: under its real name (unchanged — it is an optionalDependency), at a **stable alias** the parent's code resolves at runtime, and as **direct bin links** overriding the parent's same-named JS-shim bins.
-
-#### Manifest syntax
+A new top-level manifest field declaring named **slots**. Each slot has ordered candidates, optional `bin` maps, and an explicit fallback. The parent package always installs as itself; the field tells the package manager which additional package to materialize and how to expose it.
 
 ```jsonc
 {
@@ -255,9 +168,13 @@ The parent declares named **slots**; each slot has ordered candidates and an exp
 }
 ```
 
+Field rules:
+
 - **Slot names** match `[a-z0-9-]+` and derive the alias `_<slot>`.
-- **Candidate versions**: a bare `package` name takes its exact version from the parent's own `optionalDependencies` (or `dependencies`) entry, which **must** exist and **must** be exact. The `name@version` inline form pins candidates deliberately *not* listed in `optionalDependencies` — so legacy package managers never download them (see the Prisma example). Ranges are a manifest error in either form.
+- **Candidate versions**: a bare `package` name takes its exact version from the parent's own `optionalDependencies` (or `dependencies`) entry, which **must** exist and **must** be exact. The `name@version` inline form pins candidates deliberately *not* listed in `optionalDependencies` — so legacy package managers never download them (see the Prisma example below). Ranges are a manifest error in either form.
+- **Candidate names must be scoped** (see *Security considerations*).
 - **`fallback`** is a predicate-free candidate tried when nothing matches, or the string `"builtin"` (the default): materialize nothing; the parent's own JS/bin is authoritative.
+- **`onMissing`** governs behavior when neither a candidate nor a declared fallback matches: `"warn"` (default), `"error"`, or `"ignore"`. With `"builtin"` the miss is silent by design — the legacy surface simply remains in charge.
 - Bin names in any slot **must** be a subset of the parent's top-level `bin` names — legacy installs always have the command, and no platform grows phantom commands.
 
 CLI example:
@@ -282,7 +199,7 @@ CLI example:
 }
 ```
 
-Binary-payload example (Prisma-style; note the inline pins keeping engines out of legacy installs):
+Binary-payload example (Prisma-style; note the inline pins keeping engines out of legacy installs entirely):
 
 ```jsonc
 {
@@ -302,12 +219,14 @@ Binary-payload example (Prisma-style; note the inline pins keeping engines out o
 }
 ```
 
-#### The linkage contract
+### The linkage contract
 
 For slot `foo`, the package manager materializes the selected artifact so that the bare specifier **`_foo`** resolves *from the parent package* to the artifact's root:
 
 - **Hoisted layouts** (npm, Yarn classic, Bun): `node_modules/<parent>/node_modules/_foo` → symlink/junction to the artifact directory. Nested `node_modules` is standard resolution; hoisting never applies to it.
 - **Isolated layouts** (pnpm, aube): the alias is one more edge in the parent's dependency realm — exactly how those installers already inject dependencies. The content-addressed store is never mutated; the parent package's bytes stay pristine.
+
+The selected artifact is *also* linked under its real name whenever it is a declared optional dependency (unchanged semantics) — the alias is purely additive, so code referencing real names keeps working.
 
 Why a `_`-prefixed bare name:
 
@@ -337,7 +256,7 @@ const engine = path.join(dir, 'query-engine' + (process.platform === 'win32' ? '
 
 (Artifact packages **should** omit `exports` or export `"./package.json"` so this resolves.)
 
-##### Rejected linkage mechanisms
+#### Rejected linkage mechanisms
 
 | Mechanism | Why rejected |
 |---|---|
@@ -345,7 +264,7 @@ const engine = path.join(dir, 'query-engine' + (process.platform === 'win32' ? '
 | Package manager rewrites the parent's `package.json` (`imports`) at install time | Mutates package bytes: breaks content-addressed store sharing, integrity re-verification, and install idempotence |
 | Well-known metadata file dropped into the parent's directory, read at runtime | Same store-mutation problem, plus bespoke runtime resolution code in every package |
 
-#### Bin entries under Option B
+### Bin entries
 
 When a slot with `bin` selects an artifact:
 
@@ -355,36 +274,108 @@ When a slot with `bin` selects an artifact:
 4. Unix: symlink/hardlink into `.bin`; ensure mode `0755`. Windows: the target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default.
 5. If the slot resolves to nothing (`"builtin"`), the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
 
-#### Honest costs of Option B
+### Lockfiles
 
-1. **The parent stays fat, forever.** Every consumer downloads the legacy JS shim, loader chain, and possibly a never-executed fallback tier. Progressive enhancement *is* the bloat.
-2. **The matrix is declared three times**: `optionalDependencies`, `artifacts` candidates with predicates, and each artifact's own `os`/`cpu`/`libc` manifest fields. Skew between them is a new lint category — mitigated by generators (napi-rs would emit all three from one definition) and the selection-time cross-check, but real verbosity.
-3. **Two code paths in perpetuity.** The `catch` branch is dead on adopting package managers and live on legacy ones; whichever branch CI doesn't exercise rots.
-4. **A novel on-disk shape.** `_slot` directories will confuse `npm ls` (extraneous), license scanners, and serverless/Electron packagers until tooling learns the convention — though a static `#slot` specifier is strictly more analyzable than today's dynamic `require(namesByPlatform[key])`.
-5. **Hoisted-npm implementation friction.** Arborist must model an alias edge that corresponds to no dependency range, survive reify/prune cycles, and not report it extraneous. pnpm/aube-style isolated installers get the alias nearly free; npm does not — and npm's buy-in is the adoption bottleneck.
+- Candidates referenced by bare name are locked through their `optionalDependencies` entries — no change from today. Inline-pinned candidates (`name@version`) are locked as additional entries reachable from the parent via a new **artifact edge** (in `package-lock.json` terms: ordinary package entries with optional-equivalent semantics plus an `"artifact": true` marker; edge-modeling lockfiles add an `artifactDependencies` edge type).
+- **Selection is never locked** (invariant 6). Frozen installs (`npm ci`, `--frozen-lockfile`) re-run selection against locked versions; a selection miss is not a lockfile mismatch.
+- **Multi-tuple installs**: configuration enumerating extra target tuples (pnpm `supportedArchitectures` precedent) causes the package manager to run selection per tuple and fetch each tuple's selected artifact into the cache — and, where the layout permits, materialize them under their real names — while alias and bin links are created for the host tuple only.
 
----
+### Legacy compatibility
 
-### Option comparison
+A conforming package publishes both mechanisms simultaneously; each surface degrades independently:
 
-Both options implement the same selection primitive and satisfy every invariant — including **no runtime shim on the CLI path** (A: the variant's `bin` *is* the native executable; B: the artifact bin overrides the parent's JS-shim bin with a direct link). The choice between them is the primary question this proposal puts to the working group.
-
-| Dimension | A — substitution | B — selection + alias |
+| Component | Legacy package manager | Conforming package manager |
 |---|---|---|
-| Pure-binary CLI (esbuild, turbo, aube) | Cleanest possible: parent never reified, variant is thin, `bin` → real executable | Nearly as clean: parent reified (small), bin override → real executable |
-| Addon library (bcrypt, sharp, @swc) | Requires restructuring: extract `-core`, add entry files to every platform tarball | **Additive**: keep everything, add one field, swap loader body for `try require('#addon')` |
-| Stable name for other packages to reference | **Parent name itself** — `require.resolve("pkg/artifacts/…")` from anywhere | `_slot` alias, resolvable only from the parent (by design) |
-| On-disk identity | Directory name ≠ manifest name; tooling must learn `variantOf` | Standard shapes plus one novel `_slot` link |
-| Multi-platform `node_modules` (Docker volume mounts, `supportedArchitectures`) | Structurally impossible (one package per tree position) | Possible: all candidates can coexist under real names; alias still points one way |
-| Independent artifact versioning | No (parity by construction) | Inline-pinned candidates may diverge from parent version |
-| Lockfile shape | Parent entry + `variants` table + `variantOf`-tagged entries | Ordinary entries; inline-pinned candidates need one new edge type |
-| npm (Arborist) implementability | Reify-as-link under parent name — designed in RFC #519 | Alias edge with no range — novel bookkeeping |
-| Ecosystem tooling migration | Scanners/bundlers/patch-package must learn substitution | Packagers/`ls` must learn `_slot` |
-| Fallback mechanism | Structural: parent reifies when no variant matches | Behavioral: alias absent → `MODULE_NOT_FOUND` → catch path |
+| `optionalDependencies` on platform packages (each with its own `os`/`cpu`/`libc` fields) | filtered to the matching one (npm ≥ 10.4 / pnpm); older installers tolerate optional failures | resolved and locked; matching one linked under its real name |
+| Top-level `bin` → JS shim | the command | **shadowed** by the artifact's direct-exec bin |
+| Runtime loader `try require('#slot') catch legacyChain()` | catch path always taken | try path always taken |
+| `imports: {"#slot": "_slot"}` | inert mapping to a nonexistent name | resolves to the alias |
+| `artifacts` field | unknown field, ignored | drives everything |
+| Lifecycle scripts | none needed (the napi-rs pattern already requires none; postinstall-download users keep their script only as a legacy tier) | none, ever |
 
-A **hybrid** is possible — the primitive is shared, and the models are not mutually exclusive per-package (a CLI-only package could use substitution while an addon uses slots). The cost is doubled specification and implementation surface; the working group may reasonably decide one model is enough.
+**Authority rule (normative)**: the legacy surface is the authoritative fallback. A conforming package manager that selects no artifact for a slot must behave exactly as a non-conforming one for that slot's bins and links.
+
+Adoption requires no restructuring of already-published platform packages: sharp, esbuild, and napi-rs-generated packages add the `artifacts` field and the one-line `try` to their loader, and ship. Generators (napi-rs, esbuild's publish tooling) can emit `optionalDependencies`, candidates, and artifact manifests from a single target-triple definition.
+
+### Security considerations
+
+- **Exact pins only.** A candidate version is either the exact version in `optionalDependencies` or an inline exact pin; ranges are a manifest error. Native artifacts are ABI-coupled to their parent's JS and built in lockstep; floating versions are a supply-chain and ABI hazard.
+- **Scoped names required** for candidates — recommended: a scope owned by the parent's publisher (`@esbuild/*`, `@img/*`). Registries **may** validate publisher overlap at publish time; package managers **may** warn otherwise. Artifact packages **should** carry npm provenance attestations so auditors can verify parent and artifacts were built from the same source.
+- **Integrity**: candidates are ordinary locked packages — SHA-512 from the lockfile, verified from cache/mirror/offline like anything else. No new trust surface.
+- **No lifecycle scripts on artifacts** (invariant 2), codifying the `--ignore-scripts` hardening posture.
+- **Overrides/resolutions** apply as the user's escape hatch (e.g. patching a vulnerable artifact), but the package manager **must** warn when an override moves an artifact off its declared exact version.
+- **Alias squatting is impossible** on conforming registries (`_` prefix unpublishable), and the alias lives in the parent's nested realm, which shadows any hoisted name.
+- **Path containment** for bin materialization (*Bin entries*, step 2).
+
+### Known costs
+
+Stated plainly, because the working group should adopt this design with eyes open:
+
+1. **The parent stays fat.** Every consumer downloads the legacy JS shim, loader chain, and possibly a never-executed fallback tier, until a publisher decides its user base has migrated and drops them. Progressive enhancement *is* the bloat.
+2. **The matrix is declared three times**: `optionalDependencies`, `artifacts` candidates with predicates, and each artifact's own `os`/`cpu`/`libc` manifest fields. Skew between them is a new lint category — mitigated by generators emitting all three from one definition and by the selection-time cross-check, but real verbosity.
+3. **Two code paths during the transition.** The `catch` branch is dead on conforming package managers and live on legacy ones; whichever branch CI doesn't exercise rots. (This cost is shared by any progressive-enhancement design.)
+4. **A novel on-disk shape.** `_slot` directories will confuse `npm ls` (extraneous), license scanners, and serverless/Electron packagers until tooling learns the convention — though a static `#slot` specifier is strictly more analyzable than today's dynamic `require(namesByPlatform[key])`.
+5. **Hoisted-npm implementation friction.** Arborist must model an alias edge that corresponds to no dependency range, survive reify/prune cycles, and not report it extraneous. Isolated-layout installers (pnpm, aube) get the alias nearly free; npm does not — and npm's buy-in is the adoption bottleneck.
 
 ## Rationale and Alternatives
+
+### Alternative considered: whole-package substitution
+
+*Lineage: npm RFC [#519 "Package Distributions"](https://github.com/npm/rfcs/pull/519), Yarn [Package Variants](https://github.com/yarnpkg/berry/issues/2751).*
+
+The strongest alternative, developed in full during the drafting of this RFC, inverts the mechanism: instead of the parent staying and an artifact being exposed *to* it, the parent declares an ordered list of **variant packages** and the selected variant is reified **in place of the parent, under the parent's name**. If none matches, the parent itself reifies — fallback is structural rather than behavioral.
+
+Sketch:
+
+```jsonc
+{
+  "name": "esbuild",
+  "version": "0.25.0",
+  "bin": { "esbuild": "bin/esbuild-shim.js" },       // legacy surface
+  "variants": {
+    "select": [
+      { "os": "darwin", "cpu": "arm64",                  "package": "@esbuild/darwin-arm64" },
+      { "os": "linux",  "cpu": "x64",   "libc": "glibc", "package": "@esbuild/linux-x64" },
+      {                                                  "package": "@esbuild/wasm" }
+    ],
+    "onMiss": "fallback"
+  }
+}
+```
+
+A variant's version is implicitly the parent's exact version (parity by construction). The selected variant's manifest governs everything at the parent's tree position — `main`, `exports`, `bin`, `dependencies` — and `require("esbuild")` resolves into it from anywhere. Because a variant must be a *complete, runnable* package, the addon case (bcrypt/sharp) requires extracting the parent's JavaScript into a shared `-core` package that every variant depends on, each variant shipping a generated entry file binding core to its local `.node` file.
+
+Genuine advantages over the proposed design:
+
+- **The parent name itself is the stable alias** — `require.resolve("@prisma/engines/artifacts/query-engine")` works from *anywhere* in the tree, not just from inside the parent.
+- **Thin installs**: consumers never download the legacy shim/loader at all; the selected variant is all there is.
+- **No triple declaration** and no novel `_slot` shape — variants are plain packages at plain paths.
+- For **pure-binary CLI packages** it is the cleanest conceivable shape.
+
+Why it was not chosen:
+
+1. **Migration is restructuring, not annotation.** Every existing addon package must extract a `-core`, add entry files to every platform tarball, and republish its whole matrix. The proposed design lets sharp adopt with a one-field diff and a one-line loader change to packages already published. Standards that require the ecosystem to restructure historically stall (this RFC reads #519's fate partly that way); standards that annotate existing practice ship (npm 10.4's `libc`).
+2. **On-disk identity mismatch.** `node_modules/esbuild/package.json` would say `"name": "@esbuild/darwin-arm64"`. Every scanner, bundler heuristic, jest module mapper, and `patch-package` user encounters that novelty — tools that never opted into the standard pay for it. It cannot be papered over without rewriting the variant's manifest at link time, which would break integrity verification and content-addressed store sharing. The proposed design's failure mode, by contrast, is the status quo: no alias, catch path, today's behavior.
+3. **One variant per tree position.** Materializing artifacts for several platforms into one `node_modules` (pnpm `supportedArchitectures`, mac-host/linux-container volume mounts) is structurally impossible under substitution. The proposed design lets all candidates coexist under their real names, leaving only the alias host-bound.
+4. **Version-parity rigidity.** A one-platform binary hotfix requires a new parent version and re-tagging every variant; independently-versioned artifacts (Prisma's engines) fit poorly. The proposed design's inline pins allow either regime.
+5. **Behavioral parity across N+1 packages is enforced by discipline, not construction** — a variant whose JS drifts from core is a platform-specific behavior fork. Under the proposed design there is exactly one copy of the parent's JS.
+
+Substitution remains worth pursuing if the identity-mismatch problem finds a principled solution (for example, registries treating variants as first-class "faces" of a parent package). Nothing in the proposed design precludes adding it later: the selection primitive — predicates, ordering, all-locked/one-materialized — is deliberately shared, and a future `variants` field could reuse it verbatim. See *Unresolved Questions*.
+
+Summary comparison:
+
+| Dimension | Proposed (`artifacts`) | Substitution (`variants`) |
+|---|---|---|
+| Pure-binary CLI | bin override → real executable | cleanest: variant *is* the package |
+| Addon library (bcrypt, sharp, @swc) | **additive**: add field + one-line loader change | restructure into `-core` + republish matrix |
+| Stable name for third parties | `_slot`, parent-internal by design | parent name, tree-wide |
+| On-disk identity | standard shapes + one novel link | directory name ≠ manifest name |
+| Multi-platform `node_modules` | candidates coexist under real names | structurally impossible |
+| Independent artifact versioning | inline pins allow it | parity by construction forbids it |
+| Failure mode | status quo (legacy path) | novel breakage surface |
+| npm implementability | new alias-edge bookkeeping in Arborist | reify-as-link designed in #519 |
+
+### Other alternatives
 
 - **Do nothing.** The status quo works, in the sense that install scripts and try/catch loaders exist. But the costs enumerated in *Motivation* are paid by every user of every native package on every install and every invocation, and the security posture of install scripts worsens as supply-chain attacks increase. The ecosystem is already converging on the artifact-package half of this design; this RFC standardizes the selection half that every project currently reinvents.
 - **Document the existing pattern instead of standardizing a field.** A "best practices" document would not remove the runtime loader, the CLI shim tax, or the hand-rolled libc detection — those exist precisely because there is no install-time selection contract.
@@ -397,20 +388,20 @@ A manifest field plus specified package-manager behavior is the minimal standard
 
 Feasibility notes per package manager:
 
-- **npm**: Option A's reify-as-link was designed in RFC #519 against Arborist. Option B needs a new alias-edge concept in Arborist's ideal/actual trees. npm ≥ 10.4 already implements the `libc` matching semantics this RFC reuses.
-- **pnpm / aube** (isolated layouts): both options map onto existing machinery — dependency realms make Option B's alias one more link, and store-backed linking makes Option A's substitution a retargeted link. pnpm's `supportedArchitectures` is the multi-tuple precedent.
-- **Yarn**: Option A is a simplification of its own Package Variants RFC (literal candidate lists instead of pattern/matrix templating; no parameter cascading).
-- **Bun**: performs install-time platform filtering already; either model fits its linker.
+- **npm**: the alias is a new edge concept in Arborist's ideal/actual trees (an edge with no dependency range that must survive reify/prune and not report extraneous) — the largest single implementation lift in this proposal, called out honestly under *Known costs*. npm ≥ 10.4 already implements the `libc` matching semantics this RFC reuses.
+- **pnpm / aube** (isolated layouts): the alias is one more link in a dependency realm — machinery both installers already have. pnpm's `supportedArchitectures` is the multi-tuple precedent.
+- **Yarn**: Plug'n'Play resolution is virtualized, making the alias a resolver-table entry rather than a filesystem link; `node_modules` linkers behave like npm's case.
+- **Bun**: performs install-time platform filtering already; the alias and direct-exec bin links fit its linker.
 
-As concrete evidence of implementability, **aube** (a Rust package manager with npm-compatible behavior) already contains every building block: npm-semantics `os`/`cpu`/`libc` matching and graph filtering, runtime glibc/musl detection with the probe-order hardening described above, bin shim creation that detects native-executable magic and execs directly (including Windows `.cmd`/`.ps1`/sh emission), and per-platform artifact-variant selection in its lockfile layer (used today for Node.js runtime pins). The author intends aube to serve as the reference implementation, and aube's own npm distribution — which today requires a `preinstall` download script — as the dogfood target: under either option it becomes script-free with `bin` entries linking straight to the native binary.
+As concrete evidence of implementability, **aube** (a Rust package manager with npm-compatible behavior) already contains every building block: npm-semantics `os`/`cpu`/`libc` matching and graph filtering, runtime glibc/musl detection with the probe-order hardening described above, bin shim creation that detects native-executable magic and execs directly (including Windows `.cmd`/`.ps1`/sh emission), and per-platform artifact-variant selection in its lockfile layer (used today for Node.js runtime pins). The author intends aube to serve as the reference implementation, and aube's own npm distribution — which today requires a `preinstall` download script — as the dogfood target: it becomes script-free with `bin` entries linking straight to the native binary.
 
-Registry-side work is optional but valuable: publish-time validation (scoped candidate names, version parity, bin-name subset rules) and provenance linkage between parent and artifact packages.
+Registry-side work is optional but valuable: publish-time validation (scoped candidate names, exact-pin rules, bin-name subset rules) and provenance linkage between parent and artifact packages.
 
 ## Prior Art
 
-- **npm RFC [#519 — Package Distributions](https://github.com/npm/rfcs/pull/519)** (2022; closed unmerged 2023). Proposed `distributions: [{platform, arch, engines, package}]` with all-locked/one-reified semantics and implicit fallback to the original package. Closed in repository cleanup rather than rejected on the merits. Option A is a direct descendant; this RFC narrows scope to binary artifacts (where #519 also contemplated ESM/CJS builds, docs/test slimming, and general variants) and adds the explicit selection primitive, libc, and the no-shim requirement.
-- **Yarn [Package Variants RFC](https://github.com/yarnpkg/berry/issues/2751)** (open). Pattern + matrix name templating with parameter cascading. This RFC borrows its scoped-name requirement, version-parity rule, non-Turing-completeness goal, and graceful-degradation stance, while rejecting name templating (literal candidate lists are greppable and provenance-attestable; no generated-name squatting surface) and consumer-driven parameters (out of scope for v1).
-- **npm RFC [#438](https://github.com/npm/rfcs/issues/438) → npm 10.4 `libc` support** (shipped 2024). Proof that incremental, narrowly-scoped platform-selection improvements can land in npm; this RFC reuses its field semantics verbatim.
+- **npm RFC [#519 — Package Distributions](https://github.com/npm/rfcs/pull/519)** (2022; closed unmerged 2023). Proposed `distributions: [{platform, arch, engines, package}]` with all-locked/one-reified semantics and implicit fallback to the original package — the substitution alternative above is its direct descendant. Closed in repository cleanup rather than rejected on the merits. This RFC narrows scope to binary artifacts (where #519 also contemplated ESM/CJS builds, docs/test slimming, and general variants), adds the explicit selection primitive, libc, and the no-shim requirement, and — for the reasons given under *Rationale* — keeps the parent package in place rather than substituting it.
+- **Yarn [Package Variants RFC](https://github.com/yarnpkg/berry/issues/2751)** (open). Pattern + matrix name templating with parameter cascading. This RFC borrows its scoped-name requirement, exact-version discipline, non-Turing-completeness goal, and graceful-degradation stance, while rejecting name templating (literal candidate lists are greppable and provenance-attestable; no generated-name squatting surface) and consumer-driven parameters (out of scope for v1).
+- **npm RFC [#438](https://github.com/npm/rfcs/issues/438) → npm 10.4 `libc` support** (shipped 2024). Proof that incremental, narrowly-scoped platform-selection improvements can land in npm; this RFC reuses its field semantics verbatim — and its shipped-because-it-annotated character informs the choice of the additive design.
 - **pnpm [`supportedArchitectures`](https://pnpm.io/settings#supportedarchitectures)** (shipped). Multi-tuple fetching precedent; adopted here as the model for cross-platform cache warming.
 - **node-pre-gyp / prebuild-install / prebuildify / napi-rs**. The current practice this RFC formalizes. napi-rs's code generation is the natural emitter of the new field — one target-triple definition can generate `optionalDependencies`, candidates, and artifact manifests together, eliminating the triple-declaration skew risk in practice.
 - **npm/npm [#1891 `platformBinaries`](https://github.com/npm/npm/issues/1891)** (2011). The same problem statement, fifteen years ago.
@@ -419,15 +410,15 @@ Registry-side work is optional but valuable: publish-time validation (scoped can
 
 ## Unresolved Questions and Bikeshedding
 
-1. **Option A vs. Option B** (or both, or a hybrid) — the headline question for the working group. The author's read: B's additive migration story fits the existing addon ecosystem; A's identity semantics are cleaner for pure-binary CLIs; requiring both doubles every implementation.
-2. Field naming: `artifacts` vs. `variants` vs. something else; slot-alias prefix (`_slot` vs. another unpublishable namespace).
+1. Field naming: `artifacts` vs. something else; slot-alias prefix (`_slot` vs. another unpublishable namespace); `onMissing` value names.
+2. Should the substitution model (*Rationale and Alternatives*) additionally be standardized — now or later — for the pure-binary CLI case where it is cleanest, given the shared selection primitive makes it a compatible extension? The author's position: not in v1; one model keeps five implementations honest.
 3. `cpuFeatures` opt-in design for a future revision (explicit "I accept install-machine detection" flag? runtime dispatch guidance?).
 4. Minimum glibc version expression (`libc: "glibc"` says nothing about `GLIBC_2.28` symbols; is `engines`-style versioning of libc worth the complexity?).
 5. Windows ARM64 x64-emulation and macOS Rosetta: should a publisher express "prefer native, accept emulated" beyond candidate ordering?
 6. Universal/fat binaries (macOS `universal2`): a predicate value, or just a candidate listing both `cpu` values?
 7. Electron/alternate-ABI targeting: `napi` covers N-API addons; NAN-style ABI-specific builds are deliberately out of scope — confirm.
-8. Multi-platform materialization of the *alias/substitution* (as opposed to fetching): is there any sound design for volume-mounted `node_modules` crossing os/libc boundaries, or is that formally unsupported?
-9. Registry enforcement: which publish-time validations (scoped names, parity, bin-name subset) should be normative for registries vs. left to package managers and linters?
+8. Multi-platform materialization of the *alias* (as opposed to candidates under real names): is there any sound design for volume-mounted `node_modules` crossing os/libc boundaries, or is that formally unsupported?
+9. Registry enforcement: which publish-time validations (scoped names, exact pins, bin-name subset) should be normative for registries vs. left to package managers and linters?
 10. Should the lockfile record the *candidate table* (for frozen-install auditability) even though it never records the *selection*?
 
 ## Feedback
