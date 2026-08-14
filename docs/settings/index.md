@@ -1245,7 +1245,7 @@ Examples:
 Package names whose presence in any importer forces per-project materialization.
 
 - Type: `list<string>`
-- Default: `["next", "nuxt", "parcel"]`
+- Default: `["next", "nuxt", "parcel", "expo", "react-native", "metro"]`
 - Environment: `npm_config_disable_global_virtual_store_for_packages`, `NPM_CONFIG_DISABLE_GLOBAL_VIRTUAL_STORE_FOR_PACKAGES`, `AUBE_DISABLE_GLOBAL_VIRTUAL_STORE_FOR_PACKAGES`
 - .npmrc keys: `disableGlobalVirtualStoreForPackages`, `disable-global-virtual-store-for-packages`
 - Workspace YAML keys: `disableGlobalVirtualStoreForPackages`
@@ -1262,11 +1262,15 @@ When `aube install` finds one of these names in any importer's
 forces per-project materialization for that install and prints a
 one-line warning naming the trigger.
 
-The default list — `next`, `nuxt`, `parcel` —
-covers the tools with concrete walk-up failures: Next.js's Turbopack
+The default list — `next`, `nuxt`, `parcel`, `expo`, `react-native`, `metro` —
+covers the tools with concrete filesystem-root failures: Next.js's Turbopack
 canonicalizes through symlinks and walks up for app-router/monorepo detection,
 Nuxt plugins walk up for config discovery, and Parcel's resolver walks up for
-`.parcelrc`. Vite and VitePress are compatible with the global virtual store:
+`.parcelrc`. Metro's file map requires symlink targets to stay within the project
+root or configured watch folders; Expo and React Native use Metro but normally
+declare their framework package rather than `metro` directly.
+
+Vite and VitePress are compatible with the global virtual store:
 aube writes `node_modules/.modules.yaml` with the store location, which Vite
 8.1+ reads when constructing its filesystem allow-list. For older Vite
 versions, aube materializes only the Vite dependency path locally and backports
