@@ -105,15 +105,17 @@ Each candidate artifact carries zero or more predicates:
 | `os` | string \| string[] | target `os` ∈ listed values | required |
 | `cpu` | string \| string[] | target `cpu` ∈ listed values | required |
 | `libc` | `"glibc"` \| `"musl"` | target os is `linux` **and** detected libc equals the value | required |
-| `napi` | integer | installing runtime's N-API version ≥ value | optional |
+| `napi` | integer | N-API version of target `nodeVersion` ≥ value | optional |
 | `engines.node` | semver range | target `nodeVersion` satisfies the range | optional |
 
 Rules:
 
 - Predicates within a candidate are **conjunctive**; array values within one predicate are **disjunctive**. An omitted predicate matches anything. Value semantics for `os`/`cpu`/`libc` are identical to the existing manifest fields of the same names (including npm ≥ 10.4's `libc` handling), so one set of semantics covers both.
+- **`napi` is evaluated against the target tuple's `nodeVersion`, never against the package manager's own runtime.** N-API versions map to Node.js releases, so the value is derivable without executing the target Node. Comparing against the installing runtime is the install-machine-vs-run-machine trap in miniature: an artifact selected under install-time Node 22 must not fail on the project's Node 18 runtime.
 - **Unknown predicate keys cause the candidate to be treated as non-matching.** This is the forward-compatibility rule: when a future revision adds (say) `cpuFeatures`, an older conforming package manager skips those candidates and falls through to broader ones or to the fallback tier — degrading to a safe choice instead of selecting an artifact whose constraint it cannot check.
 - **First match wins, in author order.** There is no specificity scoring. Scoring would require five independent implementations to reproduce a ranking function bit-for-bit forever; author order moves the judgment to the publisher, who knows that the AVX-tuned build should be listed before the baseline build and native before WASM.
 - **CPU micro-architecture features (AVX2, NEON, …) are deliberately excluded from v1.** The install machine is not the run machine (an image built on an AVX-512 CI host may deploy anywhere); install-time selection on CPU features produces `SIGILL` in production. Feature dispatch belongs inside the artifact at runtime. The key `cpuFeatures` is reserved, and the unknown-key rule above means a future revision introducing it degrades safely on v1 implementations.
+- **The v1 predicate set is the intersection all five package managers can check today.** The known demands beyond it — OpenSSL/TLS-library variants (Prisma's `rhel-openssl-1.0.x` targets), ARM sub-architecture (`armv6`/`armv7`), minimum OS or kernel version, minimum glibc version, alternate runtimes (Electron, NW.js) — are all expressible as future predicate keys, and the unknown-key rule means each degrades safely on older implementations the day it ships. They are deferred rather than rejected: every added key multiplies the conformance matrix five implementations must agree on, and several are open design questions in their own right (see *Unresolved Questions*).
 - A predicate-free candidate is a catch-all: it always matches, so anything after it is unreachable. Listed last, it **is** the fallback tier (WASM or pure JS) — there is no separate fallback construct. A slot without a catch-all simply selects nothing on unmatched platforms, leaving the legacy surface in charge.
 
 #### Selection algorithm (normative sketch)
@@ -127,7 +129,8 @@ select(candidates, target):
     if cpu     present and target.cpu ∉ listify(candidate.cpu):  continue
     if libc    present and (target.os ≠ "linux"
                             or target.libc ≠ candidate.libc):    continue
-    if napi    present and runtime_napi < candidate.napi:        continue
+    if napi    present and
+       napi_version(target.nodeVersion) < candidate.napi:        continue
     if engines.node present and
        not semver_satisfies(target.nodeVersion, range):          continue
     return candidate                        # first match wins
@@ -172,7 +175,7 @@ Field rules:
 
 - **Slot names** match `[a-z0-9-]+` and derive the alias `_<slot>`.
 - **Candidate versions**: a bare `package` name takes its exact version from the parent's own `optionalDependencies` (or `dependencies`) entry, which **must** exist and **must** be exact. The `name@version` inline form pins candidates deliberately *not* listed in `optionalDependencies`, so legacy package managers never download them (see the Prisma example below). Ranges are a manifest error in either form.
-- **Candidate names must be scoped** (see *Security considerations*).
+- **Candidate names should be scoped** (see *Security considerations*).
 - **There is no separate fallback construct.** A predicate-free candidate listed last is the fallback tier; omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
 - **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). Unreachable when the slot ends in a predicate-free candidate.
 - **`supersedesScripts`** (optional) lists parent lifecycle events (`preinstall`, `install`, `postinstall`) that exist only as this slot's legacy fallback. When the slot selects a candidate, a conforming package manager **must not** execute them (see *Lifecycle-script supersession*).
@@ -307,12 +310,15 @@ Rules:
 - Listing an event the parent's `scripts` does not define is skew, in the same lint category as predicate/manifest skew; package managers **should** warn.
 - On a legacy package manager the field is inert inside the ignored `artifacts` object: the script runs exactly as today. A publisher whose script also does unrelated work must split the script before declaring supersession; the field declares full replacement.
 
+Supersession also gives the build-from-source population a conforming path. Many addons (node-serialport, node-usb, most node-gyp packages) have no WASM tier; their only universal fallback is compilation. That is just another superseded fallback: the slot lists prebuilt candidates for the common platforms and declares the `install` script (`node-gyp rebuild`) superseded, so matched platforms get a prebuilt artifact with zero code execution while a miss falls back to today's source build under normal script policy. The build-from-source tier needs no new construct; it is the legacy surface.
+
 The compat contract is symmetric: on a miss the legacy surface, scripts included, is authoritative; on a hit it is inert (bins shadowed, catch path dead, scripts superseded).
 
 ### Lockfiles
 
 - Candidates referenced by bare name are locked through their `optionalDependencies` entries — no change from today. Inline-pinned candidates (`name@version`) are locked as additional entries reachable from the parent via a new **artifact edge** (in `package-lock.json` terms: ordinary package entries with optional-equivalent semantics plus an `"artifact": true` marker; edge-modeling lockfiles add an `artifactDependencies` edge type).
 - **Selection is never locked** (invariant 6). Frozen installs (`npm ci`, `--frozen-lockfile`) re-run selection against locked versions; a selection miss is not a lockfile mismatch.
+- **Unresolvable candidates degrade like optional dependencies.** A declared candidate that cannot be resolved at lock time (typically not yet published: parents and their platform matrices routinely publish from CI minutes apart) is warned about, omitted from the lockfile, and treated as non-matching by selection; remaining candidates and `onMissing` apply as usual. A failed or delayed artifact publish therefore degrades to the legacy surface instead of breaking every install, and a later resolve that finds the candidate locks it then.
 - **Multi-tuple installs**: configuration enumerating extra target tuples (pnpm `supportedArchitectures` precedent) causes the package manager to run selection per tuple and fetch each tuple's selected artifact into the cache — and, where the layout permits, materialize them under their real names — while alias and bin links are created for the host tuple only.
 
 ### Legacy compatibility
@@ -335,7 +341,7 @@ Adoption requires no restructuring of already-published platform packages: sharp
 ### Security considerations
 
 - **Exact pins only.** A candidate version is either the exact version in `optionalDependencies` or an inline exact pin; ranges are a manifest error. Native artifacts are ABI-coupled to their parent's JS and built in lockstep; floating versions are a supply-chain and ABI hazard.
-- **Scoped names required** for candidates — recommended: a scope owned by the parent's publisher (`@esbuild/*`, `@img/*`). Registries **may** validate publisher overlap at publish time; package managers **may** warn otherwise. Artifact packages **should** carry npm provenance attestations so auditors can verify parent and artifacts were built from the same source.
+- **Scoped candidate names are recommended rather than required** — ideally a scope owned by the parent's publisher (`@esbuild/*`, `@img/*`), which lets registries validate publisher overlap at publish time and package managers warn otherwise. Yarn's variants RFC made scopes a hard requirement to close a squatting hole opened by template-generated names, an open namespace this RFC rejects; here every candidate is a literal, exact-pinned, integrity-locked name the publisher wrote by hand, the same trust surface as any other dependency entry. A hard requirement would also force existing unscoped families (`esbuild-wasm`, aube's `aube-*` matrix) to republish under new names in order to adopt. Package managers **should** warn on unscoped candidates. Artifact packages **should** carry npm provenance attestations so auditors can verify parent and artifacts were built from the same source.
 - **Integrity**: candidates are ordinary locked packages — SHA-512 from the lockfile, verified from cache/mirror/offline like anything else. No new trust surface.
 - **No lifecycle scripts on artifacts** (invariant 2), codifying the `--ignore-scripts` hardening posture.
 - **Script supersession closes the double-execution hole.** Without it, an adopting package that keeps a download script for legacy installers would still execute code at install time on conforming package managers unless users disable scripts. With `supersedesScripts`, the conforming hit path executes zero package code even with scripts fully enabled; the hardening no longer depends on user configuration.
@@ -434,7 +440,7 @@ Registry-side work is optional but valuable: publish-time validation (scoped can
 ## Prior Art
 
 - **npm RFC [#519 — Package Distributions](https://github.com/npm/rfcs/pull/519)** (2022; closed unmerged 2023). Proposed `distributions: [{platform, arch, engines, package}]` with all-locked/one-reified semantics and implicit fallback to the original package — the substitution alternative above is its direct descendant. Closed in repository cleanup rather than rejected on the merits. This RFC narrows scope to binary artifacts (where #519 also contemplated ESM/CJS builds, docs/test slimming, and general variants), adds the explicit selection primitive, libc, and the no-shim requirement, and — for the reasons given under *Rationale* — keeps the parent package in place rather than substituting it.
-- **Yarn [Package Variants RFC](https://github.com/yarnpkg/berry/issues/2751)** (open). Pattern + matrix name templating with parameter cascading. This RFC borrows its scoped-name requirement, exact-version discipline, non-Turing-completeness goal, and graceful-degradation stance, while rejecting name templating (literal candidate lists are greppable and provenance-attestable; no generated-name squatting surface) and consumer-driven parameters (out of scope for v1).
+- **Yarn [Package Variants RFC](https://github.com/yarnpkg/berry/issues/2751)** (open). Pattern + matrix name templating with parameter cascading. This RFC borrows its exact-version discipline, non-Turing-completeness goal, and graceful-degradation stance, relaxes its scoped-name requirement to a recommendation (see *Security considerations*), and rejects name templating (literal candidate lists are greppable and provenance-attestable; no generated-name squatting surface) and consumer-driven parameters (out of scope for v1).
 - **npm RFC [#438](https://github.com/npm/rfcs/issues/438) → npm 10.4 `libc` support** (shipped 2024). Proof that incremental, narrowly-scoped platform-selection improvements can land in npm; this RFC reuses its field semantics verbatim — and its shipped-because-it-annotated character informs the choice of the additive design.
 - **pnpm [`supportedArchitectures`](https://pnpm.io/settings#supportedarchitectures)** (shipped). Multi-tuple fetching precedent; adopted here as the model for cross-platform cache warming.
 - **node-pre-gyp / prebuild-install / prebuildify / napi-rs**. The current practice this RFC formalizes. napi-rs's code generation is the natural emitter of the new field — one target-triple definition can generate `optionalDependencies`, candidates, and artifact manifests together, eliminating the triple-declaration skew risk in practice.
