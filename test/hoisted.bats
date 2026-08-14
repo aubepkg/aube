@@ -111,6 +111,35 @@ test "$(realpath "$app")" = "$(realpath "$lib")"
 	assert_success
 }
 
+@test "hoisted workspace root placements stay warm before scripts" {
+	mkdir -p packages/app
+	cat >package.json <<'JSON'
+{"name":"root","private":true,"scripts":{"ok":"printf 'ok\\n'"}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - packages/*
+nodeLinker: hoisted
+YAML
+	cat >packages/app/package.json <<'JSON'
+{"name":"app","private":true,"dependencies":{"is-number":"7.0.0"}}
+JSON
+
+	run aube install
+	assert_success
+	assert_dir_exists node_modules/is-number
+	assert_not_exists packages/app/node_modules/is-number
+
+	run aube run ok
+	assert_success
+	assert_output "ok"
+	refute_output --partial "Auto-installing"
+	run aube run ok
+	assert_success
+	assert_output "ok"
+	refute_output --partial "Auto-installing"
+}
+
 @test "hoistingLimits=workspaces keeps dependencies under each workspace" {
 	mkdir -p packages/app packages/lib
 	cat >package.json <<'JSON'

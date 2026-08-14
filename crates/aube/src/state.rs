@@ -1124,14 +1124,33 @@ impl InstallLayoutState {
         // "Already up to date" and never relinked the member.
         let mut direct_entries = BTreeMap::new();
         for (importer, deps) in &layout.graph.importers {
-            let modules_base = if importer == "." {
-                project_dir.join(layout.modules_dir_name)
+            let importer_dir = if importer == "." {
+                project_dir.to_path_buf()
             } else {
-                project_dir.join(importer).join(layout.modules_dir_name)
+                aube_util::path::normalize_lexical(&project_dir.join(importer))
             };
             let entries = deps
                 .iter()
-                .map(|dep| relative_path_or_original(&modules_base.join(&dep.name), project_dir))
+                .map(|dep| {
+                    let importer_entry = importer_dir.join(layout.modules_dir_name).join(&dep.name);
+                    // A workspace-wide hoist may satisfy this direct edge from
+                    // an ancestor node_modules. Record the first placement Node
+                    // can actually see instead of a local slot the linker
+                    // intentionally left absent.
+                    let entry = layout
+                        .placements
+                        .filter(|_| matches!(layout.node_linker, aube_linker::NodeLinker::Hoisted))
+                        .and_then(|placements| {
+                            let package_dirs = placements.all_package_dirs(&dep.dep_path);
+                            importer_dir.ancestors().find_map(|ancestor| {
+                                let candidate =
+                                    ancestor.join(layout.modules_dir_name).join(&dep.name);
+                                package_dirs.contains(&candidate).then_some(candidate)
+                            })
+                        })
+                        .unwrap_or(importer_entry);
+                    relative_path_or_original(&entry, project_dir)
+                })
                 .collect();
             direct_entries.insert(importer.clone(), entries);
         }
@@ -1736,6 +1755,47 @@ mod tests {
         assert_eq!(
             layout.direct_entries.get("packages/svc"),
             Some(&vec!["packages/svc/node_modules/zod".to_string()])
+        );
+    }
+
+    #[test]
+    fn from_graph_records_visible_hoisted_entries_for_workspace_importers() {
+        let project_dir = temp_project_dir("layout-hoisted-importer");
+        let aube_dir = project_dir.join("node_modules/.aube");
+        let dep = aube_lockfile::DirectDep {
+            name: "is-number".to_string(),
+            dep_path: "is-number@7.0.0".to_string(),
+            dep_type: aube_lockfile::DepType::Production,
+            specifier: None,
+        };
+        let graph = aube_lockfile::LockfileGraph {
+            importers: BTreeMap::from([
+                (".".to_string(), Vec::new()),
+                ("packages/app".to_string(), vec![dep]),
+            ]),
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([(
+            "is-number@7.0.0".to_string(),
+            vec![project_dir.join("node_modules/is-number")],
+        )]));
+
+        let layout = InstallLayoutState::from_graph(
+            &project_dir,
+            &WriteStateLayout {
+                graph: &graph,
+                node_linker: aube_linker::NodeLinker::Hoisted,
+                hoisting_limits: aube_linker::HoistingLimits::None,
+                modules_dir_name: "node_modules",
+                aube_dir: &aube_dir,
+                virtual_store_dir_max_length: 120,
+                placements: Some(&placements),
+            },
+        );
+
+        assert_eq!(
+            layout.direct_entries.get("packages/app"),
+            Some(&vec!["node_modules/is-number".to_string()])
         );
     }
 
