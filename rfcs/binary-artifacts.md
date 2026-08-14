@@ -17,7 +17,7 @@ This RFC proposes a new top-level manifest field, **`artifacts`**, which formali
 - at a **stable alias** (`_<slot>`) the parent package's code resolves at runtime — no try/catch over N package names, and
 - as **direct bin links** to the native executable, overriding the parent's legacy JS-shim bins — no Node.js trampoline at launch.
 
-Package managers that predate the standard ignore the field and get today's working behavior; the legacy surface remains the authoritative fallback. No lifecycle scripts, no registry protocol changes, no Node.js resolver changes, no flag day.
+Package managers that predate the standard ignore the field and get today's working behavior; the legacy surface remains the authoritative fallback — and where that fallback is an install script, the package **declares it superseded** so a conforming package manager never runs it. No lifecycle scripts, no registry protocol changes, no Node.js resolver changes, no flag day.
 
 A whole-package substitution model in the lineage of npm RFC [#519](https://github.com/npm/rfcs/pull/519) and Yarn's [Package Variants](https://github.com/yarnpkg/berry/issues/2751) was seriously considered and is presented as an alternative in *Rationale and Alternatives*, with a full comparison.
 
@@ -73,7 +73,7 @@ Prior discussions of this problem have often centered on CLI tools, but the larg
 These are the contract of the standard; the `artifacts` field is a mechanism that satisfies them, and any future extension must too.
 
 1. **Artifacts are ordinary registry packages.** They resolve through normal registries, appear in lockfiles with exact versions and SHA-512 integrity, are served from caches and mirrors, work offline, and can carry npm provenance attestations. No registry protocol changes.
-2. **No lifecycle scripts.** The mechanism requires no `preinstall`/`postinstall` anywhere. Artifact packages must be passive carriers: conforming package managers **must not** execute lifecycle scripts of packages installed via artifact selection.
+2. **No lifecycle scripts.** The mechanism requires no `preinstall`/`postinstall` anywhere. Artifact packages must be passive carriers: conforming package managers **must not** execute lifecycle scripts of packages installed via artifact selection. A parent's own install script kept as the legacy fallback is declared superseded and is never executed when its slot selects an artifact (see *Lifecycle-script supersession*).
 3. **Selection is declarative and performed by the package manager.** The matching language is non-Turing-complete and statically analyzable. Packages do not ship platform-detection code on the conforming path.
 4. **Progressive enhancement, no flag day.** The new manifest field is ignored by package managers that predate it. A published package also ships today's compat surface (JS shim `bin`, loader chain, `optionalDependencies`), which continues to work unchanged on legacy installers. The legacy surface is the **authoritative fallback**: a conforming package manager that selects no artifact must behave exactly like a non-conforming one. Partial implementations are therefore safe by construction.
 5. **No runtime shim on the CLI path.** When an artifact is selected, conforming package managers **must** expose `bin` commands as direct links to the native executable — symlink or hardlink with the executable bit on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it.
@@ -175,6 +175,7 @@ Field rules:
 - **Candidate names must be scoped** (see *Security considerations*).
 - **There is no separate fallback construct.** A predicate-free candidate listed last is the fallback tier; omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
 - **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). Unreachable when the slot ends in a predicate-free candidate.
+- **`supersedesScripts`** (optional) lists parent lifecycle events (`preinstall`, `install`, `postinstall`) that exist only as this slot's legacy fallback. When the slot selects a candidate, a conforming package manager **must not** execute them (see *Lifecycle-script supersession*).
 - Bin names in any slot **must** be a subset of the parent's top-level `bin` names — legacy installs always have the command, and no platform grows phantom commands.
 
 CLI example:
@@ -274,6 +275,40 @@ When a slot with `bin` selects an artifact:
 4. Unix: symlink/hardlink into `.bin`; ensure mode `0755`. Windows: the target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default.
 5. If the slot selects nothing (no candidate matched), the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
 
+### Lifecycle-script supersession
+
+The install-script packages of *Workaround 1* are prime adoption targets, and progressive enhancement forces them to **keep** their download script for legacy installers. That creates a hit-path problem the rest of the compat story doesn't cover: a conforming package manager with scripts enabled would run the legacy downloader *and* materialize the selected artifact — two downloads of the same binary, with the script racing the package manager for the very `bin` paths the artifact just claimed. The script cannot dodge this itself: `preinstall` runs before anything is materialized, so there is no alias to probe — and probing is exactly the install-time code execution the standard exists to remove.
+
+Supersession is therefore **declared, not detected**. A slot lists the parent lifecycle events that exist only as its legacy fallback:
+
+```jsonc
+{
+  "name": "aube",
+  "version": "1.40.0",
+  "bin": { "aube": "bin/aube.js" },                   // legacy JS shim
+  "scripts": { "preinstall": "node npm/installArchSpecificPackage.js" },
+  "artifacts": {
+    "cli": {
+      "bin": { "aube": "aube" },
+      "supersedesScripts": ["preinstall"],            // artifact replaces the downloader entirely
+      "candidates": [ /* one per platform */ ]
+    }
+  }
+}
+```
+
+Rules:
+
+- **When a slot selects a candidate, a conforming package manager must not execute the parent lifecycle events listed in that slot's `supersedesScripts`.** The artifact replaces the script's entire purpose; running both is a bug, not a policy choice.
+- Supersession is **inapplicability, not denial**. A superseded script is not "blocked by `--ignore-scripts`" — it is not part of the install at all. Package managers with build-approval flows (pnpm's `onlyBuiltDependencies`, aube's `approve-builds`) **must not** count a superseded script as pending approval or prompt users to allowlist it, and **must not** emit skipped-lifecycle-script warnings for it. Ignored-build-scripts warnings exist so users notice a package that may need its script; warning about a script whose purpose the artifact just fulfilled is noise that trains users to ignore the warning that matters.
+- Values are restricted to `preinstall`, `install`, and `postinstall` — the events install-fallback scripts actually use. Listing any other event is a manifest error.
+- A script listed by several slots is skipped only when **every** listing slot selected a candidate; if any listing slot missed, the script runs under normal script policy — the miss makes the legacy surface authoritative (authority rule), and the script *is* the legacy surface. Package managers **should** expose per-slot outcomes to any superseded script that does run (`npm_package_artifacts_<slot>` set to the selected package name, empty on a miss) so the script can skip work an artifact already covered.
+- On a miss, "normal script policy" includes policies that skip scripts by default (pnpm ≥ 10, aube): the fallback script may still not run until approved — bit-identical to a non-conforming install, per the authority rule. What supersession changes is *when the warning fires*: only when the script is actually load-bearing. Package managers **should** fold the slot miss into that diagnostic ("no `cli` artifact matched linux/riscv64; fallback script `preinstall` is not approved — run `approve-builds`") — an actionable signal where today every native package produces blanket noise. `onMissing: "error"` remains the escalation for slots where neither surface can be allowed to silently fail.
+- Listing an event the parent's `scripts` does not define is skew — the same lint category as predicate/manifest skew; package managers **should** warn.
+- On a legacy package manager the field is inert inside the ignored `artifacts` object: the script runs exactly as today. A publisher whose script also does unrelated work must split the script before declaring supersession — the field declares *replacement*, not *modification*.
+
+Together with the authority rule this completes the compat contract symmetrically: **on a miss, the legacy surface — scripts included — is authoritative; on a hit, it is inert** (bins shadowed, loader's catch path dead, scripts superseded).
+
 ### Lockfiles
 
 - Candidates referenced by bare name are locked through their `optionalDependencies` entries — no change from today. Inline-pinned candidates (`name@version`) are locked as additional entries reachable from the parent via a new **artifact edge** (in `package-lock.json` terms: ordinary package entries with optional-equivalent semantics plus an `"artifact": true` marker; edge-modeling lockfiles add an `artifactDependencies` edge type).
@@ -291,9 +326,9 @@ A conforming package publishes both mechanisms simultaneously; each surface degr
 | Runtime loader `try require('#slot') catch legacyChain()` | catch path always taken | try path always taken |
 | `imports: {"#slot": "_slot"}` | inert mapping to a nonexistent name | resolves to the alias |
 | `artifacts` field | unknown field, ignored | drives everything |
-| Lifecycle scripts | none needed (the napi-rs pattern already requires none; postinstall-download users keep their script only as a legacy tier) | none, ever |
+| Lifecycle scripts | none needed for the napi-rs pattern; postinstall-download users keep their script as the legacy tier and declare it via `supersedesScripts` | **superseded** — never executed when the declaring slot selects (see *Lifecycle-script supersession*); never on artifact packages |
 
-**Authority rule (normative)**: the legacy surface is the authoritative fallback. A conforming package manager that selects no artifact for a slot must behave exactly as a non-conforming one for that slot's bins and links.
+**Authority rule (normative)**: the legacy surface is the authoritative fallback. A conforming package manager that selects no artifact for a slot must behave exactly as a non-conforming one for that slot's bins, links, and superseded scripts — a script listed in `supersedesScripts` runs under normal script policy when its slot misses.
 
 Adoption requires no restructuring of already-published platform packages: sharp, esbuild, and napi-rs-generated packages add the `artifacts` field and the one-line `try` to their loader, and ship. Generators (napi-rs, esbuild's publish tooling) can emit `optionalDependencies`, candidates, and artifact manifests from a single target-triple definition.
 
@@ -303,6 +338,7 @@ Adoption requires no restructuring of already-published platform packages: sharp
 - **Scoped names required** for candidates — recommended: a scope owned by the parent's publisher (`@esbuild/*`, `@img/*`). Registries **may** validate publisher overlap at publish time; package managers **may** warn otherwise. Artifact packages **should** carry npm provenance attestations so auditors can verify parent and artifacts were built from the same source.
 - **Integrity**: candidates are ordinary locked packages — SHA-512 from the lockfile, verified from cache/mirror/offline like anything else. No new trust surface.
 - **No lifecycle scripts on artifacts** (invariant 2), codifying the `--ignore-scripts` hardening posture.
+- **Script supersession closes the double-execution hole.** Without it, an adopting package that keeps a download script for legacy installers would still execute code at install time on conforming package managers unless users disable scripts. With `supersedesScripts`, the conforming hit path executes zero package code even with scripts fully enabled — the hardening no longer depends on user configuration.
 - **Overrides/resolutions** apply as the user's escape hatch (e.g. patching a vulnerable artifact), but the package manager **must** warn when an override moves an artifact off its declared exact version.
 - **Alias squatting is impossible** on conforming registries (`_` prefix unpublishable), and the alias lives in the parent's nested realm, which shadows any hoisted name.
 - **Path containment** for bin materialization (*Bin entries*, step 2).
@@ -393,7 +429,7 @@ Feasibility notes per package manager:
 - **Yarn**: Plug'n'Play resolution is virtualized, making the alias a resolver-table entry rather than a filesystem link; `node_modules` linkers behave like npm's case.
 - **Bun**: performs install-time platform filtering already; the alias and direct-exec bin links fit its linker.
 
-As concrete evidence of implementability, **aube** (a Rust package manager with npm-compatible behavior) already contains every building block: npm-semantics `os`/`cpu`/`libc` matching and graph filtering, runtime glibc/musl detection with the probe-order hardening described above, bin shim creation that detects native-executable magic and execs directly (including Windows `.cmd`/`.ps1`/sh emission), and per-platform artifact-variant selection in its lockfile layer (used today for Node.js runtime pins). The author intends aube to serve as the reference implementation, and aube's own npm distribution — which today requires a `preinstall` download script — as the dogfood target: it becomes script-free with `bin` entries linking straight to the native binary.
+As concrete evidence of implementability, **aube** (a Rust package manager with npm-compatible behavior) already contains every building block: npm-semantics `os`/`cpu`/`libc` matching and graph filtering, runtime glibc/musl detection with the probe-order hardening described above, bin shim creation that detects native-executable magic and execs directly (including Windows `.cmd`/`.ps1`/sh emission), and per-platform artifact-variant selection in its lockfile layer (used today for Node.js runtime pins). The author intends aube to serve as the reference implementation, and aube's own npm distribution — which today requires a `preinstall` download script — as the dogfood target: the script stays only for legacy installers, declared via `supersedesScripts`, so a conforming install executes no code at all and links `bin` straight to the native binary.
 
 Registry-side work is optional but valuable: publish-time validation (scoped candidate names, exact-pin rules, bin-name subset rules) and provenance linkage between parent and artifact packages.
 
@@ -410,7 +446,7 @@ Registry-side work is optional but valuable: publish-time validation (scoped can
 
 ## Unresolved Questions and Bikeshedding
 
-1. Field naming: `artifacts` vs. something else; slot-alias prefix (`_slot` vs. another unpublishable namespace); `onMissing` value names.
+1. Field naming: `artifacts` vs. something else; slot-alias prefix (`_slot` vs. another unpublishable namespace); `onMissing` value names; `supersedesScripts` naming.
 2. Should the substitution model (*Rationale and Alternatives*) additionally be standardized — now or later — for the pure-binary CLI case where it is cleanest, given the shared selection primitive makes it a compatible extension? The author's position: not in v1; one model keeps five implementations honest.
 3. `cpuFeatures` opt-in design for a future revision (explicit "I accept install-machine detection" flag? runtime dispatch guidance?).
 4. Minimum glibc version expression (`libc: "glibc"` says nothing about `GLIBC_2.28` symbols; is `engines`-style versioning of libc worth the complexity?).
