@@ -427,10 +427,28 @@ fn build_workspace_preferences(
     let mut root_direct = BTreeMap::new();
     let mut pending = VecDeque::new();
     let mut discovery_order = 0;
+    let workspace_root = root_nm.parent().unwrap_or(root_nm);
 
     for (importer_idx, importer) in importers.iter().enumerate() {
+        let root_reachable = importer
+            .modules_dir
+            .parent()
+            .is_some_and(|importer_dir| importer_dir.starts_with(workspace_root));
+        if !root_reachable {
+            continue;
+        }
         let dependent = format!("workspace:{importer_idx}");
         for dep in &importer.dependencies {
+            let is_link = graph
+                .packages
+                .get(&dep.dep_path)
+                .is_some_and(|pkg| matches!(pkg.local_source.as_ref(), Some(LocalSource::Link(_))));
+            // A non-root `link:` edge is pinned to its importer and can never
+            // claim the shared root slot. A root direct link is already at the
+            // root floor, so it remains an unconditional root preference.
+            if is_link && importer.modules_dir != root_nm {
+                continue;
+            }
             if importer.modules_dir == root_nm {
                 root_direct.insert(dep.name.clone(), dep.dep_path.clone());
             }
@@ -445,7 +463,9 @@ fn build_workspace_preferences(
                     entry
                 });
             entry.dependents.insert(dependent.clone());
-            pending.push_back(dep.dep_path.clone());
+            if !is_link {
+                pending.push_back(dep.dep_path.clone());
+            }
         }
     }
 
@@ -457,6 +477,9 @@ fn build_workspace_preferences(
         let Some(pkg) = graph.packages.get(&parent_dep_path) else {
             continue;
         };
+        if matches!(pkg.local_source.as_ref(), Some(LocalSource::Link(_))) {
+            continue;
+        }
         for (dep_name, dep_tail) in &pkg.dependencies {
             let child_dep_path = aube_lockfile::shared_local_dep_path(dep_name, dep_tail)
                 .unwrap_or_else(|| format!("{dep_name}@{dep_tail}"));
@@ -501,6 +524,7 @@ fn build_workspace_preferences(
             preferred.insert(name, dep_path);
         }
     }
+    preferred.extend(root_direct);
     preferred
 }
 
@@ -1005,6 +1029,79 @@ mod tests {
         assert_eq!(
             package_dirs(&plan, "shared@1.0.0"),
             vec![PathBuf::from("/project/packages/first/node_modules/shared")]
+        );
+    }
+
+    #[test]
+    fn workspace_preferences_exclude_root_ineligible_candidates() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("shared@2.0.0".into(), pkg("shared", "2.0.0", &[]));
+        graph
+            .packages
+            .insert("shared@3.0.0".into(), pkg("shared", "3.0.0", &[]));
+        let link_dep_path = "shared@link:../shared";
+        let mut linked = pkg("shared", "0.0.0", &[]);
+        linked.local_source = Some(LocalSource::Link(PathBuf::from("packages/shared")));
+        graph.packages.insert(link_dep_path.into(), linked);
+
+        let mut importers = vec![
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/web/node_modules"),
+                dependencies: vec![dep("shared", "shared@3.0.0")],
+            },
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/lib/node_modules"),
+                dependencies: vec![dep("shared", "shared@3.0.0")],
+            },
+        ];
+        for idx in 0..3 {
+            importers.push(HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from(format!("/sibling-{idx}/node_modules")),
+                dependencies: vec![dep("shared", "shared@2.0.0")],
+            });
+        }
+        for idx in 0..4 {
+            importers.push(HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from(format!("/project/packages/linked-{idx}/node_modules")),
+                dependencies: vec![dep("shared", link_dep_path)],
+            });
+        }
+
+        let preferred = build_workspace_preferences(&root_nm, &importers, &graph);
+
+        assert_eq!(
+            preferred.get("shared").map(String::as_str),
+            Some("shared@3.0.0")
+        );
+    }
+
+    #[test]
+    fn preference_fallback_places_first_candidate_when_preferred_is_unavailable() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("shared@1.0.0".into(), pkg("shared", "1.0.0", &[]));
+        let root_deps = vec![dep("shared", "shared@1.0.0")];
+        let mut plan = PlacementPlan::new(root_nm.clone());
+        let mut queue = VecDeque::new();
+        seed_importer(&mut queue, plan.root_idx, plan.root_idx, &root_deps, &graph);
+
+        complete_plan(
+            &mut plan,
+            queue,
+            &graph,
+            HoistingLimits::None,
+            &BTreeMap::from([("shared".to_string(), "shared@2.0.0".to_string())]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            package_dirs(&plan, "shared@1.0.0"),
+            vec![root_nm.join("shared")]
         );
     }
 
