@@ -12,16 +12,19 @@
 //!
 //! 1. Start with a `TreeNode` for the workspace-root `node_modules`
 //!    directory, with physical importers modeled as synthetic children.
-//! 2. BFS from the importer's direct deps. For each `(requester, name,
+//! 2. Rank competing versions for each package name across the full
+//!    workspace. An explicit root dependency wins; otherwise the version
+//!    used by the most distinct dependents and peer dependents is preferred.
+//! 3. BFS from the importer's direct deps. For each `(requester, name,
 //!    dep_path)` pair, walk up from the requester looking for the
 //!    shallowest ancestor whose `children[name]` is either absent or
 //!    points at the same `dep_path`. That ancestor becomes the
 //!    placement site.
-//! 3. If a matching entry already exists at that ancestor, reuse it
+//! 4. If a matching entry already exists at that ancestor, reuse it
 //!    (dedupe). Otherwise create a new child node and enqueue every
 //!    transitive dep of the placed package with the new node as
 //!    requester.
-//! 4. Conflicting versions naturally nest: when walking up from the
+//! 5. Conflicting versions naturally nest: when walking up from the
 //!    requester we stop as soon as we find a different `dep_path`
 //!    under the same name, so the conflict forces the new entry to
 //!    live below the blocker (typically inside the requester's own
@@ -171,6 +174,19 @@ struct PlaceOutcome {
     created: bool,
 }
 
+#[derive(Default)]
+struct PreferenceEntry {
+    dependents: BTreeSet<String>,
+    peer_dependents: BTreeSet<String>,
+    discovery_order: usize,
+}
+
+impl PreferenceEntry {
+    fn usages(&self) -> usize {
+        self.dependents.len() + self.peer_dependents.len()
+    }
+}
+
 impl PlacementPlan {
     fn new(importer_nm: PathBuf) -> Self {
         let root = TreeNode {
@@ -278,6 +294,39 @@ impl PlacementPlan {
         })
     }
 
+    fn should_defer_for_preference(
+        &self,
+        requester: usize,
+        floor: usize,
+        name: &str,
+        dep_path: &str,
+        preferred: &BTreeMap<String, String>,
+    ) -> bool {
+        if floor != self.root_idx
+            || preferred
+                .get(name)
+                .is_none_or(|candidate| candidate == dep_path)
+        {
+            return false;
+        }
+
+        // Once a nearer same-name package exists, this request cannot claim
+        // the shared root slot and delaying it provides no dedupe benefit.
+        let mut cursor = requester;
+        loop {
+            if self.nodes[cursor].children.contains_key(name) {
+                return false;
+            }
+            if cursor == floor {
+                return true;
+            }
+            let Some(parent) = self.nodes[cursor].parent else {
+                return false;
+            };
+            cursor = parent;
+        }
+    }
+
     /// Names placed directly in an importer's `node_modules/`. Drives
     /// the stale-entry sweep before the plan is materialized.
     fn importer_root_names(&self, importer_idx: usize) -> impl Iterator<Item = &str> {
@@ -308,7 +357,7 @@ pub(crate) fn plan_importer(
     let mut queue: VecDeque<(usize, usize, String, String)> = VecDeque::new();
 
     seed_importer(&mut queue, plan.root_idx, plan.root_idx, root_deps, graph);
-    complete_plan(&mut plan, queue, graph, hoisting_limits)?;
+    complete_plan(&mut plan, queue, graph, hoisting_limits, &BTreeMap::new())?;
 
     Ok(plan)
 }
@@ -360,8 +409,123 @@ fn plan_workspace(
         );
     }
 
-    complete_plan(&mut plan, queue, graph, hoisting_limits)?;
+    let preferred = if matches!(hoisting_limits, HoistingLimits::None) {
+        build_workspace_preferences(root_nm, importers, graph)
+    } else {
+        BTreeMap::new()
+    };
+    complete_plan(&mut plan, queue, graph, hoisting_limits, &preferred)?;
     Ok(plan)
+}
+
+fn build_workspace_preferences(
+    root_nm: &Path,
+    importers: &[HoistedWorkspaceImporter],
+    graph: &LockfileGraph,
+) -> BTreeMap<String, String> {
+    let mut entries: BTreeMap<(String, String), PreferenceEntry> = BTreeMap::new();
+    let mut root_direct = BTreeMap::new();
+    let mut pending = VecDeque::new();
+    let mut discovery_order = 0;
+    let workspace_root = root_nm.parent().unwrap_or(root_nm);
+
+    for (importer_idx, importer) in importers.iter().enumerate() {
+        let root_reachable = importer
+            .modules_dir
+            .parent()
+            .is_some_and(|importer_dir| importer_dir.starts_with(workspace_root));
+        if !root_reachable {
+            continue;
+        }
+        let dependent = format!("workspace:{importer_idx}");
+        for dep in &importer.dependencies {
+            let is_link = graph
+                .packages
+                .get(&dep.dep_path)
+                .is_some_and(|pkg| matches!(pkg.local_source.as_ref(), Some(LocalSource::Link(_))));
+            // A non-root `link:` edge is pinned to its importer and can never
+            // claim the shared root slot. A root direct link is already at the
+            // root floor, so it remains an unconditional root preference.
+            if is_link && importer.modules_dir != root_nm {
+                continue;
+            }
+            if importer.modules_dir == root_nm {
+                root_direct.insert(dep.name.clone(), dep.dep_path.clone());
+            }
+            let entry = entries
+                .entry((dep.name.clone(), dep.dep_path.clone()))
+                .or_insert_with(|| {
+                    let entry = PreferenceEntry {
+                        discovery_order,
+                        ..PreferenceEntry::default()
+                    };
+                    discovery_order += 1;
+                    entry
+                });
+            entry.dependents.insert(dependent.clone());
+            if !is_link {
+                pending.push_back(dep.dep_path.clone());
+            }
+        }
+    }
+
+    let mut expanded = BTreeSet::new();
+    while let Some(parent_dep_path) = pending.pop_front() {
+        if !expanded.insert(parent_dep_path.clone()) {
+            continue;
+        }
+        let Some(pkg) = graph.packages.get(&parent_dep_path) else {
+            continue;
+        };
+        if matches!(pkg.local_source.as_ref(), Some(LocalSource::Link(_))) {
+            continue;
+        }
+        for (dep_name, dep_tail) in &pkg.dependencies {
+            let child_dep_path = aube_lockfile::shared_local_dep_path(dep_name, dep_tail)
+                .unwrap_or_else(|| format!("{dep_name}@{dep_tail}"));
+            if !graph.packages.contains_key(&child_dep_path) {
+                continue;
+            }
+            let entry = entries
+                .entry((dep_name.clone(), child_dep_path.clone()))
+                .or_insert_with(|| {
+                    let entry = PreferenceEntry {
+                        discovery_order,
+                        ..PreferenceEntry::default()
+                    };
+                    discovery_order += 1;
+                    entry
+                });
+            if pkg.peer_dependencies.contains_key(dep_name) {
+                entry.peer_dependents.insert(parent_dep_path.clone());
+            } else {
+                entry.dependents.insert(parent_dep_path.clone());
+            }
+            pending.push_back(child_dep_path);
+        }
+    }
+
+    let mut candidates: BTreeMap<String, Vec<(String, usize, usize)>> = BTreeMap::new();
+    for ((name, dep_path), entry) in entries {
+        candidates
+            .entry(name)
+            .or_default()
+            .push((dep_path, entry.usages(), entry.discovery_order));
+    }
+
+    let mut preferred = BTreeMap::new();
+    for (name, mut versions) in candidates {
+        if let Some(dep_path) = root_direct.remove(&name) {
+            preferred.insert(name, dep_path);
+            continue;
+        }
+        versions.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.2.cmp(&right.2)));
+        if let Some((dep_path, _, _)) = versions.into_iter().next() {
+            preferred.insert(name, dep_path);
+        }
+    }
+    preferred.extend(root_direct);
+    preferred
 }
 
 fn seed_importer(
@@ -371,9 +535,9 @@ fn seed_importer(
     root_deps: &[DirectDep],
     graph: &LockfileGraph,
 ) {
-    // Seed the queue with the importer's direct deps in declaration
-    // order. BFS makes shallower deps win placement ties over
-    // deeper ones, which matches npm's first-writer-wins policy.
+    // Seed the queue with the importer's direct deps in declaration order.
+    // The workspace preference pass preserves that order as the stable
+    // tiebreaker after usage counts.
     for dep in root_deps {
         let Some(pkg) = graph.packages.get(&dep.dep_path) else {
             continue;
@@ -401,8 +565,26 @@ fn complete_plan(
     mut queue: VecDeque<(usize, usize, String, String)>,
     graph: &LockfileGraph,
     hoisting_limits: HoistingLimits,
+    preferred: &BTreeMap<String, String>,
 ) -> Result<(), Error> {
+    let mut consecutive_deferrals = 0;
+    let mut force_next = false;
     while let Some((requester, floor, name, dep_path)) = queue.pop_front() {
+        if !force_next
+            && plan.should_defer_for_preference(requester, floor, &name, &dep_path, preferred)
+        {
+            queue.push_back((requester, floor, name, dep_path));
+            consecutive_deferrals += 1;
+            if consecutive_deferrals >= queue.len() {
+                // The preferred candidate is unreachable until one of the
+                // deferred packages lands (or is outside this root). Let the
+                // stable first candidate through so planning still converges.
+                force_next = true;
+            }
+            continue;
+        }
+        consecutive_deferrals = 0;
+        force_next = false;
         let outcome = plan.place(requester, floor, &name, &dep_path)?;
         if !outcome.created {
             continue;
@@ -721,6 +903,205 @@ mod tests {
                 PathBuf::from("/project/packages/app/node_modules/shared"),
                 PathBuf::from("/project/packages/lib/node_modules/shared"),
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_prefers_version_used_by_more_dependents_and_peers() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("react@19.2.3".into(), pkg("react", "19.2.3", &[]));
+        graph
+            .packages
+            .insert("react@19.2.6".into(), pkg("react", "19.2.6", &[]));
+        let zustand_dep_path = "zustand@5.0.11(react@19.2.6)";
+        let mut zustand = pkg("zustand", "5.0.11", &[("react", "19.2.6")]);
+        zustand.dep_path = zustand_dep_path.to_string();
+        zustand
+            .peer_dependencies
+            .insert("react".to_string(), ">=18.0.0".to_string());
+        graph.packages.insert(zustand_dep_path.into(), zustand);
+        let importers = vec![
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/mobile/node_modules"),
+                dependencies: vec![dep("react", "react@19.2.3")],
+            },
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/web/node_modules"),
+                dependencies: vec![
+                    dep("react", "react@19.2.6"),
+                    dep("zustand", zustand_dep_path),
+                ],
+            },
+        ];
+
+        let plan = plan_workspace(&root_nm, &importers, &graph, HoistingLimits::None).unwrap();
+
+        assert_eq!(
+            package_dirs(&plan, "react@19.2.6"),
+            vec![root_nm.join("react")]
+        );
+        assert_eq!(
+            package_dirs(&plan, "react@19.2.3"),
+            vec![PathBuf::from("/project/packages/mobile/node_modules/react")]
+        );
+        assert_eq!(
+            package_dir(&plan, zustand_dep_path),
+            root_nm.join("zustand")
+        );
+    }
+
+    #[test]
+    fn workspace_root_direct_dependency_overrides_usage_preference() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("react@19.2.3".into(), pkg("react", "19.2.3", &[]));
+        graph
+            .packages
+            .insert("react@19.2.6".into(), pkg("react", "19.2.6", &[]));
+        graph.packages.insert(
+            "consumer@1.0.0".into(),
+            pkg("consumer", "1.0.0", &[("react", "19.2.6")]),
+        );
+        let importers = vec![
+            HoistedWorkspaceImporter {
+                modules_dir: root_nm.clone(),
+                dependencies: vec![dep("react", "react@19.2.3")],
+            },
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/web/node_modules"),
+                dependencies: vec![
+                    dep("react", "react@19.2.6"),
+                    dep("consumer", "consumer@1.0.0"),
+                ],
+            },
+        ];
+
+        let plan = plan_workspace(&root_nm, &importers, &graph, HoistingLimits::None).unwrap();
+
+        assert_eq!(
+            package_dirs(&plan, "react@19.2.3"),
+            vec![root_nm.join("react")]
+        );
+        assert_eq!(package_dirs(&plan, "react@19.2.6").len(), 2);
+    }
+
+    #[test]
+    fn workspace_defers_direct_conflict_until_preferred_transitive_is_discovered() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("shared@1.0.0".into(), pkg("shared", "1.0.0", &[]));
+        graph
+            .packages
+            .insert("shared@2.0.0".into(), pkg("shared", "2.0.0", &[]));
+        for consumer in ["consumer-a", "consumer-b"] {
+            graph.packages.insert(
+                format!("{consumer}@1.0.0"),
+                pkg(consumer, "1.0.0", &[("shared", "2.0.0")]),
+            );
+        }
+        let importers = vec![
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/first/node_modules"),
+                dependencies: vec![dep("shared", "shared@1.0.0")],
+            },
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/second/node_modules"),
+                dependencies: vec![
+                    dep("consumer-a", "consumer-a@1.0.0"),
+                    dep("consumer-b", "consumer-b@1.0.0"),
+                ],
+            },
+        ];
+
+        let plan = plan_workspace(&root_nm, &importers, &graph, HoistingLimits::None).unwrap();
+
+        assert_eq!(
+            package_dirs(&plan, "shared@2.0.0"),
+            vec![root_nm.join("shared")]
+        );
+        assert_eq!(
+            package_dirs(&plan, "shared@1.0.0"),
+            vec![PathBuf::from("/project/packages/first/node_modules/shared")]
+        );
+    }
+
+    #[test]
+    fn workspace_preferences_exclude_root_ineligible_candidates() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("shared@2.0.0".into(), pkg("shared", "2.0.0", &[]));
+        graph
+            .packages
+            .insert("shared@3.0.0".into(), pkg("shared", "3.0.0", &[]));
+        let link_dep_path = "shared@link:../shared";
+        let mut linked = pkg("shared", "0.0.0", &[]);
+        linked.local_source = Some(LocalSource::Link(PathBuf::from("packages/shared")));
+        graph.packages.insert(link_dep_path.into(), linked);
+
+        let mut importers = vec![
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/web/node_modules"),
+                dependencies: vec![dep("shared", "shared@3.0.0")],
+            },
+            HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from("/project/packages/lib/node_modules"),
+                dependencies: vec![dep("shared", "shared@3.0.0")],
+            },
+        ];
+        for idx in 0..3 {
+            importers.push(HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from(format!("/sibling-{idx}/node_modules")),
+                dependencies: vec![dep("shared", "shared@2.0.0")],
+            });
+        }
+        for idx in 0..4 {
+            importers.push(HoistedWorkspaceImporter {
+                modules_dir: PathBuf::from(format!("/project/packages/linked-{idx}/node_modules")),
+                dependencies: vec![dep("shared", link_dep_path)],
+            });
+        }
+
+        let preferred = build_workspace_preferences(&root_nm, &importers, &graph);
+
+        assert_eq!(
+            preferred.get("shared").map(String::as_str),
+            Some("shared@3.0.0")
+        );
+    }
+
+    #[test]
+    fn preference_fallback_places_first_candidate_when_preferred_is_unavailable() {
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph
+            .packages
+            .insert("shared@1.0.0".into(), pkg("shared", "1.0.0", &[]));
+        let root_deps = vec![dep("shared", "shared@1.0.0")];
+        let mut plan = PlacementPlan::new(root_nm.clone());
+        let mut queue = VecDeque::new();
+        seed_importer(&mut queue, plan.root_idx, plan.root_idx, &root_deps, &graph);
+
+        complete_plan(
+            &mut plan,
+            queue,
+            &graph,
+            HoistingLimits::None,
+            &BTreeMap::from([("shared".to_string(), "shared@2.0.0".to_string())]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            package_dirs(&plan, "shared@1.0.0"),
+            vec![root_nm.join("shared")]
         );
     }
 

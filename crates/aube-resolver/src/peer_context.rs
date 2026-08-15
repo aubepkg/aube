@@ -154,6 +154,23 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
                 if satisfied.contains(peer_name) {
                     continue;
                 }
+                // Optional peers (`peerDependenciesMeta.optional = true`)
+                // are opt-in integrations — pnpm's `auto-install-peers`
+                // only fills in *required* peers and never promotes an
+                // optional one to the importer, even when another
+                // dependency already pulled a matching version into the
+                // graph. Mirrors the enqueue-side skip in
+                // `resolve/driver.rs`. Skipped before the dep_type
+                // reconciliation below so an optional declaration can't
+                // reclassify an entry hoisted for a required peer.
+                let optional = pkg
+                    .peer_dependencies_meta
+                    .get(peer_name)
+                    .map(|m| m.optional)
+                    .unwrap_or(false);
+                if optional {
+                    continue;
+                }
                 if let Some(&idx) = additions_by_name.get(peer_name) {
                     let current = additions[idx].dep_type;
                     // A peer needed by roots from different sections cannot

@@ -2826,6 +2826,75 @@ fn hoist_auto_installed_peers_does_not_hoist_auto_peer_peers_to_importer() {
     assert_eq!(root[1].dep_path, "plugin@2.0.0");
 }
 
+// pnpm's `auto-install-peers` only fills in *required* peers — an
+// optional peer (`peerDependenciesMeta.optional = true`) is never
+// promoted to the importer, even when another dependency already
+// pulled a matching version into the graph. Without the skip, the
+// hoist pass would surface `node-sass` as an importer direct dep
+// (lockfile importers entry + top-level node_modules symlink) where
+// pnpm has none. The required peer alongside proves the skip is
+// targeted.
+#[test]
+fn hoist_auto_installed_peers_skips_optional_peers() {
+    let mut loader = mk_locked(
+        "loader",
+        "1.0.0",
+        &[("webpack", "5.0.0")],
+        &[("webpack", "^5"), ("node-sass", "^9")],
+    );
+    loader.peer_dependencies_meta.insert(
+        "node-sass".to_string(),
+        aube_lockfile::PeerDepMeta { optional: true },
+    );
+    // `node-sass` is in the graph anyway — a second direct dep
+    // depends on it as a regular dependency.
+    let legacy = mk_locked("legacy", "1.0.0", &[("node-sass", "9.0.0")], &[]);
+    let node_sass = mk_locked("node-sass", "9.0.0", &[], &[]);
+    let webpack = mk_locked("webpack", "5.0.0", &[], &[]);
+
+    let mut packages = BTreeMap::new();
+    packages.insert("loader@1.0.0".to_string(), loader);
+    packages.insert("legacy@1.0.0".to_string(), legacy);
+    packages.insert("node-sass@9.0.0".to_string(), node_sass);
+    packages.insert("webpack@5.0.0".to_string(), webpack);
+
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![
+            DirectDep {
+                name: "loader".to_string(),
+                dep_path: "loader@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("^1".to_string()),
+            },
+            DirectDep {
+                name: "legacy".to_string(),
+                dep_path: "legacy@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("^1".to_string()),
+            },
+        ],
+    );
+
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let hoisted = hoist_auto_installed_peers(graph);
+    let root = hoisted.importers.get(".").unwrap();
+
+    // The required peer `webpack` hoists; the optional peer
+    // `node-sass` does not, despite being resolved in the graph.
+    assert_eq!(root.len(), 3);
+    assert!(root.iter().any(|d| d.name == "webpack"));
+    assert!(
+        root.iter().all(|d| d.name != "node-sass"),
+        "optional peer must not be hoisted to the importer"
+    );
+}
+
 // If the peer is already in the importer's direct deps, hoist is a
 // no-op — we don't duplicate or shadow the user's own specifier.
 #[test]

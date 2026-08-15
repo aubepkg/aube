@@ -4,7 +4,10 @@
 # `disableGlobalVirtualStoreForPackages` is present in an importer's
 # deps. Next.js's Turbopack canonicalizes every `node_modules/<pkg>`
 # symlink and rejects targets outside the project root, which aube's
-# gvs layout produces by default. Vite is deliberately absent because
+# gvs layout produces by default. Metro's file map likewise requires
+# external symlink targets to be included in `watchFolders`; Expo and
+# React Native use Metro but normally declare their framework package.
+# Vite is deliberately absent because
 # 8.1+ reads the `.modules.yaml` metadata aube writes. The setting is
 # the extension point: add any tool with the same restriction, or set
 # to `[]` to disable the heuristic.
@@ -84,6 +87,26 @@ JSON
 	assert_success
 	assert_output --partial "disableGlobalVirtualStoreForPackages"
 	assert_output --partial "\`next\`"
+}
+
+@test "Metro ecosystem packages disable the global virtual store by default" {
+	for package in expo react-native metro; do
+		_make_fake_dep "$package"
+		mkdir "app-$package"
+		(
+			cd "app-$package"
+			cat >package.json <<JSON
+{"name":"app-$package","version":"0.0.0","dependencies":{"$package":"link:../fake-$package","is-odd":"3.0.1"}}
+JSON
+
+			run aube install
+			assert_success
+			assert_output --partial "disableGlobalVirtualStoreForPackages"
+			assert_output --partial "\`$package\`"
+			[ -d node_modules/.aube/is-odd@3.0.1 ]
+			[ ! -L node_modules/.aube/is-odd@3.0.1 ]
+		)
+	done
 }
 
 @test "aube install does not warn when no listed package is present" {
