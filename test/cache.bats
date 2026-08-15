@@ -88,6 +88,11 @@ EOF
 	run aube cache path
 	assert_success
 	assert_output "$TEST_TEMP_DIR/tools/.cache/aube"
+
+	run aube view is-odd --json
+	assert_success
+	[ -d "$TEST_TEMP_DIR/tools/.cache/aube/packuments-full-v1" ]
+	[ ! -e "$TEST_TEMP_DIR/tools/packages/lib/.cache/aube" ]
 }
 
 @test "aube cache list on an empty cache prints nothing" {

@@ -691,8 +691,16 @@ pub(crate) fn resolve_virtual_store_dir_for_cwd(cwd: &std::path::Path) -> std::p
 
 /// Disk cache directory for packument metadata. Falls back to a tmp dir if
 /// the user cache dir can't be resolved (rare).
+pub(crate) fn metadata_cache_anchor() -> miette::Result<std::path::PathBuf> {
+    let initial_cwd = crate::dirs::cwd()?;
+    Ok(crate::dirs::find_workspace_root(&initial_cwd)
+        .or_else(|| crate::dirs::find_project_root(&initial_cwd))
+        .unwrap_or(initial_cwd))
+}
+
 pub(crate) fn packument_cache_dir() -> std::path::PathBuf {
-    let cwd = crate::dirs::cwd().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let cwd =
+        metadata_cache_anchor().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     packument_cache_dir_for_cwd(&cwd)
 }
 
@@ -706,7 +714,8 @@ pub(crate) fn packument_cache_dir_for_cwd(cwd: &std::path::Path) -> std::path::P
 /// human-facing commands like `aube view`. Separate from the corgi cache
 /// because the shapes differ.
 pub(crate) fn packument_full_cache_dir() -> std::path::PathBuf {
-    let cwd = crate::dirs::cwd().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let cwd =
+        metadata_cache_anchor().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     resolved_cache_dir(&cwd).join("packuments-full-v1")
 }
 
