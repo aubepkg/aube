@@ -311,7 +311,23 @@ impl NodeRuntime {
     /// (through the disk caches).
     pub async fn resolve_for_lockfile(&self, spec: &NodeSpec) -> Result<PinnedNode, Error> {
         if let NodeSpec::Exact(version) = spec {
-            return self.build_full_pin(version).await;
+            let pin = self.build_full_pin(version).await?;
+            let platform = Platform::current()?;
+            // Exact specs bypass the release-index availability gate. Apply
+            // an equivalent check for official Node distributions, while
+            // leaving FreeBSD and best-effort musl pins usable: those hosts
+            // intentionally rely on system/mise Node or a later live-checksum
+            // lookup rather than requiring an official lockfile variant.
+            if requires_official_host_variant(&platform)
+                && pin
+                    .variant_for(&platform.os, &platform.cpu, platform.libc.as_deref())
+                    .is_none()
+            {
+                return Err(Error::UnsupportedPlatform {
+                    platform: platform.label(),
+                });
+            }
+            return Ok(pin);
         }
         let platform = Platform::current()?;
         let entries = index::load_index(&self.http, &self.cfg).await?;
@@ -347,21 +363,15 @@ impl NodeRuntime {
                 }
             }
         }
-        let pin = PinnedNode {
+        Ok(PinnedNode {
             version: version.clone(),
             variants,
-        };
-        let platform = Platform::current()?;
-        if pin
-            .variant_for(&platform.os, &platform.cpu, platform.libc.as_deref())
-            .is_none()
-        {
-            return Err(Error::UnsupportedPlatform {
-                platform: platform.label(),
-            });
-        }
-        Ok(pin)
+        })
     }
+}
+
+fn requires_official_host_variant(platform: &Platform) -> bool {
+    platform.os != "freebsd" && platform.libc.as_deref() != Some("musl")
 }
 
 fn warn_version_mismatch(req: &NodeRequest) {
@@ -470,6 +480,23 @@ fn variants_from_shasums<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_variant_validation_skips_non_official_distributions() {
+        let platform = |os: &str, libc: Option<&str>| Platform {
+            os: os.to_string(),
+            cpu: "x64".to_string(),
+            libc: libc.map(str::to_string),
+        };
+
+        assert!(requires_official_host_variant(&platform("linux", None)));
+        assert!(requires_official_host_variant(&platform("darwin", None)));
+        assert!(!requires_official_host_variant(&platform(
+            "linux",
+            Some("musl")
+        )));
+        assert!(!requires_official_host_variant(&platform("freebsd", None)));
+    }
 
     #[tokio::test]
     async fn exact_lockfile_pin_skips_release_index() {
