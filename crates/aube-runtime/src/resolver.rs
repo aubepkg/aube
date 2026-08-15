@@ -127,9 +127,14 @@ impl NodeRuntime {
         // Network: pin the spec to an exact version.
         progress.on_phase(None, crate::progress::InstallPhase::Resolving);
         let platform = Platform::current()?;
-        let (version, fresh_pin) = match pinned {
-            Some(p) => (p.version.clone(), None),
-            None => {
+        let (version, fresh_pin) = match (pinned, &target) {
+            (Some(p), _) => (p.version.clone(), None),
+            // An exact version can go straight to the immutable
+            // per-release SHASUMS file. Besides saving the index
+            // round-trip, this lets an exact request resolve when a
+            // mirror serves release artifacts but no global index.
+            (None, NodeSpec::Exact(version)) => (version.clone(), None),
+            (None, _) => {
                 let selected = match index::load_index(&self.http, &self.cfg).await {
                     Ok(entries) => index::select(&entries, &target, &platform)
                         .map(|e| e.version.clone())
@@ -305,6 +310,9 @@ impl NodeRuntime {
     /// artifact set — the lockfile-pin path. Always network-backed
     /// (through the disk caches).
     pub async fn resolve_for_lockfile(&self, spec: &NodeSpec) -> Result<PinnedNode, Error> {
+        if let NodeSpec::Exact(version) = spec {
+            return self.build_full_pin(version).await;
+        }
         let platform = Platform::current()?;
         let entries = index::load_index(&self.http, &self.cfg).await?;
         let entry =
@@ -452,6 +460,51 @@ fn variants_from_shasums<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn exact_lockfile_pin_skips_release_index() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let read = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..read]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap()
+                .to_string();
+            let body = concat!(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "  node-v22.23.2-linux-x64.tar.gz\n"
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            path
+        });
+
+        let runtime = NodeRuntime::new(RuntimeConfig {
+            mirror: Some(format!("http://{address}")),
+            retries: 0,
+            ..RuntimeConfig::default()
+        });
+        let version = node_semver::Version::parse("22.23.2").unwrap();
+        let pin = runtime
+            .resolve_for_lockfile(&NodeSpec::Exact(version.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(pin.version, version);
+        assert_eq!(server.join().unwrap(), "/v22.23.2/SHASUMS256.txt");
+    }
 
     #[test]
     fn shasums_variant_mapping() {
