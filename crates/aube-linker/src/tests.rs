@@ -987,6 +987,27 @@ fn warm_link_repairs_stale_global_virtual_store_dependency_link() {
 }
 
 #[test]
+fn cached_entry_repair_rejects_dependency_path_escape() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _) = setup_store_with_files(dir.path());
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let sentinel = outside.join("sentinel");
+    std::fs::write(&sentinel, "keep").unwrap();
+    let mut pkg = make_graph().packages.remove("foo@1.0.0").unwrap();
+    pkg.dependencies =
+        BTreeMap::from([(outside.to_string_lossy().into_owned(), "1.0.0".to_string())]);
+
+    assert!(
+        linker
+            .reconcile_virtual_store_entry("foo@1.0.0", &pkg, None)
+            .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "keep");
+}
+
+#[test]
 fn test_global_virtual_store_gets_hidden_hoist() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");

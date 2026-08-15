@@ -343,6 +343,7 @@ impl Linker {
             if dep_name == &pkg.name {
                 continue;
             }
+            validate_package_link_name(dep_name)?;
             let dep_dep_path = shared_local_dep_path(dep_name, dep_version)
                 .unwrap_or_else(|| format!("{dep_name}@{dep_version}"));
             let symlink_path = pkg_nm_parent.join(dep_name);
