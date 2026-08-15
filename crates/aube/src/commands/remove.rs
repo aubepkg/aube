@@ -195,7 +195,20 @@ pub async fn run(
     };
     let mut opts = install::InstallOptions::with_mode(mode);
     opts.ignore_scripts = args.ignore_scripts;
-    install::run_with_project_lock(opts, &lock).await?;
+    if used_lockfile_prune {
+        // The common remove path is entirely local when every retained
+        // artifact is present. Try that first so removing a dependency never
+        // consults the registry unnecessarily, then allow the normal install
+        // path to repair an incomplete store.
+        opts.network_mode = aube_registry::NetworkMode::Offline;
+        if let Err(err) = install::run_with_project_lock(opts.clone(), &lock).await {
+            tracing::debug!(%err, "offline relink missed a retained artifact; retrying with the registry");
+            opts.network_mode = aube_registry::NetworkMode::Online;
+            install::run_with_project_lock(opts, &lock).await?;
+        }
+    } else {
+        install::run_with_project_lock(opts, &lock).await?;
+    }
 
     Ok(())
 }
