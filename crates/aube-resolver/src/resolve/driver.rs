@@ -540,11 +540,12 @@ impl<'a> ResolveDriver<'a> {
             .map(|p| p.version.as_str())
             .filter(|v| !is_vulnerable(task.registry_name(), v, &self.resolver.vulnerable_ranges));
 
-        // Direct deps in time-based mode pick the lowest
-        // satisfying version; everything else (transitives,
-        // and all picks in Highest mode) picks highest.
-        let pick_lowest =
-            self.resolver.resolution_mode == ResolutionMode::TimeBased && task.is_root;
+        // Direct deps in time-based and lowest-direct modes pick the
+        // lowest satisfying version; everything else picks highest.
+        let pick_lowest = matches!(
+            self.resolver.resolution_mode,
+            ResolutionMode::TimeBased | ResolutionMode::LowestDirect
+        ) && task.is_root;
         // `minimumReleaseAgeExclude` is applied per-candidate-version
         // inside `pick_version` via the `is_age_exempt` closure below. A
         // name-only exclude rule matches every version; a `pkg@1.2.3`

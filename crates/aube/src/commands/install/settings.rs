@@ -8,12 +8,8 @@ use std::collections::BTreeMap;
 fn parse_resolution_mode(s: &str) -> Option<aube_resolver::ResolutionMode> {
     match s.trim().to_ascii_lowercase().as_str() {
         "highest" => Some(aube_resolver::ResolutionMode::Highest),
-        // pnpm treats `lowest-direct` and `time-based` as distinct
-        // modes; aube folds them into `TimeBased` and skips the cutoff
-        // filter when there's no publish time to compare against, so
-        // `lowest-direct` behavior emerges naturally from `TimeBased`
-        // with `time:` absent. Close enough for the first pass.
-        "time-based" | "time" | "lowest-direct" => Some(aube_resolver::ResolutionMode::TimeBased),
+        "time-based" | "time" => Some(aube_resolver::ResolutionMode::TimeBased),
+        "lowest-direct" => Some(aube_resolver::ResolutionMode::LowestDirect),
         _ => None,
     }
 }
@@ -51,19 +47,17 @@ fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> aube_resolver
 }
 
 /// Translate the settings-side `ResolutionMode` enum into the
-/// resolver's runtime enum. pnpm treats `lowest-direct` and
-/// `time-based` as distinct modes, but aube folds them into
-/// `TimeBased` and lets the `time:` cutoff filter handle the
-/// difference — when publish times are missing the `lowest-direct`
-/// behavior emerges naturally. Close enough for the first pass.
+/// resolver's runtime enum.
 fn map_resolution_mode(
     m: aube_settings::resolved::ResolutionMode,
 ) -> aube_resolver::ResolutionMode {
     match m {
         aube_settings::resolved::ResolutionMode::Highest => aube_resolver::ResolutionMode::Highest,
-        aube_settings::resolved::ResolutionMode::TimeBased
-        | aube_settings::resolved::ResolutionMode::LowestDirect => {
+        aube_settings::resolved::ResolutionMode::TimeBased => {
             aube_resolver::ResolutionMode::TimeBased
+        }
+        aube_settings::resolved::ResolutionMode::LowestDirect => {
+            aube_resolver::ResolutionMode::LowestDirect
         }
     }
 }
