@@ -93,19 +93,19 @@ JSON
 	for package in expo react-native metro; do
 		_make_fake_dep "$package"
 		mkdir "app-$package"
-		cd "app-$package"
-		cat >package.json <<JSON
+		(
+			cd "app-$package"
+			cat >package.json <<JSON
 {"name":"app-$package","version":"0.0.0","dependencies":{"$package":"link:../fake-$package","is-odd":"3.0.1"}}
 JSON
 
-		run aube install
-		assert_success
-		assert_output --partial "disableGlobalVirtualStoreForPackages"
-		assert_output --partial "\`$package\`"
-		[ -d node_modules/.aube/is-odd@3.0.1 ]
-		[ ! -L node_modules/.aube/is-odd@3.0.1 ]
-
-		cd ..
+			run aube install
+			assert_success
+			assert_output --partial "disableGlobalVirtualStoreForPackages"
+			assert_output --partial "\`$package\`"
+			[ -d node_modules/.aube/is-odd@3.0.1 ]
+			[ ! -L node_modules/.aube/is-odd@3.0.1 ]
+		)
 	done
 }
 
