@@ -32,6 +32,8 @@ mod sweep;
 mod unreviewed_builds;
 mod workspace;
 
+pub(crate) use resolve::check_patch_drift;
+
 use advisory::resolve_osv_routing_settings;
 pub use args::{EmbedderInstallOverrides, InstallArgs, InstallOptions};
 pub(crate) use bin_linking::{

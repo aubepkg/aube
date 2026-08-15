@@ -169,23 +169,29 @@ pub async fn run(
     let lockfile_kind = aube_lockfile::detect_existing_lockfile_kind(&cwd)
         .unwrap_or(aube_lockfile::LockfileKind::Aube);
     let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
+    let patch_status = existing
+        .as_ref()
+        .map(|graph| install::check_patch_drift(&cwd, graph, lockfile_kind))
+        .transpose()?;
     let (mut graph, used_lockfile_prune) = match existing
         .as_ref()
         .and_then(|graph| prune_removed_dependencies(graph, &manifest, packages))
         .filter(|graph| {
-            matches!(
-                graph.check_drift_for_kind(
-                    &manifest,
-                    &workspace_config.overrides,
-                    &workspace_config.ignored_optional_dependencies,
-                    &workspace_catalogs,
-                    lockfile_kind,
-                ),
-                aube_lockfile::DriftStatus::Fresh
-            ) && matches!(
-                graph.check_catalogs_drift(&workspace_catalogs),
-                aube_lockfile::DriftStatus::Fresh
-            )
+            matches!(patch_status, Some(aube_lockfile::DriftStatus::Fresh))
+                && matches!(
+                    graph.check_drift_for_kind(
+                        &manifest,
+                        &workspace_config.overrides,
+                        &workspace_config.ignored_optional_dependencies,
+                        &workspace_catalogs,
+                        lockfile_kind,
+                    ),
+                    aube_lockfile::DriftStatus::Fresh
+                )
+                && matches!(
+                    graph.check_catalogs_drift(&workspace_catalogs),
+                    aube_lockfile::DriftStatus::Fresh
+                )
         }) {
         Some(graph) => {
             eprintln!("Pruned lockfile to {} packages", graph.packages.len());

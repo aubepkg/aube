@@ -519,7 +519,7 @@ pub(super) fn select_lockfile_result(
     }
 }
 
-fn check_patch_drift(
+pub(crate) fn check_patch_drift(
     cwd: &Path,
     graph: &LockfileGraph,
     kind: LockfileKind,
