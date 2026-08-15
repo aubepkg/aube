@@ -347,22 +347,6 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
         // NTFS junctions store normalized absolute targets, sometimes with a
         // `\\?\` prefix, so compare canonical destinations rather than the
         // relative target passed to `create_dir_link`.
-        use std::path::PathBuf;
-        use std::sync::OnceLock;
-        static CANON_CACHE: OnceLock<
-            std::sync::RwLock<std::collections::HashMap<PathBuf, PathBuf>>,
-        > = OnceLock::new();
-        fn cached_canonicalize(p: &Path) -> std::io::Result<PathBuf> {
-            let map = CANON_CACHE.get_or_init(Default::default);
-            if let Some(hit) = map.read().expect("canon cache poisoned").get(p) {
-                return Ok(hit.clone());
-            }
-            let canon = p.canonicalize()?;
-            map.write()
-                .expect("canon cache poisoned")
-                .insert(p.to_path_buf(), canon.clone());
-            Ok(canon)
-        }
         let expected_abs = if expected_target.is_absolute() {
             expected_target.to_path_buf()
         } else {
@@ -371,8 +355,10 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
                 .unwrap_or_else(|| Path::new(""))
                 .join(expected_target)
         };
-        if let Ok(link_canon) = cached_canonicalize(link_path)
-            && let Ok(exp_canon) = cached_canonicalize(&expected_abs)
+        // The link destination is mutable during reconciliation and shared
+        // installs can repair it concurrently, so it must never be cached.
+        if let Ok(link_canon) = link_path.canonicalize()
+            && let Ok(exp_canon) = expected_abs.canonicalize()
             && link_canon == exp_canon
         {
             return Ok(true);
