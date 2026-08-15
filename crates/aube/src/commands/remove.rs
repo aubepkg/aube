@@ -1,6 +1,7 @@
 use super::install;
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Args)]
 pub struct RemoveArgs {
@@ -156,27 +157,83 @@ pub async fn run(
     })?;
     eprintln!("Updated package.json");
 
-    // Re-resolve dependency tree without the removed packages
+    // Removing a direct dependency normally needs no registry work: trim
+    // that importer's roots and garbage-collect packages that are no longer
+    // reachable. Fall back to resolution for shared-workspace graphs and
+    // when a surviving package declared the removed package as a peer — in
+    // that case its peer context may need to be recomputed.
     let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
-    let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
-    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
-    let mut graph = resolver
-        .resolve(&manifest, existing.as_ref())
-        .await
-        .map_err(miette::Report::new)
-        .wrap_err("failed to resolve dependencies")?;
-    eprintln!("Resolved {} packages", graph.packages.len());
+    let (mut graph, used_lockfile_prune) = match existing
+        .as_ref()
+        .and_then(|graph| prune_removed_dependencies(graph, packages, args.save_dev))
+    {
+        Some(graph) => {
+            eprintln!("Pruned lockfile to {} packages", graph.packages.len());
+            (graph, true)
+        }
+        None => {
+            let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
+            let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
+            let graph = resolver
+                .resolve(&manifest, existing.as_ref())
+                .await
+                .map_err(miette::Report::new)
+                .wrap_err("failed to resolve dependencies")?;
+            eprintln!("Resolved {} packages", graph.packages.len());
+            (graph, false)
+        }
+    };
 
     install::finalize_lockfile_graph(&cwd, &mut graph, &manifest, false, None).await?;
     super::write_and_log_lockfile(&cwd, &graph, &manifest)?;
 
     // Reinstall to clean up node_modules
-    let mut opts =
-        install::InstallOptions::with_mode(super::chained_frozen_mode(install::FrozenMode::Prefer));
+    let mode = if used_lockfile_prune {
+        install::FrozenMode::Frozen
+    } else {
+        super::chained_frozen_mode(install::FrozenMode::Prefer)
+    };
+    let mut opts = install::InstallOptions::with_mode(mode);
+    if used_lockfile_prune {
+        // The retained graph is a strict subset of the graph that was
+        // already installed and verified. Keep the relink entirely local:
+        // this also skips redundant supply-chain metadata validation.
+        opts.network_mode = aube_registry::NetworkMode::Offline;
+    }
     opts.ignore_scripts = args.ignore_scripts;
     install::run_with_project_lock(opts, &lock).await?;
 
     Ok(())
+}
+
+/// Remove direct roots from a single-importer lockfile without consulting the
+/// registry. Shared workspace graphs stay on the resolver path because the
+/// current command may represent a member importer rather than `.`.
+///
+/// A removed package that supplied a peer to a surviving package also forces
+/// resolution: peer-context suffixes encode the provider version, so merely
+/// pruning the root could leave a stale contextualized dep path behind.
+fn prune_removed_dependencies(
+    graph: &aube_lockfile::LockfileGraph,
+    packages: &[String],
+    save_dev: bool,
+) -> Option<aube_lockfile::LockfileGraph> {
+    if graph.importers.len() != 1 || !graph.importers.contains_key(".") {
+        return None;
+    }
+    let removed: HashSet<&str> = packages.iter().map(String::as_str).collect();
+    let pruned = graph.filter_deps(|dep| {
+        !removed.contains(dep.name.as_str())
+            || (save_dev && dep.dep_type != aube_lockfile::DepType::Dev)
+    });
+    if pruned.packages.values().any(|pkg| {
+        pkg.peer_dependencies
+            .keys()
+            .any(|name| removed.contains(name.as_str()))
+    }) {
+        return None;
+    }
+    Some(pruned)
 }
 
 async fn run_filtered(
@@ -410,7 +467,75 @@ fn prune_sidecar_entries(manifest: &mut aube_manifest::PackageJson, name: &str) 
 
 #[cfg(test)]
 mod tests {
+    use super::prune_removed_dependencies;
+    use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
     use serde_json::Value;
+
+    fn direct(name: &str, version: &str, dep_type: DepType) -> DirectDep {
+        DirectDep {
+            name: name.to_string(),
+            dep_path: format!("{name}@{version}"),
+            dep_type,
+            specifier: Some(version.to_string()),
+        }
+    }
+
+    fn locked(name: &str, version: &str) -> LockedPackage {
+        LockedPackage {
+            name: name.to_string(),
+            version: version.to_string(),
+            dep_path: format!("{name}@{version}"),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn lockfile_prune_keeps_only_reachable_packages() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![
+                direct("remove-me", "1.0.0", DepType::Production),
+                direct("keep-me", "1.0.0", DepType::Production),
+            ],
+        );
+        let mut removed = locked("remove-me", "1.0.0");
+        removed
+            .dependencies
+            .insert("orphan".to_string(), "1.0.0".to_string());
+        graph.packages.insert(removed.dep_path.clone(), removed);
+        for pkg in [locked("orphan", "1.0.0"), locked("keep-me", "1.0.0")] {
+            graph.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        let pruned = prune_removed_dependencies(&graph, &["remove-me".to_string()], false)
+            .expect("single-importer graph without affected peers should prune");
+        assert_eq!(pruned.importers["."].len(), 1);
+        assert!(pruned.packages.contains_key("keep-me@1.0.0"));
+        assert!(!pruned.packages.contains_key("remove-me@1.0.0"));
+        assert!(!pruned.packages.contains_key("orphan@1.0.0"));
+    }
+
+    #[test]
+    fn lockfile_prune_falls_back_when_removed_dep_supplied_peer() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![
+                direct("react", "18.0.0", DepType::Production),
+                direct("plugin", "1.0.0", DepType::Production),
+            ],
+        );
+        let mut plugin = locked("plugin", "1.0.0");
+        plugin
+            .peer_dependencies
+            .insert("react".to_string(), "^18".to_string());
+        for pkg in [locked("react", "18.0.0"), plugin] {
+            graph.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        assert!(prune_removed_dependencies(&graph, &["react".to_string()], false).is_none());
+    }
 
     fn collect_section_order(raw: &str, section: &str) -> Vec<String> {
         let v: Value = serde_json::from_str(raw).unwrap();

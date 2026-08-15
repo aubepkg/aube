@@ -38,6 +38,29 @@ EOF
 	assert_file_exists node_modules/is-even/index.js
 }
 
+@test "aube remove: prunes a single-project lockfile without resolution" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-offline",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "is-even": "1.0.0"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	run aube remove --registry http://127.0.0.1:9 --fetch-retries 0 --fetch-timeout 50 is-odd
+	assert_success
+	assert_output --partial "Pruned lockfile"
+	refute_output --partial "Resolved"
+	run test -e node_modules/is-odd
+	assert_failure
+	assert_file_exists node_modules/is-even/index.js
+}
+
 @test "aube remove: preserves package.json top-level key order" {
 	cat >package.json <<'EOF'
 {
