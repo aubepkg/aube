@@ -347,10 +347,20 @@ impl NodeRuntime {
                 }
             }
         }
-        Ok(PinnedNode {
+        let pin = PinnedNode {
             version: version.clone(),
             variants,
-        })
+        };
+        let platform = Platform::current()?;
+        if pin
+            .variant_for(&platform.os, &platform.cpu, platform.libc.as_deref())
+            .is_none()
+        {
+            return Err(Error::UnsupportedPlatform {
+                platform: platform.label(),
+            });
+        }
+        Ok(pin)
     }
 }
 
@@ -467,6 +477,23 @@ mod tests {
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let mirror = format!("http://{address}");
+        let version = node_semver::Version::parse("22.23.2").unwrap();
+        let cache_path = crate::paths::shasums_cache_path(&mirror, &version);
+        if let Some(path) = cache_path.as_deref() {
+            let _ = std::fs::remove_file(path);
+        }
+        struct CacheCleanup(Option<std::path::PathBuf>);
+        impl Drop for CacheCleanup {
+            fn drop(&mut self) {
+                if let Some(path) = self.0.as_deref() {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+        let _cache_cleanup = CacheCleanup(cache_path);
+        let platform = Platform::current().unwrap();
+        let filename = artifact_filename(&version, &platform);
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0_u8; 2048];
@@ -478,9 +505,9 @@ mod tests {
                 .and_then(|line| line.split_whitespace().nth(1))
                 .unwrap()
                 .to_string();
-            let body = concat!(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                "  node-v22.23.2-linux-x64.tar.gz\n"
+            let body = format!(
+                "{}  {filename}\n",
+                "0000000000000000000000000000000000000000000000000000000000000000"
             );
             write!(
                 stream,
@@ -492,11 +519,10 @@ mod tests {
         });
 
         let runtime = NodeRuntime::new(RuntimeConfig {
-            mirror: Some(format!("http://{address}")),
+            mirror: Some(mirror),
             retries: 0,
             ..RuntimeConfig::default()
         });
-        let version = node_semver::Version::parse("22.23.2").unwrap();
         let pin = runtime
             .resolve_for_lockfile(&NodeSpec::Exact(version.clone()))
             .await
