@@ -10156,6 +10156,18 @@
             ]
           },
           {
+            "name": "lockfile-only",
+            "usage": "--lockfile-only",
+            "help": "Describe the complete platform-independent lockfile graph",
+            "help_first_line": "Describe the complete platform-independent lockfile graph",
+            "short": [],
+            "long": [
+              "lockfile-only"
+            ],
+            "hide": false,
+            "global": false
+          },
+          {
             "name": "prod",
             "usage": "-P --prod",
             "help": "Show only production dependencies (skip devDependencies)",

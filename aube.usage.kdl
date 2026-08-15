@@ -3454,6 +3454,7 @@ cmd sbom help="Generate a Software Bill of Materials (CycloneDX or SPDX)" effect
             choices cyclonedx spdx
         }
     }
+    flag --lockfile-only help="Describe the complete platform-independent lockfile graph"
     flag "-P --prod --production" help="Show only production dependencies (skip devDependencies)"
 }
 cmd search hide=#true help="Search the registry for packages (not implemented — use `npm search`)" effect=read {

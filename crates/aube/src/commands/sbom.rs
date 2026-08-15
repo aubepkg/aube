@@ -26,6 +26,10 @@ pub struct SbomArgs {
     #[arg(long, value_enum, default_value_t = SbomFormat::Cyclonedx)]
     pub format: SbomFormat,
 
+    /// Describe the complete platform-independent lockfile graph
+    #[arg(long)]
+    pub lockfile_only: bool,
+
     /// Show only production dependencies (skip devDependencies)
     #[arg(
         short = 'P',
@@ -47,7 +51,7 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
 
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
 
-    let graph = super::load_graph(
+    let mut graph = super::load_graph(
         &cwd,
         &manifest,
         &format!(
@@ -55,6 +59,25 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
             aube_util::cmd("install")
         ),
     )?;
+
+    // Lockfiles intentionally retain optional native packages for every
+    // platform. A normal SBOM describes what this host can install, while
+    // --lockfile-only preserves the complete platform-independent graph.
+    if !args.lockfile_only {
+        let workspace = aube_manifest::WorkspaceConfig::load(&cwd)
+            .into_diagnostic()
+            .wrap_err("failed to load workspace config")?;
+        let (os, cpu, libc) =
+            aube_manifest::effective_supported_architectures(&manifest, &workspace);
+        let supported = aube_resolver::SupportedArchitectures {
+            os,
+            cpu,
+            libc,
+            ..Default::default()
+        };
+        let ignored = aube_manifest::effective_ignored_optional_dependencies(&manifest, &workspace);
+        aube_resolver::platform::filter_graph(&mut graph, &supported, &ignored);
+    }
 
     let filter = DepFilter::from_flags(args.prod, args.dev);
     let closure = super::collect_dep_closure(&graph, filter, false);

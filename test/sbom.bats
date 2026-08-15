@@ -157,3 +157,30 @@ JSON
 	assert_failure
 	assert_output --partial "no lockfile"
 }
+
+@test "aube sbom filters foreign optional packages unless lockfile-only is requested" {
+	if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+		skip "win32 host would install the win32 optional dependency"
+	fi
+	cat >package.json <<'JSON'
+{
+  "name": "sbom-platform-filter",
+  "version": "1.0.0",
+  "optionalDependencies": {
+    "aube-test-optional-win32": "1.0.0"
+  }
+}
+JSON
+	run aube install
+	assert_success
+	run grep -F 'aube-test-optional-win32@1.0.0' aube-lock.yaml
+	assert_success
+
+	run aube sbom
+	assert_success
+	refute_output --partial 'aube-test-optional-win32'
+
+	run aube sbom --lockfile-only
+	assert_success
+	assert_output --partial 'aube-test-optional-win32'
+}
