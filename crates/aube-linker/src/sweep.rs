@@ -335,6 +335,74 @@ pub(crate) fn classify_local_entry_state(path: &Path) -> EntryState {
     }
 }
 
+/// Reconcile a directory link against its expected target.
+///
+/// Returns `Ok(true)` when the existing link is current. Missing, dangling,
+/// incorrectly-targeted, and non-link entries are removed and return
+/// `Ok(false)` so the caller can recreate the link.
+pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Result<bool, Error> {
+    #[cfg(windows)]
+    {
+        // NTFS junctions store normalized absolute targets, sometimes with a
+        // `\\?\` prefix, so compare canonical destinations rather than the
+        // relative target passed to `create_dir_link`.
+        use std::path::PathBuf;
+        use std::sync::OnceLock;
+        static CANON_CACHE: OnceLock<
+            std::sync::RwLock<std::collections::HashMap<PathBuf, PathBuf>>,
+        > = OnceLock::new();
+        fn cached_canonicalize(p: &Path) -> std::io::Result<PathBuf> {
+            let map = CANON_CACHE.get_or_init(Default::default);
+            if let Some(hit) = map.read().expect("canon cache poisoned").get(p) {
+                return Ok(hit.clone());
+            }
+            let canon = p.canonicalize()?;
+            map.write()
+                .expect("canon cache poisoned")
+                .insert(p.to_path_buf(), canon.clone());
+            Ok(canon)
+        }
+        let expected_abs = if expected_target.is_absolute() {
+            expected_target.to_path_buf()
+        } else {
+            link_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(expected_target)
+        };
+        if let Ok(link_canon) = cached_canonicalize(link_path)
+            && let Ok(exp_canon) = cached_canonicalize(&expected_abs)
+            && link_canon == exp_canon
+        {
+            return Ok(true);
+        }
+        if link_path.symlink_metadata().is_err() {
+            return Ok(false);
+        }
+        match std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path)) {
+            Ok(()) => Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(Error::Io(link_path.to_path_buf(), e)),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match std::fs::read_link(link_path) {
+            Ok(existing) if existing == expected_target => Ok(true),
+            Ok(_) => {
+                let _ = std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path));
+                Ok(false)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => {
+                let _ =
+                    std::fs::remove_dir_all(link_path).or_else(|_| std::fs::remove_file(link_path));
+                Ok(false)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_physical_importer;

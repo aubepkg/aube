@@ -122,6 +122,12 @@ fn compatibility_metadata_is_current(cwd: &Path, opts: &InstallOptions) -> bool 
                 Some(true) => {
                     legacy_vite_patches_current =
                         super::gvs::legacy_vite_patches_are_current(&aube_dir);
+                    if !state::gvs_nested_links_are_current(cwd, &layout) {
+                        tracing::debug!(
+                            "install warm path skipped: global virtual store links are stale"
+                        );
+                        return false;
+                    }
                     Some(global_virtual_store)
                 }
                 Some(false) => Some(aube_dir),

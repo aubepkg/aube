@@ -399,6 +399,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                     aube_dir,
                     virtual_store_dir_max_length,
                     placements: placements_ref,
+                    use_global_virtual_store: planned_gvs,
                 },
                 unreviewed_builds: unreviewed_builds_for_state,
             },

@@ -955,6 +955,38 @@ fn test_global_virtual_store_is_populated() {
 }
 
 #[test]
+fn warm_link_repairs_stale_global_virtual_store_dependency_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let virtual_store = store.virtual_store_dir();
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    let graph = make_graph();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let nested_bar = virtual_store.join("foo@1.0.0/node_modules/bar");
+    let stale_bar = virtual_store.join("bar@2.0.0-stale/node_modules/bar");
+    std::fs::create_dir_all(&stale_bar).unwrap();
+    crate::sweep::try_remove_entry(&nested_bar);
+    crate::sys::create_dir_link(&stale_bar, &nested_bar).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(&nested_bar).unwrap(),
+        std::fs::canonicalize(&stale_bar).unwrap()
+    );
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let expected_bar = virtual_store.join("bar@2.0.0/node_modules/bar");
+    assert_eq!(
+        std::fs::canonicalize(&nested_bar).unwrap(),
+        std::fs::canonicalize(&expected_bar).unwrap(),
+        "a cached parent entry must reconcile its nested dependency identity"
+    );
+}
+
+#[test]
 fn test_global_virtual_store_gets_hidden_hoist() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");

@@ -1,7 +1,9 @@
 use tracing::{debug, trace, warn};
 
 use crate::patches::apply_multi_file_patch;
-use crate::sweep::{EntryState, classify_entry_state, mkdirp, try_remove_entry};
+use crate::sweep::{
+    EntryState, classify_entry_state, mkdirp, reconcile_dir_link, try_remove_entry,
+};
 use crate::{Error, LinkStats, LinkStrategy, Linker, sys};
 use aube_lockfile::{LockedPackage, shared_local_dep_path};
 use aube_store::{PackageIndex, StoredFile};
@@ -238,6 +240,7 @@ impl Linker {
             .join(&pkg.name);
 
         if pkg_nm_dir.exists() {
+            self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
             trace!("virtual store hit: {dep_path}");
             stats.packages_cached += 1;
             return Ok(());
@@ -319,6 +322,64 @@ impl Linker {
             );
         }
 
+        Ok(())
+    }
+
+    /// Validate and repair the dependency links inside an existing global
+    /// virtual-store package entry. The package directory itself can be a
+    /// valid cache hit while one of its sibling links still targets an old
+    /// graph identity.
+    pub(crate) fn reconcile_virtual_store_entry(
+        &self,
+        dep_path: &str,
+        pkg: &LockedPackage,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<(), Error> {
+        let pkg_nm_parent = self
+            .virtual_store
+            .join(self.virtual_store_subdir(dep_path))
+            .join("node_modules");
+        for (dep_name, dep_version) in &pkg.dependencies {
+            if dep_name == &pkg.name {
+                continue;
+            }
+            let dep_dep_path = shared_local_dep_path(dep_name, dep_version)
+                .unwrap_or_else(|| format!("{dep_name}@{dep_version}"));
+            let symlink_path = pkg_nm_parent.join(dep_name);
+            let target = if let Some(abs_target) =
+                nested_link_targets.and_then(|targets| targets.get(&dep_dep_path))
+            {
+                abs_target.clone()
+            } else {
+                let sibling_subdir = self.virtual_store_subdir(&dep_dep_path);
+                #[cfg(not(windows))]
+                {
+                    let sibling_abs = self
+                        .virtual_store
+                        .join(sibling_subdir)
+                        .join("node_modules")
+                        .join(dep_name);
+                    let link_parent = symlink_path.parent().unwrap_or(&pkg_nm_parent);
+                    pathdiff::diff_paths(&sibling_abs, link_parent)
+                        .unwrap_or_else(|| sibling_abs.clone())
+                }
+                #[cfg(windows)]
+                {
+                    self.virtual_store
+                        .join(sibling_subdir)
+                        .join("node_modules")
+                        .join(dep_name)
+                }
+            };
+            if reconcile_dir_link(&symlink_path, &target)? {
+                continue;
+            }
+            if let Some(parent) = symlink_path.parent() {
+                mkdirp(parent)?;
+            }
+            sys::create_dir_link(&target, &symlink_path)
+                .map_err(|e| Error::Io(symlink_path.clone(), e))?;
+        }
         Ok(())
     }
 

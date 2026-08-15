@@ -7,8 +7,8 @@ use crate::patches::{
 use crate::pool::with_link_pool;
 use crate::sweep::{
     EntryState, classify_entry_state, classify_local_entry_state, is_physical_importer, mkdirp,
-    remove_hidden_hoist_tree, sweep_dead_hidden_hoist_entries, sweep_stale_tmp_dirs,
-    sweep_stale_top_level_entries, try_remove_entry,
+    reconcile_dir_link, remove_hidden_hoist_tree, sweep_dead_hidden_hoist_entries,
+    sweep_stale_tmp_dirs, sweep_stale_top_level_entries, try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
@@ -322,6 +322,13 @@ impl Linker {
                             };
 
                             if matches!(state, EntryState::Fresh) {
+                                if !project_local {
+                                    self.reconcile_virtual_store_entry(
+                                        dep_path,
+                                        pkg,
+                                        nested_link_targets.as_ref(),
+                                    )?;
+                                }
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
@@ -533,7 +540,7 @@ impl Linker {
                         let link_parent = target_dir.parent().unwrap_or(&nm);
                         let rel_target =
                             pathdiff::diff_paths(&abs_target, link_parent).unwrap_or(abs_target);
-                        if reconcile_top_level_link(&target_dir, &rel_target)? {
+                        if reconcile_dir_link(&target_dir, &rel_target)? {
                             return Ok(false);
                         }
                         if let Some(parent) = target_dir.parent() {
@@ -564,7 +571,7 @@ impl Linker {
                     // old `node_modules/<name>` symlink but it now points
                     // at a stale `.aube/<old-dep-path>`; we need to
                     // rewrite it to the new `.aube/<new-dep-path>`.
-                    if reconcile_top_level_link(&target_dir, &rel_target)? {
+                    if reconcile_dir_link(&target_dir, &rel_target)? {
                         return Ok(false);
                     }
                     if let Some(parent) = target_dir.parent() {
@@ -916,6 +923,13 @@ impl Linker {
                             };
 
                             if matches!(state, EntryState::Fresh) {
+                                if !project_local {
+                                    self.reconcile_virtual_store_entry(
+                                        dep_path,
+                                        pkg,
+                                        nested_link_targets.as_ref(),
+                                    )?;
+                                }
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
@@ -1262,7 +1276,7 @@ impl Linker {
                         let link_parent = link_path.parent().unwrap_or(nm);
                         let rel_target =
                             pathdiff::diff_paths(ws_dir, link_parent).unwrap_or(ws_dir.clone());
-                        if reconcile_top_level_link(&link_path, &rel_target)? {
+                        if reconcile_dir_link(&link_path, &rel_target)? {
                             return Ok(false);
                         }
                         if let Some(parent) = link_path.parent() {
@@ -1281,7 +1295,7 @@ impl Linker {
                         let link_parent = link_path.parent().unwrap_or(nm);
                         let rel_target =
                             pathdiff::diff_paths(&abs_target, link_parent).unwrap_or(abs_target);
-                        if reconcile_top_level_link(&link_path, &rel_target)? {
+                        if reconcile_dir_link(&link_path, &rel_target)? {
                             return Ok(false);
                         }
                         if let Some(parent) = link_path.parent() {
@@ -1304,7 +1318,7 @@ impl Linker {
                     let link_parent = link_path.parent().unwrap_or(nm);
                     let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                         .unwrap_or_else(|| source_dir.clone());
-                    if reconcile_top_level_link(&link_path, &rel_target)? {
+                    if reconcile_dir_link(&link_path, &rel_target)? {
                         return Ok(false);
                     }
                     if let Some(parent) = link_path.parent() {
@@ -1475,7 +1489,7 @@ impl Linker {
             let link_parent = target_dir.parent().unwrap_or(&hidden);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());
-            if reconcile_top_level_link(&target_dir, &rel_target)? {
+            if reconcile_dir_link(&target_dir, &rel_target)? {
                 continue;
             }
             sys::create_dir_link(&rel_target, &target_dir)
@@ -1579,7 +1593,7 @@ impl Linker {
             let link_parent = target_dir.parent().unwrap_or(nm);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());
-            if reconcile_top_level_link(&target_dir, &rel_target)? {
+            if reconcile_dir_link(&target_dir, &rel_target)? {
                 continue;
             }
             if let Some(parent) = target_dir.parent() {
@@ -1591,119 +1605,6 @@ impl Linker {
             stats.top_level_linked += 1;
         }
         Ok(())
-    }
-}
-
-/// Decide whether an existing `node_modules/<name>` entry can be left
-/// alone, or must be removed so the caller can recreate it.
-///
-/// Returns `Ok(true)` when a live entry is present and should be
-/// preserved. Returns `Ok(false)` when nothing is there (or a broken
-/// link was reclaimed) and the caller should proceed to create the
-/// entry. `symlink_metadata().is_ok()` on its own treats a dangling
-/// symlink — whose `.aube/<dep_path>/...` target has been deleted — as
-/// "already in place", which silently leaves the project unresolvable.
-///
-/// `sys::create_dir_link` produces a Unix symlink on Unix and an NTFS
-/// junction on Windows. A junction's `file_type().is_symlink()` is
-/// `false`, so we trust the `symlink_metadata().is_ok() && !exists()`
-/// pair to identify "something is at `path` but its target is gone",
-/// and use the same `remove_dir().or_else(remove_file())` fallback
-/// used elsewhere in this file to unlink both shapes.
-/// Reconcile a top-level `node_modules/<name>` entry against the
-/// expected symlink target. Compares the link's *target* — a version
-/// upgrade that leaves `.aube/<old-dep-path>/` resolvable on disk is
-/// correctly classified as stale instead of silently keeping the old
-/// symlink.
-///
-/// - `Ok(true)`  – existing entry is a symlink pointing at
-///   `expected_target`; caller skips creation.
-/// - `Ok(false)` – no entry exists, or a stale entry (wrong target,
-///   dangling symlink, regular directory) has been best-effort
-///   removed; caller should proceed to create the symlink.
-///
-/// Unix and Windows use different comparison strategies because
-/// `create_dir_link` writes the target differently on each platform:
-/// Unix preserves the relative target bytes-for-bytes as a POSIX
-/// symlink, Windows normalizes to an absolute path before calling
-/// `junction::create`. A plain `read_link == expected` check that
-/// works on Unix would miss every warm run on Windows.
-fn reconcile_top_level_link(link_path: &Path, expected_target: &Path) -> Result<bool, Error> {
-    #[cfg(windows)]
-    {
-        // NTFS junctions store normalized absolute targets
-        // (sometimes `\\?\`-prefixed), so comparing against the
-        // relative `pathdiff::diff_paths` output the callers compute
-        // would never match. Compare the canonical forms instead: if
-        // the junction resolves to the same directory
-        // `expected_target` points at, the link is fresh. Anything
-        // else (dangling, wrong target, not a reparse point) falls
-        // through to a best-effort reclaim.
-        //
-        // Canonicalize is ~5 syscalls on NTFS (open reparse, read
-        // reparse data, close, query attrs ×2). With ~1000 top-level
-        // links per warm install that's 5000 syscalls just for
-        // expected_abs. Cache canonical forms keyed by the absolute
-        // path so a second call to the same target returns
-        // immediately.
-        use std::sync::OnceLock;
-        static CANON_CACHE: OnceLock<
-            std::sync::RwLock<std::collections::HashMap<PathBuf, PathBuf>>,
-        > = OnceLock::new();
-        fn cached_canonicalize(p: &Path) -> std::io::Result<PathBuf> {
-            let map = CANON_CACHE.get_or_init(Default::default);
-            if let Some(hit) = map.read().expect("canon cache poisoned").get(p) {
-                return Ok(hit.clone());
-            }
-            let canon = p.canonicalize()?;
-            map.write()
-                .expect("canon cache poisoned")
-                .insert(p.to_path_buf(), canon.clone());
-            Ok(canon)
-        }
-        let expected_abs = if expected_target.is_absolute() {
-            expected_target.to_path_buf()
-        } else {
-            let parent = link_path.parent().unwrap_or_else(|| Path::new(""));
-            parent.join(expected_target)
-        };
-        if let Ok(link_canon) = cached_canonicalize(link_path)
-            && let Ok(exp_canon) = cached_canonicalize(&expected_abs)
-            && link_canon == exp_canon
-        {
-            return Ok(true);
-        }
-        if link_path.symlink_metadata().is_err() {
-            return Ok(false);
-        }
-        match std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path)) {
-            Ok(()) => Ok(false),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(Error::Io(link_path.to_path_buf(), e)),
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        match std::fs::read_link(link_path) {
-            Ok(existing) if existing == expected_target => Ok(true),
-            Ok(_) => {
-                // Wrong target — remove the stale symlink so the
-                // caller's `create_dir_link` below doesn't EEXIST.
-                let _ = std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path));
-                Ok(false)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(_) => {
-                // `read_link` failed with EINVAL (entry exists but
-                // isn't a symlink — e.g. a regular directory left by
-                // a prior hoisted install) or another error.
-                // Best-effort reclaim so the create call lands on a
-                // clean slot.
-                let _ =
-                    std::fs::remove_dir_all(link_path).or_else(|_| std::fs::remove_file(link_path));
-                Ok(false)
-            }
-        }
     }
 }
 
