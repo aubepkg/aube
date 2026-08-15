@@ -153,7 +153,8 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`shellEmulator`](#setting-shellemulator) | `bool` | Use a JavaScript bash-like shell to run scripts cross-platform. |
 | [`catalogMode`](#setting-catalogmode) | `"manual" \| "strict" \| "prefer"` | How catalog references in package.json are handled by `add`. |
 | [`ci`](#setting-ci) | `bool` | Explicitly mark the environment as CI. |
-| [`cleanupUnusedCatalogs`](#setting-cleanupunusedcatalogs) | `bool` | Remove unused catalog entries during install. |
+| [`catalogPrune`](#setting-catalogprune) | `bool` | Remove unused catalog entries during install. |
+| [`cleanupUnusedCatalogs`](#setting-cleanupunusedcatalogs) | `bool` | Deprecated alias for catalogPrune. |
 | [`linkConcurrency`](#setting-linkconcurrency) | `int` | Maximum concurrent package materialization/linking tasks. |
 | [`aubeNoLock`](#setting-aubenolock) | `bool` | Disable aube's project-level advisory lock. |
 | [`aubeNoAutoInstall`](#setting-aubenoautoinstall) | `bool` | Skip the auto-install staleness check in `aube run` / `aube exec`. |
@@ -3060,15 +3061,15 @@ Examples:
 
 - `CI=1 aube install`
 
-### `cleanupUnusedCatalogs` {#setting-cleanupunusedcatalogs}
+### `catalogPrune` {#setting-catalogprune}
 
 Remove unused catalog entries during install.
 
 - Type: `bool`
 - Default: `false`
-- Environment: `npm_config_cleanup_unused_catalogs`, `NPM_CONFIG_CLEANUP_UNUSED_CATALOGS`, `AUBE_CLEANUP_UNUSED_CATALOGS`
-- .npmrc keys: `cleanupUnusedCatalogs`, `cleanup-unused-catalogs`
-- Workspace YAML keys: `cleanupUnusedCatalogs`
+- Environment: `npm_config_catalog_prune`, `NPM_CONFIG_CATALOG_PRUNE`, `AUBE_CATALOG_PRUNE`
+- .npmrc keys: `catalogPrune`, `catalog-prune`
+- Workspace YAML keys: `catalogPrune`
 
 When enabled, `aube install` rewrites `aube-workspace.yaml` (or
 `pnpm-workspace.yaml`, whichever is present) after resolution to drop
@@ -3079,6 +3080,20 @@ stay intact. yamlpatch's `Remove` op only deletes the line carrying
 the entry's `key: value`, so a `# annotation` line above a pruned
 entry is left in place rather than guessed-at; clean those up by
 hand if you don't want orphaned annotations.
+
+### `cleanupUnusedCatalogs` {#setting-cleanupunusedcatalogs}
+
+Deprecated alias for catalogPrune.
+
+- Type: `bool`
+- Default: `false`
+- Environment: `npm_config_cleanup_unused_catalogs`, `NPM_CONFIG_CLEANUP_UNUSED_CATALOGS`, `AUBE_CLEANUP_UNUSED_CATALOGS`
+- .npmrc keys: `cleanupUnusedCatalogs`, `cleanup-unused-catalogs`
+- Workspace YAML keys: `cleanupUnusedCatalogs`
+
+Deprecated in pnpm 11.22. Use `catalogPrune` instead. The legacy name remains
+accepted for compatibility, but `catalogPrune` takes precedence when both are
+configured.
 
 ## aube-specific
 

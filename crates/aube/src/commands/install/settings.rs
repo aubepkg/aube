@@ -231,7 +231,7 @@ mod gvs_mode_tests {
     }
 }
 
-/// Honor `cleanupUnusedCatalogs` by pruning declared-but-unreferenced
+/// Honor `catalogPrune` (or its deprecated `cleanupUnusedCatalogs` alias) by pruning declared-but-unreferenced
 /// catalog entries from the workspace yaml. No-op when the setting is
 /// off, when there is no workspace yaml file on disk, or when every
 /// declared entry was referenced by an importer.
@@ -244,7 +244,9 @@ pub(super) fn maybe_cleanup_unused_catalogs(
         std::collections::BTreeMap<String, aube_lockfile::CatalogEntry>,
     >,
 ) -> miette::Result<()> {
-    if !aube_settings::resolved::cleanup_unused_catalogs(ctx) {
+    let enabled = aube_settings::resolved::catalog_prune(ctx)
+        .unwrap_or_else(|| aube_settings::resolved::cleanup_unused_catalogs(ctx));
+    if !enabled {
         return Ok(());
     }
     if declared.is_empty() {

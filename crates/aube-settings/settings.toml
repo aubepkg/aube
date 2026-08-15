@@ -3068,7 +3068,7 @@ examples = ["CI=1 aube install"]
 # `ResolveCtx` for a one-liner isn't worth the plumbing.
 typedAccessorUnused = true
 
-[cleanupUnusedCatalogs]
+[catalogPrune]
 description = "Remove unused catalog entries during install."
 type = "bool"
 default = "false"
@@ -3082,6 +3082,21 @@ stay intact. yamlpatch's `Remove` op only deletes the line carrying
 the entry's `key: value`, so a `# annotation` line above a pruned
 entry is left in place rather than guessed-at; clean those up by
 hand if you don't want orphaned annotations.
+"""
+sources.cli = []
+sources.env = ["npm_config_catalog_prune", "NPM_CONFIG_CATALOG_PRUNE", "AUBE_CATALOG_PRUNE"]
+sources.npmrc = ["catalogPrune"]
+sources.workspaceYaml = ["catalogPrune"]
+examples = []
+
+[cleanupUnusedCatalogs]
+description = "Deprecated alias for catalogPrune."
+type = "bool"
+default = "false"
+docs = """
+Deprecated in pnpm 11.22. Use `catalogPrune` instead. The legacy name remains
+accepted for compatibility, but `catalogPrune` takes precedence when both are
+configured.
 """
 sources.cli = []
 sources.env = ["npm_config_cleanup_unused_catalogs", "NPM_CONFIG_CLEANUP_UNUSED_CATALOGS", "AUBE_CLEANUP_UNUSED_CATALOGS"]

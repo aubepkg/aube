@@ -472,9 +472,13 @@ pub struct WorkspaceConfig {
 
     // -- Catalog Settings --
     /// Drop catalog entries that no importer references after resolve.
-    /// Wired through `aube_settings::resolved::cleanup_unused_catalogs`;
+    /// Wired through `aube_settings::resolved::catalog_prune`;
     /// the typed field exists only so `meta::workspace_yaml_keys_...`
     /// sees the key as a real field and doesn't fall through to `extra`.
+    #[serde(default)]
+    pub catalog_prune: Option<bool>,
+
+    /// Deprecated pre-pnpm-11.22 alias for `catalogPrune`.
     #[serde(default)]
     pub cleanup_unused_catalogs: Option<bool>,
 
