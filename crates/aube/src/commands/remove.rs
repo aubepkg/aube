@@ -165,7 +165,7 @@ pub async fn run(
     let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
     let (mut graph, used_lockfile_prune) = match existing
         .as_ref()
-        .and_then(|graph| prune_removed_dependencies(graph, packages, args.save_dev))
+        .and_then(|graph| prune_removed_dependencies(graph, &manifest, packages))
     {
         Some(graph) => {
             eprintln!("Pruned lockfile to {} packages", graph.packages.len());
@@ -194,12 +194,6 @@ pub async fn run(
         super::chained_frozen_mode(install::FrozenMode::Prefer)
     };
     let mut opts = install::InstallOptions::with_mode(mode);
-    if used_lockfile_prune {
-        // The retained graph is a strict subset of the graph that was
-        // already installed and verified. Keep the relink entirely local:
-        // this also skips redundant supply-chain metadata validation.
-        opts.network_mode = aube_registry::NetworkMode::Offline;
-    }
     opts.ignore_scripts = args.ignore_scripts;
     install::run_with_project_lock(opts, &lock).await?;
 
@@ -215,17 +209,37 @@ pub async fn run(
 /// pruning the root could leave a stale contextualized dep path behind.
 fn prune_removed_dependencies(
     graph: &aube_lockfile::LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
     packages: &[String],
-    save_dev: bool,
 ) -> Option<aube_lockfile::LockfileGraph> {
     if graph.importers.len() != 1 || !graph.importers.contains_key(".") {
         return None;
     }
     let removed: HashSet<&str> = packages.iter().map(String::as_str).collect();
-    let pruned = graph.filter_deps(|dep| {
-        !removed.contains(dep.name.as_str())
-            || (save_dev && dep.dep_type != aube_lockfile::DepType::Dev)
+    // Removing a manifest override changes resolution intent, not just graph
+    // reachability. Let the resolver rebuild that case so the lockfile header
+    // cannot retain an override that package.json no longer declares.
+    if graph
+        .overrides
+        .keys()
+        .any(|selector| removed.contains(selector.as_str()))
+    {
+        return None;
+    }
+    let mut pruned = graph.filter_deps(|dep| {
+        !removed.contains(dep.name.as_str()) || manifest_direct_dep(manifest, &dep.name).is_some()
     });
+    // `--save-dev` can reveal a lower-priority declaration of the same name.
+    // Retain its locked package but rewrite the importer metadata to match the
+    // surviving manifest section and specifier.
+    for dep in pruned.importers.get_mut(".").into_iter().flatten() {
+        if removed.contains(dep.name.as_str())
+            && let Some((dep_type, specifier)) = manifest_direct_dep(manifest, &dep.name)
+        {
+            dep.dep_type = dep_type;
+            dep.specifier = Some(specifier.to_string());
+        }
+    }
     if pruned.packages.values().any(|pkg| {
         pkg.peer_dependencies
             .keys()
@@ -234,6 +248,28 @@ fn prune_removed_dependencies(
         return None;
     }
     Some(pruned)
+}
+
+fn manifest_direct_dep<'a>(
+    manifest: &'a aube_manifest::PackageJson,
+    name: &str,
+) -> Option<(aube_lockfile::DepType, &'a str)> {
+    manifest
+        .dependencies
+        .get(name)
+        .map(|range| (aube_lockfile::DepType::Production, range.as_str()))
+        .or_else(|| {
+            manifest
+                .dev_dependencies
+                .get(name)
+                .map(|range| (aube_lockfile::DepType::Dev, range.as_str()))
+        })
+        .or_else(|| {
+            manifest
+                .optional_dependencies
+                .get(name)
+                .map(|range| (aube_lockfile::DepType::Optional, range.as_str()))
+        })
 }
 
 async fn run_filtered(
@@ -508,7 +544,8 @@ mod tests {
             graph.packages.insert(pkg.dep_path.clone(), pkg);
         }
 
-        let pruned = prune_removed_dependencies(&graph, &["remove-me".to_string()], false)
+        let manifest = aube_manifest::PackageJson::default();
+        let pruned = prune_removed_dependencies(&graph, &manifest, &["remove-me".to_string()])
             .expect("single-importer graph without affected peers should prune");
         assert_eq!(pruned.importers["."].len(), 1);
         assert!(pruned.packages.contains_key("keep-me@1.0.0"));
@@ -534,7 +571,48 @@ mod tests {
             graph.packages.insert(pkg.dep_path.clone(), pkg);
         }
 
-        assert!(prune_removed_dependencies(&graph, &["react".to_string()], false).is_none());
+        let manifest = aube_manifest::PackageJson::default();
+        assert!(prune_removed_dependencies(&graph, &manifest, &["react".to_string()]).is_none());
+    }
+
+    #[test]
+    fn lockfile_prune_falls_back_when_removed_dep_had_override() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![direct("remove-me", "1.0.0", DepType::Production)],
+        );
+        graph
+            .overrides
+            .insert("remove-me".to_string(), "1.0.0".to_string());
+
+        let manifest = aube_manifest::PackageJson::default();
+        assert!(
+            prune_removed_dependencies(&graph, &manifest, &["remove-me".to_string()]).is_none()
+        );
+    }
+
+    #[test]
+    fn lockfile_prune_retypes_a_surviving_overlapping_declaration() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![direct("shared", "1.0.0", DepType::Dev)],
+        );
+        graph
+            .packages
+            .insert("shared@1.0.0".to_string(), locked("shared", "1.0.0"));
+        let mut manifest = aube_manifest::PackageJson::default();
+        manifest
+            .optional_dependencies
+            .insert("shared".to_string(), "^1.0.0".to_string());
+
+        let pruned = prune_removed_dependencies(&graph, &manifest, &["shared".to_string()])
+            .expect("surviving optional declaration should stay locked");
+        let dep = &pruned.importers["."][0];
+        assert_eq!(dep.dep_type, DepType::Optional);
+        assert_eq!(dep.specifier.as_deref(), Some("^1.0.0"));
+        assert!(pruned.packages.contains_key("shared@1.0.0"));
     }
 
     fn collect_section_order(raw: &str, section: &str) -> Vec<String> {

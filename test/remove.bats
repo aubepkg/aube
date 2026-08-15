@@ -61,6 +61,50 @@ EOF
 	assert_file_exists node_modules/is-even/index.js
 }
 
+@test "aube remove: pruned relink fetches a missing retained artifact" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-refetch",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "is-even": "1.0.0"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	rm -rf "$HOME/.local/share/aube/store/v1/files" node_modules
+	run aube remove is-odd
+	assert_success
+	assert_output --partial "Pruned lockfile"
+	assert_file_exists node_modules/is-even/index.js
+}
+
+@test "aube remove: removed override falls back to resolution" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-override",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "is-even": "1.0.0"
+  },
+  "pnpm": {
+    "overrides": { "is-odd": "3.0.1" }
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	run aube remove is-odd
+	assert_success
+	assert_output --partial "Resolved"
+	refute_output --partial "Pruned lockfile"
+}
+
 @test "aube remove: preserves package.json top-level key order" {
 	cat >package.json <<'EOF'
 {
@@ -144,6 +188,30 @@ EOF
 	assert_success
 
 	run node -e 'const p=require("./package.json"); if (!p.dependencies["is-odd"]) process.exit(1); if (p.devDependencies && p.devDependencies["is-odd"]) process.exit(2)'
+	assert_success
+}
+
+@test "aube remove --save-dev retains an overlapping optional dependency" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-overlap",
+  "version": "0.0.0",
+  "devDependencies": {
+    "is-number": "7.0.0"
+  },
+  "optionalDependencies": {
+    "is-number": "7.0.0"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	run aube remove --save-dev is-number
+	assert_success
+	assert_output --partial "Pruned lockfile"
+	assert_file_exists node_modules/is-number/index.js
+	run grep -F 'optionalDependencies:' aube-lock.yaml
 	assert_success
 }
 
