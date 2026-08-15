@@ -64,12 +64,9 @@ pub async fn run(args: SbomArgs) -> miette::Result<()> {
     // platform. A normal SBOM describes what this host can install, while
     // --lockfile-only preserves the complete platform-independent graph.
     if !args.lockfile_only {
-        let workspace = aube_manifest::WorkspaceConfig::load(&cwd).map_err(|err| {
-            miette::miette!(
-                code = aube_codes::errors::ERR_AUBE_WORKSPACE_PARSE,
-                "failed to load workspace config: {err}"
-            )
-        })?;
+        let workspace = aube_manifest::WorkspaceConfig::load(&cwd)
+            .map_err(miette::Report::new)
+            .wrap_err("failed to load workspace config")?;
         let (os, cpu, libc) =
             aube_manifest::effective_supported_architectures(&manifest, &workspace);
         let supported = aube_resolver::SupportedArchitectures {
