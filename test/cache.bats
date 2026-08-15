@@ -68,11 +68,12 @@ EOF
 	echo '{"name":"root","private":true}' >package.json
 	echo '{"name":"lib","version":"1.0.0"}' >packages/lib/package.json
 	echo 'cache-dir=.cache/aube' >.npmrc
+	workspace_root="$(pwd -P)"
 
 	cd packages/lib
 	run aube cache path
 	assert_success
-	assert_output "$TEST_TEMP_DIR/.cache/aube"
+	assert_output "$workspace_root/.cache/aube"
 }
 
 @test "aube cache path prefers a nested yaml-only workspace over an outer project" {
@@ -83,11 +84,12 @@ EOF
 		  - packages/*
 	EOF
 	echo 'cache-dir=.cache/aube' >tools/.npmrc
+	workspace_root="$(cd tools && pwd -P)"
 
 	cd tools/packages/lib
 	run aube cache path
 	assert_success
-	assert_output "$TEST_TEMP_DIR/tools/.cache/aube"
+	assert_output "$workspace_root/.cache/aube"
 
 	run aube view is-odd --json
 	assert_success
