@@ -106,7 +106,8 @@ pub async fn run(args: CacheArgs) -> miette::Result<()> {
 }
 
 fn path() -> miette::Result<()> {
-    let cwd = crate::dirs::project_root_or_cwd()?;
+    let project = crate::dirs::project_root_or_cwd()?;
+    let cwd = crate::dirs::find_workspace_root(&project).unwrap_or(project);
     println!("{}", super::resolved_cache_dir(&cwd).display());
     Ok(())
 }

@@ -2,5 +2,6 @@
 # `aube cache path`
 
 - **Usage**: `aube cache path`
+- **Effect**: read-only
 
 Print the directory used for metadata and policy caches

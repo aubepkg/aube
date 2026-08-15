@@ -66,6 +66,7 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
     ("cache delete", Write),
     ("cache list", Read),
     ("cache list-registries", Read),
+    ("cache path", Read),
     ("cache prune", Write),
     ("cache view", Read),
     ("cat-file", Read),

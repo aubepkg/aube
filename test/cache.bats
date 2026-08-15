@@ -59,6 +59,22 @@ EOF
 	assert_output "$TEST_TEMP_DIR/custom-cache"
 }
 
+@test "aube cache path resolves relative cache-dir from the workspace root" {
+	mkdir -p packages/lib
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	echo '{"name":"root","private":true}' >package.json
+	echo '{"name":"lib","version":"1.0.0"}' >packages/lib/package.json
+	echo 'cache-dir=.cache/aube' >.npmrc
+
+	cd packages/lib
+	run aube cache path
+	assert_success
+	assert_output "$TEST_TEMP_DIR/.cache/aube"
+}
+
 @test "aube cache list on an empty cache prints nothing" {
 	run aube cache list
 	assert_success

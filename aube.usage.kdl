@@ -670,7 +670,7 @@ List configured registries from the project + user `.npmrc`.
 Aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
 """#
     }
-    cmd path help="Print the directory used for metadata and policy caches"
+    cmd path help="Print the directory used for metadata and policy caches" effect=read
     cmd prune help="Remove stale extracted primer files from the metadata cache" effect=write {
         flag --age-days help="Minimum age in days before an old primer file is removed" default="30" {
             arg <AGE_DAYS>

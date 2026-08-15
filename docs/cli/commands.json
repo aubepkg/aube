@@ -1650,6 +1650,7 @@
             "args": [],
             "flags": [],
             "mounts": [],
+            "effect": "read",
             "hide": false,
             "help": "Print the directory used for metadata and policy caches",
             "name": "path",
