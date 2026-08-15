@@ -65,15 +65,19 @@ function main() {
 
 function childNpmEnv(parentEnv) {
     var env = Object.assign({}, parentEnv);
-    // Nested `npm install` must stay local; otherwise it'd try to write
-    // into the global prefix when the user ran `npm i -g @endevco/aube`.
-    env.npm_config_global = 'false';
     // npm 12 exports the outer global install's allowlist into lifecycle
     // scripts. The nested project-scoped install rejects that global-only
     // setting with EALLOWSCRIPTS even though it already uses --ignore-scripts.
     Object.keys(env).forEach(function(key) {
-        if (key.toLowerCase() === 'npm_config_allow_scripts') delete env[key];
+        var normalized = key.toLowerCase();
+        if (normalized === 'npm_config_allow_scripts' || normalized === 'npm_config_global') {
+            delete env[key];
+        }
     });
+    // Nested `npm install` must stay local; otherwise it'd try to write
+    // into the global prefix when the user ran `npm i -g @endevco/aube`.
+    // Add one canonical key after removing case variants for Windows.
+    env.npm_config_global = 'false';
     return env;
 }
 
