@@ -883,11 +883,9 @@ where
                         .map_err(|e| {
                             let throttled = e.is_throttle();
                             (
-                                super::registry_fetch_report(
-                                    &display_name,
-                                    &version,
-                                    &display_name,
-                                    e,
+                                miette!(
+                                    "failed to fetch {display_name}@{version}: {e}{}",
+                                    crate::dep_chain::format_chain_for(&display_name, &version)
                                 ),
                                 throttled,
                             )
@@ -896,11 +894,9 @@ where
                     client.fetch_tarball_bytes(&url).await.map(|b| (b, None)).map_err(|e| {
                         let throttled = e.is_throttle();
                         (
-                            super::registry_fetch_report(
-                                &display_name,
-                                &version,
-                                &display_name,
-                                e,
+                            miette!(
+                                "failed to fetch {display_name}@{version}: {e}{}",
+                                crate::dep_chain::format_chain_for(&display_name, &version)
                             ),
                             throttled,
                         )

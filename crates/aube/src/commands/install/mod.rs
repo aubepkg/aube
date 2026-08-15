@@ -100,23 +100,6 @@ const TRUST_POLICY_VALIDATION_CACHE_DIR: &str = "trust-policy-v1";
 const TRUST_POLICY_VALIDATION_CACHE_TTL: std::time::Duration =
     std::time::Duration::from_secs(5 * 60);
 
-fn registry_fetch_report(
-    display_name: &str,
-    version: &str,
-    registry_name: &str,
-    error: aube_registry::Error,
-) -> miette::Report {
-    let message = format!(
-        "failed to fetch {display_name}@{version}: {error}{}",
-        crate::dep_chain::format_chain_for(registry_name, version)
-    );
-    if matches!(error, aube_registry::Error::Offline(_)) {
-        miette!(code = aube_codes::errors::ERR_AUBE_OFFLINE, "{message}")
-    } else {
-        miette!("{message}")
-    }
-}
-
 #[cfg(test)]
 mod reentrancy_tests {
     use super::*;
@@ -1771,11 +1754,11 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                                 .map_err(|e| {
                                     let throttled = e.is_throttle();
                                     (
-                                        registry_fetch_report(
-                                            &pkg.name,
-                                            &pkg.version,
-                                            &pkg.name,
-                                            e,
+                                        miette!(
+                                            "failed to fetch {}@{}: {e}{}",
+                                            pkg.name,
+                                            pkg.version,
+                                            crate::dep_chain::format_chain_for(&pkg.name, &pkg.version)
                                         ),
                                         throttled,
                                     )
@@ -1784,7 +1767,12 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                             client.fetch_tarball_bytes(&url).await.map(|b| (b, None)).map_err(|e| {
                                 let throttled = e.is_throttle();
                                 (
-                                    registry_fetch_report(&pkg.name, &pkg.version, &pkg.name, e),
+                                    miette!(
+                                        "failed to fetch {}@{}: {e}{}",
+                                        pkg.name,
+                                        pkg.version,
+                                        crate::dep_chain::format_chain_for(&pkg.name, &pkg.version)
+                                    ),
                                     throttled,
                                 )
                             })
