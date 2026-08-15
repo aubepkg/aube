@@ -325,6 +325,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_INVALID_PACKAGE_EXTENSION",
+      "category": "Manifest / workspace",
+      "description": "A `packageExtensions` entry had an invalid object shape or non-string dependency range.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_FILTER_EMPTY",
       "category": "Manifest / workspace",
       "description": "`--filter` was passed an empty selector.",

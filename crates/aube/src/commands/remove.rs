@@ -198,7 +198,7 @@ pub async fn run(
             (graph, true)
         }
         None => {
-            let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
+            let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs)?;
             let graph = resolver
                 .resolve(&manifest, existing.as_ref())
                 .await

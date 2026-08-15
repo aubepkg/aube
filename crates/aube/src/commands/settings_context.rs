@@ -461,7 +461,7 @@ pub(crate) fn build_resolver(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
     catalogs: CatalogMap,
-) -> aube_resolver::Resolver {
+) -> miette::Result<aube_resolver::Resolver> {
     let (ws_config, raw_workspace) = aube_manifest::workspace::load_both(cwd).unwrap_or_default();
     let files = FileSources::load(cwd);
     let env = aube_settings::values::process_env();
@@ -472,7 +472,8 @@ pub(crate) fn build_resolver(
     // that record per-package platform metadata keep optional natives for
     // every platform, while formats without that metadata stay host-only.
     let target_lockfile_kind = Some(lockfile_kind_for_write_with_ctx(cwd, &ctx));
-    install::configure_resolver(
+    let dependency_policy = install::resolve_dependency_policy(manifest, &ctx)?;
+    Ok(install::configure_resolver(
         aube_resolver::Resolver::new(std::sync::Arc::new(make_client(cwd))),
         cwd,
         manifest,
@@ -482,7 +483,7 @@ pub(crate) fn build_resolver(
             workspace_catalogs: &catalogs,
             minimum_release_age_override: None,
             target_lockfile_kind,
-            dependency_policy: None,
+            dependency_policy,
             // Update / add / dedupe / audit deliberately skip the
             // full-packument disk cache install populates: the cache's
             // freshness window can outlive a registry dist-tag bump,
@@ -494,7 +495,7 @@ pub(crate) fn build_resolver(
             ignore_scripts: false,
         },
         None,
-    )
+    ))
 }
 
 /// Resolve [`aube_registry::config::FetchPolicy`] from the same
