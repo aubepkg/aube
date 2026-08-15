@@ -106,8 +106,6 @@ pub async fn run(
             };
             return Err(miette!("package '{name}' is not {section}"));
         }
-
-        eprintln!("  - {name}");
     }
 
     // Build and validate resolver configuration before persisting the
@@ -162,6 +160,9 @@ pub async fn run(
         }
         Ok(())
     })?;
+    for name in packages {
+        eprintln!("  - {name}");
+    }
     eprintln!("Updated package.json");
 
     // Removing a direct dependency normally needs no registry work: trim

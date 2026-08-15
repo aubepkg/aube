@@ -223,6 +223,7 @@ EOF
 	run aube remove is-odd
 	assert_failure
 	assert_output --partial "ERR_AUBE_INVALID_PACKAGE_EXTENSION"
+	refute_output --partial "  - is-odd"
 	after="$(cat package.json)"
 	[ "$before" = "$after" ]
 }
