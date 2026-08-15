@@ -221,14 +221,21 @@ pub async fn run(
         // Starting in the right mode avoids rerunning lifecycle side effects.
         let store = super::open_store(&cwd)?;
         let fully_cached = graph.packages.values().all(|pkg| {
-            pkg.local_source.is_none()
-                && store
-                    .load_index_verified(
-                        pkg.registry_name(),
-                        &pkg.version,
-                        pkg.integrity.as_deref(),
-                    )
-                    .is_some()
+            pkg.local_source.as_ref().map_or_else(
+                || {
+                    store
+                        .load_index_verified(
+                            pkg.registry_name(),
+                            &pkg.version,
+                            pkg.integrity.as_deref(),
+                        )
+                        .is_some()
+                },
+                // file/link/portal/exec sources can be rematerialized from
+                // disk. Git and URL sources use their own remote caches and
+                // may need the network when those caches are cold.
+                |local| local.path().is_some(),
+            )
         });
         opts.network_mode = if fully_cached {
             aube_registry::NetworkMode::Offline

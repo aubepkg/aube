@@ -115,6 +115,32 @@ EOF
 	refute_output --partial "Pruned lockfile"
 }
 
+@test "aube remove: retained local dependency keeps the prune relink offline" {
+	mkdir local-pkg
+	cat >local-pkg/package.json <<'EOF'
+{"name":"local-pkg","version":"1.0.0","main":"index.js"}
+EOF
+	echo 'module.exports = 42' >local-pkg/index.js
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-local-retained",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "local-pkg": "file:./local-pkg"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	rm -rf node_modules
+	run aube remove --registry http://127.0.0.1:9 --fetch-retries 0 --fetch-timeout 50 is-odd
+	assert_success
+	assert_output --partial "Pruned lockfile"
+	assert_file_exists node_modules/local-pkg/index.js
+}
+
 @test "aube remove: removed override falls back to resolution" {
 	cat >package.json <<'EOF'
 {
