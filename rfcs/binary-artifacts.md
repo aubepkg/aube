@@ -423,18 +423,25 @@ Why it was not chosen:
 
 Substitution remains worth pursuing if the identity-mismatch problem finds a principled solution (for example, registries treating variants as first-class "faces" of a parent package). Nothing in the proposed design precludes adding it later: the selection primitive — predicates, ordering, all-locked/one-materialized — is deliberately shared, and a future `variants` field could reuse it verbatim. See *Unresolved Questions*.
 
-Summary comparison:
+Summary comparison, extended to the two prior proposals the substitution model descends from:
 
-| Dimension | Proposed (`artifacts`) | Substitution (`variants`) |
-|---|---|---|
-| Pure-binary CLI | bin override → real executable | cleanest: variant *is* the package |
-| Addon library (bcrypt, sharp, @swc) | **additive**: add field + one-line loader change | restructure into `-core` + republish matrix |
-| Stable name for third parties | `_slot`, parent-internal by design | parent name, tree-wide |
-| On-disk identity | standard shapes + one novel link | directory name ≠ manifest name |
-| Multi-platform `node_modules` | candidates coexist under real names | structurally impossible |
-| Independent artifact versioning | inline pins allow it | parity by construction forbids it |
-| Failure mode | status quo (legacy path) | novel breakage surface |
-| npm implementability | new alias-edge bookkeeping in Arborist | reify-as-link designed in #519 |
+| Dimension | Proposed (`artifacts`) | Substitution (`variants`, as refined here) | npm #519 (`distributions`) | Yarn #2751 (Package Variants) |
+|---|---|---|---|---|
+| Core move | selected artifact exposed *to* the parent at `_slot` | selected variant reified *as* the parent | variant reified as the parent (Arborist Link) | variant substituted at resolution, alias-style |
+| Pure-binary CLI | bin override → real executable | cleanest: variant *is* the package | `bin` handling unspecified (asked in review, unanswered) | `bin` handling unspecified |
+| Addon library (bcrypt, sharp, @swc) | **additive**: add field + one-line loader change | restructure into `-core` + republish matrix | same restructuring implied | same restructuring implied |
+| Stable name for third parties | `_slot`, parent-internal by design | parent name, tree-wide | parent name, tree-wide | parent name, tree-wide |
+| On-disk identity | standard shapes + one novel link | directory name ≠ manifest name | directory name ≠ manifest name | same mismatch on `node_modules` linkers; virtualized away under PnP |
+| Candidate naming | literal lists; scopes recommended | literal lists; scoped | literal specifiers | template-generated (`%platform-%napi`); scopes required against squatting |
+| Version discipline | exact pins; inline pins allow independent versioning | parity with parent by construction | semver ranges (`@1.x`) | parity with parent by construction |
+| Selection language | `os`/`cpu`/`libc`/`napi`/`engines.node`; first-match; unknown-key skip rule | same primitive (shared) | `platform`/`arch`/`engines`; no libc; matching semantics unspecified | freeform parameter matrix; consumer-extensible via `dependenciesMeta` |
+| Artifact/variant dependencies | ordinary locked optional deps | variant's deps govern at the parent's position | must not differ across distributions (its own stated known risk) | unresolved |
+| Lifecycle scripts | superseded declaratively (`supersedesScripts`) | — | replacing them is motivation, no mechanism | not addressed |
+| Multi-platform `node_modules` | candidates coexist under real names | structurally impossible | single reify position | single position; `supportedArchitectures` fetches only |
+| Failure mode | status quo (legacy path) | novel breakage surface | parent reifies (structural fallback) | parent reifies (field ignored) |
+| npm implementability | new alias-edge bookkeeping in Arborist | reify-as-link designed in #519 | designed for Arborist, never built | PnP resolver-table native; Arborist story untested |
+| Scope | binary artifacts only | binary artifacts only | also polyfills, full/slim, ESM/CJS contemplated | also ESM/CJS, source, docs, locales via custom parameters |
+| Status | this proposal | alternative developed herein | closed unmerged (2023, repository cleanup) | open, dormant |
 
 ### Other alternatives
 
