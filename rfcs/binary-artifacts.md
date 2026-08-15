@@ -15,7 +15,7 @@ This RFC proposes a new top-level manifest field, **`artifacts`**, which formali
 
 - under its real name (unchanged — it is an ordinary optional dependency),
 - at a **stable alias** (`_<slot>`) the parent package's code resolves at runtime — no try/catch over N package names, and
-- as **direct bin links** to the native executable, overriding the parent's legacy JS-shim bins — no Node.js trampoline at launch.
+- as **direct bin links** to the executable the artifact itself declares (via the artifact-side `artifact` field), overriding the parent's legacy JS-shim bins — no Node.js trampoline at launch.
 
 Package managers that predate the standard ignore the field and get today's working behavior; the legacy surface remains the authoritative fallback. Where that fallback is an install script, the package declares it superseded and a conforming package manager never runs it. No lifecycle scripts, no registry protocol changes, no Node.js resolver changes, no flag day.
 
@@ -76,7 +76,7 @@ These are the contract of the standard; the `artifacts` field is a mechanism tha
 2. **No lifecycle scripts.** The mechanism requires no `preinstall`/`postinstall` anywhere. Artifact packages must be passive carriers: conforming package managers **must not** execute lifecycle scripts of packages installed via artifact selection. A parent's own install script kept as the legacy fallback is declared superseded and is never executed when its slot selects an artifact (see *Lifecycle-script supersession*).
 3. **Selection is declarative and performed by the package manager.** The matching language is non-Turing-complete and statically analyzable. Packages do not ship platform-detection code on the conforming path.
 4. **Progressive enhancement, no flag day.** The new manifest field is ignored by package managers that predate it. A published package also ships today's compat surface (JS shim `bin`, loader chain, `optionalDependencies`), which continues to work unchanged on legacy installers. The legacy surface is the **authoritative fallback**: a conforming package manager that selects no artifact must behave exactly like a non-conforming one. Partial implementations are therefore safe by construction.
-5. **No runtime shim on the CLI path.** When an artifact is selected, conforming package managers **must** expose `bin` commands as direct links to the native executable — symlink or hardlink with the executable bit on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it.
+5. **No runtime shim on the CLI path.** When a selected artifact declares its executables (the `artifact` field), conforming package managers **must** expose those `bin` commands as direct links to the native executable — symlink or hardlink with the executable bit on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it.
 6. **One lockfile for every platform.** *All* declared candidates are resolved and locked (name, exact version, integrity — a metadata-only operation; no tarball downloads for non-selected candidates). Only the selected artifact is materialized on disk. Selection is a pure function of `(manifest, target tuple)` and is **never recorded in the lockfile**: recording it would reintroduce the platform-dirty lockfiles this design exists to eliminate.
 7. **Implementable by npm, pnpm, Yarn, Bun, and aube** without coordinated releases, and without changes to Node.js module resolution.
 
@@ -143,7 +143,7 @@ As a defense against copy-paste errors and name confusion, package managers **sh
 
 ### The `artifacts` field
 
-A new top-level manifest field declaring named **slots**. Each slot has ordered candidates and optional `bin` maps. The parent package always installs as itself; the field tells the package manager which additional package to materialize and how to expose it.
+A new top-level manifest field declaring named **slots**. Each slot is an ordered candidate list. The parent package always installs as itself; the field tells the package manager which additional package to materialize and how to expose it.
 
 ```jsonc
 {
@@ -179,7 +179,7 @@ Field rules:
 - **There is no separate fallback construct.** A predicate-free candidate listed last is the fallback tier; omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
 - **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). Unreachable when the slot ends in a predicate-free candidate.
 - **`supersedesScripts`** (optional) lists parent lifecycle events (`preinstall`, `install`, `postinstall`) that exist only as this slot's legacy fallback. When the slot selects a candidate, a conforming package manager **must not** execute them (see *Lifecycle-script supersession*).
-- Bin names in any slot **must** be a subset of the parent's top-level `bin` names — legacy installs always have the command, and no platform grows phantom commands.
+- **The parent's top-level `bin` is the command-name authority.** Executable names declared by artifacts (see *The `artifact` field*) are linked only when they appear in the parent's top-level `bin`: legacy installs always have the command, and no platform grows phantom commands.
 
 CLI example:
 
@@ -187,21 +187,21 @@ CLI example:
 {
   "name": "esbuild",
   "version": "0.25.0",
-  "bin": { "esbuild": "bin/esbuild" },                // legacy JS shim, unchanged
+  "bin": { "esbuild": "bin/esbuild" },                // legacy JS shim, and the command-name authority
   "artifacts": {
     "cli": {
-      "bin": { "esbuild": "bin/esbuild" },            // slot-level default path in artifact
       "candidates": [
         { "package": "@esbuild/linux-x64",    "os": "linux",  "cpu": "x64" },
         { "package": "@esbuild/darwin-arm64", "os": "darwin", "cpu": "arm64" },
-        { "package": "@esbuild/win32-x64",    "os": "win32",  "cpu": "x64",
-          "bin": { "esbuild": "esbuild.exe" } },      // per-candidate override
-        { "package": "esbuild-wasm@0.25.0" }          // fallback tier: WASM build, JS-shim bin
+        { "package": "@esbuild/win32-x64",    "os": "win32",  "cpu": "x64" },
+        { "package": "esbuild-wasm@0.25.0" }          // fallback tier: WASM build
       ]
     }
   }
 }
 ```
+
+Where each executable lives is not the parent's business: each candidate declares its own path in the artifact-side `artifact` field (next section), which is how the Windows build gets to call its file `esbuild.exe` without the parent maintaining per-candidate overrides.
 
 Binary-payload example (Prisma-style; note the inline pins keeping engines out of legacy installs entirely):
 
@@ -222,6 +222,26 @@ Binary-payload example (Prisma-style; note the inline pins keeping engines out o
   }
 }
 ```
+
+### The `artifact` field
+
+The parent's side of the contract says *which package* to materialize; the artifact's side says *what it contains*. Artifact packages declare their own executables in a new top-level manifest field:
+
+```jsonc
+// @esbuild/win32-x64/package.json
+{
+  "name": "@esbuild/win32-x64",
+  "version": "0.25.0",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "artifact": { "bin": { "esbuild": "esbuild.exe" } }
+}
+```
+
+- **`artifact.bin`** maps command names to paths inside the package, the same shape as the standard `bin` field. v1 defines only the `bin` key; the field is an object so future revisions can add payload or addon hints without a shape change, and unknown keys inside it are ignored.
+- **The standard `bin` field cannot serve this purpose.** Legacy package managers link the bins of every installed package, so an artifact declaring top-level `bin` would fight the parent's same-named JS shim in `.bin` directories, nondeterministically. Platform packages today ship no `bin` for exactly this reason (esbuild's optional postinstall exists to swap the shim into place manually). Artifact packages **must not** declare top-level `bin`; `artifact` is invisible to legacy package managers, so declaring it changes nothing about legacy installs.
+- Registries strip unknown fields from abbreviated packuments, so `artifact` is normally visible only in the tarball's own `package.json`. Bin materialization happens after the tarball is on disk, so this costs nothing at install time; it does make bin-name validation a link-time check, and registry-side validation needs the full manifest.
+- **A candidate without an `artifact` field is still a valid candidate.** The alias is linked and the parent's top-level `bin` stays in place, where the parent's JS shim resolves the artifact through the alias — the slot still works. An already-published fallback package (`esbuild-wasm`) participates with no republish; adding `artifact.bin` in a later version upgrades it to a direct link.
 
 ### The linkage contract
 
@@ -270,13 +290,13 @@ const engine = path.join(dir, 'query-engine' + (process.platform === 'win32' ? '
 
 ### Bin entries
 
-When a slot with `bin` selects an artifact:
+When a selected artifact declares `artifact.bin`:
 
-1. Resolve each command's path inside the artifact (candidate-level `bin` > slot-level `bin` > the artifact package's own `bin` entry for that name).
+1. Each entry maps a command name to a path inside the artifact. Names absent from the parent's top-level `bin` are ignored with a warning (the name-authority rule).
 2. **Containment check**: the resolved path must not escape the artifact directory after symlink resolution (string containment, then `realpath` containment).
 3. The artifact bin **overrides** the parent's same-named top-level `bin` entry in every `.bin` directory the package manager populates.
-4. Unix: symlink/hardlink into `.bin`; ensure mode `0755`. Windows: the target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default.
-5. If the slot selects nothing (no candidate matched), the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
+4. Unix: symlink/hardlink into `.bin`; ensure mode `0755`. Windows: a native target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default. A fallback-tier artifact may declare a JS entry point; the package manager emits an ordinary Node shim for it.
+5. If the slot selects nothing, or the selected artifact declares no `artifact.bin`, the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
 
 ### Lifecycle-script supersession
 
@@ -292,7 +312,6 @@ Supersession is therefore **declared, not detected**. A slot lists the parent li
   "scripts": { "preinstall": "node npm/installArchSpecificPackage.js" },
   "artifacts": {
     "cli": {
-      "bin": { "aube": "aube" },
       "supersedesScripts": ["preinstall"],            // artifact replaces the downloader entirely
       "candidates": [ /* one per platform */ ]
     }
@@ -328,15 +347,16 @@ A conforming package publishes both mechanisms simultaneously; each surface degr
 | Component | Legacy package manager | Conforming package manager |
 |---|---|---|
 | `optionalDependencies` on platform packages (each with its own `os`/`cpu`/`libc` fields) | filtered to the matching one (npm ≥ 10.4 / pnpm); older installers tolerate optional failures | resolved and locked; matching one linked under its real name |
-| Top-level `bin` → JS shim | the command | **shadowed** by the artifact's direct-exec bin |
+| Top-level `bin` → JS shim | the command | **shadowed** when the selected artifact declares `artifact.bin`; untouched otherwise |
 | Runtime loader `try require('#slot') catch legacyChain()` | catch path always taken | try path always taken |
 | `imports: {"#slot": "_slot"}` | inert mapping to a nonexistent name | resolves to the alias |
 | `artifacts` field | unknown field, ignored | drives everything |
+| `artifact` field (in artifact packages) | unknown field, ignored; artifact packages declare no top-level `bin`, so nothing links | declares the executable paths the package manager links |
 | Lifecycle scripts | none needed for the napi-rs pattern; postinstall-download users keep their script as the legacy tier and declare it via `supersedesScripts` | **superseded**: never executed when the declaring slot selects (see *Lifecycle-script supersession*); never on artifact packages |
 
 **Authority rule (normative)**: the legacy surface is the authoritative fallback. A conforming package manager that selects no artifact for a slot must behave exactly as a non-conforming one for that slot's bins, links, and superseded scripts: a script listed in `supersedesScripts` runs under normal script policy when its slot misses.
 
-Adoption requires no restructuring of already-published platform packages: sharp, esbuild, and napi-rs-generated packages add the `artifacts` field and the one-line `try` to their loader, and ship. Generators (napi-rs, esbuild's publish tooling) can emit `optionalDependencies`, candidates, and artifact manifests from a single target-triple definition.
+Adoption requires no restructuring. Addon packages (sharp, napi-rs output) add the `artifacts` field and the one-line `try` to their loader, and ship; their platform packages need no changes at all. CLI packages additionally add `artifact.bin` to each platform package — a one-field diff emitted by the same generator, and exact-pin lockstep means the whole matrix republishes with every release anyway. Generators (napi-rs, esbuild's publish tooling) can emit `optionalDependencies`, candidates, and both manifests from a single target-triple definition.
 
 ### Security considerations
 
@@ -348,6 +368,7 @@ Adoption requires no restructuring of already-published platform packages: sharp
 - **Overrides/resolutions** apply as the user's escape hatch (e.g. patching a vulnerable artifact), but the package manager **must** warn when an override moves an artifact off its declared exact version.
 - **Alias squatting is impossible** on conforming registries (`_` prefix unpublishable), and the alias lives in the parent's nested realm, which shadows any hoisted name.
 - **Path containment** for bin materialization (*Bin entries*, step 2).
+- **Command names are parent-authoritative.** Only names present in the parent's top-level `bin` are ever linked, so a compromised artifact can redirect an existing command but cannot introduce new ones. The executable-path claim itself ships inside the artifact's own integrity-hashed, provenance-attested tarball, next to the executable it describes.
 
 ### Known costs
 
@@ -450,7 +471,7 @@ Registry-side work is optional but valuable: publish-time validation (scoped can
 
 ## Unresolved Questions and Bikeshedding
 
-1. Field naming: `artifacts` vs. something else; slot-alias prefix (`_slot` vs. another unpublishable namespace); `onMissing` value names; `supersedesScripts` naming.
+1. Field naming: `artifacts` vs. something else; the artifact-side field name (`artifact` is one letter from `artifacts` — `provides`?); slot-alias prefix (`_slot` vs. another unpublishable namespace); `onMissing` value names; `supersedesScripts` naming.
 2. Should the substitution model (*Rationale and Alternatives*) additionally be standardized — now or later — for the pure-binary CLI case where it is cleanest, given the shared selection primitive makes it a compatible extension? The author's position: not in v1; one model keeps five implementations honest.
 3. `cpuFeatures` opt-in design for a future revision (explicit "I accept install-machine detection" flag? runtime dispatch guidance?).
 4. Minimum glibc version expression (`libc: "glibc"` says nothing about `GLIBC_2.28` symbols; is `engines`-style versioning of libc worth the complexity?).
