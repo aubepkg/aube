@@ -1480,6 +1480,11 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     hasher.update(b"\0");
     let lockfile_enabled = aube_settings::resolved::lockfile(&ctx);
     hasher.update(format!("lockfile={lockfile_enabled}\0").as_bytes());
+    // Catalog pruning runs after resolution, so a false→true environment
+    // change must invalidate the warm path even though it does not alter the
+    // installed dependency tree itself.
+    let catalog_prune = crate::commands::install::resolve_catalog_prune(&ctx);
+    hasher.update(format!("catalog_prune={catalog_prune}\0").as_bytes());
     // additional tree shape settings. cover enable_modules_dir flip
     // (pnpm equivalent of --lockfile-only persistent), virtual_store_only,
     // hoist_workspace_packages, dedupe_direct_deps, symlink,

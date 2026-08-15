@@ -73,6 +73,7 @@ use materialize::{
     GvsPrewarmInputs, combine_install_pipeline_errors, materialize_channel, spawn_gvs_prewarm,
 };
 pub(crate) use settings::PeerDependencyRules;
+pub(crate) use settings::resolve_catalog_prune;
 pub(crate) use settings::resolve_minimum_release_age;
 pub(crate) use settings::{ResolverConfigInputs, configure_resolver, finalize_lockfile_graph};
 pub(crate) use side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root};
@@ -2369,7 +2370,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
 
     tracing::debug!("Packages: {cached_count} cached, {fetch_count} fetched");
 
-    // `cleanupUnusedCatalogs` (gated by the setting) rewrites
+    // `catalogPrune` (gated by the setting) rewrites
     // `aube-workspace.yaml` / `pnpm-workspace.yaml` to drop entries no
     // importer references. Runs once after we have the final graph so
     // the same helper covers both lockfile-read and fresh-resolve

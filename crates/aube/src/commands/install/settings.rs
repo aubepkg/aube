@@ -231,8 +231,13 @@ mod gvs_mode_tests {
     }
 }
 
-/// Honor `catalogPrune` (or its deprecated `cleanupUnusedCatalogs` alias) by pruning declared-but-unreferenced
-/// catalog entries from the workspace yaml. No-op when the setting is
+pub(crate) fn resolve_catalog_prune(ctx: &aube_settings::ResolveCtx<'_>) -> bool {
+    aube_settings::resolved::catalog_prune(ctx)
+        .unwrap_or_else(|| aube_settings::resolved::cleanup_unused_catalogs(ctx))
+}
+
+/// Honor `catalogPrune` (or its deprecated `cleanupUnusedCatalogs` alias) by
+/// pruning declared-but-unreferenced catalog entries from the workspace yaml. No-op when the setting is
 /// off, when there is no workspace yaml file on disk, or when every
 /// declared entry was referenced by an importer.
 pub(super) fn maybe_cleanup_unused_catalogs(
@@ -244,9 +249,7 @@ pub(super) fn maybe_cleanup_unused_catalogs(
         std::collections::BTreeMap<String, aube_lockfile::CatalogEntry>,
     >,
 ) -> miette::Result<()> {
-    let enabled = aube_settings::resolved::catalog_prune(ctx)
-        .unwrap_or_else(|| aube_settings::resolved::cleanup_unused_catalogs(ctx));
-    if !enabled {
+    if !resolve_catalog_prune(ctx) {
         return Ok(());
     }
     if declared.is_empty() {
@@ -262,7 +265,7 @@ pub(super) fn maybe_cleanup_unused_catalogs(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| ws_path.display().to_string());
         tracing::info!(
-            "cleanupUnusedCatalogs: pruned {} from {filename}",
+            "catalogPrune: pruned {} from {filename}",
             pluralizer::pluralize("entry", dropped.len() as isize, true)
         );
     }
