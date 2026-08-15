@@ -46,6 +46,19 @@ EOF
 	assert_output --partial "list-registries"
 }
 
+@test "aube cache path prints the resolved metadata cache directory" {
+	run aube cache path
+	assert_success
+	assert_output "$HOME/.cache/aube"
+}
+
+@test "aube cache path honors cache-dir" {
+	echo "cache-dir=$TEST_TEMP_DIR/custom-cache" >>.npmrc
+	run aube cache path
+	assert_success
+	assert_output "$TEST_TEMP_DIR/custom-cache"
+}
+
 @test "aube cache list on an empty cache prints nothing" {
 	run aube cache list
 	assert_success

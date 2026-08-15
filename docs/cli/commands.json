@@ -1640,6 +1640,23 @@
             "hidden_aliases": [],
             "examples": []
           },
+          "path": {
+            "full_cmd": [
+              "cache",
+              "path"
+            ],
+            "usage": "cache path",
+            "subcommands": {},
+            "args": [],
+            "flags": [],
+            "mounts": [],
+            "hide": false,
+            "help": "Print the directory used for metadata and policy caches",
+            "name": "path",
+            "aliases": [],
+            "hidden_aliases": [],
+            "examples": []
+          },
           "prune": {
             "full_cmd": [
               "cache",

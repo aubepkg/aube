@@ -131,6 +131,7 @@ Run from the workspace root regardless of the current package
 - [`aube cache delete <PATTERNS>…`](/cli/cache/delete.md)
 - [`aube cache list [PATTERNS]…`](/cli/cache/list.md)
 - [`aube cache list-registries`](/cli/cache/list-registries.md)
+- [`aube cache path`](/cli/cache/path.md)
 - [`aube cache prune [--age-days <AGE_DAYS>] [--dry-run]`](/cli/cache/prune.md)
 - [`aube cache view [--json] <NAME>`](/cli/cache/view.md)
 - [`aube cat-file <HASH>`](/cli/cat-file.md)

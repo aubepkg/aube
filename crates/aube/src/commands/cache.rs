@@ -47,6 +47,8 @@ pub enum CacheCommand {
     /// currently configured to talk to rather than the registries that
     /// happen to be in the cache.
     ListRegistries,
+    /// Print the directory used for metadata and policy caches.
+    Path,
     /// Remove stale extracted primer files from the metadata cache.
     Prune(PruneArgs),
     /// View the cached metadata for a single package.
@@ -99,7 +101,14 @@ pub async fn run(args: CacheArgs) -> miette::Result<()> {
         CacheCommand::Prune(a) => prune(a),
         CacheCommand::View(a) => view(a),
         CacheCommand::ListRegistries => list_registries(),
+        CacheCommand::Path => path(),
     }
+}
+
+fn path() -> miette::Result<()> {
+    let cwd = crate::dirs::project_root_or_cwd()?;
+    println!("{}", super::resolved_cache_dir(&cwd).display());
+    Ok(())
 }
 
 /// Both packument cache directories. Returned in a fixed order so
