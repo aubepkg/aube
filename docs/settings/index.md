@@ -2843,8 +2843,9 @@ Dependency version resolution strategy.
 Controls how aube chooses versions during resolution. `highest` picks
 the newest satisfying version. `time-based` filters candidates through
 the lockfile / packument publish-time cutoff before picking. `lowest-direct`
-is accepted for pnpm parity and currently maps to the same time-aware
-resolver mode.
+picks the oldest satisfying version for direct dependencies without a
+publish-time cutoff, while transitive dependencies use the newest satisfying
+version.
 
 ### `registrySupportsTimeField` {#setting-registrysupportstimefield}
 
