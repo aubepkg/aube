@@ -85,7 +85,7 @@ pub fn snapshot() -> Option<KernelSnapshot> {
  * other platforms.
  */
 pub fn enabled() -> bool {
-    crate::env::embedder_env("DIAG_KERNEL").is_some() && snapshot().is_some()
+    crate::diag::diag_env("DIAG_KERNEL").is_some() && snapshot().is_some()
 }
 
 /// Current resident set size for timeline sampling.
