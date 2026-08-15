@@ -1980,8 +1980,10 @@ mod tests {
                 aube_dir: &aube_dir,
                 virtual_store_dir_max_length: 120,
                 placements: Some(&placements),
+                use_global_virtual_store: false,
             },
-        );
+        )
+        .expect("hoisted layout should build");
 
         assert_eq!(
             layout.direct_entries.get("packages/app"),
