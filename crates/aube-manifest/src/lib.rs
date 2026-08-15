@@ -775,27 +775,29 @@ impl PackageJson {
         unresolved
     }
 
+    /// Return every raw `packageExtensions` value in precedence order so
+    /// callers can validate the enclosing shape before object extraction.
+    pub fn package_extension_values(&self) -> Vec<&serde_json::Value> {
+        let mut out = self
+            .pnpm_aube_objects()
+            .filter_map(|ns| ns.get("packageExtensions"))
+            .collect::<Vec<_>>();
+        if let Some(value) = self.extra.get("packageExtensions") {
+            out.push(value);
+        }
+        out
+    }
+
     /// Extract `packageExtensions` from root package.json. Supports
     /// top-level `packageExtensions`, `pnpm.packageExtensions`, and
-    /// `aube.packageExtensions`. Precedence (low → high):
-    /// `pnpm.packageExtensions`, `aube.packageExtensions`, top-level
-    /// `packageExtensions` — later writes win for duplicate selectors.
+    /// `aube.packageExtensions`. Later values win for duplicate selectors.
     pub fn package_extensions(&self) -> BTreeMap<String, serde_json::Value> {
         let mut out = BTreeMap::new();
-        for ns in self.pnpm_aube_objects() {
-            if let Some(obj) = ns.get("packageExtensions").and_then(|v| v.as_object()) {
+        for value in self.package_extension_values() {
+            if let Some(obj) = value.as_object() {
                 for (k, v) in obj {
                     out.insert(k.clone(), v.clone());
                 }
-            }
-        }
-        if let Some(obj) = self
-            .extra
-            .get("packageExtensions")
-            .and_then(|v| v.as_object())
-        {
-            for (k, v) in obj {
-                out.insert(k.clone(), v.clone());
             }
         }
         out

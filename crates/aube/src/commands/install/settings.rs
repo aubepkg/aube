@@ -444,6 +444,7 @@ pub(crate) fn resolve_dependency_policy(
 ) -> miette::Result<aube_resolver::DependencyPolicy> {
     let mut policy = aube_resolver::DependencyPolicy::default();
 
+    validate_package_extension_containers(manifest, ctx)?;
     let package_extensions = effective_package_extensions(manifest, ctx);
     policy.package_extensions = parse_package_extensions(package_extensions)?;
 
@@ -730,6 +731,77 @@ fn parse_json_object(raw: &str) -> Option<BTreeMap<String, serde_json::Value>> {
         return None;
     };
     Some(obj.into_iter().collect())
+}
+
+fn validate_package_extension_containers(
+    manifest: &aube_manifest::PackageJson,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<()> {
+    for value in manifest.package_extension_values() {
+        if !value.is_object() {
+            return Err(invalid_package_extension(
+                "packageExtensions",
+                "setting must be an object",
+            ));
+        }
+    }
+
+    let meta = aube_settings::find("packageExtensions").ok_or_else(|| {
+        invalid_package_extension("packageExtensions", "setting is not registered")
+    })?;
+    for entries in [
+        ctx.user_npmrc,
+        ctx.user_aube_config,
+        ctx.project_npmrc,
+        ctx.project_aube_config,
+    ] {
+        for (key, raw) in entries.iter().rev() {
+            if !meta.npmrc_keys.contains(&key.as_str()) {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| {
+                invalid_package_extension("packageExtensions", "setting must be valid JSON")
+            })?;
+            if !value.is_object() {
+                return Err(invalid_package_extension(
+                    "packageExtensions",
+                    "setting must be an object",
+                ));
+            }
+            break;
+        }
+    }
+    for key in meta.workspace_yaml_keys {
+        let Some(value) = aube_settings::workspace_yaml_value(ctx.workspace_yaml, key) else {
+            continue;
+        };
+        let value = serde_json::to_value(value).map_err(|_| {
+            invalid_package_extension("packageExtensions", "setting must be an object")
+        })?;
+        if !value.is_object() {
+            return Err(invalid_package_extension(
+                "packageExtensions",
+                "setting must be an object",
+            ));
+        }
+        break;
+    }
+    for (key, raw) in ctx.env.iter().rev() {
+        if !meta.env_vars.contains(&key.as_str()) {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| {
+            invalid_package_extension("packageExtensions", "setting must be valid JSON")
+        })?;
+        if !value.is_object() {
+            return Err(invalid_package_extension(
+                "packageExtensions",
+                "setting must be an object",
+            ));
+        }
+        break;
+    }
+    Ok(())
 }
 
 fn json_string_map(map: BTreeMap<String, serde_json::Value>) -> BTreeMap<String, String> {
