@@ -337,9 +337,10 @@ pub(crate) fn classify_local_entry_state(path: &Path) -> EntryState {
 
 /// Reconcile a directory link against its expected target.
 ///
-/// Returns `Ok(true)` when the existing link is current. Missing, dangling,
-/// incorrectly-targeted, and non-link entries are removed and return
-/// `Ok(false)` so the caller can recreate the link.
+/// Returns `Ok(true)` when the existing link stores the expected target.
+/// Missing, incorrectly-targeted, and non-link entries are removed and return
+/// `Ok(false)` so the caller can recreate the link. The target is not probed,
+/// so a dangling link that stores the expected target is considered current.
 pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Result<bool, Error> {
     #[cfg(windows)]
     {

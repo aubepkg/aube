@@ -377,8 +377,13 @@ impl Linker {
             if let Some(parent) = symlink_path.parent() {
                 mkdirp(parent)?;
             }
-            sys::create_dir_link(&target, &symlink_path)
-                .map_err(|e| Error::Io(symlink_path.clone(), e))?;
+            if let Err(create_err) = sys::create_dir_link(&target, &symlink_path) {
+                let won_race = create_err.kind() == std::io::ErrorKind::AlreadyExists
+                    && reconcile_dir_link(&symlink_path, &target).unwrap_or(false);
+                if !won_race {
+                    return Err(Error::Io(symlink_path, create_err));
+                }
+            }
         }
         Ok(())
     }
