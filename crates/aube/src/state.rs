@@ -1218,9 +1218,8 @@ impl InstallLayoutState {
                     layout.virtual_store_dir_max_length,
                     layout.placements,
                 );
-                let Some(node_modules_dir) = package_dir.parent() else {
-                    continue;
-                };
+                let node_modules_dir =
+                    crate::commands::install::dep_modules_dir_for(&package_dir, &pkg.name);
                 for dep_name in pkg.dependencies.keys().filter(|name| *name != &pkg.name) {
                     let link_path = node_modules_dir.join(dep_name);
                     let target = std::fs::read_link(&link_path).map_err(|err| {
@@ -1868,6 +1867,65 @@ mod tests {
         assert_eq!(
             layout.direct_entries.get("packages/svc"),
             Some(&vec!["packages/svc/node_modules/zod".to_string()])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_graph_records_scoped_gvs_links_from_package_node_modules() {
+        let project_dir = temp_project_dir("scoped-gvs-links");
+        let aube_dir = project_dir.join("node_modules/.aube");
+        let dep_path = "@scope/parent@1.0.0";
+        let entry_name = aube_lockfile::dep_path_filename::dep_path_to_filename(dep_path, 120);
+        let global_entry = project_dir.join("gvs/scoped-parent");
+        let global_modules = global_entry.join("node_modules");
+        std::fs::create_dir_all(global_modules.join("@scope/parent"))
+            .expect("scoped package should write");
+        std::os::unix::fs::symlink(
+            "../../child@1.0.0/node_modules/child",
+            global_modules.join("child"),
+        )
+        .expect("nested link should write");
+        std::fs::create_dir_all(&aube_dir).expect("virtual store should write");
+        std::os::unix::fs::symlink(&global_entry, aube_dir.join(&entry_name))
+            .expect("project GVS link should write");
+
+        let graph = aube_lockfile::LockfileGraph {
+            packages: BTreeMap::from([(
+                dep_path.to_string(),
+                aube_lockfile::LockedPackage {
+                    name: "@scope/parent".to_string(),
+                    version: "1.0.0".to_string(),
+                    dep_path: dep_path.to_string(),
+                    dependencies: BTreeMap::from([("child".to_string(), "1.0.0".to_string())]),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let layout = InstallLayoutState::from_graph(
+            &project_dir,
+            &WriteStateLayout {
+                graph: &graph,
+                node_linker: aube_linker::NodeLinker::Isolated,
+                hoisting_limits: aube_linker::HoistingLimits::None,
+                modules_dir_name: "node_modules",
+                aube_dir: &aube_dir,
+                virtual_store_dir_max_length: 120,
+                placements: None,
+                use_global_virtual_store: true,
+            },
+        )
+        .expect("scoped GVS layout should build");
+
+        let expected_path = format!("node_modules/.aube/{entry_name}/node_modules/child");
+        assert_eq!(
+            layout
+                .gvs_nested_links
+                .as_ref()
+                .and_then(|links| links.get(&expected_path)),
+            Some(&"../../child@1.0.0/node_modules/child".to_string())
         );
     }
 

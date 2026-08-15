@@ -54,7 +54,7 @@ pub(crate) fn materialized_pkg_dir(
 /// packages (`@scope/name`) `package_dir` is two levels below that
 /// `node_modules/`, so we strip the extra `@scope` hop. Used to
 /// locate the per-dep `.bin/` for transitive lifecycle-script bins.
-pub(super) fn dep_modules_dir_for(package_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+pub(crate) fn dep_modules_dir_for(package_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     if name.starts_with('@') {
         package_dir
             .parent()

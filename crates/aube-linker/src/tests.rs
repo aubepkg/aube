@@ -1196,6 +1196,87 @@ fn gvs_shareable_source_dep_without_index_errors_loudly() {
     );
 }
 
+#[test]
+fn warm_link_repairs_stale_shared_source_dependency_link() {
+    use aube_lockfile::{GitSource, LocalSource};
+
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, mut indices) = setup_store_with_files(dir.path());
+    let git = LocalSource::Git(GitSource {
+        url: "https://github.com/example/source-parent.git".to_string(),
+        committish: None,
+        resolved: "0123456789abcdef0123456789abcdef01234567".to_string(),
+        integrity: None,
+        subpath: None,
+    });
+    let parent_dep_path = git.dep_path("source-parent");
+    let parent_file = store
+        .import_bytes(b"module.exports = 'parent';", false)
+        .unwrap();
+    let mut parent_index = PackageIndex::default();
+    parent_index.insert("index.js".to_string(), parent_file);
+    indices.insert(parent_dep_path.clone(), parent_index);
+
+    let graph = LockfileGraph {
+        importers: BTreeMap::from([(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "source-parent".to_string(),
+                dep_path: parent_dep_path.clone(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        )]),
+        packages: BTreeMap::from([
+            (
+                parent_dep_path.clone(),
+                LockedPackage {
+                    name: "source-parent".to_string(),
+                    version: "1.0.0".to_string(),
+                    dependencies: BTreeMap::from([("bar".to_string(), "2.0.0".to_string())]),
+                    dep_path: parent_dep_path.clone(),
+                    local_source: Some(git),
+                    ..Default::default()
+                },
+            ),
+            (
+                "bar@2.0.0".to_string(),
+                LockedPackage {
+                    name: "bar".to_string(),
+                    version: "2.0.0".to_string(),
+                    dep_path: "bar@2.0.0".to_string(),
+                    ..Default::default()
+                },
+            ),
+        ]),
+        ..Default::default()
+    };
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let parent_entry = store.virtual_store_dir().join(dep_path_to_filename(
+        &parent_dep_path,
+        DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+    ));
+    let nested_bar = parent_entry.join("node_modules/bar");
+    let stale_bar = store
+        .virtual_store_dir()
+        .join("bar@2.0.0-stale/node_modules/bar");
+    std::fs::create_dir_all(&stale_bar).unwrap();
+    crate::sweep::try_remove_entry(&nested_bar);
+    crate::sys::create_dir_link(&stale_bar, &nested_bar).unwrap();
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    assert_eq!(
+        std::fs::canonicalize(&nested_bar).unwrap(),
+        std::fs::canonicalize(store.virtual_store_dir().join("bar@2.0.0/node_modules/bar"))
+            .unwrap()
+    );
+}
+
 /// Regression: a version bump keeps the same top-level name
 /// (`foo`) but must repoint `node_modules/foo` at the new
 /// `.aube/foo@<new>` entry. The old `.aube/foo@<old>/` is left
