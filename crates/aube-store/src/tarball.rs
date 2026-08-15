@@ -291,6 +291,7 @@ impl Store {
         let mut staged: Vec<(String, Vec<u8>, bool)> = Vec::new();
         let mut entries_seen: usize = 0;
         let mut total_uncompressed: u64 = 0;
+        let mut max_entry_bytes: u64 = 0;
         let mut decode_ns: u128 = 0;
         let mut cas_ns: u128 = 0;
         let mut index = PackageIndex::default();
@@ -434,6 +435,7 @@ impl Store {
             let mode = entry.header().mode().unwrap_or(0o644);
             let executable = mode & 0o111 != 0;
             total_uncompressed = total_uncompressed.saturating_add(content.len() as u64);
+            max_entry_bytes = max_entry_bytes.max(content.len() as u64);
             staged.push((rel_path, content, executable));
             staged_count += 1;
 
@@ -447,7 +449,11 @@ impl Store {
             aube_util::diag::Category::Store,
             "tar_extract_complete",
             extract_t0.elapsed(),
-            || format!(r#"{{"entries":{staged_count},"bytes_uncompressed":{total_uncompressed}}}"#),
+            || {
+                format!(
+                    r#"{{"entries":{staged_count},"bytes_uncompressed":{total_uncompressed},"max_entry_bytes":{max_entry_bytes}}}"#
+                )
+            },
         );
         if aube_util::diag::enabled() {
             aube_util::diag::event_lazy(

@@ -181,7 +181,13 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, 
         aube_util::diag::instant_lazy(
             aube_util::diag::Category::Resolver,
             "packument_disk_hit",
-            || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
+            || {
+                format!(
+                    r#"{{"name":{},"versions":{}}}"#,
+                    aube_util::diag::jstr(&name),
+                    packument.versions.len()
+                )
+            },
         );
         permit.record_cancelled();
         return Ok((name, packument, false));
@@ -227,7 +233,13 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, 
         aube_util::diag::instant_lazy(
             aube_util::diag::Category::Resolver,
             "packument_primer_hit",
-            || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
+            || {
+                format!(
+                    r#"{{"name":{},"versions":{}}}"#,
+                    aube_util::diag::jstr(&name),
+                    packument.versions.len()
+                )
+            },
         );
         permit.record_cancelled();
         return Ok((name, packument, true));
@@ -265,7 +277,13 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, 
     aube_util::diag::instant_lazy(
         aube_util::diag::Category::Resolver,
         "packument_network_hit",
-        || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
+        || {
+            format!(
+                r#"{{"name":{},"versions":{}}}"#,
+                aube_util::diag::jstr(&name),
+                packument.versions.len()
+            )
+        },
     );
     Ok((name, packument, false))
 }

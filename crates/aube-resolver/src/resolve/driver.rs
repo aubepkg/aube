@@ -268,10 +268,21 @@ impl<'a> ResolveDriver<'a> {
         let resolved_count = self.resolved.len();
         let lockfile_reuse_count = self.lockfile_reuse_count;
         let packument_fetch_count = self.packument_fetch_count;
+        let packument_cache_count = self.resolver.cache.len();
+        let packument_version_count: usize = self
+            .resolver
+            .cache
+            .values()
+            .map(|packument| packument.versions.len())
+            .sum();
         aube_util::diag::instant_lazy(aube_util::diag::Category::Resolver, "decision_mix", || {
             format!(
-                r#"{{"resolved":{},"lockfile_reused":{},"packuments_fetched":{}}}"#,
-                resolved_count, lockfile_reuse_count, packument_fetch_count
+                r#"{{"resolved":{},"lockfile_reused":{},"packuments_fetched":{},"packuments_cached":{},"packument_versions_cached":{}}}"#,
+                resolved_count,
+                lockfile_reuse_count,
+                packument_fetch_count,
+                packument_cache_count,
+                packument_version_count
             )
         });
 

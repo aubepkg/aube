@@ -13,6 +13,7 @@
  *   - `AUBE_DIAG_SUMMARY=1` enables the end-of-run aggregate table only.
  *   - `AUBE_DIAG_CRITPATH=1` retains per-event records for the
  *     critical-path / lifecycle / what-if / starvation analyzers.
+ *   - `AUBE_DIAG_FLUSH=1` flushes every JSONL event so a trace survives OOM.
  *
  * Event wire format (JSONL, one event per line):
  *
@@ -66,6 +67,7 @@ use std::time::{Duration, Instant};
 struct Recorder {
     start: Instant,
     file: Option<Mutex<BufWriter<File>>>,
+    flush_each_event: bool,
     print_stderr: bool,
     threshold_ms: u64,
     summary: bool,
@@ -423,6 +425,7 @@ pub fn init_with_config(cfg: Option<DiagConfig>) {
         let recorder = Recorder {
             start: Instant::now(),
             file,
+            flush_each_event: crate::env::embedder_env("DIAG_FLUSH").is_some(),
             print_stderr: cfg.print_stderr,
             threshold_ms: cfg.threshold_ms,
             summary: cfg.summary,
@@ -548,6 +551,9 @@ pub fn event(category: Category, name: &'static str, duration: Duration, meta: O
                 t_ms, cat_wire, name, dur_ms
             ),
         };
+        if r.flush_each_event {
+            let _ = f.flush();
+        }
     }
 
     if r.print_stderr && (dur_ms as u64) >= r.threshold_ms {
@@ -1064,6 +1070,14 @@ pub fn sample_concurrency() {
         let value = slot_counter(r, *slot).load(Ordering::Relaxed);
         let _ = write!(meta, r#""{}":{}"#, slot.sample_key(), value);
     }
+    if crate::diag_kernel::enabled()
+        && let Some(snapshot) = crate::diag_kernel::snapshot()
+    {
+        let _ = write!(meta, r#","rss_peak":{}"#, snapshot.max_rss_bytes);
+        if let Some(current) = crate::diag_kernel::current_rss_bytes() {
+            let _ = write!(meta, r#","rss_current":{current}"#);
+        }
+    }
     meta.push('}');
     instant(Category::Sample, "concurrency", Some(&meta));
 }
@@ -1072,8 +1086,12 @@ pub fn spawn_concurrency_sampler() {
     if !enabled() {
         return;
     }
+    // Capture a baseline even when a warm/empty install finishes before the
+    // spawned sampler receives its first runtime poll.
+    sample_concurrency();
     tokio::spawn(async {
-        let mut iv = tokio::time::interval(Duration::from_millis(50));
+        let period = Duration::from_millis(50);
+        let mut iv = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut tick = 0u32;
         loop {
@@ -1088,11 +1106,21 @@ pub fn spawn_concurrency_sampler() {
     });
 }
 
+/// Flush only the JSONL sink without printing end-of-run analysis.
+///
+/// Embedded hosts remain alive after an aube operation, so their static
+/// recorder's `BufWriter` is not dropped when an install returns. The embed
+/// facade calls this at operation boundaries; `AUBE_DIAG_FLUSH=1` remains the
+/// stronger option when every event must survive an abrupt OOM kill.
+pub fn flush_file() {
+    if let Some(file) = rec().and_then(|r| r.file.as_ref()) {
+        let _ = file.lock().unwrap_or_else(|e| e.into_inner()).flush();
+    }
+}
+
 pub fn flush() {
     if let Some(r) = rec() {
-        if let Some(file) = &r.file {
-            let _ = file.lock().unwrap_or_else(|e| e.into_inner()).flush();
-        }
+        flush_file();
         let n = r.event_count.load(Ordering::Relaxed);
         let total_ms = r.start.elapsed().as_secs_f64() * 1000.0;
 
