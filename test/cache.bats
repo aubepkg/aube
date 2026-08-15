@@ -75,6 +75,21 @@ EOF
 	assert_output "$TEST_TEMP_DIR/.cache/aube"
 }
 
+@test "aube cache path prefers a nested yaml-only workspace over an outer project" {
+	mkdir -p tools/packages/lib
+	echo '{"name":"outer","private":true}' >package.json
+	cat >tools/pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	echo 'cache-dir=.cache/aube' >tools/.npmrc
+
+	cd tools/packages/lib
+	run aube cache path
+	assert_success
+	assert_output "$TEST_TEMP_DIR/tools/.cache/aube"
+}
+
 @test "aube cache list on an empty cache prints nothing" {
 	run aube cache list
 	assert_success
