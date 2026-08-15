@@ -75,11 +75,44 @@ EOF
 
 	run aube install
 	assert_success
-	rm -rf "$HOME/.local/share/aube/store/v1/files" node_modules
+	store_v1="$(aube store path)"
+	[ -d "$store_v1/files" ]
+	rm -rf "$store_v1/files" node_modules
 	run aube remove is-odd
 	assert_success
 	assert_output --partial "Pruned lockfile"
 	assert_file_exists node_modules/is-even/index.js
+}
+
+@test "aube remove: stale retained dependency falls back to resolution" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-stale-retained",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "is-even": "1.0.0"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-stale-retained",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "is-even": "^1.0.0"
+  }
+}
+EOF
+
+	run aube remove is-odd
+	assert_success
+	assert_output --partial "Resolved"
+	refute_output --partial "Pruned lockfile"
 }
 
 @test "aube remove: removed override falls back to resolution" {

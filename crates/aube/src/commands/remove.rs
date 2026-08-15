@@ -162,17 +162,36 @@ pub async fn run(
     // reachable. Fall back to resolution for shared-workspace graphs and
     // when a surviving package declared the removed package as a peer — in
     // that case its peer context may need to be recomputed.
+    let workspace_config = aube_manifest::WorkspaceConfig::load(&cwd)
+        .map_err(miette::Report::new)
+        .wrap_err("failed to load workspace config")?;
+    let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
+    let lockfile_kind = aube_lockfile::detect_existing_lockfile_kind(&cwd)
+        .unwrap_or(aube_lockfile::LockfileKind::Aube);
     let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
     let (mut graph, used_lockfile_prune) = match existing
         .as_ref()
         .and_then(|graph| prune_removed_dependencies(graph, &manifest, packages))
-    {
+        .filter(|graph| {
+            matches!(
+                graph.check_drift_for_kind(
+                    &manifest,
+                    &workspace_config.overrides,
+                    &workspace_config.ignored_optional_dependencies,
+                    &workspace_catalogs,
+                    lockfile_kind,
+                ),
+                aube_lockfile::DriftStatus::Fresh
+            ) && matches!(
+                graph.check_catalogs_drift(&workspace_catalogs),
+                aube_lockfile::DriftStatus::Fresh
+            )
+        }) {
         Some(graph) => {
             eprintln!("Pruned lockfile to {} packages", graph.packages.len());
             (graph, true)
         }
         None => {
-            let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
             let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
             let graph = resolver
                 .resolve(&manifest, existing.as_ref())
