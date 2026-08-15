@@ -973,10 +973,7 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     let mut resp = client.start_tarball_stream(url).await.map_err(|e| {
         let is_throttle = e.is_throttle();
         TarballStreamErr {
-            report: miette!(
-                "failed to fetch {display_name}@{version}: {e}{}",
-                crate::dep_chain::format_chain_for(registry_name, version)
-            ),
+            report: super::registry_fetch_report(display_name, version, registry_name, e),
             is_throttle,
         }
     })?;

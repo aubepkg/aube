@@ -202,6 +202,9 @@ pub async fn run(
         // path to repair an incomplete store.
         opts.network_mode = aube_registry::NetworkMode::Offline;
         if let Err(err) = install::run_with_project_lock(opts.clone(), &lock).await {
+            if !is_retryable_offline_relink_error(&err) {
+                return Err(err);
+            }
             tracing::debug!(%err, "offline relink missed a retained artifact; retrying with the registry");
             opts.network_mode = aube_registry::NetworkMode::Online;
             install::run_with_project_lock(opts, &lock).await?;
@@ -211,6 +214,25 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+fn is_retryable_offline_relink_error(err: &miette::Report) -> bool {
+    let mut diagnostic: &dyn miette::Diagnostic = err.as_ref();
+    loop {
+        if diagnostic.code().is_some_and(|code| {
+            matches!(
+                code.to_string().as_str(),
+                aube_codes::errors::ERR_AUBE_OFFLINE
+                    | aube_codes::errors::ERR_AUBE_MISSING_STORE_FILE
+            )
+        }) {
+            return true;
+        }
+        let Some(source) = diagnostic.diagnostic_source() else {
+            return false;
+        };
+        diagnostic = source;
+    }
 }
 
 /// Remove direct roots from a single-importer lockfile without consulting the
@@ -517,6 +539,24 @@ fn prune_sidecar_entries(manifest: &mut aube_manifest::PackageJson, name: &str) 
 #[cfg(test)]
 mod tests {
     use super::prune_removed_dependencies;
+
+    #[test]
+    fn offline_relink_retries_only_cache_misses() {
+        let offline = miette::miette!(code = aube_codes::errors::ERR_AUBE_OFFLINE, "cache miss");
+        let missing = miette::miette!(
+            code = aube_codes::errors::ERR_AUBE_MISSING_STORE_FILE,
+            "missing"
+        );
+        let script = miette::miette!(
+            code = aube_codes::errors::ERR_AUBE_SCRIPT_NON_ZERO_EXIT,
+            "script failed"
+        );
+
+        let wrapped = offline.wrap_err("failed to fetch retained package");
+        assert!(super::is_retryable_offline_relink_error(&wrapped));
+        assert!(super::is_retryable_offline_relink_error(&missing));
+        assert!(!super::is_retryable_offline_relink_error(&script));
+    }
     use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
     use serde_json::Value;
 
