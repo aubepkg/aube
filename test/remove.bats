@@ -274,6 +274,29 @@ EOF
 	assert_success
 }
 
+@test "aube remove --save-dev resolves an incompatible overlapping dependency" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-incompatible-overlap",
+  "version": "0.0.0",
+  "devDependencies": {
+    "is-number": "6.0.0"
+  },
+  "optionalDependencies": {
+    "is-number": "7.0.0"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	run aube remove --save-dev is-number
+	assert_success
+	assert_output --partial "Resolved"
+	run jq -e '.version == "7.0.0"' node_modules/is-number/package.json
+	assert_success
+}
+
 @test "aube remove: removes multiple packages" {
 	cat >package.json <<'EOF'
 {

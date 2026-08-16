@@ -290,6 +290,18 @@ fn prune_removed_dependencies(
         if removed.contains(dep.name.as_str())
             && let Some((dep_type, specifier)) = manifest_direct_dep(manifest, &dep.name)
         {
+            let range = specifier.strip_prefix("workspace:").unwrap_or(specifier);
+            let range = range.strip_prefix("npm:").map_or(range, |alias| {
+                alias.rsplit_once('@').map_or("", |(_, range)| range)
+            });
+            let locked_version = pruned.packages.get(&dep.dep_path).map(|pkg| &pkg.version);
+            let compatible = locked_version
+                .and_then(|version| node_semver::Version::parse(version).ok())
+                .zip(node_semver::Range::parse(range).ok())
+                .is_some_and(|(version, range)| version.satisfies(&range));
+            if !compatible {
+                return None;
+            }
             dep.dep_type = dep_type;
             dep.specifier = Some(specifier.to_string());
         }
@@ -667,6 +679,24 @@ mod tests {
         assert_eq!(dep.dep_type, DepType::Optional);
         assert_eq!(dep.specifier.as_deref(), Some("^1.0.0"));
         assert!(pruned.packages.contains_key("shared@1.0.0"));
+    }
+
+    #[test]
+    fn lockfile_prune_rejects_an_incompatible_overlapping_declaration() {
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![direct("shared", "1.0.0", DepType::Dev)],
+        );
+        graph
+            .packages
+            .insert("shared@1.0.0".to_string(), locked("shared", "1.0.0"));
+        let mut manifest = aube_manifest::PackageJson::default();
+        manifest
+            .dependencies
+            .insert("shared".to_string(), "^2.0.0".to_string());
+
+        assert!(prune_removed_dependencies(&graph, &manifest, &["shared".to_string()]).is_none());
     }
 
     fn collect_section_order(raw: &str, section: &str) -> Vec<String> {
