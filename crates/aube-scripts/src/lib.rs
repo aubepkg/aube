@@ -937,6 +937,12 @@ fn apply_jail_env(
         .env("TMPDIR", home)
         .env("TMP", home)
         .env("TEMP", home)
+        // `run_script` stamps this before entering the jail, but `env_clear`
+        // removes it. Restore the outer project so the lazy node-gyp shim
+        // inherits the right registry/auth and bootstrap-lock context.
+        // `apply_script_settings_env` runs after this and intentionally lets
+        // an embedder's `extra_env` override the default.
+        .env("AUBE_NODE_GYP_PROJECT_DIR", project_root)
         .env("npm_lifecycle_event", script_name);
     if std::env::var_os("INIT_CWD").is_none() {
         cmd.env("INIT_CWD", project_root);
@@ -1700,9 +1706,41 @@ mod jail_tests {
         assert_eq!(env("NODE_OPTIONS"), Some("--conditions=aube"));
         assert_eq!(env("npm_config_unsafe_perm"), Some("false"));
         assert_eq!(env("npm_config_shell_emulator"), Some("true"));
+        assert_eq!(env("AUBE_NODE_GYP_PROJECT_DIR"), Some("/tmp/project"));
         assert_eq!(env("npm_lifecycle_event"), Some("postinstall"));
         assert_eq!(env("npm_package_name"), Some("pkg"));
         assert_eq!(env("npm_package_version"), Some("1.2.3"));
+    }
+
+    #[test]
+    fn embedder_env_overrides_jailed_node_gyp_project_default() {
+        let mut cmd = tokio::process::Command::new("node");
+        let settings = ScriptSettings {
+            extra_env: vec![(
+                "AUBE_NODE_GYP_PROJECT_DIR".into(),
+                "/tmp/embedder-project".into(),
+            )],
+            ..Default::default()
+        };
+
+        apply_jail_env(
+            &mut cmd,
+            std::ffi::OsStr::new("/bin"),
+            Path::new("/tmp/aube-jail/home"),
+            Path::new("/tmp/project"),
+            &PackageJson::default(),
+            "postinstall",
+            &[],
+        );
+        apply_script_settings_env(&mut cmd, &settings);
+
+        let project_dir = cmd
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("AUBE_NODE_GYP_PROJECT_DIR"))
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str());
+        assert_eq!(project_dir, Some("/tmp/embedder-project"));
     }
 
     fn proxy_env(settings: ScriptSettings) -> impl Fn(&str) -> Option<String> {

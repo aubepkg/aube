@@ -386,10 +386,10 @@ impl<'a> ResolveDriver<'a> {
         let Some(packument) = self.resolver.cache.get(name) else {
             return false;
         };
-        if !self.trust_histories.contains_key(name) {
-            return true;
+        if let Some(version) = exact_optional_version {
+            return packument.versions.contains_key(version);
         }
-        exact_optional_version.is_some_and(|version| packument.versions.contains_key(version))
+        !self.trust_histories.contains_key(name)
     }
 
     fn record_fetch_result(
@@ -2211,9 +2211,23 @@ fn merge_fetch_result(
         return;
     };
 
-    // A full result is authoritative. If it won the race, a later compact
-    // result must not replace it with a one-version packument.
-    if cache.contains_key(&name) && !trust_histories.contains_key(&name) {
+    // A full result is normally authoritative. It can be stale, though: a
+    // later exact endpoint response may contain a newly published version
+    // that the cached full packument lacks. Preserve the full data while
+    // merging that missing exact version and its fresher compact history.
+    if !trust_histories.contains_key(&name)
+        && let Some(existing) = cache.get_mut(&name)
+    {
+        let has_missing_version = packument
+            .versions
+            .keys()
+            .any(|version| !existing.versions.contains_key(version));
+        if !has_missing_version {
+            return;
+        }
+        existing.versions.append(&mut packument.versions);
+        existing.time.append(&mut packument.time);
+        trust_histories.insert(name, history);
         return;
     }
 
@@ -2328,6 +2342,37 @@ mod tests {
 
         assert_eq!(cache["shared"].versions.len(), 2);
         assert!(!histories.contains_key("shared"));
+    }
+
+    #[test]
+    fn compact_fetch_adds_exact_version_missing_from_stale_full_result() {
+        let mut cache = FxHashMap::default();
+        let mut histories = FxHashMap::default();
+
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["1.0.0"]),
+            None,
+        );
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["2.0.0"]),
+            Some(test_history()),
+        );
+
+        assert_eq!(
+            cache["shared"]
+                .versions
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["1.0.0", "2.0.0"]
+        );
+        assert!(histories.contains_key("shared"));
     }
 
     #[test]

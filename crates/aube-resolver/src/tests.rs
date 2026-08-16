@@ -1361,6 +1361,67 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+#[tokio::test]
+async fn compact_fetch_augments_stale_full_cache_with_exact_optional_version() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stale = make_packument("fresh-optional", &["1.0.0"], "1.0.0");
+    stale
+        .time
+        .insert("1.0.0".to_string(), "2024-01-01T00:00:00.000Z".to_string());
+    let mut fresh = make_packument("fresh-optional", &["1.0.0", "2.0.0"], "2.0.0");
+    for version in fresh.versions.keys() {
+        fresh
+            .time
+            .insert(version.clone(), "2024-01-01T00:00:00.000Z".to_string());
+    }
+    let body = serde_json::to_vec(&fresh).unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let requests = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let body = body.clone();
+                requests.fetch_add(1, Ordering::Relaxed);
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                });
+            }
+        })
+    };
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+    let mut resolver = Resolver::new(client).with_minimum_release_age(Some(MinimumReleaseAge {
+        minutes: 60,
+        ..Default::default()
+    }));
+    resolver.cache.insert("fresh-optional".to_string(), stale);
+    let mut manifest = PackageJson::default();
+    manifest
+        .optional_dependencies
+        .insert("fresh-optional".to_string(), "2.0.0".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    assert!(graph_has_package(&graph, "fresh-optional", "2.0.0"));
+    assert_eq!(requests.load(Ordering::Relaxed), 1);
+    server.abort();
+}
+
 async fn resolve_compact_same_name_collision(
     second_is_optional_exact: bool,
 ) -> (LockfileGraph, usize) {
