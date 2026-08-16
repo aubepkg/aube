@@ -582,15 +582,6 @@ pub(crate) async fn run_dep_lifecycle_scripts(
         return Ok(0);
     }
 
-    // Bootstrap node-gyp once before the fan-out when the ambient
-    // `PATH` doesn't already provide one. At least one job is about
-    // to run a lifecycle script, and we can't cheaply predict which
-    // ones will end up shelling out to `node-gyp` (explicit,
-    // implicit via binding.gyp, or transitive via node-gyp-build).
-    // If the user already has node-gyp (system install, nvm, a test
-    // shim), `ensure` returns `None` and we leave their copy alone.
-    let node_gyp_bin_dir = std::sync::Arc::new(node_gyp_bootstrap::ensure(project_dir).await?);
-
     // Pass 2 (parallel, bounded): fan out across `child_concurrency`
     // concurrent workers. Inside one job the three hooks
     // (preinstall → install → postinstall) still run sequentially —
@@ -619,7 +610,6 @@ pub(crate) async fn run_dep_lifecycle_scripts(
         let sem = semaphore.clone();
         let project_dir = project_dir.clone();
         let modules_dir_name = modules_dir_name.clone();
-        let node_gyp_bin_dir = node_gyp_bin_dir.clone();
         let jail_policy = jail_policy.clone();
         let task = crate::dep_chain::scope_current(async move {
             let _permit = sem.acquire().await.unwrap();
@@ -644,8 +634,14 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                     SideEffectsCacheRestore::Miss => {}
                 }
             }
+            // Put a cheap lazy node-gyp shim behind the dep's own `.bin`.
+            // Most lifecycle scripts never invoke node-gyp, so eagerly
+            // installing its dependency tree here adds avoidable network and
+            // linking work. The shim bootstraps on first execution and still
+            // covers indirect calls from JS build helpers.
+            let dep_bin_dir = job.dep_modules_dir.join(".bin");
+            let node_gyp_bin_dir = node_gyp_bootstrap::lazy_shim_bin_dir(&dep_bin_dir)?;
             let tool_dirs: Vec<&std::path::Path> = node_gyp_bin_dir
-                .as_ref()
                 .as_deref()
                 .map(|p| vec![p])
                 .unwrap_or_default();

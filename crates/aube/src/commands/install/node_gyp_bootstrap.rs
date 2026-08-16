@@ -9,13 +9,11 @@
 //! and npm solve this by bundling node-gyp with themselves; aube (a
 //! Rust binary) bootstraps it lazily on first need.
 //!
-//! User precedence: if `node-gyp` is already resolvable on the
-//! ambient `PATH` (system install, nvm, a shim in a test fixture),
-//! [`ensure`] returns `None` and we stay out of the way — the user's
-//! copy wins. Otherwise node-gyp is installed under
-//! `<cache_dir>/tools/node-gyp/<bucket>/` and the returned `.bin`
-//! dir is prepended to the lifecycle script's `PATH` *after* the
-//! dep's own `.bin`.
+//! User precedence: if `node-gyp` is already resolvable from the
+//! package's own `.bin` or ambient `PATH` (system install, nvm, a shim
+//! in a test fixture), [`lazy_shim_bin_dir`] stays out of the way — the
+//! user's copy wins. Otherwise it prepends a cheap shim that installs
+//! node-gyp under `<cache_dir>/tools/node-gyp/<bucket>/` only if invoked.
 //!
 //! The install runs in-process against a freshly-written
 //! `package.json` that pins node-gyp, via
@@ -79,21 +77,6 @@ fn tool_root() -> miette::Result<PathBuf> {
     let cache = aube_store::dirs::cache_dir()
         .ok_or_else(|| miette!("could not resolve cache dir for node-gyp bootstrap"))?;
     Ok(cache.join("tools").join("node-gyp"))
-}
-
-/// Returns `Some(bin_dir)` containing a freshly-bootstrapped `node-gyp`
-/// when the ambient `PATH` doesn't already provide one, or `None` when
-/// the user already has a copy on `PATH` — in which case we don't
-/// touch their setup.
-///
-/// `project_dir` is the outer install's project root; its `.npmrc`
-/// (if any) is propagated to the tool dir so the bootstrap inherits
-/// the same registry/auth configuration.
-pub async fn ensure(project_dir: &Path) -> miette::Result<Option<PathBuf>> {
-    if node_gyp_on_path() {
-        return Ok(None);
-    }
-    ensure_cached(project_dir).await.map(Some)
 }
 
 pub async fn ensure_cached(project_dir: &Path) -> miette::Result<PathBuf> {

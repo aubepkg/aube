@@ -1336,6 +1336,10 @@ pub async fn run_script(
     cmd.current_dir(script_dir)
         .stderr(child_stderr())
         .env("PATH", &new_path)
+        // The lazy node-gyp shim needs the outer project for registry/auth
+        // settings and bootstrap locking. Dependency scripts run from the
+        // virtual store, so falling back to their cwd would lose that context.
+        .env("AUBE_NODE_GYP_PROJECT_DIR", project_root)
         .env("npm_lifecycle_event", script_name);
 
     // Pass INIT_CWD the way npm/pnpm do — the directory the user
