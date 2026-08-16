@@ -2,7 +2,7 @@ use super::body::{check_body_cap, read_body_capped};
 use super::cache::packument_full_cache_path;
 use super::{
     AUDIT_BODY_CAP, PACKUMENT_FULL_ACCEPT, RegistryClient, check_dist_tag_status,
-    dist_tag_root_url, dist_tag_url, parse_full_response,
+    dist_tag_root_url, dist_tag_url, parse_full_response, parse_full_response_seed,
 };
 use crate::{Error, NetworkMode};
 use serde::Deserialize;
@@ -163,13 +163,14 @@ impl RegistryClient {
         parse_full_response(resp).await
     }
 
-    /// Fetch only publish times and trust evidence from a full packument.
-    /// This still transfers the registry document, but serde skips the large
-    /// dependency and distribution payload retained by normal resolution.
-    pub async fn fetch_packument_trust_history(
+    /// Fetch one exact release plus compact publish-time/trust history from a
+    /// single full-packument response. Historical dependency and distribution
+    /// metadata is discarded during deserialization.
+    pub async fn fetch_exact_version_packument(
         &self,
         name: &str,
-    ) -> Result<crate::PackumentTrustHistory, Error> {
+        version: &str,
+    ) -> Result<crate::ExactVersionPackument, Error> {
         if self.network_mode == NetworkMode::Offline {
             return Err(Error::Offline(format!("trust history for {name}")));
         }
@@ -189,7 +190,7 @@ impl RegistryClient {
             self.fetch_policy.packument_max_bytes,
             "packument-trust-history",
         )?;
-        parse_full_response(resp).await
+        parse_full_response_seed(resp, crate::ExactVersionPackumentSeed { version }).await
     }
 
     /// Fetch the *full* (non-corgi) packument as raw JSON, bypassing the

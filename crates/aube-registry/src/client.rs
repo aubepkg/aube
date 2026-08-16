@@ -27,7 +27,7 @@ use dist_tags::*;
 pub use endpoints::PackageSearchResult;
 pub(crate) use http::probe_client_builder;
 use http::*;
-use parse::parse_full_response;
+use parse::{parse_full_response, parse_full_response_seed};
 
 /// Accept header for packument requests. `vnd.npm.install-v1+json` is the
 /// abbreviated (corgi) format npmjs emits for installs; the `application/json`

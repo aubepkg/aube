@@ -1269,7 +1269,6 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
     packument
         .versions
         .insert("1.0.0".to_string(), exact.clone());
-    let exact_body = serde_json::to_vec(&exact).unwrap();
     let full_body = serde_json::to_vec(&packument).unwrap();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1284,7 +1283,6 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
                 let Ok((mut socket, _)) = listener.accept().await else {
                     break;
                 };
-                let exact_body = exact_body.clone();
                 let full_body = full_body.clone();
                 let exact_requests = exact_requests.clone();
                 let full_requests = full_requests.clone();
@@ -1297,7 +1295,7 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
                         .unwrap_or("/");
                     let body = if path.ends_with("/1.0.0") {
                         exact_requests.fetch_add(1, Ordering::Relaxed);
-                        exact_body
+                        full_body.clone()
                     } else {
                         full_requests.fetch_add(1, Ordering::Relaxed);
                         full_body
@@ -1340,7 +1338,11 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
     let graph = resolver.resolve(&manifest, None).await.unwrap();
 
     assert!(!graph_has_package(&graph, "darwin-only", "1.0.0"));
-    assert_eq!(exact_requests.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        exact_requests.load(Ordering::Relaxed),
+        0,
+        "the compact path must not make a second exact-version request"
+    );
     assert_eq!(full_requests.load(Ordering::Relaxed), 1);
     assert_eq!(
         resolver.cache["darwin-only"].versions.len(),

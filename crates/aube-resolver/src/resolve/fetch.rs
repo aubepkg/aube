@@ -326,15 +326,15 @@ async fn fetch_exact_optional_packument(
 ) -> Result<FetchResult, Error> {
     let permit = inputs.sem.acquire().await;
     let name = inputs.name.clone();
-    let fetched = tokio::try_join!(
-        inputs.client.fetch_single_version_metadata(&name, &version),
-        inputs.client.fetch_packument_trust_history(&name),
-    );
+    let fetched = inputs
+        .client
+        .fetch_exact_version_packument(&name, &version)
+        .await;
     match fetched {
-        Ok((metadata, history)) => {
+        Ok(exact) => {
             permit.record_success();
             let mut versions = std::collections::BTreeMap::new();
-            versions.insert(version, metadata);
+            versions.insert(version, exact.metadata);
             Ok((
                 name.clone(),
                 Packument {
@@ -342,10 +342,10 @@ async fn fetch_exact_optional_packument(
                     modified: None,
                     versions,
                     dist_tags: std::collections::BTreeMap::new(),
-                    time: history.time,
+                    time: exact.history.time,
                 },
                 false,
-                Some(history.versions),
+                Some(exact.history.versions),
             ))
         }
         Err(err) => {
