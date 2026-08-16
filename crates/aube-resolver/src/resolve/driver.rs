@@ -543,8 +543,8 @@ impl<'a> ResolveDriver<'a> {
                 self.ensure_fetch(&fetch_name);
             }
             match self.fetcher.join_next().await {
-                Some(Ok((_, Ok((name, packument, from_primer, trust_history))))) => {
-                    if from_primer {
+                Some(Ok((_, Ok((name, packument, source, trust_history))))) => {
+                    if source == super::fetch::FetchSource::Primer {
                         self.fetcher.note_primer_seeded(name.clone());
                     }
                     self.record_fetch_result(name, packument, trust_history);
@@ -2220,6 +2220,26 @@ fn merge_fetch_result(
     trust_history: Option<TrustHistory>,
 ) {
     let Some(history) = trust_history else {
+        if trust_histories.contains_key(&name)
+            && let Some(existing) = cache.get(&name)
+        {
+            let missing_versions = existing
+                .versions
+                .iter()
+                .filter(|(version, _)| !packument.versions.contains_key(*version))
+                .map(|(version, metadata)| (version.clone(), metadata.clone()))
+                .collect::<Vec<_>>();
+            if !missing_versions.is_empty() {
+                for (version, metadata) in missing_versions {
+                    packument.versions.insert(version.clone(), metadata);
+                    if let Some(time) = existing.time.get(&version) {
+                        packument.time.insert(version, time.clone());
+                    }
+                }
+                cache.insert(name, packument);
+                return;
+            }
+        }
         cache.insert(name.clone(), packument);
         trust_histories.remove(&name);
         return;
@@ -2356,6 +2376,37 @@ mod tests {
 
         assert_eq!(cache["shared"].versions.len(), 2);
         assert!(!histories.contains_key("shared"));
+    }
+
+    #[test]
+    fn stale_full_fetch_preserves_compact_version_when_it_finishes_last() {
+        let mut cache = FxHashMap::default();
+        let mut histories = FxHashMap::default();
+
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["2.0.0"]),
+            Some(test_history()),
+        );
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["1.0.0"]),
+            None,
+        );
+
+        assert_eq!(
+            cache["shared"]
+                .versions
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["1.0.0", "2.0.0"]
+        );
+        assert!(histories.contains_key("shared"));
     }
 
     #[test]

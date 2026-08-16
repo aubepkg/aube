@@ -34,7 +34,7 @@ pub(super) struct FetchScheduler {
 }
 
 pub(super) type TrustHistory = std::collections::BTreeMap<String, VersionTrustMetadata>;
-pub(super) type FetchResult = (String, Packument, bool, Option<TrustHistory>);
+pub(super) type FetchResult = (String, Packument, FetchSource, Option<TrustHistory>);
 pub(super) type FetchOutcome =
     Option<Result<(FetchKey, Result<FetchResult, Error>), tokio::task::JoinError>>;
 
@@ -42,6 +42,14 @@ pub(super) type FetchOutcome =
 pub(super) enum FetchKey {
     Full(String),
     Exact(String, String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FetchSource {
+    Disk,
+    Primer,
+    Network,
+    Exact,
 }
 
 impl FetchScheduler {
@@ -204,11 +212,8 @@ struct FetchInputs {
 
 /// Body of the per-packument fetch task spawned by the resolver.
 ///
-/// Returns `(name, packument, from_primer)` — `from_primer` is true
-/// when the result came from the bundled metadata primer (only its
-/// capped slice of high-traffic histories), so the caller knows a
-/// range miss must trigger a live registry refetch before reporting
-/// `ERR_AUBE_NO_MATCHING_VERSION`.
+/// Returns the result source so callers can distinguish incomplete local
+/// metadata from a live registry response.
 async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> {
     let FetchInputs {
         name,
@@ -267,7 +272,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
             },
         );
         permit.record_cancelled();
-        return Ok((name, packument, false, None));
+        return Ok((name, packument, FetchSource::Disk, None));
     }
     let use_metadata_primer = !force_refresh
         && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
@@ -319,7 +324,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
             },
         );
         permit.record_cancelled();
-        return Ok((name, packument, true, None));
+        return Ok((name, packument, FetchSource::Primer, None));
     }
     let fetch_outcome = if needs_time {
         match full_cache_dir.as_ref() {
@@ -362,7 +367,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
             )
         },
     );
-    Ok((name, packument, false, None))
+    Ok((name, packument, FetchSource::Network, None))
 }
 
 async fn fetch_exact_optional_packument(
@@ -389,7 +394,7 @@ async fn fetch_exact_optional_packument(
                     dist_tags: std::collections::BTreeMap::new(),
                     time: exact.history.time,
                 },
-                false,
+                FetchSource::Exact,
                 Some(exact.history.versions),
             ))
         }
@@ -398,9 +403,22 @@ async fn fetch_exact_optional_packument(
                 "compact exact metadata fetch failed for optional dep {name}@{version}; falling back to full packument: {err}"
             );
             permit.record_cancelled();
+            let fallback_inputs = inputs.clone();
             let fallback = fetch_one_packument(inputs).await?;
             if fallback.1.versions.contains_key(&version) {
                 Ok(fallback)
+            } else if matches!(fallback.2, FetchSource::Disk | FetchSource::Primer) {
+                let mut refresh_inputs = fallback_inputs;
+                refresh_inputs.force_refresh = true;
+                let refreshed = fetch_one_packument(refresh_inputs).await?;
+                if refreshed.1.versions.contains_key(&version) {
+                    Ok(refreshed)
+                } else {
+                    Err(Error::Registry(
+                        name,
+                        format!("version {version} is missing from the full packument"),
+                    ))
+                }
             } else {
                 Err(Error::Registry(
                     name,
@@ -417,8 +435,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    async fn serve_registry(
-        body: Vec<u8>,
+    async fn serve_registry_responses(
+        bodies: Vec<Vec<u8>>,
     ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let registry = format!("http://{}/", listener.local_addr().unwrap());
@@ -430,8 +448,8 @@ mod tests {
                     let Ok((mut socket, _)) = listener.accept().await else {
                         break;
                     };
-                    requests.fetch_add(1, Ordering::Relaxed);
-                    let body = body.clone();
+                    let request = requests.fetch_add(1, Ordering::Relaxed);
+                    let body = bodies[request.min(bodies.len() - 1)].clone();
                     tokio::spawn(async move {
                         let mut buf = [0_u8; 2048];
                         let _ = socket.read(&mut buf).await;
@@ -446,6 +464,12 @@ mod tests {
             })
         };
         (registry, requests, server)
+    }
+
+    async fn serve_registry(
+        body: Vec<u8>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        serve_registry_responses(vec![body]).await
     }
 
     #[tokio::test]
@@ -517,6 +541,51 @@ mod tests {
         };
         assert_eq!(version, "2.0.0");
         assert!(message.contains("version 2.0.0 is missing"));
+        assert_eq!(requests.load(Ordering::Relaxed), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn exact_fallback_refreshes_an_incomplete_disk_entry() {
+        let incomplete = serde_json::from_value(serde_json::json!({
+            "name": "shared",
+            "versions": {
+                "1.0.0": { "name": "shared", "version": "1.0.0" }
+            },
+            "dist-tags": { "latest": "1.0.0" },
+            "time": { "1.0.0": "2024-01-01T00:00:00.000Z" }
+        }))
+        .unwrap();
+        let refreshed = serde_json::to_vec(&serde_json::json!({
+            "name": "shared",
+            "versions": {
+                "1.0.0": { "name": "shared", "version": "1.0.0" },
+                "2.0.0": { "name": "shared", "version": "2.0.0" }
+            },
+            "dist-tags": { "latest": "2.0.0" },
+            "time": {
+                "1.0.0": "2024-01-01T00:00:00.000Z",
+                "2.0.0": "2024-02-01T00:00:00.000Z"
+            }
+        }))
+        .unwrap();
+        let compact_miss = serde_json::to_vec(&incomplete).unwrap();
+        let (registry, requests, server) =
+            serve_registry_responses(vec![compact_miss, refreshed]).await;
+        let cache = tempfile::tempdir().unwrap();
+        let client = Arc::new(RegistryClient::new(&registry));
+        client.seed_full_packument_cache("shared", cache.path(), &incomplete, None, None, true);
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+
+        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None);
+        let Some(Ok((FetchKey::Exact(_, _), Ok((_, packument, source, _))))) =
+            scheduler.join_next().await
+        else {
+            panic!("forced exact fallback refresh did not complete");
+        };
+        assert!(packument.versions.contains_key("2.0.0"));
+        assert_eq!(source, FetchSource::Network);
         assert_eq!(requests.load(Ordering::Relaxed), 2);
         server.abort();
     }
