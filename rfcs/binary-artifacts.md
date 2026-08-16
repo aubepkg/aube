@@ -76,7 +76,7 @@ These are the contract of the standard; the `artifacts` field is a mechanism tha
 2. **No lifecycle scripts.** The mechanism requires no `preinstall`/`postinstall` anywhere. Artifact packages must be passive carriers: conforming package managers **must not** execute lifecycle scripts of packages installed via artifact selection. A parent's own install script kept as the legacy fallback is declared superseded and is never executed when its slot selects an artifact (see *Lifecycle-script supersession*).
 3. **Selection is declarative and performed by the package manager.** The matching language is non-Turing-complete and statically analyzable. Packages do not ship platform-detection code on the conforming path.
 4. **Progressive enhancement, no flag day.** The new manifest field is ignored by package managers that predate it. A published package also ships today's compat surface (JS shim `bin`, loader chain, `optionalDependencies`), which continues to work unchanged on legacy installers. The legacy surface is the **authoritative fallback**: a conforming package manager that selects no artifact must behave exactly like a non-conforming one. Partial implementations are therefore safe by construction.
-5. **No runtime shim on the CLI path.** When a selected artifact declares its executables (the `artifact` field), conforming package managers **must** expose those `bin` commands as direct links to the native executable — symlink or hardlink with the executable bit on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it.
+5. **No runtime shim on the CLI path.** When a selected artifact declares its executables (the `artifact` field), conforming package managers **must** expose those `bin` commands as direct links to the native executable — a symlink, or an executable copy, on Unix; a real `.exe` on Windows (never interpreted through a shebang/`cmd` shim that assumes a Node script). A hardlink is valid only when its source inode already has the required executable mode; implementations must never chmod through a hardlink into an immutable content-addressed store. Zero interpreter trampoline, zero extra process at launch. A JS shim may exist in the package only as the legacy fallback surface; a conforming implementation never executes it.
 6. **One lockfile for every platform.** *All* declared candidates are resolved and locked (name, exact version, integrity — a metadata-only operation; no tarball downloads for non-selected candidates). Only the selected artifact is materialized on disk. Selection is a pure function of `(manifest, target tuple)` and is **never recorded in the lockfile**: recording it would reintroduce the platform-dirty lockfiles this design exists to eliminate.
 7. **Implementable by npm, pnpm, Yarn, Bun, and aube** without coordinated releases, and without changes to Node.js module resolution.
 
@@ -91,7 +91,7 @@ Selection is evaluated against a target tuple:
 ```
 
 - `os`, `cpu`: values of `process.platform` / `process.arch` (`linux`, `darwin`, `win32`, …; `x64`, `arm64`, …).
-- `libc`: `"glibc"` or `"musl"` on Linux; absent elsewhere. Detection **must** be a runtime probe (the `detect-libc` / `process.report().header.glibcVersionRuntime` family of heuristics), never a compile-time constant of the package manager itself — a statically-linked musl build of a package manager running on a glibc host must still report `glibc`. (Aube's implementation history includes exactly this bug twice: a musl-static binary reporting `musl` on glibc hosts, and Ubuntu hosts with `apt install musl` present false-positiving. The spec should pin down the probe order: dynamic loader in `/proc/self/maps` first, then `ld-linux*`/`ld-musl-*` filesystem probes, glibc winning ties.)
+- `libc`: `"glibc"` or `"musl"` on Linux; absent elsewhere. Detection **must** be a runtime probe (the `detect-libc` / `process.report().header.glibcVersionRuntime` family of heuristics), never a compile-time constant of the package manager itself — a statically-linked musl build of a package manager running on a glibc host must still report `glibc`. The normative probe order is the dynamic loader in `/proc/self/maps` first, then `ld-linux*`/`ld-musl-*` filesystem probes, with glibc winning conflicting evidence. This requirement governs package-manager artifact selection; legacy package loaders are fallback implementations outside this RFC and may use their existing runtime detection.
 - `nodeVersion`: the version of Node.js the project will run — by default the package manager's runtime; overridable by fields like `devEngines.runtime` where supported.
 
 Package managers **must** support explicit target-tuple overrides beyond the host (configuration and/or CLI flag), for Docker cross-platform installs and pnpm-`supportedArchitectures`-style fleet caching. Multi-tuple behavior is specified under *Lockfiles* below.
@@ -139,7 +139,7 @@ select(candidates, target):
 
 Selection never requires downloading a non-selected artifact: predicates live in the parent's manifest (already fetched), and locking candidates needs only registry metadata.
 
-As a defense against copy-paste errors and name confusion, package managers **should** cross-check that the selected artifact's own manifest `os`/`cpu`/`libc` fields do not contradict the predicates it was selected under, and warn on skew.
+Before materialization, package managers **must** verify that the selected artifact's own manifest `os`/`cpu`/`libc` fields accept the target tuple. Incompatible metadata is a manifest error and the artifact must not be linked. This is a required defense against copy-paste errors and name confusion, not a warning-only lint.
 
 ### The `artifacts` field
 
@@ -261,12 +261,15 @@ Why a `_`-prefixed bare name:
 The normative loader pattern:
 
 ```js
-let native;
+let addonPath;
 try {
-  native = require('#addon');       // adopting PMs: resolves via the alias
-} catch {
-  native = legacyRequireChain();    // today's napi-rs try/catch over real names
+  addonPath = require.resolve('#addon');
+} catch (error) {
+  if (error?.code !== 'MODULE_NOT_FOUND') throw error;
 }
+const native = addonPath === undefined
+  ? legacyRequireChain()            // alias absent: use today's fallback
+  : require(addonPath);             // load outside catch; artifact errors propagate
 ```
 
 `imports: { "#addon": "_addon" }` is **recommended sugar, not a requirement**: it gives parent code and bundlers a single static `#`-namespaced specifier, is inert in the published tarball, and behaves identically under all package managers. A parent may `require('_addon')` directly.
@@ -295,8 +298,9 @@ When a selected artifact declares `artifact.bin`:
 1. Each entry maps a command name to a path inside the artifact. Names absent from the parent's top-level `bin` are ignored with a warning (the name-authority rule).
 2. **Containment check**: the resolved path must not escape the artifact directory after symlink resolution (string containment, then `realpath` containment).
 3. The artifact bin **overrides** the parent's same-named top-level `bin` entry in every `.bin` directory the package manager populates.
-4. Unix: symlink/hardlink into `.bin`; ensure mode `0755`. Windows: a native target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default. A fallback-tier artifact may declare a JS entry point; the package manager emits an ordinary Node shim for it.
-5. If the slot selects nothing, or the selected artifact declares no `artifact.bin`, the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
+4. Selected slots must expose disjoint command names. If two selected artifacts declare the same `artifact.bin` name, the package manager must reject the manifest before changing any `.bin` entry; slot or object iteration order never determines the winner.
+5. Unix: symlink into `.bin`, or copy the executable and set the copy to mode `0755`. A package manager must not chmod a hardlink to a content-addressed-store inode; hardlinks are permitted only when the stored inode is already executable and no mode change is required. Windows: a native target is a real PE executable — link/copy it as `<name>.exe` and/or emit shims that exec it *directly*, never through the "interpret with node" default. A fallback-tier artifact may declare a JS entry point; the package manager emits an ordinary Node shim for it.
+6. If the slot selects nothing, or the selected artifact declares no `artifact.bin`, the parent's top-level `bin` is used untouched — bit-identical to legacy behavior.
 
 ### Lifecycle-script supersession
 
