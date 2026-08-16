@@ -534,6 +534,13 @@ impl<'a> ResolveDriver<'a> {
             || FetchKey::Full(fetch_name.clone()),
             |version| FetchKey::Exact(fetch_name.clone(), version.to_string()),
         );
+        // A compact exact result that landed after an optional full-fetch
+        // failure proves the package is reachable and leaves a trust-history
+        // marker requiring authoritative full metadata. Discard the stale
+        // prefetch failure so this range task can perform that refresh.
+        if exact_optional_version.is_none() && self.trust_histories.contains_key(&fetch_name) {
+            self.failed_fetches.remove(&fetch_key);
+        }
         while !self.cache_satisfies(&fetch_name, exact_optional_version)
             && !self.failed_fetches.contains_key(&fetch_key)
         {
@@ -2231,10 +2238,16 @@ fn merge_fetch_result(
                 .collect::<Vec<_>>();
             if !missing_versions.is_empty() {
                 for (version, metadata) in missing_versions {
-                    packument.versions.insert(version.clone(), metadata);
-                    if let Some(time) = existing.time.get(&version) {
-                        packument.time.insert(version, time.clone());
-                    }
+                    packument.versions.insert(version, metadata);
+                }
+                // Compact history contains publish times for every historical
+                // release used by no-downgrade checks, not only the selected
+                // version retained in `versions`.
+                for (version, time) in &existing.time {
+                    packument
+                        .time
+                        .entry(version.clone())
+                        .or_insert_with(|| time.clone());
                 }
                 cache.insert(name, packument);
                 return;
@@ -2383,11 +2396,15 @@ mod tests {
         let mut cache = FxHashMap::default();
         let mut histories = FxHashMap::default();
 
+        let mut compact = test_packument(&["2.0.0"]);
+        compact
+            .time
+            .insert("0.9.0".to_string(), "2023-01-01T00:00:00.000Z".to_string());
         merge_fetch_result(
             &mut cache,
             &mut histories,
             "shared".to_string(),
-            test_packument(&["2.0.0"]),
+            compact,
             Some(test_history()),
         );
         merge_fetch_result(
@@ -2407,6 +2424,7 @@ mod tests {
             ["1.0.0", "2.0.0"]
         );
         assert!(histories.contains_key("shared"));
+        assert_eq!(cache["shared"].time["0.9.0"], "2023-01-01T00:00:00.000Z");
     }
 
     #[test]
