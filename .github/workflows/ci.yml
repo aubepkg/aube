@@ -216,20 +216,12 @@ jobs:
           fi
       - run: mise run docs:build
 
-  # Guards published API surfaces against unintended breaks:
-  #   * Every published Rust library via cargo-semver-checks, baselined
-  #     against main. Findings are advisory so intentional API work does
-  #     not block the final gate, but it is visible before release-plz can
-  #     surprise us with a major bump.
-  #   * The C ABI export set via the cdylib's dynamic symbol table diffed
-  #     against the frozen crates/aube-ffi/abi-symbols.txt manifest.
-  # Symbol drift always blocks (keeps the manifest honest); removing an
-  # export shows as a manifest deletion in the diff and must ride a
-  # breaking PR.
+  # Guard the C ABI export set by diffing the cdylib's dynamic symbol table
+  # against the frozen crates/aube-ffi/abi-symbols.txt manifest. Symbol drift
+  # blocks the final gate so the manifest cannot silently become stale.
   api-stability:
-    # PR-time gate only: baselining the checked-out revision against main is
-    # meaningless on push/tag/dispatch runs. `final` treats the resulting
-    # `skipped` job as a pass.
+    # PR-time gate only. `final` treats the resulting skipped job as a pass on
+    # push/tag/dispatch runs.
     if: github.event_name == 'pull_request'
     runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
     timeout-minutes: 20
@@ -248,64 +240,55 @@ jobs:
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - name: C ABI — frozen export set
+        run: |
+          cargo build --locked --profile ffi -p aube-ffi
+          grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt
+          nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
+            | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt
+          diff -u /tmp/abi-expected.txt /tmp/abi-actual.txt
+
+  # Check every published Rust library against main. This job intentionally
+  # fails when cargo-semver-checks finds a break so the PR shows a red check.
+  # `final` waits for it but treats only this job's failure as advisory.
+  rust-api-stability:
+    if: github.event_name == 'pull_request'
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
+        with:
+          cache: rust
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
+        with:
+          cache_save: false
       - name: Fetch semver baseline
         run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-      # These checks use independent build profiles and outputs. Keep them on
-      # one Namespace runner while overlapping their work.
-      - parallel:
-          - name: Published Rust APIs — cargo-semver-checks
-            # Version pinned in bin/cargo-semver-checks (mise tool-stub).
-            run: |
-              set +e
-              ./bin/cargo-semver-checks semver-checks \
-                --baseline-rev origin/main \
-                --package aube \
-                --package aube-codes \
-                --package aube-linker \
-                --package aube-lockfile \
-                --package aube-manifest \
-                --package aube-registry \
-                --package aube-resolver \
-                --package aube-runtime \
-                --package aube-scripts \
-                --package aube-settings \
-                --package aube-store \
-                --package aube-util \
-                --package aube-workspace
-              semver_status=$?
-              set -e
-              printf '%s\n' "$semver_status" > /tmp/semver-status
-          - name: C ABI — frozen export set
-            run: |
-              set +e
-              (
-                cargo build --locked --profile ffi -p aube-ffi &&
-                grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt &&
-                nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
-                  | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt &&
-                diff -u /tmp/abi-expected.txt /tmp/abi-actual.txt
-              )
-              ffi_status=$?
-              set -e
-              printf '%s\n' "$ffi_status" > /tmp/ffi-status
-      - name: Enforce C ABI and report Rust API stability
-        if: always()
+      - name: Published Rust APIs — cargo-semver-checks
         run: |
-          if [ ! -s /tmp/semver-status ] || [ ! -s /tmp/ffi-status ]; then
-            echo "::error::one or more API stability checks did not report a result"
-            exit 1
-          fi
-          SEMVER=$(cat /tmp/semver-status)
-          FFI=$(cat /tmp/ffi-status)
-          fail=0
-          if [ "$FFI" -ne 0 ]; then
-            echo "::error::C ABI exports drifted from crates/aube-ffi/abi-symbols.txt. Update the manifest to match; removing or renaming an export is a breaking change — also mark the PR breaking (a '!' in the title or the 'breaking-api' label)."
-            fail=1
-          fi
-          if [ "$SEMVER" -ne 0 ]; then
-            echo "::warning::A published Rust API has a semver-breaking change. Inspect the cargo-semver-checks output; release-plz will propose a major version unless the API is kept compatible."
-          fi
-          exit $fail
+          ./bin/cargo-semver-checks semver-checks \
+            --baseline-rev origin/main \
+            --package aube \
+            --package aube-codes \
+            --package aube-linker \
+            --package aube-lockfile \
+            --package aube-manifest \
+            --package aube-registry \
+            --package aube-resolver \
+            --package aube-runtime \
+            --package aube-scripts \
+            --package aube-settings \
+            --package aube-store \
+            --package aube-util \
+            --package aube-workspace
 
   # BATS integration shards. Linux runs 4 shards (matches Buildkite),
   # macOS runs 2. Keep these on GitHub-hosted runners: the jail-build
@@ -440,7 +423,8 @@ jobs:
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is
   # blocked. Lets the branch-protection rule depend on one name instead of ten.
-  # Exception: api-stability is PR-only and may skip outside pull requests.
+  # Exceptions: PR-only API jobs may skip outside pull requests, and a failed
+  # Rust semver check is advisory even though its own job remains red.
   final:
     needs:
       - build
@@ -450,6 +434,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
+      - rust-api-stability
     runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 2
     permissions: {}
@@ -470,7 +455,8 @@ jobs:
 
           # Jobs whose `if:` legitimately skips them in this event. A skip
           # here is a pass; every other job must actually succeed.
-          SKIP_OK = {"api-stability"}
+          SKIP_OK = {"api-stability", "rust-api-stability"}
+          ADVISORY_FAILURE = {"rust-api-stability"}
           if os.environ["EVENT_NAME"] == "workflow_dispatch" and os.environ["REF"] != "refs/heads/main":
               SKIP_OK.add("cache-qualification")
 
@@ -480,6 +466,8 @@ jobs:
               result = data.get("result", "unknown")
               if result == "success":
                   print(f"::notice::{name}: {result}")
+              elif result == "failure" and name in ADVISORY_FAILURE:
+                  print(f"::warning::{name}: {result} (advisory; inspect for an unintended major bump)")
               elif result == "skipped" and name in SKIP_OK:
                   print(f"::notice::{name}: {result} (allowed to skip)")
               else:
