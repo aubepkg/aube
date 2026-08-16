@@ -77,6 +77,15 @@ impl FetchScheduler {
         self.in_flight.len()
     }
 
+    /// Whether an exact request for any version of `name` is still running.
+    /// A successful exact response can supersede a retained full-fetch error
+    /// by proving the package is reachable and requiring a fresh full fetch.
+    pub(super) fn has_active_exact_fetch(&self, name: &str) -> bool {
+        self.active_fetches
+            .iter()
+            .any(|key| matches!(key, FetchKey::Exact(active_name, _) if active_name == name))
+    }
+
     /// Spawn a full fetch for `name` unless one was already scheduled.
     ///
     /// The caller is responsible for the resolver-cache gate — passing
@@ -607,5 +616,17 @@ mod tests {
         assert!(matches!(scheduler.join_next().await, Some(Err(_))));
         assert!(!scheduler.active_fetches.contains(&key));
         assert!(scheduler.task_keys.is_empty());
+    }
+
+    #[test]
+    fn active_exact_fetch_is_reported_by_package_name() {
+        let resolver = Resolver::new(Arc::new(RegistryClient::new("http://127.0.0.1:0")));
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), false);
+        scheduler
+            .active_fetches
+            .insert(FetchKey::Exact("shared".to_string(), "1.0.0".to_string()));
+
+        assert!(scheduler.has_active_exact_fetch("shared"));
+        assert!(!scheduler.has_active_exact_fetch("other"));
     }
 }

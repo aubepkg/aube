@@ -542,7 +542,9 @@ impl<'a> ResolveDriver<'a> {
             self.failed_fetches.remove(&fetch_key);
         }
         while !self.cache_satisfies(&fetch_name, exact_optional_version)
-            && !self.failed_fetches.contains_key(&fetch_key)
+            && (!self.failed_fetches.contains_key(&fetch_key)
+                || (exact_optional_version.is_none()
+                    && self.fetcher.has_active_exact_fetch(&fetch_name)))
         {
             if let Some(version) = exact_optional_version {
                 self.ensure_exact_optional_fetch(&fetch_name, version);
@@ -550,7 +552,11 @@ impl<'a> ResolveDriver<'a> {
                 self.ensure_fetch(&fetch_name);
             }
             match self.fetcher.join_next().await {
-                Some(Ok((_, Ok((name, packument, source, trust_history))))) => {
+                Some(Ok((key, Ok((name, packument, source, trust_history))))) => {
+                    if let FetchKey::Exact(exact_name, _) = &key {
+                        self.failed_fetches
+                            .remove(&FetchKey::Full(exact_name.clone()));
+                    }
                     if source == super::fetch::FetchSource::Primer {
                         self.fetcher.note_primer_seeded(name.clone());
                     }
