@@ -133,13 +133,14 @@ select(candidates, target):
        napi_version(target.nodeVersion) < candidate.napi:        continue
     if engines.node present and
        not semver_satisfies(target.nodeVersion, range):          continue
+    if candidate manifest os/cpu/libc rejects target:            continue
     return candidate                        # first match wins
   return NONE                               # → legacy surface (see onMissing)
 ```
 
-Selection never requires downloading a non-selected artifact: predicates live in the parent's manifest (already fetched), and locking candidates needs only registry metadata.
+Selection never requires downloading a non-selected artifact: predicates live in the parent's manifest, and the artifact's standard `os`/`cpu`/`libc` fields are registry metadata already read while resolving and locking every candidate. Lockfiles must retain those fields so frozen installs can repeat the same validation without fetching tarballs.
 
-Before materialization, package managers **must** verify that the selected artifact's own manifest `os`/`cpu`/`libc` fields accept the target tuple. Incompatible metadata is a manifest error and the artifact must not be linked. This is a required defense against copy-paste errors and name confusion, not a warning-only lint.
+An artifact whose own manifest `os`/`cpu`/`libc` fields reject the target is treated as non-matching with a skew warning, and selection continues with the next candidate. Only a candidate that passes both the parent's predicates and its own manifest constraints counts as selected. If none passes, the slot is a miss: `onMissing` applies, no alias or artifact bin is linked, and `supersedesScripts` does not suppress the legacy script. This required validation prevents copy-paste errors and name confusion without stranding users between the artifact and legacy surfaces.
 
 ### The `artifacts` field
 
@@ -178,7 +179,7 @@ Field rules:
 - **Candidate names should be scoped** (see *Security considerations*).
 - **There is no separate fallback construct.** A predicate-free candidate listed last is the fallback tier; omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
 - **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). Unreachable when the slot ends in a predicate-free candidate.
-- **`supersedesScripts`** (optional) lists parent lifecycle events (`preinstall`, `install`, `postinstall`) that exist only as this slot's legacy fallback. When the slot selects a candidate, a conforming package manager **must not** execute them (see *Lifecycle-script supersession*).
+- **`supersedesScripts`** (optional) lists parent lifecycle events (`preinstall`, `install`, `postinstall`) that exist only as this slot's legacy fallback. When the slot selects and validates a candidate, a conforming package manager **must not** execute them (see *Lifecycle-script supersession*).
 - **The parent's top-level `bin` is the command-name authority.** Executable names declared by artifacts (see *The `artifact` field*) are linked only when they appear in the parent's top-level `bin`: legacy installs always have the command, and no platform grows phantom commands.
 
 CLI example:
@@ -256,21 +257,32 @@ Why a `_`-prefixed bare name:
 
 - **Unsquattable**: conforming registries reject package names beginning with `_`, so no registry publish can ever shadow the alias.
 - **Zero Node.js changes**: a directory named `_foo` resolves in every Node ever shipped, and in Bun/Deno's node-compat resolution.
-- **Behavioral fallback**: under a legacy package manager the directory doesn't exist; `require('_foo')` throws `MODULE_NOT_FOUND`; the shipped catch-path takes over. The fallback needs no configuration — it is the absence of the alias.
+- **Behavioral fallback**: under a legacy package manager the directory doesn't exist, so the shipped alias-presence guard chooses the existing loader chain. The fallback needs no configuration — it is the absence of the alias.
 
 The normative loader pattern:
 
 ```js
-let addonPath;
-try {
-  addonPath = require.resolve('#addon');
-} catch (error) {
-  if (error?.code !== 'MODULE_NOT_FOUND') throw error;
+const fs = require('node:fs');
+const path = require('node:path');
+
+function hasPackageAlias(name) {
+  return (require.resolve.paths(name) ?? []).some((nodeModules) => {
+    try {
+      fs.lstatSync(path.join(nodeModules, name));
+      return true;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
+    }
+  });
 }
-const native = addonPath === undefined
-  ? legacyRequireChain()            // alias absent: use today's fallback
-  : require(addonPath);             // load outside catch; artifact errors propagate
+
+const native = hasPackageAlias('_addon')
+  ? require('#addon')               // alias exists: all load errors propagate
+  : legacyRequireChain();           // alias absent: use today's fallback
 ```
+
+The guard tests the `_slot` directory entry itself rather than catching resolution errors. A dangling alias or an artifact with a missing `main`, invalid `exports`, initialization failure, or missing transitive dependency therefore takes the artifact branch and fails visibly; only an actually absent alias activates the legacy loader.
 
 `imports: { "#addon": "_addon" }` is **recommended sugar, not a requirement**: it gives parent code and bundlers a single static `#`-namespaced specifier, is inert in the published tarball, and behaves identically under all package managers. A parent may `require('_addon')` directly.
 
@@ -325,7 +337,7 @@ Supersession is therefore **declared, not detected**. A slot lists the parent li
 
 Rules:
 
-- **When a slot selects a candidate, a conforming package manager must not execute the parent lifecycle events listed in that slot's `supersedesScripts`.** The artifact replaces the script's entire purpose; running both is a bug.
+- **When a slot selects and validates a candidate, a conforming package manager must not execute the parent lifecycle events listed in that slot's `supersedesScripts`.** The artifact replaces the script's entire purpose; running both is a bug. A candidate rejected by its own platform metadata is non-matching and cannot supersede a script.
 - A superseded script is not *skipped*; it is not part of the install at all. Package managers with build-approval flows (pnpm's `onlyBuiltDependencies`, aube's `approve-builds`) **must not** count a superseded script as pending approval or prompt users to allowlist it, and **must not** emit skipped-lifecycle-script warnings for it. Those warnings exist so users notice a package that may need its script; this one does not.
 - Values are restricted to `preinstall`, `install`, and `postinstall`, the events install-fallback scripts actually use. Listing any other event is a manifest error.
 - A script listed by several slots is superseded only when **every** listing slot selected a candidate. If any listing slot missed, the script runs under normal script policy: the script is the legacy surface, and the miss makes the legacy surface authoritative. Package managers **should** expose per-slot outcomes to a superseded script that does run (`npm_package_artifacts_<slot>` set to the selected package name, empty on a miss) so it can skip work an artifact already covered.
@@ -335,7 +347,7 @@ Rules:
 
 Supersession also gives the build-from-source population a conforming path. Many addons (node-serialport, node-usb, most node-gyp packages) have no WASM tier; their only universal fallback is compilation. That is just another superseded fallback: the slot lists prebuilt candidates for the common platforms and declares the `install` script (`node-gyp rebuild`) superseded, so matched platforms get a prebuilt artifact with zero code execution while a miss falls back to today's source build under normal script policy. The build-from-source tier needs no new construct; it is the legacy surface.
 
-The compat contract is symmetric: on a miss the legacy surface, scripts included, is authoritative; on a hit it is inert (bins shadowed, catch path dead, scripts superseded).
+The compat contract is symmetric: on a miss the legacy surface, scripts included, is authoritative; on a hit it is inert (bins shadowed, alias-present branch used, scripts superseded).
 
 ### Lockfiles
 
@@ -352,15 +364,15 @@ A conforming package publishes both mechanisms simultaneously; each surface degr
 |---|---|---|
 | `optionalDependencies` on platform packages (each with its own `os`/`cpu`/`libc` fields) | filtered to the matching one (npm ≥ 10.4 / pnpm); older installers tolerate optional failures | resolved and locked; matching one linked under its real name |
 | Top-level `bin` → JS shim | the command | **shadowed** when the selected artifact declares `artifact.bin`; untouched otherwise |
-| Runtime loader `try require('#slot') catch legacyChain()` | catch path always taken | try path always taken |
+| Runtime loader checks for `_slot`, then loads `#slot` or the legacy chain | alias absent, so the legacy branch runs | alias present, so `require('#slot')` runs and any artifact error propagates |
 | `imports: {"#slot": "_slot"}` | inert mapping to a nonexistent name | resolves to the alias |
 | `artifacts` field | unknown field, ignored | drives everything |
 | `artifact` field (in artifact packages) | unknown field, ignored; artifact packages declare no top-level `bin`, so nothing links | declares the executable paths the package manager links |
-| Lifecycle scripts | none needed for the napi-rs pattern; postinstall-download users keep their script as the legacy tier and declare it via `supersedesScripts` | **superseded**: never executed when the declaring slot selects (see *Lifecycle-script supersession*); never on artifact packages |
+| Lifecycle scripts | none needed for the napi-rs pattern; postinstall-download users keep their script as the legacy tier and declare it via `supersedesScripts` | **superseded**: never executed when the declaring slot selects and validates a candidate (see *Lifecycle-script supersession*); never on artifact packages |
 
 **Authority rule (normative)**: the legacy surface is the authoritative fallback. A conforming package manager that selects no artifact for a slot must behave exactly as a non-conforming one for that slot's bins, links, and superseded scripts: a script listed in `supersedesScripts` runs under normal script policy when its slot misses.
 
-Adoption requires no restructuring. Addon packages (sharp, napi-rs output) add the `artifacts` field and the one-line `try` to their loader, and ship; their platform packages need no changes at all. CLI packages additionally add `artifact.bin` to each platform package — a one-field diff emitted by the same generator, and exact-pin lockstep means the whole matrix republishes with every release anyway. Generators (napi-rs, esbuild's publish tooling) can emit `optionalDependencies`, candidates, and both manifests from a single target-triple definition.
+Adoption requires no restructuring. Addon packages (sharp, napi-rs output) add the `artifacts` field and a small alias-presence guard to their loader, and ship; their platform packages need no changes at all. CLI packages additionally add `artifact.bin` to each platform package — a one-field diff emitted by the same generator, and exact-pin lockstep means the whole matrix republishes with every release anyway. Generators (napi-rs, esbuild's publish tooling) can emit `optionalDependencies`, candidates, and both manifests from a single target-triple definition.
 
 ### Security considerations
 
@@ -378,7 +390,7 @@ Adoption requires no restructuring. Addon packages (sharp, napi-rs output) add t
 
 1. **The parent stays fat.** Every consumer downloads the legacy JS shim, loader chain, and possibly a never-executed fallback tier, until a publisher decides its user base has migrated and drops them. Progressive enhancement *is* the bloat.
 2. **The matrix is declared three times**: `optionalDependencies`, `artifacts` candidates with predicates, and each artifact's own `os`/`cpu`/`libc` manifest fields. Skew between them is a new lint category, mitigated by generators emitting all three from one definition and by the selection-time cross-check, but real verbosity.
-3. **Two code paths during the transition.** The `catch` branch is dead on conforming package managers and live on legacy ones; whichever branch CI doesn't exercise rots. (This cost is shared by any progressive-enhancement design.)
+3. **Two code paths during the transition.** The alias-present branch is live on conforming package managers and the alias-absent branch on legacy ones; whichever branch CI doesn't exercise rots. (This cost is shared by any progressive-enhancement design.)
 4. **A novel on-disk shape.** `_slot` directories will confuse `npm ls` (extraneous), license scanners, and serverless/Electron packagers until tooling learns the convention, though a static `#slot` specifier is strictly more analyzable than today's dynamic `require(namesByPlatform[key])`.
 5. **Hoisted-npm implementation friction.** Arborist must model an alias edge that corresponds to no dependency range, survive reify/prune cycles, and not report it extraneous. Isolated-layout installers (pnpm, aube) get the alias nearly free; npm does not — and npm's buy-in is the adoption bottleneck.
 
@@ -419,7 +431,7 @@ Genuine advantages over the proposed design:
 
 Why it was not chosen:
 
-1. **Migration is restructuring, not annotation.** Every existing addon package must extract a `-core`, add entry files to every platform tarball, and republish its whole matrix. The proposed design lets sharp adopt with a one-field diff and a one-line loader change to packages already published. Standards that require the ecosystem to restructure historically stall (this RFC reads #519's fate partly that way); standards that annotate existing practice ship (npm 10.4's `libc`).
+1. **Migration is restructuring, not annotation.** Every existing addon package must extract a `-core`, add entry files to every platform tarball, and republish its whole matrix. The proposed design lets sharp adopt with a field addition and a small loader guard while reusing packages already published. Standards that require the ecosystem to restructure historically stall (this RFC reads #519's fate partly that way); standards that annotate existing practice ship (npm 10.4's `libc`).
 2. **On-disk identity mismatch.** `node_modules/esbuild/package.json` would say `"name": "@esbuild/darwin-arm64"`. Every scanner, bundler heuristic, jest module mapper, and `patch-package` user encounters that novelty — tools that never opted into the standard pay for it. It cannot be papered over without rewriting the variant's manifest at link time, which would break integrity verification and content-addressed store sharing. The proposed design's failure mode, by contrast, is the status quo: no alias, catch path, today's behavior.
 3. **One variant per tree position.** Materializing artifacts for several platforms into one `node_modules` (pnpm `supportedArchitectures`, mac-host/linux-container volume mounts) is structurally impossible under substitution. The proposed design lets all candidates coexist under their real names, leaving only the alias host-bound.
 4. **Version-parity rigidity.** A one-platform binary hotfix requires a new parent version and re-tagging every variant; independently-versioned artifacts (Prisma's engines) fit poorly. The proposed design's inline pins allow either regime.
@@ -433,7 +445,7 @@ Summary comparison, extended to the two prior proposals the substitution model d
 |---|---|---|---|---|
 | Core move | selected artifact exposed *to* the parent at `_slot` | selected variant reified *as* the parent | variant reified as the parent (Arborist Link) | variant substituted at resolution, alias-style |
 | Pure-binary CLI | bin override → real executable | cleanest: variant *is* the package | `bin` handling unspecified (asked in review, unanswered) | `bin` handling unspecified |
-| Addon library (bcrypt, sharp, @swc) | **additive**: add field + one-line loader change | restructure into `-core` + republish matrix | same restructuring implied | same restructuring implied |
+| Addon library (bcrypt, sharp, @swc) | **additive**: add field + alias-presence guard | restructure into `-core` + republish matrix | same restructuring implied | same restructuring implied |
 | Stable name for third parties | `_slot`, parent-internal by design | parent name, tree-wide | parent name, tree-wide | parent name, tree-wide |
 | On-disk identity | standard shapes + one novel link | directory name ≠ manifest name | directory name ≠ manifest name | same mismatch on `node_modules` linkers; virtualized away under PnP |
 | Candidate naming | literal lists; scopes recommended | literal lists; scoped | literal specifiers | template-generated (`%platform-%napi`); scopes required against squatting |
