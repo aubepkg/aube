@@ -1265,10 +1265,13 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
         .time
         .insert("1.0.0".to_string(), "2024-01-01T00:00:00.000Z".to_string());
     let mut exact = packument.versions["1.0.0"].clone();
-    exact.os = vec!["darwin".to_string()];
-    packument
-        .versions
-        .insert("1.0.0".to_string(), exact.clone());
+    let unsupported_os = if cfg!(target_os = "macos") {
+        "linux"
+    } else {
+        "darwin"
+    };
+    exact.os = vec![unsupported_os.to_string()];
+    packument.versions.insert("1.0.0".to_string(), exact);
     let full_body = serde_json::to_vec(&packument).unwrap();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1356,6 +1359,133 @@ async fn minimum_release_age_compacts_exact_optional_platform_history() {
 
     server.abort();
     let _ = std::fs::remove_dir_all(base);
+}
+
+async fn resolve_compact_same_name_collision(
+    second_is_optional_exact: bool,
+) -> (LockfileGraph, usize) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut compact_parent = make_packument("compact-parent", &["1.0.0"], "1.0.0");
+    compact_parent
+        .versions
+        .get_mut("1.0.0")
+        .unwrap()
+        .optional_dependencies
+        .insert("shared-child".to_string(), "1.0.0".to_string());
+
+    let mut other_parent = make_packument("other-parent", &["1.0.0"], "1.0.0");
+    let other = other_parent.versions.get_mut("1.0.0").unwrap();
+    if second_is_optional_exact {
+        other
+            .optional_dependencies
+            .insert("shared-child".to_string(), "2.0.0".to_string());
+    } else {
+        other
+            .dependencies
+            .insert("shared-child".to_string(), "^2.0.0".to_string());
+    }
+
+    let mut shared = make_packument("shared-child", &["1.0.0", "2.0.0"], "2.0.0");
+    for packument in [&mut compact_parent, &mut other_parent, &mut shared] {
+        for version in packument.versions.keys() {
+            packument
+                .time
+                .insert(version.clone(), "2024-01-01T00:00:00.000Z".to_string());
+        }
+    }
+
+    let bodies = Arc::new(std::collections::HashMap::from([
+        (
+            "compact-parent".to_string(),
+            serde_json::to_vec(&compact_parent).unwrap(),
+        ),
+        (
+            "other-parent".to_string(),
+            serde_json::to_vec(&other_parent).unwrap(),
+        ),
+        (
+            "shared-child".to_string(),
+            serde_json::to_vec(&shared).unwrap(),
+        ),
+    ]));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let shared_requests = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let shared_requests = shared_requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let bodies = bodies.clone();
+                let shared_requests = shared_requests.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let path = std::str::from_utf8(&buf[..n])
+                        .ok()
+                        .and_then(|request| request.split_whitespace().nth(1))
+                        .unwrap_or("/");
+                    let name = path.trim_start_matches('/').split('/').next().unwrap_or("");
+                    let Some(body) = bodies.get(name) else {
+                        socket
+                            .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+                            .await
+                            .unwrap();
+                        return;
+                    };
+                    if name == "shared-child" {
+                        shared_requests.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.write_all(body).await.unwrap();
+                });
+            }
+        })
+    };
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+    let mut resolver = Resolver::new(client).with_minimum_release_age(Some(MinimumReleaseAge {
+        minutes: 60,
+        ..Default::default()
+    }));
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("compact-parent".to_string(), "1.0.0".to_string());
+    manifest
+        .dependencies
+        .insert("other-parent".to_string(), "1.0.0".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+    let request_count = shared_requests.load(Ordering::Relaxed);
+    server.abort();
+    (graph, request_count)
+}
+
+#[tokio::test]
+async fn compact_fetch_keeps_two_exact_optional_versions_for_one_name() {
+    let (graph, requests) = resolve_compact_same_name_collision(true).await;
+
+    assert!(graph_has_package(&graph, "shared-child", "1.0.0"));
+    assert!(graph_has_package(&graph, "shared-child", "2.0.0"));
+    assert_eq!(requests, 2, "each exact version needs one compact fetch");
+}
+
+#[tokio::test]
+async fn compact_fetch_does_not_suppress_same_name_range_fetch() {
+    let (graph, requests) = resolve_compact_same_name_collision(false).await;
+
+    assert!(graph_has_package(&graph, "shared-child", "1.0.0"));
+    assert!(graph_has_package(&graph, "shared-child", "2.0.0"));
+    assert_eq!(requests, 2, "the exact and full fetches must both run");
 }
 
 /// Regression: when both `minimumReleaseAge` and `trustPolicy=NoDowngrade`

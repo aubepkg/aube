@@ -315,11 +315,18 @@ impl<'a> ResolveDriver<'a> {
                 && task.dep_type == DepType::Optional
                 && node_semver::Version::parse(&task.range).is_ok()
             {
-                self.fetcher.ensure_exact_optional_fetch(
-                    task.name.as_str(),
-                    task.range.as_str(),
-                    self.published_by.as_deref(),
-                );
+                let ready = self
+                    .resolver
+                    .cache
+                    .get(task.name.as_str())
+                    .is_some_and(|packument| packument.versions.contains_key(&task.range));
+                if !ready {
+                    self.fetcher.ensure_exact_optional_fetch(
+                        task.name.as_str(),
+                        task.range.as_str(),
+                        self.published_by.as_deref(),
+                    );
+                }
                 continue;
             }
             if !self.resolver.is_prefetchable(
@@ -355,10 +362,49 @@ impl<'a> ResolveDriver<'a> {
     /// prefetching names already covered by the lockfile check
     /// `existing_names` explicitly before invoking this.
     fn ensure_fetch(&mut self, name: &str) {
-        if !self.resolver.cache.contains_key(name) && !self.failed_fetches.contains_key(name) {
+        let needs_full =
+            !self.resolver.cache.contains_key(name) || self.trust_histories.contains_key(name);
+        if needs_full && !self.failed_fetches.contains_key(name) {
             self.fetcher
                 .ensure_fetch(name, self.published_by.as_deref());
         }
+    }
+
+    fn ensure_exact_optional_fetch(&mut self, name: &str, version: &str) {
+        let ready = self
+            .resolver
+            .cache
+            .get(name)
+            .is_some_and(|packument| packument.versions.contains_key(version));
+        if !ready && !self.failed_fetches.contains_key(name) {
+            self.fetcher
+                .ensure_exact_optional_fetch(name, version, self.published_by.as_deref());
+        }
+    }
+
+    fn cache_satisfies(&self, name: &str, exact_optional_version: Option<&str>) -> bool {
+        let Some(packument) = self.resolver.cache.get(name) else {
+            return false;
+        };
+        if !self.trust_histories.contains_key(name) {
+            return true;
+        }
+        exact_optional_version.is_some_and(|version| packument.versions.contains_key(version))
+    }
+
+    fn record_fetch_result(
+        &mut self,
+        name: String,
+        packument: aube_registry::Packument,
+        trust_history: Option<TrustHistory>,
+    ) {
+        merge_fetch_result(
+            &mut self.resolver.cache,
+            &mut self.trust_histories,
+            name,
+            packument,
+            trust_history,
+        );
     }
 
     /// Outer BFS loop. Pops tasks until the queue drains, with a
@@ -477,20 +523,24 @@ impl<'a> ResolveDriver<'a> {
         let _diag_task_wait =
             aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "task_wait_packument")
                 .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&fetch_name)));
-        while !self.resolver.cache.contains_key(&fetch_name)
+        let exact_optional_version = (self.needs_time
+            && task.dep_type == DepType::Optional
+            && node_semver::Version::parse(&task.range).is_ok())
+        .then_some(task.range.as_str());
+        while !self.cache_satisfies(&fetch_name, exact_optional_version)
             && !self.failed_fetches.contains_key(&fetch_name)
         {
-            self.ensure_fetch(&fetch_name);
+            if let Some(version) = exact_optional_version {
+                self.ensure_exact_optional_fetch(&fetch_name, version);
+            } else {
+                self.ensure_fetch(&fetch_name);
+            }
             match self.fetcher.join_next().await {
                 Some(Ok(Ok((name, packument, from_primer, trust_history)))) => {
-                    self.fetcher.release_in_flight(&name);
                     if from_primer {
                         self.fetcher.note_primer_seeded(name.clone());
                     }
-                    if let Some(history) = trust_history {
-                        self.trust_histories.insert(name.clone(), history);
-                    }
-                    self.resolver.cache.insert(name, packument);
+                    self.record_fetch_result(name, packument, trust_history);
                     self.packument_fetch_count += 1;
                 }
                 Some(Ok(Err(e))) => {
@@ -500,7 +550,6 @@ impl<'a> ResolveDriver<'a> {
                         crate::Error::Registry(n, _) => n.clone(),
                         _ => return Err(e),
                     };
-                    self.fetcher.release_in_flight(&name);
                     self.failed_fetches.insert(name, e);
                 }
                 Some(Err(join_err)) => {
@@ -685,6 +734,7 @@ impl<'a> ResolveDriver<'a> {
                     self.packument_fetch_time += fetch_start.elapsed();
                     self.packument_fetch_count += 1;
                     self.resolver.cache.insert(registry_name.clone(), live);
+                    self.trust_histories.remove(&registry_name);
                 }
                 // Only surface `AgeGate` when the cutoff actually
                 // came from `minimumReleaseAge`. When it came from
@@ -1242,11 +1292,7 @@ impl<'a> ResolveDriver<'a> {
                 continue;
             }
             if self.needs_time && node_semver::Version::parse(dep_range).is_ok() {
-                self.fetcher.ensure_exact_optional_fetch(
-                    dep_name,
-                    dep_range,
-                    self.published_by.as_deref(),
-                );
+                self.ensure_exact_optional_fetch(dep_name, dep_range);
             } else if !self.existing_names.contains(dep_name.as_str())
                 && self.resolver.is_prefetchable(
                     dep_name.as_str(),
@@ -2152,6 +2198,34 @@ impl<'a> ResolveDriver<'a> {
     }
 }
 
+fn merge_fetch_result(
+    cache: &mut FxHashMap<String, aube_registry::Packument>,
+    trust_histories: &mut FxHashMap<String, TrustHistory>,
+    name: String,
+    mut packument: aube_registry::Packument,
+    trust_history: Option<TrustHistory>,
+) {
+    let Some(history) = trust_history else {
+        cache.insert(name.clone(), packument);
+        trust_histories.remove(&name);
+        return;
+    };
+
+    // A full result is authoritative. If it won the race, a later compact
+    // result must not replace it with a one-version packument.
+    if cache.contains_key(&name) && !trust_histories.contains_key(&name) {
+        return;
+    }
+
+    if let Some(existing) = cache.get_mut(&name) {
+        existing.versions.append(&mut packument.versions);
+        existing.time.append(&mut packument.time);
+    } else {
+        cache.insert(name.clone(), packument);
+    }
+    trust_histories.entry(name).or_default().extend(history);
+}
+
 fn attach_integrity_to_git_source(local: &mut LocalSource, integrity: Option<&str>) {
     if let LocalSource::Git(git) = local
         && git.integrity.is_none()
@@ -2164,6 +2238,97 @@ fn attach_integrity_to_git_source(local: &mut LocalSource, integrity: Option<&st
 mod tests {
     use super::*;
     use aube_lockfile::GitSource;
+
+    fn test_packument(versions: &[&str]) -> aube_registry::Packument {
+        aube_registry::Packument {
+            name: "shared".to_string(),
+            modified: None,
+            versions: versions
+                .iter()
+                .map(|version| {
+                    (
+                        (*version).to_string(),
+                        serde_json::from_value(serde_json::json!({
+                            "name": "shared",
+                            "version": version,
+                        }))
+                        .unwrap(),
+                    )
+                })
+                .collect(),
+            dist_tags: BTreeMap::new(),
+            time: versions
+                .iter()
+                .map(|version| {
+                    (
+                        (*version).to_string(),
+                        "2024-01-01T00:00:00.000Z".to_string(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn test_history() -> TrustHistory {
+        [(
+            "0.9.0".to_string(),
+            aube_registry::VersionTrustMetadata {
+                approver: None,
+                npm_user: None,
+                dist: None,
+            },
+        )]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn full_fetch_remains_authoritative_when_it_finishes_first() {
+        let mut cache = FxHashMap::default();
+        let mut histories = FxHashMap::default();
+
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["1.0.0", "2.0.0"]),
+            None,
+        );
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["1.0.0"]),
+            Some(test_history()),
+        );
+
+        assert_eq!(cache["shared"].versions.len(), 2);
+        assert!(!histories.contains_key("shared"));
+    }
+
+    #[test]
+    fn full_fetch_replaces_compact_result_when_it_finishes_last() {
+        let mut cache = FxHashMap::default();
+        let mut histories = FxHashMap::default();
+
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["1.0.0"]),
+            Some(test_history()),
+        );
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".to_string(),
+            test_packument(&["1.0.0", "2.0.0"]),
+            None,
+        );
+
+        assert_eq!(cache["shared"].versions.len(), 2);
+        assert!(!histories.contains_key("shared"));
+    }
 
     #[test]
     fn attach_integrity_to_git_source_fills_missing_git_integrity() {

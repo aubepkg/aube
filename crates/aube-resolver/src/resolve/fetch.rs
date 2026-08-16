@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 /// Spawns and tracks in-flight packument fetches.
 ///
 /// Owns the `JoinSet` of running fetch tasks plus the bookkeeping the
-/// resolver needs to dedupe spawns (`in_flight_names`) and to know
+/// resolver needs to dedupe spawns (`scheduled_fetches`) and to know
 /// which packuments came from the bundled primer
 /// (`primer_seeded_names`, so range misses against the primer's
 /// capped history can trigger a live refetch before reporting
@@ -21,7 +21,7 @@ use tokio::task::JoinSet;
 /// access pattern.
 pub(super) struct FetchScheduler {
     in_flight: JoinSet<Result<FetchResult, Error>>,
-    in_flight_names: FxHashSet<String>,
+    scheduled_fetches: FxHashSet<FetchKey>,
     primer_seeded_names: FxHashSet<String>,
     sem: Arc<AdaptiveLimit>,
     client: Arc<RegistryClient>,
@@ -36,11 +36,17 @@ pub(super) type TrustHistory = std::collections::BTreeMap<String, VersionTrustMe
 pub(super) type FetchResult = (String, Packument, bool, Option<TrustHistory>);
 pub(super) type FetchOutcome = Option<Result<Result<FetchResult, Error>, tokio::task::JoinError>>;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum FetchKey {
+    Full(String),
+    Exact(String, String),
+}
+
 impl FetchScheduler {
     pub(super) fn new(resolver: &Resolver, sem: Arc<AdaptiveLimit>, needs_time: bool) -> Self {
         Self {
             in_flight: JoinSet::new(),
-            in_flight_names: FxHashSet::default(),
+            scheduled_fetches: FxHashSet::default(),
             primer_seeded_names: FxHashSet::default(),
             sem,
             client: resolver.client.clone(),
@@ -60,16 +66,18 @@ impl FetchScheduler {
         self.in_flight.len()
     }
 
-    /// Spawn a fetch for `name` unless one is already running for it.
+    /// Spawn a full fetch for `name` unless one was already scheduled.
     ///
     /// The caller is responsible for the resolver-cache gate — passing
     /// a name that's already in the cache wastes a spawn but is
     /// otherwise harmless.
     pub(super) fn ensure_fetch(&mut self, name: &str, published_by: Option<&str>) {
-        if self.in_flight_names.contains(name) {
+        if !self
+            .scheduled_fetches
+            .insert(FetchKey::Full(name.to_string()))
+        {
             return;
         }
-        self.in_flight_names.insert(name.to_string());
         // Only a name-only exclude lets us skip the cutoff sight-unseen;
         // a version-specific rule still needs publish times to tell which
         // versions are exempt, so it falls through to the cutoff check.
@@ -96,10 +104,12 @@ impl FetchScheduler {
         version: &str,
         published_by: Option<&str>,
     ) {
-        if self.in_flight_names.contains(name) {
+        if !self
+            .scheduled_fetches
+            .insert(FetchKey::Exact(name.to_string(), version.to_string()))
+        {
             return;
         }
-        self.in_flight_names.insert(name.to_string());
         let primer_covers_cutoff = self.mra_exclude.matches_name_only(name)
             || published_by.is_none_or(crate::primer::covers_cutoff);
         self.in_flight.spawn(fetch_exact_optional_packument(
@@ -120,10 +130,6 @@ impl FetchScheduler {
     /// Wait for the next in-flight fetch to complete.
     pub(super) async fn join_next(&mut self) -> FetchOutcome {
         self.in_flight.join_next().await
-    }
-
-    pub(super) fn release_in_flight(&mut self, name: &str) {
-        self.in_flight_names.remove(name);
     }
 
     pub(super) fn note_primer_seeded(&mut self, name: String) {
