@@ -30,6 +30,7 @@ impl Resolver {
             resolved_tx: None,
             packument_cache_dir: None,
             packument_full_cache_dir: None,
+            packument_policy_cache_dir: None,
             auto_install_peers: true,
             exclude_links_from_lockfile: false,
             supported_architectures: SupportedArchitectures::default(),
@@ -77,6 +78,7 @@ impl Resolver {
                 resolved_tx: Some(tx),
                 packument_cache_dir: None,
                 packument_full_cache_dir: None,
+                packument_policy_cache_dir: None,
                 auto_install_peers: true,
                 exclude_links_from_lockfile: false,
                 supported_architectures: SupportedArchitectures::default(),
@@ -120,6 +122,12 @@ impl Resolver {
     /// `ResolutionMode::TimeBased` so we can read the `time:` map.
     pub fn with_packument_full_cache(mut self, cache_dir: std::path::PathBuf) -> Self {
         self.packument_full_cache_dir = Some(cache_dir);
+        self
+    }
+
+    /// Disk cache for exact releases plus compact publish-time/trust history.
+    pub fn with_packument_policy_cache(mut self, cache_dir: std::path::PathBuf) -> Self {
+        self.packument_policy_cache_dir = Some(cache_dir);
         self
     }
 

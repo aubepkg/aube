@@ -41,6 +41,94 @@ fn make_packument_json() -> serde_json::Value {
     })
 }
 
+fn make_exact_history_json() -> serde_json::Value {
+    serde_json::json!({
+        "name": "demo",
+        "versions": {
+            "1.0.0": {
+                "name": "demo",
+                "version": "1.0.0",
+                "dist": {
+                    "tarball": "https://registry.example/demo/-/demo-1.0.0.tgz",
+                    "integrity": "sha512-ZGVtbw=="
+                }
+            },
+            "0.9.0": {
+                "name": "demo",
+                "version": "0.9.0",
+                "_npmUser": {"trustedPublisher": {"id": "github"}}
+            }
+        },
+        "time": {
+            "0.9.0": "2024-01-01T00:00:00.000Z",
+            "1.0.0": "2024-02-01T00:00:00.000Z"
+        }
+    })
+}
+
+#[tokio::test]
+async fn exact_policy_history_uses_fresh_disk_cache() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("cache-control", "max-age=3600")
+                .set_body_json(make_exact_history_json()),
+        )
+        .mount(&server)
+        .await;
+
+    let client = client_with(&server, FetchPolicy::default());
+    let temp = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        let exact = client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", Some(temp.path()))
+            .await
+            .expect("exact history fetch");
+        assert_eq!(exact.metadata.version, "1.0.0");
+        assert_eq!(exact.history.versions.len(), 1);
+    }
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "second read should use the disk cache");
+}
+
+#[tokio::test]
+async fn exact_policy_history_revalidates_stale_cache() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("cache-control", "max-age=0")
+                .insert_header("etag", "\"history-v1\"")
+                .set_body_json(make_exact_history_json()),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .and(header("if-none-match", "\"history-v1\""))
+        .respond_with(ResponseTemplate::new(304).insert_header("cache-control", "max-age=3600"))
+        .mount(&server)
+        .await;
+
+    let client = client_with(&server, FetchPolicy::default());
+    let temp = tempfile::tempdir().unwrap();
+    for _ in 0..3 {
+        let exact = client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", Some(temp.path()))
+            .await
+            .expect("exact history fetch");
+        assert_eq!(exact.metadata.version, "1.0.0");
+    }
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2, "third read should use revalidated cache");
+}
+
 #[tokio::test]
 async fn retries_on_503_then_succeeds() {
     let server = MockServer::start().await;

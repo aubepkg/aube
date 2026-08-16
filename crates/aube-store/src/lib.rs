@@ -55,6 +55,7 @@ pub const INDEX_SUBDIR: &str = "index";
 pub const VIRTUAL_STORE_SUBDIR: &str = "virtual-store";
 pub const PACKUMENT_CACHE_SUBDIR: &str = "packuments-v1";
 pub const PACKUMENT_FULL_CACHE_SUBDIR: &str = "packuments-full-v1";
+pub const PACKUMENT_POLICY_CACHE_SUBDIR: &str = "packuments-policy-v1";
 
 /// The global content-addressable store, owned by aube.
 ///
@@ -309,6 +310,13 @@ impl Store {
     /// corgi and full responses have different shapes.
     pub fn packument_full_cache_dir(&self) -> PathBuf {
         self.cache_dir.join(PACKUMENT_FULL_CACHE_SUBDIR)
+    }
+
+    /// Directory for compact publish-time/trust histories used by exact
+    /// optional dependencies. Kept separate because these entries retain one
+    /// exact release plus policy evidence, not a complete packument.
+    pub fn packument_policy_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join(PACKUMENT_POLICY_CACHE_SUBDIR)
     }
 
     /// Check if a file with the given integrity hash exists in the store.

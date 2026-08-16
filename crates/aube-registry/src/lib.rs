@@ -214,7 +214,7 @@ pub struct Packument {
 /// trust-downgrade policies for an exact version. Deserializing this shape
 /// skips dependency maps and distribution metadata for every historical
 /// release, avoiding the large retained heap of a full [`Packument`].
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PackumentTrustHistory {
     #[serde(default, deserialize_with = "non_string_tolerant_map")]
     pub time: BTreeMap<String, String>,
@@ -226,7 +226,7 @@ pub struct PackumentTrustHistory {
 /// policy checks. The full registry document is decoded in a single pass:
 /// the selected release uses [`VersionMetadata`], while every other release
 /// uses [`VersionTrustMetadata`].
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ExactVersionPackument {
     pub metadata: VersionMetadata,
     pub history: PackumentTrustHistory,
@@ -359,7 +359,7 @@ struct TolerantStringMap(
     #[serde(deserialize_with = "non_string_tolerant_map")] BTreeMap<String, String>,
 );
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionTrustMetadata {
     #[serde(default)]
@@ -370,7 +370,7 @@ pub struct VersionTrustMetadata {
     pub dist: Option<VersionTrustDist>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VersionTrustDist {
     #[serde(default)]
     pub attestations: Option<Attestations>,

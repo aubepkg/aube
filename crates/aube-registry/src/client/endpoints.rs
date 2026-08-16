@@ -1,5 +1,9 @@
 use super::body::{check_body_cap, read_body_capped};
-use super::cache::packument_full_cache_path;
+use super::cache::{
+    CachedExactVersionPackument, cached_is_fresh, exact_version_packument_cache_path,
+    extract_cache_headers, now_secs, packument_full_cache_path, parse_cache_control_max_age,
+    read_cached_exact_version_packument, write_cached_exact_version_packument,
+};
 use super::{
     AUDIT_BODY_CAP, PACKUMENT_FULL_ACCEPT, RegistryClient, check_dist_tag_status,
     dist_tag_root_url, dist_tag_url, parse_full_response, parse_full_response_seed,
@@ -191,6 +195,94 @@ impl RegistryClient {
             "packument-trust-history",
         )?;
         parse_full_response_seed(resp, crate::ExactVersionPackumentSeed { version }).await
+    }
+
+    /// Fetch one exact release plus compact policy history through a
+    /// disk-backed cache. Entries use the same TTL, registry-origin
+    /// partitioning, and conditional revalidation rules as other packuments.
+    pub async fn fetch_exact_version_packument_cached(
+        &self,
+        name: &str,
+        version: &str,
+        cache_dir: Option<&Path>,
+    ) -> Result<crate::ExactVersionPackument, Error> {
+        let Some(cache_dir) = cache_dir else {
+            return self.fetch_exact_version_packument(name, version).await;
+        };
+        let registry_url = self.registry_url_for(name);
+        let cache_path = exact_version_packument_cache_path(cache_dir, name, version, registry_url)
+            .ok_or_else(|| Error::InvalidName(name.to_string()))?;
+        let mut cached = read_cached_exact_version_packument(&cache_path);
+        if let Some(entry) = cached.take() {
+            if self.force_cache() || cached_is_fresh(entry.fetched_at, entry.max_age_secs) {
+                return Ok(entry.packument);
+            }
+            cached = Some(entry);
+        }
+        if self.network_mode == NetworkMode::Offline {
+            return Err(Error::Offline(format!("trust history for {name}")));
+        }
+
+        let (url, registry_url) = self.packument_url(name);
+        let resp = self
+            .send_metadata_with_retry(&format!("trust history {name}"), || {
+                let mut req = self
+                    .authed_get_for_package(&url, registry_url, name)
+                    .header("Accept", PACKUMENT_FULL_ACCEPT);
+                if let Some(entry) = cached.as_ref() {
+                    if let Some(etag) = entry.etag.as_ref() {
+                        req = req.header("If-None-Match", etag);
+                    }
+                    if let Some(last_modified) = entry.last_modified.as_ref() {
+                        req = req.header("If-Modified-Since", last_modified);
+                    }
+                }
+                req
+            })
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(Error::NotFound(name.to_string()));
+        }
+        if resp.status() == reqwest::StatusCode::NOT_MODIFIED
+            && let Some(mut entry) = cached
+        {
+            entry.fetched_at = now_secs();
+            entry.max_age_secs = parse_cache_control_max_age(&resp).or(entry.max_age_secs);
+            if let Err(err) = write_cached_exact_version_packument(&cache_path, &entry) {
+                tracing::warn!(
+                    code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                    "failed to write packument cache {}: {err}",
+                    cache_path.display()
+                );
+            }
+            return Ok(entry.packument);
+        }
+
+        let (etag, last_modified) = extract_cache_headers(&resp);
+        let max_age_secs = parse_cache_control_max_age(&resp);
+        let resp = resp.error_for_status()?;
+        check_body_cap(
+            &resp,
+            self.fetch_policy.packument_max_bytes,
+            "packument-trust-history",
+        )?;
+        let packument =
+            parse_full_response_seed(resp, crate::ExactVersionPackumentSeed { version }).await?;
+        let entry = CachedExactVersionPackument {
+            etag,
+            last_modified,
+            fetched_at: now_secs(),
+            max_age_secs,
+            packument,
+        };
+        if let Err(err) = write_cached_exact_version_packument(&cache_path, &entry) {
+            tracing::warn!(
+                code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                "failed to write packument cache {}: {err}",
+                cache_path.display()
+            );
+        }
+        Ok(entry.packument)
     }
 
     /// Fetch the *full* (non-corgi) packument as raw JSON, bypassing the

@@ -1091,9 +1091,11 @@ pub(crate) fn configure_resolver(
     let cache_dir = crate::commands::resolved_cache_dir_with_ctx(cwd, settings_ctx);
     let mut resolver = resolver
         .with_packument_network_concurrency(packument_concurrency)
-        .with_packument_cache(cache_dir.join("packuments-v1"));
+        .with_packument_cache(cache_dir.join(aube_store::PACKUMENT_CACHE_SUBDIR))
+        .with_packument_policy_cache(cache_dir.join(aube_store::PACKUMENT_POLICY_CACHE_SUBDIR));
     if cache_full_packuments {
-        resolver = resolver.with_packument_full_cache(cache_dir.join("packuments-full-v1"));
+        resolver = resolver
+            .with_packument_full_cache(cache_dir.join(aube_store::PACKUMENT_FULL_CACHE_SUBDIR));
     }
     let mut resolver = resolver
         .with_auto_install_peers(auto_install_peers)

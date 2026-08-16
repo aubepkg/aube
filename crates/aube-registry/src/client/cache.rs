@@ -1,4 +1,4 @@
-use crate::Packument;
+use crate::{ExactVersionPackument, Packument};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -26,6 +26,16 @@ pub(super) struct CachedFullPackument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) max_age_secs: Option<u64>,
     pub(super) packument: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct CachedExactVersionPackument {
+    pub(super) etag: Option<String>,
+    pub(super) last_modified: Option<String>,
+    pub(super) fetched_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) max_age_secs: Option<u64>,
+    pub(super) packument: ExactVersionPackument,
 }
 
 #[derive(Debug, Default)]
@@ -161,6 +171,36 @@ pub(super) fn packument_full_cache_path(
     let safe_name = aube_store::validate_and_encode_name(name)?;
     let origin = registry_origin_segment(registry_url);
     Some(cache_dir.join(origin).join(format!("{safe_name}.json")))
+}
+
+pub(super) fn exact_version_packument_cache_path(
+    cache_dir: &Path,
+    name: &str,
+    version: &str,
+    registry_url: &str,
+) -> Option<PathBuf> {
+    let safe_name = aube_store::validate_and_encode_name(name)?;
+    let origin = registry_origin_segment(registry_url);
+    let version_digest = blake3::hash(version.as_bytes()).to_hex();
+    Some(cache_dir.join(origin).join(format!(
+        "{safe_name}@{}.json",
+        &version_digest.as_str()[..16]
+    )))
+}
+
+pub(super) fn read_cached_exact_version_packument(
+    path: &Path,
+) -> Option<CachedExactVersionPackument> {
+    let content = std::fs::read(path).ok()?;
+    sonic_rs::from_slice(&content).ok()
+}
+
+pub(super) fn write_cached_exact_version_packument(
+    path: &Path,
+    cached: &CachedExactVersionPackument,
+) -> std::io::Result<()> {
+    let json = sonic_rs::to_vec(cached).map_err(std::io::Error::other)?;
+    aube_util::fs_atomic::atomic_write(path, &json)
 }
 
 pub(super) fn read_cached_full_packument(path: &Path) -> Option<CachedFullPackument> {

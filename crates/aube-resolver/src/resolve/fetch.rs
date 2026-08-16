@@ -27,6 +27,7 @@ pub(super) struct FetchScheduler {
     client: Arc<RegistryClient>,
     cache_dir: Option<PathBuf>,
     full_cache_dir: Option<PathBuf>,
+    policy_cache_dir: Option<PathBuf>,
     mra_exclude: crate::trust::PackageVersionPolicy,
     force_metadata_primer: bool,
     needs_time: bool,
@@ -52,6 +53,7 @@ impl FetchScheduler {
             client: resolver.client.clone(),
             cache_dir: resolver.packument_cache_dir.clone(),
             full_cache_dir: resolver.packument_full_cache_dir.clone(),
+            policy_cache_dir: resolver.packument_policy_cache_dir.clone(),
             mra_exclude: resolver
                 .minimum_release_age
                 .as_ref()
@@ -88,6 +90,7 @@ impl FetchScheduler {
             client: self.client.clone(),
             cache_dir: self.cache_dir.clone(),
             full_cache_dir: self.full_cache_dir.clone(),
+            policy_cache_dir: self.policy_cache_dir.clone(),
             primer_covers_cutoff,
             force_metadata_primer: self.force_metadata_primer,
             sem: self.sem.clone(),
@@ -118,6 +121,7 @@ impl FetchScheduler {
                 client: self.client.clone(),
                 cache_dir: self.cache_dir.clone(),
                 full_cache_dir: self.full_cache_dir.clone(),
+                policy_cache_dir: self.policy_cache_dir.clone(),
                 primer_covers_cutoff,
                 force_metadata_primer: self.force_metadata_primer,
                 sem: self.sem.clone(),
@@ -156,6 +160,7 @@ struct FetchInputs {
     client: Arc<RegistryClient>,
     cache_dir: Option<PathBuf>,
     full_cache_dir: Option<PathBuf>,
+    policy_cache_dir: Option<PathBuf>,
     /// Precomputed from the resolver's `minimum_release_age` exclude
     /// list and `published_by` cutoff — if false, the primer is
     /// bypassed even when it would otherwise be eligible.
@@ -183,6 +188,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         client,
         cache_dir,
         full_cache_dir,
+        policy_cache_dir: _,
         primer_covers_cutoff,
         force_metadata_primer,
         sem,
@@ -334,7 +340,7 @@ async fn fetch_exact_optional_packument(
     let name = inputs.name.clone();
     let fetched = inputs
         .client
-        .fetch_exact_version_packument(&name, &version)
+        .fetch_exact_version_packument_cached(&name, &version, inputs.policy_cache_dir.as_deref())
         .await;
     match fetched {
         Ok(exact) => {

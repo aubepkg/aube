@@ -111,6 +111,9 @@ pub struct Resolver {
     /// map). Defaults to the sibling `packuments-full-v1/` directory
     /// next to `packument_cache_dir`.
     packument_full_cache_dir: Option<std::path::PathBuf>,
+    /// Compact exact-version policy histories, isolated from both corgi and
+    /// complete full-packument cache schemas.
+    packument_policy_cache_dir: Option<std::path::PathBuf>,
     /// When true (pnpm's default), a package's declared `peerDependencies`
     /// are enqueued like regular transitives and — if not already
     /// satisfied by the importer — hoisted to the importer's direct deps.
