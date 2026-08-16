@@ -310,34 +310,35 @@ impl NodeRuntime {
     /// artifact set — the lockfile-pin path. Always network-backed
     /// (through the disk caches).
     pub async fn resolve_for_lockfile(&self, spec: &NodeSpec) -> Result<PinnedNode, Error> {
-        if let NodeSpec::Exact(version) = spec {
-            let pin = self.build_full_pin(version).await?;
-            let platform = Platform::current()?;
-            // Exact specs bypass the release-index availability gate. Apply
-            // an equivalent check for official Node distributions, while
-            // leaving FreeBSD and best-effort musl pins usable: those hosts
-            // intentionally rely on system/mise Node or a later live-checksum
-            // lookup rather than requiring an official lockfile variant.
-            if requires_official_host_variant(&platform)
-                && pin
-                    .variant_for(&platform.os, &platform.cpu, platform.libc.as_deref())
-                    .is_none()
-            {
-                return Err(Error::UnsupportedPlatform {
-                    platform: platform.label(),
-                });
-            }
-            return Ok(pin);
-        }
         let platform = Platform::current()?;
-        let entries = index::load_index(&self.http, &self.cfg).await?;
-        let entry =
-            index::select(&entries, spec, &platform).ok_or_else(|| Error::NoMatchingVersion {
-                requested: spec.display(),
-                platform_note: String::new(),
-            })?;
-        let version = entry.version.clone();
-        self.build_full_pin(&version).await
+        let version = match spec {
+            NodeSpec::Exact(version) => version.clone(),
+            _ => {
+                let entries = index::load_index(&self.http, &self.cfg).await?;
+                index::select(&entries, spec, &platform)
+                    .ok_or_else(|| Error::NoMatchingVersion {
+                        requested: spec.display(),
+                        platform_note: String::new(),
+                    })?
+                    .version
+                    .clone()
+            }
+        };
+        let pin = self.build_full_pin(&version).await?;
+        // The release index is only a coarse availability gate. Validate the
+        // selected release against its checksums as well, while leaving
+        // FreeBSD and best-effort musl pins usable: those hosts intentionally
+        // rely on system/mise Node or a later live-checksum lookup.
+        if requires_official_host_variant(&platform)
+            && pin
+                .variant_for(&platform.os, &platform.cpu, platform.libc.as_deref())
+                .is_none()
+        {
+            return Err(Error::UnsupportedPlatform {
+                platform: platform.label(),
+            });
+        }
+        Ok(pin)
     }
 
     /// Build a full pin (all platforms) from SHASUMS data: the
