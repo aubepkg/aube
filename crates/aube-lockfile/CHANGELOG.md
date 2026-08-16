@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0](https://github.com/jdx/aube/compare/aube-lockfile-v1.40.0...aube-lockfile-v1.41.0) - 2026-08-16
+
+### Fixed
+
+- *(lockfile)* preserve existing npm hoist choices ([#1287](https://github.com/jdx/aube/pull/1287))
+
+### Other
+
+- refresh benchmarks for v1.40.0 ([#1290](https://github.com/jdx/aube/pull/1290))
+
 ## [1.40.0](https://github.com/jdx/aube/compare/aube-lockfile-v1.39.0...aube-lockfile-v1.40.0) - 2026-08-13
 
 ### Other

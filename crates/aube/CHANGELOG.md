@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0](https://github.com/jdx/aube/compare/v1.40.0...v1.41.0) - 2026-08-16
+
+### Added
+
+- *(cache)* add cache path command ([#1302](https://github.com/jdx/aube/pull/1302))
+- *(catalog)* support catalogPrune setting ([#1308](https://github.com/jdx/aube/pull/1308))
+
+### Fixed
+
+- *(resolver)* avoid lowest-direct API break ([#1311](https://github.com/jdx/aube/pull/1311))
+- *(settings)* validate package extensions ([#1304](https://github.com/jdx/aube/pull/1304))
+- *(sbom)* filter unsupported optional packages ([#1309](https://github.com/jdx/aube/pull/1309))
+- *(resolver)* separate lowest-direct resolution ([#1307](https://github.com/jdx/aube/pull/1307))
+- *(install)* enable embedded memory diagnostics ([#1303](https://github.com/jdx/aube/pull/1303))
+- *(linker)* repair stale nested gvs links ([#1299](https://github.com/jdx/aube/pull/1299))
+- *(install)* track actual hoisted direct entries ([#1295](https://github.com/jdx/aube/pull/1295))
+
+### Other
+
+- *(remove)* prune lockfile without resolution ([#1306](https://github.com/jdx/aube/pull/1306))
+- refresh benchmarks for v1.40.0 ([#1290](https://github.com/jdx/aube/pull/1290))
+
 ## [1.40.0](https://github.com/jdx/aube/compare/v1.39.0...v1.40.0) - 2026-08-13
 
 ### Added

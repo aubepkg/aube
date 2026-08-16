@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0](https://github.com/jdx/aube/compare/aube-settings-v1.40.0...aube-settings-v1.41.0) - 2026-08-16
+
+### Added
+
+- *(catalog)* support catalogPrune setting ([#1308](https://github.com/jdx/aube/pull/1308))
+
+### Fixed
+
+- *(resolver)* separate lowest-direct resolution ([#1307](https://github.com/jdx/aube/pull/1307))
+- *(install)* disable global virtual store for Metro apps ([#1297](https://github.com/jdx/aube/pull/1297))
+
+### Other
+
+- refresh benchmarks for v1.40.0 ([#1290](https://github.com/jdx/aube/pull/1290))
+
 ## [1.40.0](https://github.com/jdx/aube/compare/aube-settings-v1.39.0...aube-settings-v1.40.0) - 2026-08-13
 
 ### Other

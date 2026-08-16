@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0](https://github.com/jdx/aube/compare/aube-resolver-v1.40.0...aube-resolver-v1.41.0) - 2026-08-16
+
+### Fixed
+
+- *(resolver)* avoid lowest-direct API break ([#1311](https://github.com/jdx/aube/pull/1311))
+- *(sbom)* filter unsupported optional packages ([#1309](https://github.com/jdx/aube/pull/1309))
+- *(resolver)* separate lowest-direct resolution ([#1307](https://github.com/jdx/aube/pull/1307))
+- *(install)* enable embedded memory diagnostics ([#1303](https://github.com/jdx/aube/pull/1303))
+- *(resolver)* skip optional peers in auto-install hoist pass ([#1291](https://github.com/jdx/aube/pull/1291))
+
+### Other
+
+- refresh benchmarks for v1.40.0 ([#1290](https://github.com/jdx/aube/pull/1290))
+
 ## [1.40.0](https://github.com/jdx/aube/compare/aube-resolver-v1.39.0...aube-resolver-v1.40.0) - 2026-08-13
 
 ### Other
