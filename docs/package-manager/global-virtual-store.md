@@ -163,12 +163,18 @@ depends on a package with a known global-virtual-store incompatibility. The
 default trigger list is:
 
 - `next`
-- `nuxt`
-- `parcel`
+- `expo`
+- `react-native`
+- `metro`
 
 When that happens, install still succeeds and aube prints a warning. Repeat
 installs of that project just won't share materialized package directories
 across projects.
+
+Nuxt and Parcel work with the shared layout because aube records each
+package's complete sibling dependency links inside the global virtual store.
+This keeps Node resolution inside the installed dependency graph even after a
+tool follows a package symlink to its physical location.
 
 Vite 8.1 and newer supports shared virtual stores. aube writes the effective
 store location to `node_modules/.modules.yaml`, including in linked workspace

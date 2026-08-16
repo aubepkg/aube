@@ -7,7 +7,9 @@
 # gvs layout produces by default. Metro's file map likewise requires
 # external symlink targets to be included in `watchFolders`; Expo and
 # React Native use Metro but normally declare their framework package.
-# Vite is deliberately absent because
+# Nuxt and Parcel are deliberately absent because aube's complete sibling
+# dependency links keep their resolution inside the installed graph. Vite is
+# absent because
 # 8.1+ reads the `.modules.yaml` metadata aube writes. The setting is
 # the extension point: add any tool with the same restriction, or set
 # to `[]` to disable the heuristic.
@@ -105,6 +107,24 @@ JSON
 			assert_output --partial "\`$package\`"
 			[ -d node_modules/.aube/is-odd@3.0.1 ]
 			[ ! -L node_modules/.aube/is-odd@3.0.1 ]
+		)
+	done
+}
+
+@test "Nuxt and Parcel keep the global virtual store enabled by default" {
+	for package in nuxt parcel; do
+		_make_fake_dep "$package"
+		mkdir "app-$package"
+		(
+			cd "app-$package"
+			cat >package.json <<JSON
+{"name":"app-$package","version":"0.0.0","dependencies":{"$package":"link:../fake-$package","is-odd":"3.0.1"}}
+JSON
+
+			run aube install
+			assert_success
+			refute_output --partial "disableGlobalVirtualStoreForPackages"
+			[ -L node_modules/.aube/is-odd@3.0.1 ]
 		)
 	done
 }
