@@ -1885,6 +1885,31 @@ mod tests {
         assert!(index.contains_key("index.js"));
     }
 
+    #[test]
+    fn test_import_tarball_streams_large_entry_into_cas() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        store.ensure_shards_exist().unwrap();
+        let content: Vec<u8> = (0..(256 << 10)).map(|i| (i % 251) as u8).collect();
+        let tarball = build_tarball("package/bin/native", &content);
+
+        let index = store.import_tarball(&tarball).unwrap();
+        let stored = &index["bin/native"];
+
+        assert_eq!(stored.hex_hash, blake3_hex(&content));
+        assert_eq!(stored.size, Some(content.len() as u64));
+        assert_eq!(std::fs::read(&stored.store_path).unwrap(), content);
+        assert!(
+            std::fs::read_dir(dir.path().join("files"))
+                .unwrap()
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".aube-stream-"))
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn test_import_tarball_accepts_posix_colon_filename() {

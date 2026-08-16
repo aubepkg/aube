@@ -437,6 +437,89 @@ impl Store {
         }
     }
 
+    /// Whether tar entries can bypass the in-memory compression gate and
+    /// stream straight into a CAS staging file. Store compression may unwrap
+    /// napi hybrids before hashing, which inherently needs the complete
+    /// entry, so keep that opt-in path on the byte-buffered importer.
+    pub(crate) fn permits_streaming_import(&self) -> bool {
+        store_compression_gate().is_none()
+    }
+
+    /// Publish a tempfile that was written and BLAKE3-hashed while its tar
+    /// entry was decoded. The tempfile lives under the CAS root, so
+    /// `persist_noclobber` is an atomic same-filesystem publish and does not
+    /// copy the entry a second time.
+    pub(crate) fn import_hashed_tempfile(
+        &self,
+        mut temp: tempfile::NamedTempFile,
+        hex_hash: String,
+        len: u64,
+        executable: bool,
+    ) -> Result<StoredFile, Error> {
+        let store_path = self.file_path_from_hex(&hex_hash);
+        let parent = store_path
+            .parent()
+            .ok_or_else(|| Error::Io(store_path.clone(), std::io::ErrorKind::NotFound.into()))?;
+        std::fs::create_dir_all(parent).map_err(|e| Error::Io(parent.to_path_buf(), e))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            temp.as_file()
+                .set_permissions(std::fs::Permissions::from_mode(0o644))
+                .map_err(|e| Error::Io(store_path.clone(), e))?;
+        }
+
+        let outcome = match temp.persist_noclobber(&store_path) {
+            Ok(_) => CasWriteOutcome::Created,
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                temp = e.file;
+                if !cas_file_matches_len(&store_path, len) {
+                    wait_for_cas_file_len(&store_path, len);
+                }
+                if cas_file_matches_len(&store_path, len) {
+                    CasWriteOutcome::AlreadyExisted
+                } else {
+                    // Match `import_bytes` recovery for a crashed predecessor:
+                    // retain our complete staging file, remove the torn CAS
+                    // entry, and retry the no-clobber publish once.
+                    let _ = xx::file::remove_file(&store_path);
+                    match temp.persist_noclobber(&store_path) {
+                        Ok(_) => CasWriteOutcome::Created,
+                        Err(e)
+                            if e.error.kind() == std::io::ErrorKind::AlreadyExists
+                                && cas_file_matches_len(&store_path, len) =>
+                        {
+                            CasWriteOutcome::AlreadyExisted
+                        }
+                        Err(e) => return Err(Error::Io(store_path.clone(), e.error)),
+                    }
+                }
+            }
+            Err(e) => return Err(Error::Io(store_path.clone(), e.error)),
+        };
+
+        if aube_util::diag::enabled() {
+            let name = match outcome {
+                CasWriteOutcome::Created => "cas_miss",
+                CasWriteOutcome::AlreadyExisted => "cas_hit",
+            };
+            aube_util::diag::instant_lazy(aube_util::diag::Category::Store, name, || {
+                format!(r#"{{"size":{len}}}"#)
+            });
+        }
+
+        if executable {
+            self.write_exec_marker(&store_path)?;
+        }
+        Ok(StoredFile {
+            hex_hash,
+            store_path,
+            executable,
+            size: Some(len),
+        })
+    }
+
     /// Import a single file's content into the store. Returns the stored file info.
     ///
     /// Hot path on cold installs: callers should invoke
