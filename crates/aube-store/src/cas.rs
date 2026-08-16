@@ -462,50 +462,59 @@ impl Store {
                 .map_err(|e| Error::Io(store_path.clone(), e))?;
         }
 
-        let outcome = match temp.persist_noclobber(&store_path) {
-            Ok(_) => CasWriteOutcome::Created,
-            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                temp = e.file;
-                // The macOS byte importer publishes directly into the final
-                // path while holding this same shard lock. Wait for that
-                // writer before deciding an existing entry is torn; otherwise
-                // streamed publication could unlink its in-progress file.
-                #[cfg(target_os = "macos")]
-                let _shard_guard = if self.fast_path.load(Ordering::Acquire) {
-                    hex_hash
-                        .get(..2)
-                        .and_then(|shard| u8::from_str_radix(shard, 16).ok())
-                        .map(|shard| {
-                            FAST_PATH_SHARD_LOCKS[shard as usize]
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        })
-                } else {
-                    None
-                };
-                if !cas_file_matches_len(&store_path, len) {
-                    wait_for_cas_file_len(&store_path, len);
+        // The macOS byte importer publishes directly into the final path while
+        // holding this same shard lock. Hold it through publication and any
+        // recovery so a streamed writer cannot unlink an in-progress file.
+        #[cfg(target_os = "macos")]
+        let _shard_guard = if self.fast_path.load(Ordering::Acquire) {
+            hex_hash
+                .get(..2)
+                .and_then(|shard| u8::from_str_radix(shard, 16).ok())
+                .map(|shard| {
+                    FAST_PATH_SHARD_LOCKS[shard as usize]
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                })
+        } else {
+            None
+        };
+
+        let mut retried_missing_parent = false;
+        let mut retried_torn_entry = false;
+        let outcome = loop {
+            match temp.persist_noclobber(&store_path) {
+                Ok(_) => break CasWriteOutcome::Created,
+                Err(e) if e.error.kind() == std::io::ErrorKind::NotFound => {
+                    temp = e.file;
+                    if retried_missing_parent {
+                        return Err(Error::Io(store_path.clone(), e.error));
+                    }
+                    // A concurrent prune may remove the shard after the
+                    // initial create. Match the buffered importer by
+                    // recreating it and retrying publication once.
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| Error::Io(parent.to_path_buf(), e))?;
+                    retried_missing_parent = true;
                 }
-                if cas_file_matches_len(&store_path, len) {
-                    CasWriteOutcome::AlreadyExisted
-                } else {
-                    // Match `import_bytes` recovery for a crashed predecessor:
-                    // retain our complete staging file, remove the torn CAS
-                    // entry, and retry the no-clobber publish once.
-                    let _ = xx::file::remove_file(&store_path);
-                    match temp.persist_noclobber(&store_path) {
-                        Ok(_) => CasWriteOutcome::Created,
-                        Err(e)
-                            if e.error.kind() == std::io::ErrorKind::AlreadyExists
-                                && cas_file_matches_len(&store_path, len) =>
-                        {
-                            CasWriteOutcome::AlreadyExisted
-                        }
-                        Err(e) => return Err(Error::Io(store_path.clone(), e.error)),
+                Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    temp = e.file;
+                    if !cas_file_matches_len(&store_path, len) {
+                        wait_for_cas_file_len(&store_path, len);
+                    }
+                    if cas_file_matches_len(&store_path, len) {
+                        break CasWriteOutcome::AlreadyExisted;
+                    } else if retried_torn_entry {
+                        return Err(Error::Io(store_path.clone(), e.error));
+                    } else {
+                        // Match `import_bytes` recovery for a crashed predecessor:
+                        // retain our complete staging file, remove the torn CAS
+                        // entry, and retry the no-clobber publish once.
+                        let _ = xx::file::remove_file(&store_path);
+                        retried_torn_entry = true;
                     }
                 }
+                Err(e) => return Err(Error::Io(store_path.clone(), e.error)),
             }
-            Err(e) => return Err(Error::Io(store_path.clone(), e.error)),
         };
 
         if aube_util::diag::enabled() {
