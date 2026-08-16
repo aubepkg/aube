@@ -85,7 +85,7 @@ fn wait_for_cas_file_len(path: &Path, expected_len: u64) {
 ///
 /// A malformed size predicate disables compression (returns `None`)
 /// rather than silently widening the gate; the addon still lands plain.
-fn store_compression_gate() -> Option<&'static Gate> {
+pub(crate) fn store_compression_gate() -> Option<&'static Gate> {
     static GATE: std::sync::OnceLock<Option<Gate>> = std::sync::OnceLock::new();
     GATE.get_or_init(|| {
         let raw = aube_util::env::embedder_env("COMPRESS_STORE")?;
@@ -437,14 +437,6 @@ impl Store {
         }
     }
 
-    /// Whether tar entries can bypass the in-memory compression gate and
-    /// stream straight into a CAS staging file. Store compression may unwrap
-    /// napi hybrids before hashing, which inherently needs the complete
-    /// entry, so keep that opt-in path on the byte-buffered importer.
-    pub(crate) fn permits_streaming_import(&self) -> bool {
-        store_compression_gate().is_none()
-    }
-
     /// Publish a tempfile that was written and BLAKE3-hashed while its tar
     /// entry was decoded. The tempfile lives under the CAS root, so
     /// `persist_noclobber` is an atomic same-filesystem publish and does not
@@ -474,6 +466,23 @@ impl Store {
             Ok(_) => CasWriteOutcome::Created,
             Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 temp = e.file;
+                // The macOS byte importer publishes directly into the final
+                // path while holding this same shard lock. Wait for that
+                // writer before deciding an existing entry is torn; otherwise
+                // streamed publication could unlink its in-progress file.
+                #[cfg(target_os = "macos")]
+                let _shard_guard = if self.fast_path.load(Ordering::Acquire) {
+                    hex_hash
+                        .get(..2)
+                        .and_then(|shard| u8::from_str_radix(shard, 16).ok())
+                        .map(|shard| {
+                            FAST_PATH_SHARD_LOCKS[shard as usize]
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        })
+                } else {
+                    None
+                };
                 if !cas_file_matches_len(&store_path, len) {
                     wait_for_cas_file_len(&store_path, len);
                 }

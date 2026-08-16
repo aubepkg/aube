@@ -414,7 +414,12 @@ impl Store {
             let mode = entry.header().mode().unwrap_or(0o644);
             let executable = mode & 0o111 != 0;
 
-            if declared >= LARGE_ENTRY_STREAM_THRESHOLD && self.permits_streaming_import() {
+            // Store compression may unwrap napi hybrids before hashing, which
+            // inherently needs the complete entry. Keep that opt-in path on
+            // the byte-buffered importer.
+            if declared >= LARGE_ENTRY_STREAM_THRESHOLD
+                && crate::cas::store_compression_gate().is_none()
+            {
                 // Keep small files on the staged/rayon path, but never retain
                 // an existing chunk while decoding a large entry. Large files
                 // are written once into a same-filesystem CAS tempfile and
