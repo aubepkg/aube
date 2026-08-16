@@ -77,15 +77,17 @@ use materialize::{
 pub(crate) use settings::PeerDependencyRules;
 pub(crate) use settings::resolve_catalog_prune;
 pub(crate) use settings::resolve_minimum_release_age;
-pub(crate) use settings::{ResolverConfigInputs, configure_resolver, finalize_lockfile_graph};
+pub(crate) use settings::{
+    ResolverConfigInputs, configure_resolver, finalize_lockfile_graph, resolve_dependency_policy,
+};
 pub(crate) use side_effects_cache::{SideEffectsCacheConfig, side_effects_cache_root};
 
 use settings::{
     check_unmet_peers, default_lockfile_network_concurrency, default_streaming_network_concurrency,
-    maybe_cleanup_unused_catalogs, resolve_dependency_policy, resolve_git_shallow_hosts,
-    resolve_link_concurrency, resolve_network_concurrency, resolve_side_effects_cache,
-    resolve_side_effects_cache_readonly, resolve_strict_peer_dependencies,
-    resolve_strict_store_pkg_content_check, resolve_verify_store_integrity,
+    maybe_cleanup_unused_catalogs, resolve_git_shallow_hosts, resolve_link_concurrency,
+    resolve_network_concurrency, resolve_side_effects_cache, resolve_side_effects_cache_readonly,
+    resolve_strict_peer_dependencies, resolve_strict_store_pkg_content_check,
+    resolve_verify_store_integrity,
 };
 use startup::{
     apply_force_state_reset, emit_up_to_date, merge_branch_lockfiles_if_needed,
@@ -637,7 +639,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     let packument_cache_dir =
         super::resolved_cache_dir_with_ctx(&cwd, &settings_ctx).join("packuments-v1");
     let explicit_store_dir_override = has_explicit_store_dir_override(&opts.cli_flags);
-    let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx);
+    let dependency_policy = resolve_dependency_policy(&manifest, &settings_ctx)?;
     // Resolve the project's Node runtime before anything can spawn
     // node: the root `preinstall` hooks below must already run on the
     // switched runtime, and the virtual-store keys downstream fold
@@ -1401,7 +1403,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                     // widening to every common platform doesn't happen
                     // just to be discarded.
                     target_lockfile_kind: lockfile_enabled.then_some(write_kind),
-                    dependency_policy: Some(dependency_policy.clone()),
+                    dependency_policy: dependency_policy.clone(),
                     cache_full_packuments: true,
                     ignore_scripts: opts.ignore_scripts,
                 },

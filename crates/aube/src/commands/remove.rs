@@ -106,9 +106,14 @@ pub async fn run(
             };
             return Err(miette!("package '{name}' is not {section}"));
         }
-
-        eprintln!("  - {name}");
     }
+
+    // Build and validate resolver configuration before persisting the
+    // manifest mutation. A malformed policy must leave package.json and
+    // the installed graph in their original, consistent state.
+    let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
+    let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
+    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs.clone())?;
 
     // Write updated package.json atomically. Crash mid-write would
     // otherwise truncate the user manifest, worst-case aube failure
@@ -155,6 +160,9 @@ pub async fn run(
         }
         Ok(())
     })?;
+    for name in packages {
+        eprintln!("  - {name}");
+    }
     eprintln!("Updated package.json");
 
     // Removing a direct dependency normally needs no registry work: trim
@@ -165,10 +173,8 @@ pub async fn run(
     let workspace_config = aube_manifest::WorkspaceConfig::load(&cwd)
         .map_err(miette::Report::new)
         .wrap_err("failed to load workspace config")?;
-    let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let lockfile_kind = aube_lockfile::detect_existing_lockfile_kind(&cwd)
         .unwrap_or(aube_lockfile::LockfileKind::Aube);
-    let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
     let patch_status = existing
         .as_ref()
         .map(|graph| install::check_patch_drift(&cwd, graph, lockfile_kind))
@@ -198,7 +204,6 @@ pub async fn run(
             (graph, true)
         }
         None => {
-            let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
             let graph = resolver
                 .resolve(&manifest, existing.as_ref())
                 .await

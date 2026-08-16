@@ -2,14 +2,30 @@ use super::version_from_dep_path;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolutionModeConfig {
+    mode: aube_resolver::ResolutionMode,
+    lowest_direct: bool,
+}
+
 /// Accept pnpm's documented aliases (`highest`, `time-based`, `time`,
-/// `lowest-direct`) and map them to our enum. Unknown values fall back
-/// to `None` so the caller's `.npmrc` / default path still runs.
-fn parse_resolution_mode(s: &str) -> Option<aube_resolver::ResolutionMode> {
+/// `lowest-direct`) and map them to the resolver's v1-compatible controls.
+/// Unknown values fall back to `None` so the caller's `.npmrc` / default path
+/// still runs.
+fn parse_resolution_mode(s: &str) -> Option<ResolutionModeConfig> {
     match s.trim().to_ascii_lowercase().as_str() {
-        "highest" => Some(aube_resolver::ResolutionMode::Highest),
-        "time-based" | "time" => Some(aube_resolver::ResolutionMode::TimeBased),
-        "lowest-direct" => Some(aube_resolver::ResolutionMode::LowestDirect),
+        "highest" => Some(ResolutionModeConfig {
+            mode: aube_resolver::ResolutionMode::Highest,
+            lowest_direct: false,
+        }),
+        "time-based" | "time" => Some(ResolutionModeConfig {
+            mode: aube_resolver::ResolutionMode::TimeBased,
+            lowest_direct: false,
+        }),
+        "lowest-direct" => Some(ResolutionModeConfig {
+            mode: aube_resolver::ResolutionMode::Highest,
+            lowest_direct: true,
+        }),
         _ => None,
     }
 }
@@ -18,7 +34,7 @@ fn parse_resolution_mode(s: &str) -> Option<aube_resolver::ResolutionMode> {
 /// (CLI > env > `.npmrc` > `aube-workspace.yaml` > default). The `.cli`
 /// source carries `--resolution-mode` via `to_cli_flag_bag`, so every
 /// caller feeds the same ctx and gets the same answer.
-fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> aube_resolver::ResolutionMode {
+fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> ResolutionModeConfig {
     // Legacy alias: pnpm's CLI / `.npmrc` / env accept the shorthand
     // `time` for `time-based`. The generator-side `from_str_normalized`
     // only knows the canonical variants declared in `settings.toml`,
@@ -48,17 +64,20 @@ fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> aube_resolver
 
 /// Translate the settings-side `ResolutionMode` enum into the
 /// resolver's runtime enum.
-fn map_resolution_mode(
-    m: aube_settings::resolved::ResolutionMode,
-) -> aube_resolver::ResolutionMode {
+fn map_resolution_mode(m: aube_settings::resolved::ResolutionMode) -> ResolutionModeConfig {
     match m {
-        aube_settings::resolved::ResolutionMode::Highest => aube_resolver::ResolutionMode::Highest,
-        aube_settings::resolved::ResolutionMode::TimeBased => {
-            aube_resolver::ResolutionMode::TimeBased
-        }
-        aube_settings::resolved::ResolutionMode::LowestDirect => {
-            aube_resolver::ResolutionMode::LowestDirect
-        }
+        aube_settings::resolved::ResolutionMode::Highest => ResolutionModeConfig {
+            mode: aube_resolver::ResolutionMode::Highest,
+            lowest_direct: false,
+        },
+        aube_settings::resolved::ResolutionMode::TimeBased => ResolutionModeConfig {
+            mode: aube_resolver::ResolutionMode::TimeBased,
+            lowest_direct: false,
+        },
+        aube_settings::resolved::ResolutionMode::LowestDirect => ResolutionModeConfig {
+            mode: aube_resolver::ResolutionMode::Highest,
+            lowest_direct: true,
+        },
     }
 }
 
@@ -441,11 +460,12 @@ pub(crate) fn resolve_force_metadata_primer(ctx: &aube_settings::ResolveCtx<'_>)
 pub(crate) fn resolve_dependency_policy(
     manifest: &aube_manifest::PackageJson,
     ctx: &aube_settings::ResolveCtx<'_>,
-) -> aube_resolver::DependencyPolicy {
+) -> miette::Result<aube_resolver::DependencyPolicy> {
     let mut policy = aube_resolver::DependencyPolicy::default();
 
+    validate_package_extension_containers(manifest, ctx)?;
     let package_extensions = effective_package_extensions(manifest, ctx);
-    policy.package_extensions = parse_package_extensions(package_extensions);
+    policy.package_extensions = parse_package_extensions(package_extensions)?;
 
     let mut allowed_deprecated = manifest.allowed_deprecated_versions();
     merge_string_map_setting(ctx, "allowedDeprecatedVersions", &mut allowed_deprecated);
@@ -481,7 +501,7 @@ pub(crate) fn resolve_dependency_policy(
     policy.trust_policy_ignore_after = aube_settings::resolved::trust_policy_ignore_after(ctx);
     policy.block_exotic_subdeps = aube_settings::resolved::block_exotic_subdeps(ctx);
 
-    policy
+    Ok(policy)
 }
 
 /// Assemble the effective `packageExtensions` object — the root
@@ -732,6 +752,77 @@ fn parse_json_object(raw: &str) -> Option<BTreeMap<String, serde_json::Value>> {
     Some(obj.into_iter().collect())
 }
 
+fn validate_package_extension_containers(
+    manifest: &aube_manifest::PackageJson,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<()> {
+    for value in manifest.package_extension_values() {
+        if !value.is_object() {
+            return Err(invalid_package_extension(
+                "packageExtensions",
+                "setting must be an object",
+            ));
+        }
+    }
+
+    let meta = aube_settings::find("packageExtensions").ok_or_else(|| {
+        invalid_package_extension("packageExtensions", "setting is not registered")
+    })?;
+    for entries in [
+        ctx.user_npmrc,
+        ctx.user_aube_config,
+        ctx.project_npmrc,
+        ctx.project_aube_config,
+    ] {
+        for (key, raw) in entries.iter().rev() {
+            if !meta.npmrc_keys.contains(&key.as_str()) {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| {
+                invalid_package_extension("packageExtensions", "setting must be valid JSON")
+            })?;
+            if !value.is_object() {
+                return Err(invalid_package_extension(
+                    "packageExtensions",
+                    "setting must be an object",
+                ));
+            }
+            break;
+        }
+    }
+    for key in meta.workspace_yaml_keys {
+        let Some(value) = aube_settings::workspace_yaml_value(ctx.workspace_yaml, key) else {
+            continue;
+        };
+        let value = serde_json::to_value(value).map_err(|_| {
+            invalid_package_extension("packageExtensions", "setting must be an object")
+        })?;
+        if !value.is_object() {
+            return Err(invalid_package_extension(
+                "packageExtensions",
+                "setting must be an object",
+            ));
+        }
+        break;
+    }
+    for (key, raw) in ctx.env.iter().rev() {
+        if !meta.env_vars.contains(&key.as_str()) {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| {
+            invalid_package_extension("packageExtensions", "setting must be valid JSON")
+        })?;
+        if !value.is_object() {
+            return Err(invalid_package_extension(
+                "packageExtensions",
+                "setting must be an object",
+            ));
+        }
+        break;
+    }
+    Ok(())
+}
+
 fn json_string_map(map: BTreeMap<String, serde_json::Value>) -> BTreeMap<String, String> {
     map.into_iter()
         .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
@@ -740,52 +831,96 @@ fn json_string_map(map: BTreeMap<String, serde_json::Value>) -> BTreeMap<String,
 
 fn parse_package_extensions(
     raw: BTreeMap<String, serde_json::Value>,
-) -> Vec<aube_resolver::PackageExtension> {
+) -> miette::Result<Vec<aube_resolver::PackageExtension>> {
     raw.into_iter()
-        .filter_map(|(selector, value)| {
-            let obj = value.as_object()?;
-            Some(aube_resolver::PackageExtension {
+        .map(|(selector, value)| {
+            let obj = value
+                .as_object()
+                .ok_or_else(|| invalid_package_extension(&selector, "entry must be an object"))?;
+            let dependencies_path = format!("{selector}.dependencies");
+            let optional_dependencies_path = format!("{selector}.optionalDependencies");
+            let peer_dependencies_path = format!("{selector}.peerDependencies");
+            let peer_dependencies_meta_path = format!("{selector}.peerDependenciesMeta");
+            Ok(aube_resolver::PackageExtension {
                 selector,
-                dependencies: read_json_string_map(obj.get("dependencies")),
-                optional_dependencies: read_json_string_map(obj.get("optionalDependencies")),
-                peer_dependencies: read_json_string_map(obj.get("peerDependencies")),
+                dependencies: read_json_string_map(obj.get("dependencies"), &dependencies_path)?,
+                optional_dependencies: read_json_string_map(
+                    obj.get("optionalDependencies"),
+                    &optional_dependencies_path,
+                )?,
+                peer_dependencies: read_json_string_map(
+                    obj.get("peerDependencies"),
+                    &peer_dependencies_path,
+                )?,
                 peer_dependencies_meta: read_peer_dependencies_meta(
                     obj.get("peerDependenciesMeta"),
-                ),
+                    &peer_dependencies_meta_path,
+                )?,
             })
         })
         .collect()
 }
 
-fn read_json_string_map(value: Option<&serde_json::Value>) -> BTreeMap<String, String> {
-    value
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
+fn read_json_string_map(
+    value: Option<&serde_json::Value>,
+    field: &str,
+) -> miette::Result<BTreeMap<String, String>> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let obj = value
+        .as_object()
+        .ok_or_else(|| invalid_package_extension(field, "field must be an object"))?;
+    obj.iter()
+        .map(|(name, value)| {
+            let range = value.as_str().ok_or_else(|| {
+                invalid_package_extension(
+                    &format!("{field}.{name}"),
+                    "dependency range must be a string",
+                )
+            })?;
+            Ok((name.clone(), range.to_string()))
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 fn read_peer_dependencies_meta(
     value: Option<&serde_json::Value>,
-) -> BTreeMap<String, aube_registry::PeerDepMeta> {
-    value
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .map(|(name, meta)| {
-                    let optional = meta
-                        .as_object()
-                        .and_then(|m| m.get("optional"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    (name.clone(), aube_registry::PeerDepMeta { optional })
-                })
-                .collect()
+    field: &str,
+) -> miette::Result<BTreeMap<String, aube_registry::PeerDepMeta>> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let obj = value
+        .as_object()
+        .ok_or_else(|| invalid_package_extension(field, "field must be an object"))?;
+    obj.iter()
+        .map(|(name, meta)| {
+            let meta = meta.as_object().ok_or_else(|| {
+                invalid_package_extension(
+                    &format!("{field}.{name}"),
+                    "peer metadata must be an object",
+                )
+            })?;
+            let optional = match meta.get("optional") {
+                Some(value) => value.as_bool().ok_or_else(|| {
+                    invalid_package_extension(
+                        &format!("{field}.{name}.optional"),
+                        "optional must be a boolean",
+                    )
+                })?,
+                None => false,
+            };
+            Ok((name.clone(), aube_registry::PeerDepMeta { optional }))
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+fn invalid_package_extension(path: &str, reason: &str) -> miette::Report {
+    miette::miette!(
+        code = aube_codes::errors::ERR_AUBE_INVALID_PACKAGE_EXTENSION,
+        "invalid packageExtensions entry at {path:?}: {reason}"
+    )
 }
 
 /// Apply the install-time resolver configuration that's shared between
@@ -823,7 +958,7 @@ pub(crate) struct ResolverConfigInputs<'a> {
     /// resolutions. Callers compute this as
     /// `lockfile_enabled.then(|| source_kind_before.unwrap_or(Aube))`.
     pub(crate) target_lockfile_kind: Option<aube_lockfile::LockfileKind>,
-    pub(crate) dependency_policy: Option<aube_resolver::DependencyPolicy>,
+    pub(crate) dependency_policy: aube_resolver::DependencyPolicy,
     /// When `true`, the resolver caches full (non-corgi) packuments on
     /// disk so the next install/update can reuse them without a
     /// round-trip. Install opts in (`true`) to amortize the cost of
@@ -926,8 +1061,6 @@ pub(crate) fn configure_resolver(
     if !effective_overrides.is_empty() {
         tracing::debug!("applying {} overrides", effective_overrides.len());
     }
-    let dependency_policy =
-        dependency_policy.unwrap_or_else(|| resolve_dependency_policy(manifest, settings_ctx));
     if !dependency_policy.package_extensions.is_empty() {
         tracing::debug!(
             "applying {} packageExtensions",
@@ -974,7 +1107,8 @@ pub(crate) fn configure_resolver(
         .with_supported_architectures(supported_architectures)
         .with_overrides(effective_overrides)
         .with_ignored_optional_dependencies(ignored_optional)
-        .with_resolution_mode(resolution_mode)
+        .with_resolution_mode(resolution_mode.mode)
+        .with_lowest_direct(resolution_mode.lowest_direct)
         .with_minimum_release_age(minimum_release_age)
         .with_catalogs(workspace_catalogs.clone())
         .with_project_root(cwd.to_path_buf())
@@ -1146,6 +1280,33 @@ fn compile_peer_patterns(field: &str, raw: &[String]) -> Vec<glob::Pattern> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod resolution_mode_tests {
+    use super::*;
+
+    #[test]
+    fn lowest_direct_uses_the_v1_compatible_resolver_controls() {
+        assert_eq!(
+            parse_resolution_mode("lowest-direct"),
+            Some(ResolutionModeConfig {
+                mode: aube_resolver::ResolutionMode::Highest,
+                lowest_direct: true,
+            })
+        );
+    }
+
+    #[test]
+    fn time_alias_keeps_time_based_mode() {
+        assert_eq!(
+            parse_resolution_mode("time"),
+            Some(ResolutionModeConfig {
+                mode: aube_resolver::ResolutionMode::TimeBased,
+                lowest_direct: false,
+            })
+        );
+    }
 }
 
 #[cfg(test)]

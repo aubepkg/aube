@@ -689,7 +689,7 @@ async fn write_fix_lockfile_update(
     widen_vulnerable_direct_pins(&mut resolver_manifest, graph, &vulnerable_ranges);
 
     let workspace_catalogs = super::load_workspace_catalogs(cwd)?;
-    let mut resolver = super::build_resolver(cwd, &resolver_manifest, workspace_catalogs)
+    let mut resolver = super::build_resolver(cwd, &resolver_manifest, workspace_catalogs)?
         .with_vulnerable_ranges(vulnerable_ranges.clone());
     let mut new_graph = resolver
         .resolve(&resolver_manifest, Some(graph))

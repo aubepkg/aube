@@ -37,6 +37,7 @@ impl Resolver {
             override_rules: Vec::new(),
             ignored_optional_dependencies: BTreeSet::new(),
             resolution_mode: ResolutionMode::Highest,
+            lowest_direct: false,
             project_root: PathBuf::from("."),
             ignore_scripts: false,
             minimum_release_age: None,
@@ -83,6 +84,7 @@ impl Resolver {
                 override_rules: Vec::new(),
                 ignored_optional_dependencies: BTreeSet::new(),
                 resolution_mode: ResolutionMode::Highest,
+                lowest_direct: false,
                 project_root: PathBuf::from("."),
                 ignore_scripts: false,
                 minimum_release_age: None,
@@ -126,6 +128,19 @@ impl Resolver {
     /// and constrains transitives by a publish-date cutoff.
     pub fn with_resolution_mode(mut self, mode: ResolutionMode) -> Self {
         self.resolution_mode = mode;
+        self.lowest_direct = false;
+        self
+    }
+
+    /// Pick the lowest satisfying version for direct dependencies while
+    /// resolving transitives normally. Unlike `ResolutionMode::TimeBased`,
+    /// this neither computes a publish-time cutoff nor records publish times
+    /// in the lockfile.
+    pub fn with_lowest_direct(mut self, enabled: bool) -> Self {
+        self.lowest_direct = enabled;
+        if enabled {
+            self.resolution_mode = ResolutionMode::Highest;
+        }
         self
     }
 

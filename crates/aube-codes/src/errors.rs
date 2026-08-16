@@ -88,6 +88,7 @@ pub const ERR_AUBE_FILTER_GIT_FAILED: &str = "ERR_AUBE_FILTER_GIT_FAILED";
 // ── manifest ────────────────────────────────────────────────────────
 pub const ERR_AUBE_MANIFEST_PARSE: &str = "ERR_AUBE_MANIFEST_PARSE";
 pub const ERR_AUBE_MANIFEST_YAML_PARSE: &str = "ERR_AUBE_MANIFEST_YAML_PARSE";
+pub const ERR_AUBE_INVALID_PACKAGE_EXTENSION: &str = "ERR_AUBE_INVALID_PACKAGE_EXTENSION";
 
 // ── engine / cli ────────────────────────────────────────────────────
 pub const ERR_AUBE_UNSUPPORTED_ENGINE: &str = "ERR_AUBE_UNSUPPORTED_ENGINE";
@@ -480,6 +481,12 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_MANIFEST_YAML_PARSE,
         category: category::MANIFEST_WORKSPACE,
         description: "A workspace YAML helper file was structurally invalid (no source pointer available).",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_INVALID_PACKAGE_EXTENSION,
+        category: category::MANIFEST_WORKSPACE,
+        description: "A `packageExtensions` entry had an invalid object shape or non-string dependency range.",
         exit_code: None,
     },
     CodeMeta {

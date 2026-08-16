@@ -708,7 +708,7 @@ async fn run_inner(
             None => (None, Vec::new()),
         };
     let workspace_package_versions = workspace_package_versions(&cwd)?;
-    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
+    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs)?;
     if let Some(host) = read_package_host {
         resolver = resolver
             .with_read_package_hook(Box::new(host) as Box<dyn aube_resolver::ReadPackageHook>);

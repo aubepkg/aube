@@ -252,7 +252,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             // With lockfiles enabled, `write_kind` is either the existing
             // format or the configured creation default.
             target_lockfile_kind: lockfile_enabled.then_some(write_kind),
-            dependency_policy: Some(dependency_policy.clone()),
+            dependency_policy: dependency_policy.clone(),
             cache_full_packuments: true,
             ignore_scripts,
         },

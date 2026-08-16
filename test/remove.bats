@@ -207,6 +207,27 @@ EOF
 	assert_output --partial "not a dependency"
 }
 
+@test "aube remove: invalid packageExtensions leave package.json unchanged" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-invalid-extensions",
+  "version": "0.0.0",
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  },
+  "packageExtensions": []
+}
+EOF
+	before="$(cat package.json)"
+
+	run aube remove is-odd
+	assert_failure
+	assert_output --partial "ERR_AUBE_INVALID_PACKAGE_EXTENSION"
+	refute_output --partial "  - is-odd"
+	after="$(cat package.json)"
+	[ "$before" = "$after" ]
+}
+
 @test "aube remove: removes dev dependency" {
 	cat >package.json <<'EOF'
 {
