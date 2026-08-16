@@ -1,4 +1,4 @@
-use crate::{Error, FxHashSet, Resolver};
+use crate::{Error, FxHashMap, FxHashSet, Resolver};
 use aube_registry::client::RegistryClient;
 use aube_registry::{Packument, VersionTrustMetadata};
 use aube_util::adaptive::AdaptiveLimit;
@@ -22,6 +22,7 @@ use tokio::task::JoinSet;
 pub(super) struct FetchScheduler {
     in_flight: JoinSet<(FetchKey, Result<FetchResult, Error>)>,
     active_fetches: FxHashSet<FetchKey>,
+    task_keys: FxHashMap<tokio::task::Id, FetchKey>,
     primer_seeded_names: FxHashSet<String>,
     sem: Arc<AdaptiveLimit>,
     client: Arc<RegistryClient>,
@@ -48,6 +49,7 @@ impl FetchScheduler {
         Self {
             in_flight: JoinSet::new(),
             active_fetches: FxHashSet::default(),
+            task_keys: FxHashMap::default(),
             primer_seeded_names: FxHashSet::default(),
             sem,
             client: resolver.client.clone(),
@@ -98,10 +100,12 @@ impl FetchScheduler {
             needs_time: self.needs_time,
             force_refresh,
         };
-        self.in_flight.spawn(async move {
+        let task_key = key.clone();
+        let handle = self.in_flight.spawn(async move {
             let result = fetch_one_packument(inputs).await;
-            (key, result)
+            (task_key, result)
         });
+        self.task_keys.insert(handle.id(), key);
     }
 
     /// Fetch an exact optional dependency without retaining every historical
@@ -131,19 +135,30 @@ impl FetchScheduler {
             force_refresh: false,
         };
         let version = version.to_string();
-        self.in_flight.spawn(async move {
+        let task_key = key.clone();
+        let handle = self.in_flight.spawn(async move {
             let result = fetch_exact_optional_packument(inputs, version).await;
-            (key, result)
+            (task_key, result)
         });
+        self.task_keys.insert(handle.id(), key);
     }
 
     /// Wait for the next in-flight fetch to complete.
     pub(super) async fn join_next(&mut self) -> FetchOutcome {
-        let outcome = self.in_flight.join_next().await;
-        if let Some(Ok((key, _))) = &outcome {
-            self.active_fetches.remove(key);
+        match self.in_flight.join_next_with_id().await {
+            Some(Ok((id, outcome))) => {
+                self.task_keys.remove(&id);
+                self.active_fetches.remove(&outcome.0);
+                Some(Ok(outcome))
+            }
+            Some(Err(error)) => {
+                if let Some(key) = self.task_keys.remove(&error.id()) {
+                    self.active_fetches.remove(&key);
+                }
+                Some(Err(error))
+            }
+            None => None,
         }
-        outcome
     }
 
     pub(super) fn note_primer_seeded(&mut self, name: String) {
@@ -156,7 +171,7 @@ impl FetchScheduler {
     }
 
     pub(super) async fn drain(&mut self) {
-        while self.in_flight.join_next().await.is_some() {}
+        while self.join_next().await.is_some() {}
     }
 }
 
@@ -254,8 +269,8 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         permit.record_cancelled();
         return Ok((name, packument, false, None));
     }
-    let use_metadata_primer = (force_metadata_primer
-        || client.uses_default_npm_registry_for(&name))
+    let use_metadata_primer = !force_refresh
+        && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
         && primer_covers_cutoff;
     if use_metadata_primer
         && !cached.stale
@@ -383,7 +398,15 @@ async fn fetch_exact_optional_packument(
                 "compact exact metadata fetch failed for optional dep {name}@{version}; falling back to full packument: {err}"
             );
             permit.record_cancelled();
-            fetch_one_packument(inputs).await
+            let fallback = fetch_one_packument(inputs).await?;
+            if fallback.1.versions.contains_key(&version) {
+                Ok(fallback)
+            } else {
+                Err(Error::Registry(
+                    name,
+                    format!("version {version} is missing from the full packument"),
+                ))
+            }
         }
     }
 }
@@ -391,37 +414,12 @@ async fn fetch_exact_optional_packument(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    fn test_packument(versions: &[&str]) -> Packument {
-        Packument {
-            name: "shared".to_string(),
-            modified: None,
-            versions: versions
-                .iter()
-                .map(|version| {
-                    (
-                        (*version).to_string(),
-                        serde_json::from_value(serde_json::json!({
-                            "name": "shared",
-                            "version": version,
-                        }))
-                        .unwrap(),
-                    )
-                })
-                .collect(),
-            dist_tags: BTreeMap::new(),
-            time: BTreeMap::new(),
-        }
-    }
-
-    #[tokio::test]
-    async fn completed_full_fetch_can_force_refresh_a_fresh_disk_entry() {
-        let stale = test_packument(&["1.0.0"]);
-        let fresh = test_packument(&["1.0.0", "2.0.0"]);
-        let body = serde_json::to_vec(&fresh).unwrap();
+    async fn serve_registry(
+        body: Vec<u8>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let registry = format!("http://{}/", listener.local_addr().unwrap());
         let requests = Arc::new(AtomicUsize::new(0));
@@ -447,29 +445,98 @@ mod tests {
                 }
             })
         };
+        (registry, requests, server)
+    }
+
+    #[tokio::test]
+    async fn completed_full_fetch_can_force_refresh_a_fresh_disk_entry() {
+        let Some(name) = crate::primer::popular_package_names()
+            .lines()
+            .find(|name| crate::primer::get(name).is_some())
+        else {
+            return;
+        };
+        let stale = crate::primer::get(name).unwrap().packument();
+        let Some(mut new_metadata) = stale.versions.values().next().cloned() else {
+            return;
+        };
+        let new_version = "9999.0.0";
+        new_metadata.version = new_version.to_string();
+        let mut fresh = stale.clone();
+        fresh.versions.insert(new_version.to_string(), new_metadata);
+        let stale_len = stale.versions.len();
+        let (registry, requests, server) =
+            serve_registry(serde_json::to_vec(&fresh).unwrap()).await;
 
         let cache = tempfile::tempdir().unwrap();
         let client = Arc::new(RegistryClient::new(&registry));
-        client.seed_full_packument_cache("shared", cache.path(), &stale, None, None, true);
+        client.seed_full_packument_cache(name, cache.path(), &stale, None, None, true);
         let resolver = Resolver::new(Arc::clone(&client))
-            .with_packument_full_cache(cache.path().to_path_buf());
+            .with_packument_full_cache(cache.path().to_path_buf())
+            .with_force_metadata_primer(true);
         let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
 
-        scheduler.ensure_fetch("shared", None, false);
+        scheduler.ensure_fetch(name, None, false);
         let Some(Ok((FetchKey::Full(_), Ok((_, first, _, _))))) = scheduler.join_next().await
         else {
             panic!("cached full fetch did not complete");
         };
-        assert_eq!(first.versions.len(), 1);
+        assert_eq!(first.versions.len(), stale_len);
         assert_eq!(requests.load(Ordering::Relaxed), 0);
 
-        scheduler.ensure_fetch("shared", None, true);
+        scheduler.ensure_fetch(name, None, true);
         let Some(Ok((FetchKey::Full(_), Ok((_, refreshed, _, _))))) = scheduler.join_next().await
         else {
             panic!("forced full refresh did not restart");
         };
-        assert_eq!(refreshed.versions.len(), 2);
+        assert!(refreshed.versions.contains_key(new_version));
         assert_eq!(requests.load(Ordering::Relaxed), 1);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn missing_exact_version_fallback_returns_a_terminal_error() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "name": "shared",
+            "versions": {
+                "1.0.0": { "name": "shared", "version": "1.0.0" }
+            },
+            "dist-tags": { "latest": "1.0.0" },
+            "time": { "1.0.0": "2024-01-01T00:00:00.000Z" }
+        }))
+        .unwrap();
+        let (registry, requests, server) = serve_registry(body).await;
+        let resolver = Resolver::new(Arc::new(RegistryClient::new(&registry)));
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+
+        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None);
+        let Some(Ok((FetchKey::Exact(_, version), Err(Error::Registry(_, message))))) =
+            scheduler.join_next().await
+        else {
+            panic!("missing exact version did not return a terminal registry error");
+        };
+        assert_eq!(version, "2.0.0");
+        assert!(message.contains("version 2.0.0 is missing"));
+        assert_eq!(requests.load(Ordering::Relaxed), 2);
+        server.abort();
+    }
+
+    async fn panic_fetch(key: FetchKey) -> (FetchKey, Result<FetchResult, Error>) {
+        let _ = key;
+        panic!("simulated fetch panic");
+    }
+
+    #[tokio::test]
+    async fn join_error_releases_the_active_fetch_key() {
+        let resolver = Resolver::new(Arc::new(RegistryClient::new("http://127.0.0.1:0")));
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), false);
+        let key = FetchKey::Full("shared".to_string());
+        scheduler.active_fetches.insert(key.clone());
+        let handle = scheduler.in_flight.spawn(panic_fetch(key.clone()));
+        scheduler.task_keys.insert(handle.id(), key.clone());
+
+        assert!(matches!(scheduler.join_next().await, Some(Err(_))));
+        assert!(!scheduler.active_fetches.contains(&key));
+        assert!(scheduler.task_keys.is_empty());
     }
 }
