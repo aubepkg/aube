@@ -288,6 +288,25 @@ fn prune(args: PruneArgs) -> miette::Result<()> {
     let mut removed_files = 0u64;
     let mut removed_bytes = 0u64;
 
+    // NamedTempFile removes these on every normal exit, but SIGKILL or a
+    // machine crash can strand a large streamed tar entry at the CAS root.
+    // They are never referenced by an index and are safe prune candidates.
+    for entry in std::fs::read_dir(&root).into_diagnostic()?.flatten() {
+        let path = entry.path();
+        let is_stream_temp = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".aube-stream-"));
+        if !is_stream_temp || !path.is_file() {
+            continue;
+        }
+        let len = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        if args.dry_run || std::fs::remove_file(&path).is_ok() {
+            removed_files += 1;
+            removed_bytes += len;
+        }
+    }
+
     // Walk every 2-char shard directory. Store layout is
     // <root>/<shard>/<rest-of-hash>[-exec].
     for shard in std::fs::read_dir(&root).into_diagnostic()?.flatten() {

@@ -466,18 +466,16 @@ impl Store {
         // holding this same shard lock. Hold it through publication and any
         // recovery so a streamed writer cannot unlink an in-progress file.
         #[cfg(target_os = "macos")]
-        let _shard_guard = if self.fast_path.load(Ordering::Acquire) {
-            hex_hash
-                .get(..2)
-                .and_then(|shard| u8::from_str_radix(shard, 16).ok())
-                .map(|shard| {
-                    FAST_PATH_SHARD_LOCKS[shard as usize]
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                })
-        } else {
-            None
-        };
+        let _shard_guard = hex_hash
+            .get(..2)
+            .and_then(|shard| u8::from_str_radix(shard, 16).ok())
+            .map(|shard| {
+                FAST_PATH_SHARD_LOCKS[shard as usize]
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            });
+        #[cfg(target_os = "macos")]
+        let mut recovery_lock = None;
 
         let mut retried_missing_parent = false;
         let mut retried_torn_entry = false;
@@ -500,6 +498,34 @@ impl Store {
                     temp = e.file;
                     if !cas_file_matches_len(&store_path, len) {
                         wait_for_cas_file_len(&store_path, len);
+                    }
+                    // A slow-path process can observe a partial final file
+                    // owned by another process that holds the macOS install
+                    // lock and is writing directly. Wait for that process
+                    // before deciding the entry is torn. The in-process shard
+                    // mutex above separately serializes recovery threads in
+                    // this process.
+                    #[cfg(target_os = "macos")]
+                    if !self.fast_path.load(Ordering::Acquire)
+                        && !cas_file_matches_len(&store_path, len)
+                        && recovery_lock.is_none()
+                    {
+                        let lock_dir = self
+                            .root
+                            .parent()
+                            .map(Path::to_path_buf)
+                            .unwrap_or_else(|| self.root.clone());
+                        std::fs::create_dir_all(&lock_dir)
+                            .map_err(|e| Error::Io(lock_dir.clone(), e))?;
+                        let lock_path = lock_dir.join(".install.lock");
+                        let file = std::fs::OpenOptions::new()
+                            .create(true)
+                            .truncate(false)
+                            .write(true)
+                            .open(&lock_path)
+                            .map_err(|e| Error::Io(lock_path.clone(), e))?;
+                        file.lock().map_err(|e| Error::Io(lock_path.clone(), e))?;
+                        recovery_lock = Some(file);
                     }
                     if cas_file_matches_len(&store_path, len) {
                         break CasWriteOutcome::AlreadyExisted;

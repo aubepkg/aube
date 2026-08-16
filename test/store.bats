@@ -196,6 +196,23 @@ EOF
 	refute_output --partial "Pruned 0 files"
 }
 
+@test "aube store prune removes orphaned streamed-entry tempfiles" {
+	store_v1="$(aube store path)"
+	mkdir -p "$store_v1/files"
+	stream_temp="$store_v1/files/.aube-stream-orphan"
+	dd if=/dev/zero of="$stream_temp" bs=1024 count=4 2>/dev/null
+
+	run aube store prune --dry-run
+	assert_success
+	assert_file_exists "$stream_temp"
+	assert_output --partial "Would prune 1 file"
+
+	run aube store prune
+	assert_success
+	assert_file_not_exists "$stream_temp"
+	assert_output --partial "Pruned 1 file"
+}
+
 @test "aube store prune removes entries from deleted registered projects" {
 	mkdir project
 	cat >project/package.json <<'JSON'
