@@ -240,9 +240,4 @@ pub enum ResolutionMode {
     /// before a cutoff date derived from the max publish time of
     /// already-locked packages. Matches pnpm's `time-based` mode.
     TimeBased,
-    /// Pick the lowest version satisfying each direct dependency range,
-    /// while resolving transitive dependencies normally. Unlike
-    /// `TimeBased`, this mode neither computes a publish-time cutoff nor
-    /// records package publish times in the lockfile.
-    LowestDirect,
 }
