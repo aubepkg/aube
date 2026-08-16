@@ -1549,6 +1549,137 @@ async fn compact_fetch_does_not_suppress_same_name_range_fetch() {
     assert_eq!(requests, 2, "the exact and full fetches must both run");
 }
 
+#[tokio::test]
+async fn failed_exact_optional_version_does_not_suppress_sibling_version() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut first_parent = make_packument("first-parent", &["1.0.0"], "1.0.0");
+    first_parent
+        .versions
+        .get_mut("1.0.0")
+        .unwrap()
+        .optional_dependencies
+        .insert("shared-child".to_string(), "1.0.0".to_string());
+    let mut second_parent = make_packument("second-parent", &["1.0.0"], "1.0.0");
+    second_parent
+        .versions
+        .get_mut("1.0.0")
+        .unwrap()
+        .optional_dependencies
+        .insert("shared-child".to_string(), "2.0.0".to_string());
+    let mut shared = make_packument("shared-child", &["1.0.0", "2.0.0"], "2.0.0");
+    for packument in [&mut first_parent, &mut second_parent, &mut shared] {
+        for version in packument.versions.keys() {
+            packument
+                .time
+                .insert(version.clone(), "2024-01-01T00:00:00.000Z".to_string());
+        }
+    }
+
+    let bodies = Arc::new(std::collections::HashMap::from([
+        (
+            "first-parent".to_string(),
+            serde_json::to_vec(&first_parent).unwrap(),
+        ),
+        (
+            "second-parent".to_string(),
+            serde_json::to_vec(&second_parent).unwrap(),
+        ),
+    ]));
+    let shared_body = serde_json::to_vec(&shared).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let shared_requests = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let shared_requests = Arc::clone(&shared_requests);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let bodies = Arc::clone(&bodies);
+                let shared_body = shared_body.clone();
+                let shared_requests = Arc::clone(&shared_requests);
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let path = std::str::from_utf8(&buf[..n])
+                        .ok()
+                        .and_then(|request| request.split_whitespace().nth(1))
+                        .unwrap_or("/");
+                    let name = path.trim_start_matches('/').split('/').next().unwrap_or("");
+                    if name == "shared-child" {
+                        let request = shared_requests.fetch_add(1, Ordering::Relaxed) + 1;
+                        if request <= 2 {
+                            socket
+                                .write_all(
+                                    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                                )
+                                .await
+                                .unwrap();
+                            return;
+                        }
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                            shared_body.len()
+                        );
+                        socket.write_all(response.as_bytes()).await.unwrap();
+                        socket.write_all(&shared_body).await.unwrap();
+                        return;
+                    }
+                    let Some(body) = bodies.get(name) else {
+                        socket
+                            .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
+                            .await
+                            .unwrap();
+                        return;
+                    };
+                    if name == "second-parent" {
+                        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                            while shared_requests.load(Ordering::Relaxed) < 2 {
+                                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                            }
+                        })
+                        .await;
+                    }
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.write_all(body).await.unwrap();
+                });
+            }
+        })
+    };
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+    let mut resolver = Resolver::new(client).with_minimum_release_age(Some(MinimumReleaseAge {
+        minutes: 60,
+        ..Default::default()
+    }));
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("first-parent".to_string(), "1.0.0".to_string());
+    manifest
+        .dependencies
+        .insert("second-parent".to_string(), "1.0.0".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    assert!(
+        !graph_has_package(&graph, "shared-child", "1.0.0"),
+        "unexpected packages after {} shared requests: {:?}",
+        shared_requests.load(Ordering::Relaxed),
+        graph.packages.keys().collect::<Vec<_>>()
+    );
+    assert!(graph_has_package(&graph, "shared-child", "2.0.0"));
+    assert_eq!(shared_requests.load(Ordering::Relaxed), 3);
+    server.abort();
+}
+
 /// Regression: when both `minimumReleaseAge` and `trustPolicy=NoDowngrade`
 /// are active, the resolver must use a full packument with `time`;
 /// using an abbreviated corgi packument would make the trust check fail

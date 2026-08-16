@@ -16,7 +16,7 @@
 //! sibling-dedupe → lockfile-reuse → fetch-and-pick) is staged for a
 //! later refactor.
 
-use super::fetch::{FetchScheduler, TrustHistory};
+use super::fetch::{FetchKey, FetchScheduler, TrustHistory};
 use super::seed::seed_direct_deps;
 use super::vulnerable::{is_vulnerable, prefer_non_vulnerable_pick};
 use crate::local_source::{
@@ -90,11 +90,12 @@ pub(crate) struct ResolveDriver<'a> {
     /// mismatch or `pnpm.ignoredOptionalDependencies`).
     skipped_optional_dependencies: BTreeMap<String, BTreeMap<String, String>>,
     /// Packument fetches that failed (registry 404, network error, etc.),
-    /// keyed by package name. Errors are stored here instead of
+    /// keyed by request identity. Errors are stored here instead of
     /// propagated from `join_next` so a failed fetch for one package
-    /// doesn't crash the wrong task. Checked after the fetch-wait loop
-    /// to decide skip (optional) vs propagate (required).
-    failed_fetches: FxHashMap<String, Error>,
+    /// doesn't crash the wrong task or suppress another exact version.
+    /// Checked after the fetch-wait loop to decide skip (optional) vs
+    /// propagate (required).
+    failed_fetches: FxHashMap<FetchKey, Error>,
     trust_histories: FxHashMap<String, TrustHistory>,
     /// Catalog picks gathered as the BFS rewrites `catalog:` task
     /// ranges. Outer key: catalog name. Inner: package name → spec.
@@ -341,7 +342,7 @@ impl<'a> ResolveDriver<'a> {
             }
             if !self.resolver.cache.contains_key(task.name.as_str()) {
                 self.fetcher
-                    .ensure_fetch(task.name.as_str(), self.published_by.as_deref());
+                    .ensure_fetch(task.name.as_str(), self.published_by.as_deref(), false);
             }
         }
     }
@@ -362,11 +363,12 @@ impl<'a> ResolveDriver<'a> {
     /// prefetching names already covered by the lockfile check
     /// `existing_names` explicitly before invoking this.
     fn ensure_fetch(&mut self, name: &str) {
-        let needs_full =
-            !self.resolver.cache.contains_key(name) || self.trust_histories.contains_key(name);
-        if needs_full && !self.failed_fetches.contains_key(name) {
+        let force_refresh = self.trust_histories.contains_key(name);
+        let needs_full = !self.resolver.cache.contains_key(name) || force_refresh;
+        let key = FetchKey::Full(name.to_string());
+        if needs_full && !self.failed_fetches.contains_key(&key) {
             self.fetcher
-                .ensure_fetch(name, self.published_by.as_deref());
+                .ensure_fetch(name, self.published_by.as_deref(), force_refresh);
         }
     }
 
@@ -376,7 +378,8 @@ impl<'a> ResolveDriver<'a> {
             .cache
             .get(name)
             .is_some_and(|packument| packument.versions.contains_key(version));
-        if !ready && !self.failed_fetches.contains_key(name) {
+        let key = FetchKey::Exact(name.to_string(), version.to_string());
+        if !ready && !self.failed_fetches.contains_key(&key) {
             self.fetcher
                 .ensure_exact_optional_fetch(name, version, self.published_by.as_deref());
         }
@@ -527,8 +530,12 @@ impl<'a> ResolveDriver<'a> {
             && task.dep_type == DepType::Optional
             && node_semver::Version::parse(&task.range).is_ok())
         .then_some(task.range.as_str());
+        let fetch_key = exact_optional_version.map_or_else(
+            || FetchKey::Full(fetch_name.clone()),
+            |version| FetchKey::Exact(fetch_name.clone(), version.to_string()),
+        );
         while !self.cache_satisfies(&fetch_name, exact_optional_version)
-            && !self.failed_fetches.contains_key(&fetch_name)
+            && !self.failed_fetches.contains_key(&fetch_key)
         {
             if let Some(version) = exact_optional_version {
                 self.ensure_exact_optional_fetch(&fetch_name, version);
@@ -536,21 +543,21 @@ impl<'a> ResolveDriver<'a> {
                 self.ensure_fetch(&fetch_name);
             }
             match self.fetcher.join_next().await {
-                Some(Ok(Ok((name, packument, from_primer, trust_history)))) => {
+                Some(Ok((_, Ok((name, packument, from_primer, trust_history))))) => {
                     if from_primer {
                         self.fetcher.note_primer_seeded(name.clone());
                     }
                     self.record_fetch_result(name, packument, trust_history);
                     self.packument_fetch_count += 1;
                 }
-                Some(Ok(Err(e))) => {
+                Some(Ok((key, Err(e)))) => {
                     // Store failed fetches in the side table instead
                     // of propagating immediately. pnpm parity.
-                    let name = match &e {
-                        crate::Error::Registry(n, _) => n.clone(),
+                    match &e {
+                        crate::Error::Registry(_, _) => {}
                         _ => return Err(e),
-                    };
-                    self.failed_fetches.insert(name, e);
+                    }
+                    self.failed_fetches.insert(key, e);
                 }
                 Some(Err(join_err)) => {
                     return Err(Error::Registry("(join)".to_string(), join_err.to_string()));
@@ -570,12 +577,19 @@ impl<'a> ResolveDriver<'a> {
         }
         self.packument_fetch_time += wait_start.elapsed();
 
+        // A different request shape may have populated this task's data while
+        // its own request failed (for example, a full fetch satisfying an
+        // exact optional). In that case the usable cache entry wins.
+        if self.cache_satisfies(&fetch_name, exact_optional_version) {
+            self.failed_fetches.remove(&fetch_key);
+        }
+
         // Post-loop: if this task's packument fetch failed, decide
         // whether to skip (optional) or propagate (required).
         // For optional deps the error stays in `failed_fetches` so
         // sibling tasks that share the same transitive optional dep
         // don't re-fetch and re-fail for each importer.
-        if task.dep_type == DepType::Optional && self.failed_fetches.contains_key(&fetch_name) {
+        if task.dep_type == DepType::Optional && self.failed_fetches.contains_key(&fetch_key) {
             tracing::debug!(
                 "skipping optional dep {}@{}: registry fetch failed",
                 task.name,
@@ -586,7 +600,7 @@ impl<'a> ResolveDriver<'a> {
             }
             return Ok(());
         }
-        if let Some(e) = self.failed_fetches.remove(&fetch_name) {
+        if let Some(e) = self.failed_fetches.remove(&fetch_key) {
             return Err(e);
         }
 

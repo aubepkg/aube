@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 /// Spawns and tracks in-flight packument fetches.
 ///
 /// Owns the `JoinSet` of running fetch tasks plus the bookkeeping the
-/// resolver needs to dedupe spawns (`scheduled_fetches`) and to know
+/// resolver needs to dedupe spawns (`active_fetches`) and to know
 /// which packuments came from the bundled primer
 /// (`primer_seeded_names`, so range misses against the primer's
 /// capped history can trigger a live refetch before reporting
@@ -20,8 +20,8 @@ use tokio::task::JoinSet;
 /// keeping it compatible with the BFS loop's `&mut self.resolver.cache`
 /// access pattern.
 pub(super) struct FetchScheduler {
-    in_flight: JoinSet<Result<FetchResult, Error>>,
-    scheduled_fetches: FxHashSet<FetchKey>,
+    in_flight: JoinSet<(FetchKey, Result<FetchResult, Error>)>,
+    active_fetches: FxHashSet<FetchKey>,
     primer_seeded_names: FxHashSet<String>,
     sem: Arc<AdaptiveLimit>,
     client: Arc<RegistryClient>,
@@ -34,10 +34,11 @@ pub(super) struct FetchScheduler {
 
 pub(super) type TrustHistory = std::collections::BTreeMap<String, VersionTrustMetadata>;
 pub(super) type FetchResult = (String, Packument, bool, Option<TrustHistory>);
-pub(super) type FetchOutcome = Option<Result<Result<FetchResult, Error>, tokio::task::JoinError>>;
+pub(super) type FetchOutcome =
+    Option<Result<(FetchKey, Result<FetchResult, Error>), tokio::task::JoinError>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum FetchKey {
+pub(super) enum FetchKey {
     Full(String),
     Exact(String, String),
 }
@@ -46,7 +47,7 @@ impl FetchScheduler {
     pub(super) fn new(resolver: &Resolver, sem: Arc<AdaptiveLimit>, needs_time: bool) -> Self {
         Self {
             in_flight: JoinSet::new(),
-            scheduled_fetches: FxHashSet::default(),
+            active_fetches: FxHashSet::default(),
             primer_seeded_names: FxHashSet::default(),
             sem,
             client: resolver.client.clone(),
@@ -71,11 +72,14 @@ impl FetchScheduler {
     /// The caller is responsible for the resolver-cache gate — passing
     /// a name that's already in the cache wastes a spawn but is
     /// otherwise harmless.
-    pub(super) fn ensure_fetch(&mut self, name: &str, published_by: Option<&str>) {
-        if !self
-            .scheduled_fetches
-            .insert(FetchKey::Full(name.to_string()))
-        {
+    pub(super) fn ensure_fetch(
+        &mut self,
+        name: &str,
+        published_by: Option<&str>,
+        force_refresh: bool,
+    ) {
+        let key = FetchKey::Full(name.to_string());
+        if !self.active_fetches.insert(key.clone()) {
             return;
         }
         // Only a name-only exclude lets us skip the cutoff sight-unseen;
@@ -83,7 +87,7 @@ impl FetchScheduler {
         // versions are exempt, so it falls through to the cutoff check.
         let primer_covers_cutoff = self.mra_exclude.matches_name_only(name)
             || published_by.is_none_or(crate::primer::covers_cutoff);
-        self.in_flight.spawn(fetch_one_packument(FetchInputs {
+        let inputs = FetchInputs {
             name: name.to_string(),
             client: self.client.clone(),
             cache_dir: self.cache_dir.clone(),
@@ -92,7 +96,12 @@ impl FetchScheduler {
             force_metadata_primer: self.force_metadata_primer,
             sem: self.sem.clone(),
             needs_time: self.needs_time,
-        }));
+            force_refresh,
+        };
+        self.in_flight.spawn(async move {
+            let result = fetch_one_packument(inputs).await;
+            (key, result)
+        });
     }
 
     /// Fetch an exact optional dependency without retaining every historical
@@ -104,32 +113,37 @@ impl FetchScheduler {
         version: &str,
         published_by: Option<&str>,
     ) {
-        if !self
-            .scheduled_fetches
-            .insert(FetchKey::Exact(name.to_string(), version.to_string()))
-        {
+        let key = FetchKey::Exact(name.to_string(), version.to_string());
+        if !self.active_fetches.insert(key.clone()) {
             return;
         }
         let primer_covers_cutoff = self.mra_exclude.matches_name_only(name)
             || published_by.is_none_or(crate::primer::covers_cutoff);
-        self.in_flight.spawn(fetch_exact_optional_packument(
-            FetchInputs {
-                name: name.to_string(),
-                client: self.client.clone(),
-                cache_dir: self.cache_dir.clone(),
-                full_cache_dir: self.full_cache_dir.clone(),
-                primer_covers_cutoff,
-                force_metadata_primer: self.force_metadata_primer,
-                sem: self.sem.clone(),
-                needs_time: self.needs_time,
-            },
-            version.to_string(),
-        ));
+        let inputs = FetchInputs {
+            name: name.to_string(),
+            client: self.client.clone(),
+            cache_dir: self.cache_dir.clone(),
+            full_cache_dir: self.full_cache_dir.clone(),
+            primer_covers_cutoff,
+            force_metadata_primer: self.force_metadata_primer,
+            sem: self.sem.clone(),
+            needs_time: self.needs_time,
+            force_refresh: false,
+        };
+        let version = version.to_string();
+        self.in_flight.spawn(async move {
+            let result = fetch_exact_optional_packument(inputs, version).await;
+            (key, result)
+        });
     }
 
     /// Wait for the next in-flight fetch to complete.
     pub(super) async fn join_next(&mut self) -> FetchOutcome {
-        self.in_flight.join_next().await
+        let outcome = self.in_flight.join_next().await;
+        if let Some(Ok((key, _))) = &outcome {
+            self.active_fetches.remove(key);
+        }
+        outcome
     }
 
     pub(super) fn note_primer_seeded(&mut self, name: String) {
@@ -168,6 +182,9 @@ struct FetchInputs {
     /// True when the caller needs the packument's `time:` map and
     /// must therefore use the full-packument path.
     needs_time: bool,
+    /// Ignore an apparently fresh full-packument disk entry because a newer
+    /// compact response proved that it is incomplete.
+    force_refresh: bool,
 }
 
 /// Body of the per-packument fetch task spawned by the resolver.
@@ -187,6 +204,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         force_metadata_primer,
         sem,
         needs_time,
+        force_refresh,
     } = inputs;
     let _diag_span =
         aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
@@ -205,6 +223,12 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
     }
     aube_util::diag::attribute_wait(aube_util::diag::Slot::Pack, &name, permit_wait_ms);
     let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
+    if force_refresh
+        && needs_time
+        && let Some(dir) = full_cache_dir.as_ref()
+    {
+        client.invalidate_full_packument_cache(&name, dir);
+    }
     let mut cached = if needs_time {
         match full_cache_dir.as_ref() {
             Some(dir) => client.cached_full_packument_lookup(&name, dir),
@@ -361,5 +385,91 @@ async fn fetch_exact_optional_packument(
             permit.record_cancelled();
             fetch_one_packument(inputs).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn test_packument(versions: &[&str]) -> Packument {
+        Packument {
+            name: "shared".to_string(),
+            modified: None,
+            versions: versions
+                .iter()
+                .map(|version| {
+                    (
+                        (*version).to_string(),
+                        serde_json::from_value(serde_json::json!({
+                            "name": "shared",
+                            "version": version,
+                        }))
+                        .unwrap(),
+                    )
+                })
+                .collect(),
+            dist_tags: BTreeMap::new(),
+            time: BTreeMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_full_fetch_can_force_refresh_a_fresh_disk_entry() {
+        let stale = test_packument(&["1.0.0"]);
+        let fresh = test_packument(&["1.0.0", "2.0.0"]);
+        let body = serde_json::to_vec(&fresh).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let registry = format!("http://{}/", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let server = {
+            let requests = Arc::clone(&requests);
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        break;
+                    };
+                    requests.fetch_add(1, Ordering::Relaxed);
+                    let body = body.clone();
+                    tokio::spawn(async move {
+                        let mut buf = [0_u8; 2048];
+                        let _ = socket.read(&mut buf).await;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        socket.write_all(response.as_bytes()).await.unwrap();
+                        socket.write_all(&body).await.unwrap();
+                    });
+                }
+            })
+        };
+
+        let cache = tempfile::tempdir().unwrap();
+        let client = Arc::new(RegistryClient::new(&registry));
+        client.seed_full_packument_cache("shared", cache.path(), &stale, None, None, true);
+        let resolver = Resolver::new(Arc::clone(&client))
+            .with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+
+        scheduler.ensure_fetch("shared", None, false);
+        let Some(Ok((FetchKey::Full(_), Ok((_, first, _, _))))) = scheduler.join_next().await
+        else {
+            panic!("cached full fetch did not complete");
+        };
+        assert_eq!(first.versions.len(), 1);
+        assert_eq!(requests.load(Ordering::Relaxed), 0);
+
+        scheduler.ensure_fetch("shared", None, true);
+        let Some(Ok((FetchKey::Full(_), Ok((_, refreshed, _, _))))) = scheduler.join_next().await
+        else {
+            panic!("forced full refresh did not restart");
+        };
+        assert_eq!(refreshed.versions.len(), 2);
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        server.abort();
     }
 }
