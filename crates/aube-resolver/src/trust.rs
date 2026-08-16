@@ -73,6 +73,30 @@ pub fn evidence_for(meta: &VersionMetadata) -> Option<TrustEvidence> {
     None
 }
 
+fn compact_evidence_for(meta: &aube_registry::VersionTrustMetadata) -> Option<TrustEvidence> {
+    if meta.approver.as_ref().is_some_and(is_approver) {
+        return Some(TrustEvidence::StagedPublish);
+    }
+    if meta
+        .npm_user
+        .as_ref()
+        .and_then(|user| user.trusted_publisher.as_ref())
+        .is_some_and(is_trusted_publisher)
+    {
+        return Some(TrustEvidence::TrustedPublisher);
+    }
+    if meta
+        .dist
+        .as_ref()
+        .and_then(|dist| dist.attestations.as_ref())
+        .and_then(|attestations| attestations.provenance.as_ref())
+        .is_some_and(is_provenance)
+    {
+        return Some(TrustEvidence::Provenance);
+    }
+    None
+}
+
 fn is_approver(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Null => false,
@@ -260,6 +284,98 @@ pub fn check_no_downgrade(
     let current = evidence_for(picked_meta);
     let current_rank = current.map_or(0, TrustEvidence::rank);
     if current_rank < prior.evidence.rank() {
+        return Err(TrustCheckError::Downgrade(TrustDowngradeDetails {
+            name: packument.name.clone(),
+            picked_version: picked_version.to_string(),
+            current_evidence: current,
+            prior_evidence: prior.evidence,
+            prior_version: prior.version,
+        }));
+    }
+    Ok(())
+}
+
+/// Trust-policy check using the compact history fetched for an exact
+/// dependency. The selected release remains full [`VersionMetadata`]; only
+/// historical releases use the evidence-only representation.
+pub fn check_no_downgrade_compact(
+    packument: &Packument,
+    picked_version: &str,
+    picked_meta: &VersionMetadata,
+    history: &std::collections::BTreeMap<String, aube_registry::VersionTrustMetadata>,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    let picked_parsed = node_semver::Version::parse(picked_version).ok();
+    if let Some(ref version) = picked_parsed {
+        if exclude.matches(&packument.name, version) {
+            return Ok(());
+        }
+    } else if exclude.matches_name_only(&packument.name) {
+        return Ok(());
+    }
+    if packument.time.is_empty() {
+        return Ok(());
+    }
+    let Some(picked_time) = packument.time.get(picked_version) else {
+        return Err(TrustCheckError::MissingTime(MissingTimeDetails {
+            name: packument.name.clone(),
+            version: picked_version.to_string(),
+        }));
+    };
+    if let Some(minutes) = ignore_after_minutes
+        && minutes > 0
+        && let Some(cutoff) = cutoff_iso8601(minutes)
+        && picked_time.as_str() < cutoff.as_str()
+    {
+        return Ok(());
+    }
+
+    let exclude_prereleases = picked_parsed
+        .as_ref()
+        .map(|version| version.pre_release.is_empty())
+        .unwrap_or(false);
+    let mut strongest: Option<PriorTrustEvidence> = None;
+    for (version, meta) in history {
+        if version == picked_version {
+            continue;
+        }
+        let Some(published_at) = packument.time.get(version) else {
+            continue;
+        };
+        if published_at >= picked_time {
+            continue;
+        }
+        if exclude_prereleases
+            && let Ok(parsed) = node_semver::Version::parse(version)
+            && !parsed.pre_release.is_empty()
+        {
+            continue;
+        }
+        let Some(evidence) = compact_evidence_for(meta) else {
+            continue;
+        };
+        if strongest
+            .as_ref()
+            .is_none_or(|current| evidence.rank() > current.evidence.rank())
+        {
+            strongest = Some(PriorTrustEvidence {
+                version: version.clone(),
+                evidence,
+            });
+        }
+        if strongest
+            .as_ref()
+            .is_some_and(|prior| prior.evidence == TrustEvidence::StagedPublish)
+        {
+            break;
+        }
+    }
+    let Some(prior) = strongest else {
+        return Ok(());
+    };
+    let current = evidence_for(picked_meta);
+    if current.map_or(0, TrustEvidence::rank) < prior.evidence.rank() {
         return Err(TrustCheckError::Downgrade(TrustDowngradeDetails {
             name: packument.name.clone(),
             picked_version: picked_version.to_string(),
@@ -872,6 +988,57 @@ mod tests {
             }
             _ => panic!("expected Downgrade"),
         }
+    }
+
+    #[test]
+    fn compact_history_preserves_downgrade_detection() {
+        let p = packument(
+            "foo",
+            vec![("3.0.0", "2025-03-01T00:00:00.000Z", version("foo", "3.0.0"))],
+        );
+        let history = BTreeMap::from([
+            (
+                "2.0.0".to_string(),
+                aube_registry::VersionTrustMetadata {
+                    approver: None,
+                    npm_user: None,
+                    dist: Some(aube_registry::VersionTrustDist {
+                        attestations: Some(Attestations {
+                            provenance: Some(serde_json::json!({
+                                "predicateType": "https://slsa.dev/provenance/v1"
+                            })),
+                        }),
+                    }),
+                },
+            ),
+            (
+                "3.0.0".to_string(),
+                aube_registry::VersionTrustMetadata {
+                    approver: None,
+                    npm_user: None,
+                    dist: None,
+                },
+            ),
+        ]);
+        let mut p = p;
+        p.time
+            .insert("2.0.0".to_string(), "2025-02-01T00:00:00.000Z".to_string());
+        let picked = &p.versions["3.0.0"];
+
+        let err = check_no_downgrade_compact(
+            &p,
+            "3.0.0",
+            picked,
+            &history,
+            &TrustExcludeRules::default(),
+            None,
+        )
+        .expect_err("compact prior provenance must still block a downgrade");
+        let TrustCheckError::Downgrade(details) = err else {
+            panic!("expected Downgrade");
+        };
+        assert_eq!(details.prior_version, "2.0.0");
+        assert_eq!(details.prior_evidence, TrustEvidence::Provenance);
     }
 
     #[test]

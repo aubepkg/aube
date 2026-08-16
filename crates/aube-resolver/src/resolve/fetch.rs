@@ -1,6 +1,6 @@
 use crate::{Error, FxHashSet, Resolver};
-use aube_registry::Packument;
 use aube_registry::client::RegistryClient;
+use aube_registry::{Packument, VersionTrustMetadata};
 use aube_util::adaptive::AdaptiveLimit;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use tokio::task::JoinSet;
 /// keeping it compatible with the BFS loop's `&mut self.resolver.cache`
 /// access pattern.
 pub(super) struct FetchScheduler {
-    in_flight: JoinSet<Result<(String, Packument, bool), Error>>,
+    in_flight: JoinSet<Result<FetchResult, Error>>,
     in_flight_names: FxHashSet<String>,
     primer_seeded_names: FxHashSet<String>,
     sem: Arc<AdaptiveLimit>,
@@ -32,8 +32,9 @@ pub(super) struct FetchScheduler {
     needs_time: bool,
 }
 
-pub(super) type FetchOutcome =
-    Option<Result<Result<(String, Packument, bool), Error>, tokio::task::JoinError>>;
+pub(super) type TrustHistory = std::collections::BTreeMap<String, VersionTrustMetadata>;
+pub(super) type FetchResult = (String, Packument, bool, Option<TrustHistory>);
+pub(super) type FetchOutcome = Option<Result<Result<FetchResult, Error>, tokio::task::JoinError>>;
 
 impl FetchScheduler {
     pub(super) fn new(resolver: &Resolver, sem: Arc<AdaptiveLimit>, needs_time: bool) -> Self {
@@ -86,6 +87,36 @@ impl FetchScheduler {
         }));
     }
 
+    /// Fetch an exact optional dependency without retaining every historical
+    /// version's dependency metadata. The full document is decoded into its
+    /// publish-time/trust subset so policy checks keep their semantics.
+    pub(super) fn ensure_exact_optional_fetch(
+        &mut self,
+        name: &str,
+        version: &str,
+        published_by: Option<&str>,
+    ) {
+        if self.in_flight_names.contains(name) {
+            return;
+        }
+        self.in_flight_names.insert(name.to_string());
+        let primer_covers_cutoff = self.mra_exclude.matches_name_only(name)
+            || published_by.is_none_or(crate::primer::covers_cutoff);
+        self.in_flight.spawn(fetch_exact_optional_packument(
+            FetchInputs {
+                name: name.to_string(),
+                client: self.client.clone(),
+                cache_dir: self.cache_dir.clone(),
+                full_cache_dir: self.full_cache_dir.clone(),
+                primer_covers_cutoff,
+                force_metadata_primer: self.force_metadata_primer,
+                sem: self.sem.clone(),
+                needs_time: self.needs_time,
+            },
+            version.to_string(),
+        ));
+    }
+
     /// Wait for the next in-flight fetch to complete.
     pub(super) async fn join_next(&mut self) -> FetchOutcome {
         self.in_flight.join_next().await
@@ -113,6 +144,7 @@ impl FetchScheduler {
 ///
 /// All fields are owned/`Arc`-cloned so the future can be moved into
 /// the resolver's `JoinSet` without borrowing the outer scope.
+#[derive(Clone)]
 struct FetchInputs {
     name: String,
     client: Arc<RegistryClient>,
@@ -139,7 +171,7 @@ struct FetchInputs {
 /// capped slice of high-traffic histories), so the caller knows a
 /// range miss must trigger a live registry refetch before reporting
 /// `ERR_AUBE_NO_MATCHING_VERSION`.
-async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, bool), Error> {
+async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> {
     let FetchInputs {
         name,
         client,
@@ -190,7 +222,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, 
             },
         );
         permit.record_cancelled();
-        return Ok((name, packument, false));
+        return Ok((name, packument, false, None));
     }
     let use_metadata_primer = (force_metadata_primer
         || client.uses_default_npm_registry_for(&name))
@@ -242,7 +274,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, 
             },
         );
         permit.record_cancelled();
-        return Ok((name, packument, true));
+        return Ok((name, packument, true, None));
     }
     let fetch_outcome = if needs_time {
         match full_cache_dir.as_ref() {
@@ -285,5 +317,43 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<(String, Packument, 
             )
         },
     );
-    Ok((name, packument, false))
+    Ok((name, packument, false, None))
+}
+
+async fn fetch_exact_optional_packument(
+    inputs: FetchInputs,
+    version: String,
+) -> Result<FetchResult, Error> {
+    let permit = inputs.sem.acquire().await;
+    let name = inputs.name.clone();
+    let fetched = tokio::try_join!(
+        inputs.client.fetch_single_version_metadata(&name, &version),
+        inputs.client.fetch_packument_trust_history(&name),
+    );
+    match fetched {
+        Ok((metadata, history)) => {
+            permit.record_success();
+            let mut versions = std::collections::BTreeMap::new();
+            versions.insert(version, metadata);
+            Ok((
+                name.clone(),
+                Packument {
+                    name,
+                    modified: None,
+                    versions,
+                    dist_tags: std::collections::BTreeMap::new(),
+                    time: history.time,
+                },
+                false,
+                Some(history.versions),
+            ))
+        }
+        Err(err) => {
+            tracing::debug!(
+                "compact exact metadata fetch failed for optional dep {name}@{version}; falling back to full packument: {err}"
+            );
+            permit.record_cancelled();
+            fetch_one_packument(inputs).await
+        }
+    }
 }

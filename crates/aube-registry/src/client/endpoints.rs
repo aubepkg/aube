@@ -4,7 +4,7 @@ use super::{
     AUDIT_BODY_CAP, PACKUMENT_FULL_ACCEPT, RegistryClient, check_dist_tag_status,
     dist_tag_root_url, dist_tag_url, parse_full_response,
 };
-use crate::Error;
+use crate::{Error, NetworkMode};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::path::Path;
@@ -138,6 +138,11 @@ impl RegistryClient {
         name: &str,
         version: &str,
     ) -> Result<crate::VersionMetadata, Error> {
+        if self.network_mode == NetworkMode::Offline {
+            return Err(Error::Offline(format!(
+                "version metadata for {name}@{version}"
+            )));
+        }
         let (packument_url, registry_url) = self.packument_url(name);
         let url = format!("{packument_url}/{version}");
         let resp = self
@@ -154,6 +159,35 @@ impl RegistryClient {
             &resp,
             self.fetch_policy.packument_max_bytes,
             "version-metadata",
+        )?;
+        parse_full_response(resp).await
+    }
+
+    /// Fetch only publish times and trust evidence from a full packument.
+    /// This still transfers the registry document, but serde skips the large
+    /// dependency and distribution payload retained by normal resolution.
+    pub async fn fetch_packument_trust_history(
+        &self,
+        name: &str,
+    ) -> Result<crate::PackumentTrustHistory, Error> {
+        if self.network_mode == NetworkMode::Offline {
+            return Err(Error::Offline(format!("trust history for {name}")));
+        }
+        let (url, registry_url) = self.packument_url(name);
+        let resp = self
+            .send_metadata_with_retry(&format!("trust history {name}"), || {
+                self.authed_get_for_package(&url, registry_url, name)
+                    .header("Accept", PACKUMENT_FULL_ACCEPT)
+            })
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(Error::NotFound(name.to_string()));
+        }
+        let resp = resp.error_for_status()?;
+        check_body_cap(
+            &resp,
+            self.fetch_policy.packument_max_bytes,
+            "packument-trust-history",
         )?;
         parse_full_response(resp).await
     }

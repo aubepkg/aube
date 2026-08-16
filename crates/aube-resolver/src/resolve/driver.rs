@@ -16,7 +16,7 @@
 //! sibling-dedupe → lockfile-reuse → fetch-and-pick) is staged for a
 //! later refactor.
 
-use super::fetch::FetchScheduler;
+use super::fetch::{FetchScheduler, TrustHistory};
 use super::seed::seed_direct_deps;
 use super::vulnerable::{is_vulnerable, prefer_non_vulnerable_pick};
 use crate::local_source::{
@@ -95,6 +95,7 @@ pub(crate) struct ResolveDriver<'a> {
     /// doesn't crash the wrong task. Checked after the fetch-wait loop
     /// to decide skip (optional) vs propagate (required).
     failed_fetches: FxHashMap<String, Error>,
+    trust_histories: FxHashMap<String, TrustHistory>,
     /// Catalog picks gathered as the BFS rewrites `catalog:` task
     /// ranges. Outer key: catalog name. Inner: package name → spec.
     catalog_picks: BTreeMap<String, BTreeMap<String, String>>,
@@ -235,6 +236,7 @@ impl<'a> ResolveDriver<'a> {
             resolved_times: BTreeMap::new(),
             skipped_optional_dependencies: BTreeMap::new(),
             failed_fetches: FxHashMap::default(),
+            trust_histories: FxHashMap::default(),
             catalog_picks: BTreeMap::new(),
             deferred_transitives: Vec::new(),
             published_by,
@@ -305,6 +307,21 @@ impl<'a> ResolveDriver<'a> {
     /// popped.
     fn seed_initial_prefetches(&mut self) {
         for task in self.queue.iter() {
+            // Time-aware resolution needs publish times and trust evidence
+            // from package history. Exact optionals use the compact-history
+            // path so every platform variant can stay in the lockfile without
+            // retaining every release's dependency metadata.
+            if self.needs_time
+                && task.dep_type == DepType::Optional
+                && node_semver::Version::parse(&task.range).is_ok()
+            {
+                self.fetcher.ensure_exact_optional_fetch(
+                    task.name.as_str(),
+                    task.range.as_str(),
+                    self.published_by.as_deref(),
+                );
+                continue;
+            }
             if !self.resolver.is_prefetchable(
                 task.name.as_str(),
                 task.range.as_str(),
@@ -465,10 +482,13 @@ impl<'a> ResolveDriver<'a> {
         {
             self.ensure_fetch(&fetch_name);
             match self.fetcher.join_next().await {
-                Some(Ok(Ok((name, packument, from_primer)))) => {
+                Some(Ok(Ok((name, packument, from_primer, trust_history)))) => {
                     self.fetcher.release_in_flight(&name);
                     if from_primer {
                         self.fetcher.note_primer_seeded(name.clone());
+                    }
+                    if let Some(history) = trust_history {
+                        self.trust_histories.insert(name.clone(), history);
                     }
                     self.resolver.cache.insert(name, packument);
                     self.packument_fetch_count += 1;
@@ -715,14 +735,24 @@ impl<'a> ResolveDriver<'a> {
         // map and all version metadata, both of which are still
         // in scope here from L1191.
         if self.resolver.dependency_policy.trust_policy == crate::TrustPolicy::NoDowngrade {
-            crate::trust::check_no_downgrade(
-                packument,
-                &picked_ref.version,
-                picked_ref,
-                &self.resolver.dependency_policy.trust_policy_exclude,
-                self.resolver.dependency_policy.trust_policy_ignore_after,
-            )
-            .map_err(|e| match e {
+            let result = match self.trust_histories.get(&registry_name) {
+                Some(history) => crate::trust::check_no_downgrade_compact(
+                    packument,
+                    &picked_ref.version,
+                    picked_ref,
+                    history,
+                    &self.resolver.dependency_policy.trust_policy_exclude,
+                    self.resolver.dependency_policy.trust_policy_ignore_after,
+                ),
+                None => crate::trust::check_no_downgrade(
+                    packument,
+                    &picked_ref.version,
+                    picked_ref,
+                    &self.resolver.dependency_policy.trust_policy_exclude,
+                    self.resolver.dependency_policy.trust_policy_ignore_after,
+                ),
+            };
+            result.map_err(|e| match e {
                 crate::trust::TrustCheckError::Downgrade(d) => Error::TrustDowngrade(Box::new(d)),
                 crate::trust::TrustCheckError::MissingTime(d) => {
                     Error::TrustCheckMissingTime(Box::new(d))
@@ -1211,7 +1241,13 @@ impl<'a> ResolveDriver<'a> {
                 );
                 continue;
             }
-            if !self.existing_names.contains(dep_name.as_str())
+            if self.needs_time && node_semver::Version::parse(dep_range).is_ok() {
+                self.fetcher.ensure_exact_optional_fetch(
+                    dep_name,
+                    dep_range,
+                    self.published_by.as_deref(),
+                );
+            } else if !self.existing_names.contains(dep_name.as_str())
                 && self.resolver.is_prefetchable(
                     dep_name.as_str(),
                     dep_range.as_str(),

@@ -210,6 +210,35 @@ pub struct Packument {
     pub time: BTreeMap<String, String>,
 }
 
+/// The subset of a full packument needed to enforce publish-time and
+/// trust-downgrade policies for an exact version. Deserializing this shape
+/// skips dependency maps and distribution metadata for every historical
+/// release, avoiding the large retained heap of a full [`Packument`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct PackumentTrustHistory {
+    #[serde(default, deserialize_with = "non_string_tolerant_map")]
+    pub time: BTreeMap<String, String>,
+    #[serde(default)]
+    pub versions: BTreeMap<String, VersionTrustMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionTrustMetadata {
+    #[serde(default)]
+    pub approver: Option<serde_json::Value>,
+    #[serde(default, rename = "_npmUser", deserialize_with = "npm_user_tolerant")]
+    pub npm_user: Option<NpmUser>,
+    #[serde(default)]
+    pub dist: Option<VersionTrustDist>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VersionTrustDist {
+    #[serde(default)]
+    pub attestations: Option<Attestations>,
+}
+
 /// Metadata for a specific version of a package.
 ///
 /// Deserializes via `VersionMetadataRaw` (`#[serde(from = ...)]`) so

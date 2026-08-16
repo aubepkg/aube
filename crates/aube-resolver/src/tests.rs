@@ -1255,6 +1255,107 @@ async fn minimum_release_age_fetches_full_packument_directly() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+#[tokio::test]
+async fn minimum_release_age_compacts_exact_optional_platform_history() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut packument = make_packument("darwin-only", &["1.0.0"], "1.0.0");
+    packument
+        .time
+        .insert("1.0.0".to_string(), "2024-01-01T00:00:00.000Z".to_string());
+    let mut exact = packument.versions["1.0.0"].clone();
+    exact.os = vec!["darwin".to_string()];
+    packument
+        .versions
+        .insert("1.0.0".to_string(), exact.clone());
+    let exact_body = serde_json::to_vec(&exact).unwrap();
+    let full_body = serde_json::to_vec(&packument).unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let exact_requests = Arc::new(AtomicUsize::new(0));
+    let full_requests = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let exact_requests = exact_requests.clone();
+        let full_requests = full_requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let exact_body = exact_body.clone();
+                let full_body = full_body.clone();
+                let exact_requests = exact_requests.clone();
+                let full_requests = full_requests.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 2048];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let path = std::str::from_utf8(&buf[..n])
+                        .ok()
+                        .and_then(|request| request.split_whitespace().nth(1))
+                        .unwrap_or("/");
+                    let body = if path.ends_with("/1.0.0") {
+                        exact_requests.fetch_add(1, Ordering::Relaxed);
+                        exact_body
+                    } else {
+                        full_requests.fetch_add(1, Ordering::Relaxed);
+                        full_body
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                });
+            }
+        })
+    };
+
+    let base = std::env::temp_dir().join(format!(
+        "aube-resolver-exact-optional-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(base.join("packuments")).unwrap();
+    std::fs::create_dir_all(base.join("packuments-full")).unwrap();
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+    let mut resolver = Resolver::new(client)
+        .with_packument_cache(base.join("packuments"))
+        .with_packument_full_cache(base.join("packuments-full"))
+        .with_minimum_release_age(Some(MinimumReleaseAge {
+            minutes: 60,
+            ..Default::default()
+        }));
+    let mut manifest = PackageJson::default();
+    manifest
+        .optional_dependencies
+        .insert("darwin-only".to_string(), "1.0.0".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    assert!(!graph_has_package(&graph, "darwin-only", "1.0.0"));
+    assert_eq!(exact_requests.load(Ordering::Relaxed), 1);
+    assert_eq!(full_requests.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        resolver.cache["darwin-only"].versions.len(),
+        1,
+        "the full history must not be retained in the resolver cache"
+    );
+    assert_eq!(
+        graph.skipped_optional_dependencies["."]["darwin-only"],
+        "1.0.0"
+    );
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(base);
+}
+
 /// Regression: when both `minimumReleaseAge` and `trustPolicy=NoDowngrade`
 /// are active, the resolver must use a full packument with `time`;
 /// using an abbreviated corgi packument would make the trust check fail
