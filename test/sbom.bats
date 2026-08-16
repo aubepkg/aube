@@ -158,6 +158,17 @@ JSON
 	assert_output --partial "no lockfile"
 }
 
+@test "aube sbom classifies invalid workspace config" {
+	_setup_mixed_fixture
+	cat >pnpm-workspace.yaml <<'YAML'
+packages: [
+YAML
+
+	run aube sbom
+	assert_failure
+	assert_output --partial "ERR_AUBE_WORKSPACE_PARSE"
+}
+
 @test "aube sbom filters foreign optional packages unless lockfile-only is requested" {
 	if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
 		skip "win32 host would install the win32 optional dependency"
