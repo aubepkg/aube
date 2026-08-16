@@ -1270,6 +1270,14 @@ map requires symlink targets to stay within the project root or configured
 watch folders; Expo and React Native use Metro but normally declare their
 framework package rather than `metro` directly.
 
+Track upstream compatibility in
+[vercel/next.js#93556](https://github.com/vercel/next.js/issues/93556) for
+Next.js and
+[expo/expo#45460](https://github.com/expo/expo/pull/45460) for the Metro
+file-map change that follows global-store symlinks. The Metro-family entries
+remain in the default list until that behavior is available across the Expo,
+React Native, and direct Metro versions aube supports.
+
 Nuxt, Parcel, Vite, and VitePress are compatible with the global virtual store.
 For Nuxt and Parcel, aube's sibling dependency links keep resolution inside the
 installed graph. For Vite and VitePress, aube writes

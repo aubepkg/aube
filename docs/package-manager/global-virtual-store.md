@@ -162,10 +162,12 @@ aube automatically falls back to per-project materialization when an importer
 depends on a package with a known global-virtual-store incompatibility. The
 default trigger list is:
 
-- `next`
-- `expo`
-- `react-native`
-- `metro`
+- `next` — track the upstream Turbopack compatibility bug in
+  [vercel/next.js#93556](https://github.com/vercel/next.js/issues/93556)
+- `expo`, `react-native`, and `metro` — track the merged Metro file-map support
+  in [expo/expo#45460](https://github.com/expo/expo/pull/45460). aube keeps the
+  fallback for now because the compatible behavior is not yet available across
+  the framework and Metro versions these package names can select.
 
 When that happens, install still succeeds and aube prints a warning. Repeat
 installs of that project just won't share materialized package directories
