@@ -37,6 +37,12 @@ run = "hk check --all --slow"
 [tasks.lint-fix]
 run = "hk fix --all --slow"
 
+# Apply clippy's machine-applicable autofixes. Coverage matches aube's clippy
+# gate (`cargo clippy --all-targets -- -D warnings`). Run on a dirty tree is
+# intended (--allow-dirty --allow-staged); review the diff before committing.
+[tasks.fix]
+run = "cargo clippy --fix --all-targets --allow-dirty --allow-staged -- -D warnings"
+
 [tasks.build]
 run = "cargo build"
 
