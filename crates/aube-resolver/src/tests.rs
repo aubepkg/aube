@@ -2805,6 +2805,61 @@ fn dedupe_peers_cycle_break_still_converges() {
     }
 }
 
+#[test]
+fn peer_chain_deeper_than_legacy_limit_converges() {
+    const CHAIN_LEN: usize = 20;
+    let package_name = |index: usize| format!("package-{index:02}");
+    let mut packages = BTreeMap::new();
+
+    for index in 0..CHAIN_LEN {
+        let name = package_name(index);
+        let next = (index + 1 < CHAIN_LEN).then(|| package_name(index + 1));
+        let dependencies = next
+            .as_deref()
+            .map(|next| vec![(next, "1.0.0")])
+            .unwrap_or_default();
+        let peer_dependencies = next
+            .as_deref()
+            .map(|next| vec![(next, "^1")])
+            .unwrap_or_default();
+        packages.insert(
+            format!("{name}@1.0.0"),
+            mk_locked(&name, "1.0.0", &dependencies, &peer_dependencies),
+        );
+    }
+
+    let root_name = package_name(0);
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: root_name.clone(),
+            dep_path: format!("{root_name}@1.0.0"),
+            dep_type: DepType::Production,
+            specifier: Some("^1".to_string()),
+        }],
+    );
+
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("peer chains deeper than 16 packages should converge");
+
+    for package in out.packages.values() {
+        for (child_name, child_tail) in &package.dependencies {
+            let child_key = format!("{child_name}@{child_tail}");
+            assert!(
+                out.packages.contains_key(&child_key),
+                "dangling dep_path {child_key} referenced from {}",
+                package.dep_path
+            );
+        }
+    }
+}
+
 // Regression: under `dedupe-peers=true`, a package whose canonical
 // version coincidentally matches a nested peer's version in an
 // unrelated subtree must NOT collide. Cycle detection runs against

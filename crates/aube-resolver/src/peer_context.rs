@@ -296,7 +296,9 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
 /// contextualized tails in every `pkg.dependencies` map, so when a
 /// descendant looks a peer up in ancestor scope it sees the full
 /// nested tail and serializes it as such. Most peer chains converge in
-/// 2–3 iterations; we cap at 16 as a safety belt.
+/// 2–3 iterations. The safety limit scales with the number of peer-bearing
+/// packages so deeper finite chains can converge, with a hard ceiling to
+/// bound work for pathological graphs.
 ///
 /// Limitations (documented as follow-ups in the README):
 ///   - No per-peer range satisfaction — we take whatever the ancestor has,
@@ -361,7 +363,20 @@ pub fn apply_peer_contexts(
     canonical: LockfileGraph,
     options: &PeerContextOptions,
 ) -> Result<LockfileGraph, crate::Error> {
-    const MAX_ITERATIONS: usize = 16;
+    const MIN_ITERATIONS: usize = 16;
+    const MAX_ITERATIONS: usize = 256;
+    // Each pass can propagate one more nested peer suffix through a chain.
+    // Allow one pass per peer-bearing package plus a final unchanged pass to
+    // confirm convergence. Keep the legacy 16-pass floor for small cyclic
+    // graphs, while retaining a hard ceiling for adversarial input.
+    let peer_package_count = canonical
+        .packages
+        .values()
+        .filter(|pkg| !pkg.peer_dependencies.is_empty())
+        .count();
+    let iteration_limit = peer_package_count
+        .saturating_add(1)
+        .clamp(MIN_ITERATIONS, MAX_ITERATIONS);
     let mut current = canonical;
     let mut converged = false;
     // Hash both keys and dependency tails. A peer-context iteration can
@@ -384,12 +399,12 @@ pub fn apply_peer_contexts(
         aube_util::hash::ordered_seq_hash(tokens.iter().copied())
     };
     // Carry the post-iteration hash forward as the next iteration's
-    // pre-hash. Saves one full graph walk per iteration (the loop runs
-    // up to 16 times; each `graph_hash` allocates a Vec<&str> sized
+    // pre-hash. Saves one full graph walk per iteration (each `graph_hash`
+    // allocates a Vec<&str> sized
     // to `pkgs * 3 + deps * 2` tokens — ~25k entries on a 1000-pkg
     // graph). One hash per iter instead of two.
     let mut before = graph_hash(&current);
-    for i in 0..MAX_ITERATIONS {
+    for i in 0..iteration_limit {
         let after_once = apply_peer_contexts_once(current, options);
         let next = if options.dedupe_peer_dependents {
             dedupe_peer_variants(after_once)
@@ -411,10 +426,10 @@ pub fn apply_peer_contexts(
         // broken node_modules. Now fatal.
         tracing::error!(
             code = aube_codes::errors::ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED,
-            max_iterations = MAX_ITERATIONS,
-            "peer-context hit MAX_ITERATIONS={MAX_ITERATIONS} without convergence"
+            max_iterations = iteration_limit,
+            "peer-context hit iteration limit={iteration_limit} without convergence"
         );
-        return Err(crate::Error::PeerContextDivergence(MAX_ITERATIONS));
+        return Err(crate::Error::PeerContextDivergence(iteration_limit));
     }
     // Propagate each package's peer-suffix segments up through its
     // non-peer-declaring ancestors so a parent that pulls in a peer-
