@@ -210,7 +210,9 @@ impl Store {
         let index: PackageIndex = sonic_rs::from_slice(&buf).ok()?;
         if !index_files_match_metadata(&index, verify_files) {
             trace!("cache stale: {name}@{version}");
-            let _ = xx::file::remove_file(&index_path);
+            if self.prepare_for_write().is_ok() {
+                let _ = xx::file::remove_file(&index_path);
+            }
             return None;
         }
         trace!("cache hit: {name}@{version}");
@@ -232,6 +234,7 @@ impl Store {
         version: &str,
         integrity: Option<&str>,
     ) -> Result<bool, Error> {
+        self.prepare_for_write()?;
         let Some(index_path) = self.index_path(name, version, integrity) else {
             return Ok(false);
         };
@@ -253,6 +256,7 @@ impl Store {
         integrity: Option<&str>,
         index: &PackageIndex,
     ) -> Result<(), Error> {
+        self.prepare_for_write()?;
         let index_path = self.index_path(name, version, integrity).ok_or_else(|| {
             Error::Tar(format!(
                 "refusing to cache: invalid coordinate {name:?}@{version:?} or integrity {integrity:?}"

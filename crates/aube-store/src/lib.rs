@@ -45,16 +45,35 @@ use sha1::Sha1;
 #[cfg(test)]
 use sha2::{Digest as _, Sha256, Sha384, Sha512};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const CACHE_DIR_NAME: &str = "aube-cache";
 pub const INDEX_SUBDIR: &str = "index";
 pub const VIRTUAL_STORE_SUBDIR: &str = "virtual-store";
 pub const PACKUMENT_CACHE_SUBDIR: &str = "packuments-v1";
 pub const PACKUMENT_FULL_CACHE_SUBDIR: &str = "packuments-full-v1";
+pub const MAINTENANCE_LOCK_FILE: &str = ".maintenance.lock";
+
+#[derive(Default)]
+struct MaintenanceState {
+    shared: Mutex<Option<std::fs::File>>,
+}
+
+/// Exclusive store-maintenance lease held by `aube store prune`.
+///
+/// Every CAS/index writer takes the corresponding shared lease through
+/// [`Store::prepare_for_write`], so holding this guard freezes one complete
+/// prune snapshot across the GVS, cached indexes, and CAS files.
+pub struct StoreMaintenanceGuard(std::fs::File);
+
+impl Drop for StoreMaintenanceGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
 
 /// The global content-addressable store, owned by aube.
 ///
@@ -83,6 +102,8 @@ pub struct Store {
     /// `storeDir` volume so materialized packages can be hardlinked
     /// out of the CAS.
     virtual_store_dir: PathBuf,
+    maintenance: Arc<MaintenanceState>,
+    migration_done: Arc<OnceLock<()>>,
     /// When set, `create_cas_file` writes directly to the final
     /// content-addressed path on non-Linux platforms instead of the
     /// tempfile-then-rename dance. Caller must guarantee no concurrent
@@ -125,14 +146,14 @@ impl Store {
     /// user-facing store dir. The global virtual store lands under
     /// `cache_dir` unless [`Store::with_virtual_store_dir`] moves it.
     pub fn with_dirs(root: PathBuf, cache_dir: PathBuf) -> Self {
-        let store = Self {
+        Self {
             root,
             virtual_store_dir: cache_dir.join(VIRTUAL_STORE_SUBDIR),
             cache_dir,
+            maintenance: Arc::new(MaintenanceState::default()),
+            migration_done: Arc::new(OnceLock::new()),
             fast_path: Arc::new(AtomicBool::new(false)),
-        };
-        store.migrate_legacy_index_dir();
-        store
+        }
     }
 
     /// Point the global virtual store somewhere other than
@@ -153,6 +174,8 @@ impl Store {
             root,
             virtual_store_dir: cache_dir.join(VIRTUAL_STORE_SUBDIR),
             cache_dir,
+            maintenance: Arc::new(MaintenanceState::default()),
+            migration_done: Arc::new(OnceLock::new()),
             fast_path: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -210,12 +233,18 @@ impl Store {
     /// aube wrote cached package indexes before they were moved next
     /// to the CAS files. Used only by [`migrate_legacy_index_dir`]; new
     /// code should always go through [`index_dir`].
-    fn legacy_index_dir(&self) -> PathBuf {
+    pub fn legacy_index_dir(&self) -> PathBuf {
         self.cache_dir.join(INDEX_SUBDIR)
     }
 
+    /// Whether opening this store for writes would migrate the legacy index.
+    pub fn legacy_index_migration_needed(&self) -> bool {
+        self.legacy_index_dir().exists() && !self.index_dir().exists()
+    }
+
     /// One-shot migration from the legacy XDG-cache index location to
-    /// the in-store `v1/index/` directory. Runs at `Store::open`-time.
+    /// the in-store `v1/index/` directory. Runs when the store first prepares
+    /// for a write, after its shared maintenance lease is acquired.
     ///
     /// The legacy location was a footgun under Docker BuildKit cache
     /// mounts: users would mount the CAS files dir, the indexes would
@@ -286,6 +315,81 @@ impl Store {
                 legacy.display()
             );
         }
+    }
+
+    pub fn maintenance_lock_path(&self) -> PathBuf {
+        self.store_v1_dir().join(MAINTENANCE_LOCK_FILE)
+    }
+
+    fn open_maintenance_lock(&self) -> Result<std::fs::File, Error> {
+        let path = self.maintenance_lock_path();
+        let Some(parent) = path.parent() else {
+            return Err(Error::Io(
+                path,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "store maintenance lock has no parent",
+                ),
+            ));
+        };
+        std::fs::create_dir_all(parent).map_err(|e| Error::Io(parent.to_path_buf(), e))?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| Error::Io(path, e))
+    }
+
+    /// Acquire the shared writer lease and perform any pending legacy-index
+    /// migration. The lease is retained by this `Store` and all of its clones.
+    pub fn prepare_for_write(&self) -> Result<(), Error> {
+        let mut shared = self.maintenance.shared.lock().map_err(|_| {
+            Error::Io(
+                self.maintenance_lock_path(),
+                std::io::Error::other("store maintenance lock state is poisoned"),
+            )
+        })?;
+        if shared.is_none() {
+            let file = self.open_maintenance_lock()?;
+            file.lock_shared()
+                .map_err(|e| Error::Io(self.maintenance_lock_path(), e))?;
+            *shared = Some(file);
+        }
+        drop(shared);
+        self.migration_done.get_or_init(|| {
+            self.migrate_legacy_index_dir();
+        });
+        Ok(())
+    }
+
+    /// Acquire an exclusive lease for a complete prune plan/apply operation.
+    pub fn lock_for_maintenance(&self) -> Result<StoreMaintenanceGuard, Error> {
+        let shared = self.maintenance.shared.lock().map_err(|_| {
+            Error::Io(
+                self.maintenance_lock_path(),
+                std::io::Error::other("store maintenance lock state is poisoned"),
+            )
+        })?;
+        if shared.is_some() {
+            return Err(Error::Io(
+                self.maintenance_lock_path(),
+                std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "this Store already holds a writer lease",
+                ),
+            ));
+        }
+        let file = self.open_maintenance_lock()?;
+        file.lock()
+            .map_err(|e| Error::Io(self.maintenance_lock_path(), e))?;
+        Ok(StoreMaintenanceGuard(file))
+    }
+
+    /// Apply the legacy-index migration while an exclusive maintenance lease
+    /// is held. Used by real prune after its candidate plan is complete.
+    pub fn migrate_legacy_index_for_maintenance(&self, _guard: &StoreMaintenanceGuard) {
+        self.migrate_legacy_index_dir();
     }
 
     /// Directory for the global virtual store (materialized packages).
@@ -368,6 +472,8 @@ mod tests {
             root,
             virtual_store_dir: cache_dir.join(VIRTUAL_STORE_SUBDIR),
             cache_dir,
+            maintenance: Arc::new(MaintenanceState::default()),
+            migration_done: Arc::new(OnceLock::new()),
             fast_path: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -451,6 +557,32 @@ mod tests {
             !store.index_dir().exists(),
             "migration must not create an empty new dir when there's nothing to migrate"
         );
+    }
+
+    #[test]
+    fn maintenance_lock_waits_for_writer_lease() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("store/v1/files");
+        let cache = tmp.path().join("cache");
+        let writer = Store::with_dirs(root.clone(), cache.clone());
+        writer.prepare_for_write().unwrap();
+
+        let maintenance = Store::with_dirs(root, cache);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let guard = maintenance.lock_for_maintenance().unwrap();
+            tx.send(()).unwrap();
+            drop(guard);
+        });
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "maintenance must wait while a writer lease is live"
+        );
+        drop(writer);
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("maintenance should proceed after the writer exits");
+        handle.join().unwrap();
     }
 
     #[test]

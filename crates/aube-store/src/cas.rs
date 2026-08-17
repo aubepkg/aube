@@ -185,6 +185,7 @@ impl Store {
     /// the directory already exists, but callers should still hoist the
     /// call out of tight loops.
     pub fn ensure_shards_exist(&self) -> Result<(), Error> {
+        self.prepare_for_write()?;
         std::fs::create_dir_all(&self.root).map_err(|e| Error::Io(self.root.clone(), e))?;
         // Windows Defender and Search both touch every file in the
         // store on default installs. Setting this attribute makes
@@ -572,6 +573,7 @@ impl Store {
     /// exist yet, the `create_new` open will fail with `NotFound`; we
     /// fall back to the slow path for correctness.
     pub fn import_bytes(&self, content: &[u8], executable: bool) -> Result<StoredFile, Error> {
+        self.prepare_for_write()?;
         let hash_t0 = std::time::Instant::now();
         let hex_hash = blake3_hex(content);
         if aube_util::diag::enabled() {
@@ -733,6 +735,7 @@ impl Store {
         executable: bool,
         gate: Option<&Gate>,
     ) -> Result<StoredFile, Error> {
+        self.prepare_for_write()?;
         let Some(gate) = gate else {
             return self.import_bytes(content, executable);
         };

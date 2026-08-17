@@ -250,13 +250,39 @@ pub(crate) fn ensure_registry_auth_for_package(
 /// across versions of aube and never collides with a pnpm store rooted
 /// at the same path.
 pub(crate) fn open_store(cwd: &std::path::Path) -> miette::Result<aube_store::Store> {
-    with_settings_ctx(cwd, |ctx| open_store_with_ctx(cwd, ctx))
+    let store = with_settings_ctx(cwd, |ctx| open_store_for_maintenance_with_ctx(cwd, ctx))?;
+    store
+        .prepare_for_write()
+        .into_diagnostic()
+        .wrap_err("failed to prepare store for writing")?;
+    Ok(store)
 }
 
 /// Open the content store using an already-resolved invocation context.
 /// Embedded installs use this so their per-call overrides are not lost by a
 /// second file/environment-only settings load.
 pub(crate) fn open_store_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<aube_store::Store> {
+    let store = open_store_for_maintenance_with_ctx(cwd, ctx)?;
+    store
+        .prepare_for_write()
+        .into_diagnostic()
+        .wrap_err("failed to prepare store for writing")?;
+    Ok(store)
+}
+
+/// Resolve a Store without taking its writer lease or migrating legacy data.
+/// Store maintenance uses this constructor so dry-run can plan migrations
+/// without applying them before it acquires the exclusive maintenance lease.
+pub(crate) fn open_store_for_maintenance(
+    cwd: &std::path::Path,
+) -> miette::Result<aube_store::Store> {
+    with_settings_ctx(cwd, |ctx| open_store_for_maintenance_with_ctx(cwd, ctx))
+}
+
+fn open_store_for_maintenance_with_ctx(
     cwd: &std::path::Path,
     ctx: &aube_settings::ResolveCtx<'_>,
 ) -> miette::Result<aube_store::Store> {

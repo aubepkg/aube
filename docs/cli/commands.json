@@ -11260,7 +11260,7 @@
               "store",
               "prune"
             ],
-            "usage": "store prune [--dry-run]",
+            "usage": "store prune [--dry-run] [--json]",
             "subcommands": {},
             "args": [],
             "flags": [
@@ -11272,6 +11272,18 @@
                 "short": [],
                 "long": [
                   "dry-run"
+                ],
+                "hide": false,
+                "global": false
+              },
+              {
+                "name": "json",
+                "usage": "--json",
+                "help": "Emit the dry-run plan as one machine-readable JSON document",
+                "help_first_line": "Emit the dry-run plan as one machine-readable JSON document",
+                "short": [],
+                "long": [
+                  "json"
                 ],
                 "hide": false,
                 "global": false

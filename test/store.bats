@@ -176,6 +176,7 @@ EOF
 	run aube store prune
 	assert_success
 	assert_output --partial "empty"
+	[ ! -d "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/v1" ]
 }
 
 @test "aube store prune actually deletes unreferenced files" {
@@ -211,6 +212,7 @@ EOF
 	assert_success
 	assert_file_not_exists "$stream_temp"
 	assert_output --partial "Pruned 1 file"
+	refute_output --partial "up to"
 }
 
 @test "aube store prune removes entries from deleted registered projects" {
@@ -303,4 +305,79 @@ JSON
 	run aube store prune --dry-run
 	assert_success
 	assert_output --partial "empty"
+}
+
+@test "aube store prune --json requires --dry-run" {
+	run aube store prune --json
+	assert_failure
+	assert_output --partial "--dry-run"
+}
+
+@test "aube store prune retains files referenced only by a legacy index" {
+	run aube store add is-odd@3.0.1
+	assert_success
+
+	store_v1="$(aube store path)"
+	current_index="$(find "$store_v1/index" -name 'is-odd@3.0.1.json' -print -quit)"
+	legacy_index="$XDG_CACHE_HOME/aube/index/legacy/is-odd@3.0.1.json"
+	mkdir -p "$(dirname "$legacy_index")"
+	cp "$current_index" "$legacy_index"
+	legacy_store_path="$(grep -o '"store_path":"[^"]*"' "$legacy_index" | head -n1 | sed 's/.*":"//;s/"$//')"
+	rm "$current_index"
+
+	# Keep the current index directory populated too, reproducing the state
+	# where an interrupted or partial migration left live records in both.
+	run aube store add is-even@1.0.0
+	assert_success
+	assert_file_exists "$legacy_store_path"
+
+	run aube store prune
+	assert_success
+	assert_file_exists "$legacy_store_path"
+}
+
+@test "aube store prune JSON reports every root and leaves legacy indexes unmigrated" {
+	legacy="$XDG_CACHE_HOME/aube/index"
+	mkdir -p "$legacy"
+	echo '{}' >"$legacy/legacy@1.0.0.json"
+
+	run aube store prune --dry-run --json
+	assert_success
+	echo "$output" | jq -e '
+		.schemaVersion == 1 and
+		.dryRun == true and
+		([.mutationRoots[].kind] | index("contentStore") != null) and
+		([.mutationRoots[].kind] | index("globalVirtualStore") != null) and
+		([.mutationRoots[].kind] | index("legacyPackageIndex") != null) and
+		([.actions[].kind] | index("migrateLegacyPackageIndex") != null)
+	' >/dev/null
+	assert_file_exists "$legacy/legacy@1.0.0.json"
+	[ ! -d "$XDG_DATA_HOME/aube/store/v1/index" ]
+}
+
+@test "aube store prune JSON models GVS hardlink removal before CAS pruning" {
+	store_v1="$(aube store path)"
+	cas="$store_v1/files/aa"
+	gvs="$AUBE_GLOBAL_VIRTUAL_STORE_DIR/v1"
+	mkdir -p "$cas" "$gvs/.projects" "$gvs/orphan/node_modules/pkg"
+	content="$cas/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	printf 'shared-content' >"$content"
+	ln "$content" "$gvs/orphan/node_modules/pkg/index.js"
+
+	run aube store prune --dry-run --json
+	assert_success
+	echo "$output" | jq -e '
+		.globalVirtualStore.entries == 1 and
+		.contentStore.files == 1 and
+		.globalVirtualStore.bytesUpperBound == 14 and
+		.contentStore.bytesUpperBound == 14 and
+		.reclaimableBytesUpperBound == 14
+	' >/dev/null
+	assert_file_exists "$content"
+	assert_dir_exists "$gvs/orphan"
+
+	run aube store prune
+	assert_success
+	[ ! -f "$content" ]
+	[ ! -d "$gvs/orphan" ]
 }

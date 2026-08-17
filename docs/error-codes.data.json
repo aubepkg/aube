@@ -151,6 +151,18 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_STORE_PRUNE_LOCK_FAILED",
+      "category": "Tarball / store",
+      "description": "Aube couldn't acquire the store-wide maintenance lock for pruning.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_STORE_PRUNE_FAILED",
+      "category": "Tarball / store",
+      "description": "A planned content-store file couldn't be removed during pruning.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_PACKAGE_NOT_FOUND",
       "category": "Registry / network",
       "description": "Registry returned 404 for the package name.",

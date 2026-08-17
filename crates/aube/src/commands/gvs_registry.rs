@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-const PROJECTS_DIR: &str = ".projects";
-const LOCK_FILE: &str = ".prune.lock";
+pub(crate) const PROJECTS_DIR: &str = ".projects";
+pub(crate) const LOCK_FILE: &str = ".prune.lock";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct RegisteredProject {
@@ -56,14 +56,22 @@ pub(crate) fn lock_for_install(global_virtual_store: &Path) -> miette::Result<Gv
     Ok(GvsLock(file))
 }
 
-fn lock_for_prune(global_virtual_store: &Path) -> miette::Result<GvsLock> {
+pub(crate) fn lock_for_prune(
+    global_virtual_store: &Path,
+    quiet: bool,
+) -> miette::Result<Option<GvsLock>> {
+    if !global_virtual_store.exists() {
+        return Ok(None);
+    }
     let file = open_lock(global_virtual_store)?;
     match file.try_lock() {
         Ok(()) => {}
         Err(std::fs::TryLockError::WouldBlock) => {
-            crate::progress::safe_eprintln(
-                "Waiting for a running global virtual store install to finish before pruning",
-            );
+            if !quiet {
+                crate::progress::safe_eprintln(
+                    "Waiting for a running global virtual store install to finish before pruning",
+                );
+            }
             file.lock()
                 .map_err(|e| lock_error(global_virtual_store, e))?;
         }
@@ -71,7 +79,7 @@ fn lock_for_prune(global_virtual_store: &Path) -> miette::Result<GvsLock> {
             return Err(lock_error(global_virtual_store, e));
         }
     }
-    Ok(GvsLock(file))
+    Ok(Some(GvsLock(file)))
 }
 
 fn lock_error(global_virtual_store: &Path, error: std::io::Error) -> miette::Report {
@@ -148,26 +156,52 @@ pub(crate) fn register_fast_path_project(
     register_project(global_virtual_store, project_dir, aube_dir)
 }
 
-pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Result<usize> {
-    if !global_virtual_store.exists() {
-        return Ok(0);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum FileIdentity {
+    #[cfg(unix)]
+    Unix { device: u64, inode: u64 },
+    #[cfg(not(unix))]
+    Path(PathBuf),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CandidateFile {
+    pub identity: FileIdentity,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct GvsPrunePlan {
+    pub entries: Vec<PathBuf>,
+    pub stale_records: Vec<PathBuf>,
+    pub files: Vec<CandidateFile>,
+}
+
+impl GvsPrunePlan {
+    pub fn bytes(&self) -> u64 {
+        let mut identities = HashSet::new();
+        self.files
+            .iter()
+            .filter(|file| identities.insert(file.identity.clone()))
+            .map(|file| file.bytes)
+            .sum()
     }
-    let _lock = lock_for_prune(global_virtual_store)?;
+}
+
+pub(crate) fn plan_prune(global_virtual_store: &Path) -> miette::Result<GvsPrunePlan> {
+    if !global_virtual_store.exists() {
+        return Ok(GvsPrunePlan::default());
+    }
     let mut reachable = HashSet::new();
-    let mut stale_records = Vec::new();
+    let mut plan = GvsPrunePlan::default();
     let projects_dir = global_virtual_store.join(PROJECTS_DIR);
-    if !projects_dir.exists() {
-        if !graph_entries(global_virtual_store)?.is_empty() {
-            return Err(miette!(
-                code = aube_codes::errors::ERR_AUBE_GVS_PRUNE_FAILED,
-                "global virtual store project registry {} is missing while entries exist\nhelp: run {} in active projects before pruning again",
-                projects_dir.display(),
-                aube_util::cmd("install")
-            ));
-        }
-        if !dry_run {
-            std::fs::create_dir_all(&projects_dir).map_err(|e| registry_error(&projects_dir, e))?;
-        }
+    if !projects_dir.exists() && !graph_entries(global_virtual_store)?.is_empty() {
+        return Err(miette!(
+            code = aube_codes::errors::ERR_AUBE_GVS_PRUNE_FAILED,
+            "global virtual store project registry {} is missing while entries exist\nhelp: run {} in active projects before pruning again",
+            projects_dir.display(),
+            aube_util::cmd("install")
+        ));
     }
 
     if projects_dir.exists() {
@@ -180,9 +214,7 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
             let project: RegisteredProject =
                 serde_json::from_slice(&bytes).map_err(|e| invalid_registry_error(&path, e))?;
             if !project.project_dir.exists() || !project.aube_dir.exists() {
-                if !dry_run {
-                    stale_records.push(path);
-                }
+                plan.stale_records.push(path);
                 continue;
             }
             let current = project_entries(global_virtual_store, &project.aube_dir)?;
@@ -190,7 +222,6 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
         }
     }
 
-    let mut removed = 0;
     for entry in read_dir(global_virtual_store)? {
         let name = entry.file_name();
         if !is_graph_entry_name(&name) {
@@ -202,14 +233,64 @@ pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Resul
         if !file_type.is_dir() || reachable.contains(&name) {
             continue;
         }
-        if !dry_run {
-            aube_linker::remove_dir_all_with_retry(&entry.path())
-                .map_err(|e| prune_error(&entry.path(), e))?;
-        }
-        removed += 1;
+        let path = entry.path();
+        collect_candidate_files(&path, &mut plan.files)?;
+        plan.entries.push(path);
     }
-    for path in stale_records {
-        std::fs::remove_file(&path).map_err(|e| prune_error(&path, e))?;
+    Ok(plan)
+}
+
+pub(crate) fn apply_prune(global_virtual_store: &Path, plan: &GvsPrunePlan) -> miette::Result<()> {
+    if !global_virtual_store.exists() {
+        return Ok(());
+    }
+    for path in &plan.entries {
+        aube_linker::remove_dir_all_with_retry(path).map_err(|e| prune_error(path, e))?;
+    }
+    for path in &plan.stale_records {
+        std::fs::remove_file(path).map_err(|e| prune_error(path, e))?;
+    }
+    let projects_dir = global_virtual_store.join(PROJECTS_DIR);
+    if !projects_dir.exists() {
+        std::fs::create_dir_all(&projects_dir).map_err(|e| registry_error(&projects_dir, e))?;
+    }
+    Ok(())
+}
+
+fn collect_candidate_files(path: &Path, files: &mut Vec<CandidateFile>) -> miette::Result<()> {
+    for entry in read_dir(path)? {
+        let entry_path = entry.path();
+        let metadata =
+            std::fs::symlink_metadata(&entry_path).map_err(|e| prune_error(&entry_path, e))?;
+        if metadata.is_dir() {
+            collect_candidate_files(&entry_path, files)?;
+        } else if metadata.is_file() {
+            #[cfg(unix)]
+            let identity = {
+                use std::os::unix::fs::MetadataExt;
+                FileIdentity::Unix {
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                }
+            };
+            #[cfg(not(unix))]
+            let identity = FileIdentity::Path(entry_path.clone());
+            files.push(CandidateFile {
+                identity,
+                bytes: metadata.len(),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Result<usize> {
+    let _lock = lock_for_prune(global_virtual_store, false)?;
+    let plan = plan_prune(global_virtual_store)?;
+    let removed = plan.entries.len();
+    if !dry_run {
+        apply_prune(global_virtual_store, &plan)?;
     }
     Ok(removed)
 }
