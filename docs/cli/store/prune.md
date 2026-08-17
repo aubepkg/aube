@@ -20,7 +20,4 @@ Do not actually delete anything; report what would be pruned
 
 ### `--json`
 
-Emit the dry-run plan as one machine-readable JSON document. Requires
-`--dry-run`. The report includes every mutation root, planned actions,
-global-virtual-store and content-store byte upper bounds, stale project records,
-and a hardlink-deduplicated combined estimate.
+Emit the dry-run plan as one machine-readable JSON document

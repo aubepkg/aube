@@ -26,11 +26,12 @@
 //! auto-install check.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
-use clap::{Args, Subcommand};
+use clap::{Arg, ArgAction, ArgMatches, Args, Command, Error, FromArgMatches, Subcommand};
 use miette::{IntoDiagnostic, miette};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Args)]
 pub struct StoreArgs {
@@ -74,14 +75,52 @@ pub enum StoreCommand {
     Status,
 }
 
-#[derive(Debug, Args)]
+// `PruneArgs` is part of the published Rust API, so keep its original
+// constructible shape while exposing JSON as CLI-only state.
+static PRUNE_JSON_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug)]
 pub struct PruneArgs {
     /// Do not actually delete anything; report what would be pruned.
-    #[arg(long)]
     pub dry_run: bool,
-    /// Emit the dry-run plan as one machine-readable JSON document.
-    #[arg(long, requires = "dry_run")]
-    pub json: bool,
+}
+
+impl FromArgMatches for PruneArgs {
+    fn from_arg_matches(matches: &ArgMatches) -> Result<Self, Error> {
+        PRUNE_JSON_REQUESTED.store(matches.get_flag("json"), Ordering::Relaxed);
+        Ok(Self {
+            dry_run: matches.get_flag("dry_run"),
+        })
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), Error> {
+        PRUNE_JSON_REQUESTED.store(matches.get_flag("json"), Ordering::Relaxed);
+        self.dry_run = matches.get_flag("dry_run");
+        Ok(())
+    }
+}
+
+impl Args for PruneArgs {
+    fn augment_args(command: Command) -> Command {
+        command
+            .arg(
+                Arg::new("dry_run")
+                    .long("dry-run")
+                    .action(ArgAction::SetTrue)
+                    .help("Do not actually delete anything; report what would be pruned"),
+            )
+            .arg(
+                Arg::new("json")
+                    .long("json")
+                    .action(ArgAction::SetTrue)
+                    .requires("dry_run")
+                    .help("Emit the dry-run plan as one machine-readable JSON document"),
+            )
+    }
+
+    fn augment_args_for_update(command: Command) -> Command {
+        Self::augment_args(command)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -339,6 +378,7 @@ fn visit_indices_in_dir(
 }
 
 fn prune(args: PruneArgs) -> miette::Result<()> {
+    let json = PRUNE_JSON_REQUESTED.swap(false, Ordering::Relaxed);
     let store = open_store_for_maintenance()?;
     let maintenance_lock = store
         .lock_for_maintenance()
@@ -349,7 +389,7 @@ fn prune(args: PruneArgs) -> miette::Result<()> {
                 "failed to lock the store for pruning: {e}"
             )
         })?;
-    let _gvs_lock = super::gvs_registry::lock_for_prune(&store.virtual_store_dir(), args.json)?;
+    let _gvs_lock = super::gvs_registry::lock_for_prune(&store.virtual_store_dir(), json)?;
     let gvs_plan = super::gvs_registry::plan_prune(&store.virtual_store_dir())?;
     let current_index_dir = store.index_dir();
     let legacy_index_dir = store.legacy_index_dir();
@@ -360,7 +400,7 @@ fn prune(args: PruneArgs) -> miette::Result<()> {
     let cas_plan = plan_cas_prune(store.root(), &referenced, &gvs_plan)?;
     let report = build_prune_report(&store, &gvs_plan, &cas_plan);
 
-    if args.json {
+    if json {
         let output = serde_json::to_string_pretty(&report).into_diagnostic()?;
         println!("{output}");
         return Ok(());
