@@ -164,7 +164,7 @@ fn open_store_for_maintenance() -> miette::Result<aube_store::Store> {
 }
 
 fn path() -> miette::Result<()> {
-    let store = open_store()?;
+    let store = open_store_for_maintenance()?;
     println!("{}", store.store_v1_dir().display());
     Ok(())
 }
@@ -394,14 +394,33 @@ fn prune(args: PruneArgs) -> miette::Result<()> {
             gvs_plan.bytes() as f64 / 1_048_576.0
         );
     }
-    if gvs_plan.entries.is_empty() && cas_plan.files.is_empty() {
-        eprintln!("Store is empty: nothing to prune");
-    } else {
+    if !gvs_plan.stale_records.is_empty() {
+        eprintln!(
+            "{verb} {} from the global virtual store registry",
+            pluralizer::pluralize(
+                "stale project record",
+                gvs_plan.stale_records.len() as isize,
+                true
+            )
+        );
+    }
+    if !cas_plan.files.is_empty() {
         let size_prefix = if args.dry_run { "up to " } else { "" };
         eprintln!(
             "{verb} {} ({size_prefix}{:.1} MB) from the store",
             pluralizer::pluralize("file", cas_plan.files.len() as isize, true),
             candidate_bytes(&cas_plan.files) as f64 / 1_048_576.0
+        );
+    }
+    if gvs_plan.entries.is_empty() && gvs_plan.stale_records.is_empty() && cas_plan.files.is_empty()
+    {
+        eprintln!("Nothing to prune");
+    }
+    for path in &gvs_plan.vanished_files {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED,
+            path = %path.display(),
+            "global virtual-store file disappeared while building the prune plan"
         );
     }
     Ok(())
@@ -599,7 +618,17 @@ fn build_prune_report(
             bytes_upper_bound: candidate_bytes(&cas_plan.files),
         },
         reclaimable_bytes_upper_bound: unique.into_values().sum(),
-        warnings: Vec::new(),
+        warnings: gvs_plan
+            .vanished_files
+            .iter()
+            .map(|path| StructuredWarning {
+                code: aube_codes::warnings::WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED,
+                message: format!(
+                    "global virtual-store file {} disappeared while building the prune plan",
+                    path.display()
+                ),
+            })
+            .collect(),
     }
 }
 

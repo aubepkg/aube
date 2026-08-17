@@ -175,6 +175,7 @@ pub(crate) struct GvsPrunePlan {
     pub entries: Vec<PathBuf>,
     pub stale_records: Vec<PathBuf>,
     pub files: Vec<CandidateFile>,
+    pub vanished_files: Vec<PathBuf>,
 }
 
 impl GvsPrunePlan {
@@ -234,7 +235,7 @@ pub(crate) fn plan_prune(global_virtual_store: &Path) -> miette::Result<GvsPrune
             continue;
         }
         let path = entry.path();
-        collect_candidate_files(&path, &mut plan.files)?;
+        collect_candidate_files(&path, &mut plan.files, &mut plan.vanished_files)?;
         plan.entries.push(path);
     }
     Ok(plan)
@@ -257,13 +258,23 @@ pub(crate) fn apply_prune(global_virtual_store: &Path, plan: &GvsPrunePlan) -> m
     Ok(())
 }
 
-fn collect_candidate_files(path: &Path, files: &mut Vec<CandidateFile>) -> miette::Result<()> {
+fn collect_candidate_files(
+    path: &Path,
+    files: &mut Vec<CandidateFile>,
+    vanished_files: &mut Vec<PathBuf>,
+) -> miette::Result<()> {
     for entry in read_dir(path)? {
         let entry_path = entry.path();
-        let metadata =
-            std::fs::symlink_metadata(&entry_path).map_err(|e| prune_error(&entry_path, e))?;
+        let metadata = match std::fs::symlink_metadata(&entry_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                vanished_files.push(entry_path);
+                continue;
+            }
+            Err(error) => return Err(prune_error(&entry_path, error)),
+        };
         if metadata.is_dir() {
-            collect_candidate_files(&entry_path, files)?;
+            collect_candidate_files(&entry_path, files, vanished_files)?;
         } else if metadata.is_file() {
             #[cfg(unix)]
             let identity = {

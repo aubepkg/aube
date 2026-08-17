@@ -693,6 +693,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED",
+      "category": "Store maintenance",
+      "description": "A global virtual-store entry disappeared while a prune plan was being built; the preview skipped it.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_INVALID_CONCURRENCY",
       "category": "Settings / config validation",
       "description": "`network-concurrency` or `link-concurrency` was 0 (must be ≥ 1).",
@@ -1057,6 +1063,7 @@
     "warnings": [
       "pnpmfile / hooks",
       "Install lifecycle",
+      "Store maintenance",
       "Settings / config validation",
       "Update / prerelease",
       "Audit / npmrc",

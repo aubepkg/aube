@@ -30,6 +30,7 @@ pub const WARN_AUBE_DELTA_INVALIDATE_FAILED: &str = "WARN_AUBE_DELTA_INVALIDATE_
 pub const WARN_AUBE_GVS_INCOMPATIBLE: &str = "WARN_AUBE_GVS_INCOMPATIBLE";
 pub const WARN_AUBE_GVS_MODE_CHANGED: &str = "WARN_AUBE_GVS_MODE_CHANGED";
 pub const WARN_AUBE_GVS_CROSS_VOLUME: &str = "WARN_AUBE_GVS_CROSS_VOLUME";
+pub const WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED: &str = "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED";
 
 // ── settings / config validation ────────────────────────────────────
 pub const WARN_AUBE_INVALID_CONCURRENCY: &str = "WARN_AUBE_INVALID_CONCURRENCY";
@@ -125,6 +126,7 @@ pub const WARN_AUBE_RUNTIME_MISE_FALLBACK: &str = "WARN_AUBE_RUNTIME_MISE_FALLBA
 pub mod category {
     pub const PNPMFILE_HOOKS: &str = "pnpmfile / hooks";
     pub const INSTALL_LIFECYCLE: &str = "Install lifecycle";
+    pub const STORE: &str = "Store maintenance";
     pub const SETTINGS_CONFIG: &str = "Settings / config validation";
     pub const UPDATE_PRERELEASE: &str = "Update / prerelease";
     pub const AUDIT_NPMRC: &str = "Audit / npmrc";
@@ -264,6 +266,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_GVS_CROSS_VOLUME,
         category: category::INSTALL_LIFECYCLE,
         description: "`cacheDir` (global virtual store) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED,
+        category: category::STORE,
+        description: "A global virtual-store entry disappeared while a prune plan was being built; the preview skipped it.",
         exit_code: None,
     },
     // Settings / config validation

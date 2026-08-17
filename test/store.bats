@@ -28,6 +28,7 @@ teardown() {
 	# temp dir and XDG_DATA_HOME points inside it, so the resolved
 	# path must match exactly.
 	assert_output "$XDG_DATA_HOME/aube/store/v1"
+	[ ! -e "$XDG_DATA_HOME/aube/store/v1" ]
 }
 
 @test "aube store path honors store-dir from .npmrc and appends v1" {
@@ -175,8 +176,18 @@ EOF
 @test "aube store prune runs cleanly on an empty store" {
 	run aube store prune
 	assert_success
-	assert_output --partial "empty"
+	assert_output --partial "Nothing to prune"
 	[ ! -d "$AUBE_GLOBAL_VIRTUAL_STORE_DIR/v1" ]
+}
+
+@test "aube store prune does not call a populated store empty" {
+	run aube store add is-odd@3.0.1
+	assert_success
+
+	run aube store prune
+	assert_success
+	assert_output --partial "Nothing to prune"
+	refute_output --partial "empty"
 }
 
 @test "aube store prune actually deletes unreferenced files" {
@@ -304,7 +315,7 @@ JSON
 @test "aube store prune --dry-run on an empty store" {
 	run aube store prune --dry-run
 	assert_success
-	assert_output --partial "empty"
+	assert_output --partial "Nothing to prune"
 }
 
 @test "aube store prune --json requires --dry-run" {
