@@ -114,7 +114,9 @@ impl Args for PruneArgs {
                     .long("json")
                     .action(ArgAction::SetTrue)
                     .requires("dry_run")
-                    .help("Emit the dry-run plan as one machine-readable JSON document"),
+                    .help(
+                        "Emit the dry-run plan as one machine-readable JSON document (requires --dry-run)",
+                    ),
             )
     }
 
