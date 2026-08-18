@@ -1,0 +1,4 @@
+{"v":1,"bench":"graph","tool":"self","runner":"gha-linux-x64","ts":"2026-07-28T18:41:28Z","metrics":{"instructions":16720077.0,"wall_max_ms":5.689062,"wall_mean_ms":4.2624679,"wall_min_ms":3.606723,"wall_n":20.0,"wall_p50_ms":4.1102170000000005}}
+{"v":1,"bench":"install","tool":"self","runner":"gha-linux-x64","ts":"2026-07-28T18:41:35Z","metrics":{"instructions":103068050.0,"wall_max_ms":38.704571,"wall_mean_ms":35.8521922,"wall_min_ms":30.983284,"wall_n":20.0,"wall_p50_ms":36.053964}}
+{"v":1,"bench":"startup","tool":"self","runner":"gha-linux-x64","ts":"2026-07-28T18:41:38Z","metrics":{"instructions":7675020.0,"wall_max_ms":5.240530000000001,"wall_mean_ms":4.42293925,"wall_min_ms":3.72295,"wall_n":20.0,"wall_p50_ms":4.510048}}
+{"v":1,"bench":"tree","tool":"self","runner":"gha-linux-x64","ts":"2026-07-28T18:41:41Z","metrics":{"instructions":17740282.0,"wall_max_ms":7.713871,"wall_mean_ms":6.29106365,"wall_min_ms":5.237607,"wall_n":20.0,"wall_p50_ms":6.162782}}
