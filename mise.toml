@@ -17,7 +17,7 @@ communique = "latest"
 # TODO: switch to plain `tak = "0.0.4"` once a mise release ships the registry
 # entry from jdx/mise#11307 — the shorthand exists on main but the registry is
 # compiled in, so it is not usable until then.
-"github:jdx/tak" = "0.0.4"
+"github:jdx/tak" = "v0.0.5"
 hk = "latest"
 node = "24"
 pitchfork = "latest"
