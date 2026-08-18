@@ -284,6 +284,7 @@ fn catalog_rewritten_package_json(project_dir: &Path) -> miette::Result<Option<V
 /// registry version metadata. Keeping this adapter beside the value-level
 /// transformer ensures the tarball and registry document use identical
 /// catalog resolution rules.
+#[cfg(feature = "publish")]
 pub(crate) fn rewrite_catalog_dependencies_in_manifest(
     project_dir: &Path,
     manifest: PackageJson,
