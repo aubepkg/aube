@@ -485,9 +485,7 @@ pub(crate) fn resolve_dependency_policy(
         // with an error naming a selector the user never wrote.
         match parse_package_extensions(bundled.clone()) {
             Ok(parsed) => extensions.extend(parsed),
-            Err(err) => tracing::warn!(
-                "ignoring malformed bundled package extension: {err}"
-            ),
+            Err(err) => tracing::warn!("ignoring malformed bundled package extension: {err}"),
         }
     }
     policy.package_extensions = extensions;

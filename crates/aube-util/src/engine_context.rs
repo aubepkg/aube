@@ -466,6 +466,11 @@ pub fn set_engine_context(context: EngineContext) {
 /// Mutate the active engine context in place. The closure receives a mutable
 /// reference to the current context (its prior fields preserved), so an
 /// embedder can populate one field per phase without clobbering the others.
+///
+/// The write lock is held for the duration of `f`, and the backing `RwLock` is
+/// not reentrant. `f` must not call [`engine_context`], [`set_engine_context`],
+/// or [`update_engine_context`]: a nested call would re-acquire the lock and
+/// deadlock (or panic). Compute every value before calling this function.
 pub fn update_engine_context(f: impl FnOnce(&mut EngineContext)) {
     match active().write() {
         Ok(mut guard) => f(&mut guard),
@@ -487,7 +492,9 @@ mod tests {
         assert!(ctx.trusted_dependencies_honored);
         assert!(ctx.read_branded_pnpm_config);
         assert!(ctx.read_pnpm_global_config);
+        assert!(ctx.read_layout_from_workspace_yaml);
         assert!(!ctx.read_pnpm_config_env_registry);
+        assert!(!ctx.npmrc_settings_allowlist);
         assert!(!ctx.read_yarn_config);
         assert!(!ctx.yarn_is_classic);
         assert!(!ctx.read_bun_config);
@@ -496,6 +503,7 @@ mod tests {
         assert!(ctx.synthetic_user_npmrc_entries.is_empty());
         assert!(ctx.synthetic_project_npmrc_entries.is_empty());
         assert!(ctx.project_config_settings.is_empty());
+        assert!(ctx.cli_supported_architectures.is_empty());
         assert!(ctx.path_prepends.is_empty());
         assert!(ctx.env_overlay.is_empty());
         assert_eq!(ctx.runtime_node_dir, None);
