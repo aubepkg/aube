@@ -862,6 +862,7 @@ fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
         .wrap_err_with(|| format!("publish: invalid {}", manifest_path.display()))?;
     let mut manifest_json: serde_json::Value =
         serde_json::from_slice(&manifest_bytes).into_diagnostic()?;
+    super::pack::rewrite_catalog_dependencies(pkg_dir, &mut manifest_json)?;
     if let Some(obj) = manifest_json.as_object_mut() {
         obj.insert("name".into(), name.clone().into());
     }
@@ -1866,6 +1867,39 @@ mod tests {
         assert_eq!(archive.version, "2026.5.16");
         assert_eq!(archive.filename, "jdxcode-mise-linux-x64-2026.5.16.tgz");
         assert_eq!(package_json["version"], "2026.5.16");
+    }
+
+    #[test]
+    fn publish_archive_rewrites_catalog_dependencies() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"name":"catalog-publish","version":"1.0.0","dependencies":{"foo":"catalog:"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("pnpm-workspace.yaml"),
+            "catalog:\n  foo: ^2.3.4\n",
+        )
+        .unwrap();
+
+        let archive = build_archive_for_publish(tmp.path()).unwrap();
+        let gz = flate2::read::GzDecoder::new(archive.tarball.as_slice());
+        let mut tar = tar::Archive::new(gz);
+        let mut package_json = None;
+        for entry in tar.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap() == std::path::Path::new("package/package.json") {
+                let mut contents = String::new();
+                std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+                package_json = Some(contents);
+                break;
+            }
+        }
+        let package_json: serde_json::Value =
+            serde_json::from_str(&package_json.expect("package.json in tarball")).unwrap();
+
+        assert_eq!(package_json["dependencies"]["foo"], "^2.3.4");
     }
 
     #[test]
