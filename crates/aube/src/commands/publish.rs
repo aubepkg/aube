@@ -521,6 +521,7 @@ async fn publish_one(
     // must agree with it or consumers get a mismatch between
     // `npm info` output and the tarball they actually download.
     let manifest = super::pack::read_root_manifest(pkg_dir)?;
+    let manifest = super::pack::rewrite_catalog_dependencies_in_manifest(pkg_dir, manifest)?;
 
     publish_archive(archive, manifest, target, client, args, Some(pkg_dir)).await
 }
@@ -1900,6 +1901,21 @@ mod tests {
             serde_json::from_str(&package_json.expect("package.json in tarball")).unwrap();
 
         assert_eq!(package_json["dependencies"]["foo"], "^2.3.4");
+
+        let manifest = PackageJson::from_path(&tmp.path().join("package.json")).unwrap();
+        let manifest =
+            super::super::pack::rewrite_catalog_dependencies_in_manifest(tmp.path(), manifest)
+                .unwrap();
+        let body = build_publish_body(
+            &archive,
+            &manifest,
+            "https://registry.example.test/",
+            "latest",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(body["versions"]["1.0.0"]["dependencies"]["foo"], "^2.3.4");
     }
 
     #[test]

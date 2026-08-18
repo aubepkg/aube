@@ -261,10 +261,36 @@ fn catalog_rewritten_package_json(project_dir: &Path) -> miette::Result<Option<V
     let mut rewritten = aube_manifest::serialize_json_with_indent(&manifest_json, indent)
         .into_diagnostic()
         .wrap_err("failed to serialize packed package.json")?;
-    if raw.ends_with('\n') {
-        rewritten.push('\n');
+    let line_ending = raw
+        .find('\n')
+        .map(|index| {
+            if index > 0 && raw.as_bytes()[index - 1] == b'\r' {
+                "\r\n"
+            } else {
+                "\n"
+            }
+        })
+        .unwrap_or("\n");
+    if line_ending == "\r\n" {
+        rewritten = rewritten.replace('\n', "\r\n");
+    }
+    if raw.ends_with(line_ending) {
+        rewritten.push_str(line_ending);
     }
     Ok(Some(rewritten.into_bytes()))
+}
+
+/// Apply the archive's catalog rewrite to a typed manifest before it becomes
+/// registry version metadata. Keeping this adapter beside the value-level
+/// transformer ensures the tarball and registry document use identical
+/// catalog resolution rules.
+pub(crate) fn rewrite_catalog_dependencies_in_manifest(
+    project_dir: &Path,
+    manifest: PackageJson,
+) -> miette::Result<PackageJson> {
+    let mut manifest_json = serde_json::to_value(manifest).into_diagnostic()?;
+    rewrite_catalog_dependencies(project_dir, &mut manifest_json)?;
+    serde_json::from_value(manifest_json).into_diagnostic()
 }
 
 /// Rewrite `catalog:` / `catalog:<name>` references in every dependency field
@@ -749,18 +775,22 @@ fn file_mode(path: &Path) -> u32 {
 mod tests {
     use super::*;
 
-    fn archived_package_json(archive: &BuiltArchive) -> serde_json::Value {
+    fn archived_package_json_bytes(archive: &BuiltArchive) -> Vec<u8> {
         let gz = flate2::read::GzDecoder::new(archive.tarball.as_slice());
         let mut tar = tar::Archive::new(gz);
         for entry in tar.entries().unwrap() {
             let mut entry = entry.unwrap();
             if entry.path().unwrap() == Path::new("package/package.json") {
-                let mut contents = String::new();
-                std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
-                return serde_json::from_str(&contents).unwrap();
+                let mut contents = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut contents).unwrap();
+                return contents;
             }
         }
         panic!("package.json missing from archive");
+    }
+
+    fn archived_package_json(archive: &BuiltArchive) -> serde_json::Value {
+        serde_json::from_slice(&archived_package_json_bytes(archive)).unwrap()
     }
 
     #[test]
@@ -818,6 +848,28 @@ mod tests {
 
         let on_disk = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
         assert!(on_disk.contains("catalog:peers"));
+    }
+
+    #[test]
+    fn pack_archive_preserves_crlf_in_rewritten_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            "{\r\n  \"name\": \"catalog-pack\",\r\n  \"version\": \"1.0.0\",\r\n  \"dependencies\": {\"foo\": \"catalog:\"}\r\n}\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "catalog:\n  foo: ^1.2.3\n",
+        )
+        .unwrap();
+
+        let archive = build_archive(dir.path()).unwrap();
+        let packed = String::from_utf8(archived_package_json_bytes(&archive)).unwrap();
+
+        assert!(packed.ends_with("\r\n"));
+        assert!(packed.contains("\r\n  \"dependencies\""));
+        assert!(!packed.replace("\r\n", "").contains('\n'));
     }
 
     fn write_tree(root: &Path, files: &[&str]) {
