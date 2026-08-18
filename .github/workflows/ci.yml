@@ -65,7 +65,10 @@ jobs:
   # jdx/aube but must not write. Pull requests start with empty local state and
   # must restore entries previously seeded by main; main can seed a cold cache.
   cache-qualification:
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # Fork pull requests run with a read-only GITHUB_TOKEN and GitHub refuses
+    # to issue an OIDC token for them, so the cache-auth probe below cannot
+    # run. Skip on fork PRs; `final` treats that skip as OK.
+    if: (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.event.pull_request.head.repo.fork != true
     runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 20
     permissions:
@@ -456,6 +459,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           NEEDS_JSON: ${{ toJSON(needs) }}
           REF: ${{ github.ref }}
+          # "true" only for pull_request events from a fork; empty otherwise.
+          FORK_PR: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           python3 - <<'PY'
           import json
@@ -467,6 +472,10 @@ jobs:
           SKIP_OK = {"api-stability"}
           ADVISORY_FAILURE = {"api-stability"}
           if os.environ["EVENT_NAME"] == "workflow_dispatch" and os.environ["REF"] != "refs/heads/main":
+              SKIP_OK.add("cache-qualification")
+          # Fork PRs can't mint an OIDC token, so cache-qualification is
+          # skipped by its `if:`; allow that skip here.
+          if os.environ.get("FORK_PR", "") == "true":
               SKIP_OK.add("cache-qualification")
 
           needs = json.loads(os.environ["NEEDS_JSON"])
