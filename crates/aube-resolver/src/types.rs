@@ -71,8 +71,10 @@ pub struct DependencyPolicy {
     /// extension re-applied - otherwise an injected dep silently misses.
     /// Defaults to `false`; an embedder that enforces a packageExtensions
     /// checksum (e.g. nub) sets this when drift is detected. Standalone aube
-    /// leaves it `false`, so the reuse path is unchanged.
-    pub(crate) package_extensions_drifted: bool,
+    /// leaves it `false`, so the reuse path is unchanged. Must stay `pub` so
+    /// struct-update syntax outside this crate (crate aube's install command)
+    /// can construct the policy.
+    pub package_extensions_drifted: bool,
 }
 
 impl DependencyPolicy {
