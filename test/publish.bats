@@ -642,34 +642,46 @@ NODE
 	assert_failure
 }
 
-@test "aube publish re-reads package.json after pre-pack hooks so registry metadata matches tarball" {
+@test "aube publish uses the archive manifest snapshot for registry metadata" {
 	# Regression test for Cursor Bugbot issue: if a `prepublishOnly`
 	# script mutates package.json (e.g. stamping a git SHA into the
 	# version, stripping devDependencies), `build_publish_body` must
-	# see the post-hook manifest so `versions.<v>` metadata agrees
-	# with what's in the tarball. Previously we serialized the
-	# pre-hook snapshot and consumers saw a mismatch.
+	# see the archive-time manifest so `versions.<v>` metadata agrees
+	# with what's in the tarball. A later `postpack` mutation must not
+	# alter that snapshot.
 	cat >package.json <<-'EOF'
 		{
 		  "name": "publish-mutated",
 		  "version": "0.1.0",
 		  "main": "index.js",
 		  "files": ["index.js"],
+		  "dependencies": {
+		    "foo": "catalog:"
+		  },
 		  "devDependencies": {
 		    "should-be-stripped": "1.0.0"
 		  },
 		  "scripts": {
-		    "prepublishOnly": "node ./rewrite.mjs"
+		    "prepublishOnly": "node ./rewrite.mjs",
+		    "postpack": "node ./rewrite-postpack.mjs"
 		  }
 		}
 	EOF
 	echo "module.exports = 1" >index.js
+	cat >pnpm-workspace.yaml <<-'EOF'
+		catalog:
+		  foo: ^1.2.3
+	EOF
 	cat >rewrite.mjs <<'NODE'
 import fs from 'node:fs';
 const m = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 delete m.devDependencies;
 m.publishedBy = 'prepublishOnly';
 fs.writeFileSync('package.json', JSON.stringify(m, null, 2));
+NODE
+	cat >rewrite-postpack.mjs <<'NODE'
+import fs from 'node:fs';
+fs.writeFileSync('pnpm-workspace.yaml', 'catalog:\n  foo: ^9.9.9\n');
 NODE
 
 	cat >record-server.mjs <<'NODE'
@@ -724,6 +736,12 @@ NODE
 	run jq '.versions."0.1.0".devDependencies' put-body.json
 	assert_success
 	assert_output "null"
+
+	# postpack runs after the archive snapshot and must not change the
+	# catalog value used for registry metadata.
+	run jq -r '.versions."0.1.0".dependencies.foo' put-body.json
+	assert_success
+	assert_output "^1.2.3"
 }
 
 @test "aube publish --dry-run --json reports post-hook version when prepublishOnly bumps version" {

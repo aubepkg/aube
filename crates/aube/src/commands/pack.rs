@@ -280,20 +280,6 @@ fn catalog_rewritten_package_json(project_dir: &Path) -> miette::Result<Option<V
     Ok(Some(rewritten.into_bytes()))
 }
 
-/// Apply the archive's catalog rewrite to a typed manifest before it becomes
-/// registry version metadata. Keeping this adapter beside the value-level
-/// transformer ensures the tarball and registry document use identical
-/// catalog resolution rules.
-#[cfg(feature = "publish")]
-pub(crate) fn rewrite_catalog_dependencies_in_manifest(
-    project_dir: &Path,
-    manifest: PackageJson,
-) -> miette::Result<PackageJson> {
-    let mut manifest_json = serde_json::to_value(manifest).into_diagnostic()?;
-    rewrite_catalog_dependencies(project_dir, &mut manifest_json)?;
-    serde_json::from_value(manifest_json).into_diagnostic()
-}
-
 /// Rewrite `catalog:` / `catalog:<name>` references in every dependency field
 /// pnpm exports. Shared with directory-based publish so the two archive paths
 /// cannot drift. Catalog discovery is deliberately lazy: packages without

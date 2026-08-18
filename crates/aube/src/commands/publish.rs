@@ -508,20 +508,8 @@ async fn publish_one(
     // The tarball build only happens now that we know we're actually
     // going to PUT. A recursive no-op publish still avoids file
     // collection, gzip, and body hashing.
-    let archive = build_archive_for_publish(pkg_dir)?;
+    let (archive, manifest) = build_archive_for_publish(pkg_dir)?;
     super::pack::run_pack_lifecycle_post(pkg_dir, args.ignore_scripts).await?;
-
-    // Re-read the manifest *after* the pre-pack chain. Publish-time
-    // hooks often rewrite `package.json` on the fly — `clean-package`
-    // strips `devDependencies`, build tools inject `exports`, a
-    // `prepublishOnly` might stamp a git SHA into the version. The
-    // tarball always reflects the on-disk state (`build_archive`
-    // reads it fresh), so the registry-visible metadata at
-    // `versions.<v>.*` and the env seen by `publish` / `postpublish`
-    // must agree with it or consumers get a mismatch between
-    // `npm info` output and the tarball they actually download.
-    let manifest = super::pack::read_root_manifest(pkg_dir)?;
-    let manifest = super::pack::rewrite_catalog_dependencies_in_manifest(pkg_dir, manifest)?;
 
     publish_archive(archive, manifest, target, client, args, Some(pkg_dir)).await
 }
@@ -851,7 +839,7 @@ fn read_publish_tarball(path: &Path) -> miette::Result<(BuiltArchive, PackageJso
     ))
 }
 
-fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
+fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<(BuiltArchive, PackageJson)> {
     let manifest_path = pkg_dir.join("package.json");
     let manifest_bytes = std::fs::read(&manifest_path)
         .into_diagnostic()
@@ -868,25 +856,27 @@ fn build_archive_for_publish(pkg_dir: &Path) -> miette::Result<BuiltArchive> {
         obj.insert("name".into(), name.clone().into());
     }
     let Some(raw_version) = manifest_json.get("version").and_then(|v| v.as_str()) else {
+        let rewritten_manifest = serde_json::from_value(manifest_json.clone()).into_diagnostic()?;
         let mut archive = build_archive_with_package_json(
             pkg_dir,
             Some(serde_json::to_vec_pretty(&manifest_json).into_diagnostic()?),
         )?;
         archive.name = name;
         archive.filename = tarball_filename(&archive.name, &archive.version);
-        return Ok(archive);
+        return Ok((archive, rewritten_manifest));
     };
     let version = normalize_publish_version(raw_version);
     if let Some(obj) = manifest_json.as_object_mut() {
         obj.insert("version".into(), version.into());
     }
+    let rewritten_manifest = serde_json::from_value(manifest_json.clone()).into_diagnostic()?;
     let mut package_json = serde_json::to_vec_pretty(&manifest_json).into_diagnostic()?;
     package_json.push(b'\n');
 
     let mut archive = build_archive_with_package_json(pkg_dir, Some(package_json))?;
     archive.name = name;
     normalize_archive_for_publish(&mut archive);
-    Ok(archive)
+    Ok((archive, rewritten_manifest))
 }
 
 fn normalize_publish_version(version: &str) -> String {
@@ -1849,7 +1839,7 @@ mod tests {
         .unwrap();
         std::fs::write(tmp.path().join("README.md"), "mise").unwrap();
 
-        let archive = build_archive_for_publish(tmp.path()).unwrap();
+        let (archive, _) = build_archive_for_publish(tmp.path()).unwrap();
         let gz = flate2::read::GzDecoder::new(archive.tarball.as_slice());
         let mut tar = tar::Archive::new(gz);
         let mut package_json = None;
@@ -1884,7 +1874,7 @@ mod tests {
         )
         .unwrap();
 
-        let archive = build_archive_for_publish(tmp.path()).unwrap();
+        let (archive, manifest) = build_archive_for_publish(tmp.path()).unwrap();
         let gz = flate2::read::GzDecoder::new(archive.tarball.as_slice());
         let mut tar = tar::Archive::new(gz);
         let mut package_json = None;
@@ -1902,10 +1892,6 @@ mod tests {
 
         assert_eq!(package_json["dependencies"]["foo"], "^2.3.4");
 
-        let manifest = PackageJson::from_path(&tmp.path().join("package.json")).unwrap();
-        let manifest =
-            super::super::pack::rewrite_catalog_dependencies_in_manifest(tmp.path(), manifest)
-                .unwrap();
         let body = build_publish_body(
             &archive,
             &manifest,
@@ -1928,7 +1914,7 @@ mod tests {
         .unwrap();
         std::fs::write(tmp.path().join("index.js"), "module.exports = 1").unwrap();
 
-        let packed = build_archive_for_publish(tmp.path()).unwrap();
+        let (packed, _) = build_archive_for_publish(tmp.path()).unwrap();
         let tarball_path = tmp.path().join("prebuilt-1.2.3.tgz");
         std::fs::write(&tarball_path, &packed.tarball).unwrap();
         let (loaded, manifest) = read_publish_tarball(&tarball_path).unwrap();
@@ -2002,7 +1988,7 @@ mod tests {
         assert_eq!(manifest.name.as_deref(), Some("workspace-name"));
         assert_eq!(published_name(&manifest).unwrap(), "@scope/published-name");
 
-        let archive = build_archive_for_publish(tmp.path()).unwrap();
+        let (archive, _) = build_archive_for_publish(tmp.path()).unwrap();
         let gz = flate2::read::GzDecoder::new(archive.tarball.as_slice());
         let mut tar = tar::Archive::new(gz);
         let mut package_json = None;
