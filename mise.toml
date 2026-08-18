@@ -37,11 +37,16 @@ run = "hk check --all --slow"
 [tasks.lint-fix]
 run = "hk fix --all --slow"
 
-# Apply clippy's machine-applicable autofixes. Coverage matches aube's clippy
-# gate (`cargo clippy --all-targets -- -D warnings`). Run on a dirty tree is
-# intended (--allow-dirty --allow-staged); review the diff before committing.
+# Apply clippy's machine-applicable autofixes via cargo-fixit — a drop-in
+# replacement for `cargo clippy --fix` that skips the full re-check compile
+# between fix rounds, so repeated runs are faster. Pinned through mise's cargo
+# backend (the repo's convention for compiled cargo tools, matching
+# cargo-audit/cargo-deny in CI), so a contributor gets it with no manual
+# install. No `cargo clippy --fix` fallback — cargo-fixit is the only path.
+# Modeled on `cargo fix` 1.89: add `--all-targets` to also fix tests/benches,
+# and `--allow-dirty`/`--allow-staged` to run on a dirty tree.
 [tasks.fix]
-run = "cargo clippy --fix --all-targets --allow-dirty --allow-staged -- -D warnings"
+run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --allow-dirty --allow-staged"
 
 [tasks.build]
 run = "cargo build"
