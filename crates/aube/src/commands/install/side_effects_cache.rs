@@ -1,6 +1,7 @@
 use miette::{Context, IntoDiagnostic, miette};
 use sha2::Digest;
 
+#[cfg(test)]
 const SIDE_EFFECTS_CACHE_MARKER: &str = ".aube-side-effects-cache";
 const SIDE_EFFECTS_CACHE_TMP_PREFIX: &str = ".tmp-side-effects-";
 const SIDE_EFFECTS_CACHE_TMP_STALE_AFTER: std::time::Duration =
@@ -39,8 +40,15 @@ impl<'a> SideEffectsCacheConfig<'a> {
 
 #[derive(Debug, Clone)]
 pub(super) struct SideEffectsCacheEntry {
+    already_applied: bool,
     input_hash: String,
+    marker_path: std::path::PathBuf,
     path: std::path::PathBuf,
+}
+
+struct SideEffectsMarker {
+    input_hash: String,
+    output_hash: String,
 }
 
 pub(super) enum SideEffectsCacheRestore {
@@ -56,18 +64,26 @@ impl SideEffectsCacheEntry {
         version: &str,
         package_dir: &std::path::Path,
     ) -> miette::Result<Self> {
-        let input_hash = match read_valid_side_effects_marker(package_dir) {
-            Some(hash) => hash,
-            None => hash_dir_for_side_effects_cache(package_dir)?,
+        let marker_path = side_effects_marker_path(package_dir, name)?;
+        let current_hash = hash_dir_for_side_effects_cache(package_dir)?;
+        let marker = read_valid_side_effects_marker(&marker_path);
+        let already_applied = marker
+            .as_ref()
+            .is_some_and(|marker| marker.output_hash == current_hash);
+        let input_hash = match marker {
+            Some(marker) => marker.input_hash,
+            None => current_hash,
         };
         let safe_name = name.replace('/', "__");
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
         Ok(Self {
+            already_applied,
             path: root
                 .join(format!("{safe_name}@{version}"))
                 .join(platform)
                 .join(&input_hash),
             input_hash,
+            marker_path,
         })
     }
 
@@ -75,12 +91,11 @@ impl SideEffectsCacheEntry {
         &self,
         package_dir: &std::path::Path,
     ) -> miette::Result<SideEffectsCacheRestore> {
-        // The marker lives in the materialized package and records the input
-        // hash whose build output is already present there. It remains valid
-        // even when the separate reusable cache entry was swept. Requiring
-        // `self.path` to exist made a cache cleanup unnecessarily rebuild an
-        // otherwise intact node_modules tree.
-        if marker_matches(package_dir, &self.input_hash) {
+        // The installer-owned marker sits outside package content and records
+        // both the pre-build input and post-build output hashes. A swept
+        // reusable cache therefore does not invalidate an intact build, while
+        // missing or modified generated output still forces restore/rebuild.
+        if self.already_applied {
             tracing::debug!(
                 "side-effects-cache: already applied {}",
                 self.path.display()
@@ -96,6 +111,7 @@ impl SideEffectsCacheEntry {
                 self.path.display()
             )
         })?;
+        self.write_marker(package_dir)?;
         tracing::debug!("side-effects-cache: restored {}", self.path.display());
         Ok(SideEffectsCacheRestore::Restored)
     }
@@ -111,7 +127,7 @@ impl SideEffectsCacheEntry {
                     .into_diagnostic()
                     .wrap_err_with(|| format!("failed to remove {}", self.path.display()))?;
             } else {
-                write_side_effects_marker(package_dir, &self.input_hash)?;
+                self.write_marker(package_dir)?;
                 return Ok(());
             }
         }
@@ -125,7 +141,7 @@ impl SideEffectsCacheEntry {
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
         sweep_stale_side_effects_tmp_dirs(parent);
-        write_side_effects_marker(package_dir, &self.input_hash)?;
+        self.write_marker(package_dir)?;
 
         let tmp = parent.join(format!(
             "{SIDE_EFFECTS_CACHE_TMP_PREFIX}{}-{}",
@@ -166,6 +182,11 @@ impl SideEffectsCacheEntry {
                     .wrap_err_with(|| format!("failed to publish {}", self.path.display()))
             }
         }
+    }
+
+    fn write_marker(&self, package_dir: &std::path::Path) -> miette::Result<()> {
+        let output_hash = hash_dir_for_side_effects_cache(package_dir)?;
+        write_side_effects_marker(&self.marker_path, &self.input_hash, &output_hash)
     }
 }
 
@@ -213,14 +234,40 @@ pub(crate) fn side_effects_cache_root(store: &aube_store::Store) -> std::path::P
         .join("side-effects-v1")
 }
 
-fn marker_matches(package_dir: &std::path::Path, input_hash: &str) -> bool {
-    read_valid_side_effects_marker(package_dir).is_some_and(|s| s == input_hash)
+fn side_effects_marker_path(
+    package_dir: &std::path::Path,
+    name: &str,
+) -> miette::Result<std::path::PathBuf> {
+    let parent = package_dir.parent().ok_or_else(|| {
+        miette!(
+            "package directory has no parent for side effects marker: {}",
+            package_dir.display()
+        )
+    })?;
+    let name_hash = sha2::Sha256::digest(name.as_bytes());
+    Ok(parent.join(format!(
+        ".aube-side-effects-cache-{}",
+        hex::encode(name_hash)
+    )))
 }
 
-fn read_valid_side_effects_marker(package_dir: &std::path::Path) -> Option<String> {
-    let marker = std::fs::read_to_string(package_dir.join(SIDE_EFFECTS_CACHE_MARKER)).ok()?;
-    let marker = marker.trim();
-    is_side_effects_cache_hash(marker).then(|| marker.to_ascii_lowercase())
+fn read_valid_side_effects_marker(marker_path: &std::path::Path) -> Option<SideEffectsMarker> {
+    let marker = std::fs::read_to_string(marker_path).ok()?;
+    let mut lines = marker.lines();
+    let version = lines.next()?;
+    let input_hash = lines.next()?;
+    let output_hash = lines.next()?;
+    if version != "v1"
+        || lines.next().is_some()
+        || !is_side_effects_cache_hash(input_hash)
+        || !is_side_effects_cache_hash(output_hash)
+    {
+        return None;
+    }
+    Some(SideEffectsMarker {
+        input_hash: input_hash.to_ascii_lowercase(),
+        output_hash: output_hash.to_ascii_lowercase(),
+    })
 }
 
 fn is_side_effects_cache_hash(value: &str) -> bool {
@@ -228,18 +275,19 @@ fn is_side_effects_cache_hash(value: &str) -> bool {
 }
 
 fn write_side_effects_marker(
-    package_dir: &std::path::Path,
+    marker_path: &std::path::Path,
     input_hash: &str,
+    output_hash: &str,
 ) -> miette::Result<()> {
     aube_util::fs_atomic::atomic_write(
-        &package_dir.join(SIDE_EFFECTS_CACHE_MARKER),
-        input_hash.as_bytes(),
+        marker_path,
+        format!("v1\n{input_hash}\n{output_hash}\n").as_bytes(),
     )
     .into_diagnostic()
     .wrap_err_with(|| {
         format!(
-            "failed to write side effects cache marker in {}",
-            package_dir.display()
+            "failed to write side effects cache marker {}",
+            marker_path.display()
         )
     })
 }
@@ -265,9 +313,6 @@ fn hash_dir_inner(
 
     for entry in entries {
         let path = entry.path();
-        if path.file_name().and_then(|n| n.to_str()) == Some(SIDE_EFFECTS_CACHE_MARKER) {
-            continue;
-        }
         let rel = path
             .strip_prefix(base)
             .into_diagnostic()
@@ -474,13 +519,16 @@ mod tests {
         let marker_path = dir.path().join(SIDE_EFFECTS_CACHE_MARKER);
 
         std::fs::write(&marker_path, "../../evil").unwrap();
-        assert_eq!(read_valid_side_effects_marker(dir.path()), None);
+        assert!(read_valid_side_effects_marker(&marker_path).is_none());
 
-        std::fs::write(&marker_path, format!("{}\n", "A".repeat(128))).unwrap();
-        assert_eq!(
-            read_valid_side_effects_marker(dir.path()),
-            Some("a".repeat(128))
-        );
+        std::fs::write(
+            &marker_path,
+            format!("v1\n{}\n{}\n", "A".repeat(128), "B".repeat(128)),
+        )
+        .unwrap();
+        let marker = read_valid_side_effects_marker(&marker_path).unwrap();
+        assert_eq!(marker.input_hash, "a".repeat(128));
+        assert_eq!(marker.output_hash, "b".repeat(128));
     }
 
     #[test]
@@ -490,13 +538,57 @@ mod tests {
         let cache = dir.path().join("cache");
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
-        std::fs::write(pkg.join(SIDE_EFFECTS_CACHE_MARKER), "a".repeat(128)).unwrap();
+
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        std::fs::write(pkg.join("built.node"), "built").unwrap();
+        entry.save(&pkg, false).unwrap();
+        std::fs::remove_dir_all(&cache).unwrap();
 
         let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
         assert!(!entry.path.exists());
         assert!(matches!(
             entry.restore_if_available(&pkg).unwrap(),
             SideEffectsCacheRestore::AlreadyApplied
+        ));
+    }
+
+    #[test]
+    fn stale_marker_does_not_skip_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
+
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        std::fs::write(pkg.join("built.node"), "built").unwrap();
+        entry.save(&pkg, false).unwrap();
+        std::fs::remove_dir_all(&cache).unwrap();
+        std::fs::remove_file(pkg.join("built.node")).unwrap();
+
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Miss
+        ));
+    }
+
+    #[test]
+    fn package_supplied_marker_is_not_installer_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
+        std::fs::write(
+            pkg.join(SIDE_EFFECTS_CACHE_MARKER),
+            format!("v1\n{}\n{}\n", "a".repeat(128), "b".repeat(128)),
+        )
+        .unwrap();
+
+        let entry = SideEffectsCacheEntry::new(dir.path(), "p", "1.0.0", &pkg).unwrap();
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Miss
         ));
     }
 }

@@ -156,14 +156,27 @@ JSON
 	assert_output "1"
 
 	# Force the normal resolve/finalize path while retaining the built
-	# package. The in-package marker is sufficient evidence that its build
-	# output is already applied even though the reusable snapshot was swept.
+	# package. The installer-owned marker verifies that build output remains
+	# intact even though the reusable snapshot was swept.
+	test -d "$XDG_CACHE_HOME/aube/side-effects-v1"
 	rm -rf "$XDG_CACHE_HOME/aube/side-effects-v1"
+	test ! -e "$XDG_CACHE_HOME/aube/side-effects-v1"
 	rm aube-lock.yaml
 	run aube install
 	assert_success
 	run cat node-gyp-count
 	assert_output "1"
+	assert_file_exists node_modules/aube-test-binding-gyp/side-effects-cache-output.txt
+
+	# The marker also records the built tree's hash. If generated output
+	# disappears, the next install must rebuild rather than trusting stale
+	# installer state.
+	rm node_modules/aube-test-binding-gyp/side-effects-cache-output.txt
+	rm aube-lock.yaml
+	run aube install
+	assert_success
+	run cat node-gyp-count
+	assert_output "2"
 	assert_file_exists node_modules/aube-test-binding-gyp/side-effects-cache-output.txt
 }
 
