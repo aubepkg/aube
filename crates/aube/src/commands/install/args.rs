@@ -180,8 +180,15 @@ impl InstallArgs {
                 || self.lockfile.no_frozen_lockfile
                 || self.lockfile.prefer_frozen_lockfile)
         {
+            let conflict = if self.lockfile.frozen_lockfile {
+                "--frozen-lockfile"
+            } else if self.lockfile.no_frozen_lockfile {
+                "--no-frozen-lockfile"
+            } else {
+                "--prefer-frozen-lockfile"
+            };
             return Err(miette::miette!(
-                "--fix-lockfile cannot be combined with a frozen-lockfile mode"
+                "--fix-lockfile cannot be used with {conflict}"
             ));
         }
         if self.lockfile_only && self.lockfile.frozen_lockfile {
