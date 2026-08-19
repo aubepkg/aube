@@ -241,7 +241,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
-      - id: rust-cache
+        with:
+          cache: false
+      - name: Capture Rust cache key inputs
+        run: |
+          mkdir -p .github/cache-keys
+          rustc -Vv > .github/cache-keys/rustc-version
+      - id: cargo-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning] PR entries are scoped to the PR and consumed only by this unprivileged job
         with:
           path: |
@@ -249,10 +255,10 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: aube-rust-${{ runner.os }}-v1-${{ hashFiles('Cargo.lock') }}
+          key: aube-rust-${{ runner.os }}-${{ github.event.pull_request.number || github.ref_name }}-v1-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.github/cache-keys/rustc-version') }}
       - name: Build with GitHub Actions cache
         env:
-          CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+          CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
         run: |
           start=$SECONDS
           mise run build
