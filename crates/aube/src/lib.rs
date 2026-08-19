@@ -227,8 +227,9 @@ impl Cli {
         S: Into<OsString>,
     {
         let raw: Vec<OsString> = argv.into_iter().map(Into::into).collect();
-        let argv: Vec<&std::ffi::OsStr> = raw.iter().skip(1).map(OsString::as_os_str).collect();
-        Self::parse_from(&argv).map_err(|error| render_cli_error(&argv, &error))
+        let argv: Vec<&std::ffi::OsStr> = raw.iter().map(OsString::as_os_str).collect();
+        Self::parse_from_argv(&argv)
+            .map_err(|error| render_cli_error(argv.get(1..).unwrap_or_default(), &error))
     }
 }
 
@@ -750,8 +751,8 @@ fn inner_main() -> miette::Result<i32> {
     // rediscover the shim as the "real" tool.
     tool_shims::sanitize_process_path();
     let argv = lift_per_subcommand_flags(rewrite_multicall_argv(argv));
-    let argv: Vec<&std::ffi::OsStr> = argv.iter().skip(1).map(OsString::as_os_str).collect();
-    let cli = match Cli::parse_from(&argv) {
+    let argv: Vec<&std::ffi::OsStr> = argv.iter().map(OsString::as_os_str).collect();
+    let cli = match Cli::parse_from_argv(&argv) {
         Ok(cli) => cli,
         Err(usage_rs::Error::Version) => {
             println!(
@@ -769,7 +770,7 @@ fn inner_main() -> miette::Result<i32> {
         }
         Err(error) => {
             let raw_compat_error = is_allow_build_compat_error(&error);
-            let message = render_cli_error(&argv, &error);
+            let message = render_cli_error(argv.get(1..).unwrap_or_default(), &error);
             if raw_compat_error {
                 eprintln!("{message}");
                 return Ok(aube_codes::exit::EXIT_GENERIC);
@@ -1150,15 +1151,16 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             // subcommand.
             let nested_argv: Vec<OsString> =
                 lift_per_subcommand_flags(argv.into_iter().map(OsString::from).collect());
-            let nested_refs: Vec<&std::ffi::OsStr> = nested_argv
-                .iter()
-                .skip(1)
-                .map(OsString::as_os_str)
-                .collect();
-            let nested = Cli::parse_from(&nested_refs).map_err(|error| {
+            let nested_refs: Vec<&std::ffi::OsStr> =
+                nested_argv.iter().map(OsString::as_os_str).collect();
+            let nested = Cli::parse_from_argv(&nested_refs).map_err(|error| {
                 miette::miette!(
                     "{}",
-                    usage_rs::render_failure(Cli::spec(), &nested_refs, &error)
+                    usage_rs::render_failure(
+                        Cli::spec(),
+                        nested_refs.get(1..).unwrap_or_default(),
+                        &error,
+                    )
                 )
             })?;
             let nested_filter = compute_effective_filter(&nested);
