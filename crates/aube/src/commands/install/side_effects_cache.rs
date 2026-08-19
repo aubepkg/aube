@@ -75,7 +75,12 @@ impl SideEffectsCacheEntry {
         &self,
         package_dir: &std::path::Path,
     ) -> miette::Result<SideEffectsCacheRestore> {
-        if marker_matches(package_dir, &self.input_hash) && self.path.is_dir() {
+        // The marker lives in the materialized package and records the input
+        // hash whose build output is already present there. It remains valid
+        // even when the separate reusable cache entry was swept. Requiring
+        // `self.path` to exist made a cache cleanup unnecessarily rebuild an
+        // otherwise intact node_modules tree.
+        if marker_matches(package_dir, &self.input_hash) {
             tracing::debug!(
                 "side-effects-cache: already applied {}",
                 self.path.display()
@@ -476,5 +481,22 @@ mod tests {
             read_valid_side_effects_marker(dir.path()),
             Some("a".repeat(128))
         );
+    }
+
+    #[test]
+    fn applied_marker_survives_reusable_cache_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
+        std::fs::write(pkg.join(SIDE_EFFECTS_CACHE_MARKER), "a".repeat(128)).unwrap();
+
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        assert!(!entry.path.exists());
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::AlreadyApplied
+        ));
     }
 }

@@ -123,6 +123,50 @@ JSON
 	assert_file_exists node_modules/aube-test-binding-gyp/side-effects-cache-output.txt
 }
 
+@test "intact build marker skips rebuild after side-effects cache cleanup" {
+	cat >"$TEST_TEMP_DIR/shim/node-gyp" <<'SHIM'
+#!/usr/bin/env bash
+count="${INIT_CWD:-$PWD}/node-gyp-count"
+n=0
+if [ -f "$count" ]; then
+  n="$(cat "$count")"
+fi
+printf '%s\n' "$((n + 1))" >"$count"
+printf 'built\n' >"$PWD/side-effects-cache-output.txt"
+SHIM
+	chmod +x "$TEST_TEMP_DIR/shim/node-gyp"
+
+	cat >package.json <<'JSON'
+{
+  "name": "binding-gyp-applied-marker-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "aube-test-binding-gyp": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-binding-gyp": true
+    }
+  }
+}
+JSON
+	run aube install
+	assert_success
+	run cat node-gyp-count
+	assert_output "1"
+
+	# Force the normal resolve/finalize path while retaining the built
+	# package. The in-package marker is sufficient evidence that its build
+	# output is already applied even though the reusable snapshot was swept.
+	rm -rf "$XDG_CACHE_HOME/aube/side-effects-v1"
+	rm aube-lock.yaml
+	run aube install
+	assert_success
+	run cat node-gyp-count
+	assert_output "1"
+	assert_file_exists node_modules/aube-test-binding-gyp/side-effects-cache-output.txt
+}
+
 @test "rebuild refreshes side-effects-cache output" {
 	cat >"$TEST_TEMP_DIR/shim/node-gyp" <<'SHIM'
 #!/usr/bin/env bash
