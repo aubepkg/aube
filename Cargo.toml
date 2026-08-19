@@ -72,10 +72,10 @@ toml = "1"
 rkyv = "0.8"
 
 # CLI
-usage-argv = { git = "https://github.com/jdx/usage", rev = "64e87fcff095a7e8ddd84e22d44151eb010adfbe", features = ["diagnostics", "spec"] }
-usage-derive = { git = "https://github.com/jdx/usage", rev = "64e87fcff095a7e8ddd84e22d44151eb010adfbe" }
-usage-lib = { git = "https://github.com/jdx/usage", rev = "64e87fcff095a7e8ddd84e22d44151eb010adfbe" }
-usage-validation = { git = "https://github.com/jdx/usage", rev = "64e87fcff095a7e8ddd84e22d44151eb010adfbe" }
+usage-argv = { git = "https://github.com/jdx/usage", rev = "7f8aeb47486bb4edfe3282fd640e3caea04d24ee", features = ["diagnostics", "spec"] }
+usage-derive = { git = "https://github.com/jdx/usage", rev = "7f8aeb47486bb4edfe3282fd640e3caea04d24ee" }
+usage-lib = { git = "https://github.com/jdx/usage", rev = "7f8aeb47486bb4edfe3282fd640e3caea04d24ee" }
+usage-validation = { git = "https://github.com/jdx/usage", rev = "7f8aeb47486bb4edfe3282fd640e3caea04d24ee" }
 
 # Enum derives (Display/FromStr/etc.)
 strum = { version = "0.28", features = ["derive"] }
