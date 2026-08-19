@@ -10,18 +10,4 @@ Print packages whose install scripts were skipped by `pnpm.allowBuilds`
 
 ### `-g --global`
 
-Operate on globally-installed packages instead of the current project
-
-Examples:
-
-  $ aube ignored-builds
-  The following builds were ignored during install:
-    esbuild@0.20.2
-    puppeteer@22.8.0
-
-  # When nothing was skipped
-  $ aube ignored-builds
-  No ignored builds.
-
-  # Approve them for this project
-  $ aube approve-builds
+Operate on globally-installed packages instead of the current project.

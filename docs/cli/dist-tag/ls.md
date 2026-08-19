@@ -6,7 +6,8 @@
 
 List every dist-tag for a package.
 
-Reads the package name from `./package.json` when no argument is given.
+Reads the package name from `./package.json` when no argument
+is given.
 
 ## Arguments
 
@@ -14,4 +15,5 @@ Reads the package name from `./package.json` when no argument is given.
 
 Package name (no version).
 
-Defaults to the current project's `package.json` `name` field.
+Defaults to the current project's `package.json` `name`
+field.

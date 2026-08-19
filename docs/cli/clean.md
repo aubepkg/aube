@@ -6,7 +6,8 @@
 
 Remove `node_modules` across every workspace project.
 
-`--lockfile` / `-l` also deletes lockfiles. A `clean` script in the root `package.json` overrides the built-in.
+`--lockfile` / `-l` also deletes lockfiles. A `clean` script in
+the root `package.json` overrides the built-in.
 
 ## Flags
 
@@ -14,4 +15,5 @@ Remove `node_modules` across every workspace project.
 
 Also remove lockfiles at the workspace root.
 
-Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock`.
+Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`,
+`npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock`.

@@ -2,6 +2,7 @@
 # `aube install`
 
 - **Usage**: `aube install [FLAGS]`
+- **Aliases**: `i`
 - **Effect**: modifies state
 
 Install all dependencies
@@ -24,25 +25,34 @@ Bypasses the `allowBuilds` allowlist. Do not use in CI.
 
 ### `--dry-run`
 
-Resolve and report what would happen without writing the lockfile or linking node_modules
+Resolve and report what would happen without writing the lockfile
+or linking node_modules.
 
 ### `--fix-lockfile`
 
 Re-resolve lockfile entries whose spec drifted from package.json.
 
-Leaves everything else pinned at its locked version. Unchanged specs keep their existing version and integrity hash; only drifted entries (and any new transitives they pull in) get re-resolved.
+Leaves everything else pinned at its locked version. Unchanged
+specs keep their existing version and integrity hash; only
+drifted entries (and any new transitives they pull in) get
+re-resolved.
 
 ### `--force`
 
 Force reinstall, ignoring lockfile/state freshness.
 
-Bypasses the `node_modules/.aube-state` freshness check and re-resolves the lockfile even when nothing has drifted. Mirrors pnpm's `install --force`.
+Bypasses the `node_modules/.aube-state` freshness check and
+re-resolves the lockfile even when nothing has drifted. Mirrors
+pnpm's `install --force`.
 
 ### `--global-pnpmfile <PATH>`
 
 Add a global pnpmfile that runs before the local one.
 
-Mirrors pnpm's `--global-pnpmfile <path>`. Relative paths resolve against the project root. The global hook runs first and the local hook (if any) runs second, so local mutations win on conflicts — matching pnpm's composition order.
+Mirrors pnpm's `--global-pnpmfile <path>`. Relative paths
+resolve against the project root. The global hook runs first
+and the local hook (if any) runs second, so local mutations
+win on conflicts — matching pnpm's composition order.
 
 ### `--ignore-pnpmfile`
 
@@ -56,11 +66,14 @@ Skip lifecycle scripts (no-op; aube already skips by default)
 
 Read and write the lockfile in the given directory.
 
-Instead of placing the lockfile alongside `package.json`, the project becomes an importer keyed by its relative path from the lockfile directory. Mirrors pnpm's `--lockfile-dir`.
+Instead of placing the lockfile alongside `package.json`, the
+project becomes an importer keyed by its relative path from the
+lockfile directory. Mirrors pnpm's `--lockfile-dir`.
 
 ### `--lockfile-only`
 
-Resolve dependencies and write the lockfile, but don't link `node_modules`.
+Resolve dependencies and write the lockfile, but don't link
+`node_modules`.
 
 Useful for CI workflows that only update the lockfile.
 
@@ -68,13 +81,20 @@ Useful for CI workflows that only update the lockfile.
 
 Merge per-branch lockfiles into the main `aube-lock.yaml`.
 
-Combines every `aube-lock.<branch>.yaml` file in the project into `aube-lock.yaml` and deletes the branch files. Companion to `gitBranchLockfile`. When `mergeGitBranchLockfilesBranchPattern` is set in `pnpm-workspace.yaml`, this happens automatically on matching branches; the flag forces it regardless.
+Combines every `aube-lock.<branch>.yaml` file in the project
+into `aube-lock.yaml` and deletes the branch files. Companion
+to `gitBranchLockfile`. When
+`mergeGitBranchLockfilesBranchPattern` is set in
+`pnpm-workspace.yaml`, this happens automatically on matching
+branches; the flag forces it regardless.
 
 ### `--network-concurrency <N>`
 
 Cap concurrent tarball downloads.
 
-Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-64.
+Overrides `network-concurrency` from `.npmrc` /
+`aube-workspace.yaml` when set. Falls back to an auto-scaled
+default of worker count x3, clamped to 16-64.
 
 ### `--no-optional`
 
@@ -82,19 +102,23 @@ Skip optionalDependencies; don't install optional native modules
 
 ### `--no-side-effects-cache`
 
-Inverse of `--side-effects-cache`
+Inverse of `--side-effects-cache`.
 
 ### `--no-verify-store-integrity`
 
 Inverse of `--verify-store-integrity`.
 
-Skips the SHA-512 verify step for every tarball aube pulls into the store during this install.
+Skips the SHA-512 verify step for every tarball aube pulls
+into the store during this install.
 
 ### `--node-linker <MODE>`
 
 Which layout to materialize `node_modules/` as.
 
-`isolated` (default) uses pnpm's `.aube/`-backed symlink tree; `hoisted` builds an npm-style flat tree with conflict nesting. Overrides `node-linker` / `nodeLinker` from `.npmrc` / `aube-workspace.yaml` when set. `pnp` is not supported.
+`isolated` (default) uses pnpm's `.aube/`-backed symlink tree;
+`hoisted` builds an npm-style flat tree with conflict nesting.
+Overrides `node-linker` / `nodeLinker` from `.npmrc` /
+`aube-workspace.yaml` when set. `pnp` is not supported.
 
 ### `--offline`
 
@@ -104,19 +128,29 @@ Never hits the network.
 
 ### `--package-import-method <METHOD>`
 
-How to import package files from the global store into the virtual store.
+How to import package files from the global store into the
+virtual store.
 
-One of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy pending strict enforcement), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.
+One of `auto` (default: detect the fastest strategy),
+`hardlink`, `copy`, `clone` (reflink; falls back to copy
+pending strict enforcement), or `clone-or-copy` (reflink with
+a copy fallback). Overrides `package-import-method` /
+`packageImportMethod` from `.npmrc` / `aube-workspace.yaml`
+when set.
 
 ### `--pnpmfile <PATH>`
 
 Override the local pnpmfile location.
 
-Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve against the project root; absolute paths are used as-is. Wins over `pnpmfilePath` from `pnpm-workspace.yaml`. A typo (target missing) is a hard miss with a warning rather than a silent fallback to the default.
+Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve
+against the project root; absolute paths are used as-is. Wins
+over `pnpmfilePath` from `pnpm-workspace.yaml`. A typo (target
+missing) is a hard miss with a warning rather than a silent
+fallback to the default.
 
 ### `--prefer-offline`
 
-Prefer cached metadata over revalidation; only hit the network on a miss
+Prefer cached metadata over revalidation; only hit the network on a miss.
 
 ### `--public-hoist-pattern… <GLOB>`
 
@@ -128,82 +162,104 @@ Repeatable; comma-separated values are also accepted.
 
 How to resolve version ranges.
 
-`highest` (pnpm's classic behavior) or `time-based` (pick the lowest satisfying direct dep and constrain transitives by a publish-date cutoff). Accepts pnpm's aliases `time` and `lowest-direct`. When omitted, falls back to the `resolution-mode` key in `.npmrc` / `aube-workspace.yaml`.
+`highest` (pnpm's classic behavior) or `time-based` (pick the
+lowest satisfying direct dep and constrain transitives by a
+publish-date cutoff). Accepts pnpm's aliases `time` and
+`lowest-direct`. When omitted, falls back to the
+`resolution-mode` key in `.npmrc` / `aube-workspace.yaml`.
 
 ### `--shamefully-hoist`
 
-Hoist every non-local transitive dep to the top-level `node_modules/`.
+Hoist every non-local transitive dep to the top-level
+`node_modules/`.
 
-Overrides `shamefully-hoist` / `shamefullyHoist` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `shamefully-hoist` / `shamefullyHoist` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--side-effects-cache`
 
 Cache post-build side effects for dependency packages.
 
-Defaults to on and only applies to packages allowed by `allowBuilds` / `onlyBuiltDependencies`. Pair with `--no-side-effects-cache` to opt out.
+Defaults to on and only applies to packages allowed by
+`allowBuilds` / `onlyBuiltDependencies`. Pair with
+`--no-side-effects-cache` to opt out.
 
 ### `--verify-store-integrity`
 
 Verify tarball SHA-512 before importing into the store.
 
-Checks each tarball against the lockfile integrity. Defaults to `true` (pnpm parity); pair with `--no-verify-store-integrity` to skip.
+Checks each tarball against the lockfile integrity. Defaults to
+`true` (pnpm parity); pair with `--no-verify-store-integrity`
+to skip.
 
 ### `--frozen-lockfile`
 
-Error if the lockfile drifts from package.json
+Error if the lockfile drifts from package.json.
 
 ### `--no-frozen-lockfile`
 
-Always re-resolve, even if the lockfile is up to date
+Always re-resolve, even if the lockfile is up to date.
 
 ### `--prefer-frozen-lockfile`
 
-Use the lockfile when fresh, re-resolve when stale
+Use the lockfile when fresh, re-resolve when stale.
 
 ### `--fetch-retries <N>`
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
+`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
+fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from
+`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
+underlying `FetchPolicy.retry_factor` is `u32`. Fractional
+values like `1.5` are rejected by clap.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
+`aube-workspace.yaml` when set. Applied via `reqwest`'s
+`.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs,
+audit requests, dist-tags, and registry writes.
 
 ### `--disable-global-virtual-store`
 
 Force the shared global virtual store off for this invocation.
 
-Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+Packages are materialized inside the project's virtual store
+instead of symlinked from `~/.cache/aube/virtual-store/`.
 
 ### `--enable-global-virtual-store`
 
 Force the shared global virtual store on for this invocation.
 
-Overrides CI's default per-project materialization and the `disableGlobalVirtualStoreForPackages` auto-disable heuristic.
+Overrides CI's default per-project materialization and the
+`disableGlobalVirtualStoreForPackages` auto-disable heuristic.

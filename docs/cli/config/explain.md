@@ -10,4 +10,4 @@ Explain a known setting, including defaults and supported config sources
 
 ### `<KEY>`
 
-Setting key, `.npmrc` alias, env var, workspace YAML key, or CLI flag
+Setting key, `.npmrc` alias, env var, workspace YAML key, or CLI flag.

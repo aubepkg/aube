@@ -12,21 +12,24 @@ Bump the version in package.json (and optionally create a git commit + tag)
 
 Bump keyword or an explicit version string.
 
-Accepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or an explicit version. `from-git` reads the nearest reachable version-like Git tag. When omitted, prints the current version.
+Accepts `major`, `minor`, `patch`, `premajor`, `preminor`,
+`prepatch`, `prerelease`, `from-git`, or an explicit version.
+`from-git` reads the nearest reachable version-like Git tag.
+When omitted, prints the current version.
 
 ## Flags
 
 ### `--allow-same-version`
 
-Allow setting the version to its current value without erroring
+Allow setting the version to its current value without erroring.
 
 ### `--ignore-scripts`
 
-Skip `preversion` / `version` / `postversion` lifecycle scripts
+Skip `preversion` / `version` / `postversion` lifecycle scripts.
 
 ### `--json`
 
-Emit the result as JSON instead of `v<version>` text
+Emit the result as JSON instead of `v<version>` text.
 
 ### `-m --message <MSG>`
 
@@ -36,18 +39,19 @@ Commit message template.
 
 ### `--no-commit-hooks`
 
-Skip git pre-commit / commit-msg hooks (passes `--no-verify`)
+Skip git pre-commit / commit-msg hooks (passes `--no-verify`).
 
 ### `--no-git-tag-version`
 
 Don't create a git commit or tag.
 
-By default `aube version` commits the manifest change and tags it `v<version>`.
+By default `aube version` commits the manifest change and
+tags it `v<version>`.
 
 ### `--preid <ID>`
 
-Prerelease identifier to use with the `pre*` keywords (e.g. `rc`)
+Prerelease identifier to use with the `pre*` keywords (e.g. `rc`).
 
 ### `--sign-git-tag`
 
-GPG-sign the created tag (`git tag -s`)
+GPG-sign the created tag (`git tag -s`).

@@ -6,4 +6,6 @@
 
 Verify the store against cached package indexes.
 
-Confirms every file referenced by a cached package index is still present in the store and that its BLAKE3 hash matches. Exits non-zero when any corruption is detected.
+Confirms every file referenced by a cached package index is
+still present in the store and that its BLAKE3 hash matches.
+Exits non-zero when any corruption is detected.

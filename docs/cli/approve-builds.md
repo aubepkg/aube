@@ -6,7 +6,8 @@
 
 Approve ignored dependency build scripts.
 
-Writes entries under `allowBuilds` in `aube-workspace.yaml` (or `pnpm-workspace.yaml` if present).
+Writes entries under `allowBuilds` in `aube-workspace.yaml` (or
+`pnpm-workspace.yaml` if present).
 
 ## Arguments
 
@@ -14,14 +15,15 @@ Writes entries under `allowBuilds` in `aube-workspace.yaml` (or `pnpm-workspace.
 
 Packages to approve directly, skipping the picker.
 
-Each name must match a currently-ignored build. Unknown names are rejected so a typo cannot silently no-op.
+Each name must match a currently-ignored build. Unknown names
+are rejected so a typo cannot silently no-op.
 
 ## Flags
 
 ### `--all`
 
-Approve every pending ignored build without prompting
+Approve every pending ignored build without prompting.
 
 ### `-g --global`
 
-Operate on globally-installed packages instead of the current project
+Operate on globally-installed packages instead of the current project.

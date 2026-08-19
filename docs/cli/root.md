@@ -11,11 +11,3 @@ Print the path to `node_modules`
 ### `-g --global`
 
 Print the global package directory instead of the project's
-
-Examples:
-
-  $ aube root
-  /home/user/project/node_modules
-
-  $ aube root -g
-  /home/user/.local/share/aube/global/node_modules

@@ -4,7 +4,7 @@
 - **Usage**: `aube diag analyze <PATH>`
 - **Effect**: read-only
 
-Show critical path / starvation / per-pkg lifecycle from a saved trace
+Show critical path / starvation / per-pkg lifecycle from a saved trace.
 
 ## Arguments
 

@@ -6,18 +6,24 @@
 
 Remove unreferenced packages from the global store.
 
-Operates on the store printed by `aube store path`; it does not touch project node_modules directories, manifests, or lockfiles.
+Operates on the store printed by `aube store path`; it does not touch
+project node_modules directories, manifests, or lockfiles.
 
-It removes global virtual-store graph entries not referenced by any registered project. Entries from older aube releases live outside the registry-managed versioned namespace and are not touched. It then prunes content-store files.
+It removes global virtual-store graph entries not referenced by any
+registered project. Entries from older aube releases live outside the
+registry-managed versioned namespace and are not touched. It then prunes
+content-store files.
 
-On reflink filesystems such as APFS or btrfs, link counts cannot prove project reachability, so content-store pruning relies on cached package indexes. Global virtual-store reachability comes from project links.
+On reflink filesystems such as APFS or btrfs, link counts cannot prove
+project reachability, so content-store pruning relies on cached package
+indexes. Global virtual-store reachability comes from project links.
 
 ## Flags
 
 ### `--dry-run`
 
-Do not actually delete anything; report what would be pruned
+Do not actually delete anything; report what would be pruned.
 
 ### `--json`
 
-Emit the dry-run plan as one machine-readable JSON document (requires --dry-run)
+Emit the dry-run plan as one machine-readable JSON document.

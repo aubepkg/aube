@@ -4,4 +4,4 @@
 - **Usage**: `aube store path`
 - **Effect**: read-only
 
-Show the store path
+Show the store path.

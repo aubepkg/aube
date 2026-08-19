@@ -4,18 +4,18 @@
 - **Usage**: `aube access grant <ARGS>…`
 - **Effect**: modifies state
 
-Grant a team read-only or read-write access to a package
+Grant a team read-only or read-write access to a package.
 
 ## Arguments
 
 ### `<PERMISSIONS>`
 
-`read-only` or `read-write`
+`read-only` or `read-write`.
 
 ### `<TEAM>`
 
-Team in `@scope:team` form
+Team in `@scope:team` form.
 
 ### `<PACKAGE>`
 
-Package name
+Package name.

@@ -4,12 +4,14 @@
 - **Usage**: `aube store add <PACKAGES>…`
 - **Effect**: modifies state
 
-Add one or more packages to the global store without linking them into any project.
+Add one or more packages to the global store without linking them
+into any project.
 
-Each argument is a package spec: `lodash`, `lodash@4.17.21`, `react@next`, or `express@^4`.
+Each argument is a package spec: `lodash`, `lodash@4.17.21`,
+`react@next`, or `express@^4`.
 
 ## Arguments
 
 ### `<PACKAGES>…`
 
-Package specs to fetch into the store
+Package specs to fetch into the store.

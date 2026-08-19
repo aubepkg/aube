@@ -4,14 +4,14 @@
 - **Usage**: `aube access revoke <TEAM> <PACKAGE>`
 - **Effect**: destructive — may delete or irreversibly overwrite
 
-Revoke a team's access to a package
+Revoke a team's access to a package.
 
 ## Arguments
 
 ### `<TEAM>`
 
-Team in `@scope:team` form
+Team in `@scope:team` form.
 
 ### `<PACKAGE>`
 
-Package name
+Package name.

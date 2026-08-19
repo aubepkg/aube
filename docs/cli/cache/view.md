@@ -6,16 +6,17 @@
 
 View the cached metadata for a single package.
 
-Prints a summary (versions, dist-tags, ETag, fetched-at) by default; `--json` dumps the raw cache file.
+Prints a summary (versions, dist-tags, ETag, fetched-at) by
+default; `--json` dumps the raw cache file.
 
 ## Arguments
 
 ### `<NAME>`
 
-Package name (scoped names like `@babel/core` are accepted)
+Package name (scoped names like `@babel/core` are accepted).
 
 ## Flags
 
 ### `--json`
 
-Dump the raw on-disk cache JSON instead of a summary
+Dump the raw on-disk cache JSON instead of a summary.

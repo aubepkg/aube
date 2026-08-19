@@ -4,7 +4,7 @@
 - **Usage**: `aube diag compare [--min-delta-ms <MIN_DELTA_MS>] [--min-pct <MIN_PCT>] <A> <B>`
 - **Effect**: read-only
 
-Diff two diag JSONL traces and surface per-operation regressions
+Diff two diag JSONL traces and surface per-operation regressions.
 
 ## Arguments
 

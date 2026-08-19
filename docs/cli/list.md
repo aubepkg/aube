@@ -31,7 +31,11 @@ Show only production dependencies (skip devDependencies)
 
 How deep to render the transitive tree.
 
-`0` (default) shows only the top-level direct deps. Pass `9999` (or any large number) for the full graph; `--depth=Infinity` is accepted for pnpm/npm compat. `--depth=-1` (pnpm spelling) lists project headers only — no direct or transitive deps.
+`0` (default) shows only the top-level direct deps. Pass
+`9999` (or any large number) for the full graph;
+`--depth=Infinity` is accepted for pnpm/npm compat.
+`--depth=-1` (pnpm spelling) lists project headers only —
+no direct or transitive deps.
 
 **Default:** `0`
 
@@ -55,13 +59,14 @@ Emit a JSON array of package entries.
 
 ### `--lockfile-only`
 
-List packages from the lockfile only, without checking node_modules
+List packages from the lockfile only, without checking node_modules.
 
 ### `--long`
 
 Show version and path for each entry.
 
-Default output is already name + version; `--long` adds the store path for debugging.
+Default output is already name + version; `--long` adds the
+store path for debugging.
 
 ### `--parseable`
 

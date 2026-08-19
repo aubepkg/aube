@@ -4,16 +4,16 @@
 - **Usage**: `aube cache prune [--age-days <AGE_DAYS>] [--dry-run]`
 - **Effect**: modifies state
 
-Remove stale extracted primer files from the metadata cache
+Remove stale extracted primer files from the metadata cache.
 
 ## Flags
 
 ### `--age-days <AGE_DAYS>`
 
-Minimum age in days before an old primer file is removed
+Minimum age in days before an old primer file is removed.
 
 **Default:** `30`
 
 ### `--dry-run`
 
-Do not actually delete anything
+Do not actually delete anything.

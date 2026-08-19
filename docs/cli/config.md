@@ -2,6 +2,7 @@
 # `aube config`
 
 - **Usage**: `aube config [FLAGS] <SUBCOMMAND>`
+- **Aliases**: `c`
 - **Effect**: read-only
 
 Read and write settings in `.npmrc`
@@ -12,27 +13,34 @@ Read and write settings in `.npmrc`
 
 Also list settings that have no value set.
 
-Renders one row per setting in `settings.toml`, with the default and description shown for unset entries.
+Renders one row per setting in `settings.toml`, with the
+default and description shown for unset entries.
 
-Only valid with `--location merged` (the default), since a per-file view can't distinguish "not set anywhere" from "set in the other file" and would render misleading defaults.
+Only valid with `--location merged` (the default), since a
+per-file view can't distinguish "not set anywhere" from "set in
+the other file" and would render misleading defaults.
 
 ### `--json`
 
 Emit all entries as a JSON object keyed by setting name.
 
-Matches `pnpm config list --json`. Honors `--all` and `--location` the same way the default text output does.
+Matches `pnpm config list --json`. Honors `--all` and
+`--location` the same way the default text output does.
 
 ### `--local`
 
 Shortcut for `--location project`.
 
-Conflicts with `--all` since `--all` only makes sense against the merged view — see the `--all` docs for why.
+Conflicts with `--all` since `--all` only makes sense against
+the merged view — see the `--all` docs for why.
 
 ### `--location <LOCATION>`
 
 Which config location(s) to list.
 
-`merged` (default) walks `~/.npmrc`, user aube config, then the project's `.npmrc` with last-write-wins precedence, matching how install reads config.
+`merged` (default) walks `~/.npmrc`, user aube config, then
+the project's `.npmrc` with last-write-wins precedence,
+matching how install reads config.
 
 **Choices:**
 

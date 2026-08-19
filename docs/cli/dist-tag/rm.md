@@ -5,20 +5,20 @@
 - **Aliases**: `remove`
 - **Effect**: destructive — may delete or irreversibly overwrite
 
-Remove a dist-tag from a package
+Remove a dist-tag from a package.
 
 ## Arguments
 
 ### `<PACKAGE>`
 
-Package name (no version)
+Package name (no version).
 
 ### `<TAG>`
 
-Tag to remove
+Tag to remove.
 
 ## Flags
 
 ### `--otp <OTP>`
 
-One-time password from a 2FA authenticator; sent as `npm-otp`
+One-time password from a 2FA authenticator; sent as `npm-otp`.

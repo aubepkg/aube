@@ -11,4 +11,4 @@ Search known settings by name, source key, or description
 
 ### `<QUERY>…`
 
-Words to search for
+Words to search for.

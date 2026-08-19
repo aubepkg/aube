@@ -10,14 +10,4 @@ Run broad install-health diagnostics
 
 ### `-J --json`
 
-Emit a machine-readable JSON report instead of the grouped text
-
-Examples:
-
-  $ aube doctor
-  version: 1.0.0-beta.4
-  node: v22.11.0
-  ...
-  No problems found
-
-  $ aube doctor --json | jq .warnings
+Emit a machine-readable JSON report instead of the grouped text.

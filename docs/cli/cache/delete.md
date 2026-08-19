@@ -6,7 +6,8 @@
 
 Delete metadata cache for the specified package(s).
 
-Supports glob patterns; matches against the package name (e.g. `lodash`, `@babel/*`).
+Supports glob patterns; matches against the package name (e.g.
+`lodash`, `@babel/*`).
 
 ## Arguments
 

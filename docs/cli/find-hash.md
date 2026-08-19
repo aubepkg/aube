@@ -12,7 +12,8 @@ List packages whose cached index references a given file hash
 
 Hash to look up.
 
-Accepts `sha512-<base64>` (pnpm integrity format) or a raw hex CAS digest.
+Accepts `sha512-<base64>` (pnpm integrity format) or a raw hex
+CAS digest.
 
 ## Flags
 
@@ -26,47 +27,44 @@ Output is an array of `{ "name", "version", "path" }` objects.
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
+`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
+fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from
+`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
+underlying `FetchPolicy.retry_factor` is `u32`. Fractional
+values like `1.5` are rejected by clap.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
+`aube-workspace.yaml` when set. Applied via `reqwest`'s
+`.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
-
-Examples:
-
-  # Accepts integrity strings
-  $ aube find-hash sha512-abc123...
-  lodash@4.17.21	package/lodash.js
-  express@4.19.2	node_modules/lodash/lodash.js
-
-  # ...or raw hex digests
-  $ aube find-hash 5d41402abc4b2a76b9719d911017c592...
-
-  # Machine-readable
-  $ aube find-hash --json sha512-abc123...
+Use this npm registry URL for package metadata, tarballs,
+audit requests, dist-tags, and registry writes.

@@ -3,8 +3,6 @@
 
 **Usage**: `aube [FLAGS] <SUBCOMMAND>`
 
-**Version**: 1.41.0
-
 - **Usage**: `aube [FLAGS] <SUBCOMMAND>`
 
 ## Global Flags
@@ -17,15 +15,22 @@ Change to directory before running (like `make -C` or `mise --cd`)
 
 Scope command execution to workspace packages matching PATTERN.
 
-Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.
+Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`),
+paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`),
+git-ref selectors (`[origin/main]`), and exclusions (`!pkg`).
+Repeatable; matches are OR-ed.
 
-Currently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.
+Currently honored by `run`, `test`, `start`, `stop`, `restart`,
+`install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`,
+`update`, `why`, and implicit-script invocations.
 
 ### `-r --recursive`
 
 Run the command across every workspace package.
 
-Equivalent to `--filter=*`; if `--filter` is also given, `--recursive` is a no-op and the explicit filter wins. Honored by the same commands as `--filter`.
+Equivalent to `--filter=*`; if `--filter` is also given,
+`--recursive` is a no-op and the explicit filter wins. Honored
+by the same commands as `--filter`.
 
 ### `-v --verbose`
 
@@ -35,19 +40,28 @@ Enable verbose/debug logging (shortcut for `--loglevel debug`)
 
 Print version and check for updates.
 
-Manual flag so we can run the async update notifier alongside the version print — clap's auto `Action::Version` exits inside `parse_from`, before the tokio runtime is built.
+Manual flag so we can run the async update notifier alongside
+the version print — clap's auto `Action::Version` exits inside
+`parse_from`, before the tokio runtime is built.
 
 ### `--color`
 
 Force colored output even when stderr is not a TTY.
 
-Overrides `NO_COLOR` / `CLICOLOR=0`. Mutually exclusive with `--no-color`.
+Overrides `NO_COLOR` / `CLICOLOR=0`. Mutually exclusive with
+`--no-color`.
 
-### `--diag <MODE>`
+### `--diag [MODE]`
 
-Enable cold-install deep diagnostics. Modes: summary  — sum_ms / mean / max / %wall table at end trace    — summary + critical path + starvation + what-if + lifecycle live     — like trace, plus print every span >= 100ms to stderr live full     — like trace, plus write JSONL trace to a file (defaults to ./aube-diag.jsonl)
+Enable cold-install deep diagnostics. Modes:
+  summary  — sum_ms / mean / max / %wall table at end
+  trace    — summary + critical path + starvation + what-if + lifecycle
+  live     — like trace, plus print every span >= 100ms to stderr live
+  full     — like trace, plus write JSONL trace to a file (defaults to ./aube-diag.jsonl)
 
-Quick form: `--diag` with no value defaults to `trace`. Output file path can be set via `--diag-file`. Threshold for live mode via `--diag-threshold-ms`.
+Quick form: `--diag` with no value defaults to `trace`.
+Output file path can be set via `--diag-file`. Threshold for live
+mode via `--diag-threshold-ms`.
 
 ### `--diag-file <PATH>`
 
@@ -55,7 +69,7 @@ Path for `--diag full` JSONL trace (default: ./aube-diag.jsonl)
 
 ### `--diag-threshold-ms <MS>`
 
-Live-mode threshold: only print spans whose duration is >= N ms (default 100)
+Live-mode threshold: only print spans whose duration is >= N ms (default 100).
 
 ### `--fail-if-no-match`
 
@@ -67,11 +81,16 @@ Accepted globally; selected commands already fail on empty matches.
 
 Production-only variant of `--filter`.
 
-Same selector grammar as `--filter`, but graph walks (`pkg...`, `...pkg`) only follow `dependencies` / `optionalDependencies` / `peerDependencies` edges — `devDependencies` (and packages reachable solely through them) are skipped. Non-graph forms (exact name, glob, path, `[git-ref]`) behave identically to `--filter`. Repeatable; can be combined with `--filter`.
+Same selector grammar as `--filter`, but graph walks (`pkg...`,
+`...pkg`) only follow `dependencies` / `optionalDependencies` /
+`peerDependencies` edges — `devDependencies` (and packages
+reachable solely through them) are skipped. Non-graph forms
+(exact name, glob, path, `[git-ref]`) behave identically to
+`--filter`. Repeatable; can be combined with `--filter`.
 
 ### `--loglevel <LEVEL>`
 
-Set the log level. Logs at or above this level are shown
+Set the log level. Logs at or above this level are shown.
 
 **Choices:**
 
@@ -86,13 +105,20 @@ Set the log level. Logs at or above this level are shown
 
 Disable colored output.
 
-Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so downstream libraries (miette, clx, child processes) all see the same choice.
+Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1`
+so downstream libraries (miette, clx, child processes) all see
+the same choice.
 
 ### `--reporter <NAME>`
 
 Output format: default, append-only, ndjson, silent.
 
-`default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` swaps the tracing fmt layer for the JSON formatter (one JSON object per log event on stderr) and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).
+`default` renders the progress UI when stderr is a TTY;
+`append-only` disables the progress UI in favor of plain
+line-at-a-time logs; `ndjson` swaps the tracing fmt layer for
+the JSON formatter (one JSON object per log event on stderr)
+and is what tooling wrappers should consume; `silent`
+suppresses all non-error output (alias for `--loglevel silent`).
 
 **Choices:**
 
@@ -107,7 +133,7 @@ Suppress all non-error output (alias for `--loglevel silent`)
 
 ### `--workspace-root`
 
-Run from the workspace root regardless of the current package
+Run from the workspace root regardless of the current package.
 
 ## Subcommands
 

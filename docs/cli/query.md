@@ -12,42 +12,26 @@ Query packages in the resolved dependency graph
 
 Selector expression.
 
-Supports `*`, bare package names, `[name=value]`, `[version=value]`, `[license=value]`, `[depPath=value]`, `[source=value]`, `:prod`, `:dev`, `:optional`, `:peer`, `:transitive`, `:scripts`, `:bin`, `:deprecated`, `:license(value)`, and `:type(value)`.
+Supports `*`, bare package names, `[name=value]`,
+`[version=value]`, `[license=value]`, `[depPath=value]`,
+`[source=value]`, `:prod`, `:dev`, `:optional`, `:peer`,
+`:transitive`, `:scripts`, `:bin`, `:deprecated`,
+`:license(value)`, and `:type(value)`.
 
 ## Flags
 
 ### `-D --dev`
 
-Only match devDependency roots and their transitive deps
+Only match devDependency roots and their transitive deps.
 
 ### `-P --prod`
 
-Only match production/optional roots and their transitive deps
+Only match production/optional roots and their transitive deps.
 
 ### `--json`
 
-Emit a JSON array instead of the default text layout
+Emit a JSON array instead of the default text layout.
 
 ### `--parseable`
 
-Emit tab-separated rows: dep_path, name, version, source, flags
-
-Inspired by vlt's dependency selector model, but currently local-only:
-selectors read aube's lockfile graph without registry or security-service calls.
-
-Examples:
-
-  # Every reachable package
-  $ aube query '*'
-
-  # Exact package name
-  $ aube query '[name=react]'
-
-  # Direct prod dependencies with install scripts
-  $ aube query ':prod:scripts'
-
-  # Local file/link/git/tarball dependencies
-  $ aube query ':type(file), :type(link), :type(git), :type(remote)'
-
-  # Machine-readable
-  $ aube query ':bin' --json
+Emit tab-separated rows: dep_path, name, version, source, flags.

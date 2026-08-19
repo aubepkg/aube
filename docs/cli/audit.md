@@ -12,7 +12,8 @@ Check installed packages against the registry advisory DB
 
 Only print advisories at or above this severity.
 
-One of: `info`, `low`, `moderate`, `high`, `critical`. Defaults to `audit.level` (or legacy `auditLevel`), then `low`.
+One of: `info`, `low`, `moderate`, `high`, `critical`.
+Defaults to `audit.level` (or legacy `auditLevel`), then `low`.
 
 **Choices:**
 
@@ -24,13 +25,14 @@ One of: `info`, `low`, `moderate`, `high`, `critical`. Defaults to `audit.level`
 
 ### `-D --dev`
 
-Only audit `devDependencies`
+Only audit `devDependencies`.
 
-### `--fix <FIX>`
+### `--fix [FIX]`
 
 Fix advisories.
 
-Bare `--fix` writes package.json overrides for backwards compatibility. `--fix=update` refreshes the lockfile without writing overrides.
+Bare `--fix` writes package.json overrides for backwards compatibility.
+`--fix=update` refreshes the lockfile without writing overrides.
 
 **Choices:**
 
@@ -41,7 +43,10 @@ Bare `--fix` writes package.json overrides for backwards compatibility. `--fix=u
 
 Drop advisories whose ID matches one of these values.
 
-Matches against the numeric npm advisory `id`, `github_advisory_id` (`GHSA-…`), and any entry in `cves[]` (case-insensitive). Repeatable; comma-separated values are also accepted.
+Matches against the numeric npm advisory `id`,
+`github_advisory_id` (`GHSA-…`), and any entry in `cves[]`
+(case-insensitive). Repeatable; comma-separated values are also
+accepted.
 
 ### `--ignore-registry-errors`
 
@@ -53,78 +58,69 @@ Useful when audit checks run in CI and the registry has a hiccup.
 
 Drop advisories that have no non-vulnerable upgrade.
 
-Filters out advisories for which no non-vulnerable version is available in the package's packument. Same "best non-vulnerable" logic as `--fix`: an advisory is kept only when an upgrade path exists.
+Filters out advisories for which no non-vulnerable version is
+available in the package's packument. Same "best non-vulnerable"
+logic as `--fix`: an advisory is kept only when an upgrade path
+exists.
 
 ### `-i --interactive`
 
-Pick which advisories to fix interactively
+Pick which advisories to fix interactively.
 
 ### `--json`
 
-Emit the report as JSON (pnpm-compatible shape) instead of a table
+Emit the report as JSON (pnpm-compatible shape) instead of a table.
 
 ### `--no-optional`
 
-Skip `optionalDependencies`
+Skip `optionalDependencies`.
 
 ### `-P --prod`
 
-Only audit `dependencies` and `optionalDependencies`
+Only audit `dependencies` and `optionalDependencies`.
 
 ### `--fetch-retries <N>`
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
+`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
+fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from
+`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
+underlying `FetchPolicy.retry_factor` is `u32`. Fractional
+values like `1.5` are rejected by clap.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
+`aube-workspace.yaml` when set. Applied via `reqwest`'s
+`.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
-
-Examples:
-
-  $ aube audit
-  Severity  Package    Vulnerable  Title
-  moderate  minimatch  <3.0.5      Regular Expression Denial of Service
-                                   https://github.com/advisories/GHSA-f8q6-p94x
-
-  1 vulnerability found
-
-  # Only fail on high and above
-  $ aube audit --audit-level high
-
-  # Skip optional deps and dev deps
-  $ aube audit --prod --no-optional
-
-  # Pipe into jq
-  $ aube audit --json | jq '.advisories | length'
-
-  # Clean
-  $ aube audit
-  No known vulnerabilities found
+Use this npm registry URL for package metadata, tarballs,
+audit requests, dist-tags, and registry writes.

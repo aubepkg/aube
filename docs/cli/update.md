@@ -2,6 +2,7 @@
 # `aube update`
 
 - **Usage**: `aube update [FLAGS] [PACKAGES]…`
+- **Aliases**: `up`, `upgrade`
 - **Effect**: modifies state
 
 Update dependencies
@@ -16,13 +17,17 @@ Package(s) to update (all if empty)
 
 ### `-D --dev`
 
-Update only devDependencies
+Update only devDependencies.
 
 ### `-E --exact`
 
-Pin manifest specifiers to the resolved version with no range prefix.
+Pin manifest specifiers to the resolved version with no range
+prefix.
 
-Pair with `--latest`: when the rewritten specifier replaces the caret/tilde original, drop the prefix so the manifest carries an exact pin (`"1.2.3"`) instead of `"^1.2.3"`. Mirrors `pnpm update --save-exact`.
+Pair with `--latest`: when the rewritten specifier replaces the
+caret/tilde original, drop the prefix so the manifest carries an
+exact pin (`"1.2.3"`) instead of `"^1.2.3"`. Mirrors
+`pnpm update --save-exact`.
 
 ### `-g --global`
 
@@ -40,110 +45,138 @@ Parsed for pnpm compatibility.
 
 Update past the manifest range unless paired with `--no-save`.
 
-Rewrites `package.json` specifiers to match the newly resolved versions (the registry's `latest` dist-tag, clamped by `minimumReleaseAge` / `resolution-mode` as usual). With `--no-save`, leaves the manifest range unchanged and resolves only to the newest version that range allows.
+Rewrites `package.json` specifiers to match the newly resolved
+versions (the registry's `latest` dist-tag, clamped by
+`minimumReleaseAge` / `resolution-mode` as usual). With
+`--no-save`, leaves the manifest range unchanged and resolves
+only to the newest version that range allows.
 
 ### `-P --prod`
 
-Update only production dependencies
+Update only production dependencies.
 
 ### `-w --workspace`
 
-Update dependencies in the current workspace package
+Update dependencies in the current workspace package.
 
 ### `--depth <DEPTH>`
 
 Dependency traversal depth.
 
-Parsed for pnpm compatibility but ignored: aube only ever refreshes direct deps (pnpm's `--depth 0` default). Setting the flag emits a one-line warning pointing at `rm aube-lock.yaml && aube install` for the `--depth Infinity` case.
+Parsed for pnpm compatibility but ignored: aube only ever
+refreshes direct deps (pnpm's `--depth 0` default). Setting
+the flag emits a one-line warning pointing at
+`rm aube-lock.yaml && aube install` for the
+`--depth Infinity` case.
 
 ### `--global-pnpmfile <PATH>`
 
 Add a global pnpmfile that runs before the local one.
 
-Mirrors pnpm's `--global-pnpmfile <path>`. The global hook runs first and the local hook (if any) runs second.
+Mirrors pnpm's `--global-pnpmfile <path>`. The global hook runs
+first and the local hook (if any) runs second.
 
 ### `--ignore-pnpmfile`
 
-Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this update
+Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this update.
 
 ### `--lockfile-only`
 
 Refresh the lockfile without populating `node_modules`.
 
-Re-resolves the full graph (direct + transitive) and writes `aube-lock.yaml`, then skips the linker so `node_modules` is left untouched. Mirrors `npm update --package-lock-only`.
+Re-resolves the full graph (direct + transitive) and writes
+`aube-lock.yaml`, then skips the linker so `node_modules` is
+left untouched. Mirrors `npm update --package-lock-only`.
 
 ### `--no-optional`
 
-Skip optionalDependencies
+Skip optionalDependencies.
 
 ### `--no-save`
 
 Refresh the lockfile without rewriting `package.json` ranges.
 
-Pair with `--latest` to refresh the lockfile to the newest version allowed by the unchanged manifest range. Without `--latest`, it still suppresses manifest range rewrites enabled by `updateRewritesSpecifier`. Mirrors `pnpm update --no-save`.
+Pair with `--latest` to refresh the lockfile to the newest
+version allowed by the unchanged manifest range. Without
+`--latest`, it still suppresses manifest range rewrites enabled
+by `updateRewritesSpecifier`. Mirrors `pnpm update --no-save`.
 
 ### `--pnpmfile <PATH>`
 
 Override the local pnpmfile location.
 
-Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve against the project root; absolute paths are used as-is. Wins over `pnpmfilePath` from `pnpm-workspace.yaml`.
+Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve
+against the project root; absolute paths are used as-is. Wins
+over `pnpmfilePath` from `pnpm-workspace.yaml`.
 
 ### `--frozen-lockfile`
 
-Error if the lockfile drifts from package.json
+Error if the lockfile drifts from package.json.
 
 ### `--no-frozen-lockfile`
 
-Always re-resolve, even if the lockfile is up to date
+Always re-resolve, even if the lockfile is up to date.
 
 ### `--prefer-frozen-lockfile`
 
-Use the lockfile when fresh, re-resolve when stale
+Use the lockfile when fresh, re-resolve when stale.
 
 ### `--fetch-retries <N>`
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
+`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
+fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from
+`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
+underlying `FetchPolicy.retry_factor` is `u32`. Fractional
+values like `1.5` are rejected by clap.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
+`aube-workspace.yaml` when set. Applied via `reqwest`'s
+`.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs,
+audit requests, dist-tags, and registry writes.
 
 ### `--disable-global-virtual-store`
 
 Force the shared global virtual store off for this invocation.
 
-Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+Packages are materialized inside the project's virtual store
+instead of symlinked from `~/.cache/aube/virtual-store/`.
 
 ### `--enable-global-virtual-store`
 
 Force the shared global virtual store on for this invocation.
 
-Overrides CI's default per-project materialization and the `disableGlobalVirtualStoreForPackages` auto-disable heuristic.
+Overrides CI's default per-project materialization and the
+`disableGlobalVirtualStoreForPackages` auto-disable heuristic.

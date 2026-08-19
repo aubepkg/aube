@@ -4,7 +4,8 @@
 - **Usage**: `aube peers check [--json]`
 - **Effect**: read-only
 
-Check for unmet and missing peer-dependency issues by reading the lockfile.
+Check for unmet and missing peer-dependency issues by reading the
+lockfile.
 
 Exits with status 1 if any issue is reported.
 
@@ -12,7 +13,7 @@ Exits with status 1 if any issue is reported.
 
 ### `--json`
 
-Emit a JSON report instead of the human-readable tree
+Emit a JSON report instead of the human-readable tree.
 
 Examples:
 

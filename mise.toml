@@ -29,7 +29,6 @@ pkl = "latest"
 rush = "latest"
 shellcheck = "latest"
 shfmt = "latest"
-usage = "latest"
 
 [tasks.lint]
 run = "hk check --all --slow"
@@ -163,13 +162,18 @@ dir = "{{config_root}}"
 run = "bash benchmarks/pgo.bash"
 
 [tasks.render]
-depends = ["build"]
+depends = ["build", "build-usage"]
 run = [
   "./target/debug/aube usage > aube.usage.kdl",
   "rm -rf docs/cli && mkdir -p docs/cli",
-  "usage g markdown -mf aube.usage.kdl --out-dir docs/cli --url-prefix /cli",
-  "usage g json -f aube.usage.kdl > docs/cli/commands.json",
+  "target/usage-cli/bin/usage g markdown -mf aube.usage.kdl --out-dir docs/cli --url-prefix /cli",
+  "target/usage-cli/bin/usage g json -f aube.usage.kdl > docs/cli/commands.json",
   "node scripts/patch-generated-cli-docs.mjs",
   "cargo run -p aube-settings --bin generate-settings-docs",
   "cargo run -p aube-codes --bin generate-error-codes-docs",
 ]
+
+[tasks.build-usage]
+run = "cargo install --locked --git https://github.com/jdx/usage --rev 88786493a5df2b90ad49314f68267c39c7497188 --root target/usage-cli usage-cli"
+sources = ["Cargo.lock"]
+outputs = ["target/usage-cli/bin/usage"]

@@ -4,7 +4,7 @@
 - **Usage**: `aube access get <SUBCOMMAND>`
 - **Effect**: read-only
 
-Get package visibility status
+Get package visibility status.
 
 ## Subcommands
 

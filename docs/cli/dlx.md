@@ -9,9 +9,15 @@ Fetch a package into a throwaway environment and run its binary
 
 ### `[PARAMS]…`
 
-Command (binary) to run, followed by arguments to pass through to it.
+Command (binary) to run, followed by arguments to pass through to
+it.
 
-The first positional is the command; the rest are forwarded verbatim to the binary. Without `--package`, a local `node_modules/.bin/<command>` wins when present; otherwise dlx installs into a throwaway project. Under `--shell-mode`/`-c` the positionals are joined and evaluated by `sh -c` instead of looked up directly.
+The first positional is the command; the rest are forwarded
+verbatim to the binary. Without `--package`, a local
+`node_modules/.bin/<command>` wins when present; otherwise dlx
+installs into a throwaway project. Under `--shell-mode`/`-c` the
+positionals are joined and evaluated by `sh -c` instead of
+looked up directly.
 
 ## Flags
 
@@ -19,7 +25,9 @@ The first positional is the command; the rest are forwarded verbatim to the bina
 
 Run the assembled command line through `sh -c`.
 
-`<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
+`<scratch>/node_modules/.bin` is prepended to `PATH`. Use this
+for pipelines, redirects, or env expansion (`aube dlx -p cowsay
+-c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
 
 ### `-p --package… <PACKAGE>`
 
@@ -29,66 +37,85 @@ Overrides inferring from the command.
 
 ### `--allow-build… <PKG>`
 
-Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.
+Allow named packages to run lifecycle scripts during the
+transient install. Use `--allow-build=<pkg>`.
 
-Repeatable — pass once per package. The named package's `preinstall` / `install` / `postinstall` scripts execute during the transient install. Requires the equals form (`--allow-build=<pkg>`); space-separated forms are rejected. Mirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility surface while keeping dlx scripts skipped unless explicitly approved.
+Repeatable — pass once per package. The named package's
+`preinstall` / `install` / `postinstall` scripts execute during
+the transient install. Requires the equals form
+(`--allow-build=<pkg>`); space-separated forms are rejected.
+Mirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility
+surface while keeping dlx scripts skipped unless explicitly
+approved.
 
 ### `--frozen-lockfile`
 
-Error if the lockfile drifts from package.json
+Error if the lockfile drifts from package.json.
 
 ### `--no-frozen-lockfile`
 
-Always re-resolve, even if the lockfile is up to date
+Always re-resolve, even if the lockfile is up to date.
 
 ### `--prefer-frozen-lockfile`
 
-Use the lockfile when fresh, re-resolve when stale
+Use the lockfile when fresh, re-resolve when stale.
 
 ### `--fetch-retries <N>`
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
+`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
+fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by clap.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from
+`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
+underlying `FetchPolicy.retry_factor` is `u32`. Fractional
+values like `1.5` are rejected by clap.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
+`.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
+`aube-workspace.yaml` when set. Applied via `reqwest`'s
+`.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs,
+audit requests, dist-tags, and registry writes.
 
 ### `--disable-global-virtual-store`
 
 Force the shared global virtual store off for this invocation.
 
-Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+Packages are materialized inside the project's virtual store
+instead of symlinked from `~/.cache/aube/virtual-store/`.
 
 ### `--enable-global-virtual-store`
 
 Force the shared global virtual store on for this invocation.
 
-Overrides CI's default per-project materialization and the `disableGlobalVirtualStoreForPackages` auto-disable heuristic.
+Overrides CI's default per-project materialization and the
+`disableGlobalVirtualStoreForPackages` auto-disable heuristic.

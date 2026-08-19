@@ -4,10 +4,10 @@
 - **Usage**: `aube access get status <PACKAGE>`
 - **Effect**: read-only
 
-Get a package's public or restricted status
+Get a package's public or restricted status.
 
 ## Arguments
 
 ### `<PACKAGE>`
 
-Package name
+Package name.

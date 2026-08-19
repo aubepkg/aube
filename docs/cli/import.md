@@ -14,6 +14,10 @@ Overwrite an existing aube-lock.yaml
 
 ### `--lockfile-only`
 
-Write only the converted lockfile and skip linking `node_modules` afterwards.
+Write only the converted lockfile and skip linking
+`node_modules` afterwards.
 
-`aube import` already exits without touching `node_modules` today, so this flag is a no-op kept for compatibility — CI scripts that pass `--lockfile-only` keep working without complaint.
+`aube import` already exits without touching `node_modules`
+today, so this flag is a no-op kept for compatibility — CI
+scripts that pass `--lockfile-only` keep working without
+complaint.

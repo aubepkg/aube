@@ -11,11 +11,3 @@ Print the current package prefix directory
 ### `-g --global`
 
 Print the global prefix directory instead of the project's root
-
-Examples:
-
-  $ aube prefix
-  /home/user/project
-
-  $ aube prefix -g
-  /home/user/.local/share/pnpm

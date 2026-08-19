@@ -13,19 +13,24 @@ Delete a key from aube config or the selected `.npmrc` file
 
 The setting key.
 
-Accepts either a pnpm canonical name (e.g. `autoInstallPeers`) or an `.npmrc` alias (e.g. `auto-install-peers`).
+Accepts either a pnpm canonical name (e.g. `autoInstallPeers`)
+or an `.npmrc` alias (e.g. `auto-install-peers`).
 
 ## Flags
 
 ### `--local`
 
-Shortcut for `--location project`
+Shortcut for `--location project`.
 
 ### `--location <LOCATION>`
 
 Which config location to act on.
 
-Defaults to `user`. Delete sweeps both aube's own config (`~/.config/aube/config.toml` at user-scope, `<cwd>/.config/aube/config.toml` at project-scope) and the matching `.npmrc`, so the call works regardless of which file the value was originally written to.
+Defaults to `user`. Delete sweeps both aube's own config
+(`~/.config/aube/config.toml` at user-scope,
+`<cwd>/.config/aube/config.toml` at project-scope) and the
+matching `.npmrc`, so the call works regardless of which file
+the value was originally written to.
 
 **Choices:**
 

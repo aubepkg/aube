@@ -11,9 +11,3 @@ Emit shell activation code for runtime tool shims
 ### `<SHELL>`
 
 Shell to emit activation code for
-
-**Choices:**
-
-- `bash`
-- `fish`
-- `zsh`

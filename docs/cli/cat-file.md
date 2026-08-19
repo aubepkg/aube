@@ -12,4 +12,5 @@ Print a file from the global store by integrity or hex hash
 
 File hash to look up.
 
-Accepts `sha512-<base64>` (pnpm integrity format) or a raw hex CAS digest.
+Accepts `sha512-<base64>` (pnpm integrity format) or a raw hex
+CAS digest.

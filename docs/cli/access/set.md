@@ -4,14 +4,14 @@
 - **Usage**: `aube access set <SETTING> <PACKAGE>`
 - **Effect**: modifies state
 
-Set package visibility or a publish MFA requirement
+Set package visibility or a publish MFA requirement.
 
 ## Arguments
 
 ### `<SETTING>`
 
-`status=public|private|restricted` or `mfa=none|publish|automation`
+`status=public|private|restricted` or `mfa=none|publish|automation`.
 
 ### `<PACKAGE>`
 
-Package name
+Package name.

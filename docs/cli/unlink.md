@@ -2,6 +2,7 @@
 # `aube unlink`
 
 - **Usage**: `aube unlink [-g --global] [PACKAGE]`
+- **Aliases**: `dislink`
 - **Effect**: modifies state
 
 Unlink a package (remove linked entries from node_modules)
@@ -16,6 +17,10 @@ Package name to unlink (omit to unlink all linked dependencies)
 
 ### `-g --global`
 
-Operate on the global link registry instead of the current project.
+Operate on the global link registry instead of the current
+project.
 
-`aube unlink -g` removes the current package's entry from `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links` when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\aube\global-links` on Windows; `aube unlink -g <name>` removes the named entry.
+`aube unlink -g` removes the current package's entry from
+`$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links`
+when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\aube\global-links`
+on Windows; `aube unlink -g <name>` removes the named entry.

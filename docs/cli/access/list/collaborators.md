@@ -4,14 +4,14 @@
 - **Usage**: `aube access list collaborators <PACKAGE> [USER]`
 - **Effect**: read-only
 
-List collaborators for a package, optionally filtering to one user
+List collaborators for a package, optionally filtering to one user.
 
 ## Arguments
 
 ### `<PACKAGE>`
 
-Package name
+Package name.
 
 ### `[USER]`
 
-Optional user name
+Optional user name.
