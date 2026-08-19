@@ -2091,6 +2091,7 @@ mod package_manager_guard_tests {
 #[cfg(test)]
 mod cli_ordering_tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     /// Validate that aube's CLI commands and arguments are ordered:
     /// - Subcommands alphabetical by name
@@ -2126,12 +2127,14 @@ mod cli_ordering_tests {
             sorted,
         );
 
-        // Short flags remain stable. Long-only flags from flattened groups are emitted in
-        // group order; usage does not yet carry clap's struct-level next_help_heading.
+        // Short flags alphabetical, long-only alphabetical within heading.
         let mut shorts: Vec<u8> = Vec::new();
+        let mut by_heading: BTreeMap<Option<&str>, Vec<&str>> = BTreeMap::new();
         for flag in cmd.flags {
             if let Some(&short) = flag.flag.shorts.first() {
                 shorts.push(short);
+            } else if let Some(&long) = flag.flag.longs.first() {
+                by_heading.entry(flag.help_heading).or_default().push(long);
             }
         }
         let mut sorted_shorts = shorts.clone();
@@ -2143,6 +2146,18 @@ mod cli_ordering_tests {
             shorts,
             sorted_shorts,
         );
+        for (heading, longs) in &by_heading {
+            let mut sorted_longs = longs.clone();
+            sorted_longs.sort();
+            assert!(
+                longs == &sorted_longs,
+                "Long-only flags under heading {:?} in '{}' are not sorted!\nActual: {:?}\nExpected: {:?}",
+                heading,
+                current_path.join(" "),
+                longs,
+                sorted_longs,
+            );
+        }
         for sub in cmd.subcommands {
             check_command_sorted(sub, &current_path);
         }

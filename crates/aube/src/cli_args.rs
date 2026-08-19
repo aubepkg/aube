@@ -1,4 +1,4 @@
-//! Shared `clap::Args` groups flattened into per-command argument structs.
+//! Shared `usage_rs::Args` groups flattened into per-command argument structs.
 //!
 //! Flags here used to live as `global` on the top-level `Cli`,
 //! which made every command's `--help` display the union of every flag
@@ -8,11 +8,12 @@
 //! Pre-subcommand placement (`aube --frozen-lockfile install`,
 //! `aube --registry=URL install`, …) keeps working through the
 //! argv-rewriting pass in `main::lift_per_subcommand_flags`, which
-//! shifts these flags past the subcommand before clap parses argv.
+//! shifts these flags past the subcommand before usage parses argv.
 
 use crate::commands;
 
 #[derive(usage_rs::Args, Debug, Default, Clone, Copy)]
+#[command(next_help_heading = "Lockfile")]
 pub struct LockfileArgs {
     /// Error if the lockfile drifts from package.json.
     #[usage(long, conflicts("--no-frozen-lockfile", "--prefer-frozen-lockfile"))]
@@ -49,6 +50,7 @@ impl LockfileArgs {
 }
 
 #[derive(usage_rs::Args, Debug, Default, Clone)]
+#[command(next_help_heading = "Network")]
 pub struct NetworkArgs {
     /// Number of retry attempts for failed registry fetches.
     ///
@@ -63,7 +65,7 @@ pub struct NetworkArgs {
     /// Overrides `fetchRetryFactor` / `fetch-retry-factor` from
     /// `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
     /// underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-    /// values like `1.5` are rejected by clap.
+    /// values like `1.5` are rejected by the CLI parser.
     #[usage(long, value_name = "N")]
     pub fetch_retry_factor: Option<u64>,
 
@@ -131,6 +133,7 @@ impl NetworkArgs {
 }
 
 #[derive(usage_rs::Args, Debug, Default, Clone, Copy)]
+#[command(next_help_heading = "Virtual store")]
 pub struct VirtualStoreArgs {
     /// Force the shared global virtual store off for this invocation.
     ///
