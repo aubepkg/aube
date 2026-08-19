@@ -1423,10 +1423,14 @@ mod cli_spec_tests {
 
     #[test]
     fn virtual_store_overrides_conflict() {
-        assert!(
-            Cli::try_parse_from(["aube", "install", "--enable-gvs", "--disable-gvs"]).is_err(),
-            "the two virtual-store overrides should remain mutually exclusive"
-        );
+        for enable in ["--enable-global-virtual-store", "--enable-gvs"] {
+            for disable in ["--disable-global-virtual-store", "--disable-gvs"] {
+                assert!(
+                    Cli::try_parse_from(["aube", "install", enable, disable]).is_err(),
+                    "{enable} and {disable} should remain mutually exclusive"
+                );
+            }
+        }
     }
 
     #[test]
