@@ -48,11 +48,7 @@ use std::path::PathBuf;
 
 #[derive(usage_derive::Cli)]
 #[allow(dead_code)]
-#[usage(
-    name = "aube",
-    about = "A fast Node.js package manager",
-    version = "1.41.0"
-)]
+#[usage(name = "aube", about = "A fast Node.js package manager")]
 pub(crate) struct Cli {
     /// Change to directory before running (like `make -C` or `mise --cd`)
     #[usage(
@@ -1344,6 +1340,7 @@ async fn run_install_command(
     filter: aube_workspace::selector::EffectiveFilter,
     workspace_root_already: bool,
 ) -> miette::Result<()> {
+    args.validate_cli_relationships()?;
     // `-w` on install is a short alias for the global
     // `--workspace-root` flag. Handle the chdir here when the global
     // flag wasn't already set.
@@ -1405,6 +1402,23 @@ mod cli_spec_tests {
             install_args.network.registry.as_deref(),
             Some("https://registry.example.com/")
         );
+    }
+
+    #[test]
+    fn top_level_version_keeps_the_manual_async_path() {
+        let cli = Cli::try_parse_from(["aube", "--version"])
+            .expect("the manual version flag should bind instead of exiting in the parser");
+        assert!(cli.version);
+    }
+
+    #[test]
+    fn install_rejects_incompatible_lockfile_modes() {
+        let cli = Cli::try_parse_from(["aube", "install", "--fix-lockfile", "--frozen-lockfile"])
+            .expect("cross-flatten relationships are checked after binding");
+        let Some(Commands::Install(args)) = cli.command else {
+            panic!("expected install subcommand");
+        };
+        assert!(args.validate_cli_relationships().is_err());
     }
 
     #[test]

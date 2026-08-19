@@ -174,6 +174,24 @@ pub struct InstallArgs {
 }
 
 impl InstallArgs {
+    pub fn validate_cli_relationships(&self) -> miette::Result<()> {
+        if self.fix_lockfile
+            && (self.lockfile.frozen_lockfile
+                || self.lockfile.no_frozen_lockfile
+                || self.lockfile.prefer_frozen_lockfile)
+        {
+            return Err(miette::miette!(
+                "--fix-lockfile cannot be combined with a frozen-lockfile mode"
+            ));
+        }
+        if self.lockfile_only && self.lockfile.frozen_lockfile {
+            return Err(miette::miette!(
+                "--lockfile-only cannot be combined with --frozen-lockfile"
+            ));
+        }
+        Ok(())
+    }
+
     /// Build the CLI flag bag that feeds
     /// [`aube_settings::ResolveCtx::cli`]. Each entry is a
     /// `(flag_name, value)` pair where `flag_name` matches a

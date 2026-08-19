@@ -47,6 +47,7 @@ pub enum PeersCommand {
 }
 
 #[derive(Debug, usage_derive::Args)]
+#[usage(after_long_help = CHECK_AFTER_LONG_HELP)]
 pub struct PeersCheckArgs {
     /// Emit a JSON report instead of the human-readable tree.
     #[usage(long)]

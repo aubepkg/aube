@@ -132,6 +132,11 @@ async fn run_inner(
     chain_install: bool,
     mut recursive_catalog_choices: Option<&mut RecursiveCatalogChoices>,
 ) -> miette::Result<Option<i32>> {
+    if args.lockfile_only && args.lockfile.frozen_lockfile {
+        return Err(miette::miette!(
+            "--lockfile-only cannot be combined with --frozen-lockfile"
+        ));
+    }
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();

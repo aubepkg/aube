@@ -1,27 +1,21 @@
 # usage 6.x migration status
 
-This branch converts aube's real CLI structs and attributes from clap to
-usage-rs and removes clap from the runtime dependency graph. It is intentionally
-kept as an experimental PR until usage 6.x exists.
+This branch converts aube's real typed CLI from clap to usage-rs and removes
+clap from the runtime dependency graph. The conversion compiles, its 806 library
+tests pass, and clippy passes for the aube crate. It remains an experimental PR
+until usage 6.x is published because its manifest deliberately pins a stacked
+git revision.
 
-The conversion currently does not compile. `cargo check -p aube` reaches the
-usage derives and reports 194 errors. Most are consequences of these distinct
-gaps:
+The working port still exposes release gaps that are tracked in jdx/usage's
+6.x plan:
 
-- usage subcommand variants must be bare or wrap one Args struct; aube has
-  inline struct variants throughout nested command enums;
-- one Args type cannot currently be reused by multiple commands, while aube
-  flattens shared network, lockfile, and virtual-store groups broadly;
-- aube's custom `CommandFactory`, `FromArgMatches`, and `ArgMatches` paths have
-  no usage-rs replacement API;
-- flag aliases, `rename_all`, fixed `num_args`, expression-valued defaults,
-  custom value parsers, and several help/action policies are not accepted by
-  the usage derives;
-- usage's `ValueEnum` supplies `FromStr`, which conflicts with aube enums that
-  already derive or implement `FromStr` for non-CLI use;
-- positional placeholder spelling differs (`name` versus clap's `value_name`),
-  so a mechanical attribute rewrite is not lossless.
-
-The remaining compiler errors are deliberately left visible: restoring clap or
-adding a parallel shadow would hide the exact work required in usage before the
-real CLI can move.
+- relationships that cross a flattened Args boundary are enforced by small
+  post-bind checks until usage validates the composed command;
+- flattened clap help headings are not represented, so the port preserves
+  parsing but cannot yet reproduce every long-help section;
+- dynamic embedder names can be applied to emitted KDL, but parser help and
+  diagnostics retain the static `aube` identity;
+- command effects and completion generation parse the derived KDL with
+  usage-lib, raising the dependency MSRV above the argv-only tier;
+- the root remains permissive intentionally because aube's external-subcommand
+  path forwards package-manager commands and options.
