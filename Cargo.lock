@@ -298,7 +298,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "usage-rs",
- "usage-validation",
  "xx",
  "yaml_serde",
 ]
@@ -5352,6 +5351,7 @@ source = "git+https://github.com/jdx/usage?rev=992cfffe5e22c0184d1dd299d25ebe535
 dependencies = [
  "usage-argv",
  "usage-derive",
+ "usage-validation",
 ]
 
 [[package]]

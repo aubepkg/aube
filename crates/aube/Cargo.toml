@@ -10,11 +10,6 @@ homepage.workspace = true
 readme.workspace = true
 include = ["src/**/*.rs", "src/**/*.mjs", "assets/**", "build.rs"]
 
-[package.metadata.cargo-machete]
-# usage-validation is referenced by
-# derive-generated code, so neither source-level use is visible to machete.
-ignored = ["usage-validation"]
-
 # The command layer is a library so it can be embedded (construct
 # `commands::install::InstallOptions`, call `commands::install::run`)
 # without shelling out. The three bins below are thin wrappers over
@@ -59,7 +54,6 @@ aube-workspace = { workspace = true }
 bytes = "1"
 xx = { workspace = true }
 usage-rs = { workspace = true }
-usage-validation = { workspace = true }
 strum = { workspace = true }
 clx = { workspace = true }
 console = "0.16"
