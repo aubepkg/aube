@@ -591,6 +591,14 @@ pub fn cli_main(embedder: &'static aube_util::Embedder) -> i32 {
     cli_main_with_defaults(embedder, Vec::new())
 }
 
+/// The root command metadata for the embeddable command layer.
+///
+/// This preserves the command-surface entry point for embedders while exposing
+/// usage-rs metadata instead of a clap command builder.
+pub fn command() -> &'static usage_argv::Command<'static> {
+    Cli::command()
+}
+
 /// The static parser and portable metadata for the embeddable command layer.
 pub fn spec() -> &'static usage_argv::spec::Spec<'static> {
     Cli::spec()
