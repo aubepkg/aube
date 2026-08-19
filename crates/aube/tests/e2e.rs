@@ -99,10 +99,20 @@ fn dynamic_completion_keeps_stdout_when_use_stderr_is_configured() {
     fs::write(sbx.project.join(".npmrc"), "use-stderr=true\n").unwrap();
 
     sbx.cmd()
-        .args(["completion", "_", "--complete", "setting"])
+        .args([
+            "__complete_word__",
+            "--shell",
+            "bash",
+            "--line",
+            "aube ",
+            "--cursor",
+            "5",
+            "--candidates",
+            "key",
+        ])
         .assert()
         .success()
-        .stdout(predicates::str::contains("auto-install-peers:"));
+        .stdout(predicates::str::contains("auto-install-peers"));
 }
 
 #[test]
@@ -112,7 +122,17 @@ fn dynamic_completion_rejects_an_invalid_dir() {
     sbx.write_manifest(r#"{"dependencies":{"react":"^19"}}"#);
 
     sbx.cmd()
-        .args(["-C", "missing", "completion", "_", "--complete", "package"])
+        .args([
+            "__complete_word__",
+            "--shell",
+            "bash",
+            "--line",
+            "aube -C missing add ",
+            "--cursor",
+            "20",
+            "--candidates",
+            "package",
+        ])
         .assert()
         .success()
         .stdout("");
