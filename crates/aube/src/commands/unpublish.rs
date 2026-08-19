@@ -29,7 +29,6 @@ use crate::commands::{encode_package_name, ensure_registry_auth_for_package, spl
 use aube_manifest::PackageJson;
 use aube_registry::client::RegistryClient;
 use aube_registry::config::{NpmConfig, normalize_registry_url_pub};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde_json::Value;
 

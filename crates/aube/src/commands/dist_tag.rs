@@ -20,7 +20,6 @@
 //! deliberately bypasses the project lock.
 
 use crate::commands::{make_client, split_name_spec};
-use clap::{Args, Subcommand};
 use miette::{Context, miette};
 
 #[derive(Debug, usage_derive::Args)]

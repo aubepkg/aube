@@ -7,7 +7,6 @@
 
 use super::DepFilter;
 use aube_lockfile::LockfileGraph;
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

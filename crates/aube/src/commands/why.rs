@@ -8,7 +8,6 @@
 //! This is a pure read — no network, no filesystem mutation, no project lock.
 
 use aube_lockfile::{DepType, LockfileGraph, dep_type_label};
-use clap::Args;
 use miette::{Context, miette};
 use std::collections::{BTreeSet, HashSet};
 

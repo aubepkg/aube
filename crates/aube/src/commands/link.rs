@@ -1,5 +1,4 @@
 use super::{remove_existing, symlink_dir};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
 #[derive(Debug, usage_derive::Args)]

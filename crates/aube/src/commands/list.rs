@@ -9,7 +9,6 @@
 //! doesn't hit the network, doesn't take the project lock.
 
 use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet};
 

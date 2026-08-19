@@ -17,7 +17,6 @@ use aube_lockfile::DepType;
 use aube_lockfile::dep_path_filename::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, dep_path_to_filename,
 };
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;

@@ -6,7 +6,6 @@
 //! modify `node_modules/` or take the project lock.
 
 use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use std::collections::BTreeMap;
 

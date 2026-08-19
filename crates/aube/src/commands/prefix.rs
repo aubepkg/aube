@@ -4,8 +4,6 @@
 //! (or cwd when no project root is found). With `--global` / `-g`, prints
 //! the global prefix directory used for PATH-visible global bins.
 
-use clap::Args;
-
 pub const AFTER_LONG_HELP: &str = "\
 Examples:
 

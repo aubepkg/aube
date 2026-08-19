@@ -9,7 +9,6 @@
 
 use super::{install, make_client};
 use aube_lockfile::{DepType, LockedPackage};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, VecDeque};
 

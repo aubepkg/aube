@@ -6,7 +6,6 @@
 //! service calls are made.
 
 use aube_lockfile::{DepType, DirectDep, LocalSource, LockedPackage, LockfileGraph};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};

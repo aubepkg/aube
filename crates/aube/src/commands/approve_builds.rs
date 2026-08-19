@@ -11,7 +11,6 @@
 //! package names so a future resolution of the same dep under a
 //! different version keeps working without re-prompting.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{IsTerminal, Write};

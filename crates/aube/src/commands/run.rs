@@ -1,6 +1,5 @@
 use super::ensure_installed_in;
 use aube_manifest::PackageJson;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::io::IsTerminal;
 use std::path::Path;

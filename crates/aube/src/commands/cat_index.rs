@@ -22,7 +22,6 @@
 //! npm-published bytes — the command lists every cached integrity and
 //! asks the user to disambiguate.
 
-use clap::Args;
 use miette::{IntoDiagnostic, miette};
 
 #[derive(Debug, usage_derive::Args)]

@@ -11,7 +11,6 @@
 use super::{DepFilter, make_client};
 use aube_lockfile::{DepType, DirectDep, dep_type_label};
 use aube_registry::Packument;
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};

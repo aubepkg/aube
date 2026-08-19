@@ -1,7 +1,6 @@
 //! `aube access` — manage package visibility and team access on an npm registry.
 
 use crate::commands::{make_client, split_name_spec};
-use clap::{Args, Subcommand};
 use miette::{IntoDiagnostic, miette};
 
 #[derive(Debug, usage_derive::Args)]

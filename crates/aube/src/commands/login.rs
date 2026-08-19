@@ -15,7 +15,6 @@
 //! scope's packages to the right registry without further config.
 
 use crate::commands::npmrc::{NpmrcEdit, registry_host_key, resolve_registry, user_npmrc_path};
-use clap::Args;
 use miette::{IntoDiagnostic, miette};
 use std::io::{BufRead, IsTerminal};
 use std::time::{Duration, Instant};

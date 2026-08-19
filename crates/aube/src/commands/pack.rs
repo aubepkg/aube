@@ -23,7 +23,6 @@
 //! the `files` field.
 
 use aube_manifest::PackageJson;
-use clap::Args;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use ignore::WalkBuilder;

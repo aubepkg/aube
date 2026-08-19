@@ -1,5 +1,4 @@
 use super::ensure_installed_in;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::path::{Path, PathBuf};
 

@@ -21,7 +21,6 @@ mod tui;
 
 use crate::commands::npmrc::{NpmrcEdit, user_npmrc_path};
 use aube_settings::meta as settings_meta;
-use clap::{Args, Subcommand, ValueEnum};
 use miette::miette;
 use std::path::{Path, PathBuf};
 

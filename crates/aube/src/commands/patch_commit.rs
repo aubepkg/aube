@@ -10,7 +10,6 @@
 
 use crate::commands::patch::{PatchState, read_state};
 use crate::patches::{is_safe_patch_rel, read_patched_dependencies, upsert_patched_dependency};
-use clap::Args;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

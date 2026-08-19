@@ -10,7 +10,6 @@
 //! reported, so it's CI-friendly.
 
 use aube_lockfile::LockfileGraph;
-use clap::{Args, Subcommand};
 use std::collections::BTreeMap;
 
 pub const CHECK_AFTER_LONG_HELP: &str = "\

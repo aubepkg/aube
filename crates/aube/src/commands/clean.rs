@@ -18,7 +18,6 @@
 //! Unlike `aube ci`, `clean` never reinstalls — it's a pure "wipe the
 //! tree" command.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 
 #[derive(Debug, usage_derive::Args)]

@@ -11,7 +11,6 @@ use build_flags::{
     apply_allow_build_flags, apply_deny_build_flags, parse_allow_build_value,
     parse_deny_build_value, reject_conflicting_build_flags,
 };
-use clap::Args;
 use manifest::{
     AddManifestOptions, update_manifest_for_add, workspace_protocol_override_from_flags,
 };

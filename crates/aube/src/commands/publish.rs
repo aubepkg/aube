@@ -34,7 +34,6 @@ use aube_manifest::PackageJson;
 use aube_registry::client::RegistryClient;
 use aube_registry::config::{NpmConfig, normalize_registry_url_pub};
 use base64::Engine;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use reqwest::Url;
 use serde::Deserialize;

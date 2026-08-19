@@ -3,7 +3,6 @@
 //! npm's convention for "remove the deprecated flag".
 
 use crate::commands::{deprecate, split_name_spec};
-use clap::Args;
 
 #[derive(Debug, usage_derive::Args)]
 pub struct UndeprecateArgs {

@@ -1,5 +1,4 @@
 use super::{literal_aliases, setting_search_score, settings_meta};
-use clap::Args;
 
 #[derive(Debug, usage_derive::Args)]
 pub struct FindArgs {

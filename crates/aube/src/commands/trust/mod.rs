@@ -2,8 +2,6 @@
 
 mod check;
 
-use clap::{Args, Subcommand};
-
 #[derive(Debug, usage_derive::Args)]
 pub struct TrustArgs {
     #[usage(subcommand)]

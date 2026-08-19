@@ -1,7 +1,6 @@
 //! Inspect npm publishing evidence for one exact package version.
 
 use crate::commands::{make_client, packument_full_cache_dir, split_name_spec};
-use clap::Args;
 use miette::{IntoDiagnostic, WrapErr, miette};
 use serde::Serialize;
 

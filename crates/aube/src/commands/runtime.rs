@@ -6,7 +6,6 @@
 //! the resolved version lands in the lockfile. `list` shows what the
 //! current project resolves to and which versions are installed.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
 use super::install;

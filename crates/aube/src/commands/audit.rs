@@ -18,7 +18,6 @@ use super::DepFilter;
 use aube_registry::Packument;
 use aube_registry::client::RegistryClient;
 use aube_registry::config::normalize_registry_url_pub;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;

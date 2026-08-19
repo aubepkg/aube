@@ -5,7 +5,6 @@
 //! `repository`. With package names, metadata is fetched from the registry.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
-use clap::Args;
 use miette::miette;
 use serde_json::Value;
 

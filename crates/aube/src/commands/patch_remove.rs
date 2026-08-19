@@ -7,7 +7,6 @@
 //! from a vendored fix.
 
 use crate::patches::{read_patched_dependencies, remove_patched_dependency};
-use clap::Args;
 use miette::{IntoDiagnostic, Result, miette};
 
 #[derive(Debug, usage_derive::Args)]

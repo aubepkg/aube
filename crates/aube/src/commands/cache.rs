@@ -16,7 +16,6 @@
 //! This is a read-only / file-deletion command — no project lock,
 //! no lockfile, no node_modules.
 
-use clap::{Args, Subcommand};
 use glob::Pattern;
 use miette::{IntoDiagnostic, miette};
 use std::collections::BTreeSet;

@@ -8,8 +8,6 @@
 //! user is expected to have on `$PATH` so globally-installed packages are
 //! callable). See [`super::global`] for the layout.
 
-use clap::Args;
-
 pub const AFTER_LONG_HELP: &str = "\
 Examples:
 

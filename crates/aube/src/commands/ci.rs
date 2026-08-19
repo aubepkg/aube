@@ -17,7 +17,6 @@
 //! defeat the point of a CI cache layer.
 
 use super::install;
-use clap::Args;
 
 #[derive(Debug, usage_derive::Args)]
 pub struct CiArgs {

@@ -4,7 +4,6 @@
 //! `package.json` (or a bare one with `--bare`) and exits. Fails if a
 //! `package.json` already exists — like pnpm, we never clobber.
 
-use clap::{Args, ValueEnum};
 use miette::{Context, IntoDiagnostic, miette};
 use std::io::Write as _;
 

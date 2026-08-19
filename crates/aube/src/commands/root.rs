@@ -7,8 +7,6 @@
 //! `aube add -g` installs live. Bins are symlinked out of it into
 //! `aube bin -g` (a separate, PATH-visible directory).
 
-use clap::Args;
-
 pub const AFTER_LONG_HELP: &str = "\
 Examples:
 

@@ -9,7 +9,6 @@
 
 use crate::commands::{make_client, split_name_spec};
 use aube_registry::config::NpmConfig;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde_json::Value;
 

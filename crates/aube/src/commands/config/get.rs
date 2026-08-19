@@ -2,7 +2,6 @@ use super::{
     ListLocation, read_merged, read_single, resolve_aliases, setting_default_value,
     setting_for_key, user_npmrc_path,
 };
-use clap::Args;
 
 #[derive(Debug, usage_derive::Args)]
 pub struct GetArgs {

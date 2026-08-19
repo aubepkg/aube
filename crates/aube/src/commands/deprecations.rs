@@ -13,7 +13,6 @@ use crate::deprecations::{DeprecationRecord, classify};
 use aube_lockfile::{LockfileGraph, dep_type_label};
 use aube_registry::Packument;
 use aube_resolver::is_deprecation_allowed;
-use clap::Args;
 use clx::style;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;

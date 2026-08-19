@@ -1,5 +1,4 @@
 use aube_workspace::selector::EffectiveFilter;
-use clap::Args;
 use miette::miette;
 
 #[derive(Debug, usage_derive::Args)]

@@ -11,7 +11,6 @@
 //! shifts these flags past the subcommand before clap parses argv.
 
 use crate::commands;
-use clap::Args;
 
 #[derive(usage_derive::Args, Debug, Default, Clone, Copy)]
 pub struct LockfileArgs {

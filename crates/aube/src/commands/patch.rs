@@ -11,7 +11,6 @@
 //! the user dir.
 
 use crate::patches::copy_dir_all;
-use clap::Args;
 use miette::{IntoDiagnostic, Result, miette};
 use std::path::{Path, PathBuf};
 

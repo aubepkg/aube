@@ -17,7 +17,6 @@
 //! (network-bound on a cold cache, cached for 24 h thereafter), which
 //! also writes `<cacheDir>/update-check.json` on a successful fetch.
 
-use clap::Args;
 use miette::Context;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};

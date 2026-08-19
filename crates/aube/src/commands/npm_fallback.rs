@@ -7,7 +7,6 @@
 //! where `aube whoami` would otherwise try to run a `whoami` script from
 //! `package.json` and produce a confusing "script not found" error.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
 #[derive(Debug, usage_derive::Args)]

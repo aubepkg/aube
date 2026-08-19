@@ -6,7 +6,6 @@
 //! and surrounding formatting are preserved — we only rewrite the string
 //! value that follows the `"version"` key.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use node_semver::{Identifier, Version};
 use std::path::Path;

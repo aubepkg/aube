@@ -8,7 +8,6 @@
 //! This is a read-only introspection command: no lockfile, no node_modules,
 //! no project lock.
 
-use clap::Args;
 use miette::{IntoDiagnostic, miette};
 use std::io::Write;
 

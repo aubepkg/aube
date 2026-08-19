@@ -6,7 +6,6 @@
 //! place, leaving every other entry untouched.
 
 use crate::commands::npmrc::{NpmrcEdit, registry_host_key, resolve_registry, user_npmrc_path};
-use clap::Args;
 use miette::miette;
 
 #[derive(Debug, usage_derive::Args)]

@@ -15,7 +15,6 @@
 //! This is a read-only introspection command — no project lock, no
 //! lockfile, no node_modules.
 
-use clap::Args;
 use miette::{IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 

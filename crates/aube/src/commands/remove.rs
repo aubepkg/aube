@@ -1,5 +1,4 @@
 use super::install;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::HashSet;
 

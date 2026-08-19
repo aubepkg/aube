@@ -3,7 +3,6 @@ use super::{
     setting_for_key, settings_meta, user_npmrc_path,
 };
 use aube_settings::meta::SettingMeta;
-use clap::Args;
 use miette::miette;
 
 #[derive(Debug, usage_derive::Args)]

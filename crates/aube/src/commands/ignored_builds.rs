@@ -9,7 +9,6 @@
 //!
 //! Pure read — no network, no writes, no project lock.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use std::collections::BTreeSet;
 

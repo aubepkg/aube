@@ -17,7 +17,6 @@
  * schema additions.
  */
 
-use clap::{Args, Subcommand};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

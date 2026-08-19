@@ -1,5 +1,3 @@
-use clap::Args;
-
 #[derive(Debug, usage_derive::Args)]
 pub struct SponsorsArgs {}
 

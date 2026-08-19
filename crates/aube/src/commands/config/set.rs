@@ -1,7 +1,6 @@
 use super::{
     Location, NpmrcEdit, aube_config, is_npm_shared_key, resolve_aliases, setting_for_key,
 };
-use clap::Args;
 use miette::miette;
 
 #[derive(Debug, usage_derive::Args)]

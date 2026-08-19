@@ -10,7 +10,6 @@
 //! passed, the target package name is read from the local manifest.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde_json::Value;
 
