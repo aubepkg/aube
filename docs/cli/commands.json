@@ -2239,58 +2239,7 @@
             "hide": false
           }
         ],
-        "flags": [
-          {
-            "name": "complete",
-            "usage": "--complete <COMPLETE>",
-            "help": "Emit dynamic candidates for the shell completion engine.",
-            "help_first_line": "Emit dynamic candidates for the shell completion engine.",
-            "short": [],
-            "long": [
-              "complete"
-            ],
-            "hide": true,
-            "global": false,
-            "arg": {
-              "name": "COMPLETE",
-              "usage": "<COMPLETE>",
-              "required": true,
-              "double_dash": "Optional",
-              "hide": false,
-              "choices": {
-                "choices": [
-                  "package",
-                  "bin",
-                  "workspace",
-                  "setting",
-                  "patch"
-                ]
-              }
-            }
-          },
-          {
-            "name": "query",
-            "usage": "--query <QUERY>",
-            "help": "Current word being completed.",
-            "help_first_line": "Current word being completed.",
-            "short": [],
-            "long": [
-              "query"
-            ],
-            "hide": true,
-            "global": false,
-            "arg": {
-              "name": "QUERY",
-              "usage": "<QUERY>",
-              "required": true,
-              "double_dash": "Optional",
-              "hide": false
-            },
-            "default": [
-              ""
-            ]
-          }
-        ],
+        "flags": [],
         "mounts": [],
         "effect": "read",
         "unknown_flags": null,
