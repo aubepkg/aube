@@ -26,7 +26,6 @@
 //! auto-install check.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
-use clap::{Arg, ArgAction, ArgMatches, Args, Command, Error, FromArgMatches, Subcommand};
 use miette::{IntoDiagnostic, miette};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -66,7 +65,7 @@ pub enum StoreCommand {
     /// On reflink filesystems such as APFS or btrfs, link counts cannot prove
     /// project reachability, so content-store pruning relies on cached package
     /// indexes. Global virtual-store reachability comes from project links.
-    Prune(PruneArgs),
+    Prune(PruneCliArgs),
     /// Verify the store against cached package indexes.
     ///
     /// Confirms every file referenced by a cached package index is
@@ -79,50 +78,20 @@ pub enum StoreCommand {
 // constructible shape while exposing JSON as CLI-only state.
 static PRUNE_JSON_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+#[derive(Debug, usage_derive::Args)]
+pub struct PruneCliArgs {
+    /// Do not actually delete anything; report what would be pruned.
+    #[usage(long)]
+    dry_run: bool,
+    /// Emit the dry-run plan as one machine-readable JSON document.
+    #[usage(long, requires = "--dry-run")]
+    json: bool,
+}
+
 #[derive(Debug)]
 pub struct PruneArgs {
     /// Do not actually delete anything; report what would be pruned.
     pub dry_run: bool,
-}
-
-impl FromArgMatches for PruneArgs {
-    fn from_arg_matches(matches: &ArgMatches) -> Result<Self, Error> {
-        PRUNE_JSON_REQUESTED.store(matches.get_flag("json"), Ordering::Relaxed);
-        Ok(Self {
-            dry_run: matches.get_flag("dry_run"),
-        })
-    }
-
-    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), Error> {
-        PRUNE_JSON_REQUESTED.store(matches.get_flag("json"), Ordering::Relaxed);
-        self.dry_run = matches.get_flag("dry_run");
-        Ok(())
-    }
-}
-
-impl Args for PruneArgs {
-    fn augment_args(command: Command) -> Command {
-        command
-            .arg(
-                Arg::new("dry_run")
-                    .long("dry-run")
-                    .action(ArgAction::SetTrue)
-                    .help("Do not actually delete anything; report what would be pruned"),
-            )
-            .arg(
-                Arg::new("json")
-                    .long("json")
-                    .action(ArgAction::SetTrue)
-                    .requires("dry_run")
-                    .help(
-                        "Emit the dry-run plan as one machine-readable JSON document (requires --dry-run)",
-                    ),
-            )
-    }
-
-    fn augment_args_for_update(command: Command) -> Command {
-        Self::augment_args(command)
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -189,7 +158,10 @@ pub async fn run(args: StoreArgs) -> miette::Result<()> {
     match args.command {
         StoreCommand::Add { packages } => add(packages).await,
         StoreCommand::Path => path(),
-        StoreCommand::Prune(a) => prune(a),
+        StoreCommand::Prune(a) => {
+            PRUNE_JSON_REQUESTED.store(a.json, Ordering::Relaxed);
+            prune(PruneArgs { dry_run: a.dry_run })
+        }
         StoreCommand::Status => status(),
     }
 }

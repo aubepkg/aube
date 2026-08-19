@@ -41,7 +41,7 @@ pub struct BinArgs {
     /// workspace root and prints its `node_modules/.bin`. No-op when no
     /// workspace root exists above cwd (single-project install), so the
     /// flag is safe to leave in shell aliases.
-    #[usage(short = 'w', long = "workspace-root", alias = "workspace")]
+    #[usage(short = 'w', long = "workspace-root", long = "workspace")]
     pub workspace_root: bool,
 }
 

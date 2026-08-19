@@ -27,7 +27,7 @@ pub struct GetArgs {
     /// Defaults to `merged` — the last-write-wins view of user aube
     /// config, `~/.npmrc`, then `./.npmrc`, matching what install
     /// actually sees. Use `user` or `project` to restrict the lookup.
-    #[usage(long, value_enum, default_value_t = ListLocation::Merged)]
+    #[usage(long, value_enum, default_value_t = ListLocation::Merged, default = "merged")]
     pub location: ListLocation,
 }
 

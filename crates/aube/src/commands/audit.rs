@@ -63,7 +63,7 @@ pub struct AuditArgs {
     ///
     /// Bare `--fix` writes package.json overrides for backwards compatibility.
     /// `--fix=update` refreshes the lockfile without writing overrides.
-    #[usage(long, value_enum, num_args = 0..=1, default_missing = "override")]
+    #[usage(long, value_enum, default_missing = "override")]
     pub fix: Option<FixMode>,
 
     /// Drop advisories whose ID matches one of these values.
@@ -103,7 +103,7 @@ pub struct AuditArgs {
     pub no_optional: bool,
 
     /// Only audit `dependencies` and `optionalDependencies`.
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
     #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
@@ -136,8 +136,8 @@ pub enum Severity {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum)]
-#[value(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub enum FixMode {
     /// Refresh the lockfile to patched versions allowed by existing ranges.
     Update,

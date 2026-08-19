@@ -86,7 +86,7 @@ pub struct ViewArgs {
 #[derive(Debug, usage_derive::Args)]
 pub struct PruneArgs {
     /// Minimum age in days before an old primer file is removed.
-    #[usage(long, default_value_t = 30)]
+    #[usage(long, default_value_t = 30, default = "30")]
     pub age_days: u64,
     /// Do not actually delete anything.
     #[usage(long)]

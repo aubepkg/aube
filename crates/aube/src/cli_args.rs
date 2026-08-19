@@ -138,7 +138,7 @@ pub struct VirtualStoreArgs {
     /// instead of symlinked from `~/.cache/aube/virtual-store/`.
     #[usage(
         long,
-        alias = "disable-gvs",
+        long = "disable-gvs",
         conflicts = "--enable-global-virtual-store"
     )]
     pub disable_global_virtual_store: bool,
@@ -149,7 +149,7 @@ pub struct VirtualStoreArgs {
     /// `disableGlobalVirtualStoreForPackages` auto-disable heuristic.
     #[usage(
         long,
-        alias = "enable-gvs",
+        long = "enable-gvs",
         conflicts = "--disable-global-virtual-store"
     )]
     pub enable_global_virtual_store: bool,

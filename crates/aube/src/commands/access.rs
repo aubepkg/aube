@@ -25,7 +25,6 @@ pub enum AccessCommand {
         command: AccessGetCommand,
     },
     /// Grant a team read-only or read-write access to a package.
-    #[usage(override_usage = "access grant <PERMISSIONS> <TEAM> <PACKAGE>")]
     Grant {
         /// `read-only` or `read-write`.
         permissions: String,
@@ -40,12 +39,11 @@ pub enum AccessCommand {
         command: AccessListCommand,
     },
     /// Alias for `list packages`.
-    #[usage(override_usage = "access ls [ENTITY]\n       access ls packages [ENTITY]")]
     Ls {
         /// User, `@organization`, or `@scope:team`. Also accepts pnpm's
         /// `packages [ENTITY]` compatibility form. Accepted forms are
         /// `aube access ls [ENTITY]` and `aube access ls packages [ENTITY]`.
-        #[usage(arg, num_args = 0..=2)]
+        #[usage(arg, var_max = 2)]
         entities: Vec<String>,
     },
     /// Revoke a team's access to a package.
@@ -395,7 +393,6 @@ fn emit_json(value: &serde_json::Value) -> miette::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{AccessArgs, AccessCommand, bare_package, format_collaborators, split_team};
-    use clap::Parser;
 
     #[test]
     fn bare_package_rejects_specifiers() {

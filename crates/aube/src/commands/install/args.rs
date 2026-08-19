@@ -6,7 +6,7 @@ pub struct InstallArgs {
     #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
     /// Skip devDependencies; install only production deps
-    #[usage(short = 'P', long, alias = "production")]
+    #[usage(short = 'P', long, long = "production")]
     pub prod: bool,
     /// Allow every dependency's lifecycle scripts to run.
     ///
@@ -23,14 +23,7 @@ pub struct InstallArgs {
     /// specs keep their existing version and integrity hash; only
     /// drifted entries (and any new transitives they pull in) get
     /// re-resolved.
-    #[usage(
-        long,
-        conflicts(
-            "--frozen-lockfile",
-            "--no-frozen-lockfile",
-            "--prefer-frozen-lockfile"
-        )
-    )]
+    #[usage(long)]
     pub fix_lockfile: bool,
     /// Force reinstall, ignoring lockfile/state freshness.
     ///
@@ -64,7 +57,7 @@ pub struct InstallArgs {
     /// `node_modules`.
     ///
     /// Useful for CI workflows that only update the lockfile.
-    #[usage(long, conflicts = "--frozen-lockfile")]
+    #[usage(long)]
     pub lockfile_only: bool,
     /// Merge per-branch lockfiles into the main `aube-lock.yaml`.
     ///

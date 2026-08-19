@@ -13,11 +13,41 @@ use miette::{Context, IntoDiagnostic, miette};
 pub struct FallbackArgs {
     /// Unused; captured so `aube <cmd> foo bar` parses instead of
     /// erroring on unexpected args before the fallback message prints.
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true, hide)]
+    #[usage(arg, double_dash = "automatic", hide)]
     pub args: Vec<String>,
     #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
+
+macro_rules! fallback_alias_args {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            #[derive(Debug, usage_derive::Args)]
+            pub struct $name {
+                #[usage(flatten)]
+                pub inner: FallbackArgs,
+            }
+
+            impl std::ops::Deref for $name {
+                type Target = FallbackArgs;
+
+                fn deref(&self) -> &Self::Target {
+                    &self.inner
+                }
+            }
+        )+
+    };
+}
+
+fallback_alias_args!(
+    OwnerArgs,
+    PkgArgs,
+    SearchArgs,
+    SetScriptArgs,
+    StageArgs,
+    TokenArgs,
+    WhoamiArgs,
+);
 
 pub fn run(name: &str, args: &FallbackArgs) -> miette::Result<i32> {
     args.network.install_overrides();

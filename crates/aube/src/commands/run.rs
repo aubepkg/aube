@@ -13,7 +13,7 @@ pub struct RunArgs {
     /// `node_modules/.bin/<name>`.
     pub script: Option<String>,
     /// Arguments to pass to the script
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub args: Vec<String>,
     /// Print the nearest `package.json`'s scripts for shell completion.
     ///
@@ -25,10 +25,20 @@ pub struct RunArgs {
     #[usage(long)]
     pub if_present: bool,
     /// Forward `--inspect` to a Node-backed script or local binary.
-    #[usage(long, value_name = "[[HOST:]PORT]", num_args = 0..=1, require_equals = true, default_missing = "")]
+    #[usage(
+        long,
+        value_name = "[[HOST:]PORT]",
+        require_equals = true,
+        default_missing = ""
+    )]
     pub inspect: Option<String>,
     /// Forward `--inspect-brk` to a Node-backed script or local binary.
-    #[usage(long, value_name = "[[HOST:]PORT]", num_args = 0..=1, require_equals = true, default_missing = "")]
+    #[usage(
+        long,
+        value_name = "[[HOST:]PORT]",
+        require_equals = true,
+        default_missing = ""
+    )]
     pub inspect_brk: Option<String>,
     /// Continue recursive execution after a script fails.
     ///
@@ -119,7 +129,7 @@ pub struct RunArgs {
 #[derive(Debug, usage_derive::Args)]
 pub struct ScriptArgs {
     /// Arguments to pass to the script
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub args: Vec<String>,
     /// Skip auto-install check
     #[usage(long)]
@@ -131,6 +141,26 @@ pub struct ScriptArgs {
     #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
+
+macro_rules! script_alias_args {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            #[derive(Debug, usage_derive::Args)]
+            pub struct $name {
+                #[usage(flatten)]
+                inner: ScriptArgs,
+            }
+
+            impl $name {
+                pub fn into_inner(self) -> ScriptArgs {
+                    self.inner
+                }
+            }
+        )+
+    };
+}
+
+script_alias_args!(InstallTestArgs, RestartArgs, StartArgs, StopArgs, TestArgs);
 
 pub async fn run(
     run_args: RunArgs,

@@ -34,7 +34,7 @@ pub struct SetArgs {
     /// `package.json#aube.<map>.<entry>` if no workspace yaml exists,
     /// the same place install reads from. User-scope dotted writes
     /// for these maps error: aube only reads them per project.
-    #[usage(long, value_enum, default_value_t = Location::User)]
+    #[usage(long, value_enum, default_value_t = Location::User, default = "user")]
     pub location: Location,
 }
 

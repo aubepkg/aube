@@ -8,7 +8,7 @@ use std::time::Duration;
 #[derive(usage_derive::Args)]
 pub struct CompletionArgs {
     /// The shell to generate completions for (bash, zsh, fish)
-    #[usage(arg, value_name = "SHELL")]
+    #[usage(arg, name = "SHELL")]
     pub shell: String,
     /// Emit dynamic candidates for the shell completion engine.
     #[usage(long, hide, value_enum)]
@@ -18,7 +18,8 @@ pub struct CompletionArgs {
     query: String,
 }
 
-#[derive(Clone, Copy, usage_derive::ValueEnum)]
+#[derive(Clone, Copy, usage_derive::ValueEnum, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 enum CompletionKind {
     Package,
     Bin,
@@ -135,8 +136,9 @@ fn ensure_success(shell: &str, output: &std::process::Output) -> Result<()> {
 }
 
 fn multicall_usage_spec(subcommand: &str, name: &str, append_shared_completers: bool) -> String {
-    let mut cmd = crate::command();
-    let mut spec = clap_usage::spec(&mut cmd, aube_util::prog());
+    let mut spec: usage::Spec = crate::Cli::to_kdl()
+        .parse()
+        .expect("derived aube spec should parse");
     let root_flags = spec
         .cmd
         .flags

@@ -34,7 +34,7 @@ pub struct RuntimeSetArgs {
     // Explicit id: clap reserves the `version` id for the global
     // `--version` flag, and a positional with the same id panics at
     // dispatch with a bool/String downcast mismatch.
-    #[usage(arg, id = "runtime-version", value_name = "VERSION")]
+    #[usage(arg, name = "VERSION")]
     pub version: String,
     /// Install for the user instead of the project (delegates to
     /// `mise use -g node@<version>` when mise manages installs)

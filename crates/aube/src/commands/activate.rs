@@ -9,7 +9,8 @@ pub struct ActivateArgs {
     pub shell: ActivateShell,
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ActivateShell {
     Bash,
     Fish,

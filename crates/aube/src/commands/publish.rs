@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, usage_derive::Args)]
 pub struct PublishArgs {
     /// Tarball or package directory to publish (default: current package).
-    #[usage(arg, value_name = "TARBALL|FOLDER")]
+    #[usage(arg, name = "TARBALL|FOLDER")]
     pub package: Option<PathBuf>,
     /// Publish as `public` or `restricted`.
     ///

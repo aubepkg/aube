@@ -11,6 +11,7 @@ pub struct TrustArgs {
 #[derive(Debug, usage_derive::Subcommands)]
 enum TrustCommand {
     /// Check one package version for a publishing-trust downgrade
+    #[usage(after_long_help = check::AFTER_LONG_HELP)]
     Check(check::CheckArgs),
 }
 

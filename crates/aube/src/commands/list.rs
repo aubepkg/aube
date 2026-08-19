@@ -64,7 +64,7 @@ pub struct ListArgs {
     pub global: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
 
     /// How deep to render the transitive tree.
@@ -74,11 +74,11 @@ pub struct ListArgs {
     /// `--depth=Infinity` is accepted for pnpm/npm compat.
     /// `--depth=-1` (pnpm spelling) lists project headers only —
     /// no direct or transitive deps.
-    #[usage(long, default = "0", value_parser = parse_depth)]
+    #[usage(long, default = "0")]
     pub depth: Depth,
 
     /// Output format: one of `default`, `json`, or `parseable`
-    #[usage(long, value_enum, default_value_t = ListFormat::Default)]
+    #[usage(long, value_enum, default_value_t = ListFormat::Default, default = "default")]
     pub format: ListFormat,
 
     /// Shortcut for `--format json`.
@@ -104,6 +104,18 @@ pub struct ListArgs {
     /// Emit one tab-separated line per package.
     #[usage(long, conflicts("--format", "--json"))]
     pub parseable: bool,
+}
+
+#[derive(Debug, usage_derive::Args)]
+pub struct LaArgs {
+    #[usage(flatten)]
+    pub args: ListArgs,
+}
+
+#[derive(Debug, usage_derive::Args)]
+pub struct LlArgs {
+    #[usage(flatten)]
+    pub args: ListArgs,
 }
 
 /// Parsed `--depth` value. `include_direct=false` is the pnpm
@@ -150,7 +162,18 @@ fn parse_depth(s: &str) -> Result<Depth, String> {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum)]
+impl std::str::FromStr for Depth {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_depth(value)
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum, strum::Display, strum::EnumString,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ListFormat {
     Default,
     Json,

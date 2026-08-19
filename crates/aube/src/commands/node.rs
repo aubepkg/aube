@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, usage_derive::Args)]
 pub struct NodeArgs {
     /// Arguments to pass to Node.js
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub args: Vec<OsString>,
 }
 

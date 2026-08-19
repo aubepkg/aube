@@ -44,7 +44,7 @@ pub struct LicensesArgs {
     /// keep working. Modeled as an optional positional instead of a
     /// clap subcommand so flags can appear on either side of `ls`
     /// (subcommands swallow the parent's flags).
-    #[usage(arg, value_parser = ["ls"], hide)]
+    #[usage(arg, choices("ls"), hide)]
     pub subcommand: Option<String>,
 
     /// Show only devDependencies
@@ -60,7 +60,7 @@ pub struct LicensesArgs {
     pub long: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
     #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,

@@ -225,7 +225,8 @@ pub struct AddArgs {
         value_name = "PKG",
         conflicts = "--no-save",
         require_equals = true,
-        value_parser = parse_allow_build_value,
+        validate = "value != ''",
+        validate_error = "The --allow-build flag is missing a package name. Please specify the package name(s) that are allowed to run installation scripts."
     )]
     pub allow_build: Vec<String>,
     /// Bypass the similar-name, new-name, and [`lowDownloadThreshold`]
@@ -263,7 +264,8 @@ pub struct AddArgs {
         value_name = "PKG",
         conflicts("--no-save", "--dangerously-allow-all-builds"),
         require_equals = true,
-        value_parser = parse_deny_build_value,
+        validate = "value != ''",
+        validate_error = "The --deny-build flag is missing a package name. Please specify the package name(s) that are denied from running installation scripts."
     )]
     pub deny_build: Vec<String>,
     /// Skip root and approved dependency lifecycle scripts.
@@ -398,6 +400,12 @@ pub async fn run(
         network,
         virtual_store,
     } = args;
+    for value in &allow_build {
+        parse_allow_build_value(value).map_err(|error| miette!("{error}"))?;
+    }
+    for value in &deny_build {
+        parse_deny_build_value(value).map_err(|error| miette!("{error}"))?;
+    }
     let save_catalog_target = save_catalog_name.or_else(|| {
         if save_catalog {
             Some("default".to_string())

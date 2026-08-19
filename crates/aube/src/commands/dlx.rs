@@ -1,7 +1,6 @@
 use super::install::{FrozenMode, InstallOptions};
 use crate::commands::add::build_flags::parse_allow_build_value;
 use aube_manifest::AllowBuildRaw;
-use clap::{Args, CommandFactory};
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -26,7 +25,7 @@ pub struct DlxArgs {
     /// installs into a throwaway project. Under `--shell-mode`/`-c` the
     /// positionals are joined and evaluated by `sh -c` instead of
     /// looked up directly.
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub params: Vec<String>,
     /// Run the assembled command line through `sh -c`.
     ///
@@ -54,7 +53,8 @@ pub struct DlxArgs {
         long = "allow-build",
         value_name = "PKG",
         require_equals = true,
-        value_parser = parse_allow_build_value,
+        validate = "value != ''",
+        validate_error = "The --allow-build flag is missing a package name. Please specify the package name(s) that are allowed to run installation scripts."
     )]
     pub allow_build: Vec<String>,
     #[usage(flatten)]
@@ -102,18 +102,16 @@ pub async fn run_in(
         network: _,
         virtual_store: _,
     } = args;
+    for value in &allow_build {
+        parse_allow_build_value(value).map_err(|error| miette!("{error}"))?;
+    }
 
     // Bare `aube dlx` or `aube dlx --help` / `-h` prints aube's dlx help.
     // Once a command is present, any further flags (including `--help`)
     // belong to the installed binary.
     let first = params.first().map(String::as_str);
     if matches!(first, None | Some("--help" | "-h")) && package.is_empty() {
-        crate::Cli::command()
-            .find_subcommand_mut("dlx")
-            .expect("dlx is a registered subcommand")
-            .print_help()
-            .map_err(|e| miette!("failed to render help: {e}"))?;
-        println!();
+        crate::print_subcommand_help("dlx")?;
         return Ok(None);
     }
 

@@ -42,10 +42,10 @@ pub enum DiagCommand {
         /// Comparison trace
         b: PathBuf,
         /// Minimum |Δsum_ms| to surface (default 50)
-        #[usage(long, default_value_t = 50.0)]
+        #[usage(long, default_value_t = 50.0, default = "50")]
         min_delta_ms: f64,
         /// Minimum |%change| to surface (default 10)
-        #[usage(long, default_value_t = 10.0)]
+        #[usage(long, default_value_t = 10.0, default = "10")]
         min_pct: f64,
     },
 }

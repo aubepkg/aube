@@ -28,7 +28,7 @@ content-addressable store.";
 #[derive(Debug, usage_derive::Args)]
 pub struct PruneArgs {
     /// Remove devDependencies from node_modules
-    #[usage(long, short = 'P', alias = "production")]
+    #[usage(long, long = "production", short = 'P')]
     pub prod: bool,
 
     /// Also remove optionalDependencies

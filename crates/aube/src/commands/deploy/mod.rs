@@ -91,7 +91,7 @@ pub struct DeployArgs {
     // Intentionally unread by the deploy code: production is the deploy
     // default, so the `!args.dev && !args.no_prod` axis already captures
     // it. Reach for that, not `args.prod`, when extending the filter.
-    #[usage(short = 'P', long, alias = "production")]
+    #[usage(short = 'P', long, long = "production")]
     pub prod: bool,
     /// Deploy every dependency kind (production + dev + optional).
     ///

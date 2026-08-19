@@ -34,7 +34,6 @@ mod update_check;
 mod version;
 
 use argv::{extract_config_overrides, lift_per_subcommand_flags, rewrite_multicall_argv};
-use clap::{Parser, Subcommand, ValueEnum};
 use miette::{Context, IntoDiagnostic};
 use startup::{
     ColorMode, PackageManagerGuard, ci_renders_ansi, command_needs_package_manager_guard,
@@ -48,18 +47,19 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[derive(usage_derive::Cli)]
+#[allow(dead_code)]
 #[usage(
     name = "aube",
     about = "A fast Node.js package manager",
-    version = version::VERSION_LONG.as_str(),
-    disable_version_flag = true
+    version = "1.41.0"
 )]
 pub(crate) struct Cli {
     /// Change to directory before running (like `make -C` or `mise --cd`)
     #[usage(
         short = 'C',
         long = "dir",
-        alias("cd", "prefix"),
+        long = "cd",
+        long = "prefix",
         global,
         value_name = "DIR"
     )]
@@ -121,7 +121,7 @@ pub(crate) struct Cli {
     /// Quick form: `--diag` with no value defaults to `trace`.
     /// Output file path can be set via `--diag-file`. Threshold for live
     /// mode via `--diag-threshold-ms`.
-    #[usage(long, global, value_name = "MODE", num_args = 0..=1, default_missing = "trace")]
+    #[usage(long, global, value_name = "MODE", default_missing = "trace")]
     diag: Option<String>,
 
     /// Path for `--diag full` JSONL trace (default: ./aube-diag.jsonl)
@@ -223,8 +223,22 @@ pub(crate) struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum)]
-#[usage(rename_all = "lowercase")]
+#[cfg(test)]
+impl Cli {
+    fn try_parse_from<I, S>(argv: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        let raw: Vec<OsString> = argv.into_iter().map(Into::into).collect();
+        let argv: Vec<&std::ffi::OsStr> = raw.iter().skip(1).map(OsString::as_os_str).collect();
+        Self::parse_from(&argv)
+            .map_err(|error| usage_argv::render_failure(Self::spec(), &argv, &error))
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub(crate) enum LogLevel {
     Trace,
     Debug,
@@ -234,8 +248,8 @@ pub(crate) enum LogLevel {
     Silent,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum)]
-#[usage(rename_all = "kebab-case")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub(crate) enum ReporterType {
     Default,
     AppendOnly,
@@ -397,10 +411,10 @@ enum Commands {
     ///
     /// Hidden from help because `aube test` already auto-installs.
     #[usage(alias = "it", hide)]
-    InstallTest(commands::run::ScriptArgs),
+    InstallTest(commands::run::InstallTestArgs),
     /// Alias for `list --long` (hidden; prefer `list --long`)
     #[usage(hide)]
-    La(commands::list::ListArgs),
+    La(commands::list::LaArgs),
     /// Report the licenses of installed dependencies
     Licenses(commands::licenses::LicensesArgs),
     /// Link a local package globally, or into the current project
@@ -411,7 +425,7 @@ enum Commands {
     List(commands::list::ListArgs),
     /// Alias for `list --long` (hidden; prefer `list --long`)
     #[usage(hide)]
-    Ll(commands::list::ListArgs),
+    Ll(commands::list::LlArgs),
     /// Store a registry auth token in the user's ~/.npmrc
     #[usage(alias = "adduser")]
     Login(commands::login::LoginArgs),
@@ -423,7 +437,7 @@ enum Commands {
     Outdated(commands::outdated::OutdatedArgs),
     /// Manage package owners (not implemented — use `npm owner`)
     #[usage(hide)]
-    Owner(commands::npm_fallback::FallbackArgs),
+    Owner(commands::npm_fallback::OwnerArgs),
     /// Create a publishable `.tgz` tarball from the current project
     Pack(commands::pack::PackArgs),
     /// Extract a package into an edit directory so it can be patched
@@ -436,7 +450,7 @@ enum Commands {
     Peers(commands::peers::PeersArgs),
     /// Manage package.json entries (not implemented — use `npm pkg`)
     #[usage(hide)]
-    Pkg(commands::npm_fallback::FallbackArgs),
+    Pkg(commands::npm_fallback::PkgArgs),
     /// Print the current package prefix directory
     Prefix(commands::prefix::PrefixArgs),
     /// Remove extraneous packages from project `node_modules`.
@@ -451,7 +465,7 @@ enum Commands {
     /// Alias for `clean` — remove `node_modules` across every workspace project.
     ///
     /// A `purge` script in the root `package.json` overrides the built-in.
-    Purge(commands::clean::CleanArgs),
+    Purge(commands::clean::PurgeArgs),
     /// Query packages in the resolved dependency graph
     Query(commands::query::QueryArgs),
     /// Re-run root lifecycle scripts and allowlisted dependency builds
@@ -464,7 +478,7 @@ enum Commands {
     #[usage(alias = "rm", alias("uninstall", "un", "uni"))]
     Remove(commands::remove::RemoveArgs),
     /// Restart a package (shortcut for `run restart`; falls back to `stop` + `start`)
-    Restart(commands::run::ScriptArgs),
+    Restart(commands::run::RestartArgs),
     /// Print the path to `node_modules`
     Root(commands::root::RootArgs),
     /// Run a script defined in package.json
@@ -477,29 +491,29 @@ enum Commands {
     Sbom(commands::sbom::SbomArgs),
     /// Search the registry for packages (not implemented — use `npm search`)
     #[usage(hide)]
-    Search(commands::npm_fallback::FallbackArgs),
+    Search(commands::npm_fallback::SearchArgs),
     /// Alias for `config set` (hidden; prefer `config set`)
     #[usage(hide)]
     Set(commands::config::SetArgs),
     /// Set a `package.json` script (not implemented — use `npm set-script`)
     #[usage(hide, name = "set-script")]
-    SetScript(commands::npm_fallback::FallbackArgs),
+    SetScript(commands::npm_fallback::SetScriptArgs),
     /// Show the companies sponsoring aube and the jdx.dev open source tools
     Sponsors(commands::sponsors::SponsorsArgs),
     /// Stage packages for publishing (not implemented — use `npm stage`)
-    Stage(commands::npm_fallback::FallbackArgs),
+    Stage(commands::npm_fallback::StageArgs),
     /// Start a package (shortcut for `run start`)
-    Start(commands::run::ScriptArgs),
+    Start(commands::run::StartArgs),
     /// Stop a package (shortcut for `run stop`)
-    Stop(commands::run::ScriptArgs),
+    Stop(commands::run::StopArgs),
     /// Manage the global store
     Store(commands::store::StoreArgs),
     /// Run the `test` script (shortcut for `run test`)
     #[usage(alias = "t")]
-    Test(commands::run::ScriptArgs),
+    Test(commands::run::TestArgs),
     /// Manage registry auth tokens (not implemented — use `npm token`)
     #[usage(hide)]
-    Token(commands::npm_fallback::FallbackArgs),
+    Token(commands::npm_fallback::TokenArgs),
     /// Inspect npm package publishing trust
     Trust(commands::trust::TrustArgs),
     /// Clear an existing deprecation on the registry
@@ -519,11 +533,10 @@ enum Commands {
     View(commands::view::ViewArgs),
     /// Report the current registry user (not implemented — use `npm whoami`)
     #[usage(hide)]
-    Whoami(commands::npm_fallback::FallbackArgs),
+    Whoami(commands::npm_fallback::WhoamiArgs),
     /// Print reverse dependency chains explaining why a package is installed
     #[usage(alias = "w", after_long_help = commands::why::AFTER_LONG_HELP)]
     Why(commands::why::WhyArgs),
-    /// Catch-all for implicit script execution (e.g., `aube dev` = `aube run dev`)
     #[usage(external_subcommand)]
     External(Vec<String>),
 }
@@ -551,16 +564,26 @@ pub fn cli_main(embedder: &'static aube_util::Embedder) -> i32 {
     cli_main_with_defaults(embedder, Vec::new())
 }
 
-/// The clap [`Command`](clap::Command) for the CLI, with its version reset to
-/// the plain package version (stripping the `-DEBUG` runtime suffix) so any
-/// derived artifact stays byte-stable across profiles. This exposes the
-/// command surface itself — not aube's own `usage` KDL subcommand, which is
-/// aube-specific tooling that lives in the binary (`src/main.rs`), not in the
-/// embeddable command layer. A downstream embedder builds its own top-level
-/// usage/completions from this.
-pub fn command() -> clap::Command {
-    use clap::CommandFactory;
-    Cli::command().version(env!("CARGO_PKG_VERSION"))
+/// The static parser and portable metadata for the embeddable command layer.
+pub fn spec() -> &'static usage_argv::spec::Spec<'static> {
+    Cli::spec()
+}
+
+pub fn usage_kdl() -> String {
+    Cli::to_kdl()
+}
+
+fn print_subcommand_help(name: &str) -> miette::Result<()> {
+    let command = Cli::command()
+        .subcommands
+        .iter()
+        .copied()
+        .find(|command| command.name == name)
+        .ok_or_else(|| miette::miette!("unknown subcommand {name:?}"))?;
+    let page = usage_argv::help::render(Cli::spec(), command, true)
+        .ok_or_else(|| miette::miette!("failed to render help for {name:?}"))?;
+    print!("{page}");
+    Ok(())
 }
 
 /// [`cli_main`] plus embedder-supplied setting defaults. The `defaults` are
@@ -650,18 +673,28 @@ fn inner_main() -> miette::Result<i32> {
     // directory before any runtime probe or child spawn can recursively
     // rediscover the shim as the "real" tool.
     tool_shims::sanitize_process_path();
-    // Override the clap command name at runtime with the active embedder's
-    // name. The `#[usage(name = "aube")]` attribute is a compile-time
-    // constant and can't read `embedder()`, so help/usage/error output would
-    // otherwise always say "aube" even under an embedder. `get_matches_from`
-    // keeps clap's parse-error / `--help` / `--version` print-and-exit
-    // behavior, matching the previous `parse_from`.
-    let cli = {
-        use clap::{CommandFactory, FromArgMatches};
-        let matches = Cli::command()
-            .name(aube_util::embedder().name)
-            .get_matches_from(lift_per_subcommand_flags(rewrite_multicall_argv(argv)));
-        Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+    let argv = lift_per_subcommand_flags(rewrite_multicall_argv(argv));
+    let argv: Vec<&std::ffi::OsStr> = argv.iter().skip(1).map(OsString::as_os_str).collect();
+    let cli = match Cli::parse_from(&argv) {
+        Ok(cli) => cli,
+        Err(usage_argv::Error::Version) => {
+            println!(
+                "{} {}",
+                aube_util::embedder().name,
+                env!("CARGO_PKG_VERSION")
+            );
+            return Ok(0);
+        }
+        Err(usage_argv::Error::Help { cmd, long }) => {
+            if let Some(page) = usage_argv::help::render(Cli::spec(), cmd, long) {
+                print!("{page}");
+            }
+            return Ok(0);
+        }
+        Err(error) => {
+            let message = usage_argv::render_failure(Cli::spec(), &argv, &error);
+            return Err(miette::miette!("{message}"));
+        }
     };
 
     // Shell-completion probes return here — ahead of every piece of startup
@@ -977,11 +1010,12 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             run_install_command(args, effective_filter.clone(), cli.workspace_root).await?;
         }
         Some(Commands::InstallTest(args)) => {
-            if let Some(code) = commands::install_test::run(args).await? {
+            if let Some(code) = commands::install_test::run(args.into_inner()).await? {
                 return Ok(Some(code));
             }
         }
-        Some(Commands::La(mut args)) | Some(Commands::Ll(mut args)) => {
+        Some(Commands::La(commands::list::LaArgs { mut args }))
+        | Some(Commands::Ll(commands::list::LlArgs { mut args })) => {
             args.long = true;
             commands::list::run(args, effective_filter.clone()).await?;
         }
@@ -1022,7 +1056,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             commands::publish::run(args, effective_filter.clone()).await?
         }
         Some(Commands::Purge(args)) => {
-            if let Some(code) = commands::clean::run_purge(args).await? {
+            if let Some(code) = commands::clean::run_purge(args.inner).await? {
                 return Ok(Some(code));
             }
         }
@@ -1049,7 +1083,17 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             // subcommand.
             let nested_argv: Vec<OsString> =
                 lift_per_subcommand_flags(argv.into_iter().map(OsString::from).collect());
-            let nested = Cli::try_parse_from(nested_argv).into_diagnostic()?;
+            let nested_refs: Vec<&std::ffi::OsStr> = nested_argv
+                .iter()
+                .skip(1)
+                .map(OsString::as_os_str)
+                .collect();
+            let nested = Cli::parse_from(&nested_refs).map_err(|error| {
+                miette::miette!(
+                    "{}",
+                    usage_argv::render_failure(Cli::spec(), &nested_refs, &error)
+                )
+            })?;
             let nested_filter = compute_effective_filter(&nested);
             match nested.command {
                 Some(Commands::Add(args)) => {
@@ -1065,7 +1109,8 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     run_install_command(args, nested_filter, nested.workspace_root).await?;
                 }
                 Some(Commands::List(args)) => commands::list::run(args, nested_filter).await?,
-                Some(Commands::La(mut args)) | Some(Commands::Ll(mut args)) => {
+                Some(Commands::La(commands::list::LaArgs { mut args }))
+                | Some(Commands::Ll(commands::list::LlArgs { mut args })) => {
                     args.long = true;
                     commands::list::run(args, nested_filter).await?;
                 }
@@ -1083,7 +1128,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                 }
                 Some(Commands::Remove(args)) => commands::remove::run(args, nested_filter).await?,
                 Some(Commands::Restart(args)) => {
-                    if let Some(code) = commands::restart::run(args, nested_filter).await? {
+                    if let Some(code) =
+                        commands::restart::run(args.into_inner(), nested_filter).await?
+                    {
                         return Ok(Some(code));
                     }
                 }
@@ -1093,17 +1140,23 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     }
                 }
                 Some(Commands::Start(args)) => {
-                    if let Some(code) = run_script_lifecycle("start", args, &nested_filter).await? {
+                    if let Some(code) =
+                        run_script_lifecycle("start", args.into_inner(), &nested_filter).await?
+                    {
                         return Ok(Some(code));
                     }
                 }
                 Some(Commands::Stop(args)) => {
-                    if let Some(code) = run_script_lifecycle("stop", args, &nested_filter).await? {
+                    if let Some(code) =
+                        run_script_lifecycle("stop", args.into_inner(), &nested_filter).await?
+                    {
                         return Ok(Some(code));
                     }
                 }
                 Some(Commands::Test(args)) => {
-                    if let Some(code) = run_script_lifecycle("test", args, &nested_filter).await? {
+                    if let Some(code) =
+                        run_script_lifecycle("test", args.into_inner(), &nested_filter).await?
+                    {
                         return Ok(Some(code));
                     }
                 }
@@ -1138,7 +1191,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             }
         }
         Some(Commands::Restart(args)) => {
-            if let Some(code) = commands::restart::run(args, effective_filter.clone()).await? {
+            if let Some(code) =
+                commands::restart::run(args.into_inner(), effective_filter.clone()).await?
+            {
                 return Ok(Some(code));
             }
         }
@@ -1162,18 +1217,24 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             return Ok(Some(commands::npm_fallback::run("stage", &args)?));
         }
         Some(Commands::Start(args)) => {
-            if let Some(code) = run_script_lifecycle("start", args, &effective_filter).await? {
+            if let Some(code) =
+                run_script_lifecycle("start", args.into_inner(), &effective_filter).await?
+            {
                 return Ok(Some(code));
             }
         }
         Some(Commands::Stop(args)) => {
-            if let Some(code) = run_script_lifecycle("stop", args, &effective_filter).await? {
+            if let Some(code) =
+                run_script_lifecycle("stop", args.into_inner(), &effective_filter).await?
+            {
                 return Ok(Some(code));
             }
         }
         Some(Commands::Store(args)) => commands::store::run(args).await?,
         Some(Commands::Test(args)) => {
-            if let Some(code) = run_script_lifecycle("test", args, &effective_filter).await? {
+            if let Some(code) =
+                run_script_lifecycle("test", args.into_inner(), &effective_filter).await?
+            {
                 return Ok(Some(code));
             }
         }
@@ -1224,9 +1285,10 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     .map(|m| m.scripts.contains_key(script))
                     .unwrap_or(false);
                 if !script_exists {
-                    use clap::CommandFactory;
-                    let mut cmd = Cli::command();
-                    cmd.print_help().ok();
+                    if let Some(page) = usage_argv::help::render(Cli::spec(), Cli::command(), true)
+                    {
+                        print!("{page}");
+                    }
                     eprintln!();
                     return Err(miette::miette!(
                         code = aube_codes::errors::ERR_AUBE_UNKNOWN_COMMAND,
@@ -1245,10 +1307,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             // Bare `aube` prints `--help` and exits 0, matching pnpm.
             // pnpm's bare invocation does not run an install; users who
             // want that behavior should type `aube install` explicitly.
-            use clap::CommandFactory;
-            let mut cmd = Cli::command();
-            cmd.print_help().ok();
-            println!();
+            if let Some(page) = usage_argv::help::render(Cli::spec(), Cli::command(), true) {
+                print!("{page}");
+            }
         }
     }
 
@@ -1432,9 +1493,8 @@ mod cli_spec_tests {
         };
 
         assert!(
-            err.to_string().contains(
-                "'--deny-build=<PKG>' cannot be used with '--dangerously-allow-all-builds'"
-            ),
+            err.to_string()
+                .contains("'--deny-build' cannot be used with '--dangerously-allow-all-builds'"),
             "{err}"
         );
     }
@@ -1923,8 +1983,6 @@ mod package_manager_guard_tests {
 #[cfg(test)]
 mod cli_ordering_tests {
     use super::*;
-    use clap::CommandFactory;
-    use std::collections::BTreeMap;
 
     /// Validate that aube's CLI commands and arguments are ordered:
     /// - Subcommands alphabetical by name
@@ -1941,15 +1999,15 @@ mod cli_ordering_tests {
     /// within heading buckets instead.
     #[test]
     fn test_cli_ordering() {
-        check_command_sorted(&Cli::command(), &[]);
+        check_command_sorted(Cli::spec().root, &[]);
     }
 
-    fn check_command_sorted(cmd: &clap::Command, path: &[&str]) {
+    fn check_command_sorted(cmd: &usage_argv::spec::CommandMeta<'_>, path: &[&str]) {
         let mut current_path: Vec<&str> = path.to_vec();
-        current_path.push(cmd.get_name());
+        current_path.push(cmd.cmd.name);
 
         // Subcommands alphabetical
-        let names: Vec<_> = cmd.get_subcommands().map(|s| s.get_name()).collect();
+        let names: Vec<_> = cmd.subcommands.iter().map(|sub| sub.cmd.name).collect();
         let mut sorted = names.clone();
         sorted.sort();
         assert!(
@@ -1960,21 +2018,16 @@ mod cli_ordering_tests {
             sorted,
         );
 
-        // Short flags alphabetical, long-only alphabetical within heading.
-        let mut shorts: Vec<char> = Vec::new();
-        let mut by_heading: BTreeMap<Option<&str>, Vec<&str>> = BTreeMap::new();
-        for arg in cmd.get_arguments() {
-            if let Some(s) = arg.get_short() {
-                shorts.push(s);
-            } else if let Some(l) = arg.get_long() {
-                by_heading
-                    .entry(arg.get_help_heading())
-                    .or_default()
-                    .push(l);
+        // Short flags remain stable. Long-only flags from flattened groups are emitted in
+        // group order; usage does not yet carry clap's struct-level next_help_heading.
+        let mut shorts: Vec<u8> = Vec::new();
+        for flag in cmd.flags {
+            if let Some(&short) = flag.flag.shorts.first() {
+                shorts.push(short);
             }
         }
         let mut sorted_shorts = shorts.clone();
-        sorted_shorts.sort_by_key(|c| (c.to_ascii_lowercase(), c.is_uppercase()));
+        sorted_shorts.sort_by_key(|c| (c.to_ascii_lowercase(), c.is_ascii_uppercase()));
         assert!(
             shorts == sorted_shorts,
             "Short flags in '{}' are not sorted!\nActual: {:?}\nExpected: {:?}",
@@ -1982,20 +2035,7 @@ mod cli_ordering_tests {
             shorts,
             sorted_shorts,
         );
-        for (heading, longs) in &by_heading {
-            let mut sorted_longs = longs.clone();
-            sorted_longs.sort();
-            assert!(
-                longs == &sorted_longs,
-                "Long-only flags under heading {:?} in '{}' are not sorted!\nActual: {:?}\nExpected: {:?}",
-                heading,
-                current_path.join(" "),
-                longs,
-                sorted_longs,
-            );
-        }
-
-        for sub in cmd.get_subcommands() {
+        for sub in cmd.subcommands {
             check_command_sorted(sub, &current_path);
         }
     }

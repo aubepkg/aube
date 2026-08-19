@@ -32,7 +32,7 @@ pub struct UpdateArgs {
     /// caret/tilde original, drop the prefix so the manifest carries an
     /// exact pin (`"1.2.3"`) instead of `"^1.2.3"`. Mirrors
     /// `pnpm update --save-exact`.
-    #[usage(short = 'E', long, alias = "save-exact")]
+    #[usage(short = 'E', long, long = "save-exact")]
     pub exact: bool,
     /// Update globally installed packages.
     ///
@@ -54,7 +54,7 @@ pub struct UpdateArgs {
     #[usage(short = 'L', long)]
     pub latest: bool,
     /// Update only production dependencies.
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
     /// Update dependencies in the current workspace package.
     #[usage(short = 'w', long)]
@@ -91,7 +91,7 @@ pub struct UpdateArgs {
     /// Re-resolves the full graph (direct + transitive) and writes
     /// `aube-lock.yaml`, then skips the linker so `node_modules` is
     /// left untouched. Mirrors `npm update --package-lock-only`.
-    #[usage(long, conflicts = "--frozen-lockfile")]
+    #[usage(long)]
     pub lockfile_only: bool,
     /// Skip optionalDependencies.
     #[usage(long)]

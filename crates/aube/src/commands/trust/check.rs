@@ -25,7 +25,7 @@ pub(super) struct CheckArgs {
     /// Exact npm package version to inspect
     ///
     /// Example: `@hono/node-server@1.19.17`.
-    #[usage(arg, value_name = "PACKAGE@VERSION")]
+    #[usage(arg, name = "PACKAGE@VERSION")]
     pub package: String,
     /// Evaluate the policy without aube's built-in package exceptions
     #[usage(long)]

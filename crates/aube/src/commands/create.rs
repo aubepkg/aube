@@ -1,6 +1,4 @@
 use super::dlx::{self, DlxArgs};
-use clap::{Args, CommandFactory};
-use miette::miette;
 
 #[derive(Debug, usage_derive::Args)]
 // Same contract as dlx: every positional after <TEMPLATE> is forwarded
@@ -20,7 +18,7 @@ pub struct CreateArgs {
     ///
     /// The first positional is the template; the rest are forwarded
     /// verbatim to `create-<template>`.
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub params: Vec<String>,
     #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
@@ -40,12 +38,7 @@ pub async fn run(args: CreateArgs) -> miette::Result<Option<i32>> {
     // flags (including `--help`) belong to the scaffold binary.
     let first = params.first().map(String::as_str);
     if matches!(first, None | Some("--help" | "-h")) {
-        crate::Cli::command()
-            .find_subcommand_mut("create")
-            .expect("create is a registered subcommand")
-            .print_help()
-            .map_err(|e| miette!("failed to render help: {e}"))?;
-        println!();
+        crate::print_subcommand_help("create")?;
         return Ok(None);
     }
 

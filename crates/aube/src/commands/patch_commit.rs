@@ -20,7 +20,7 @@ pub struct PatchCommitArgs {
     ///
     /// The matching source snapshot is read from a sibling `source/`
     /// dir, located via the `.aube_patch_state.json` sidecar.
-    #[usage(arg, value_name = "DIR")]
+    #[usage(arg, name = "DIR")]
     pub edit_dir: PathBuf,
 
     /// Where to write the generated `.patch` file, relative to the

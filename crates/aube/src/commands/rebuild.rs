@@ -28,7 +28,7 @@ pub struct RebuildArgs {
     /// not by `dep_path`. The active `allowBuilds` /
     /// `onlyBuiltDependencies` policy is bypassed for the named
     /// deps — naming the package is the explicit opt-in.
-    #[usage(arg, value_name = "PACKAGE")]
+    #[usage(arg, name = "PACKAGE")]
     pub packages: Vec<String>,
 }
 

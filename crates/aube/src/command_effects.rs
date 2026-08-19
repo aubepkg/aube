@@ -35,8 +35,8 @@
 
 use std::collections::HashMap;
 
-use clap_usage::usage;
-use clap_usage::usage::SpecCommandEffect::{self, Destructive, Read, Write};
+use usage;
+use usage::SpecCommandEffect::{self, Destructive, Read, Write};
 
 /// Commands whose effect is fixed, keyed by their full path under the binary.
 pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
@@ -241,7 +241,9 @@ mod tests {
     /// Every command in the tree, hidden ones included: a hidden command is
     /// still runnable.
     fn all_commands() -> Vec<String> {
-        let spec: usage::Spec = crate::command().into();
+        let spec: usage::Spec = crate::usage_kdl()
+            .parse()
+            .expect("derived spec should parse");
         let mut out = vec![];
         collect(&spec.cmd, &mut vec![], &mut out);
         out
@@ -317,7 +319,9 @@ mod tests {
     /// actually transfers them.
     #[test]
     fn apply_annotates_the_spec() {
-        let mut spec: usage::Spec = crate::command().into();
+        let mut spec: usage::Spec = crate::usage_kdl()
+            .parse()
+            .expect("derived spec should parse");
         apply(&mut spec);
 
         let cmd = |name: &str| {

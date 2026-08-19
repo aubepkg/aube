@@ -74,7 +74,7 @@ pub struct OutdatedArgs {
     pub long: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
     /// Operate on the workspace root regardless of cwd.
     ///
@@ -82,7 +82,7 @@ pub struct OutdatedArgs {
     /// `aube outdated -w` reports the root manifest's deps instead
     /// of the sub-package's. No-op when paired with `-r` / `--filter`
     /// (those already drive workspace selection from the root).
-    #[usage(short = 'w', long = "workspace-root", alias = "workspace")]
+    #[usage(short = 'w', long = "workspace-root", long = "workspace")]
     pub workspace_root: bool,
     #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,

@@ -30,6 +30,12 @@ pub struct CleanArgs {
     pub lockfile: bool,
 }
 
+#[derive(Debug, usage_derive::Args)]
+pub struct PurgeArgs {
+    #[usage(flatten)]
+    pub inner: CleanArgs,
+}
+
 /// Lockfile basenames removed by `--lockfile`. Kept in one place so
 /// `clean` and any future `purge`-adjacent command see the same set.
 /// Lockfile names `aube clean --lockfile` removes: this tool's canonical

@@ -7,7 +7,7 @@ pub struct ExecArgs {
     /// Binary name
     pub bin: String,
     /// Arguments to pass to the binary
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub args: Vec<String>,
     /// Continue recursive execution after a command fails.
     ///

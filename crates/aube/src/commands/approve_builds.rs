@@ -32,7 +32,7 @@ pub struct ApproveBuildsArgs {
     ///
     /// Each name must match a currently-ignored build. Unknown names
     /// are rejected so a typo cannot silently no-op.
-    #[usage(arg, value_name = "PKG")]
+    #[usage(arg, name = "PKG")]
     pub packages: Vec<String>,
 }
 

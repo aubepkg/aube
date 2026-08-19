@@ -46,7 +46,7 @@ pub struct WhyArgs {
     pub dev: bool,
 
     /// Only follow chains that start at a production (or optional) dependency
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
 
     /// Output as JSON — an array of chain objects

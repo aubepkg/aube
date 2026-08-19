@@ -15,7 +15,7 @@ pub struct PatchRemoveArgs {
     ///
     /// Same shape used as the `pnpm.patchedDependencies` map key. With
     /// no arguments, every declared patch is removed.
-    #[usage(arg, value_name = "PATCH")]
+    #[usage(arg, name = "PATCH")]
     pub packages: Vec<String>,
 }
 

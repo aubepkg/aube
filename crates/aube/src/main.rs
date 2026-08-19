@@ -45,8 +45,11 @@ fn main() {
 
 /// Print the usage.jdx.dev KDL spec for the CLI and return an exit code.
 fn print_usage_spec(embedder: &'static aube_util::Embedder) -> i32 {
-    let mut cmd = aube::command();
-    let mut usage_spec = clap_usage::spec(&mut cmd, embedder.name);
+    let mut usage_spec: usage::Spec = aube::usage_kdl()
+        .parse()
+        .expect("derived aube spec should parse");
+    usage_spec.name = embedder.name.to_string();
+    usage_spec.bin = embedder.name.to_string();
     // Declare what each command does to the world; clap cannot express it.
     aube::command_effects::apply(&mut usage_spec);
     // 4.0 added `effect=`; older `usage` CLIs reject the spec outright with

@@ -73,7 +73,7 @@ pub struct KeyArgs {
     /// `<cwd>/.config/aube/config.toml` at project-scope) and the
     /// matching `.npmrc`, so the call works regardless of which file
     /// the value was originally written to.
-    #[usage(long, value_enum, default_value_t = Location::User)]
+    #[usage(long, value_enum, default_value_t = Location::User, default = "user")]
     pub location: Location,
 }
 
@@ -87,7 +87,8 @@ impl KeyArgs {
     }
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Location {
     /// User config (`~/.config/aube/config.toml` for known aube
     /// settings, `~/.npmrc` for registry/auth and unknown keys)
@@ -98,7 +99,8 @@ pub enum Location {
     Global,
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ListLocation {
     /// Merge `~/.npmrc`, user aube config, and project `.npmrc`,
     /// last-write-wins (same precedence install uses).

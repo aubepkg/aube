@@ -4,7 +4,7 @@ use miette::miette;
 #[derive(Debug, usage_derive::Args)]
 pub struct RecursiveArgs {
     /// Command and arguments to run recursively across workspace packages
-    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub args: Vec<String>,
 }
 

@@ -49,7 +49,7 @@ pub struct QueryArgs {
     pub dev: bool,
 
     /// Only match production/optional roots and their transitive deps.
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
 
     /// Emit a JSON array instead of the default text layout.

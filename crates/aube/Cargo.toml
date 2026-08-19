@@ -55,6 +55,8 @@ bytes = "1"
 xx = { workspace = true }
 usage-argv = { workspace = true }
 usage-derive = { workspace = true }
+usage-lib = { workspace = true }
+usage-validation = { workspace = true }
 strum = { workspace = true }
 clx = { workspace = true }
 console = "0.16"

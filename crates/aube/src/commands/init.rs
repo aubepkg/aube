@@ -26,8 +26,8 @@ pub struct InitArgs {
     pub network: crate::cli_args::NetworkArgs,
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum)]
-#[value(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub enum InitType {
     Commonjs,
     Module,

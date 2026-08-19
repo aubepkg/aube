@@ -22,7 +22,7 @@ pub struct SbomArgs {
     pub exclude_peers: bool,
 
     /// Output format: `cyclonedx` (default) or `spdx`
-    #[usage(long, value_enum, default_value_t = SbomFormat::Cyclonedx)]
+    #[usage(long, value_enum, default_value_t = SbomFormat::Cyclonedx, default = "cyclonedx")]
     pub format: SbomFormat,
 
     /// Describe the complete platform-independent lockfile graph
@@ -30,11 +30,14 @@ pub struct SbomArgs {
     pub lockfile_only: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum, strum::Display, strum::EnumString,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SbomFormat {
     Cyclonedx,
     Spdx,
