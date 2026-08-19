@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn ls_accepts_the_pnpm_packages_marker() {
-        let cli = crate::Cli::try_parse_from(["aube", "access", "ls", "packages", "@scope"])
+        let cli = crate::Cli::try_parse_test_from(["aube", "access", "ls", "packages", "@scope"])
             .expect("access ls packages should parse");
         let Some(crate::Commands::Access(AccessArgs {
             command: AccessCommand::Ls { entities },

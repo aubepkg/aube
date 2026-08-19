@@ -48,7 +48,11 @@ use std::path::PathBuf;
 
 #[derive(usage_rs::Cli)]
 #[allow(dead_code)]
-#[usage(name = "aube", about = "A fast Node.js package manager")]
+#[usage(
+    name = aube_util::prog(),
+    name_spec = "aube",
+    about = "A fast Node.js package manager"
+)]
 pub(crate) struct Cli {
     /// Change to directory before running (like `make -C` or `mise --cd`)
     #[usage(
@@ -221,7 +225,7 @@ pub(crate) struct Cli {
 
 #[cfg(test)]
 impl Cli {
-    fn try_parse_from<I, S>(argv: I) -> Result<Self, String>
+    fn try_parse_test_from<I, S>(argv: I) -> Result<Self, String>
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
@@ -250,7 +254,8 @@ fn render_cli_error(argv: &[&std::ffi::OsStr], error: &usage_rs::Error<'_, '_>) 
             .reason
             .replacen(" Please specify", "\nPlease specify", 1);
     }
-    usage_rs::render_failure(Cli::spec(), argv, error)
+    let runtime_spec = Cli::runtime_app().spec();
+    usage_rs::render_failure(&runtime_spec, argv, error)
 }
 
 fn is_allow_build_compat_error(error: &usage_rs::Error<'_, '_>) -> bool {
@@ -763,7 +768,8 @@ fn inner_main() -> miette::Result<i32> {
             return Ok(0);
         }
         Err(usage_rs::Error::Help { cmd, long }) => {
-            if let Some(page) = usage_rs::help::render(Cli::spec(), cmd, long) {
+            let runtime_spec = Cli::runtime_app().spec();
+            if let Some(page) = usage_rs::help::render(&runtime_spec, cmd, long) {
                 print!("{page}");
             }
             return Ok(0);
@@ -1459,7 +1465,7 @@ mod cli_spec_tests {
 
     #[test]
     fn install_accepts_subcommand_registry_flag() {
-        let cli = Cli::try_parse_from([
+        let cli = Cli::try_parse_test_from([
             "aube",
             "install",
             "--registry",
@@ -1478,15 +1484,16 @@ mod cli_spec_tests {
 
     #[test]
     fn top_level_version_keeps_the_manual_async_path() {
-        let cli = Cli::try_parse_from(["aube", "--version"])
+        let cli = Cli::try_parse_test_from(["aube", "--version"])
             .expect("the manual version flag should bind instead of exiting in the parser");
         assert!(cli.version);
     }
 
     #[test]
     fn install_rejects_incompatible_lockfile_modes() {
-        let cli = Cli::try_parse_from(["aube", "install", "--fix-lockfile", "--frozen-lockfile"])
-            .expect("cross-flatten relationships are checked after binding");
+        let cli =
+            Cli::try_parse_test_from(["aube", "install", "--fix-lockfile", "--frozen-lockfile"])
+                .expect("cross-flatten relationships are checked after binding");
         let Some(Commands::Install(args)) = cli.command else {
             panic!("expected install subcommand");
         };
@@ -1498,7 +1505,7 @@ mod cli_spec_tests {
         for enable in ["--enable-global-virtual-store", "--enable-gvs"] {
             for disable in ["--disable-global-virtual-store", "--disable-gvs"] {
                 assert!(
-                    Cli::try_parse_from(["aube", "install", enable, disable]).is_err(),
+                    Cli::try_parse_test_from(["aube", "install", enable, disable]).is_err(),
                     "{enable} and {disable} should remain mutually exclusive"
                 );
             }
@@ -1521,7 +1528,7 @@ mod cli_spec_tests {
             .map(OsString::from)
             .collect(),
         );
-        let cli = Cli::try_parse_from(argv)
+        let cli = Cli::try_parse_test_from(argv)
             .expect("pre-subcommand --registry should still parse via the rewriter");
         let Some(Commands::Install(install_args)) = cli.command else {
             panic!("expected install subcommand");
@@ -1535,7 +1542,7 @@ mod cli_spec_tests {
     #[test]
     fn dlx_accepts_allow_build_before_command() {
         let cli =
-            Cli::try_parse_from(["aube", "dlx", "--allow-build=esbuild", "vite", "--version"])
+            Cli::try_parse_test_from(["aube", "dlx", "--allow-build=esbuild", "vite", "--version"])
                 .expect("dlx --allow-build should parse");
 
         let Some(Commands::Dlx(dlx_args)) = cli.command else {
@@ -1547,7 +1554,7 @@ mod cli_spec_tests {
 
     #[test]
     fn dlx_rejects_empty_allow_build_value() {
-        let err = match Cli::try_parse_from(["aube", "dlx", "--allow-build=", "vite"]) {
+        let err = match Cli::try_parse_test_from(["aube", "dlx", "--allow-build=", "vite"]) {
             Ok(_) => panic!("empty --allow-build should fail"),
             Err(err) => err,
         };
@@ -1560,7 +1567,7 @@ mod cli_spec_tests {
 
     #[test]
     fn add_accepts_dangerously_allow_all_builds_after_package() {
-        let cli = Cli::try_parse_from([
+        let cli = Cli::try_parse_test_from([
             "aube",
             "add",
             "--global",
@@ -1579,7 +1586,7 @@ mod cli_spec_tests {
 
     #[test]
     fn add_rejects_deny_build_with_dangerously_allow_all_builds() {
-        let err = match Cli::try_parse_from([
+        let err = match Cli::try_parse_test_from([
             "aube",
             "add",
             "some-package",
@@ -1624,18 +1631,18 @@ mod cli_spec_tests {
 
     #[test]
     fn short_command_aliases_parse() {
-        let cli = Cli::try_parse_from(["aube", "a", "react"]).expect("a should parse as add");
+        let cli = Cli::try_parse_test_from(["aube", "a", "react"]).expect("a should parse as add");
         assert!(matches!(cli.command, Some(Commands::Add(_))));
 
-        let cli =
-            Cli::try_parse_from(["aube", "x", "vitest", "--run"]).expect("x should parse as exec");
+        let cli = Cli::try_parse_test_from(["aube", "x", "vitest", "--run"])
+            .expect("x should parse as exec");
         let Some(Commands::Exec(args)) = cli.command else {
             panic!("x should dispatch to exec");
         };
         assert_eq!(args.bin, "vitest");
         assert_eq!(args.args, vec!["--run"]);
 
-        let cli = Cli::try_parse_from(["aube", "w", "react"]).expect("w should parse as why");
+        let cli = Cli::try_parse_test_from(["aube", "w", "react"]).expect("w should parse as why");
         assert!(matches!(cli.command, Some(Commands::Why(_))));
     }
 
@@ -1644,7 +1651,7 @@ mod cli_spec_tests {
         // pnpm parity: `aube bin -w` / `--workspace-root` prints the
         // workspace-root bin dir. See discussion #988.
         for flag in ["-w", "--workspace-root", "--workspace"] {
-            let cli = Cli::try_parse_from(["aube", "bin", flag])
+            let cli = Cli::try_parse_test_from(["aube", "bin", flag])
                 .unwrap_or_else(|e| panic!("`aube bin {flag}` should parse: {e}"));
             let Some(Commands::Bin(args)) = cli.command else {
                 panic!("`aube bin {flag}` should dispatch to bin");
@@ -1657,14 +1664,14 @@ mod cli_spec_tests {
     #[test]
     fn bin_global_conflicts_with_workspace_root() {
         assert!(
-            Cli::try_parse_from(["aube", "bin", "-g", "-w"]).is_err(),
+            Cli::try_parse_test_from(["aube", "bin", "-g", "-w"]).is_err(),
             "`aube bin -g -w` should be rejected as conflicting"
         );
     }
 
     #[test]
     fn node_subcommand_forwards_version_flag() {
-        let cli = Cli::try_parse_from(rewrite_multicall_argv(vec![
+        let cli = Cli::try_parse_test_from(rewrite_multicall_argv(vec![
             OsString::from("aube"),
             OsString::from("node"),
             OsString::from("--version"),
@@ -1679,7 +1686,7 @@ mod cli_spec_tests {
 
     #[test]
     fn node_subcommand_forwards_help_flag() {
-        let cli = Cli::try_parse_from(rewrite_multicall_argv(vec![
+        let cli = Cli::try_parse_test_from(rewrite_multicall_argv(vec![
             OsString::from("aube"),
             OsString::from("node"),
             OsString::from("--help"),
@@ -2003,8 +2010,8 @@ mod package_manager_guard_tests {
 
     #[test]
     fn run_like_commands_warn_instead_of_erroring() {
-        let run = Cli::try_parse_from(["aube", "run", "test"]).expect("run should parse");
-        let test = Cli::try_parse_from(["aube", "test"]).expect("test should parse");
+        let run = Cli::try_parse_test_from(["aube", "run", "test"]).expect("run should parse");
+        let test = Cli::try_parse_test_from(["aube", "test"]).expect("test should parse");
 
         assert_eq!(
             package_manager_guard_mode(run.command.as_ref()),
@@ -2018,7 +2025,7 @@ mod package_manager_guard_tests {
 
     #[test]
     fn install_still_errors_on_mismatch() {
-        let cli = Cli::try_parse_from(["aube", "install"]).expect("install should parse");
+        let cli = Cli::try_parse_test_from(["aube", "install"]).expect("install should parse");
         assert_eq!(
             package_manager_guard_mode(cli.command.as_ref()),
             PackageManagerGuardMode::Error
@@ -2027,7 +2034,8 @@ mod package_manager_guard_tests {
 
     #[test]
     fn install_test_still_errors_on_mismatch() {
-        let cli = Cli::try_parse_from(["aube", "install-test"]).expect("install-test should parse");
+        let cli =
+            Cli::try_parse_test_from(["aube", "install-test"]).expect("install-test should parse");
         assert_eq!(
             package_manager_guard_mode(cli.command.as_ref()),
             PackageManagerGuardMode::Error
@@ -2036,7 +2044,7 @@ mod package_manager_guard_tests {
 
     #[test]
     fn prefix_skips_package_manager_guard() {
-        let cli = Cli::try_parse_from(["aube", "prefix"]).expect("prefix should parse");
+        let cli = Cli::try_parse_test_from(["aube", "prefix"]).expect("prefix should parse");
         assert!(!command_needs_package_manager_guard(cli.command.as_ref()));
     }
 
