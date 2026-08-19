@@ -104,11 +104,9 @@ fn dynamic_completion_keeps_stdout_when_use_stderr_is_configured() {
             "--shell",
             "bash",
             "--line",
-            "aube ",
+            "aube config get ",
             "--cursor",
-            "5",
-            "--candidates",
-            "key",
+            "16",
         ])
         .assert()
         .success()
