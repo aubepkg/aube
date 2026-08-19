@@ -49,7 +49,14 @@ flag "--include-workspace-root" help="Include the workspace root in recursive wo
 }
 flag "--loglevel" help="Set the log level. Logs at or above this level are shown." global=#true {
     arg "<LEVEL>" {
-        choices "trace" "debug" "info" "warn" "error" "silent"
+        choices {
+            choice "trace"
+            choice "debug"
+            choice "info"
+            choice "warn"
+            choice "error"
+            choice "silent"
+        }
     }
 }
 flag "--no-color" help="Disable colored output." global=#true {
@@ -58,7 +65,12 @@ flag "--no-color" help="Disable colored output." global=#true {
 flag "--reporter" help="Output format: default, append-only, ndjson, silent." global=#true {
     long_help "Output format: default, append-only, ndjson, silent.\n\n`default` renders the progress UI when stderr is a TTY;\n`append-only` disables the progress UI in favor of plain\nline-at-a-time logs; `ndjson` swaps the tracing fmt layer for\nthe JSON formatter (one JSON object per log event on stderr)\nand is what tooling wrappers should consume; `silent`\nsuppresses all non-error output (alias for `--loglevel silent`)."
     arg "<NAME>" {
-        choices "default" "append-only" "ndjson" "silent"
+        choices {
+            choice "default"
+            choice "append-only"
+            choice "ndjson"
+            choice "silent"
+        }
     }
 }
 flag "--silent" help="Suppress all non-error output (alias for `--loglevel silent`)" global=#true
@@ -226,10 +238,10 @@ cmd "add" help="Add a dependency" effect="write" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[PACKAGES]..." help="Package(s) to add"
@@ -246,14 +258,23 @@ cmd "audit" help="Check installed packages against the registry advisory DB" eff
     flag "--audit-level" help="Only print advisories at or above this severity." {
         long_help "Only print advisories at or above this severity.\n\nOne of: `info`, `low`, `moderate`, `high`, `critical`.\nDefaults to `audit.level` (or legacy `auditLevel`), then `low`."
         arg "<AUDIT_LEVEL>" {
-            choices "info" "low" "moderate" "high" "critical"
+            choices {
+                choice "info"
+                choice "low"
+                choice "moderate"
+                choice "high"
+                choice "critical"
+            }
         }
     }
     flag "-D --dev" help="Only audit `devDependencies`." conflicts="--prod"
     flag "--fix" help="Fix advisories." default_missing="override" {
         long_help "Fix advisories.\n\nBare `--fix` writes package.json overrides for backwards compatibility.\n`--fix=update` refreshes the lockfile without writing overrides."
         arg "[FIX]" required=#false {
-            choices "update" "override"
+            choices {
+                choice "update" help="Refresh the lockfile to patched versions allowed by existing ranges."
+                choice "override" help="Write package.json overrides that force patched versions."
+            }
         }
     }
     flag "--ignore" help="Drop advisories whose ID matches one of these values." var=#true delimiter="," {
@@ -414,10 +435,10 @@ cmd "ci" help="Clean install: delete node_modules, then install with frozen lock
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
 }
@@ -445,7 +466,12 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
     flag "--location" help="Which config location(s) to list." {
         long_help "Which config location(s) to list.\n\n`merged` (default) walks `~/.npmrc`, user aube config, then\nthe project's `.npmrc` with last-write-wins precedence,\nmatching how install reads config."
         arg "<LOCATION>" {
-            choices "merged" "user" "project" "global"
+            choices {
+                choice "merged" help="Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                choice "user" help="Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                choice "project" help="Only `<cwd>/.npmrc`"
+                choice "global" help="Alias for `user`."
+            }
         }
     }
     cmd "delete" help="Delete a key from aube config or the selected `.npmrc` file" effect="destructive" {
@@ -456,7 +482,11 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
         flag "--location" help="Which config location to act on." default="user" {
             long_help "Which config location to act on.\n\nDefaults to `user`. Delete sweeps both aube's own config\n(`~/.config/aube/config.toml` at user-scope,\n`<cwd>/.config/aube/config.toml` at project-scope) and the\nmatching `.npmrc`, so the call works regardless of which file\nthe value was originally written to."
             arg "<LOCATION>" {
-                choices "user" "project" "global"
+                choices {
+                    choice "user" help="User config (`~/.config/aube/config.toml` for known aube settings, `~/.npmrc` for registry/auth and unknown keys)"
+                    choice "project" help="`<cwd>/.npmrc`"
+                    choice "global" help="Alias for `user` — aube has no separate global config file."
+                }
             }
         }
         arg "<KEY>" help="The setting key." {
@@ -478,7 +508,12 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
         flag "--location" help="Which config location(s) to read." default="merged" {
             long_help "Which config location(s) to read.\n\nDefaults to `merged` — the last-write-wins view of user aube\nconfig, `~/.npmrc`, then `./.npmrc`, matching what install\nactually sees. Use `user` or `project` to restrict the lookup."
             arg "<LOCATION>" {
-                choices "merged" "user" "project" "global"
+                choices {
+                    choice "merged" help="Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                    choice "user" help="Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                    choice "project" help="Only `<cwd>/.npmrc`"
+                    choice "global" help="Alias for `user`."
+                }
             }
         }
         arg "<KEY>" help="The setting key." {
@@ -500,7 +535,12 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
         flag "--location" help="Which config location(s) to list." {
             long_help "Which config location(s) to list.\n\n`merged` (default) walks `~/.npmrc`, user aube config, then\nthe project's `.npmrc` with last-write-wins precedence,\nmatching how install reads config."
             arg "<LOCATION>" {
-                choices "merged" "user" "project" "global"
+                choices {
+                    choice "merged" help="Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                    choice "user" help="Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                    choice "project" help="Only `<cwd>/.npmrc`"
+                    choice "global" help="Alias for `user`."
+                }
             }
         }
     }
@@ -509,7 +549,11 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
         flag "--location" help="Which config location to write to." default="user" {
             long_help "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared\nsurface — per-host auth/cert templates, scoped registries, and\nsettings tagged `npmShared = true` in the settings registry\n(`registry`, `proxy` / `https-proxy`, `engine-strict`,\n`ignore-scripts`, etc.) — so npm and yarn read the same value.\nAube-only and pnpm-only settings, plus unknown keys, land in\naube's own config (`~/.config/aube/config.toml` at user scope,\n`<cwd>/.config/aube/config.toml` at project scope) where\nsibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`,\n`overrides.<pkg>`, …) edit one entry at a time. At project\nscope (`--local`) they land in\n`pnpm-workspace.yaml#<map>.<entry>` or\n`package.json#aube.<map>.<entry>` if no workspace yaml exists,\nthe same place install reads from. User-scope dotted writes\nfor these maps error: aube only reads them per project."
             arg "<LOCATION>" {
-                choices "user" "project" "global"
+                choices {
+                    choice "user" help="User config (`~/.config/aube/config.toml` for known aube settings, `~/.npmrc` for registry/auth and unknown keys)"
+                    choice "project" help="`<cwd>/.npmrc`"
+                    choice "global" help="Alias for `user` — aube has no separate global config file."
+                }
             }
         }
         arg "<KEY>" help="Setting key (canonical name or `.npmrc` alias)."
@@ -584,10 +628,10 @@ cmd "dedupe" help="Re-resolve the lockfile to collapse duplicate versions" effec
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
 }
@@ -641,10 +685,10 @@ cmd "deploy" help="Deploy a workspace package into a target directory with deps 
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "<TARGET>" help="Target directory to deploy into." {
@@ -827,10 +871,10 @@ cmd "dlx" help="Fetch a package into a throwaway environment and run its binary"
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[PARAMS]..." help="Command (binary) to run, followed by arguments to pass through to it." double_dash="automatic" {
@@ -902,10 +946,10 @@ cmd "exec" help="Execute a locally installed binary" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "<BIN>" help="Binary name"
@@ -947,10 +991,10 @@ cmd "fetch" help="Download lockfile dependencies into the store without linking 
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
 }
@@ -994,7 +1038,12 @@ cmd "get" help="Alias for `config get` (hidden; prefer `config get`)" hide=#true
     flag "--location" help="Which config location(s) to read." default="merged" {
         long_help "Which config location(s) to read.\n\nDefaults to `merged` — the last-write-wins view of user aube\nconfig, `~/.npmrc`, then `./.npmrc`, matching what install\nactually sees. Use `user` or `project` to restrict the lookup."
         arg "<LOCATION>" {
-            choices "merged" "user" "project" "global"
+            choices {
+                choice "merged" help="Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                choice "user" help="Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                choice "project" help="Only `<cwd>/.npmrc`"
+                choice "global" help="Alias for `user`."
+            }
         }
     }
     arg "<KEY>" help="The setting key." {
@@ -1156,10 +1205,10 @@ cmd "install" help="Install all dependencies" effect="write" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
 }
@@ -1200,10 +1249,10 @@ cmd "install-test" help="Install dependencies, then run the `test` script (pnpm 
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash="automatic"
@@ -1218,7 +1267,11 @@ cmd "la" help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#tru
     }
     flag "--format" help="Output format: one of `default`, `json`, or `parseable`" default="default" {
         arg "<FORMAT>" {
-            choices "default" "json" "parseable"
+            choices {
+                choice "default"
+                choice "json"
+                choice "parseable"
+            }
         }
     }
     flag "--json" help="Shortcut for `--format json`." conflicts="--format" {
@@ -1287,7 +1340,11 @@ cmd "list" help="Print the resolved dependency tree" effect="read" {
     }
     flag "--format" help="Output format: one of `default`, `json`, or `parseable`" default="default" {
         arg "<FORMAT>" {
-            choices "default" "json" "parseable"
+            choices {
+                choice "default"
+                choice "json"
+                choice "parseable"
+            }
         }
     }
     flag "--json" help="Shortcut for `--format json`." conflicts="--format" {
@@ -1313,7 +1370,11 @@ cmd "ll" help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#tru
     }
     flag "--format" help="Output format: one of `default`, `json`, or `parseable`" default="default" {
         arg "<FORMAT>" {
-            choices "default" "json" "parseable"
+            choices {
+                choice "default"
+                choice "json"
+                choice "parseable"
+            }
         }
     }
     flag "--json" help="Shortcut for `--format json`." conflicts="--format" {
@@ -1687,10 +1748,10 @@ cmd "remove" help="Remove a dependency" effect="destructive" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[PACKAGES]..." help="Package(s) to remove"
@@ -1730,10 +1791,10 @@ cmd "restart" help="Restart a package (shortcut for `run restart`; falls back to
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash="automatic"
@@ -1819,10 +1880,10 @@ cmd "run" help="Run a script defined in package.json" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[SCRIPT]" help="Script or local binary name." {
@@ -1854,7 +1915,10 @@ cmd "sbom" help="Generate a Software Bill of Materials (CycloneDX or SPDX)" effe
     flag "--exclude-peers" help="Exclude peer dependencies from CycloneDX output"
     flag "--format" help="Output format: `cyclonedx` (default) or `spdx`" default="cyclonedx" {
         arg "<FORMAT>" {
-            choices "cyclonedx" "spdx"
+            choices {
+                choice "cyclonedx"
+                choice "spdx"
+            }
         }
     }
     flag "--lockfile-only" help="Describe the complete platform-independent lockfile graph"
@@ -1894,7 +1958,11 @@ cmd "set" help="Alias for `config set` (hidden; prefer `config set`)" hide=#true
     flag "--location" help="Which config location to write to." default="user" {
         long_help "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared\nsurface — per-host auth/cert templates, scoped registries, and\nsettings tagged `npmShared = true` in the settings registry\n(`registry`, `proxy` / `https-proxy`, `engine-strict`,\n`ignore-scripts`, etc.) — so npm and yarn read the same value.\nAube-only and pnpm-only settings, plus unknown keys, land in\naube's own config (`~/.config/aube/config.toml` at user scope,\n`<cwd>/.config/aube/config.toml` at project scope) where\nsibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`,\n`overrides.<pkg>`, …) edit one entry at a time. At project\nscope (`--local`) they land in\n`pnpm-workspace.yaml#<map>.<entry>` or\n`package.json#aube.<map>.<entry>` if no workspace yaml exists,\nthe same place install reads from. User-scope dotted writes\nfor these maps error: aube only reads them per project."
         arg "<LOCATION>" {
-            choices "user" "project" "global"
+            choices {
+                choice "user" help="User config (`~/.config/aube/config.toml` for known aube settings, `~/.npmrc` for registry/auth and unknown keys)"
+                choice "project" help="`<cwd>/.npmrc`"
+                choice "global" help="Alias for `user` — aube has no separate global config file."
+            }
         }
     }
     arg "<KEY>" help="Setting key (canonical name or `.npmrc` alias)."
@@ -1995,10 +2063,10 @@ cmd "start" help="Start a package (shortcut for `run start`)" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash="automatic"
@@ -2038,10 +2106,10 @@ cmd "stop" help="Stop a package (shortcut for `run stop`)" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash="automatic"
@@ -2098,10 +2166,10 @@ cmd "test" help="Run the `test` script (shortcut for `run test`)" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash="automatic"
@@ -2320,10 +2388,10 @@ cmd "update" help="Update dependencies" effect="write" {
         long_help "Override the default registry URL for this invocation.\n\nUse this npm registry URL for package metadata, tarballs,\naudit requests, dist-tags, and registry writes."
         arg "<URL>"
     }
-    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-gvs" {
+    flag "--disable-global-virtual-store --disable-gvs" help="Force the shared global virtual store off for this invocation." conflicts="--enable-global-virtual-store" {
         long_help "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store\ninstead of symlinked from `~/.cache/aube/virtual-store/`."
     }
-    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-gvs" {
+    flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." conflicts="--disable-global-virtual-store" {
         long_help "Force the shared global virtual store on for this invocation.\n\nOverrides CI's default per-project materialization and the\n`disableGlobalVirtualStoreForPackages` auto-disable heuristic."
     }
     arg "[PACKAGES]..." help="Package(s) to update (all if empty)"

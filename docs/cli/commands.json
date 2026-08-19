@@ -1015,7 +1015,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -1032,7 +1032,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -1139,6 +1139,23 @@
                   "moderate",
                   "high",
                   "critical"
+                ],
+                "details": [
+                  {
+                    "value": "info"
+                  },
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "moderate"
+                  },
+                  {
+                    "value": "high"
+                  },
+                  {
+                    "value": "critical"
+                  }
                 ]
               }
             }
@@ -1182,6 +1199,16 @@
                 "choices": [
                   "update",
                   "override"
+                ],
+                "details": [
+                  {
+                    "value": "update",
+                    "help": "Refresh the lockfile to patched versions allowed by existing ranges."
+                  },
+                  {
+                    "value": "override",
+                    "help": "Write package.json overrides that force patched versions."
+                  }
                 ]
               }
             },
@@ -2151,7 +2178,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -2168,7 +2195,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -2314,6 +2341,20 @@
                       "user",
                       "project",
                       "global"
+                    ],
+                    "details": [
+                      {
+                        "value": "user",
+                        "help": "User config (`~/.config/aube/config.toml` for known aube settings, `~/.npmrc` for registry/auth and unknown keys)"
+                      },
+                      {
+                        "value": "project",
+                        "help": "`<cwd>/.npmrc`"
+                      },
+                      {
+                        "value": "global",
+                        "help": "Alias for `user` — aube has no separate global config file."
+                      }
                     ]
                   }
                 },
@@ -2469,6 +2510,24 @@
                       "user",
                       "project",
                       "global"
+                    ],
+                    "details": [
+                      {
+                        "value": "merged",
+                        "help": "Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                      },
+                      {
+                        "value": "user",
+                        "help": "Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                      },
+                      {
+                        "value": "project",
+                        "help": "Only `<cwd>/.npmrc`"
+                      },
+                      {
+                        "value": "global",
+                        "help": "Alias for `user`."
+                      }
                     ]
                   }
                 },
@@ -2563,6 +2622,24 @@
                       "user",
                       "project",
                       "global"
+                    ],
+                    "details": [
+                      {
+                        "value": "merged",
+                        "help": "Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                      },
+                      {
+                        "value": "user",
+                        "help": "Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                      },
+                      {
+                        "value": "project",
+                        "help": "Only `<cwd>/.npmrc`"
+                      },
+                      {
+                        "value": "global",
+                        "help": "Alias for `user`."
+                      }
                     ]
                   }
                 }
@@ -2646,6 +2723,20 @@
                       "user",
                       "project",
                       "global"
+                    ],
+                    "details": [
+                      {
+                        "value": "user",
+                        "help": "User config (`~/.config/aube/config.toml` for known aube settings, `~/.npmrc` for registry/auth and unknown keys)"
+                      },
+                      {
+                        "value": "project",
+                        "help": "`<cwd>/.npmrc`"
+                      },
+                      {
+                        "value": "global",
+                        "help": "Alias for `user` — aube has no separate global config file."
+                      }
                     ]
                   }
                 },
@@ -2753,6 +2844,24 @@
                   "user",
                   "project",
                   "global"
+                ],
+                "details": [
+                  {
+                    "value": "merged",
+                    "help": "Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                  },
+                  {
+                    "value": "user",
+                    "help": "Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                  },
+                  {
+                    "value": "project",
+                    "help": "Only `<cwd>/.npmrc`"
+                  },
+                  {
+                    "value": "global",
+                    "help": "Alias for `user`."
+                  }
                 ]
               }
             }
@@ -3123,7 +3232,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -3140,7 +3249,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -3450,7 +3559,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -3467,7 +3576,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -4537,7 +4646,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -4554,7 +4663,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -4971,7 +5080,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -4988,7 +5097,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -5227,7 +5336,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -5244,7 +5353,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -5492,6 +5601,24 @@
                   "user",
                   "project",
                   "global"
+                ],
+                "details": [
+                  {
+                    "value": "merged",
+                    "help": "Merge `~/.npmrc`, user aube config, and project `.npmrc`, last-write-wins (same precedence install uses)."
+                  },
+                  {
+                    "value": "user",
+                    "help": "Only user config (`~/.config/aube/config.toml` + `~/.npmrc`)"
+                  },
+                  {
+                    "value": "project",
+                    "help": "Only `<cwd>/.npmrc`"
+                  },
+                  {
+                    "value": "global",
+                    "help": "Alias for `user`."
+                  }
                 ]
               }
             },
@@ -6410,7 +6537,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -6427,7 +6554,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -6656,7 +6783,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -6673,7 +6800,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -6801,6 +6928,17 @@
                   "default",
                   "json",
                   "parseable"
+                ],
+                "details": [
+                  {
+                    "value": "default"
+                  },
+                  {
+                    "value": "json"
+                  },
+                  {
+                    "value": "parseable"
+                  }
                 ]
               }
             },
@@ -7249,6 +7387,17 @@
                   "default",
                   "json",
                   "parseable"
+                ],
+                "details": [
+                  {
+                    "value": "default"
+                  },
+                  {
+                    "value": "json"
+                  },
+                  {
+                    "value": "parseable"
+                  }
                 ]
               }
             },
@@ -7440,6 +7589,17 @@
                   "default",
                   "json",
                   "parseable"
+                ],
+                "details": [
+                  {
+                    "value": "default"
+                  },
+                  {
+                    "value": "json"
+                  },
+                  {
+                    "value": "parseable"
+                  }
                 ]
               }
             },
@@ -9638,7 +9798,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -9655,7 +9815,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -9887,7 +10047,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -9904,7 +10064,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -10390,7 +10550,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -10407,7 +10567,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -10612,6 +10772,14 @@
                 "choices": [
                   "cyclonedx",
                   "spdx"
+                ],
+                "details": [
+                  {
+                    "value": "cyclonedx"
+                  },
+                  {
+                    "value": "spdx"
+                  }
                 ]
               }
             },
@@ -10876,6 +11044,20 @@
                   "user",
                   "project",
                   "global"
+                ],
+                "details": [
+                  {
+                    "value": "user",
+                    "help": "User config (`~/.config/aube/config.toml` for known aube settings, `~/.npmrc` for registry/auth and unknown keys)"
+                  },
+                  {
+                    "value": "project",
+                    "help": "`<cwd>/.npmrc`"
+                  },
+                  {
+                    "value": "global",
+                    "help": "Alias for `user` — aube has no separate global config file."
+                  }
                 ]
               }
             },
@@ -11427,7 +11609,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -11444,7 +11626,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -11670,7 +11852,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -11687,7 +11869,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -12051,7 +12233,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -12068,7 +12250,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -13294,7 +13476,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--enable-gvs"
+              "--enable-global-virtual-store"
             ]
           },
           {
@@ -13311,7 +13493,7 @@
             "hide": false,
             "global": false,
             "conflicts": [
-              "--disable-gvs"
+              "--disable-global-virtual-store"
             ]
           }
         ],
@@ -14176,6 +14358,26 @@
               "warn",
               "error",
               "silent"
+            ],
+            "details": [
+              {
+                "value": "trace"
+              },
+              {
+                "value": "debug"
+              },
+              {
+                "value": "info"
+              },
+              {
+                "value": "warn"
+              },
+              {
+                "value": "error"
+              },
+              {
+                "value": "silent"
+              }
             ]
           }
         }
@@ -14217,6 +14419,20 @@
               "append-only",
               "ndjson",
               "silent"
+            ],
+            "details": [
+              {
+                "value": "default"
+              },
+              {
+                "value": "append-only"
+              },
+              {
+                "value": "ndjson"
+              },
+              {
+                "value": "silent"
+              }
             ]
           }
         }
