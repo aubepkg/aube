@@ -23,7 +23,14 @@ pub struct InstallArgs {
     /// specs keep their existing version and integrity hash; only
     /// drifted entries (and any new transitives they pull in) get
     /// re-resolved.
-    #[usage(long)]
+    #[usage(
+        long,
+        conflicts(
+            "--frozen-lockfile",
+            "--no-frozen-lockfile",
+            "--prefer-frozen-lockfile"
+        )
+    )]
     pub fix_lockfile: bool,
     /// Force reinstall, ignoring lockfile/state freshness.
     ///
@@ -57,7 +64,7 @@ pub struct InstallArgs {
     /// `node_modules`.
     ///
     /// Useful for CI workflows that only update the lockfile.
-    #[usage(long)]
+    #[usage(long, conflicts = "--frozen-lockfile")]
     pub lockfile_only: bool,
     /// Merge per-branch lockfiles into the main `aube-lock.yaml`.
     ///
@@ -174,31 +181,6 @@ pub struct InstallArgs {
 }
 
 impl InstallArgs {
-    pub fn validate_cli_relationships(&self) -> miette::Result<()> {
-        if self.fix_lockfile
-            && (self.lockfile.frozen_lockfile
-                || self.lockfile.no_frozen_lockfile
-                || self.lockfile.prefer_frozen_lockfile)
-        {
-            let conflict = if self.lockfile.frozen_lockfile {
-                "--frozen-lockfile"
-            } else if self.lockfile.no_frozen_lockfile {
-                "--no-frozen-lockfile"
-            } else {
-                "--prefer-frozen-lockfile"
-            };
-            return Err(miette::miette!(
-                "--fix-lockfile cannot be used with {conflict}"
-            ));
-        }
-        if self.lockfile_only && self.lockfile.frozen_lockfile {
-            return Err(miette::miette!(
-                "--lockfile-only cannot be combined with --frozen-lockfile"
-            ));
-        }
-        Ok(())
-    }
-
     /// Build the CLI flag bag that feeds
     /// [`aube_settings::ResolveCtx::cli`]. Each entry is a
     /// `(flag_name, value)` pair where `flag_name` matches a

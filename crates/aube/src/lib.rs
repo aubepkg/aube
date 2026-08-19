@@ -1418,7 +1418,6 @@ async fn run_install_command(
     filter: aube_workspace::selector::EffectiveFilter,
     workspace_root_already: bool,
 ) -> miette::Result<()> {
-    args.validate_cli_relationships()?;
     // `-w` on install is a short alias for the global
     // `--workspace-root` flag. Handle the chdir here when the global
     // flag wasn't already set.
@@ -1491,13 +1490,16 @@ mod cli_spec_tests {
 
     #[test]
     fn install_rejects_incompatible_lockfile_modes() {
-        let cli =
-            Cli::try_parse_test_from(["aube", "install", "--fix-lockfile", "--frozen-lockfile"])
-                .expect("cross-flatten relationships are checked after binding");
-        let Some(Commands::Install(args)) = cli.command else {
-            panic!("expected install subcommand");
-        };
-        assert!(args.validate_cli_relationships().is_err());
+        assert!(
+            Cli::try_parse_test_from([
+                "aube",
+                "install",
+                "--fix-lockfile",
+                "--frozen-lockfile"
+            ])
+            .is_err(),
+            "cross-flatten relationships should be enforced by usage"
+        );
     }
 
     #[test]
