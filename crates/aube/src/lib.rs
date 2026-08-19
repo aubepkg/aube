@@ -228,9 +228,40 @@ impl Cli {
     {
         let raw: Vec<OsString> = argv.into_iter().map(Into::into).collect();
         let argv: Vec<&std::ffi::OsStr> = raw.iter().skip(1).map(OsString::as_os_str).collect();
-        Self::parse_from(&argv)
-            .map_err(|error| usage_argv::render_failure(Self::spec(), &argv, &error))
+        Self::parse_from(&argv).map_err(|error| render_cli_error(&argv, &error))
     }
+}
+
+fn render_cli_error(argv: &[&std::ffi::OsStr], error: &usage_argv::Error<'_, '_>) -> String {
+    if let usage_argv::Error::MissingFlagValue { flag } = error
+        && flag.require_equals
+        && flag.longs.contains(&"allow-build")
+    {
+        return "error: equal sign is needed when assigning values to '--allow-build=<PKG>'"
+            .to_owned();
+    }
+    if let usage_argv::Error::InvalidValue(detail) = error
+        && detail
+            .reason
+            .starts_with("The --allow-build flag is missing a package name.")
+    {
+        return detail
+            .reason
+            .replacen(" Please specify", "\nPlease specify", 1);
+    }
+    usage_argv::render_failure(Cli::spec(), argv, error)
+}
+
+fn is_allow_build_compat_error(error: &usage_argv::Error<'_, '_>) -> bool {
+    matches!(
+        error,
+        usage_argv::Error::MissingFlagValue { flag }
+            if flag.require_equals && flag.longs.contains(&"allow-build")
+    ) || matches!(
+        error,
+        usage_argv::Error::InvalidValue(detail)
+            if detail.reason.starts_with("The --allow-build flag is missing a package name.")
+    )
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
@@ -688,7 +719,12 @@ fn inner_main() -> miette::Result<i32> {
             return Ok(0);
         }
         Err(error) => {
-            let message = usage_argv::render_failure(Cli::spec(), &argv, &error);
+            let raw_compat_error = is_allow_build_compat_error(&error);
+            let message = render_cli_error(&argv, &error);
+            if raw_compat_error {
+                eprintln!("{message}");
+                return Ok(aube_codes::exit::EXIT_GENERIC);
+            }
             return Err(miette::miette!("{message}"));
         }
     };
