@@ -19,12 +19,12 @@ struct InteractiveSelection {
     shown: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, usage_derive::Args)]
 pub struct UpdateArgs {
     /// Package(s) to update (all if empty)
     pub packages: Vec<String>,
     /// Update only devDependencies.
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
     /// Pin manifest specifiers to the resolved version with no range
     /// prefix.
@@ -33,17 +33,17 @@ pub struct UpdateArgs {
     /// caret/tilde original, drop the prefix so the manifest carries an
     /// exact pin (`"1.2.3"`) instead of `"^1.2.3"`. Mirrors
     /// `pnpm update --save-exact`.
-    #[arg(short = 'E', long, visible_alias = "save-exact")]
+    #[usage(short = 'E', long, alias = "save-exact")]
     pub exact: bool,
     /// Update globally installed packages.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
     /// Interactive update picker.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(short = 'i', long)]
+    #[usage(short = 'i', long)]
     pub interactive: bool,
     /// Update past the manifest range unless paired with `--no-save`.
     ///
@@ -52,18 +52,13 @@ pub struct UpdateArgs {
     /// `minimumReleaseAge` / `resolution-mode` as usual). With
     /// `--no-save`, leaves the manifest range unchanged and resolves
     /// only to the newest version that range allows.
-    #[arg(short = 'L', long)]
+    #[usage(short = 'L', long)]
     pub latest: bool,
     /// Update only production dependencies.
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
     /// Update dependencies in the current workspace package.
-    #[arg(short = 'w', long)]
+    #[usage(short = 'w', long)]
     pub workspace: bool,
     /// Dependency traversal depth.
     ///
@@ -72,35 +67,35 @@ pub struct UpdateArgs {
     /// the flag emits a one-line warning pointing at
     /// `rm aube-lock.yaml && aube install` for the
     /// `--depth Infinity` case.
-    #[arg(long)]
+    #[usage(long)]
     pub depth: Option<String>,
     /// Add a global pnpmfile that runs before the local one.
     ///
     /// Mirrors pnpm's `--global-pnpmfile <path>`. The global hook runs
     /// first and the local hook (if any) runs second.
-    #[arg(long, value_name = "PATH", conflicts_with = "ignore_pnpmfile")]
+    #[usage(long, value_name = "PATH", conflicts = "--ignore-pnpmfile")]
     pub global_pnpmfile: Option<std::path::PathBuf>,
     /// Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this update.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_pnpmfile: bool,
     /// Skip lifecycle scripts.
     ///
     /// Skips the root `pnpm:devPreinstall` hook and all approved
     /// dependency build scripts in the chained install.
-    #[arg(long, hide = true)]
+    #[usage(long, hide)]
     pub ignore_scripts: bool,
     /// Internal recursive-update marker: the workspace root hook already ran.
-    #[arg(skip)]
+    #[usage(skip)]
     dev_preinstall_already_run: bool,
     /// Refresh the lockfile without populating `node_modules`.
     ///
     /// Re-resolves the full graph (direct + transitive) and writes
     /// `aube-lock.yaml`, then skips the linker so `node_modules` is
     /// left untouched. Mirrors `npm update --package-lock-only`.
-    #[arg(long, conflicts_with = "frozen_lockfile")]
+    #[usage(long, conflicts = "--frozen-lockfile")]
     pub lockfile_only: bool,
     /// Skip optionalDependencies.
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
     /// Refresh the lockfile without rewriting `package.json` ranges.
     ///
@@ -108,20 +103,20 @@ pub struct UpdateArgs {
     /// version allowed by the unchanged manifest range. Without
     /// `--latest`, it still suppresses manifest range rewrites enabled
     /// by `updateRewritesSpecifier`. Mirrors `pnpm update --no-save`.
-    #[arg(long)]
+    #[usage(long)]
     pub no_save: bool,
     /// Override the local pnpmfile location.
     ///
     /// Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve
     /// against the project root; absolute paths are used as-is. Wins
     /// over `pnpmfilePath` from `pnpm-workspace.yaml`.
-    #[arg(long, value_name = "PATH", conflicts_with = "ignore_pnpmfile")]
+    #[usage(long, value_name = "PATH", conflicts = "--ignore-pnpmfile")]
     pub pnpmfile: Option<std::path::PathBuf>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

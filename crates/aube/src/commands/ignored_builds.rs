@@ -29,10 +29,10 @@ Examples:
   $ aube approve-builds
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct IgnoredBuildsArgs {
     /// Operate on globally-installed packages instead of the current project.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 }
 

@@ -47,24 +47,24 @@ Examples:
   No known vulnerabilities found
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct AuditArgs {
     /// Only print advisories at or above this severity.
     ///
     /// One of: `info`, `low`, `moderate`, `high`, `critical`.
     /// Defaults to `audit.level` (or legacy `auditLevel`), then `low`.
-    #[arg(long, value_enum)]
+    #[usage(long, value_enum)]
     pub audit_level: Option<Severity>,
 
     /// Only audit `devDependencies`.
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Fix advisories.
     ///
     /// Bare `--fix` writes package.json overrides for backwards compatibility.
     /// `--fix=update` refreshes the lockfile without writing overrides.
-    #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "override")]
+    #[usage(long, value_enum, num_args = 0..=1, default_missing = "override")]
     pub fix: Option<FixMode>,
 
     /// Drop advisories whose ID matches one of these values.
@@ -73,13 +73,13 @@ pub struct AuditArgs {
     /// `github_advisory_id` (`GHSA-…`), and any entry in `cves[]`
     /// (case-insensitive). Repeatable; comma-separated values are also
     /// accepted.
-    #[arg(long, value_name = "ID", value_delimiter = ',')]
+    #[usage(long, value_name = "ID", delimiter = ',')]
     pub ignore: Vec<String>,
 
     /// Use exit code 0 if the registry responds with an error.
     ///
     /// Useful when audit checks run in CI and the registry has a hiccup.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_registry_errors: bool,
 
     /// Drop advisories that have no non-vulnerable upgrade.
@@ -88,30 +88,25 @@ pub struct AuditArgs {
     /// available in the package's packument. Same "best non-vulnerable"
     /// logic as `--fix`: an advisory is kept only when an upgrade path
     /// exists.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_unfixable: bool,
 
     /// Pick which advisories to fix interactively.
-    #[arg(short = 'i', long)]
+    #[usage(short = 'i', long)]
     pub interactive: bool,
 
     /// Emit the report as JSON (pnpm-compatible shape) instead of a table.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Skip `optionalDependencies`.
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
 
     /// Only audit `dependencies` and `optionalDependencies`.
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 
@@ -123,7 +118,7 @@ pub struct AuditArgs {
     Eq,
     PartialOrd,
     Ord,
-    clap::ValueEnum,
+    usage_derive::ValueEnum,
     strum::Display,
     strum::EnumString,
 )]
@@ -142,7 +137,7 @@ pub enum Severity {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum FixMode {
     /// Refresh the lockfile to patched versions allowed by existing ranges.

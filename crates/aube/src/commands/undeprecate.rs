@@ -5,7 +5,7 @@
 use crate::commands::{deprecate, split_name_spec};
 use clap::Args;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct UndeprecateArgs {
     /// Package spec: `name`, `name@version`, or `name@<range>`.
     ///
@@ -14,13 +14,13 @@ pub struct UndeprecateArgs {
     pub package: String,
 
     /// Don't PUT anything — print which versions would be touched and exit.
-    #[arg(long)]
+    #[usage(long)]
     pub dry_run: bool,
 
     /// One-time password from a 2FA authenticator; sent as `npm-otp`.
-    #[arg(long, value_name = "CODE")]
+    #[usage(long, value_name = "CODE")]
     pub otp: Option<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

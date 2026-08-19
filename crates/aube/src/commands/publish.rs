@@ -43,10 +43,10 @@ use sha2::Sha512;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct PublishArgs {
     /// Tarball or package directory to publish (default: current package).
-    #[arg(value_name = "TARBALL|FOLDER")]
+    #[usage(arg, value_name = "TARBALL|FOLDER")]
     pub package: Option<PathBuf>,
     /// Publish as `public` or `restricted`.
     ///
@@ -54,10 +54,10 @@ pub struct PublishArgs {
     /// packages default to `restricted` on the registry side, so
     /// pass `--access=public` to make a new scoped package
     /// world-readable.
-    #[arg(long, value_name = "LEVEL")]
+    #[usage(long, value_name = "LEVEL")]
     pub access: Option<String>,
     /// Don't upload; print what would be published.
-    #[arg(long)]
+    #[usage(long)]
     pub dry_run: bool,
     /// Republish even when the version is already on the registry.
     ///
@@ -69,31 +69,31 @@ pub struct PublishArgs {
     /// package is re-PUT. The registry must still accept the
     /// republish — npm's public registry rejects re-publishes
     /// outright; Verdaccio and most private mirrors allow them.
-    #[arg(long)]
+    #[usage(long)]
     pub force: bool,
     /// Skip publish lifecycle scripts.
     ///
     /// Suppresses `prepublishOnly`, `prepublish`, `prepack`, `prepare`,
     /// `postpack`, `publish`, and `postpublish` scripts for this
     /// publish.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_scripts: bool,
     /// Emit the publish result as JSON.
     ///
     /// Output matches `npm publish --json` / `pnpm publish --json`; recursive multi-package publishes emit an array.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
     /// Skip the "working tree must be clean" check.
     ///
     /// When unset, aube refuses to publish from a dirty git checkout
     /// (uncommitted tracked changes) or from a detached / non-release
     /// branch.
-    #[arg(long)]
+    #[usage(long)]
     pub no_git_checks: bool,
     /// One-time password for registries that require 2FA.
     ///
     /// Sent verbatim as the `npm-otp` header.
-    #[arg(long, value_name = "CODE")]
+    #[usage(long, value_name = "CODE")]
     pub otp: Option<String>,
     /// Generate a SLSA provenance attestation and attach it to the publish
     /// body.
@@ -104,12 +104,12 @@ pub struct PublishArgs {
     /// and attaches the resulting bundle so registries that honor
     /// npm's provenance protocol light up the "provenance" badge on
     /// the published version.
-    #[arg(long)]
+    #[usage(long)]
     pub provenance: bool,
     /// Default dist-tag to publish under (default: `latest`).
-    #[arg(long, value_name = "TAG")]
+    #[usage(long, value_name = "TAG")]
     pub tag: Option<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

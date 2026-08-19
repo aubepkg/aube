@@ -33,13 +33,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct StoreArgs {
-    #[command(subcommand)]
+    #[usage(subcommand)]
     pub command: StoreCommand,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, usage_derive::Subcommands)]
 pub enum StoreCommand {
     /// Add one or more packages to the global store without linking them
     /// into any project.
@@ -48,7 +48,7 @@ pub enum StoreCommand {
     /// `react@next`, or `express@^4`.
     Add {
         /// Package specs to fetch into the store.
-        #[arg(required = true)]
+        #[usage(arg, required)]
         packages: Vec<String>,
     },
     /// Show the store path.

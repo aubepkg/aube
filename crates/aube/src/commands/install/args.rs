@@ -1,21 +1,21 @@
 use super::{DepSelection, FrozenMode, FrozenOverride, GlobalVirtualStoreFlags};
 
-#[derive(Debug, clap::Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct InstallArgs {
     /// Install only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
     /// Skip devDependencies; install only production deps
-    #[arg(short = 'P', long, visible_alias = "production")]
+    #[usage(short = 'P', long, alias = "production")]
     pub prod: bool,
     /// Allow every dependency's lifecycle scripts to run.
     ///
     /// Bypasses the `allowBuilds` allowlist. Do not use in CI.
-    #[arg(long)]
+    #[usage(long)]
     pub dangerously_allow_all_builds: bool,
     /// Resolve and report what would happen without writing the lockfile
     /// or linking node_modules.
-    #[arg(long, conflicts_with = "lockfile_only")]
+    #[usage(long, conflicts = "--lockfile-only")]
     pub dry_run: bool,
     /// Re-resolve lockfile entries whose spec drifted from package.json.
     ///
@@ -23,14 +23,21 @@ pub struct InstallArgs {
     /// specs keep their existing version and integrity hash; only
     /// drifted entries (and any new transitives they pull in) get
     /// re-resolved.
-    #[arg(long, conflicts_with_all = ["frozen_lockfile", "no_frozen_lockfile", "prefer_frozen_lockfile"])]
+    #[usage(
+        long,
+        conflicts(
+            "--frozen-lockfile",
+            "--no-frozen-lockfile",
+            "--prefer-frozen-lockfile"
+        )
+    )]
     pub fix_lockfile: bool,
     /// Force reinstall, ignoring lockfile/state freshness.
     ///
     /// Bypasses the `node_modules/.aube-state` freshness check and
     /// re-resolves the lockfile even when nothing has drifted. Mirrors
     /// pnpm's `install --force`.
-    #[arg(long)]
+    #[usage(long)]
     pub force: bool,
     /// Add a global pnpmfile that runs before the local one.
     ///
@@ -38,26 +45,26 @@ pub struct InstallArgs {
     /// resolve against the project root. The global hook runs first
     /// and the local hook (if any) runs second, so local mutations
     /// win on conflicts — matching pnpm's composition order.
-    #[arg(long, value_name = "PATH", conflicts_with = "ignore_pnpmfile")]
+    #[usage(long, value_name = "PATH", conflicts = "--ignore-pnpmfile")]
     pub global_pnpmfile: Option<std::path::PathBuf>,
     /// Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_pnpmfile: bool,
     /// Skip lifecycle scripts (no-op; aube already skips by default)
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_scripts: bool,
     /// Read and write the lockfile in the given directory.
     ///
     /// Instead of placing the lockfile alongside `package.json`, the
     /// project becomes an importer keyed by its relative path from the
     /// lockfile directory. Mirrors pnpm's `--lockfile-dir`.
-    #[arg(long, value_name = "PATH")]
+    #[usage(long, value_name = "PATH")]
     pub lockfile_dir: Option<String>,
     /// Resolve dependencies and write the lockfile, but don't link
     /// `node_modules`.
     ///
     /// Useful for CI workflows that only update the lockfile.
-    #[arg(long, conflicts_with = "frozen_lockfile")]
+    #[usage(long, conflicts = "--frozen-lockfile")]
     pub lockfile_only: bool,
     /// Merge per-branch lockfiles into the main `aube-lock.yaml`.
     ///
@@ -67,26 +74,26 @@ pub struct InstallArgs {
     /// `mergeGitBranchLockfilesBranchPattern` is set in
     /// `pnpm-workspace.yaml`, this happens automatically on matching
     /// branches; the flag forces it regardless.
-    #[arg(long)]
+    #[usage(long)]
     pub merge_git_branch_lockfiles: bool,
     /// Cap concurrent tarball downloads.
     ///
     /// Overrides `network-concurrency` from `.npmrc` /
     /// `aube-workspace.yaml` when set. Falls back to an auto-scaled
     /// default of worker count x3, clamped to 16-64.
-    #[arg(long, value_name = "N")]
+    #[usage(long, value_name = "N")]
     pub network_concurrency: Option<u64>,
     /// Skip optionalDependencies; don't install optional native modules
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
     /// Inverse of `--side-effects-cache`.
-    #[arg(long, overrides_with = "side_effects_cache")]
+    #[usage(long, overrides = "--side-effects-cache")]
     pub no_side_effects_cache: bool,
     /// Inverse of `--verify-store-integrity`.
     ///
     /// Skips the SHA-512 verify step for every tarball aube pulls
     /// into the store during this install.
-    #[arg(long, overrides_with = "verify_store_integrity")]
+    #[usage(long, overrides = "--verify-store-integrity")]
     pub no_verify_store_integrity: bool,
     /// Which layout to materialize `node_modules/` as.
     ///
@@ -94,12 +101,12 @@ pub struct InstallArgs {
     /// `hoisted` builds an npm-style flat tree with conflict nesting.
     /// Overrides `node-linker` / `nodeLinker` from `.npmrc` /
     /// `aube-workspace.yaml` when set. `pnp` is not supported.
-    #[arg(long, value_name = "MODE")]
+    #[usage(long, value_name = "MODE")]
     pub node_linker: Option<String>,
     /// Fail if any metadata or tarball isn't already in the local cache.
     ///
     /// Never hits the network.
-    #[arg(long, conflicts_with = "prefer_offline")]
+    #[usage(long, conflicts = "--prefer-offline")]
     pub offline: bool,
     /// How to import package files from the global store into the
     /// virtual store.
@@ -110,7 +117,7 @@ pub struct InstallArgs {
     /// a copy fallback). Overrides `package-import-method` /
     /// `packageImportMethod` from `.npmrc` / `aube-workspace.yaml`
     /// when set.
-    #[arg(long, value_name = "METHOD")]
+    #[usage(long, value_name = "METHOD")]
     pub package_import_method: Option<String>,
     /// Override the local pnpmfile location.
     ///
@@ -119,15 +126,15 @@ pub struct InstallArgs {
     /// over `pnpmfilePath` from `pnpm-workspace.yaml`. A typo (target
     /// missing) is a hard miss with a warning rather than a silent
     /// fallback to the default.
-    #[arg(long, value_name = "PATH", conflicts_with = "ignore_pnpmfile")]
+    #[usage(long, value_name = "PATH", conflicts = "--ignore-pnpmfile")]
     pub pnpmfile: Option<std::path::PathBuf>,
     /// Prefer cached metadata over revalidation; only hit the network on a miss.
-    #[arg(long, conflicts_with = "offline")]
+    #[usage(long, conflicts = "--offline")]
     pub prefer_offline: bool,
     /// Selectively hoist matching transitive deps to the root node_modules.
     ///
     /// Repeatable; comma-separated values are also accepted.
-    #[arg(long, value_name = "GLOB", value_delimiter = ',')]
+    #[usage(long, value_name = "GLOB", delimiter = ',')]
     pub public_hoist_pattern: Vec<String>,
     /// How to resolve version ranges.
     ///
@@ -136,40 +143,40 @@ pub struct InstallArgs {
     /// publish-date cutoff). Accepts pnpm's aliases `time` and
     /// `lowest-direct`. When omitted, falls back to the
     /// `resolution-mode` key in `.npmrc` / `aube-workspace.yaml`.
-    #[arg(long, value_name = "MODE")]
+    #[usage(long, value_name = "MODE")]
     pub resolution_mode: Option<String>,
     /// Hoist every non-local transitive dep to the top-level
     /// `node_modules/`.
     ///
     /// Overrides `shamefully-hoist` / `shamefullyHoist` from
     /// `.npmrc` / `aube-workspace.yaml` when set.
-    #[arg(long)]
+    #[usage(long)]
     pub shamefully_hoist: bool,
     /// Cache post-build side effects for dependency packages.
     ///
     /// Defaults to on and only applies to packages allowed by
     /// `allowBuilds` / `onlyBuiltDependencies`. Pair with
     /// `--no-side-effects-cache` to opt out.
-    #[arg(long, overrides_with = "no_side_effects_cache")]
+    #[usage(long, overrides = "--no-side-effects-cache")]
     pub side_effects_cache: bool,
     /// Verify tarball SHA-512 before importing into the store.
     ///
     /// Checks each tarball against the lockfile integrity. Defaults to
     /// `true` (pnpm parity); pair with `--no-verify-store-integrity`
     /// to skip.
-    #[arg(long, overrides_with = "no_verify_store_integrity")]
+    #[usage(long, overrides = "--no-verify-store-integrity")]
     pub verify_store_integrity: bool,
     /// Short alias for the global `--workspace-root` flag.
     ///
     /// Runs install from the workspace root regardless of cwd (`pnpm
     /// install -w`).
-    #[arg(short = 'w', hide = true)]
+    #[usage(short = 'w', hide)]
     pub workspace_root_short: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

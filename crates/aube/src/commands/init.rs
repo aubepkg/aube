@@ -8,26 +8,26 @@ use clap::{Args, ValueEnum};
 use miette::{Context, IntoDiagnostic, miette};
 use std::io::Write as _;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct InitArgs {
     /// Create a `package.json` with only the bare minimum of required fields
-    #[arg(long)]
+    #[usage(long)]
     pub bare: bool,
 
     /// Pin the project to the current aube version.
     ///
     /// Adds a `packageManager` field to `package.json`.
-    #[arg(long)]
+    #[usage(long)]
     pub init_package_manager: bool,
 
     /// Set the module system for the package. Defaults to `commonjs`.
-    #[arg(long, value_name = "commonjs|module")]
+    #[usage(long, value_name = "commonjs|module")]
     pub init_type: Option<InitType>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_derive::ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum InitType {
     Commonjs,

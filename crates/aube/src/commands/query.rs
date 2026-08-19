@@ -34,7 +34,7 @@ Examples:
   $ aube query ':bin' --json
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct QueryArgs {
     /// Selector expression.
     ///
@@ -46,24 +46,19 @@ pub struct QueryArgs {
     pub selector: String,
 
     /// Only match devDependency roots and their transitive deps.
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Only match production/optional roots and their transitive deps.
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
 
     /// Emit a JSON array instead of the default text layout.
-    #[arg(long, conflicts_with = "parseable")]
+    #[usage(long, conflicts = "--parseable")]
     pub json: bool,
 
     /// Emit tab-separated rows: dep_path, name, version, source, flags.
-    #[arg(long)]
+    #[usage(long)]
     pub parseable: bool,
 }
 

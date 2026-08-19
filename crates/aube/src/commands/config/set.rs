@@ -4,7 +4,7 @@ use super::{
 use clap::Args;
 use miette::miette;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct SetArgs {
     /// Setting key (canonical name or `.npmrc` alias).
     pub key: String,
@@ -13,7 +13,7 @@ pub struct SetArgs {
     pub value: String,
 
     /// Shortcut for `--location project`.
-    #[arg(long, conflicts_with = "location")]
+    #[usage(long, conflicts = "--location")]
     pub local: bool,
 
     /// Which config location to write to.
@@ -35,7 +35,7 @@ pub struct SetArgs {
     /// `package.json#aube.<map>.<entry>` if no workspace yaml exists,
     /// the same place install reads from. User-scope dotted writes
     /// for these maps error: aube only reads them per project.
-    #[arg(long, value_enum, default_value_t = Location::User)]
+    #[usage(long, value_enum, default_value_t = Location::User)]
     pub location: Location,
 }
 

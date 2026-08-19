@@ -15,13 +15,13 @@ use miette::{IntoDiagnostic, Result, miette};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct PatchCommitArgs {
     /// The edit directory printed by `aube patch`.
     ///
     /// The matching source snapshot is read from a sibling `source/`
     /// dir, located via the `.aube_patch_state.json` sidecar.
-    #[arg(value_name = "DIR")]
+    #[usage(arg, value_name = "DIR")]
     pub edit_dir: PathBuf,
 
     /// Where to write the generated `.patch` file, relative to the
@@ -31,7 +31,7 @@ pub struct PatchCommitArgs {
     ///
     /// Ignored when the dependency already has a declared patch path;
     /// the existing path is always reused in that case.
-    #[arg(long, value_name = "DIR", default_value = "patches")]
+    #[usage(long, value_name = "DIR", default = "patches")]
     pub patches_dir: PathBuf,
 }
 

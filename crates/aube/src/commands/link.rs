@@ -2,7 +2,7 @@ use super::{remove_existing, symlink_dir};
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct LinkArgs {
     /// Package name, or path to a local directory
     pub package: Option<String>,
@@ -14,7 +14,7 @@ pub struct LinkArgs {
     /// Default behavior for bare `aube link` /
     /// `aube link <name>` — the flag exists for pnpm parity and makes
     /// the intent explicit.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 }
 

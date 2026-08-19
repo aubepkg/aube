@@ -2,7 +2,7 @@ use super::dlx::{self, DlxArgs};
 use clap::{Args, CommandFactory};
 use miette::miette;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 // Same contract as dlx: every positional after <TEMPLATE> is forwarded
 // verbatim to the scaffold binary, including `--help` / `--version`.
 // Without `disable_help_flag`, clap intercepts `-h` / `--help` before
@@ -14,16 +14,15 @@ use miette::miette;
 // aube's help for this subcommand, so the template is collapsed into
 // `params` and the handler intercepts a leading `--help` / `-h` before
 // doing any name mapping.
-#[command(disable_help_flag = true)]
 pub struct CreateArgs {
     /// Template package name followed by any args to pass through to
     /// the scaffold binary.
     ///
     /// The first positional is the template; the rest are forwarded
     /// verbatim to `create-<template>`.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
     pub params: Vec<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

@@ -51,26 +51,21 @@ Examples:
   $ aube list express
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct ListArgs {
     /// Optional package name (or glob-like prefix match) to filter the output
     pub pattern: Option<String>,
 
     /// Show only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// List globally-installed packages instead of the project's dependency tree
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
 
     /// How deep to render the transitive tree.
@@ -80,35 +75,35 @@ pub struct ListArgs {
     /// `--depth=Infinity` is accepted for pnpm/npm compat.
     /// `--depth=-1` (pnpm spelling) lists project headers only —
     /// no direct or transitive deps.
-    #[arg(long, default_value = "0", value_parser = parse_depth)]
+    #[usage(long, default = "0", value_parser = parse_depth)]
     pub depth: Depth,
 
     /// Output format: one of `default`, `json`, or `parseable`
-    #[arg(long, value_enum, default_value_t = ListFormat::Default)]
+    #[usage(long, value_enum, default_value_t = ListFormat::Default)]
     pub format: ListFormat,
 
     /// Shortcut for `--format json`.
     ///
     /// Emit a JSON array of package entries.
-    #[arg(long, conflicts_with = "format")]
+    #[usage(long, conflicts = "--format")]
     pub json: bool,
 
     // Compatibility flag: aube already reads exclusively from the canonical lockfile.
     /// List packages from the lockfile only, without checking node_modules.
-    #[arg(long)]
+    #[usage(long)]
     pub lockfile_only: bool,
 
     /// Show version and path for each entry.
     ///
     /// Default output is already name + version; `--long` adds the
     /// store path for debugging.
-    #[arg(long)]
+    #[usage(long)]
     pub long: bool,
 
     /// Shortcut for `--format parseable`.
     ///
     /// Emit one tab-separated line per package.
-    #[arg(long, conflicts_with_all = ["format", "json"])]
+    #[usage(long, conflicts("--format", "--json"))]
     pub parseable: bool,
 }
 
@@ -156,7 +151,7 @@ fn parse_depth(s: &str) -> Result<Depth, String> {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum)]
 pub enum ListFormat {
     Default,
     Json,

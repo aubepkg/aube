@@ -4,7 +4,7 @@ use super::{
 };
 use clap::Args;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct GetArgs {
     /// The setting key.
     ///
@@ -16,11 +16,11 @@ pub struct GetArgs {
     ///
     /// Matches `pnpm config get --json`: a missing key renders as
     /// `undefined`, a found value is JSON-encoded.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Shortcut for `--location project`.
-    #[arg(long, conflicts_with = "location")]
+    #[usage(long, conflicts = "--location")]
     pub local: bool,
 
     /// Which config location(s) to read.
@@ -28,7 +28,7 @@ pub struct GetArgs {
     /// Defaults to `merged` — the last-write-wins view of user aube
     /// config, `~/.npmrc`, then `./.npmrc`, matching what install
     /// actually sees. Use `user` or `project` to restrict the lookup.
-    #[arg(long, value_enum, default_value_t = ListLocation::Merged)]
+    #[usage(long, value_enum, default_value_t = ListLocation::Merged)]
     pub location: ListLocation,
 }
 

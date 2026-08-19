@@ -41,10 +41,10 @@ Examples:
   $ aube check --json
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct CheckArgs {
     /// Emit a JSON report instead of the human-readable list.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 }
 

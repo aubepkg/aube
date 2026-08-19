@@ -22,20 +22,20 @@ use std::time::{Duration, Instant};
 
 const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct LoginArgs {
     /// Authentication flow: `legacy` (token paste; default) or `web`
     /// (OAuth flow against `{registry}/-/v1/login`).
-    #[arg(long, value_name = "TYPE", default_value = "legacy")]
+    #[usage(long, value_name = "TYPE", default = "legacy")]
     pub auth_type: String,
 
     /// Scope to bind this registry to (e.g. `@myorg`).
     ///
     /// When set, the scope->registry mapping is also written to
     /// `~/.npmrc`.
-    #[arg(long, value_name = "SCOPE")]
+    #[usage(long, value_name = "SCOPE")]
     pub scope: Option<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

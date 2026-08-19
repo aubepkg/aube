@@ -190,24 +190,24 @@ pub(crate) async fn add_to_project_with_overrides(
     Ok(())
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, usage_derive::Args)]
 pub struct AddArgs {
     /// Package(s) to add
     pub packages: Vec<String>,
     /// Add as dev dependency
-    #[arg(short = 'D', long)]
+    #[usage(short = 'D', long)]
     pub save_dev: bool,
     /// Pin the exact resolved version (no `^` prefix)
-    #[arg(short = 'E', long)]
+    #[usage(short = 'E', long)]
     pub save_exact: bool,
     /// Install the package globally.
     ///
     /// Installs into the aube/pnpm global directory and links its
     /// binaries into the global bin directory. Mirrors `pnpm add -g`.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
     /// Add as optional dependency
-    #[arg(short = 'O', long)]
+    #[usage(short = 'O', long)]
     pub save_optional: bool,
     /// Pre-approve a dependency's lifecycle scripts as part of the add.
     ///
@@ -221,10 +221,10 @@ pub struct AddArgs {
     /// and the lockfile and would leave an orphaned approval in the
     /// workspace yaml on restore. Also conflicts with `--deny-build` for
     /// the same package name.
-    #[arg(
+    #[usage(
         long = "allow-build",
         value_name = "PKG",
-        conflicts_with = "no_save",
+        conflicts = "--no-save",
         require_equals = true,
         value_parser = parse_allow_build_value,
     )]
@@ -239,13 +239,13 @@ pub struct AddArgs {
     /// for cases where you've already verified the package out-of-band.
     /// It does not affect the OSV malicious-package check, which remains
     /// a hard block.
-    #[arg(long)]
+    #[usage(long)]
     pub allow_low_downloads: bool,
     /// Allow every dependency's lifecycle scripts to run.
     ///
     /// Bypasses the `allowBuilds` allowlist for this invocation. Do not
     /// use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.
-    #[arg(long)]
+    #[usage(long)]
     pub dangerously_allow_all_builds: bool,
     /// Mark a dependency's lifecycle scripts as reviewed and denied.
     ///
@@ -259,16 +259,16 @@ pub struct AddArgs {
     /// and the lockfile and would leave an orphaned denial in the
     /// workspace yaml on restore. Also conflicts with `--allow-build` for
     /// the same package name and with `--dangerously-allow-all-builds`.
-    #[arg(
+    #[usage(
         long = "deny-build",
         value_name = "PKG",
-        conflicts_with_all = ["no_save", "dangerously_allow_all_builds"],
+        conflicts("--no-save", "--dangerously-allow-all-builds"),
         require_equals = true,
         value_parser = parse_deny_build_value,
     )]
     pub deny_build: Vec<String>,
     /// Skip root and approved dependency lifecycle scripts.
-    #[arg(long, hide = true)]
+    #[usage(long, hide)]
     pub ignore_scripts: bool,
     /// Install without persisting the dependency to `package.json`.
     ///
@@ -281,7 +281,7 @@ pub struct AddArgs {
     /// tool transiently. Mirrors `pnpm add --no-save`. Conflicts with
     /// `-g`/`--global`, which has to persist the install to its global
     /// manifest.
-    #[arg(long, conflicts_with = "global")]
+    #[usage(long, conflicts = "--global")]
     pub no_save: bool,
     /// Inverse of `--save-workspace-protocol`.
     ///
@@ -291,7 +291,7 @@ pub struct AddArgs {
     /// pipeline still prefers the local workspace copy at resolve
     /// time — this flag only controls what's written to
     /// `package.json`. Mirrors `pnpm add --no-save-workspace-protocol`.
-    #[arg(long, overrides_with = "save_workspace_protocol")]
+    #[usage(long, overrides = "--save-workspace-protocol")]
     pub no_save_workspace_protocol: bool,
     /// Save the new dependency into the workspace's default catalog.
     ///
@@ -310,7 +310,7 @@ pub struct AddArgs {
     /// workspace yaml, which the `--no-save` restore path doesn't
     /// snapshot — combining the two would silently leave an orphaned
     /// catalog entry behind.
-    #[arg(long, conflicts_with_all = ["save_catalog_name", "no_save"])]
+    #[usage(long, conflicts("--save-catalog-name", "--no-save"))]
     pub save_catalog: bool,
     /// Save the new dependency into a *named* catalog.
     ///
@@ -318,7 +318,7 @@ pub struct AddArgs {
     /// `catalog:<name>` into `package.json`. Same workspace/alias
     /// exclusions and `--no-save` conflict as `--save-catalog`. Mirrors
     /// `pnpm add --save-catalog-name=<name>`.
-    #[arg(long, value_name = "NAME", conflicts_with = "no_save")]
+    #[usage(long, value_name = "NAME", conflicts = "--no-save")]
     pub save_catalog_name: Option<String>,
     /// Add as a peer dependency (written to `peerDependencies` in
     /// package.json).
@@ -326,7 +326,7 @@ pub struct AddArgs {
     /// By convention you usually pair this with `--save-dev` so the
     /// peer is also installed for local development; that's what pnpm
     /// does.
-    #[arg(long, conflicts_with = "save_optional")]
+    #[usage(long, conflicts = "--save-optional")]
     pub save_peer: bool,
     /// Force the manifest specifier into `workspace:` form for this
     /// invocation, overriding `saveWorkspaceProtocol` from the
@@ -337,7 +337,7 @@ pub struct AddArgs {
     /// the entry written to `package.json` is `workspace:^` (rolling)
     /// or `workspace:^<version>` (pinned), depending on the resolved
     /// `saveWorkspaceProtocol` value.
-    #[arg(long, overrides_with = "no_save_workspace_protocol")]
+    #[usage(long, overrides = "--no-save-workspace-protocol")]
     pub save_workspace_protocol: bool,
     /// Add the dependency to the workspace root's `package.json`.
     ///
@@ -345,7 +345,7 @@ pub struct AddArgs {
     /// from cwd looking for `aube-workspace.yaml`, `pnpm-workspace.yaml`,
     /// or a `package.json` with a `workspaces` field and runs the add
     /// against that directory.
-    #[arg(short = 'w', long, conflicts_with = "global")]
+    #[usage(short = 'w', long, conflicts = "--global")]
     pub workspace: bool,
     /// Allow `add` to run in a workspace root.
     ///
@@ -355,13 +355,13 @@ pub struct AddArgs {
     /// with a `workspaces` field) because deps added there end up
     /// shared by every package and usually reflect a mistake. Pass
     /// this flag to opt in. Mirrors `pnpm add -W`.
-    #[arg(short = 'W', long)]
+    #[usage(short = 'W', long)]
     pub ignore_workspace_root_check: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

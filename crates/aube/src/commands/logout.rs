@@ -9,12 +9,12 @@ use crate::commands::npmrc::{NpmrcEdit, registry_host_key, resolve_registry, use
 use clap::Args;
 use miette::miette;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct LogoutArgs {
     /// Scope whose registry mapping should also be removed (e.g. `@myorg`).
-    #[arg(long, value_name = "SCOPE")]
+    #[usage(long, value_name = "SCOPE")]
     pub scope: Option<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

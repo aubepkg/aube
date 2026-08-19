@@ -19,19 +19,19 @@
 use super::install;
 use clap::Args;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct CiArgs {
     /// Skip lifecycle scripts (no-op; aube already skips by default)
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_scripts: bool,
     /// Skip optionalDependencies; don't install optional native modules
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

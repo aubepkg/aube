@@ -30,10 +30,10 @@ Examples:
   $ export PATH=\"$(aube bin):$PATH\"
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct BinArgs {
     /// Print the global bin directory instead of the project's
-    #[arg(short, long, conflicts_with = "workspace_root")]
+    #[usage(short, long, conflicts = "--workspace-root")]
     pub global: bool,
 
     /// Print the workspace-root bin directory instead of the current
@@ -43,7 +43,7 @@ pub struct BinArgs {
     /// workspace root and prints its `node_modules/.bin`. No-op when no
     /// workspace root exists above cwd (single-project install), so the
     /// flag is safe to leave in shell aliases.
-    #[arg(short = 'w', long = "workspace-root", visible_alias = "workspace")]
+    #[usage(short = 'w', long = "workspace-root", alias = "workspace")]
     pub workspace_root: bool,
 }
 

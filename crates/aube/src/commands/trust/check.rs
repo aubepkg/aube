@@ -21,20 +21,20 @@ Examples:
   $ aube trust check @hono/node-server@1.19.17 --json
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub(super) struct CheckArgs {
     /// Exact npm package version to inspect
     ///
     /// Example: `@hono/node-server@1.19.17`.
-    #[arg(value_name = "PACKAGE@VERSION")]
+    #[usage(arg, value_name = "PACKAGE@VERSION")]
     pub package: String,
     /// Evaluate the policy without aube's built-in package exceptions
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_default_excludes: bool,
     /// Emit a JSON report
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

@@ -4,11 +4,10 @@ use miette::miette;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-#[derive(Debug, Args)]
-#[command(disable_help_flag = true, disable_version_flag = true)]
+#[derive(Debug, usage_derive::Args)]
 pub struct NodeArgs {
     /// Arguments to pass to Node.js
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
     pub args: Vec<OsString>,
 }
 

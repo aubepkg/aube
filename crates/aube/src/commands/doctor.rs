@@ -34,10 +34,10 @@ Examples:
   $ aube doctor --json | jq .warnings
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct DoctorArgs {
     /// Emit a machine-readable JSON report instead of the grouped text.
-    #[arg(long, short = 'J')]
+    #[usage(long, short = 'J')]
     pub json: bool,
 }
 

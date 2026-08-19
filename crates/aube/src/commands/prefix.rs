@@ -16,10 +16,10 @@ Examples:
   /home/user/.local/share/pnpm
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct PrefixArgs {
     /// Print the global prefix directory instead of the project's root
-    #[arg(short, long)]
+    #[usage(short, long)]
     pub global: bool,
 }
 

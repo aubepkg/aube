@@ -34,21 +34,21 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct PackArgs {
     /// Don't write the tarball; print what would be packed
-    #[arg(long)]
+    #[usage(long)]
     pub dry_run: bool,
     /// Skip `prepack` / `prepare` / `postpack` lifecycle scripts.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_scripts: bool,
     /// Print the result as a JSON object
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
     /// Directory to write the tarball into (default: current directory)
-    #[arg(long, value_name = "DIR")]
+    #[usage(long, value_name = "DIR")]
     pub pack_destination: Option<PathBuf>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

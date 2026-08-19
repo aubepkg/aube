@@ -6,7 +6,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Default, usage_derive::Args)]
 // dlx forwards everything after `<command>` to the bin it runs, including
 // `--help` and `--version`. Let clap auto-inject its own `-h`/`--help` and
 // `--version` handlers and they'd silently swallow those flags before they
@@ -16,7 +16,6 @@ use std::sync::Arc;
 // `aube dlx --help` on its own (no command) still prints aube's dlx help:
 // `params` is optional and the handler intercepts a leading `--help` /
 // `-h` before treating anything as a command.
-#[command(disable_help_flag = true)]
 pub struct DlxArgs {
     /// Command (binary) to run, followed by arguments to pass through to
     /// it.
@@ -27,19 +26,19 @@ pub struct DlxArgs {
     /// installs into a throwaway project. Under `--shell-mode`/`-c` the
     /// positionals are joined and evaluated by `sh -c` instead of
     /// looked up directly.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
     pub params: Vec<String>,
     /// Run the assembled command line through `sh -c`.
     ///
     /// `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this
     /// for pipelines, redirects, or env expansion (`aube dlx -p cowsay
     /// -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
-    #[arg(short = 'c', long)]
+    #[usage(short = 'c', long)]
     pub shell_mode: bool,
     /// Install a specific package (repeatable).
     ///
     /// Overrides inferring from the command.
-    #[arg(short = 'p', long = "package")]
+    #[usage(short = 'p', long = "package")]
     pub package: Vec<String>,
     /// Allow named packages to run lifecycle scripts during the
     /// transient install. Use `--allow-build=<pkg>`.
@@ -51,18 +50,18 @@ pub struct DlxArgs {
     /// Mirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility
     /// surface while keeping dlx scripts skipped unless explicitly
     /// approved.
-    #[arg(
+    #[usage(
         long = "allow-build",
         value_name = "PKG",
         require_equals = true,
         value_parser = parse_allow_build_value,
     )]
     pub allow_build: Vec<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

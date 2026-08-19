@@ -15,7 +15,7 @@ use clap::Args;
 use miette::{IntoDiagnostic, Result, miette};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct PatchArgs {
     /// Package spec, `<name>@<version>`.
     ///
@@ -28,7 +28,7 @@ pub struct PatchArgs {
     ///
     /// When omitted, `aube` picks a fresh temp dir under the system
     /// tmpdir.
-    #[arg(long, value_name = "DIR")]
+    #[usage(long, value_name = "DIR")]
     pub edit_dir: Option<PathBuf>,
 
     /// Ignore any existing patch entry for this package.
@@ -37,7 +37,7 @@ pub struct PatchArgs {
     /// re-applying the existing patch first. Accepted for pnpm parity;
     /// aube already extracts from the *linked* (post-patch) tree, so
     /// this flag is effectively informational here.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_existing: bool,
 }
 

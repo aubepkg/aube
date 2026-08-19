@@ -12,35 +12,30 @@ use std::collections::BTreeMap;
 
 use super::DepFilter;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct SbomArgs {
     /// Show only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Exclude peer dependencies from CycloneDX output
-    #[arg(long)]
+    #[usage(long)]
     pub exclude_peers: bool,
 
     /// Output format: `cyclonedx` (default) or `spdx`
-    #[arg(long, value_enum, default_value_t = SbomFormat::Cyclonedx)]
+    #[usage(long, value_enum, default_value_t = SbomFormat::Cyclonedx)]
     pub format: SbomFormat,
 
     /// Describe the complete platform-independent lockfile graph
-    #[arg(long)]
+    #[usage(long)]
     pub lockfile_only: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum)]
 pub enum SbomFormat {
     Cyclonedx,
     Spdx,

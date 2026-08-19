@@ -1,7 +1,7 @@
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct UnlinkArgs {
     /// Package name to unlink (omit to unlink all linked dependencies)
     pub package: Option<String>,
@@ -12,7 +12,7 @@ pub struct UnlinkArgs {
     /// `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links`
     /// when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\aube\global-links`
     /// on Windows; `aube unlink -g <name>` removes the named entry.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 }
 

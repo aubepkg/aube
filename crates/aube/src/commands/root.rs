@@ -19,10 +19,10 @@ Examples:
   /home/user/.local/share/aube/global/node_modules
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct RootArgs {
     /// Print the global package directory instead of the project's
-    #[arg(short, long)]
+    #[usage(short, long)]
     pub global: bool,
 }
 

@@ -3,18 +3,18 @@ use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, usage_derive::Args)]
 pub struct RemoveArgs {
     /// Package(s) to remove
     pub packages: Vec<String>,
     /// Remove only from devDependencies
-    #[arg(short = 'D', long)]
+    #[usage(short = 'D', long)]
     pub save_dev: bool,
     /// Remove from the global install directory instead of the project
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
     /// Skip root lifecycle scripts during the chained reinstall
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_scripts: bool,
     /// Remove the dependency from the workspace root's `package.json`.
     ///
@@ -23,13 +23,13 @@ pub struct RemoveArgs {
     /// or a `package.json` with a `workspaces` field and runs the
     /// remove against that directory. Takes precedence over `--filter`
     /// when both are supplied (same as `add --workspace`).
-    #[arg(short = 'w', long, conflicts_with = "global")]
+    #[usage(short = 'w', long, conflicts = "--global")]
     pub workspace: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

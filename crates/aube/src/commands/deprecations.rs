@@ -20,20 +20,20 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct DeprecationsArgs {
     /// Exit with a non-zero status if any deprecations are found.
-    #[arg(long)]
+    #[usage(long)]
     pub exit_code: bool,
 
     /// Emit JSON instead of the default text layout.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Include transitive dependencies as well as direct ones.
-    #[arg(long)]
+    #[usage(long)]
     pub transitive: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

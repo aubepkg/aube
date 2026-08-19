@@ -10,13 +10,13 @@
 use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct FallbackArgs {
     /// Unused; captured so `aube <cmd> foo bar` parses instead of
     /// erroring on unexpected args before the fallback message prints.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true, hide)]
     pub args: Vec<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

@@ -13,20 +13,20 @@ use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, VecDeque};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct FetchArgs {
     /// Only fetch devDependencies
-    #[arg(long, short = 'D', conflicts_with = "prod")]
+    #[usage(long, short = 'D', conflicts = "--prod")]
     pub dev: bool,
 
     /// Only fetch production + optional dependencies (skip devDependencies)
-    #[arg(long, short = 'P', conflicts_with = "dev")]
+    #[usage(long, short = 'P', conflicts = "--dev")]
     pub prod: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

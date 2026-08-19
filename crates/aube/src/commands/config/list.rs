@@ -6,7 +6,7 @@ use aube_settings::meta::SettingMeta;
 use clap::Args;
 use miette::miette;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct ListArgs {
     /// Also list settings that have no value set.
     ///
@@ -16,21 +16,21 @@ pub struct ListArgs {
     /// Only valid with `--location merged` (the default), since a
     /// per-file view can't distinguish "not set anywhere" from "set in
     /// the other file" and would render misleading defaults.
-    #[arg(long)]
+    #[usage(long)]
     pub all: bool,
 
     /// Emit all entries as a JSON object keyed by setting name.
     ///
     /// Matches `pnpm config list --json`. Honors `--all` and
     /// `--location` the same way the default text output does.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Shortcut for `--location project`.
     ///
     /// Conflicts with `--all` since `--all` only makes sense against
     /// the merged view — see the `--all` docs for why.
-    #[arg(long, conflicts_with_all = ["location", "all"])]
+    #[usage(long, conflicts("--location", "--all"))]
     pub local: bool,
 
     /// Which config location(s) to list.
@@ -38,7 +38,7 @@ pub struct ListArgs {
     /// `merged` (default) walks `~/.npmrc`, user aube config, then
     /// the project's `.npmrc` with last-write-wins precedence,
     /// matching how install reads config.
-    #[arg(long, value_enum)]
+    #[usage(long, value_enum)]
     pub location: Option<ListLocation>,
 }
 

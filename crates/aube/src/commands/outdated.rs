@@ -53,34 +53,29 @@ Examples:
   All dependencies up to date.
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct OutdatedArgs {
     /// Optional package name (prefix match) to filter the report
     pub pattern: Option<String>,
 
     /// Show only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Check globally-installed packages instead of the current project.
-    #[arg(short = 'g', long, conflicts_with = "workspace_root")]
+    #[usage(short = 'g', long, conflicts = "--workspace-root")]
     pub global: bool,
 
     /// Emit a JSON object keyed by package name instead of the default table
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Also show deps whose `wanted` version matches the installed version
-    #[arg(long)]
+    #[usage(long)]
     pub long: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
     /// Operate on the workspace root regardless of cwd.
     ///
@@ -88,9 +83,9 @@ pub struct OutdatedArgs {
     /// `aube outdated -w` reports the root manifest's deps instead
     /// of the sub-package's. No-op when paired with `-r` / `--filter`
     /// (those already drive workspace selection from the root).
-    #[arg(short = 'w', long = "workspace-root", visible_alias = "workspace")]
+    #[usage(short = 'w', long = "workspace-root", alias = "workspace")]
     pub workspace_root: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

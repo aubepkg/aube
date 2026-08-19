@@ -36,7 +36,7 @@ Examples:
   $ aube licenses --json
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct LicensesArgs {
     /// pnpm-compat subcommand marker.
     ///
@@ -45,30 +45,25 @@ pub struct LicensesArgs {
     /// keep working. Modeled as an optional positional instead of a
     /// clap subcommand so flags can appear on either side of `ls`
     /// (subcommands swallow the parent's flags).
-    #[arg(value_parser = ["ls"], hide = true)]
+    #[usage(arg, value_parser = ["ls"], hide)]
     pub subcommand: Option<String>,
 
     /// Show only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Emit a JSON array keyed by package instead of the default table
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Include the resolved path on disk for each package
-    #[arg(long)]
+    #[usage(long)]
     pub long: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

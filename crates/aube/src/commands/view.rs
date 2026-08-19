@@ -59,7 +59,7 @@ Examples:
   $ aube view react@next --json
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct ViewArgs {
     /// Package to view, optionally with a version or dist-tag.
     ///
@@ -75,9 +75,9 @@ pub struct ViewArgs {
     /// Print the full JSON of the selected version instead of the summary.
     ///
     /// Mutually exclusive with `field`.
-    #[arg(long, conflicts_with = "field")]
+    #[usage(long, conflicts = "--field")]
     pub json: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

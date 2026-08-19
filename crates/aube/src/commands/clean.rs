@@ -21,13 +21,13 @@
 use clap::Args;
 use miette::{Context, IntoDiagnostic};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct CleanArgs {
     /// Also remove lockfiles at the workspace root.
     ///
     /// Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`,
     /// `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock`.
-    #[arg(short = 'l', long)]
+    #[usage(short = 'l', long)]
     pub lockfile: bool,
 }
 

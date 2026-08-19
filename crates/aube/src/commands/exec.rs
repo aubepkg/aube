@@ -3,72 +3,72 @@ use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Default, usage_derive::Args)]
 pub struct ExecArgs {
     /// Binary name
     pub bin: String,
     /// Arguments to pass to the binary
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
     pub args: Vec<String>,
     /// Continue recursive execution after a command fails.
     ///
     /// Parsed for pnpm compatibility; aube currently stops on the
     /// first failure.
-    #[arg(long)]
+    #[usage(long)]
     pub no_bail: bool,
     /// Skip auto-install check
-    #[arg(long)]
+    #[usage(long)]
     pub no_install: bool,
     /// Disable topological sorting (default is on).
     ///
     /// Without this, recursive execs visit packages in a deps-first
     /// order. Pass this to fall back to raw workspace-listing order.
-    #[arg(long, overrides_with = "sort")]
+    #[usage(long, overrides = "--sort")]
     pub no_sort: bool,
     /// Run recursive workspace executions concurrently.
-    #[arg(long)]
+    #[usage(long)]
     pub parallel: bool,
     /// Write a recursive exec summary file.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(long)]
+    #[usage(long)]
     pub report_summary: bool,
     /// Hide the `<package>: ` label on parallel-exec output lines.
     ///
     /// Lines are still piped (clean line breaks even with concurrent
     /// children) but the source package isn't named on each line.
     /// Sequential execs ignore this flag.
-    #[arg(long)]
+    #[usage(long)]
     pub reporter_hide_prefix: bool,
     /// Resume recursive execution starting at this package name.
     ///
     /// Packages before the named one in the post-sort, post-reverse
     /// order are skipped. Errors if the name isn't in the matched set.
-    #[arg(long, value_name = "PACKAGE")]
+    #[usage(long, value_name = "PACKAGE")]
     pub resume_from: Option<String>,
     /// Reverse the recursive execution order (after topo sort).
-    #[arg(long)]
+    #[usage(long)]
     pub reverse: bool,
     /// Run the command through `sh -c`.
-    #[arg(short = 'c', long)]
+    #[usage(short = 'c', long)]
     pub shell_mode: bool,
     /// Sort recursive packages topologically (this is the default).
     ///
     /// Pass to override an earlier `--no-sort` on the same invocation.
-    #[arg(long, overrides_with = "no_sort")]
+    #[usage(long, overrides = "--no-sort")]
     pub sort: bool,
     /// Cap the number of recursive packages running at once.
     ///
     /// Setting this implicitly enables parallel mode at width `N`.
     /// `0` means "use the available CPU count". Without this flag,
     /// `--parallel` stays unbounded.
-    #[arg(long, value_name = "N")]
+    #[usage(long, value_name = "N")]
     pub workspace_concurrency: Option<usize>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

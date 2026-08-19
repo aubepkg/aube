@@ -19,12 +19,12 @@ Examples:
   $ aube issues react react-dom
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct BugsArgs {
     /// Packages to open bug trackers for. Defaults to the current project.
     pub packages: Vec<String>,
 
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 

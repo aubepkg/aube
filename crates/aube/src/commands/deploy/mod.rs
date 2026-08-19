@@ -70,7 +70,7 @@ use staging::{StagedDeploy, stage_one};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct DeployArgs {
     /// Target directory to deploy into.
     ///
@@ -81,10 +81,10 @@ pub struct DeployArgs {
     /// Implemented by stripping `dependencies` and
     /// `optionalDependencies` from the deployed `package.json` before
     /// install runs.
-    #[arg(short = 'D', long, conflicts_with_all = ["prod", "no_prod"])]
+    #[usage(short = 'D', long, conflicts("--prod", "--no-prod"))]
     pub dev: bool,
     /// Skip `optionalDependencies`
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
     /// Install only production dependencies (default).
     ///
@@ -92,7 +92,7 @@ pub struct DeployArgs {
     // Intentionally unread by the deploy code: production is the deploy
     // default, so the `!args.dev && !args.no_prod` axis already captures
     // it. Reach for that, not `args.prod`, when extending the filter.
-    #[arg(short = 'P', long, visible_alias = "production")]
+    #[usage(short = 'P', long, alias = "production")]
     pub prod: bool,
     /// Deploy every dependency kind (production + dev + optional).
     ///
@@ -101,23 +101,23 @@ pub struct DeployArgs {
     /// harnesses, build-step deploys). Combine with `--no-optional` to
     /// drop optionals while keeping prod + dev. Mutually exclusive with
     /// `--prod` and `--dev`.
-    #[arg(long, conflicts_with_all = ["prod", "dev"])]
+    #[usage(long, conflicts("--prod", "--dev"))]
     pub no_prod: bool,
     /// Fail if any metadata or tarball isn't already in the local cache.
     ///
     /// Never hits the network. Useful in multi-stage Dockerfiles where
     /// an earlier `aube install` already populated the store: deploy
     /// then reproduces a prod-only tree without re-fetching anything.
-    #[arg(long, conflicts_with = "prefer_offline")]
+    #[usage(long, conflicts = "--prefer-offline")]
     pub offline: bool,
     /// Prefer cached metadata over revalidation; only hit the network on a miss.
-    #[arg(long, conflicts_with = "offline")]
+    #[usage(long, conflicts = "--offline")]
     pub prefer_offline: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

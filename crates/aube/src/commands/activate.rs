@@ -4,13 +4,13 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct ActivateArgs {
     /// Shell to emit activation code for
     pub shell: ActivateShell,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_derive::ValueEnum)]
 pub enum ActivateShell {
     Bash,
     Fish,

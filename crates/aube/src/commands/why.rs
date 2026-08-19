@@ -37,34 +37,29 @@ Examples:
   $ aube why --json debug
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct WhyArgs {
     /// Package name to search for (exact match against package names)
     pub package: String,
 
     /// Only follow chains that start at a devDependency
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Only follow chains that start at a production (or optional) dependency
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, conflicts = "--dev", alias = "production")]
     pub prod: bool,
 
     /// Output as JSON — an array of chain objects
-    #[arg(long, conflicts_with = "parseable")]
+    #[usage(long, conflicts = "--parseable")]
     pub json: bool,
 
     /// Append each node's `.aube/<dep_path>` store path to the tree output
-    #[arg(long)]
+    #[usage(long)]
     pub long: bool,
 
     /// Tab-separated output: one line per chain, `importer\tdep_type\tname@ver\t...`
-    #[arg(long)]
+    #[usage(long)]
     pub parseable: bool,
 }
 

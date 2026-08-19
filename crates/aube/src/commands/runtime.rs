@@ -11,22 +11,22 @@ use miette::{Context, IntoDiagnostic, miette};
 
 use super::install;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct RuntimeArgs {
-    #[command(subcommand)]
+    #[usage(subcommand)]
     pub command: RuntimeCommand,
 }
 
-#[derive(Debug, clap::Subcommand)]
+#[derive(Debug, usage_derive::Subcommands)]
 pub enum RuntimeCommand {
     /// Show the resolved runtime and installed versions
-    #[command(visible_alias = "ls")]
+    #[usage(alias = "ls")]
     List(RuntimeListArgs),
     /// Pin a runtime in package.json devEngines.runtime and install it
     Set(RuntimeSetArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct RuntimeSetArgs {
     /// Runtime name (only `node` is supported)
     pub name: String,
@@ -35,21 +35,21 @@ pub struct RuntimeSetArgs {
     // Explicit id: clap reserves the `version` id for the global
     // `--version` flag, and a positional with the same id panics at
     // dispatch with a bool/String downcast mismatch.
-    #[arg(id = "runtime-version", value_name = "VERSION")]
+    #[usage(arg, id = "runtime-version", value_name = "VERSION")]
     pub version: String,
     /// Install for the user instead of the project (delegates to
     /// `mise use -g node@<version>` when mise manages installs)
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
     /// `onFail` policy written to devEngines.runtime
-    #[arg(long, value_name = "POLICY", default_value = "download")]
+    #[usage(long, value_name = "POLICY", default = "download")]
     pub on_fail: String,
     /// Pin the exact resolved version instead of a caret range
-    #[arg(long)]
+    #[usage(long)]
     pub save_exact: bool,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct RuntimeListArgs {}
 
 pub async fn run(args: RuntimeArgs) -> miette::Result<()> {

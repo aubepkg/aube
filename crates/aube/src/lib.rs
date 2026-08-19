@@ -47,8 +47,8 @@ use startup::{PackageManagerGuardMode, PackageManagerStrictMode, package_manager
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-#[derive(Parser)]
-#[command(
+#[derive(usage_derive::Cli)]
+#[usage(
     name = "aube",
     about = "A fast Node.js package manager",
     version = version::VERSION_LONG.as_str(),
@@ -56,7 +56,13 @@ use std::path::PathBuf;
 )]
 pub(crate) struct Cli {
     /// Change to directory before running (like `make -C` or `mise --cd`)
-    #[arg(short = 'C', long = "dir", visible_aliases = ["cd", "prefix"], global = true, value_name = "DIR")]
+    #[usage(
+        short = 'C',
+        long = "dir",
+        alias("cd", "prefix"),
+        global,
+        value_name = "DIR"
+    )]
     dir: Option<std::path::PathBuf>,
 
     /// Scope command execution to workspace packages matching PATTERN.
@@ -69,7 +75,7 @@ pub(crate) struct Cli {
     /// Currently honored by `run`, `test`, `start`, `stop`, `restart`,
     /// `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`,
     /// `update`, `why`, and implicit-script invocations.
-    #[arg(short = 'F', long, global = true, value_name = "WORKSPACE")]
+    #[usage(short = 'F', long, global, value_name = "WORKSPACE")]
     filter: Vec<String>,
 
     /// Run the command across every workspace package.
@@ -77,11 +83,11 @@ pub(crate) struct Cli {
     /// Equivalent to `--filter=*`; if `--filter` is also given,
     /// `--recursive` is a no-op and the explicit filter wins. Honored
     /// by the same commands as `--filter`.
-    #[arg(short = 'r', long, global = true)]
+    #[usage(short = 'r', long, global)]
     recursive: bool,
 
     /// Enable verbose/debug logging (shortcut for `--loglevel debug`)
-    #[arg(short, long, global = true)]
+    #[usage(short, long, global)]
     verbose: bool,
 
     /// Print version and check for updates.
@@ -89,21 +95,21 @@ pub(crate) struct Cli {
     /// Manual flag so we can run the async update notifier alongside
     /// the version print — clap's auto `Action::Version` exits inside
     /// `parse_from`, before the tokio runtime is built.
-    #[arg(short = 'V', long = "version", global = true)]
+    #[usage(short = 'V', long = "version", global)]
     version: bool,
 
     /// Group workspace command output after each package finishes.
     ///
     /// Accepted for pnpm compatibility; aube's workspace fanout is
     /// currently sequential, so output is already grouped.
-    #[arg(long, global = true, conflicts_with = "stream", hide = true)]
+    #[usage(long, global, conflicts = "--stream", hide)]
     aggregate_output: bool,
 
     /// Force colored output even when stderr is not a TTY.
     ///
     /// Overrides `NO_COLOR` / `CLICOLOR=0`. Mutually exclusive with
     /// `--no-color`.
-    #[arg(long, global = true, conflicts_with = "no_color")]
+    #[usage(long, global, conflicts = "--no-color")]
     color: bool,
 
     /// Enable cold-install deep diagnostics. Modes:
@@ -115,21 +121,21 @@ pub(crate) struct Cli {
     /// Quick form: `--diag` with no value defaults to `trace`.
     /// Output file path can be set via `--diag-file`. Threshold for live
     /// mode via `--diag-threshold-ms`.
-    #[arg(long, global = true, value_name = "MODE", num_args = 0..=1, default_missing_value = "trace")]
+    #[usage(long, global, value_name = "MODE", num_args = 0..=1, default_missing = "trace")]
     diag: Option<String>,
 
     /// Path for `--diag full` JSONL trace (default: ./aube-diag.jsonl)
-    #[arg(long, global = true, value_name = "PATH")]
+    #[usage(long, global, value_name = "PATH")]
     diag_file: Option<PathBuf>,
 
     /// Live-mode threshold: only print spans whose duration is >= N ms (default 100).
-    #[arg(long, global = true, value_name = "MS")]
+    #[usage(long, global, value_name = "MS")]
     diag_threshold_ms: Option<u64>,
 
     /// Error when a workspace selector matches no packages.
     ///
     /// Accepted globally; selected commands already fail on empty matches.
-    #[arg(long, global = true)]
+    #[usage(long, global)]
     fail_if_no_match: bool,
 
     /// Production-only variant of `--filter`.
@@ -140,23 +146,23 @@ pub(crate) struct Cli {
     /// reachable solely through them) are skipped. Non-graph forms
     /// (exact name, glob, path, `[git-ref]`) behave identically to
     /// `--filter`. Repeatable; can be combined with `--filter`.
-    #[arg(long, global = true, value_name = "PATTERN")]
+    #[usage(long, global, value_name = "PATTERN")]
     filter_prod: Vec<String>,
 
     /// Ignore workspace discovery for commands that support workspace fanout.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(long, global = true, hide = true)]
+    #[usage(long, global, hide)]
     ignore_workspace: bool,
 
     /// Include the workspace root in recursive workspace operations.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(long, global = true, hide = true)]
+    #[usage(long, global, hide)]
     include_workspace_root: bool,
 
     /// Set the log level. Logs at or above this level are shown.
-    #[arg(long, global = true, value_name = "LEVEL", value_enum)]
+    #[usage(long, global, value_name = "LEVEL", value_enum)]
     loglevel: Option<LogLevel>,
 
     /// Disable colored output.
@@ -164,7 +170,7 @@ pub(crate) struct Cli {
     /// Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1`
     /// so downstream libraries (miette, clx, child processes) all see
     /// the same choice.
-    #[arg(long, global = true)]
+    #[usage(long, global)]
     no_color: bool,
 
     /// Output format: default, append-only, ndjson, silent.
@@ -175,50 +181,50 @@ pub(crate) struct Cli {
     /// the JSON formatter (one JSON object per log event on stderr)
     /// and is what tooling wrappers should consume; `silent`
     /// suppresses all non-error output (alias for `--loglevel silent`).
-    #[arg(long, global = true, value_name = "NAME", value_enum)]
+    #[usage(long, global, value_name = "NAME", value_enum)]
     reporter: Option<ReporterType>,
 
     /// Suppress all non-error output (alias for `--loglevel silent`)
-    #[arg(long, global = true)]
+    #[usage(long, global)]
     silent: bool,
 
     /// Stream workspace command output as each child process writes it.
     ///
     /// Accepted for pnpm compatibility; aube's workspace fanout is
     /// currently sequential.
-    #[arg(long, global = true, conflicts_with = "aggregate_output", hide = true)]
+    #[usage(long, global, conflicts = "--aggregate-output", hide)]
     stream: bool,
 
     /// Route lifecycle and workspace command output through stderr.
     ///
     /// Accepted for pnpm compatibility.
-    #[arg(long, global = true, hide = true)]
+    #[usage(long, global, hide)]
     use_stderr: bool,
 
     /// Prefer workspace packages when resolving dependencies.
     ///
     /// Parsed for pnpm compatibility; aube already resolves workspace
     /// packages when a workspace is present.
-    #[arg(long, global = true, hide = true)]
+    #[usage(long, global, hide)]
     workspace_packages: bool,
 
     /// Run from the workspace root regardless of the current package.
-    #[arg(long, global = true)]
+    #[usage(long, global)]
     workspace_root: bool,
 
     /// Automatically answer yes to prompts.
     ///
     /// Parsed for pnpm compatibility; aube does not currently prompt
     /// on these paths.
-    #[arg(short = 'y', long, global = true, hide = true)]
+    #[usage(short = 'y', long, global, hide)]
     yes: bool,
 
-    #[command(subcommand)]
+    #[usage(subcommand)]
     command: Option<Commands>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-#[clap(rename_all = "lowercase")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum)]
+#[usage(rename_all = "lowercase")]
 pub(crate) enum LogLevel {
     Trace,
     Debug,
@@ -228,8 +234,8 @@ pub(crate) enum LogLevel {
     Silent,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-#[clap(rename_all = "kebab-case")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum)]
+#[usage(rename_all = "kebab-case")]
 pub(crate) enum ReporterType {
     Default,
     AppendOnly,
@@ -299,17 +305,17 @@ impl Drop for SilentStderrGuard {
 // then long-only flags alphabetically. The `External` catch-all is last
 // because clap's external_subcommand must come after named variants; it
 // has no fixed name so the sort check skips it.
-#[derive(Subcommand)]
+#[derive(usage_derive::Subcommands)]
 enum Commands {
     /// Bootstrap aube's cached node-gyp and print the executable path.
-    #[command(name = "__node-gyp-bootstrap", hide = true)]
+    #[usage(name = "__node-gyp-bootstrap", hide)]
     NodeGypBootstrap { project_dir: PathBuf },
     /// Manage package access and visibility on the registry
     Access(commands::access::AccessArgs),
     /// Emit shell activation code for runtime tool shims
     Activate(commands::activate::ActivateArgs),
     /// Add a dependency
-    #[command(visible_alias = "a")]
+    #[usage(alias = "a")]
     Add(commands::add::AddArgs),
     /// Approve ignored dependency build scripts.
     ///
@@ -317,13 +323,11 @@ enum Commands {
     /// `pnpm-workspace.yaml` if present).
     ApproveBuilds(commands::approve_builds::ApproveBuildsArgs),
     /// Check installed packages against the registry advisory DB
-    #[command(after_long_help = commands::audit::AFTER_LONG_HELP)]
     Audit(commands::audit::AuditArgs),
     /// Print the path to `node_modules/.bin`
-    #[command(after_long_help = commands::bin::AFTER_LONG_HELP)]
     Bin(commands::bin::BinArgs),
     /// Open package bug tracker URLs
-    #[command(visible_alias = "issues", after_long_help = commands::bugs::AFTER_LONG_HELP)]
+    #[usage(alias = "issues", after_long_help = commands::bugs::AFTER_LONG_HELP)]
     Bugs(commands::bugs::BugsArgs),
     /// Inspect and manage the packument metadata cache
     Cache(commands::cache::CacheArgs),
@@ -335,12 +339,11 @@ enum Commands {
     ///
     /// Walks the `node_modules/` symlink tree and confirms every
     /// dependency in each `package.json` resolves to a real entry.
-    #[command(after_long_help = commands::check::AFTER_LONG_HELP)]
     Check(commands::check::CheckArgs),
     /// Clean install: delete node_modules, then install with frozen lockfile.
     ///
     /// Use in CI to guarantee a reproducible install from the committed lockfile.
-    #[command(visible_alias = "clean-install", aliases = ["ic", "install-clean"])]
+    #[usage(alias = "clean-install", alias("ic", "install-clean"))]
     Ci(commands::ci::CiArgs),
     /// Remove `node_modules` across every workspace project.
     ///
@@ -350,7 +353,7 @@ enum Commands {
     /// Generate shell completions (bash, zsh, fish)
     Completion(commands::completion::CompletionArgs),
     /// Read and write settings in `.npmrc`
-    #[command(alias = "c")]
+    #[usage(alias = "c")]
     Config(commands::config::ConfigArgs),
     /// Scaffold a project from a `create-*` starter kit (via dlx)
     Create(commands::create::CreateArgs),
@@ -365,67 +368,61 @@ enum Commands {
     /// Diagnostic trace analysis (compare/analyze JSONL traces)
     Diag(commands::diag::DiagArgs),
     /// Manage package distribution tags on the registry
-    #[command(visible_alias = "dist-tags")]
+    #[usage(alias = "dist-tags")]
     DistTag(commands::dist_tag::DistTagArgs),
     /// Fetch a package into a throwaway environment and run its binary
     Dlx(commands::dlx::DlxArgs),
     /// Run broad install-health diagnostics
-    #[command(after_long_help = commands::doctor::AFTER_LONG_HELP)]
     Doctor(commands::doctor::DoctorArgs),
     /// Execute a locally installed binary
-    #[command(visible_alias = "x")]
+    #[usage(alias = "x")]
     Exec(commands::exec::ExecArgs),
     /// Download lockfile dependencies into the store without linking node_modules
     Fetch(commands::fetch::FetchArgs),
     /// List packages whose cached index references a given file hash
-    #[command(after_long_help = commands::find_hash::AFTER_LONG_HELP)]
     FindHash(commands::find_hash::FindHashArgs),
     /// Alias for `config get` (hidden; prefer `config get`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Get(commands::config::GetArgs),
     /// Print packages whose install scripts were skipped by `pnpm.allowBuilds`
-    #[command(after_long_help = commands::ignored_builds::AFTER_LONG_HELP)]
     IgnoredBuilds(commands::ignored_builds::IgnoredBuildsArgs),
     /// Convert a supported lockfile into aube-lock.yaml
     Import(commands::import::ImportArgs),
     /// Create a `package.json` in the current directory
     Init(commands::init::InitArgs),
     /// Install all dependencies
-    #[command(alias = "i")]
+    #[usage(alias = "i")]
     Install(commands::install::InstallArgs),
     /// Install dependencies, then run the `test` script (pnpm compat alias).
     ///
     /// Hidden from help because `aube test` already auto-installs.
-    #[command(alias = "it", hide = true)]
+    #[usage(alias = "it", hide)]
     InstallTest(commands::run::ScriptArgs),
     /// Alias for `list --long` (hidden; prefer `list --long`)
-    #[command(hide = true)]
+    #[usage(hide)]
     La(commands::list::ListArgs),
     /// Report the licenses of installed dependencies
-    #[command(after_long_help = commands::licenses::AFTER_LONG_HELP)]
     Licenses(commands::licenses::LicensesArgs),
     /// Link a local package globally, or into the current project
-    #[command(visible_alias = "ln")]
+    #[usage(alias = "ln")]
     Link(commands::link::LinkArgs),
     /// Print the resolved dependency tree
-    #[command(visible_alias = "ls", after_long_help = commands::list::AFTER_LONG_HELP)]
+    #[usage(alias = "ls", after_long_help = commands::list::AFTER_LONG_HELP)]
     List(commands::list::ListArgs),
     /// Alias for `list --long` (hidden; prefer `list --long`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Ll(commands::list::ListArgs),
     /// Store a registry auth token in the user's ~/.npmrc
-    #[command(alias = "adduser")]
+    #[usage(alias = "adduser")]
     Login(commands::login::LoginArgs),
     /// Remove a registry auth token from the user's ~/.npmrc
     Logout(commands::logout::LogoutArgs),
     /// Run Node.js through aube's project runtime resolver
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Node(commands::node::NodeArgs),
     /// Report dependencies whose installed version lags behind the registry
-    #[command(after_long_help = commands::outdated::AFTER_LONG_HELP)]
     Outdated(commands::outdated::OutdatedArgs),
     /// Manage package owners (not implemented — use `npm owner`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Owner(commands::npm_fallback::FallbackArgs),
     /// Create a publishable `.tgz` tarball from the current project
     Pack(commands::pack::PackArgs),
@@ -438,17 +435,15 @@ enum Commands {
     /// Inspect peer-dependency resolution from the lockfile
     Peers(commands::peers::PeersArgs),
     /// Manage package.json entries (not implemented — use `npm pkg`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Pkg(commands::npm_fallback::FallbackArgs),
     /// Print the current package prefix directory
-    #[command(after_long_help = commands::prefix::AFTER_LONG_HELP)]
     Prefix(commands::prefix::PrefixArgs),
     /// Remove extraneous packages from project `node_modules`.
     ///
     /// Reads the lockfile, computes the packages still reachable from each
     /// importer, and removes stale top-level links, stale virtual-store entries,
     /// and dangling .bin links. Does not modify package.json or the lockfile.
-    #[command(after_long_help = commands::prune::AFTER_LONG_HELP)]
     Prune(commands::prune::PruneArgs),
     /// Publish the current package to the registry
     #[cfg(feature = "publish")]
@@ -458,38 +453,36 @@ enum Commands {
     /// A `purge` script in the root `package.json` overrides the built-in.
     Purge(commands::clean::CleanArgs),
     /// Query packages in the resolved dependency graph
-    #[command(after_long_help = commands::query::AFTER_LONG_HELP)]
     Query(commands::query::QueryArgs),
     /// Re-run root lifecycle scripts and allowlisted dependency builds
-    #[command(visible_alias = "rb")]
+    #[usage(alias = "rb")]
     Rebuild(commands::rebuild::RebuildArgs),
     /// Run a supported command across workspace packages
-    #[command(visible_aliases = ["multi", "m"])]
+    #[usage(alias("multi", "m"))]
     Recursive(commands::recursive::RecursiveArgs),
     /// Remove a dependency
-    #[command(visible_alias = "rm", aliases = ["uninstall", "un", "uni"])]
+    #[usage(alias = "rm", alias("uninstall", "un", "uni"))]
     Remove(commands::remove::RemoveArgs),
     /// Restart a package (shortcut for `run restart`; falls back to `stop` + `start`)
     Restart(commands::run::ScriptArgs),
     /// Print the path to `node_modules`
-    #[command(after_long_help = commands::root::AFTER_LONG_HELP)]
     Root(commands::root::RootArgs),
     /// Run a script defined in package.json
-    #[command(alias = "run-script")]
+    #[usage(alias = "run-script")]
     Run(commands::run::RunArgs),
     /// Manage the project's Node.js runtime (pin, install, inspect)
-    #[command(visible_alias = "rt")]
+    #[usage(alias = "rt")]
     Runtime(commands::runtime::RuntimeArgs),
     /// Generate a Software Bill of Materials (CycloneDX or SPDX)
     Sbom(commands::sbom::SbomArgs),
     /// Search the registry for packages (not implemented — use `npm search`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Search(commands::npm_fallback::FallbackArgs),
     /// Alias for `config set` (hidden; prefer `config set`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Set(commands::config::SetArgs),
     /// Set a `package.json` script (not implemented — use `npm set-script`)
-    #[command(hide = true, name = "set-script")]
+    #[usage(hide, name = "set-script")]
     SetScript(commands::npm_fallback::FallbackArgs),
     /// Show the companies sponsoring aube and the jdx.dev open source tools
     Sponsors(commands::sponsors::SponsorsArgs),
@@ -502,36 +495,36 @@ enum Commands {
     /// Manage the global store
     Store(commands::store::StoreArgs),
     /// Run the `test` script (shortcut for `run test`)
-    #[command(visible_alias = "t")]
+    #[usage(alias = "t")]
     Test(commands::run::ScriptArgs),
     /// Manage registry auth tokens (not implemented — use `npm token`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Token(commands::npm_fallback::FallbackArgs),
     /// Inspect npm package publishing trust
     Trust(commands::trust::TrustArgs),
     /// Clear an existing deprecation on the registry
     Undeprecate(commands::undeprecate::UndeprecateArgs),
     /// Unlink a package (remove linked entries from node_modules)
-    #[command(alias = "dislink")]
+    #[usage(alias = "dislink")]
     Unlink(commands::unlink::UnlinkArgs),
     /// Remove a package (or a single version) from the registry
     Unpublish(commands::unpublish::UnpublishArgs),
     /// Update dependencies
-    #[command(aliases = ["up", "upgrade"])]
+    #[usage(alias("up", "upgrade"))]
     Update(commands::update::UpdateArgs),
     /// Bump the version in package.json (and optionally create a git commit + tag)
     Version(commands::version::VersionArgs),
     /// Print package metadata from the registry
-    #[command(visible_aliases = ["info", "show"], alias = "v", after_long_help = commands::view::AFTER_LONG_HELP)]
+    #[usage(alias("info", "show"), alias = "v", after_long_help = commands::view::AFTER_LONG_HELP)]
     View(commands::view::ViewArgs),
     /// Report the current registry user (not implemented — use `npm whoami`)
-    #[command(hide = true)]
+    #[usage(hide)]
     Whoami(commands::npm_fallback::FallbackArgs),
     /// Print reverse dependency chains explaining why a package is installed
-    #[command(visible_alias = "w", after_long_help = commands::why::AFTER_LONG_HELP)]
+    #[usage(alias = "w", after_long_help = commands::why::AFTER_LONG_HELP)]
     Why(commands::why::WhyArgs),
     /// Catch-all for implicit script execution (e.g., `aube dev` = `aube run dev`)
-    #[command(external_subcommand)]
+    #[usage(external_subcommand)]
     External(Vec<String>),
 }
 
@@ -658,7 +651,7 @@ fn inner_main() -> miette::Result<i32> {
     // rediscover the shim as the "real" tool.
     tool_shims::sanitize_process_path();
     // Override the clap command name at runtime with the active embedder's
-    // name. The `#[command(name = "aube")]` attribute is a compile-time
+    // name. The `#[usage(name = "aube")]` attribute is a compile-time
     // constant and can't read `embedder()`, so help/usage/error output would
     // otherwise always say "aube" even under an embedder. `get_matches_from`
     // keeps clap's parse-error / `--help` / `--version` print-and-exit
@@ -1050,7 +1043,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                 },
             )?;
             // The reconstructed argv may carry pre-subcommand-positioned
-            // flags that moved off `global = true` (e.g. `--registry`,
+            // flags that moved off `global` (e.g. `--registry`,
             // `--frozen-lockfile`). Run the same lift-pass we use on the
             // outer argv so the nested clap parse sees them after the
             // subcommand.

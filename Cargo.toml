@@ -72,7 +72,8 @@ toml = "1"
 rkyv = "0.8"
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+usage-argv = { git = "https://github.com/jdx/usage", rev = "cc60dcb7fd01c8b61d7665fc7dc7c8210551601a", features = ["diagnostics", "spec"] }
+usage-derive = { git = "https://github.com/jdx/usage", rev = "cc60dcb7fd01c8b61d7665fc7dc7c8210551601a" }
 
 # Enum derives (Display/FromStr/etc.)
 strum = { version = "0.28", features = ["derive"] }

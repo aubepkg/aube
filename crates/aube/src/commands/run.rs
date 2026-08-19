@@ -5,7 +5,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::io::IsTerminal;
 use std::path::Path;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct RunArgs {
     /// Script or local binary name.
     ///
@@ -14,31 +14,31 @@ pub struct RunArgs {
     /// `node_modules/.bin/<name>`.
     pub script: Option<String>,
     /// Arguments to pass to the script
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
     pub args: Vec<String>,
     /// Print the nearest `package.json`'s scripts for shell completion.
     ///
     /// Consumed by the `complete "script"` node in the usage spec, not
     /// meant to be typed by hand.
-    #[arg(long, hide = true)]
+    #[usage(long, hide)]
     pub complete: bool,
     /// Don't error if the script is missing from package.json
-    #[arg(long)]
+    #[usage(long)]
     pub if_present: bool,
     /// Forward `--inspect` to a Node-backed script or local binary.
-    #[arg(long, value_name = "[[HOST:]PORT]", num_args = 0..=1, require_equals = true, default_missing_value = "")]
+    #[usage(long, value_name = "[[HOST:]PORT]", num_args = 0..=1, require_equals = true, default_missing = "")]
     pub inspect: Option<String>,
     /// Forward `--inspect-brk` to a Node-backed script or local binary.
-    #[arg(long, value_name = "[[HOST:]PORT]", num_args = 0..=1, require_equals = true, default_missing_value = "")]
+    #[usage(long, value_name = "[[HOST:]PORT]", num_args = 0..=1, require_equals = true, default_missing = "")]
     pub inspect_brk: Option<String>,
     /// Continue recursive execution after a script fails.
     ///
     /// Parsed for pnpm compatibility; aube's sequential fanout still
     /// stops on first failure.
-    #[arg(long)]
+    #[usage(long)]
     pub no_bail: bool,
     /// Skip auto-install check
-    #[arg(long)]
+    #[usage(long)]
     pub no_install: bool,
     /// Disable topological sorting (default is on).
     ///
@@ -46,7 +46,7 @@ pub struct RunArgs {
     /// order so a `build` script in a shared library finishes before a
     /// dependent app's `build` starts. Pass this to fall back to the
     /// raw workspace-listing order.
-    #[arg(long, overrides_with = "sort")]
+    #[usage(long, overrides = "--sort")]
     pub no_sort: bool,
     /// Run the script in every matched workspace package concurrently.
     ///
@@ -56,12 +56,12 @@ pub struct RunArgs {
     /// allowed to finish so their output isn't truncated. Child
     /// stdio is piped and lines are emitted with a `<package>: `
     /// prefix; pass `--reporter-hide-prefix` to drop the labels.
-    #[arg(long)]
+    #[usage(long)]
     pub parallel: bool,
     /// Write a recursive run summary file.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(long)]
+    #[usage(long)]
     pub report_summary: bool,
     /// Hide the `<package>: ` label on parallel-run output lines.
     ///
@@ -69,25 +69,25 @@ pub struct RunArgs {
     /// clean even when many packages run at once), but the source
     /// package isn't named on each line. Sequential runs ignore this
     /// flag.
-    #[arg(long)]
+    #[usage(long)]
     pub reporter_hide_prefix: bool,
     /// Resume recursive execution starting at this package name.
     ///
     /// After the topo sort and `--reverse` are applied, packages
     /// before the named one in the resulting order are skipped. Errors
     /// if the name isn't in the matched workspace set.
-    #[arg(long, value_name = "PACKAGE")]
+    #[usage(long, value_name = "PACKAGE")]
     pub resume_from: Option<String>,
     /// Reverse the recursive execution order (after topo sort).
     ///
     /// Useful for teardown-style scripts where dependents must shut
     /// down before their deps.
-    #[arg(long)]
+    #[usage(long)]
     pub reverse: bool,
     /// Sort recursive packages topologically (this is the default).
     ///
     /// Pass to override an earlier `--no-sort` on the same invocation.
-    #[arg(long, overrides_with = "no_sort")]
+    #[usage(long, overrides = "--no-sort")]
     pub sort: bool,
     /// Suppress aube's wrapper output while still showing script
     /// stdout/stderr.
@@ -95,20 +95,20 @@ pub struct RunArgs {
     /// Short alias for the global `--silent` flag; long form is
     /// intentionally omitted to avoid shadowing the global `--silent`
     /// in clap's dispatch.
-    #[arg(short = 's')]
+    #[usage(short = 's')]
     pub silent: bool,
     /// Cap the number of recursive packages running at once.
     ///
     /// Setting this implicitly enables parallel mode at width `N`.
     /// `0` means "use the available CPU count". Without this flag,
     /// `--parallel` stays unbounded.
-    #[arg(long, value_name = "N")]
+    #[usage(long, value_name = "N")]
     pub workspace_concurrency: Option<usize>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 
@@ -117,19 +117,19 @@ pub struct RunArgs {
 ///
 /// These forward to a fixed script name so the script name itself
 /// is implicit — only the trailing args and `--no-install` are configurable.
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct ScriptArgs {
     /// Arguments to pass to the script
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic", allow_hyphen_values = true)]
     pub args: Vec<String>,
     /// Skip auto-install check
-    #[arg(long)]
+    #[usage(long)]
     pub no_install: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 

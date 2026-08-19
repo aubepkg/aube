@@ -21,7 +21,7 @@ use std::collections::HashSet;
 /// linking, so triggering an install here would double-run every script
 /// on a stale tree. Users who actually want a fresh install should run
 /// `aube install`.
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct RebuildArgs {
     /// Optional package names. When supplied, only matching deps'
     /// scripts run; the root lifecycle hooks (preinstall, install,
@@ -29,7 +29,7 @@ pub struct RebuildArgs {
     /// not by `dep_path`. The active `allowBuilds` /
     /// `onlyBuiltDependencies` policy is bypassed for the named
     /// deps — naming the package is the explicit opt-in.
-    #[arg(value_name = "PACKAGE")]
+    #[usage(arg, value_name = "PACKAGE")]
     pub packages: Vec<String>,
 }
 

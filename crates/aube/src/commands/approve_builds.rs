@@ -19,21 +19,21 @@ use std::path::Path;
 
 const INTERACTIVE_TTY_ERROR: &str = "approve-builds needs stdin and stderr to be TTYs for the interactive picker; pass `--all` or name packages positionally to approve non-interactively";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_derive::Args)]
 pub struct ApproveBuildsArgs {
     /// Approve every pending ignored build without prompting.
-    #[arg(long)]
+    #[usage(long)]
     pub all: bool,
 
     /// Operate on globally-installed packages instead of the current project.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 
     /// Packages to approve directly, skipping the picker.
     ///
     /// Each name must match a currently-ignored build. Unknown names
     /// are rejected so a typo cannot silently no-op.
-    #[arg(value_name = "PKG")]
+    #[usage(arg, value_name = "PKG")]
     pub packages: Vec<String>,
 }
 

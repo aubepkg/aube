@@ -5,20 +5,20 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-#[derive(clap::Args)]
+#[derive(usage_derive::Args)]
 pub struct CompletionArgs {
     /// The shell to generate completions for (bash, zsh, fish)
-    #[arg(value_name = "SHELL")]
+    #[usage(arg, value_name = "SHELL")]
     pub shell: String,
     /// Emit dynamic candidates for the shell completion engine.
-    #[arg(long, hide = true, value_enum)]
+    #[usage(long, hide, value_enum)]
     complete: Option<CompletionKind>,
     /// Current word being completed.
-    #[arg(long, hide = true, default_value = "")]
+    #[usage(long, hide, default = "")]
     query: String,
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
+#[derive(Clone, Copy, usage_derive::ValueEnum)]
 enum CompletionKind {
     Package,
     Bin,
