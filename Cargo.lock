@@ -2189,7 +2189,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -5332,13 +5332,14 @@ dependencies = [
 [[package]]
 name = "usage-argv"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=597f58718a42a9a6e81675af47cc0d50d0273a4a#597f58718a42a9a6e81675af47cc0d50d0273a4a"
+source = "git+https://github.com/jdx/usage?rev=55193c3cc202b1041f8eee2ecfa36b97e930c7a5#55193c3cc202b1041f8eee2ecfa36b97e930c7a5"
 
 [[package]]
 name = "usage-derive"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=597f58718a42a9a6e81675af47cc0d50d0273a4a#597f58718a42a9a6e81675af47cc0d50d0273a4a"
+source = "git+https://github.com/jdx/usage?rev=55193c3cc202b1041f8eee2ecfa36b97e930c7a5#55193c3cc202b1041f8eee2ecfa36b97e930c7a5"
 dependencies = [
+ "heck",
  "proc-macro2",
  "quote",
  "syn 3.0.3",
@@ -5347,7 +5348,7 @@ dependencies = [
 [[package]]
 name = "usage-rs"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=597f58718a42a9a6e81675af47cc0d50d0273a4a#597f58718a42a9a6e81675af47cc0d50d0273a4a"
+source = "git+https://github.com/jdx/usage?rev=55193c3cc202b1041f8eee2ecfa36b97e930c7a5#55193c3cc202b1041f8eee2ecfa36b97e930c7a5"
 dependencies = [
  "usage-argv",
  "usage-derive",
@@ -5356,7 +5357,7 @@ dependencies = [
 [[package]]
 name = "usage-validation"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=597f58718a42a9a6e81675af47cc0d50d0273a4a#597f58718a42a9a6e81675af47cc0d50d0273a4a"
+source = "git+https://github.com/jdx/usage?rev=55193c3cc202b1041f8eee2ecfa36b97e930c7a5#55193c3cc202b1041f8eee2ecfa36b97e930c7a5"
 dependencies = [
  "expr-lang",
 ]
