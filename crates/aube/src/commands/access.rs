@@ -3,7 +3,7 @@
 use crate::commands::{make_client, split_name_spec};
 use miette::{IntoDiagnostic, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct AccessArgs {
     #[usage(subcommand)]
     pub command: AccessCommand,
@@ -17,7 +17,7 @@ pub struct AccessArgs {
     pub network: crate::cli_args::NetworkArgs,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum AccessCommand {
     /// Get package visibility status.
     Get {
@@ -62,7 +62,7 @@ pub enum AccessCommand {
     },
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum AccessListCommand {
     /// List collaborators for a package, optionally filtering to one user.
     Collaborators {
@@ -78,7 +78,7 @@ pub enum AccessListCommand {
     },
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum AccessGetCommand {
     /// Get a package's public or restricted status.
     Status {

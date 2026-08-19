@@ -33,7 +33,7 @@ Examples:
   $ aube find-hash --json sha512-abc123...
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct FindHashArgs {
     /// Hash to look up.
     ///

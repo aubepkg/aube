@@ -35,7 +35,7 @@ Examples:
   $ aube licenses --json
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct LicensesArgs {
     /// pnpm-compat subcommand marker.
     ///

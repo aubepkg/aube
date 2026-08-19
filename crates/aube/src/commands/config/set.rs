@@ -3,7 +3,7 @@ use super::{
 };
 use miette::miette;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct SetArgs {
     /// Setting key (canonical name or `.npmrc` alias).
     pub key: String,

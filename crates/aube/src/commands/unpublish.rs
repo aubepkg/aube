@@ -32,7 +32,7 @@ use aube_registry::config::{NpmConfig, normalize_registry_url_pub};
 use miette::{Context, IntoDiagnostic, miette};
 use serde_json::Value;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct UnpublishArgs {
     /// Don't talk to the registry; print what the command would do.
     #[usage(long)]

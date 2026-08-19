@@ -33,7 +33,7 @@ Examples:
   $ aube query ':bin' --json
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct QueryArgs {
     /// Selector expression.
     ///

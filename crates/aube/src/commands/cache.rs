@@ -21,13 +21,13 @@ use miette::{IntoDiagnostic, miette};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CacheArgs {
     #[usage(subcommand)]
     pub command: CacheCommand,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum CacheCommand {
     /// Delete metadata cache for the specified package(s).
     ///
@@ -57,7 +57,7 @@ pub enum CacheCommand {
     View(ViewArgs),
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DeleteArgs {
     /// One or more package name patterns.
     ///
@@ -66,7 +66,7 @@ pub struct DeleteArgs {
     pub patterns: Vec<String>,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ListArgs {
     /// Optional glob patterns to filter the listing.
     ///
@@ -74,7 +74,7 @@ pub struct ListArgs {
     pub patterns: Vec<String>,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ViewArgs {
     /// Package name (scoped names like `@babel/core` are accepted).
     pub name: String,
@@ -83,7 +83,7 @@ pub struct ViewArgs {
     pub json: bool,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PruneArgs {
     /// Minimum age in days before an old primer file is removed.
     #[usage(long, default_value_t = 30, default = "30")]

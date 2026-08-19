@@ -14,7 +14,7 @@ use crate::patches::copy_dir_all;
 use miette::{IntoDiagnostic, Result, miette};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PatchArgs {
     /// Package spec, `<name>@<version>`.
     ///

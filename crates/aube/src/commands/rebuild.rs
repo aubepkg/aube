@@ -20,7 +20,7 @@ use std::collections::HashSet;
 /// linking, so triggering an install here would double-run every script
 /// on a stale tree. Users who actually want a fresh install should run
 /// `aube install`.
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RebuildArgs {
     /// Optional package names. When supplied, only matching deps'
     /// scripts run; the root lifecycle hooks (preinstall, install,

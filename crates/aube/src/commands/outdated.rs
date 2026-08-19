@@ -52,7 +52,7 @@ Examples:
   All dependencies up to date.
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct OutdatedArgs {
     /// Optional package name (prefix match) to filter the report
     pub pattern: Option<String>,

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct LoginArgs {
     /// Authentication flow: `legacy` (token paste; default) or `web`
     /// (OAuth flow against `{registry}/-/v1/login`).

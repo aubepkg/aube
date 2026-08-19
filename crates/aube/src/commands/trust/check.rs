@@ -20,7 +20,7 @@ Examples:
   $ aube trust check @hono/node-server@1.19.17 --json
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub(super) struct CheckArgs {
     /// Exact npm package version to inspect
     ///

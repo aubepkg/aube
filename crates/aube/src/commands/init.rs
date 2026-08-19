@@ -7,7 +7,7 @@
 use miette::{Context, IntoDiagnostic, miette};
 use std::io::Write as _;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct InitArgs {
     /// Create a `package.json` with only the bare minimum of required fields
     #[usage(long)]
@@ -26,7 +26,7 @@ pub struct InitArgs {
     pub network: crate::cli_args::NetworkArgs,
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::EnumString)]
+#[derive(Debug, Clone, Copy, usage_rs::ValueEnum, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum InitType {
     Commonjs,

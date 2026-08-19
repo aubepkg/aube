@@ -18,7 +18,7 @@
 
 use super::install;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CiArgs {
     /// Skip lifecycle scripts (no-op; aube already skips by default)
     #[usage(long)]

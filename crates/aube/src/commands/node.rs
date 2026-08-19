@@ -3,7 +3,7 @@ use miette::miette;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct NodeArgs {
     /// Arguments to pass to Node.js
     #[usage(arg, double_dash = "automatic")]

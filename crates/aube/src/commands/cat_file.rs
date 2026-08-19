@@ -13,7 +13,7 @@ use std::io::Write;
 
 use crate::commands::open_store;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CatFileArgs {
     /// File hash to look up.
     ///

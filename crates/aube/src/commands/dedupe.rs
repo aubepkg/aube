@@ -9,7 +9,7 @@ use super::install;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DedupeArgs {
     /// Check whether dedupe would change the lockfile; don't write anything.
     ///

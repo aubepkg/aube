@@ -4,7 +4,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::io::IsTerminal;
 use std::path::Path;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RunArgs {
     /// Script or local binary name.
     ///
@@ -126,7 +126,7 @@ pub struct RunArgs {
 ///
 /// These forward to a fixed script name so the script name itself
 /// is implicit — only the trailing args and `--no-install` are configurable.
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ScriptArgs {
     /// Arguments to pass to the script
     #[usage(arg, double_dash = "automatic")]
@@ -145,7 +145,7 @@ pub struct ScriptArgs {
 macro_rules! script_alias_args {
     ($($name:ident),+ $(,)?) => {
         $(
-            #[derive(Debug, usage_derive::Args)]
+            #[derive(Debug, usage_rs::Args)]
             pub struct $name {
                 #[usage(flatten)]
                 inner: ScriptArgs,

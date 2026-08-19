@@ -1,7 +1,7 @@
 use super::{remove_existing, symlink_dir};
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct LinkArgs {
     /// Package name, or path to a local directory
     pub package: Option<String>,

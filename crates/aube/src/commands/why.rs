@@ -36,7 +36,7 @@ Examples:
   $ aube why --json debug
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct WhyArgs {
     /// Package name to search for (exact match against package names)
     pub package: String,

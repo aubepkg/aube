@@ -24,7 +24,7 @@ use aube_settings::meta as settings_meta;
 use miette::miette;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ConfigArgs {
     #[usage(flatten)]
     pub list: list::ListArgs,
@@ -33,7 +33,7 @@ pub struct ConfigArgs {
     pub command: Option<ConfigCommand>,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum ConfigCommand {
     /// Delete a key from aube config or the selected `.npmrc` file
     #[usage(alias("rm", "remove", "unset"))]
@@ -54,7 +54,7 @@ pub enum ConfigCommand {
     Tui,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct KeyArgs {
     /// The setting key.
     ///
@@ -87,7 +87,7 @@ impl KeyArgs {
     }
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, usage_rs::ValueEnum, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Location {
     /// User config (`~/.config/aube/config.toml` for known aube
@@ -99,7 +99,7 @@ pub enum Location {
     Global,
 }
 
-#[derive(Debug, Clone, Copy, usage_derive::ValueEnum, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, usage_rs::ValueEnum, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "kebab-case")]
 pub enum ListLocation {
     /// Merge `~/.npmrc`, user aube config, and project `.npmrc`,

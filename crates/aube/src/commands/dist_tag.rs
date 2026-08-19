@@ -22,7 +22,7 @@
 use crate::commands::{make_client, split_name_spec};
 use miette::{Context, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DistTagArgs {
     #[usage(subcommand)]
     pub command: DistTagCommand,
@@ -30,7 +30,7 @@ pub struct DistTagArgs {
     pub network: crate::cli_args::NetworkArgs,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum DistTagCommand {
     /// Add or update a dist-tag on a package.
     ///

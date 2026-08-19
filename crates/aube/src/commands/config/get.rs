@@ -3,7 +3,7 @@ use super::{
     setting_for_key, user_npmrc_path,
 };
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct GetArgs {
     /// The setting key.
     ///

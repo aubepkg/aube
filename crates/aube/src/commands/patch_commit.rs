@@ -14,7 +14,7 @@ use miette::{IntoDiagnostic, Result, miette};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PatchCommitArgs {
     /// The edit directory printed by `aube patch`.
     ///

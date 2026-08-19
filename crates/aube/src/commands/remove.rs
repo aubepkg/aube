@@ -2,7 +2,7 @@ use super::install;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, usage_derive::Args)]
+#[derive(Debug, Clone, usage_rs::Args)]
 pub struct RemoveArgs {
     /// Package(s) to remove
     pub packages: Vec<String>,

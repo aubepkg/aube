@@ -18,7 +18,7 @@ Examples:
   $ aube issues react react-dom
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct BugsArgs {
     /// Packages to open bug trackers for. Defaults to the current project.
     pub packages: Vec<String>,

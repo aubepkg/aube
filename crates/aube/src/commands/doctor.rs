@@ -33,7 +33,7 @@ Examples:
   $ aube doctor --json | jq .warnings
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DoctorArgs {
     /// Emit a machine-readable JSON report instead of the grouped text.
     #[usage(long, short = 'J')]

@@ -189,7 +189,7 @@ pub(crate) async fn add_to_project_with_overrides(
     Ok(())
 }
 
-#[derive(Debug, Clone, usage_derive::Args)]
+#[derive(Debug, Clone, usage_rs::Args)]
 pub struct AddArgs {
     /// Package(s) to add
     pub packages: Vec<String>,

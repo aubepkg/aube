@@ -1,6 +1,6 @@
 use super::{DepSelection, FrozenMode, FrozenOverride, GlobalVirtualStoreFlags};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct InstallArgs {
     /// Install only devDependencies
     #[usage(short = 'D', long, conflicts = "--prod")]

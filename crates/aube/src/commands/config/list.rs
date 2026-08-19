@@ -5,7 +5,7 @@ use super::{
 use aube_settings::meta::SettingMeta;
 use miette::miette;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ListArgs {
     /// Also list settings that have no value set.
     ///

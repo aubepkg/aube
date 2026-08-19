@@ -92,7 +92,7 @@ static VERBS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
 /// nothing; names carrying chars the `aube <verb>` matcher can't reach (e.g. the
 /// hidden `__node-gyp-bootstrap`) are harmless — they simply never match a
 /// literal.
-fn collect_verbs(cmd: &usage_argv::Command<'_>, out: &mut BTreeSet<String>) {
+fn collect_verbs(cmd: &usage_rs::Command<'_>, out: &mut BTreeSet<String>) {
     for sub in cmd.subcommands {
         out.insert(sub.name.to_string());
         for alias in sub.aliases {

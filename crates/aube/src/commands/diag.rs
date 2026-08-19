@@ -22,13 +22,13 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DiagArgs {
     #[usage(subcommand)]
     pub command: DiagCommand,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum DiagCommand {
     /// Show critical path / starvation / per-pkg lifecycle from a saved trace.
     Analyze {

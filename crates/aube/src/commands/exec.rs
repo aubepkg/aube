@@ -2,7 +2,7 @@ use super::ensure_installed_in;
 use miette::{Context, IntoDiagnostic, miette};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Default, usage_derive::Args)]
+#[derive(Debug, Default, usage_rs::Args)]
 pub struct ExecArgs {
     /// Binary name
     pub bin: String,

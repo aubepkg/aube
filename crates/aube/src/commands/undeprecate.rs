@@ -4,7 +4,7 @@
 
 use crate::commands::{deprecate, split_name_spec};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct UndeprecateArgs {
     /// Package spec: `name`, `name@version`, or `name@<range>`.
     ///

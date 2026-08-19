@@ -8,7 +8,7 @@
 use crate::commands::npmrc::{NpmrcEdit, registry_host_key, resolve_registry, user_npmrc_path};
 use miette::miette;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct LogoutArgs {
     /// Scope whose registry mapping should also be removed (e.g. `@myorg`).
     #[usage(long, value_name = "SCOPE")]

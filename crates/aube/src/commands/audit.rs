@@ -46,7 +46,7 @@ Examples:
   No known vulnerabilities found
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct AuditArgs {
     /// Only print advisories at or above this severity.
     ///
@@ -117,7 +117,7 @@ pub struct AuditArgs {
     Eq,
     PartialOrd,
     Ord,
-    usage_derive::ValueEnum,
+    usage_rs::ValueEnum,
     strum::Display,
     strum::EnumString,
 )]
@@ -136,7 +136,7 @@ pub enum Severity {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_rs::ValueEnum, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum FixMode {
     /// Refresh the lockfile to patched versions allowed by existing ranges.

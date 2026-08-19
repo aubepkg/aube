@@ -25,7 +25,7 @@ pub const AFTER_LONG_HELP: &str = "\
 Global store cleanup: use `aube store prune` to clean unreferenced files from the global
 content-addressable store.";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PruneArgs {
     /// Remove devDependencies from node_modules
     #[usage(long, long = "production", short = 'P')]

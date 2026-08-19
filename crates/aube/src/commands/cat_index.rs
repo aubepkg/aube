@@ -24,7 +24,7 @@
 
 use miette::{IntoDiagnostic, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CatIndexArgs {
     /// Package to inspect, in `name@version` form (e.g. `lodash@4.17.21`,
     /// `@babel/core@7.26.0`).

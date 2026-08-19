@@ -42,7 +42,7 @@ use sha2::Sha512;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PublishArgs {
     /// Tarball or package directory to publish (default: current package).
     #[usage(arg, name = "TARBALL|FOLDER")]

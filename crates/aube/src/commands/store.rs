@@ -32,13 +32,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct StoreArgs {
     #[usage(subcommand)]
     pub command: StoreCommand,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum StoreCommand {
     /// Add one or more packages to the global store without linking them
     /// into any project.
@@ -78,7 +78,7 @@ pub enum StoreCommand {
 // constructible shape while exposing JSON as CLI-only state.
 static PRUNE_JSON_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PruneCliArgs {
     /// Do not actually delete anything; report what would be pruned.
     #[usage(long)]

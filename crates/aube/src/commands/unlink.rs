@@ -1,6 +1,6 @@
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct UnlinkArgs {
     /// Package name to unlink (omit to unlink all linked dependencies)
     pub package: Option<String>,

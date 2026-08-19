@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DeprecationsArgs {
     /// Exit with a non-zero status if any deprecations are found.
     #[usage(long)]

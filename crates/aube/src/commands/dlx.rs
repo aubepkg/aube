@@ -5,7 +5,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-#[derive(Debug, Default, usage_derive::Args)]
+#[derive(Debug, Default, usage_rs::Args)]
 // dlx forwards everything after `<command>` to the bin it runs, including
 // `--help` and `--version`. Let clap auto-inject its own `-h`/`--help` and
 // `--version` handlers and they'd silently swallow those flags before they

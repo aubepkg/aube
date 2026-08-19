@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use super::DepFilter;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct SbomArgs {
     /// Show only devDependencies
     #[usage(short = 'D', long, conflicts = "--prod")]
@@ -35,7 +35,7 @@ pub struct SbomArgs {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum, strum::Display, strum::EnumString,
+    Debug, Clone, Copy, PartialEq, Eq, usage_rs::ValueEnum, strum::Display, strum::EnumString,
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum SbomFormat {

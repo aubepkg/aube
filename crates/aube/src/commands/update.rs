@@ -18,7 +18,7 @@ struct InteractiveSelection {
     shown: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, usage_derive::Args)]
+#[derive(Debug, Clone, usage_rs::Args)]
 pub struct UpdateArgs {
     /// Package(s) to update (all if empty)
     pub packages: Vec<String>,

@@ -40,7 +40,7 @@ Examples:
   $ aube check --json
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CheckArgs {
     /// Emit a JSON report instead of the human-readable list.
     #[usage(long)]

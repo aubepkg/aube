@@ -9,7 +9,7 @@
 
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct FallbackArgs {
     /// Unused; captured so `aube <cmd> foo bar` parses instead of
     /// erroring on unexpected args before the fallback message prints.
@@ -22,7 +22,7 @@ pub struct FallbackArgs {
 macro_rules! fallback_alias_args {
     ($($name:ident),+ $(,)?) => {
         $(
-            #[derive(Debug, usage_derive::Args)]
+            #[derive(Debug, usage_rs::Args)]
             pub struct $name {
                 #[usage(flatten)]
                 pub inner: FallbackArgs,

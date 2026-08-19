@@ -33,7 +33,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PackArgs {
     /// Don't write the tarball; print what would be packed
     #[usage(long)]

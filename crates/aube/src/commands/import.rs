@@ -1,6 +1,6 @@
 use miette::{Context, IntoDiagnostic, miette};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ImportArgs {
     /// Overwrite an existing aube-lock.yaml
     #[usage(long)]

@@ -58,7 +58,7 @@ Examples:
   $ aube view react@next --json
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ViewArgs {
     /// Package to view, optionally with a version or dist-tag.
     ///

@@ -28,7 +28,7 @@ Examples:
   $ export PATH=\"$(aube bin):$PATH\"
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct BinArgs {
     /// Print the global bin directory instead of the project's
     #[usage(short, long, conflicts = "--workspace-root")]

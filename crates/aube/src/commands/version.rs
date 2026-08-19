@@ -11,7 +11,7 @@ use node_semver::{Identifier, Version};
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct VersionArgs {
     /// Bump keyword or an explicit version string.
     ///

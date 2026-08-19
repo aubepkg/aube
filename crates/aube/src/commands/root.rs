@@ -17,7 +17,7 @@ Examples:
   /home/user/.local/share/aube/global/node_modules
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RootArgs {
     /// Print the global package directory instead of the project's
     #[usage(short, long)]

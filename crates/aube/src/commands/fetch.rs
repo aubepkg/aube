@@ -12,7 +12,7 @@ use aube_lockfile::{DepType, LockedPackage};
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, VecDeque};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct FetchArgs {
     /// Only fetch devDependencies
     #[usage(long, short = 'D', conflicts = "--prod")]

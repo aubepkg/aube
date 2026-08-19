@@ -1,6 +1,6 @@
 use super::{literal_aliases, setting_search_score, settings_meta};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct FindArgs {
     /// Words to search for.
     #[usage(arg, required)]

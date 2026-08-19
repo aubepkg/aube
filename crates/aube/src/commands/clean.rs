@@ -20,7 +20,7 @@
 
 use miette::{Context, IntoDiagnostic};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CleanArgs {
     /// Also remove lockfiles at the workspace root.
     ///
@@ -30,7 +30,7 @@ pub struct CleanArgs {
     pub lockfile: bool,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PurgeArgs {
     #[usage(flatten)]
     pub inner: CleanArgs,

@@ -50,7 +50,7 @@ Examples:
   $ aube list express
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ListArgs {
     /// Optional package name (or glob-like prefix match) to filter the output
     pub pattern: Option<String>,
@@ -106,13 +106,13 @@ pub struct ListArgs {
     pub parseable: bool,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct LaArgs {
     #[usage(flatten)]
     pub args: ListArgs,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct LlArgs {
     #[usage(flatten)]
     pub args: ListArgs,
@@ -171,7 +171,7 @@ impl std::str::FromStr for Depth {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, usage_derive::ValueEnum, strum::Display, strum::EnumString,
+    Debug, Clone, Copy, PartialEq, Eq, usage_rs::ValueEnum, strum::Display, strum::EnumString,
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum ListFormat {

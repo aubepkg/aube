@@ -10,13 +10,13 @@ use miette::{Context, IntoDiagnostic, miette};
 
 use super::install;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RuntimeArgs {
     #[usage(subcommand)]
     pub command: RuntimeCommand,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum RuntimeCommand {
     /// Show the resolved runtime and installed versions
     #[usage(alias = "ls")]
@@ -25,7 +25,7 @@ pub enum RuntimeCommand {
     Set(RuntimeSetArgs),
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RuntimeSetArgs {
     /// Runtime name (only `node` is supported)
     pub name: String,
@@ -48,7 +48,7 @@ pub struct RuntimeSetArgs {
     pub save_exact: bool,
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RuntimeListArgs {}
 
 pub async fn run(args: RuntimeArgs) -> miette::Result<()> {

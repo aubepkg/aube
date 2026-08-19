@@ -12,7 +12,7 @@ use aube_registry::config::NpmConfig;
 use miette::{Context, IntoDiagnostic, miette};
 use serde_json::Value;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DeprecateArgs {
     /// Package spec: `name`, `name@version`, or `name@<range>`.
     ///

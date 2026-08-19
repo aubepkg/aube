@@ -1,7 +1,7 @@
 use aube_workspace::selector::EffectiveFilter;
 use miette::miette;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RecursiveArgs {
     /// Command and arguments to run recursively across workspace packages
     #[usage(arg, double_dash = "automatic")]

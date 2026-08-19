@@ -1,6 +1,6 @@
 use super::dlx::{self, DlxArgs};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 // Same contract as dlx: every positional after <TEMPLATE> is forwarded
 // verbatim to the scaffold binary, including `--help` / `--version`.
 // Without `disable_help_flag`, clap intercepts `-h` / `--help` before

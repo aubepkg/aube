@@ -2,13 +2,13 @@
 
 mod check;
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct TrustArgs {
     #[usage(subcommand)]
     command: TrustCommand,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 enum TrustCommand {
     /// Check one package version for a publishing-trust downgrade
     #[usage(after_long_help = check::AFTER_LONG_HELP)]

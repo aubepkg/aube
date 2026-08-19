@@ -18,7 +18,7 @@ use std::path::Path;
 
 const INTERACTIVE_TTY_ERROR: &str = "approve-builds needs stdin and stderr to be TTYs for the interactive picker; pass `--all` or name packages positionally to approve non-interactively";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ApproveBuildsArgs {
     /// Approve every pending ignored build without prompting.
     #[usage(long)]

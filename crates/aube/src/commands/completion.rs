@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-#[derive(usage_derive::Args)]
+#[derive(usage_rs::Args)]
 pub struct CompletionArgs {
     /// The shell to generate completions for (bash, zsh, fish)
     #[usage(arg, name = "SHELL")]
@@ -18,7 +18,7 @@ pub struct CompletionArgs {
     query: String,
 }
 
-#[derive(Clone, Copy, usage_derive::ValueEnum, strum::EnumString)]
+#[derive(Clone, Copy, usage_rs::ValueEnum, strum::EnumString)]
 #[strum(serialize_all = "kebab-case")]
 enum CompletionKind {
     Package,

@@ -58,8 +58,7 @@ aube-scripts = { workspace = true }
 aube-workspace = { workspace = true }
 bytes = "1"
 xx = { workspace = true }
-usage-argv = { workspace = true }
-usage-derive = { workspace = true }
+usage-rs = { workspace = true }
 usage-lib = { workspace = true }
 usage-validation = { workspace = true }
 strum = { workspace = true }

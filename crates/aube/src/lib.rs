@@ -46,7 +46,7 @@ use startup::{PackageManagerGuardMode, PackageManagerStrictMode, package_manager
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-#[derive(usage_derive::Cli)]
+#[derive(usage_rs::Cli)]
 #[allow(dead_code)]
 #[usage(name = "aube", about = "A fast Node.js package manager")]
 pub(crate) struct Cli {
@@ -232,15 +232,15 @@ impl Cli {
     }
 }
 
-fn render_cli_error(argv: &[&std::ffi::OsStr], error: &usage_argv::Error<'_, '_>) -> String {
-    if let usage_argv::Error::MissingFlagValue { flag } = error
+fn render_cli_error(argv: &[&std::ffi::OsStr], error: &usage_rs::Error<'_, '_>) -> String {
+    if let usage_rs::Error::MissingFlagValue { flag } = error
         && flag.require_equals
         && flag.longs.contains(&"allow-build")
     {
         return "error: equal sign is needed when assigning values to '--allow-build=<PKG>'"
             .to_owned();
     }
-    if let usage_argv::Error::InvalidValue(detail) = error
+    if let usage_rs::Error::InvalidValue(detail) = error
         && detail
             .reason
             .starts_with("The --allow-build flag is missing a package name.")
@@ -249,22 +249,22 @@ fn render_cli_error(argv: &[&std::ffi::OsStr], error: &usage_argv::Error<'_, '_>
             .reason
             .replacen(" Please specify", "\nPlease specify", 1);
     }
-    usage_argv::render_failure(Cli::spec(), argv, error)
+    usage_rs::render_failure(Cli::spec(), argv, error)
 }
 
-fn is_allow_build_compat_error(error: &usage_argv::Error<'_, '_>) -> bool {
+fn is_allow_build_compat_error(error: &usage_rs::Error<'_, '_>) -> bool {
     matches!(
         error,
-        usage_argv::Error::MissingFlagValue { flag }
+        usage_rs::Error::MissingFlagValue { flag }
             if flag.require_equals && flag.longs.contains(&"allow-build")
     ) || matches!(
         error,
-        usage_argv::Error::InvalidValue(detail)
+        usage_rs::Error::InvalidValue(detail)
             if detail.reason.starts_with("The --allow-build flag is missing a package name.")
     )
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_rs::ValueEnum, strum::EnumString)]
 #[strum(serialize_all = "kebab-case")]
 pub(crate) enum LogLevel {
     Trace,
@@ -275,7 +275,7 @@ pub(crate) enum LogLevel {
     Silent,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_derive::ValueEnum, strum::EnumString)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, usage_rs::ValueEnum, strum::EnumString)]
 #[strum(serialize_all = "kebab-case")]
 pub(crate) enum ReporterType {
     Default,
@@ -346,7 +346,7 @@ impl Drop for SilentStderrGuard {
 // then long-only flags alphabetically. The `External` catch-all is last
 // because clap's external_subcommand must come after named variants; it
 // has no fixed name so the sort check skips it.
-#[derive(usage_derive::Subcommands)]
+#[derive(usage_rs::Subcommands)]
 enum Commands {
     /// Bootstrap aube's cached node-gyp and print the executable path.
     #[usage(name = "__node-gyp-bootstrap", hide)]
@@ -595,12 +595,12 @@ pub fn cli_main(embedder: &'static aube_util::Embedder) -> i32 {
 ///
 /// This preserves the command-surface entry point for embedders while exposing
 /// usage-rs metadata instead of a clap command builder.
-pub fn command() -> &'static usage_argv::Command<'static> {
+pub fn command() -> &'static usage_rs::Command<'static> {
     Cli::command()
 }
 
 /// The static parser and portable metadata for the embeddable command layer.
-pub fn spec() -> &'static usage_argv::spec::Spec<'static> {
+pub fn spec() -> &'static usage_rs::spec::Spec<'static> {
     Cli::spec()
 }
 
@@ -615,7 +615,7 @@ fn print_subcommand_help(name: &str) -> miette::Result<()> {
         .copied()
         .find(|command| command.name == name)
         .ok_or_else(|| miette::miette!("unknown subcommand {name:?}"))?;
-    let page = usage_argv::help::render(Cli::spec(), command, true)
+    let page = usage_rs::help::render(Cli::spec(), command, true)
         .ok_or_else(|| miette::miette!("failed to render help for {name:?}"))?;
     print!("{page}");
     Ok(())
@@ -712,7 +712,7 @@ fn inner_main() -> miette::Result<i32> {
     let argv: Vec<&std::ffi::OsStr> = argv.iter().skip(1).map(OsString::as_os_str).collect();
     let cli = match Cli::parse_from(&argv) {
         Ok(cli) => cli,
-        Err(usage_argv::Error::Version) => {
+        Err(usage_rs::Error::Version) => {
             println!(
                 "{} {}",
                 aube_util::embedder().name,
@@ -720,8 +720,8 @@ fn inner_main() -> miette::Result<i32> {
             );
             return Ok(0);
         }
-        Err(usage_argv::Error::Help { cmd, long }) => {
-            if let Some(page) = usage_argv::help::render(Cli::spec(), cmd, long) {
+        Err(usage_rs::Error::Help { cmd, long }) => {
+            if let Some(page) = usage_rs::help::render(Cli::spec(), cmd, long) {
                 print!("{page}");
             }
             return Ok(0);
@@ -1131,7 +1131,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             let nested = Cli::parse_from(&nested_refs).map_err(|error| {
                 miette::miette!(
                     "{}",
-                    usage_argv::render_failure(Cli::spec(), &nested_refs, &error)
+                    usage_rs::render_failure(Cli::spec(), &nested_refs, &error)
                 )
             })?;
             let nested_filter = compute_effective_filter(&nested);
@@ -1325,8 +1325,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     .map(|m| m.scripts.contains_key(script))
                     .unwrap_or(false);
                 if !script_exists {
-                    if let Some(page) = usage_argv::help::render(Cli::spec(), Cli::command(), true)
-                    {
+                    if let Some(page) = usage_rs::help::render(Cli::spec(), Cli::command(), true) {
                         print!("{page}");
                     }
                     eprintln!();
@@ -1347,7 +1346,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
             // Bare `aube` prints `--help` and exits 0, matching pnpm.
             // pnpm's bare invocation does not run an install; users who
             // want that behavior should type `aube install` explicitly.
-            if let Some(page) = usage_argv::help::render(Cli::spec(), Cli::command(), true) {
+            if let Some(page) = usage_rs::help::render(Cli::spec(), Cli::command(), true) {
                 print!("{page}");
             }
         }
@@ -2072,7 +2071,7 @@ mod cli_ordering_tests {
         check_command_sorted(Cli::spec().root, &[]);
     }
 
-    fn check_command_sorted(cmd: &usage_argv::spec::CommandMeta<'_>, path: &[&str]) {
+    fn check_command_sorted(cmd: &usage_rs::spec::CommandMeta<'_>, path: &[&str]) {
         let mut current_path: Vec<&str> = path.to_vec();
         current_path.push(cmd.cmd.name);
 

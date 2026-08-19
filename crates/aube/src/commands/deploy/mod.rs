@@ -69,7 +69,7 @@ use staging::{StagedDeploy, stage_one};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DeployArgs {
     /// Target directory to deploy into.
     ///

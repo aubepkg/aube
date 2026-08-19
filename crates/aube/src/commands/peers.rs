@@ -31,13 +31,13 @@ Examples:
   $ aube peers check --json
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PeersArgs {
     #[usage(subcommand)]
     pub command: PeersCommand,
 }
 
-#[derive(Debug, usage_derive::Subcommands)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum PeersCommand {
     /// Check for unmet and missing peer-dependency issues by reading the
     /// lockfile.
@@ -46,7 +46,7 @@ pub enum PeersCommand {
     Check(PeersCheckArgs),
 }
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 #[usage(after_long_help = CHECK_AFTER_LONG_HELP)]
 pub struct PeersCheckArgs {
     /// Emit a JSON report instead of the human-readable tree.

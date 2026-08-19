@@ -28,7 +28,7 @@ Examples:
   $ aube approve-builds
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct IgnoredBuildsArgs {
     /// Operate on globally-installed packages instead of the current project.
     #[usage(short = 'g', long)]

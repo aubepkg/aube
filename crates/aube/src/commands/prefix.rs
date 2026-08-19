@@ -14,7 +14,7 @@ Examples:
   /home/user/.local/share/pnpm
 ";
 
-#[derive(Debug, usage_derive::Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PrefixArgs {
     /// Print the global prefix directory instead of the project's root
     #[usage(short, long)]
