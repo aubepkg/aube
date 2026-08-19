@@ -72,8 +72,8 @@ toml = "1"
 rkyv = "0.8"
 
 # CLI
-usage-rs = { version = "5.1.0", git = "https://github.com/jdx/usage", rev = "38d53d28bdc2730158285976f686459e6cb0aec4", features = ["diagnostics", "completions"] }
-usage-validation = { version = "5.1.0", git = "https://github.com/jdx/usage", rev = "38d53d28bdc2730158285976f686459e6cb0aec4" }
+usage-rs = { version = "5.1.0", git = "https://github.com/jdx/usage", rev = "053fca735614697d4d3a59311330467da14994df", features = ["diagnostics", "completions"] }
+usage-validation = { version = "5.1.0", git = "https://github.com/jdx/usage", rev = "053fca735614697d4d3a59311330467da14994df" }
 
 # Enum derives (Display/FromStr/etc.)
 strum = { version = "0.28", features = ["derive"] }
