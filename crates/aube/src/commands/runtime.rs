@@ -49,7 +49,7 @@ pub struct RuntimeSetArgs {
 }
 
 #[derive(Debug, usage_rs::Args)]
-pub struct RuntimeListArgs {}
+pub struct RuntimeListArgs;
 
 pub async fn run(args: RuntimeArgs) -> miette::Result<()> {
     match args.command {

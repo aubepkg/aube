@@ -349,7 +349,7 @@ cmd "cache" help="Inspect and manage the packument metadata cache" effect="read"
     cmd "path" help="Print the directory used for metadata and policy caches." effect="read" {
     }
     cmd "prune" help="Remove stale extracted primer files from the metadata cache." effect="write" {
-        flag "--age-days" help="Minimum age in days before an old primer file is removed." required=#true default="30" {
+        flag "--age-days" help="Minimum age in days before an old primer file is removed." default="30" {
             arg "<AGE_DAYS>"
         }
         flag "--dry-run" help="Do not actually delete anything."
@@ -453,7 +453,7 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
         alias "remove"
         alias "unset"
         flag "--local" help="Shortcut for `--location project`." conflicts="--location"
-        flag "--location" help="Which config location to act on." required=#true default="user" {
+        flag "--location" help="Which config location to act on." default="user" {
             long_help "Which config location to act on.\n\nDefaults to `user`. Delete sweeps both aube's own config\n(`~/.config/aube/config.toml` at user-scope,\n`<cwd>/.config/aube/config.toml` at project-scope) and the\nmatching `.npmrc`, so the call works regardless of which file\nthe value was originally written to."
             arg "<LOCATION>" {
                 choices "user" "project" "global"
@@ -475,7 +475,7 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
             long_help "Emit the value as JSON.\n\nMatches `pnpm config get --json`: a missing key renders as\n`undefined`, a found value is JSON-encoded."
         }
         flag "--local" help="Shortcut for `--location project`." conflicts="--location"
-        flag "--location" help="Which config location(s) to read." required=#true default="merged" {
+        flag "--location" help="Which config location(s) to read." default="merged" {
             long_help "Which config location(s) to read.\n\nDefaults to `merged` — the last-write-wins view of user aube\nconfig, `~/.npmrc`, then `./.npmrc`, matching what install\nactually sees. Use `user` or `project` to restrict the lookup."
             arg "<LOCATION>" {
                 choices "merged" "user" "project" "global"
@@ -506,7 +506,7 @@ cmd "config" help="Read and write settings in `.npmrc`" effect="read" {
     }
     cmd "set" help="Write a key=value pair to aube config or the selected `.npmrc` file" effect="write" {
         flag "--local" help="Shortcut for `--location project`." conflicts="--location"
-        flag "--location" help="Which config location to write to." required=#true default="user" {
+        flag "--location" help="Which config location to write to." default="user" {
             long_help "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared\nsurface — per-host auth/cert templates, scoped registries, and\nsettings tagged `npmShared = true` in the settings registry\n(`registry`, `proxy` / `https-proxy`, `engine-strict`,\n`ignore-scripts`, etc.) — so npm and yarn read the same value.\nAube-only and pnpm-only settings, plus unknown keys, land in\naube's own config (`~/.config/aube/config.toml` at user scope,\n`<cwd>/.config/aube/config.toml` at project scope) where\nsibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`,\n`overrides.<pkg>`, …) edit one entry at a time. At project\nscope (`--local`) they land in\n`pnpm-workspace.yaml#<map>.<entry>` or\n`package.json#aube.<map>.<entry>` if no workspace yaml exists,\nthe same place install reads from. User-scope dotted writes\nfor these maps error: aube only reads them per project."
             arg "<LOCATION>" {
                 choices "user" "project" "global"
@@ -721,10 +721,10 @@ cmd "diag" help="Diagnostic trace analysis (compare/analyze JSONL traces)" effec
         arg "<PATH>" help="Trace JSONL"
     }
     cmd "compare" help="Diff two diag JSONL traces and surface per-operation regressions." effect="read" {
-        flag "--min-delta-ms" help="Minimum |Δsum_ms| to surface (default 50)" required=#true default="50" {
+        flag "--min-delta-ms" help="Minimum |Δsum_ms| to surface (default 50)" default="50" {
             arg "<MIN_DELTA_MS>"
         }
-        flag "--min-pct" help="Minimum |%change| to surface (default 10)" required=#true default="10" {
+        flag "--min-pct" help="Minimum |%change| to surface (default 10)" default="10" {
             arg "<MIN_PCT>"
         }
         arg "<A>" help="Baseline trace"
@@ -991,7 +991,7 @@ cmd "get" help="Alias for `config get` (hidden; prefer `config get`)" hide=#true
         long_help "Emit the value as JSON.\n\nMatches `pnpm config get --json`: a missing key renders as\n`undefined`, a found value is JSON-encoded."
     }
     flag "--local" help="Shortcut for `--location project`." conflicts="--location"
-    flag "--location" help="Which config location(s) to read." required=#true default="merged" {
+    flag "--location" help="Which config location(s) to read." default="merged" {
         long_help "Which config location(s) to read.\n\nDefaults to `merged` — the last-write-wins view of user aube\nconfig, `~/.npmrc`, then `./.npmrc`, matching what install\nactually sees. Use `user` or `project` to restrict the lookup."
         arg "<LOCATION>" {
             choices "merged" "user" "project" "global"
@@ -1212,11 +1212,11 @@ cmd "la" help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#tru
     flag "-D --dev" help="Show only devDependencies" conflicts="--prod"
     flag "-g --global" help="List globally-installed packages instead of the project's dependency tree"
     flag "-P --prod --production" help="Show only production dependencies (skip devDependencies)" conflicts="--dev"
-    flag "--depth" help="How deep to render the transitive tree." required=#true default="0" {
+    flag "--depth" help="How deep to render the transitive tree." default="0" {
         long_help "How deep to render the transitive tree.\n\n`0` (default) shows only the top-level direct deps. Pass\n`9999` (or any large number) for the full graph;\n`--depth=Infinity` is accepted for pnpm/npm compat.\n`--depth=-1` (pnpm spelling) lists project headers only —\nno direct or transitive deps."
         arg "<DEPTH>"
     }
-    flag "--format" help="Output format: one of `default`, `json`, or `parseable`" required=#true default="default" {
+    flag "--format" help="Output format: one of `default`, `json`, or `parseable`" default="default" {
         arg "<FORMAT>" {
             choices "default" "json" "parseable"
         }
@@ -1281,11 +1281,11 @@ cmd "list" help="Print the resolved dependency tree" effect="read" {
     flag "-D --dev" help="Show only devDependencies" conflicts="--prod"
     flag "-g --global" help="List globally-installed packages instead of the project's dependency tree"
     flag "-P --prod --production" help="Show only production dependencies (skip devDependencies)" conflicts="--dev"
-    flag "--depth" help="How deep to render the transitive tree." required=#true default="0" {
+    flag "--depth" help="How deep to render the transitive tree." default="0" {
         long_help "How deep to render the transitive tree.\n\n`0` (default) shows only the top-level direct deps. Pass\n`9999` (or any large number) for the full graph;\n`--depth=Infinity` is accepted for pnpm/npm compat.\n`--depth=-1` (pnpm spelling) lists project headers only —\nno direct or transitive deps."
         arg "<DEPTH>"
     }
-    flag "--format" help="Output format: one of `default`, `json`, or `parseable`" required=#true default="default" {
+    flag "--format" help="Output format: one of `default`, `json`, or `parseable`" default="default" {
         arg "<FORMAT>" {
             choices "default" "json" "parseable"
         }
@@ -1307,11 +1307,11 @@ cmd "ll" help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#tru
     flag "-D --dev" help="Show only devDependencies" conflicts="--prod"
     flag "-g --global" help="List globally-installed packages instead of the project's dependency tree"
     flag "-P --prod --production" help="Show only production dependencies (skip devDependencies)" conflicts="--dev"
-    flag "--depth" help="How deep to render the transitive tree." required=#true default="0" {
+    flag "--depth" help="How deep to render the transitive tree." default="0" {
         long_help "How deep to render the transitive tree.\n\n`0` (default) shows only the top-level direct deps. Pass\n`9999` (or any large number) for the full graph;\n`--depth=Infinity` is accepted for pnpm/npm compat.\n`--depth=-1` (pnpm spelling) lists project headers only —\nno direct or transitive deps."
         arg "<DEPTH>"
     }
-    flag "--format" help="Output format: one of `default`, `json`, or `parseable`" required=#true default="default" {
+    flag "--format" help="Output format: one of `default`, `json`, or `parseable`" default="default" {
         arg "<FORMAT>" {
             choices "default" "json" "parseable"
         }
@@ -1331,7 +1331,7 @@ cmd "ll" help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#tru
 }
 cmd "login" help="Store a registry auth token in the user's ~/.npmrc" effect="write" {
     alias "adduser"
-    flag "--auth-type" help="Authentication flow: `legacy` (token paste; default) or `web` (OAuth flow against `{registry}/-/v1/login`)." required=#true default="legacy" {
+    flag "--auth-type" help="Authentication flow: `legacy` (token paste; default) or `web` (OAuth flow against `{registry}/-/v1/login`)." default="legacy" {
         long_help "Authentication flow: `legacy` (token paste; default) or `web`\n(OAuth flow against `{registry}/-/v1/login`)."
         arg "<TYPE>"
     }
@@ -1505,7 +1505,7 @@ cmd "patch" help="Extract a package into an edit directory so it can be patched"
     }
 }
 cmd "patch-commit" help="Generate a `.patch` file from a `aube patch` edit directory" effect="write" {
-    flag "--patches-dir" help="Where to write the generated `.patch` file, relative to the project root." required=#true default="patches" {
+    flag "--patches-dir" help="Where to write the generated `.patch` file, relative to the project root." default="patches" {
         long_help "Where to write the generated `.patch` file, relative to the\nproject root.\n\nDefaults to `patches`.\n\nIgnored when the dependency already has a declared patch path;\nthe existing path is always reused in that case."
         arg "<DIR>"
     }
@@ -1839,7 +1839,7 @@ cmd "runtime" help="Manage the project's Node.js runtime (pin, install, inspect)
         flag "-g --global" help="Install for the user instead of the project (delegates to `mise use -g node@<version>` when mise manages installs)" {
             long_help "Install for the user instead of the project (delegates to\n`mise use -g node@<version>` when mise manages installs)"
         }
-        flag "--on-fail" help="`onFail` policy written to devEngines.runtime" required=#true default="download" {
+        flag "--on-fail" help="`onFail` policy written to devEngines.runtime" default="download" {
             arg "<POLICY>"
         }
         flag "--save-exact" help="Pin the exact resolved version instead of a caret range"
@@ -1852,7 +1852,7 @@ cmd "runtime" help="Manage the project's Node.js runtime (pin, install, inspect)
 cmd "sbom" help="Generate a Software Bill of Materials (CycloneDX or SPDX)" effect="read" {
     flag "-D --dev" help="Show only devDependencies" conflicts="--prod"
     flag "--exclude-peers" help="Exclude peer dependencies from CycloneDX output"
-    flag "--format" help="Output format: `cyclonedx` (default) or `spdx`" required=#true default="cyclonedx" {
+    flag "--format" help="Output format: `cyclonedx` (default) or `spdx`" default="cyclonedx" {
         arg "<FORMAT>" {
             choices "cyclonedx" "spdx"
         }
@@ -1891,7 +1891,7 @@ cmd "search" help="Search the registry for packages (not implemented — use `np
 }
 cmd "set" help="Alias for `config set` (hidden; prefer `config set`)" hide=#true effect="write" {
     flag "--local" help="Shortcut for `--location project`." conflicts="--location"
-    flag "--location" help="Which config location to write to." required=#true default="user" {
+    flag "--location" help="Which config location to write to." default="user" {
         long_help "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared\nsurface — per-host auth/cert templates, scoped registries, and\nsettings tagged `npmShared = true` in the settings registry\n(`registry`, `proxy` / `https-proxy`, `engine-strict`,\n`ignore-scripts`, etc.) — so npm and yarn read the same value.\nAube-only and pnpm-only settings, plus unknown keys, land in\naube's own config (`~/.config/aube/config.toml` at user scope,\n`<cwd>/.config/aube/config.toml` at project scope) where\nsibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`,\n`overrides.<pkg>`, …) edit one entry at a time. At project\nscope (`--local`) they land in\n`pnpm-workspace.yaml#<map>.<entry>` or\n`package.json#aube.<map>.<entry>` if no workspace yaml exists,\nthe same place install reads from. User-scope dotted writes\nfor these maps error: aube only reads them per project."
         arg "<LOCATION>" {
             choices "user" "project" "global"

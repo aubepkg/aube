@@ -1,5 +1,5 @@
 #[derive(Debug, usage_rs::Args)]
-pub struct SponsorsArgs {}
+pub struct SponsorsArgs;
 
 pub async fn run(_args: SponsorsArgs) -> miette::Result<()> {
     println!(
