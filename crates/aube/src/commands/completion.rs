@@ -83,8 +83,10 @@ fn complete_script(
     ctx: usage_rs::spec::CompleteCtx<'_>,
 ) -> usage_rs::complete::CompletionFuture<'_> {
     Box::pin(async move {
-        let dir = completion_dir(&ctx);
-        finish(super::run::script_completion_candidates(dir.as_deref()))
+        let Some(dir) = completion_dir(&ctx) else {
+            return Vec::new();
+        };
+        finish(super::run::script_completion_candidates(Some(&dir)))
     })
 }
 
