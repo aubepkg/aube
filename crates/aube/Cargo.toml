@@ -138,7 +138,6 @@ hickory-dns = ["reqwest/hickory-dns", "aube-registry/hickory-dns"]
 workspace-yaml-preserve = ["aube-manifest/workspace-yaml-preserve"]
 
 [dev-dependencies]
-clap-sort = "1"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
