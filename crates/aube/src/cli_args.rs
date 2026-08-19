@@ -136,22 +136,14 @@ pub struct VirtualStoreArgs {
     ///
     /// Packages are materialized inside the project's virtual store
     /// instead of symlinked from `~/.cache/aube/virtual-store/`.
-    #[usage(
-        long,
-        long = "disable-gvs",
-        conflicts = "--enable-global-virtual-store"
-    )]
+    #[usage(long, long = "disable-gvs", conflicts = "--enable-gvs")]
     pub disable_global_virtual_store: bool,
 
     /// Force the shared global virtual store on for this invocation.
     ///
     /// Overrides CI's default per-project materialization and the
     /// `disableGlobalVirtualStoreForPackages` auto-disable heuristic.
-    #[usage(
-        long,
-        long = "enable-gvs",
-        conflicts = "--disable-global-virtual-store"
-    )]
+    #[usage(long, long = "enable-gvs", conflicts = "--disable-gvs")]
     pub enable_global_virtual_store: bool,
 }
 

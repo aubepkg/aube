@@ -1422,6 +1422,14 @@ mod cli_spec_tests {
     }
 
     #[test]
+    fn virtual_store_overrides_conflict() {
+        assert!(
+            Cli::try_parse_from(["aube", "install", "--enable-gvs", "--disable-gvs"]).is_err(),
+            "the two virtual-store overrides should remain mutually exclusive"
+        );
+    }
+
+    #[test]
     fn pre_subcommand_registry_lifts_to_install() {
         // pnpm-compat: `--registry=URL install` continues to parse via
         // `lift_per_subcommand_flags`, which shifts the flag past the
