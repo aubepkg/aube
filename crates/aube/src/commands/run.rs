@@ -430,6 +430,16 @@ fn single_line(cmd: &str) -> String {
 /// `package.json` prints nothing rather than erroring, because the caller
 /// is a TAB press and completion noise is worse than no completions.
 pub(crate) fn print_script_completions(dir: Option<&Path>) {
+    let candidates = script_completion_candidates(dir);
+    let mut out = String::new();
+    for (name, cmd) in candidates {
+        out.push_str(&completion_line(&name, &cmd));
+        out.push('\n');
+    }
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), out.as_bytes());
+}
+
+pub(crate) fn script_completion_candidates(dir: Option<&Path>) -> Vec<(String, String)> {
     // Establish where to search *without* chdir'ing. `cli_main` is a
     // library entry point, so an embedding host is driving this in-process
     // and would keep any cwd change we made.
@@ -447,30 +457,18 @@ pub(crate) fn print_script_completions(dir: Option<&Path>) {
     // missing. (`read_dir` would test the read bit instead and reject
     // execute-only directories a real run handles fine.)
     let Some(start) = super::completion_start_dir(dir) else {
-        return;
+        return Vec::new();
     };
     let Some(root) = crate::dirs::find_project_root(&start) else {
-        return;
+        return Vec::new();
     };
     let Ok(scripts) = read_scripts_in_order(&root) else {
-        return;
+        return Vec::new();
     };
-    let mut out = String::new();
-    for (name, cmd) in &scripts {
-        // JSON keys can hold a newline, and the protocol is one candidate
-        // per line — such a name would split into several bogus
-        // candidates, none of which names a real script. Nothing sane can
-        // be offered for it, so skip it.
-        if name.contains(['\n', '\r']) {
-            continue;
-        }
-        out.push_str(&completion_line(name, cmd));
-        out.push('\n');
-    }
-    // `write_all` rather than `print!`: the latter panics if stdout is
-    // gone, and a completion helper whose reader closed the pipe should
-    // just stop, not abort with a panic message.
-    let _ = std::io::Write::write_all(&mut std::io::stdout(), out.as_bytes());
+    scripts
+        .into_iter()
+        .filter(|(name, _)| !name.contains(['\n', '\r']))
+        .collect()
 }
 
 /// Format one `name:command` completion line. `usage` splits each line on

@@ -33,13 +33,11 @@
 //! and mislabeling one `read` is the dangerous one. Commands that run
 //! user-supplied code have no fixed effect and are listed in [`UNCLASSIFIED`].
 
-use std::collections::HashMap;
-
-use usage;
-use usage::SpecCommandEffect::{self, Destructive, Read, Write};
+use Effect::{Destructive, Read, Write};
+use usage_rs::spec::{CommandOverlay, Effect};
 
 /// Commands whose effect is fixed, keyed by their full path under the binary.
-pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
+pub const EFFECTS: &[(&str, Effect)] = &[
     ("__node-gyp-bootstrap", Write),
     ("access", Read),
     ("access get", Read),
@@ -177,7 +175,7 @@ pub const EFFECTS: &[(&str, SpecCommandEffect)] = &[
 ///
 /// `config tui` is deliberately *not* here: a `cfg(not(feature = "config-tui"))`
 /// stub keeps the subcommand present either way, it just errors when invoked.
-pub const FEATURE_EFFECTS: &[(&str, SpecCommandEffect)] = &[
+pub const FEATURE_EFFECTS: &[(&str, Effect)] = &[
     // Publishes to the registry. Creates rather than removes, so `write` by
     // the rules above — but a published version cannot be replaced, and every
     // consumer can see it immediately. Never auto-run this.
@@ -211,26 +209,13 @@ pub const UNCLASSIFIED: &[(&str, &str)] = &[
     ("test", "runs the package's test script"),
 ];
 
-/// Annotate every command in the spec that has a declared effect.
-pub fn apply(spec: &mut usage::Spec) {
-    let effects: HashMap<&str, SpecCommandEffect> =
-        EFFECTS.iter().chain(FEATURE_EFFECTS).copied().collect();
-    annotate(&mut spec.cmd, &mut vec![], &effects);
-}
-
-fn annotate(
-    cmd: &mut usage::SpecCommand,
-    path: &mut Vec<String>,
-    effects: &HashMap<&str, SpecCommandEffect>,
-) {
-    for (name, sub) in cmd.subcommands.iter_mut() {
-        path.push(name.clone());
-        if let Some(effect) = effects.get(path.join(" ").as_str()) {
-            sub.effect = Some(*effect);
-        }
-        annotate(sub, path, effects);
-        path.pop();
-    }
+/// Sparse metadata applied to the derived spec on cold paths.
+pub fn overlays() -> Vec<CommandOverlay<'static>> {
+    EFFECTS
+        .iter()
+        .chain(FEATURE_EFFECTS)
+        .map(|(path, effect)| CommandOverlay::effect(path, *effect))
+        .collect()
 }
 
 #[cfg(test)]
@@ -241,17 +226,18 @@ mod tests {
     /// Every command in the tree, hidden ones included: a hidden command is
     /// still runnable.
     fn all_commands() -> Vec<String> {
-        let spec: usage::Spec = crate::usage_kdl()
-            .parse()
-            .expect("derived spec should parse");
         let mut out = vec![];
-        collect(&spec.cmd, &mut vec![], &mut out);
+        collect(crate::spec().root, &mut vec![], &mut out);
         out
     }
 
-    fn collect(cmd: &usage::SpecCommand, path: &mut Vec<String>, out: &mut Vec<String>) {
-        for (name, sub) in &cmd.subcommands {
-            path.push(name.clone());
+    fn collect(
+        cmd: &usage_rs::spec::CommandMeta<'_>,
+        path: &mut Vec<String>,
+        out: &mut Vec<String>,
+    ) {
+        for sub in cmd.subcommands {
+            path.push(sub.cmd.name.to_string());
             out.push(path.join(" "));
             collect(sub, path, out);
             path.pop();
@@ -314,30 +300,13 @@ mod tests {
         }
     }
 
-    /// The tables are only worth having if they reach the spec. Everything
-    /// else here checks the tables against the CLI; this checks that `apply`
-    /// actually transfers them.
+    /// The tables are only worth having if they reach emitted metadata.
     #[test]
-    fn apply_annotates_the_spec() {
-        let mut spec: usage::Spec = crate::usage_kdl()
-            .parse()
-            .expect("derived spec should parse");
-        apply(&mut spec);
-
-        let cmd = |name: &str| {
-            spec.cmd
-                .subcommands
-                .get(name)
-                .unwrap_or_else(|| panic!("no `{name}`"))
-        };
-        assert_eq!(cmd("unpublish").effect, Some(Destructive));
-        assert_eq!(cmd("remove").effect, Some(Destructive));
-        assert_eq!(cmd("list").effect, Some(Read));
-        assert_eq!(cmd("install").effect, Some(Write));
-        // Nested commands are reached too.
-        assert_eq!(cmd("dist-tag").subcommands["rm"].effect, Some(Destructive));
-        // Anything in UNCLASSIFIED must be left unset, not defaulted.
-        assert_eq!(cmd("run").effect, None);
-        assert_eq!(cmd("dlx").effect, None);
+    fn overlays_annotate_the_spec() {
+        let kdl = crate::usage_kdl();
+        assert!(kdl.contains("cmd \"unpublish\"") && kdl.contains("effect=\"destructive\""));
+        assert!(kdl.contains("cmd \"list\"") && kdl.contains("effect=\"read\""));
+        assert!(kdl.contains("cmd \"install\"") && kdl.contains("effect=\"write\""));
+        assert!(kdl.contains("cmd \"rm\"") && kdl.contains("effect=\"destructive\""));
     }
 }

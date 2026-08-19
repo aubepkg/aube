@@ -605,7 +605,26 @@ pub fn spec() -> &'static usage_rs::spec::Spec<'static> {
 }
 
 pub fn usage_kdl() -> String {
-    Cli::to_kdl()
+    let overlays = command_effects::overlays();
+    Cli::app().overlay(&overlays).to_kdl()
+}
+
+pub fn usage_kdl_for(name: &'static str) -> String {
+    let overlays = command_effects::overlays();
+    Cli::app().name(name).bin(name).overlay(&overlays).to_kdl()
+}
+
+pub fn completion_app(name: &'static str) -> usage_rs::complete::App<'static> {
+    let app = Cli::app()
+        .name(name)
+        .bin(name)
+        .completion_app()
+        .completions(&commands::completion::COMPLETIONS);
+    match name {
+        "aubr" => app.project("run"),
+        "aubx" => app.project("dlx"),
+        _ => app,
+    }
 }
 
 fn print_subcommand_help(name: &str) -> miette::Result<()> {
@@ -697,6 +716,28 @@ fn report_exit_code(report: &miette::Report) -> i32 {
 
 fn inner_main() -> miette::Result<i32> {
     let mut argv: Vec<OsString> = std::env::args_os().collect();
+    if argv.get(1).and_then(|arg| arg.to_str()) == Some("__complete_word__") {
+        let name = argv
+            .first()
+            .and_then(|arg| std::path::Path::new(arg).file_stem())
+            .and_then(|name| name.to_str())
+            .and_then(|name| match name {
+                "aubr" => Some("aubr"),
+                "aubx" => Some("aubx"),
+                _ => None,
+            })
+            .unwrap_or("aube");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .into_diagnostic()
+            .wrap_err("failed to build completion runtime")?;
+        if let Some(answer) = runtime.block_on(completion_app(name).completion_request(&argv[1..]))
+        {
+            print!("{answer}");
+        }
+        return Ok(0);
+    }
     // pnpm-compat: pull `--config.<key>[=<value>]` out of argv before
     // clap parses it. Stripping here means the rest of the binary sees
     // a clean argv, and the parsed pairs feed every `ResolveCtx::cli`
@@ -759,20 +800,6 @@ fn inner_main() -> miette::Result<i32> {
         commands::run::print_script_completions(cli.dir.as_deref());
         return Ok(0);
     }
-    if let Some(Commands::Completion(args)) = cli.command.as_ref()
-        && args.is_probe()
-    {
-        // Package search is async, but a completion probe does not need the
-        // full multi-thread runtime and blocking pool used by installs.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .into_diagnostic()
-            .wrap_err("failed to build completion runtime")?;
-        runtime.block_on(args.run_probe(cli.dir.as_deref()));
-        return Ok(0);
-    }
-
     // `--color` / `--no-color` take effect before anything else touches
     // color state: we translate the flags into the env vars that miette,
     // clx, `supports-color`, and spawned child processes all already
