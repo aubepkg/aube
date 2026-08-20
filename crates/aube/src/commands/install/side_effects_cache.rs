@@ -71,8 +71,10 @@ impl SideEffectsCacheEntry {
             .as_ref()
             .is_some_and(|marker| marker.output_hash == current_hash);
         let input_hash = match marker {
-            Some(marker) => marker.input_hash,
-            None => current_hash,
+            Some(marker) if already_applied || marker.input_hash == current_hash => {
+                marker.input_hash
+            }
+            _ => current_hash,
         };
         let safe_name = name.replace('/', "__");
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
@@ -569,6 +571,36 @@ mod tests {
         let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
         assert!(matches!(
             entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Miss
+        ));
+    }
+
+    #[test]
+    fn changed_package_does_not_restore_stale_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            "{\"name\":\"p\",\"revision\":1}\n",
+        )
+        .unwrap();
+
+        let original = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        std::fs::write(pkg.join("built.node"), "old build").unwrap();
+        original.save(&pkg, false).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            "{\"name\":\"p\",\"revision\":2}\n",
+        )
+        .unwrap();
+        std::fs::remove_file(pkg.join("built.node")).unwrap();
+
+        let changed = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        assert_ne!(changed.path, original.path);
+        assert!(matches!(
+            changed.restore_if_available(&pkg).unwrap(),
             SideEffectsCacheRestore::Miss
         ));
     }
