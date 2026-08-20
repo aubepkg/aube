@@ -24,7 +24,7 @@ flag --aggregate-output help="Group workspace command output after each package 
 flag --color help="Force colored output even when stderr is not a TTY." global=#true conflicts=--no-color {
     long_help "Force colored output even when stderr is not a TTY.\n\nOverrides `NO_COLOR` / `CLICOLOR=0`. Mutually exclusive with\n`--no-color`."
 }
-flag --diag help="Enable cold-install deep diagnostics. Modes:   summary  — sum_ms / mean / max / %wall table at end   trace    — summary + critical path + starvation + what-if + lifecycle   live     — like trace, plus print every span >= 100ms to stderr live   full     — like trace, plus write JSONL trace to a file (defaults to ./aube-diag.jsonl)" global=#true default_missing=trace {
+flag --diag help="Enable cold-install deep diagnostics. Modes:   summary  — sum_ms / mean / max / %wall table at end   trace    — summary + critical path + starvation + what-if + lifecycle   live     — like trace, plus print every span >= 100ms to stderr live   full     — like trace, plus write JSONL trace to a file (defaults to ./aube-diag.jsonl)" global=#true value_optional=#true default_missing=trace {
     long_help "Enable cold-install deep diagnostics. Modes:\n  summary  — sum_ms / mean / max / %wall table at end\n  trace    — summary + critical path + starvation + what-if + lifecycle\n  live     — like trace, plus print every span >= 100ms to stderr live\n  full     — like trace, plus write JSONL trace to a file (defaults to ./aube-diag.jsonl)\n\nQuick form: `--diag` with no value defaults to `trace`.\nOutput file path can be set via `--diag-file`. Threshold for live\nmode via `--diag-threshold-ms`."
     arg "[MODE]" required=#false
 }
@@ -268,7 +268,7 @@ cmd audit help="Check installed packages against the registry advisory DB" effec
         }
     }
     flag "-D --dev" help="Only audit `devDependencies`." conflicts=--prod
-    flag --fix help="Fix advisories." default_missing=override {
+    flag --fix help="Fix advisories." value_optional=#true default_missing=override {
         long_help "Fix advisories.\n\nBare `--fix` writes package.json overrides for backwards compatibility.\n`--fix=update` refreshes the lockfile without writing overrides."
         arg "[FIX]" required=#false {
             choices {
@@ -1809,10 +1809,10 @@ cmd run help="Run a script defined in package.json" {
         long_help "Print the nearest `package.json`'s scripts for shell completion.\n\nConsumed by the `complete \"script\"` node in the usage spec, not\nmeant to be typed by hand."
     }
     flag --if-present help="Don't error if the script is missing from package.json"
-    flag --inspect help="Forward `--inspect` to a Node-backed script or local binary." require_equals=#true default_missing="" {
+    flag --inspect help="Forward `--inspect` to a Node-backed script or local binary." require_equals=#true value_optional=#true default_missing="" {
         arg "[[[HOST:]PORT]]" required=#false
     }
-    flag --inspect-brk help="Forward `--inspect-brk` to a Node-backed script or local binary." require_equals=#true default_missing="" {
+    flag --inspect-brk help="Forward `--inspect-brk` to a Node-backed script or local binary." require_equals=#true value_optional=#true default_missing="" {
         arg "[[[HOST:]PORT]]" required=#false
     }
     flag --no-bail help="Continue recursive execution after a script fails." {
@@ -2496,32 +2496,21 @@ cmd why help="Print reverse dependency chains explaining why a package is instal
     arg <PACKAGE> help="Package name to search for (exact match against package names)"
 }
 
-// `aube run <TAB>` offers the scripts from the package.json nearest the
-// shell's cwd.
-//
-// The command is fixed, so a `-C` on the line being completed is not
-// forwarded and `aube -C packages/api run <TAB>` still offers the outer
-// project's scripts. usage's only channel for the typed words is tera
-// interpolation into a `sh -c` string, with no shell-quoting filter, so
-// forwarding it would mean pasting user input into a shell command. The
-// helper itself honors `-C` for direct invocation, ready for a safer
-// channel upstream.
-complete "script" run="aube run --complete" descriptions=#true
+// Route external usage consumers to the compiled completer used by the
+// built-in scripts. The complete argv is preserved, including `-C`.
+complete "script" run="aube __complete_word__ --candidates script --line={{ words | shell_join | shell_quote }}"
 
 // Keep value completers in a shared fragment so `aube usage`, `aubr`, and
 // `aubx` are generated from the same candidate protocol.
-// Dynamic completion follows mise's custom-completer pattern: the usage
-// spec delegates candidate production to a hidden, machine-oriented CLI mode.
-//
-// usage renders the current token into `sh -c`. Wrap it in single quotes and
-// replace every embedded apostrophe with the POSIX close/escape/reopen form so
-// arbitrary input remains one inert argument.
-complete "package" run=#"aube completion _ --complete package --query='{{ words[CURRENT] | replace(from="'", to="'\\''") }}'"# descriptions=#true
-complete "packages" run=#"aube completion _ --complete package --query='{{ words[CURRENT] | replace(from="'", to="'\\''") }}'"# descriptions=#true
-complete "pkg" run=#"aube completion _ --complete package --query='{{ words[CURRENT] | replace(from="'", to="'\\''") }}'"# descriptions=#true
-complete "bin" run="aube completion _ --complete bin" descriptions=#true
-complete "workspace" run="aube completion _ --complete workspace" descriptions=#true
-complete "key" run="aube completion _ --complete setting" descriptions=#true
-complete "patch" run="aube completion _ --complete patch" descriptions=#true
+// Let external usage consumers ask the same compiled completers as the
+// built-in scripts. shell_join preserves argv boundaries; shell_quote carries
+// the reconstructed line through sh -c as one inert --line value.
+complete "package" run="aube __complete_word__ --candidates package --line={{ words | shell_join | shell_quote }}"
+complete "packages" run="aube __complete_word__ --candidates packages --line={{ words | shell_join | shell_quote }}"
+complete "pkg" run="aube __complete_word__ --candidates pkg --line={{ words | shell_join | shell_quote }}"
+complete "bin" run="aube __complete_word__ --candidates bin --line={{ words | shell_join | shell_quote }}"
+complete "workspace" run="aube __complete_word__ --candidates workspace --line={{ words | shell_join | shell_quote }}"
+complete "key" run="aube __complete_word__ --candidates key --line={{ words | shell_join | shell_quote }}"
+complete "patch" run="aube __complete_word__ --candidates patch --line={{ words | shell_join | shell_quote }}"
 complete "dir" type="dir"
 complete "path" type="path"
