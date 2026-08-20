@@ -304,9 +304,19 @@ mod tests {
     #[test]
     fn overlays_annotate_the_spec() {
         let kdl = crate::usage_kdl();
-        assert!(kdl.contains("cmd \"unpublish\"") && kdl.contains("effect=\"destructive\""));
-        assert!(kdl.contains("cmd \"list\"") && kdl.contains("effect=\"read\""));
-        assert!(kdl.contains("cmd \"install\"") && kdl.contains("effect=\"write\""));
-        assert!(kdl.contains("cmd \"rm\"") && kdl.contains("effect=\"destructive\""));
+        for (command, effect) in [
+            ("unpublish", "destructive"),
+            ("list", "read"),
+            ("install", "write"),
+            ("rm", "destructive"),
+        ] {
+            assert!(
+                kdl.lines().any(|line| {
+                    line.trim_start().starts_with(&format!("cmd {command} "))
+                        && line.contains(&format!("effect={effect}"))
+                }),
+                "{command} is missing effect={effect} from the emitted spec"
+            );
+        }
     }
 }
