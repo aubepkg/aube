@@ -153,10 +153,14 @@ jobs:
               # this repository's audited lockfile. Ignore only the current crates.io
               # arrayref incident; every real semver finding and every other resolver
               # failure must continue to fail the gate.
-              if [ "$semver_status" -ne 0 ] \
-                && grep -q 'no matching package named `proc-macro1` found' /tmp/semver-output \
-                && grep -q 'required by package `arrayref v0.3.10`' /tmp/semver-output; then
-                echo "::warning::cargo-semver-checks could not resolve the compromised arrayref 0.3.10 release; preserving the lockfile-backed API baseline"
+              if [ "$semver_status" -ne 0 ] && {
+                { grep -q 'no matching package named `proc-macro1` found' /tmp/semver-output \
+                  && grep -q 'required by package `arrayref v0.3.10`' /tmp/semver-output; } \
+                || { grep -q 'failed to select a version for the requirement `arrayref = "\^0.3.5"`' /tmp/semver-output \
+                  && grep -q 'version 0.3.9 is yanked' /tmp/semver-output \
+                  && grep -q 'required by package `blake3 v1.8.5`' /tmp/semver-output; }
+              }; then
+                echo "::warning::cargo-semver-checks could not resolve the current crates.io arrayref incident; preserving the lockfile-backed API baseline"
                 semver_status=0
               fi
               set -e
