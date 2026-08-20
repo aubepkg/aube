@@ -37,6 +37,8 @@ or a `package.json` with a `workspaces` field and runs the
 remove against that directory. Takes precedence over `--filter`
 when both are supplied (same as `add --workspace`).
 
+## Lockfile
+
 ### `--frozen-lockfile`
 
 Error if the lockfile drifts from package.json.
@@ -48,6 +50,8 @@ Always re-resolve, even if the lockfile is up to date.
 ### `--prefer-frozen-lockfile`
 
 Use the lockfile when fresh, re-resolve when stale.
+
+## Network
 
 ### `--fetch-retries <N>`
 
@@ -64,7 +68,7 @@ Exponential backoff factor between retry attempts.
 Overrides `fetchRetryFactor` / `fetch-retry-factor` from
 `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
 underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-values like `1.5` are rejected by clap.
+values like `1.5` are rejected by the CLI parser.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
@@ -94,6 +98,8 @@ Override the default registry URL for this invocation.
 
 Use this npm registry URL for package metadata, tarballs,
 audit requests, dist-tags, and registry writes.
+
+## Virtual store
 
 ### `--disable-global-virtual-store`
 

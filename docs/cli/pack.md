@@ -24,6 +24,8 @@ Print the result as a JSON object
 
 Directory to write the tarball into (default: current directory)
 
+## Network
+
 ### `--fetch-retries <N>`
 
 Number of retry attempts for failed registry fetches.
@@ -39,7 +41,7 @@ Exponential backoff factor between retry attempts.
 Overrides `fetchRetryFactor` / `fetch-retry-factor` from
 `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
 underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-values like `1.5` are rejected by clap.
+values like `1.5` are rejected by the CLI parser.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
