@@ -1491,13 +1491,8 @@ mod cli_spec_tests {
     #[test]
     fn install_rejects_incompatible_lockfile_modes() {
         assert!(
-            Cli::try_parse_test_from([
-                "aube",
-                "install",
-                "--fix-lockfile",
-                "--frozen-lockfile"
-            ])
-            .is_err(),
+            Cli::try_parse_test_from(["aube", "install", "--fix-lockfile", "--frozen-lockfile"])
+                .is_err(),
             "cross-flatten relationships should be enforced by usage"
         );
     }
