@@ -51,7 +51,9 @@ use std::path::PathBuf;
 #[usage(
     name = aube_util::prog(),
     name_spec = "aube",
-    about = "A fast Node.js package manager"
+    about = "A fast Node.js package manager",
+    view("aubr", root = "run", globals),
+    view("aubx", root = "dlx", globals)
 )]
 pub(crate) struct Cli {
     /// Change to directory before running (like `make -C` or `mise --cd`)
@@ -621,16 +623,15 @@ pub fn usage_kdl_for(name: &'static str) -> String {
 }
 
 pub fn completion_app(name: &'static str) -> usage_rs::complete::App<'static> {
-    let app = Cli::app()
+    let mut app = Cli::app()
         .name(name)
         .bin(name)
         .completion_app()
         .completions(&commands::completion::COMPLETIONS);
-    match name {
-        "aubr" => app.project("run"),
-        "aubx" => app.project("dlx"),
-        _ => app,
+    if let Some(view) = Cli::spec().views.iter().find(|view| view.bin == name) {
+        app = app.project(view.root);
     }
+    app
 }
 
 fn print_subcommand_help(name: &str) -> miette::Result<()> {
@@ -759,7 +760,7 @@ fn inner_main() -> miette::Result<i32> {
     let argv: Vec<&std::ffi::OsStr> = argv.iter().map(OsString::as_os_str).collect();
     let cli = match Cli::parse_from_argv(&argv) {
         Ok(cli) => cli,
-        Err(usage_rs::Error::Version) => {
+        Err(usage_rs::Error::Version { .. }) => {
             println!(
                 "{} {}",
                 aube_util::embedder().name,
@@ -1719,19 +1720,40 @@ mod multicall_tests {
     }
 
     #[test]
-    fn aubr_rewrites_to_run() {
+    fn aubr_is_left_for_the_executable_view() {
         assert_eq!(
             rewrite_multicall_argv(os(&["aubr", "build"])),
-            os(&["aube", "run", "build"])
+            os(&["aubr", "build"])
         );
     }
 
     #[test]
-    fn aubx_rewrites_to_dlx() {
+    fn aubx_is_left_for_the_executable_view() {
         assert_eq!(
             rewrite_multicall_argv(os(&["aubx", "cowsay", "hi"])),
-            os(&["aube", "dlx", "cowsay", "hi"])
+            os(&["aubx", "cowsay", "hi"])
         );
+    }
+
+    #[test]
+    fn executable_views_dispatch_without_argv_rewriting() {
+        let cli = Cli::try_parse_test_from(["aubr", "build"])
+            .expect("aubr should promote the run command");
+        let Some(Commands::Run(run)) = cli.command else {
+            panic!("expected run");
+        };
+        assert_eq!(run.script.as_deref(), Some("build"));
+
+        let raw = os(&["aubx", "cowsay"]);
+        let argv: Vec<&std::ffi::OsStr> = raw.iter().map(OsString::as_os_str).collect();
+        let cli = Cli::parse_from_argv(&argv).expect("aubx should promote the dlx command");
+        assert!(matches!(cli.command, Some(Commands::Dlx(_))));
+
+        let raw = os(&["aubr", "--version"]);
+        let argv: Vec<&std::ffi::OsStr> = raw.iter().map(OsString::as_os_str).collect();
+        let cli = Cli::parse_from_argv(&argv).expect("the global manual version flag should bind");
+        assert!(cli.version);
+        assert!(matches!(cli.command, Some(Commands::Run(_))));
     }
 
     #[test]
@@ -1836,7 +1858,7 @@ mod multicall_tests {
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["npm", "run", "build"])),
-            os(&["aube", "run", "build"])
+            os(&["aubr", "build"])
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["npm", "rm", "react"])),
@@ -1866,46 +1888,40 @@ mod multicall_tests {
 
     #[test]
     fn absolute_path_and_exe_suffix_are_handled() {
-        // argv[0] can be an absolute path (exec-style invocation) or carry
-        // a `.exe` suffix on Windows. `Path::file_stem` takes care of both
-        // so dispatch stays purely basename-driven.
+        // Executable views consume argv0 themselves, including paths and Windows suffixes.
         assert_eq!(
             rewrite_multicall_argv(os(&["/usr/local/bin/aubr", "test"])),
-            os(&["aube", "run", "test"])
+            os(&["/usr/local/bin/aubr", "test"])
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["aubx.exe", "pkg"])),
-            os(&["aube", "dlx", "pkg"])
+            os(&["aubx.exe", "pkg"])
         );
     }
 
     #[test]
     fn bare_shim_invocation_passes_through_to_subcommand() {
-        // `aubr` with no further args becomes `aube run`, which clap
-        // parses as the `run` subcommand with no positional — same as
-        // the user typing `aube run` directly.
-        assert_eq!(rewrite_multicall_argv(os(&["aubr"])), os(&["aube", "run"]));
+        assert_eq!(rewrite_multicall_argv(os(&["aubr"])), os(&["aubr"]));
     }
 
     #[test]
     fn version_flag_short_circuits_to_top_level() {
-        // `aubr --version` / `aubx --version` should print the aube
-        // version, not trip the `run` / `dlx` parsers.
+        // The executable view parser recognizes root version requests without argv surgery.
         assert_eq!(
             rewrite_multicall_argv(os(&["aubr", "--version"])),
-            os(&["aube", "--version"])
+            os(&["aubr", "--version"])
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["aubx", "--version"])),
-            os(&["aube", "--version"])
+            os(&["aubx", "--version"])
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["aubr", "-V"])),
-            os(&["aube", "-V"])
+            os(&["aubr", "-V"])
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["aubx.exe", "-V"])),
-            os(&["aube", "-V"])
+            os(&["aubx.exe", "-V"])
         );
     }
 
