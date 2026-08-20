@@ -12,7 +12,7 @@ and dangling .bin links. Does not modify package.json or the lockfile.
 
 ## Flags
 
-### `-P --prod`
+### `-P --prod --production`
 
 Remove devDependencies from node_modules
 

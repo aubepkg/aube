@@ -20,7 +20,7 @@ Emit a JSON array keyed by package instead of the default table
 
 Include the resolved path on disk for each package
 
-### `-P --prod`
+### `-P --prod --production`
 
 Show only production dependencies (skip devDependencies)
 

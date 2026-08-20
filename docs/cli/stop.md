@@ -81,14 +81,14 @@ audit requests, dist-tags, and registry writes.
 
 ## Virtual store
 
-### `--disable-global-virtual-store`
+### `--disable-global-virtual-store --disable-gvs`
 
 Force the shared global virtual store off for this invocation.
 
 Packages are materialized inside the project's virtual store
 instead of symlinked from `~/.cache/aube/virtual-store/`.
 
-### `--enable-global-virtual-store`
+### `--enable-global-virtual-store --enable-gvs`
 
 Force the shared global virtual store on for this invocation.
 

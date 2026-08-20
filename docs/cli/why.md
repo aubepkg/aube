@@ -19,7 +19,7 @@ Package name to search for (exact match against package names)
 
 Only follow chains that start at a devDependency
 
-### `-P --prod`
+### `-P --prod --production`
 
 Only follow chains that start at a production (or optional) dependency
 

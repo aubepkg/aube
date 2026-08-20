@@ -12,7 +12,7 @@ Print the path to `node_modules/.bin`
 
 Print the global bin directory instead of the project's
 
-### `-w --workspace-root`
+### `-w --workspace-root --workspace`
 
 Print the workspace-root bin directory instead of the current
 package's.

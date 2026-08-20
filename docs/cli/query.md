@@ -24,7 +24,7 @@ Supports `*`, bare package names, `[name=value]`,
 
 Only match devDependency roots and their transitive deps.
 
-### `-P --prod`
+### `-P --prod --production`
 
 Only match production/optional roots and their transitive deps.
 

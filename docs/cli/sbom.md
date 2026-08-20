@@ -31,6 +31,6 @@ Output format: `cyclonedx` (default) or `spdx`
 
 Describe the complete platform-independent lockfile graph
 
-### `-P --prod`
+### `-P --prod --production`
 
 Show only production dependencies (skip devDependencies)

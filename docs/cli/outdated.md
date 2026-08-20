@@ -30,11 +30,11 @@ Emit a JSON object keyed by package name instead of the default table
 
 Also show deps whose `wanted` version matches the installed version
 
-### `-P --prod`
+### `-P --prod --production`
 
 Show only production dependencies (skip devDependencies)
 
-### `-w --workspace-root`
+### `-w --workspace-root --workspace`
 
 Operate on the workspace root regardless of cwd.
 

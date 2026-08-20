@@ -7,7 +7,7 @@
 
 ## Global Flags
 
-### `-C --dir <DIR>`
+### `-C --dir --cd --prefix <DIR>`
 
 Change to directory before running (like `make -C` or `mise --cd`)
 

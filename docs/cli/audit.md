@@ -75,7 +75,7 @@ Emit the report as JSON (pnpm-compatible shape) instead of a table.
 
 Skip `optionalDependencies`.
 
-### `-P --prod`
+### `-P --prod --production`
 
 Only audit `dependencies` and `optionalDependencies`.
 

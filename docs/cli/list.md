@@ -23,7 +23,7 @@ Show only devDependencies
 
 List globally-installed packages instead of the project's dependency tree
 
-### `-P --prod`
+### `-P --prod --production`
 
 Show only production dependencies (skip devDependencies)
 

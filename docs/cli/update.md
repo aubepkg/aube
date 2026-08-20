@@ -19,7 +19,7 @@ Package(s) to update (all if empty)
 
 Update only devDependencies.
 
-### `-E --exact`
+### `-E --exact --save-exact`
 
 Pin manifest specifiers to the resolved version with no range
 prefix.
@@ -51,7 +51,7 @@ versions (the registry's `latest` dist-tag, clamped by
 `--no-save`, leaves the manifest range unchanged and resolves
 only to the newest version that range allows.
 
-### `-P --prod`
+### `-P --prod --production`
 
 Update only production dependencies.
 
@@ -173,14 +173,14 @@ audit requests, dist-tags, and registry writes.
 
 ## Virtual store
 
-### `--disable-global-virtual-store`
+### `--disable-global-virtual-store --disable-gvs`
 
 Force the shared global virtual store off for this invocation.
 
 Packages are materialized inside the project's virtual store
 instead of symlinked from `~/.cache/aube/virtual-store/`.
 
-### `--enable-global-virtual-store`
+### `--enable-global-virtual-store --enable-gvs`
 
 Force the shared global virtual store on for this invocation.
 
