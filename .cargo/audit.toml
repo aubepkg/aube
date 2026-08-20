@@ -7,9 +7,3 @@ ignore = [
     # proc-macro-error2 2.0.1 via jiff's defmt dependency.
     "RUSTSEC-2026-0173",
 ]
-
-# Every pre-0.3.10 arrayref release was yanked together. The replacement adds
-# an unrelated proc-macro dependency, so keep the audited lockfile revision
-# until the blake3 maintainers publish a trusted resolution.
-[yanked]
-enabled = false

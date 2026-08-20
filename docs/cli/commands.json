@@ -623,7 +623,7 @@
           },
           {
             "name": "allow-build",
-            "usage": "--allow-build… <PKG>",
+            "usage": "--allow-build…=<PKG>",
             "help": "Pre-approve a dependency's lifecycle scripts as part of the add.",
             "help_long": "Pre-approve a dependency's lifecycle scripts as part of the add.\n\nWrites `allowBuilds: { <pkg>: true }` into the workspace yaml\n(or `package.json#aube.allowBuilds`) before the install runs,\nso the named package's `preinstall` / `install` / `postinstall`\nscripts execute on this invocation. Repeatable — pass the flag\nonce per package. Mirrors `pnpm add --allow-build=<pkg>`.\n\nConflicts with `--no-save`, which only snapshots `package.json`\nand the lockfile and would leave an orphaned approval in the\nworkspace yaml on restore. Also conflicts with `--deny-build` for\nthe same package name.",
             "help_first_line": "Pre-approve a dependency's lifecycle scripts as part of the add.",
@@ -676,7 +676,7 @@
           },
           {
             "name": "deny-build",
-            "usage": "--deny-build… <PKG>",
+            "usage": "--deny-build…=<PKG>",
             "help": "Mark a dependency's lifecycle scripts as reviewed and denied.",
             "help_long": "Mark a dependency's lifecycle scripts as reviewed and denied.\n\nWrites `allowBuilds: { <pkg>: false }` into the workspace yaml\n(or `package.json#aube.allowBuilds`) before the install runs,\nso the named package's lifecycle scripts stay skipped without\ntripping `strictDepBuilds=true`. Repeatable — pass the flag\nonce per package.\n\nConflicts with `--no-save`, which only snapshots `package.json`\nand the lockfile and would leave an orphaned denial in the\nworkspace yaml on restore. Also conflicts with `--allow-build` for\nthe same package name and with `--dangerously-allow-all-builds`.",
             "help_first_line": "Mark a dependency's lifecycle scripts as reviewed and denied.",
@@ -4579,7 +4579,7 @@
           },
           {
             "name": "allow-build",
-            "usage": "--allow-build… <PKG>",
+            "usage": "--allow-build…=<PKG>",
             "help": "Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.",
             "help_long": "Allow named packages to run lifecycle scripts during the\ntransient install. Use `--allow-build=<pkg>`.\n\nRepeatable — pass once per package. The named package's\n`preinstall` / `install` / `postinstall` scripts execute during\nthe transient install. Requires the equals form\n(`--allow-build=<pkg>`); space-separated forms are rejected.\nMirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility\nsurface while keeping dlx scripts skipped unless explicitly\napproved.",
             "help_first_line": "Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.",
@@ -10486,7 +10486,7 @@
           },
           {
             "name": "inspect",
-            "usage": "--inspect [[[HOST:]PORT]]",
+            "usage": "--inspect[=[[HOST:]PORT]]",
             "help": "Forward `--inspect` to a Node-backed script or local binary.",
             "help_first_line": "Forward `--inspect` to a Node-backed script or local binary.",
             "short": [],
@@ -10508,7 +10508,7 @@
           },
           {
             "name": "inspect-brk",
-            "usage": "--inspect-brk [[[HOST:]PORT]]",
+            "usage": "--inspect-brk[=[[HOST:]PORT]]",
             "help": "Forward `--inspect-brk` to a Node-backed script or local binary.",
             "help_first_line": "Forward `--inspect-brk` to a Node-backed script or local binary.",
             "short": [],
@@ -15036,6 +15036,24 @@
     "path": {
       "name": "path",
       "type_": "path"
+    }
+  },
+  "views": {
+    "aubr": {
+      "id": "aubr",
+      "name": "aubr",
+      "bin": "aubr",
+      "root": "run",
+      "all_globals": true,
+      "globals": []
+    },
+    "aubx": {
+      "id": "aubx",
+      "name": "aubx",
+      "bin": "aubx",
+      "root": "dlx",
+      "all_globals": true,
+      "globals": []
     }
   },
   "about": "A fast Node.js package manager",

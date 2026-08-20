@@ -34,7 +34,7 @@ binaries into the global bin directory. Mirrors `pnpm add -g`.
 
 Add as optional dependency
 
-### `--allow-build… <PKG>`
+### `--allow-build…=<PKG>`
 
 Pre-approve a dependency's lifecycle scripts as part of the add.
 
@@ -69,7 +69,7 @@ Allow every dependency's lifecycle scripts to run.
 Bypasses the `allowBuilds` allowlist for this invocation. Do not
 use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.
 
-### `--deny-build… <PKG>`
+### `--deny-build…=<PKG>`
 
 Mark a dependency's lifecycle scripts as reviewed and denied.
 

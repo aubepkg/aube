@@ -35,7 +35,7 @@ Install a specific package (repeatable).
 
 Overrides inferring from the command.
 
-### `--allow-build… <PKG>`
+### `--allow-build…=<PKG>`
 
 Allow named packages to run lifecycle scripts during the
 transient install. Use `--allow-build=<pkg>`.

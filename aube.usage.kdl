@@ -3,6 +3,8 @@ min_usage_version "4.0"
 name aube
 bin aube
 about "A fast Node.js package manager"
+view aubr root=run globals=#true
+view aubx root=dlx globals=#true
 external_subcommand #true
 flag "-C --dir --cd --prefix" help="Change to directory before running (like `make -C` or `mise --cd`)" global=#true {
     arg <DIR>
