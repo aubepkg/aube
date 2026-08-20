@@ -281,6 +281,17 @@ fn normalize_npm_interpreter_shim_argv(args: &mut Vec<OsString>) {
 /// `aube --registry=URL install`, etc. keep parsing after those flags
 /// moved into per-command Args groups.
 pub(crate) fn lift_per_subcommand_flags(mut args: Vec<OsString>) -> Vec<OsString> {
+    if args
+        .first()
+        .map(|argv0| crate::tool_shims::stem_of_argv0(argv0.as_os_str()))
+        .is_some_and(|stem| matches!(stem.as_str(), "aubr" | "aubx"))
+    {
+        // An executable view has already selected `run` or `dlx`; flags before its first
+        // positional are therefore in the selected command's scope. Looking for another
+        // subcommand would mistake that positional for one and move the flags past it, where
+        // the command intentionally forwards them.
+        return args;
+    }
     // (long_name_without_dashes, takes_value)
     const LIFTED_LONGS: &[(&str, bool)] = &[
         ("frozen-lockfile", false),

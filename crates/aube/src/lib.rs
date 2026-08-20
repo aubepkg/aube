@@ -1757,6 +1757,15 @@ mod multicall_tests {
     }
 
     #[test]
+    fn executable_view_flags_are_not_lifted_past_forwarded_positionals() {
+        let argv = os(&["aubr", "--registry", "https://registry.test", "build"]);
+        assert_eq!(lift_per_subcommand_flags(argv.clone()), argv);
+
+        let argv = os(&["aubx", "--registry", "https://registry.test", "vite"]);
+        assert_eq!(lift_per_subcommand_flags(argv.clone()), argv);
+    }
+
+    #[test]
     fn node_shim_rewrites_to_node_subcommand() {
         assert_eq!(
             rewrite_multicall_argv(os(&["node", "--version"])),
@@ -1858,7 +1867,7 @@ mod multicall_tests {
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["npm", "run", "build"])),
-            os(&["aubr", "build"])
+            os(&["aube", "run", "build"])
         );
         assert_eq!(
             rewrite_multicall_argv(os(&["npm", "rm", "react"])),
@@ -1947,10 +1956,10 @@ mod multicall_tests {
         assert_eq!(
             rewrite_multicall_argv(vec![
                 OsString::from("aubr.exe"),
-                shim.into_os_string(),
+                shim.clone().into_os_string(),
                 OsString::from("build"),
             ]),
-            os(&["aube", "run", "build"])
+            vec![shim.into_os_string(), OsString::from("build")]
         );
     }
 
