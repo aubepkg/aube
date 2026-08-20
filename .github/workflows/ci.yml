@@ -60,7 +60,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Qualify mise's experimental Rust action cache against the production
+  # Exercise mise's experimental Rust action cache against the production
   # service without replacing Namespace's cache yet. Pull requests can read
   # jdx/aube but must not write. Pull requests start with empty local state and
   # must restore entries previously seeded by main; main can seed a cold cache.
@@ -89,7 +89,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
-          version: 2026.8.8
+          version: 2026.8.9
           install: false
           cache: false
       - name: Qualify production cache authorization
@@ -138,47 +138,133 @@ jobs:
               exit 1
             fi
           fi
-      - name: Qualify Rust action cache
+      - name: Exercise Rust action cache
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/mise-cache-qualification.log"
-          mise run cache:qualify 2>&1 | tee "$log"
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            remote_summary=$(grep -Eo \
-              'Action cache: [0-9]+ hits, [0-9]+ misses, [0-9]+ prefetched; [^,]+ downloaded,' \
-              "$log" | tail -n 1 || true)
-            if [[ ! "$remote_summary" =~ ^Action\ cache:\ [0-9]+\ hits,\ [0-9]+\ misses,\ ([0-9]+)\ prefetched\;\ (.+)\ downloaded,$ ]]; then
-              echo "::error::mise did not report Rust remote action-cache results"
-              exit 1
-            fi
-            prefetched=${BASH_REMATCH[1]}
-            downloaded=${BASH_REMATCH[2]}
-            if (( prefetched == 0 )) || [[ "$downloaded" == "0 B" ]]; then
-              echo "::error::Rust remote action cache reported $prefetched prefetched actions and $downloaded downloaded"
-              exit 1
-            fi
-          else
+          first_report="$RUNNER_TEMP/mise-cache-stats-remote.json"
+          reports=("remote:$first_report")
+          MISE_TASK_CACHE_STATS_REPORT="$first_report" \
+            mise run cache:qualify 2>&1 | tee "$log"
+          qualification_report=$first_report
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             cargo clean --target-dir "$CARGO_TARGET_DIR"
-            mise run cache:qualify 2>&1 | tee -a "$log"
+            local_report="$RUNNER_TEMP/mise-cache-stats-local.json"
+            reports+=("local-after-clean:$local_report")
+            MISE_TASK_CACHE_STATS_REPORT="$local_report" \
+              mise run cache:qualify 2>&1 | tee -a "$log"
+            qualification_report=$local_report
           fi
-          summary=$(grep -Eo \
-            'Action cache qualification: [0-9]+ verified, [0-9]+ diverged' \
-            "$log" | tail -n 1 || true)
-          if [[ ! "$summary" =~ ^Action\ cache\ qualification:\ ([0-9]+)\ verified,\ ([0-9]+)\ diverged$ ]]; then
-            echo "::error::mise did not report Rust action-cache qualification results"
+
+          for entry in "${reports[@]}"; do
+            report=${entry#*:}
+            if ! jq -e '
+              .version == 1 and
+              (.session_duration_ns | numbers) and
+              (.hits | numbers) and
+              (.remote_blob_requests | numbers) and
+              (.materialization_duration_ns | numbers)
+            ' "$report" >/dev/null; then
+              echo "::error::mise did not write a valid Rust action-cache report to $report"
+              exit 1
+            fi
+          done
+
+          hits=$(jq -r '.hits' "$qualification_report")
+          if (( hits == 0 )); then
+            echo "::error::Rust action cache reported no hits"
             exit 1
           fi
-          verified=${BASH_REMATCH[1]}
-          diverged=${BASH_REMATCH[2]}
-          if (( verified == 0 || diverged != 0 )); then
-            echo "::error::Rust action-cache qualification reported $verified verified and $diverged diverged actions"
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            prefetched=$(jq -r '.prefetched_actions' "$qualification_report")
+            downloaded=$(jq -r '.downloaded_bytes' "$qualification_report")
+            if (( prefetched == 0 || downloaded == 0 )); then
+              echo "::error::Rust remote action cache reported $prefetched prefetched actions and $downloaded downloaded bytes"
+              exit 1
+            fi
           fi
           if grep -Eiq 'remote cache .* failed|mise rustc cache warning' \
             "$log"; then
             echo "::error::mise reported a Rust action-cache warning"
             exit 1
           fi
+
+          {
+            echo '### mise Rust action cache'
+            echo
+            echo '| Pass | Hits | Misses | Avoided compiles | Prefetched | Blob requests | Downloaded | Restored |'
+            echo '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
+            for entry in "${reports[@]}"; do
+              label=${entry%%:*}
+              report=${entry#*:}
+              jq -r --arg label "$label" '
+                def mib($value):
+                  (((($value / 1048576) * 100) | round) / 100 | tostring) + " MiB";
+                "| \($label) | \(.hits) | \(.misses) | \(.compiler_invocations_avoided) | \(.prefetched_actions) | \(.remote_blob_requests) | \(mib(.downloaded_bytes)) | \(mib(.restored_output_bytes)) |"
+              ' "$report"
+            done
+            echo
+            echo '| Pass | Session | Prefetch | Manifest lookup | Action lookup | Blob transfer | CAS write | Materialization |'
+            echo '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
+            for entry in "${reports[@]}"; do
+              label=${entry%%:*}
+              report=${entry#*:}
+              jq -r --arg label "$label" '
+                def seconds($value):
+                  (((($value / 1000000000) * 100) | round) / 100 | tostring) + "s";
+                "| \($label) | \(seconds(.session_duration_ns)) | \(seconds(.prefetch_duration_ns)) | \(seconds(.remote_manifest_lookup_duration_ns)) (\(.remote_manifest_lookups)) | \(seconds(.remote_action_lookup_duration_ns)) (\(.remote_action_lookups)) | \(seconds(.remote_blob_transfer_duration_ns)) | \(seconds(.local_cas_write_duration_ns)) | \(seconds(.materialization_duration_ns)) |"
+              ' "$report"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Rust action cache reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mise-cache-stats-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mise-cache-stats-*.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # Hosted-runner control for the common archive-cache setup. The first PR run
+  # seeds an isolated pull-request cache; rerunning the job measures the warm
+  # restore without relying on Namespace's attached NVMe cache volume.
+  github-cache:
+    name: GitHub Actions Rust cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          cache: false
+      - name: Capture Rust cache key inputs
+        run: |
+          mkdir -p .github/cache-keys
+          rustc -Vv > .github/cache-keys/rustc-version
+      - id: cargo-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning] PR entries are scoped to the PR and consumed only by this unprivileged job
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: aube-rust-${{ runner.os }}-${{ github.event.pull_request.number || github.ref_name }}-v1-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.github/cache-keys/rustc-version') }}
+      - name: Build with GitHub Actions cache
+        env:
+          CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: |
+          start=$SECONDS
+          mise run build
+          elapsed=$((SECONDS - start))
+          printf '### GitHub Actions Rust cache\n\n- Exact cache hit: %s\n- Build: %ss\n' \
+            "$CACHE_HIT" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
 
   # Linux-only test + lint + render + docs:build. Matches the
   # `linux / test` step in .buildkite/pipeline.sh. Split from `build` so
@@ -442,6 +528,7 @@ jobs:
     needs:
       - build
       - cache-qualification
+      - github-cache
       - test-linux
       - bats
       - bats-serial
