@@ -84,15 +84,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "android_system_properties"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -852,31 +843,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chrono"
-version = "0.4.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
-dependencies = [
- "iana-time-zone",
- "js-sys",
- "num-traits",
- "serde",
- "wasm-bindgen",
- "windows-link 0.2.1",
-]
-
-[[package]]
-name = "chrono-tz"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
-dependencies = [
- "chrono",
- "phf",
- "serde",
-]
-
-[[package]]
 name = "ci_info"
 version = "0.14.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,23 +1564,15 @@ dependencies = [
 
 [[package]]
 name = "expr-lang"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86283664be0dc99b1247e957cf8234bb0e98fe76096bd36767d8f87ac98f00b7"
+checksum = "0ccbe01093a53933ac2e794bf8de543359ba840520304a6b93b8d00d0b99ceaf"
 dependencies = [
- "base64 0.23.1",
- "chrono",
- "chrono-tz",
- "iana-time-zone",
  "indexmap 2.14.0",
  "log",
- "once_cell",
  "pest",
  "pest_derive",
  "regex",
- "serde_json",
- "strum",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2167,30 +2125,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "windows-registry",
-]
-
-[[package]]
-name = "iana-time-zone"
-version = "0.1.65"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470"
-dependencies = [
- "android_system_properties",
- "core-foundation-sys",
- "iana-time-zone-haiku",
- "js-sys",
- "log",
- "wasm-bindgen",
- "windows-core 0.62.2",
-]
-
-[[package]]
-name = "iana-time-zone-haiku"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -3241,24 +3175,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e04d3a0849e241d7dfce834c83b1c5edc8622009e8dd51a12ba1927c32f05496"
 dependencies = [
  "pest",
-]
-
-[[package]]
-name = "phf"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
-dependencies = [
- "phf_shared",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
-dependencies = [
- "siphasher",
 ]
 
 [[package]]
@@ -4514,12 +4430,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
-name = "siphasher"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5324,14 +5234,13 @@ dependencies = [
 [[package]]
 name = "usage-argv"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=7e6e349e35716ef2095be9a6adceb1281470683f#7e6e349e35716ef2095be9a6adceb1281470683f"
+source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
 
 [[package]]
 name = "usage-derive"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=7e6e349e35716ef2095be9a6adceb1281470683f#7e6e349e35716ef2095be9a6adceb1281470683f"
+source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
 dependencies = [
- "heck",
  "proc-macro2",
  "quote",
  "syn 3.0.3",
@@ -5340,17 +5249,26 @@ dependencies = [
 [[package]]
 name = "usage-rs"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=7e6e349e35716ef2095be9a6adceb1281470683f#7e6e349e35716ef2095be9a6adceb1281470683f"
+source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
 dependencies = [
  "usage-argv",
  "usage-derive",
+ "usage-test",
  "usage-validation",
+]
+
+[[package]]
+name = "usage-test"
+version = "5.1.0"
+source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
+dependencies = [
+ "usage-argv",
 ]
 
 [[package]]
 name = "usage-validation"
 version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=7e6e349e35716ef2095be9a6adceb1281470683f#7e6e349e35716ef2095be9a6adceb1281470683f"
+source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
 dependencies = [
  "expr-lang",
 ]
