@@ -3,20 +3,111 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// The programs aube answers for: itself, and the two applets its spec declares as views.
+const PROGRAMS: [&str; 3] = ["aube", "aubr", "aubx"];
+
 #[derive(usage_rs::Args)]
 pub struct CompletionArgs {
     /// The shell to generate completions for (bash, zsh, fish)
     #[usage(arg, name = "SHELL")]
     pub shell: String,
+
+    /// Install the scripts where this shell looks for them, instead of printing them
+    ///
+    /// Writes one script per program — aube, aubr and aubx — and nothing else: no shell rc file
+    /// and no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is
+    /// printed for you to add.
+    #[usage(long, effect = "write")]
+    pub install: bool,
+
+    /// Replace a file at a target path that aube did not write
+    #[usage(long, requires = "--install", effect = "write")]
+    pub force: bool,
 }
 
 pub async fn run(args: CompletionArgs) -> Result<()> {
     let shell = usage_rs::complete::Shell::from_name(&args.shell)
         .ok_or_else(|| miette!("unsupported shell {:?}", args.shell))?;
-    print!("{}", crate::completion_app("aube").completion_script(shell));
-    print!("{}", crate::completion_app("aubr").completion_script(shell));
-    print!("{}", crate::completion_app("aubx").completion_script(shell));
+    if args.install {
+        return install(shell, args.force);
+    }
+    for program in PROGRAMS {
+        print!(
+            "{}",
+            crate::completion_app(program).completion_script(shell)
+        );
+    }
     Ok(())
+}
+
+/// Put each program's script where this shell looks for it, and say what is left to do.
+///
+/// One install per program rather than one for `aube`: an applet is completed under its own name,
+/// so `aubr` needs its own file, exactly as it needs its own script. The location comes from
+/// usage's resolver, so `aube completion zsh --install` and `usage g completion zsh aubr --install`
+/// cannot disagree about where an applet's completion lives.
+fn install(shell: usage_rs::complete::Shell, force: bool) -> Result<()> {
+    use usage_rs::install::{self, Loading, OnForeign, Wrote};
+
+    let on_foreign = if force {
+        OnForeign::Overwrite
+    } else {
+        OnForeign::Refuse
+    };
+    // The environment is described from this process rather than reached for inside the resolver,
+    // which is what lets a test point the same code path somewhere harmless.
+    let env = install::Env::from_process();
+
+    // Collected rather than printed per program: all three land in the same directory, so a shell
+    // that needs a line needs it once, and saying it three times is noise a reader has to compare
+    // to be sure it really is the same line.
+    let mut instructions: Vec<(String, String)> = Vec::new();
+    let mut notes: Vec<&'static str> = Vec::new();
+    for program in PROGRAMS {
+        let done = crate::completion_app(program)
+            .install_completion(shell, &env, on_foreign)
+            .map_err(|err| as_diagnostic(program, err))?;
+        eprintln!("installing to {}", done.plan.path.display());
+        if done.wrote == Wrote::Unchanged {
+            eprintln!("already up to date");
+        }
+        if let Loading::Manual { line, file, .. } = &done.plan.loading {
+            let entry = (file.clone(), line.clone());
+            if !instructions.contains(&entry) {
+                instructions.push(entry);
+            }
+        }
+        if let Some(note) = done.plan.note.filter(|note| !notes.contains(note)) {
+            notes.push(note);
+        }
+    }
+
+    for (file, line) in instructions {
+        eprintln!("\nadd this to {file}, once:\n\n{line}\n");
+    }
+    for note in notes {
+        eprintln!("note: {note}");
+    }
+    Ok(())
+}
+
+/// An install failure as something aube can print, with the way out where there is one.
+///
+/// The chain is walked rather than formatted away: `Display` names the step and the path, and the
+/// operating system's own words are on `source()`.
+fn as_diagnostic(program: &str, err: usage_rs::install::Error) -> miette::Report {
+    let mut message = err.to_string();
+    let mut cause = std::error::Error::source(&err);
+    while let Some(next) = cause {
+        message.push_str(&format!(": {next}"));
+        cause = next.source();
+    }
+    match &err {
+        usage_rs::install::Error::Foreign { .. } => miette!(
+            "{program}: {message}\n\nPass --force to replace it, or redirect the scripts yourself."
+        ),
+        _ => miette!("{program}: {message}"),
+    }
 }
 
 fn finish(mut candidates: Vec<(String, String)>) -> Vec<usage_rs::spec::Candidate<'static>> {

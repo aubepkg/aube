@@ -451,6 +451,10 @@ cmd clean help="Remove `node_modules` across every workspace project." effect=wr
     }
 }
 cmd completion help="Generate shell completions (bash, zsh, fish)" effect=read {
+    flag --install help="Install the scripts where this shell looks for them, instead of printing them" effect=write {
+        long_help "Install the scripts where this shell looks for them, instead of printing them\n\nWrites one script per program — aube, aubr and aubx — and nothing else: no shell rc file\nand no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is\nprinted for you to add."
+    }
+    flag --force help="Replace a file at a target path that aube did not write" effect=write requires=--install
     arg <SHELL> help="The shell to generate completions for (bash, zsh, fish)"
 }
 cmd config help="Read and write settings in `.npmrc`" effect=read {

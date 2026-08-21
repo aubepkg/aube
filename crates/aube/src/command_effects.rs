@@ -301,6 +301,31 @@ mod tests {
     }
 
     /// The tables are only worth having if they reach emitted metadata.
+    /// A flag can raise what its command does, and this table cannot say so: it is keyed by
+    /// command. `aube completion` only reads, and `--install` writes three files — so the flags
+    /// carry the effect themselves, declared on the fields. Asserted here so a later edit cannot
+    /// quietly leave `--install` reading as safe.
+    #[test]
+    fn installing_completion_scripts_is_a_write() {
+        let completion = crate::Cli::spec()
+            .root
+            .subcommands
+            .iter()
+            .find(|command| command.cmd.name == "completion")
+            .expect("completion");
+        let flag = |name: &str| {
+            completion
+                .flags
+                .iter()
+                .find(|f| f.flag.name == name)
+                .unwrap_or_else(|| panic!("`aube completion` has no --{name}"))
+        };
+        assert_eq!(flag("install").effect, Some(usage_rs::spec::Effect::Write));
+        // `--force` only widens which file an install may replace, so it writes for that reason
+        // rather than one of its own.
+        assert_eq!(flag("force").effect, Some(usage_rs::spec::Effect::Write));
+    }
+
     #[test]
     fn overlays_annotate_the_spec() {
         let kdl = crate::usage_kdl();
