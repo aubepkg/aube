@@ -1,7 +1,0 @@
-[settings]
-experimental = true
-
-[tasks."cache:qualify"]
-dir = "{{ env.GITHUB_WORKSPACE }}"
-run = "cargo build --workspace"
-rust_cache = { verify = true }

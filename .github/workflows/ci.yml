@@ -60,126 +60,6 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Qualify mise's experimental Rust action cache against the production
-  # service without replacing Namespace's cache yet. Pull requests can read
-  # jdx/aube but must not write. Pull requests start with empty local state and
-  # must restore entries previously seeded by main; main can seed a cold cache.
-  cache-qualification:
-    # Fork pull requests run with a read-only GITHUB_TOKEN and GitHub refuses
-    # to issue an OIDC token for them, so the cache-auth probe below cannot
-    # run. Skip on fork PRs; `final` treats that skip as OK.
-    if: (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.event.pull_request.head.repo.fork != true
-    runs-on: namespace-profile-endev-linux-amd64
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target/cache-qualification
-      MISE_CACHE_DIR: /tmp/aube-cache-qualification-${{ github.run_id }}-${{ github.run_attempt }}/mise
-      MISE_CONFIG_FILE: ${{ github.workspace }}/.github/mise-cache-qualification.toml
-      MISE_TASK_CACHE_REMOTE_MODE: ${{ github.ref == 'refs/heads/main' && 'read-write' || 'read-only' }}
-      MISE_TASK_CACHE_REMOTE_NAMESPACE: jdx/aube
-      MISE_TASK_CACHE_REMOTE_OIDC_AUDIENCE: https://cache.mise.jdx.dev
-      MISE_TASK_CACHE_REMOTE_URL: https://cache.mise.jdx.dev
-      RUSTFLAGS: "-D warnings"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
-        with:
-          version: 2026.8.8
-          install: false
-          cache: false
-      - name: Qualify production cache authorization
-        env:
-          CACHE_URL: https://cache.mise.jdx.dev
-        run: |
-          response=$(curl --fail --silent --show-error \
-            --get \
-            --data-urlencode "audience=$CACHE_URL" \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL")
-          token=$(jq -er '.value | strings | select(length > 0)' <<<"$response")
-          echo "::add-mask::$token"
-
-          empty_blake3=af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
-          blob_url="$CACHE_URL/v1/blobs/blake3/$empty_blake3/0"
-          headers=(
-            -H "Authorization: Bearer $token"
-            -H "Mise-Cache-Namespace: jdx/aube"
-            -H "Mise-Cache-Protocol: 1"
-          )
-          read_status=$(curl --silent --show-error \
-            --output /dev/null \
-            --write-out '%{http_code}' \
-            "${headers[@]}" \
-            "$blob_url")
-          case "$read_status" in
-            200|404) ;;
-            *)
-              echo "::error::production cache read authorization returned HTTP $read_status"
-              exit 1
-              ;;
-          esac
-
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            write_status=$(curl --silent --show-error \
-              --output /dev/null \
-              --write-out '%{http_code}' \
-              --request PUT \
-              --data-binary '' \
-              -H "If-None-Match: *" \
-              "${headers[@]}" \
-              "$blob_url")
-            if [ "$write_status" != 403 ]; then
-              echo "::error::pull request cache write returned HTTP $write_status instead of 403"
-              exit 1
-            fi
-          fi
-      - name: Qualify Rust action cache
-        run: |
-          set -o pipefail
-          log="$RUNNER_TEMP/mise-cache-qualification.log"
-          mise run cache:qualify 2>&1 | tee "$log"
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            remote_summary=$(grep -Eo \
-              'Action cache: [0-9]+ hits, [0-9]+ misses, [0-9]+ prefetched; [^,]+ downloaded,' \
-              "$log" | tail -n 1 || true)
-            if [[ ! "$remote_summary" =~ ^Action\ cache:\ [0-9]+\ hits,\ [0-9]+\ misses,\ ([0-9]+)\ prefetched\;\ (.+)\ downloaded,$ ]]; then
-              echo "::error::mise did not report Rust remote action-cache results"
-              exit 1
-            fi
-            prefetched=${BASH_REMATCH[1]}
-            downloaded=${BASH_REMATCH[2]}
-            if (( prefetched == 0 )) || [[ "$downloaded" == "0 B" ]]; then
-              echo "::error::Rust remote action cache reported $prefetched prefetched actions and $downloaded downloaded"
-              exit 1
-            fi
-          else
-            cargo clean --target-dir "$CARGO_TARGET_DIR"
-            mise run cache:qualify 2>&1 | tee -a "$log"
-          fi
-          summary=$(grep -Eo \
-            'Action cache qualification: [0-9]+ verified, [0-9]+ diverged' \
-            "$log" | tail -n 1 || true)
-          if [[ ! "$summary" =~ ^Action\ cache\ qualification:\ ([0-9]+)\ verified,\ ([0-9]+)\ diverged$ ]]; then
-            echo "::error::mise did not report Rust action-cache qualification results"
-            exit 1
-          fi
-          verified=${BASH_REMATCH[1]}
-          diverged=${BASH_REMATCH[2]}
-          if (( verified == 0 || diverged != 0 )); then
-            echo "::error::Rust action-cache qualification reported $verified verified and $diverged diverged actions"
-            exit 1
-          fi
-          if grep -Eiq 'remote cache .* failed|mise rustc cache warning' \
-            "$log"; then
-            echo "::error::mise reported a Rust action-cache warning"
-            exit 1
-          fi
-
   # Linux-only test + lint + render + docs:build. Matches the
   # `linux / test` step in .buildkite/pipeline.sh. Split from `build` so
   # lint failures don't block the BATS jobs from starting against a
@@ -441,7 +321,6 @@ jobs:
   final:
     needs:
       - build
-      - cache-qualification
       - test-linux
       - bats
       - bats-serial
@@ -456,11 +335,7 @@ jobs:
     steps:
       - name: Gate on upstream job results
         env:
-          EVENT_NAME: ${{ github.event_name }}
           NEEDS_JSON: ${{ toJSON(needs) }}
-          REF: ${{ github.ref }}
-          # "true" only for pull_request events from a fork; empty otherwise.
-          FORK_PR: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           python3 - <<'PY'
           import json
@@ -471,13 +346,6 @@ jobs:
           # here is a pass; every other job must actually succeed.
           SKIP_OK = {"api-stability"}
           ADVISORY_FAILURE = {"api-stability"}
-          if os.environ["EVENT_NAME"] == "workflow_dispatch" and os.environ["REF"] != "refs/heads/main":
-              SKIP_OK.add("cache-qualification")
-          # Fork PRs can't mint an OIDC token, so cache-qualification is
-          # skipped by its `if:`; allow that skip here.
-          if os.environ.get("FORK_PR", "") == "true":
-              SKIP_OK.add("cache-qualification")
-
           needs = json.loads(os.environ["NEEDS_JSON"])
           failed = False
           for name, data in sorted(needs.items()):
