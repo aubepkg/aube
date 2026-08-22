@@ -36,7 +36,7 @@ edition = "2024"
 # Kept at the floor mise can build with (its distro packaging pins the
 # toolchain) so mise can embed the library crates. CI enforces this via
 # `cargo msrv verify` — bump deliberately, not as a side effect.
-rust-version = "1.95"
+rust-version = "1.91"
 license = "MIT"
 repository = "https://github.com/jdx/aube"
 homepage = "https://github.com/jdx/aube"
@@ -72,7 +72,7 @@ toml = "1"
 rkyv = "0.8"
 
 # CLI
-usage-rs = { git = "https://github.com/jdx/usage", rev = "600c2287b7cd23a4841ad789a7dcb6dd7d8dd31a", version = "6", features = ["diagnostics", "completions", "validation"] }
+usage-rs = { git = "https://github.com/jdx/usage", rev = "e23e61a3df28cd381884fd121120ccd336f09481", version = "6", features = ["diagnostics", "completions", "validation"] }
 
 # Enum derives (Display/FromStr/etc.)
 strum = { version = "0.28", features = ["derive"] }
