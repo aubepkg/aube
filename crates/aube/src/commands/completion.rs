@@ -12,6 +12,10 @@ pub struct CompletionArgs {
     #[usage(arg, name = "SHELL")]
     pub shell: String,
 
+    /// Replace a file at a target path that aube did not write
+    #[usage(long, requires = "--install", effect = "write")]
+    pub force: bool,
+
     /// Install the scripts where this shell looks for them, instead of printing them
     ///
     /// Writes one script per program — aube, aubr and aubx — and nothing else: no shell rc file
@@ -19,10 +23,6 @@ pub struct CompletionArgs {
     /// printed for you to add.
     #[usage(long, effect = "write")]
     pub install: bool,
-
-    /// Replace a file at a target path that aube did not write
-    #[usage(long, requires = "--install", effect = "write")]
-    pub force: bool,
 }
 
 pub async fn run(args: CompletionArgs) -> Result<()> {
