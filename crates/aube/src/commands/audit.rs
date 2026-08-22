@@ -121,7 +121,7 @@ pub struct AuditArgs {
     strum::Display,
     strum::EnumString,
 )]
-#[value(rename_all = "lowercase")]
+#[usage(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum Severity {
     // Declaration order IS severity order (`Ord` is derived): `Info` is

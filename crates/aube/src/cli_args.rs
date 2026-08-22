@@ -13,7 +13,7 @@
 use crate::commands;
 
 #[derive(usage_rs::Args, Debug, Default, Clone, Copy)]
-#[command(next_help_heading = "Lockfile")]
+#[usage(next_help_heading = "Lockfile")]
 pub struct LockfileArgs {
     /// Error if the lockfile drifts from package.json.
     #[usage(long, conflicts("--no-frozen-lockfile", "--prefer-frozen-lockfile"))]
@@ -50,7 +50,7 @@ impl LockfileArgs {
 }
 
 #[derive(usage_rs::Args, Debug, Default, Clone)]
-#[command(next_help_heading = "Network")]
+#[usage(next_help_heading = "Network")]
 pub struct NetworkArgs {
     /// Number of retry attempts for failed registry fetches.
     ///
@@ -133,7 +133,7 @@ impl NetworkArgs {
 }
 
 #[derive(usage_rs::Args, Debug, Default, Clone, Copy)]
-#[command(next_help_heading = "Virtual store")]
+#[usage(next_help_heading = "Virtual store")]
 pub struct VirtualStoreArgs {
     /// Force the shared global virtual store off for this invocation.
     ///
