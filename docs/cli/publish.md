@@ -18,10 +18,7 @@ Tarball or package directory to publish (default: current package).
 
 Publish as `public` or `restricted`.
 
-Sent as the `access` field in the publish body; scoped
-packages default to `restricted` on the registry side, so
-pass `--access=public` to make a new scoped package
-world-readable.
+Sent as the `access` field in the publish body; scoped packages default to `restricted` on the registry side, so pass `--access=public` to make a new scoped package world-readable.
 
 ### `--dry-run`
 
@@ -31,22 +28,13 @@ Don't upload; print what would be published.
 
 Republish even when the version is already on the registry.
 
-By default `aube publish` issues a GET before the PUT and
-refuses to proceed when the version exists, surfacing a clear
-error instead of relying on the registry to return 409. In
-`--recursive` / `--filter` mode, `--force` overrides the
-silent "already-published" skip so every selected workspace
-package is re-PUT. The registry must still accept the
-republish — npm's public registry rejects re-publishes
-outright; Verdaccio and most private mirrors allow them.
+By default `aube publish` issues a GET before the PUT and refuses to proceed when the version exists, surfacing a clear error instead of relying on the registry to return 409. In `--recursive` / `--filter` mode, `--force` overrides the silent "already-published" skip so every selected workspace package is re-PUT. The registry must still accept the republish — npm's public registry rejects re-publishes outright; Verdaccio and most private mirrors allow them.
 
 ### `--ignore-scripts`
 
 Skip publish lifecycle scripts.
 
-Suppresses `prepublishOnly`, `prepublish`, `prepack`, `prepare`,
-`postpack`, `publish`, and `postpublish` scripts for this
-publish.
+Suppresses `prepublishOnly`, `prepublish`, `prepack`, `prepare`, `postpack`, `publish`, and `postpublish` scripts for this publish.
 
 ### `--json`
 
@@ -58,9 +46,7 @@ Output matches `npm publish --json` / `pnpm publish --json`; recursive multi-pac
 
 Skip the "working tree must be clean" check.
 
-When unset, aube refuses to publish from a dirty git checkout
-(uncommitted tracked changes) or from a detached / non-release
-branch.
+When unset, aube refuses to publish from a dirty git checkout (uncommitted tracked changes) or from a detached / non-release branch.
 
 ### `--otp <CODE>`
 
@@ -70,15 +56,9 @@ Sent verbatim as the `npm-otp` header.
 
 ### `--provenance`
 
-Generate a SLSA provenance attestation and attach it to the publish
-body.
+Generate a SLSA provenance attestation and attach it to the publish body.
 
-Requires an OIDC-capable CI environment (GitHub Actions with
-`id-token: write`, GitLab CI, Buildkite, or CircleCI) — aube
-signs via the Sigstore public-good instance (Fulcio + Rekor)
-and attaches the resulting bundle so registries that honor
-npm's provenance protocol light up the "provenance" badge on
-the published version.
+Requires an OIDC-capable CI environment (GitHub Actions with `id-token: write`, GitLab CI, Buildkite, or CircleCI) — aube signs via the Sigstore public-good instance (Fulcio + Rekor) and attaches the resulting bundle so registries that honor npm's provenance protocol light up the "provenance" badge on the published version.
 
 ### `--tag <TAG>`
 
@@ -90,44 +70,34 @@ Default dist-tag to publish under (default: `latest`).
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
-`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
-fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from
-`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
-underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-values like `1.5` are rejected by the CLI parser.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
-`aube-workspace.yaml` when set. Applied via `reqwest`'s
-`.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs,
-audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.

@@ -14,15 +14,13 @@ Runtime name (only `node` is supported)
 
 ### `<VERSION>`
 
-Version request: an exact version, a range (`^24`, `22`), `lts`,
-`latest`, or an LTS codename (`lts/jod`)
+Version request: an exact version, a range (`^24`, `22`), `lts`, `latest`, or an LTS codename (`lts/jod`)
 
 ## Flags
 
 ### `-g --global`
 
-Install for the user instead of the project (delegates to
-`mise use -g node@<version>` when mise manages installs)
+Install for the user instead of the project (delegates to `mise use -g node@<version>` when mise manages installs)
 
 ### `--on-fail <POLICY>`
 

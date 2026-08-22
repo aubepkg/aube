@@ -6,8 +6,7 @@
 
 List the available packages in the metadata cache.
 
-Optional glob filters narrow the result; with no filter every
-cached package is listed.
+Optional glob filters narrow the result; with no filter every cached package is listed.
 
 ## Arguments
 

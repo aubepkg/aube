@@ -12,9 +12,7 @@ Run a script defined in package.json
 
 Script or local binary name.
 
-Omit on an interactive TTY to pick from `package.json`
-scripts. If no script matches, aube falls back to
-`node_modules/.bin/<name>`.
+Omit on an interactive TTY to pick from `package.json` scripts. If no script matches, aube falls back to `node_modules/.bin/<name>`.
 
 ### `[ARGS]…`
 
@@ -38,8 +36,7 @@ Forward `--inspect-brk` to a Node-backed script or local binary.
 
 Continue recursive execution after a script fails.
 
-Parsed for pnpm compatibility; aube's sequential fanout still
-stops on first failure.
+Parsed for pnpm compatibility; aube's sequential fanout still stops on first failure.
 
 ### `--no-install`
 
@@ -49,21 +46,13 @@ Skip auto-install check
 
 Disable topological sorting (default is on).
 
-Without this, recursive runs visit packages in a deps-first
-order so a `build` script in a shared library finishes before a
-dependent app's `build` starts. Pass this to fall back to the
-raw workspace-listing order.
+Without this, recursive runs visit packages in a deps-first order so a `build` script in a shared library finishes before a dependent app's `build` starts. Pass this to fall back to the raw workspace-listing order.
 
 ### `--parallel`
 
 Run the script in every matched workspace package concurrently.
 
-Unbounded parallelism. Pair with `--workspace-concurrency=N` to
-cap the worker count. Single-package runs ignore this flag.
-First non-zero exit fails the whole run, but siblings are
-allowed to finish so their output isn't truncated. Child
-stdio is piped and lines are emitted with a `<package>: `
-prefix; pass `--reporter-hide-prefix` to drop the labels.
+Unbounded parallelism. Pair with `--workspace-concurrency=N` to cap the worker count. Single-package runs ignore this flag. First non-zero exit fails the whole run, but siblings are allowed to finish so their output isn't truncated. Child stdio is piped and lines are emitted with a `<package>: ` prefix; pass `--reporter-hide-prefix` to drop the labels.
 
 ### `--report-summary`
 
@@ -75,25 +64,19 @@ Parsed for pnpm compatibility.
 
 Hide the `<package>: ` label on parallel-run output lines.
 
-Lines are still piped through aube (so the line breaks are
-clean even when many packages run at once), but the source
-package isn't named on each line. Sequential runs ignore this
-flag.
+Lines are still piped through aube (so the line breaks are clean even when many packages run at once), but the source package isn't named on each line. Sequential runs ignore this flag.
 
 ### `--resume-from <PACKAGE>`
 
 Resume recursive execution starting at this package name.
 
-After the topo sort and `--reverse` are applied, packages
-before the named one in the resulting order are skipped. Errors
-if the name isn't in the matched workspace set.
+After the topo sort and `--reverse` are applied, packages before the named one in the resulting order are skipped. Errors if the name isn't in the matched workspace set.
 
 ### `--reverse`
 
 Reverse the recursive execution order (after topo sort).
 
-Useful for teardown-style scripts where dependents must shut
-down before their deps.
+Useful for teardown-style scripts where dependents must shut down before their deps.
 
 ### `--sort`
 
@@ -103,20 +86,15 @@ Pass to override an earlier `--no-sort` on the same invocation.
 
 ### `-s`
 
-Suppress aube's wrapper output while still showing script
-stdout/stderr.
+Suppress aube's wrapper output while still showing script stdout/stderr.
 
-Short alias for the global `--silent` flag; long form is
-intentionally omitted to avoid shadowing the global `--silent`
-in clap's dispatch.
+Short alias for the global `--silent` flag; long form is intentionally omitted to avoid shadowing the global `--silent` in clap's dispatch.
 
 ### `--workspace-concurrency <N>`
 
 Cap the number of recursive packages running at once.
 
-Setting this implicitly enables parallel mode at width `N`.
-`0` means "use the available CPU count". Without this flag,
-`--parallel` stays unbounded.
+Setting this implicitly enables parallel mode at width `N`. `0` means "use the available CPU count". Without this flag, `--parallel` stays unbounded.
 
 ## Lockfile
 
@@ -138,47 +116,37 @@ Use the lockfile when fresh, re-resolve when stale.
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
-`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
-fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from
-`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
-underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-values like `1.5` are rejected by the CLI parser.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
-`aube-workspace.yaml` when set. Applied via `reqwest`'s
-`.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs,
-audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
 
 ## Virtual store
 
@@ -186,12 +154,10 @@ audit requests, dist-tags, and registry writes.
 
 Force the shared global virtual store off for this invocation.
 
-Packages are materialized inside the project's virtual store
-instead of symlinked from `~/.cache/aube/virtual-store/`.
+Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
 
 ### `--enable-global-virtual-store --enable-gvs`
 
 Force the shared global virtual store on for this invocation.
 
-Overrides CI's default per-project materialization and the
-`disableGlobalVirtualStoreForPackages` auto-disable heuristic.
+Overrides CI's default per-project materialization and the `disableGlobalVirtualStoreForPackages` auto-disable heuristic.

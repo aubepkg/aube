@@ -12,10 +12,7 @@ Bump the version in package.json (and optionally create a git commit + tag)
 
 Bump keyword or an explicit version string.
 
-Accepts `major`, `minor`, `patch`, `premajor`, `preminor`,
-`prepatch`, `prerelease`, `from-git`, or an explicit version.
-`from-git` reads the nearest reachable version-like Git tag.
-When omitted, prints the current version.
+Accepts `major`, `minor`, `patch`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or an explicit version. `from-git` reads the nearest reachable version-like Git tag. When omitted, prints the current version.
 
 ## Flags
 
@@ -45,8 +42,7 @@ Skip git pre-commit / commit-msg hooks (passes `--no-verify`).
 
 Don't create a git commit or tag.
 
-By default `aube version` commits the manifest change and
-tags it `v<version>`.
+By default `aube version` commits the manifest change and tags it `v<version>`.
 
 ### `--preid <ID>`
 

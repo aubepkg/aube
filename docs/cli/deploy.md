@@ -20,9 +20,7 @@ Must be empty or not yet exist.
 
 Install only `devDependencies`.
 
-Implemented by stripping `dependencies` and
-`optionalDependencies` from the deployed `package.json` before
-install runs.
+Implemented by stripping `dependencies` and `optionalDependencies` from the deployed `package.json` before install runs.
 
 ### `--no-optional`
 
@@ -38,19 +36,13 @@ Accepted for pnpm compatibility.
 
 Deploy every dependency kind (production + dev + optional).
 
-Opts out of the implicit `--prod` deploy default. Useful when a
-deployed package needs its devDependencies at runtime (test
-harnesses, build-step deploys). Combine with `--no-optional` to
-drop optionals while keeping prod + dev. Mutually exclusive with
-`--prod` and `--dev`.
+Opts out of the implicit `--prod` deploy default. Useful when a deployed package needs its devDependencies at runtime (test harnesses, build-step deploys). Combine with `--no-optional` to drop optionals while keeping prod + dev. Mutually exclusive with `--prod` and `--dev`.
 
 ### `--offline`
 
 Fail if any metadata or tarball isn't already in the local cache.
 
-Never hits the network. Useful in multi-stage Dockerfiles where
-an earlier `aube install` already populated the store: deploy
-then reproduces a prod-only tree without re-fetching anything.
+Never hits the network. Useful in multi-stage Dockerfiles where an earlier `aube install` already populated the store: deploy then reproduces a prod-only tree without re-fetching anything.
 
 ### `--prefer-offline`
 
@@ -76,47 +68,37 @@ Use the lockfile when fresh, re-resolve when stale.
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
-`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
-fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from
-`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
-underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-values like `1.5` are rejected by the CLI parser.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
-`aube-workspace.yaml` when set. Applied via `reqwest`'s
-`.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs,
-audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
 
 ## Virtual store
 
@@ -124,12 +106,10 @@ audit requests, dist-tags, and registry writes.
 
 Force the shared global virtual store off for this invocation.
 
-Packages are materialized inside the project's virtual store
-instead of symlinked from `~/.cache/aube/virtual-store/`.
+Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
 
 ### `--enable-global-virtual-store --enable-gvs`
 
 Force the shared global virtual store on for this invocation.
 
-Overrides CI's default per-project materialization and the
-`disableGlobalVirtualStoreForPackages` auto-disable heuristic.
+Overrides CI's default per-project materialization and the `disableGlobalVirtualStoreForPackages` auto-disable heuristic.

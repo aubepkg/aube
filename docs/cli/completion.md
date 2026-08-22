@@ -26,6 +26,4 @@ Replace a file at a target path that aube did not write
 
 Install the scripts where this shell looks for them, instead of printing them
 
-Writes one script per program — aube, aubr and aubx — and nothing else: no shell rc file
-and no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is
-printed for you to add.
+Writes one script per program — aube, aubr and aubx — and nothing else: no shell rc file and no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is printed for you to add.

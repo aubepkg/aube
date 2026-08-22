@@ -6,8 +6,7 @@
 
 Verify installed packages can resolve their declared deps.
 
-Walks the `node_modules/` symlink tree and confirms every
-dependency in each `package.json` resolves to a real entry.
+Walks the `node_modules/` symlink tree and confirms every dependency in each `package.json` resolves to a real entry.
 
 ## Flags
 

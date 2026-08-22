@@ -10,8 +10,6 @@ Print the cached package index JSON for `<name>@<version>`
 
 ### `<PACKAGE>`
 
-Package to inspect, in `name@version` form (e.g. `lodash@4.17.21`,
-`@babel/core@7.26.0`).
+Package to inspect, in `name@version` form (e.g. `lodash@4.17.21`, `@babel/core@7.26.0`).
 
-An exact version is required — ranges and dist-tags aren't
-resolved here.
+An exact version is required — ranges and dist-tags aren't resolved here.

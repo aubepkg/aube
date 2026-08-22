@@ -6,15 +6,13 @@
 
 Add or update a dist-tag on a package.
 
-Spec must include a concrete version: `aube dist-tag add
-react@18.2.0 stable`. The tag argument defaults to `latest`.
+Spec must include a concrete version: `aube dist-tag add react@18.2.0 stable`. The tag argument defaults to `latest`.
 
 ## Arguments
 
 ### `<SPEC>`
 
-Package spec in `name@version` form (exact version required,
-ranges and tags aren't resolved here).
+Package spec in `name@version` form (exact version required, ranges and tags aren't resolved here).
 
 ### `[TAG]`
 

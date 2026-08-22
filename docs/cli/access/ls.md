@@ -10,6 +10,4 @@ Alias for `list packages`.
 
 ### `[ENTITIES]…`
 
-User, `@organization`, or `@scope:team`. Also accepts pnpm's
-`packages [ENTITY]` compatibility form. Accepted forms are
-`aube access ls [ENTITY]` and `aube access ls packages [ENTITY]`.
+User, `@organization`, or `@scope:team`. Also accepts pnpm's `packages [ENTITY]` compatibility form. Accepted forms are `aube access ls [ENTITY]` and `aube access ls packages [ENTITY]`.

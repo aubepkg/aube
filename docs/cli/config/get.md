@@ -12,8 +12,7 @@ Print the effective value of a key
 
 The setting key.
 
-Accepts either a pnpm canonical name (e.g. `autoInstallPeers`)
-or an `.npmrc` alias (e.g. `auto-install-peers`).
+Accepts either a pnpm canonical name (e.g. `autoInstallPeers`) or an `.npmrc` alias (e.g. `auto-install-peers`).
 
 ## Flags
 
@@ -21,8 +20,7 @@ or an `.npmrc` alias (e.g. `auto-install-peers`).
 
 Emit the value as JSON.
 
-Matches `pnpm config get --json`: a missing key renders as
-`undefined`, a found value is JSON-encoded.
+Matches `pnpm config get --json`: a missing key renders as `undefined`, a found value is JSON-encoded.
 
 ### `--local`
 
@@ -32,9 +30,7 @@ Shortcut for `--location project`.
 
 Which config location(s) to read.
 
-Defaults to `merged` — the last-write-wins view of user aube
-config, `~/.npmrc`, then `./.npmrc`, matching what install
-actually sees. Use `user` or `project` to restrict the lookup.
+Defaults to `merged` — the last-write-wins view of user aube config, `~/.npmrc`, then `./.npmrc`, matching what install actually sees. Use `user` or `project` to restrict the lookup.
 
 **Choices:**
 

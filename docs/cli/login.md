@@ -11,8 +11,7 @@ Store a registry auth token in the user's ~/.npmrc
 
 ### `--auth-type <TYPE>`
 
-Authentication flow: `legacy` (token paste; default) or `web`
-(OAuth flow against `{registry}/-/v1/login`).
+Authentication flow: `legacy` (token paste; default) or `web` (OAuth flow against `{registry}/-/v1/login`).
 
 **Default:** `legacy`
 
@@ -20,8 +19,7 @@ Authentication flow: `legacy` (token paste; default) or `web`
 
 Scope to bind this registry to (e.g. `@myorg`).
 
-When set, the scope->registry mapping is also written to
-`~/.npmrc`.
+When set, the scope->registry mapping is also written to `~/.npmrc`.
 
 ## Network
 
@@ -29,44 +27,34 @@ When set, the scope->registry mapping is also written to
 
 Number of retry attempts for failed registry fetches.
 
-Overrides `fetchRetries` / `fetch-retries` from `.npmrc` /
-`aube-workspace.yaml` when set. Pair with `--fetch-timeout` to
-fail fast in scripted test runs.
+Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 
 ### `--fetch-retry-factor <N>`
 
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from
-`.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
-underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-values like `1.5` are rejected by the CLI parser.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
 
 ### `--fetch-retry-maxtimeout <MS>`
 
 Upper bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-retry-mintimeout <MS>`
 
 Lower bound (ms) on the computed retry backoff.
 
-Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from
-`.npmrc` / `aube-workspace.yaml` when set.
+Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 
 ### `--fetch-timeout <MS>`
 
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
-`aube-workspace.yaml` when set. Applied via `reqwest`'s
-`.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
 
 ### `--registry <URL>`
 
 Override the default registry URL for this invocation.
 
-Use this npm registry URL for package metadata, tarballs,
-audit requests, dist-tags, and registry writes.
+Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.

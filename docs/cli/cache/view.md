@@ -6,8 +6,7 @@
 
 View the cached metadata for a single package.
 
-Prints a summary (versions, dist-tags, ETag, fetched-at) by
-default; `--json` dumps the raw cache file.
+Prints a summary (versions, dist-tags, ETag, fetched-at) by default; `--json` dumps the raw cache file.
 
 ## Arguments
 

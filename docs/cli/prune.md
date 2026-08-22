@@ -6,9 +6,7 @@
 
 Remove extraneous packages from project `node_modules`.
 
-Reads the lockfile, computes the packages still reachable from each
-importer, and removes stale top-level links, stale virtual-store entries,
-and dangling .bin links. Does not modify package.json or the lockfile.
+Reads the lockfile, computes the packages still reachable from each importer, and removes stale top-level links, stale virtual-store entries, and dangling .bin links. Does not modify package.json or the lockfile.
 
 ## Flags
 

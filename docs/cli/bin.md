@@ -14,10 +14,6 @@ Print the global bin directory instead of the project's
 
 ### `-w --workspace-root --workspace`
 
-Print the workspace-root bin directory instead of the current
-package's.
+Print the workspace-root bin directory instead of the current package's.
 
-Mirrors `pnpm bin -w`: from a sub-package, resolves the enclosing
-workspace root and prints its `node_modules/.bin`. No-op when no
-workspace root exists above cwd (single-project install), so the
-flag is safe to leave in shell aliases.
+Mirrors `pnpm bin -w`: from a sub-package, resolves the enclosing workspace root and prints its `node_modules/.bin`. No-op when no workspace root exists above cwd (single-project install), so the flag is safe to leave in shell aliases.
