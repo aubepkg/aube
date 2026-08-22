@@ -4421,7 +4421,13 @@ async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
         "default".to_string(),
         BTreeMap::from([("is-number".to_string(), "7.0.0".to_string())]),
     )]);
-    let overrides = BTreeMap::from([("is-number".to_string(), "catalog:".to_string())]);
+    let overrides = BTreeMap::from([
+        ("is-number".to_string(), "catalog:".to_string()),
+        (
+            "parent/is-number@>=7.0.0".to_string(),
+            "catalog:".to_string(),
+        ),
+    ]);
     let mut resolver = Resolver::new(client)
         .with_catalogs(catalogs)
         .with_overrides(overrides);
@@ -4438,6 +4444,7 @@ async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
         .expect("catalog override should resolve");
 
     assert_eq!(graph.overrides["is-number"], "7.0.0");
+    assert_eq!(graph.overrides["parent/is-number@>=7.0.0"], "7.0.0");
     let dep = &graph.importers["."][0];
     assert_eq!(dep.name, "is-number");
     assert_eq!(dep.specifier.as_deref(), Some("7.0.0"));

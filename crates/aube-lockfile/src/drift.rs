@@ -1334,6 +1334,32 @@ mod drift_tests {
     }
 
     #[test]
+    fn catalog_overrides_resolve_slash_targets_with_comparators() {
+        let overrides = BTreeMap::from([
+            ("parent/lodash@>=4.0.0".to_string(), "catalog:".to_string()),
+            (
+                "parent/@scope/pkg@>1.0.0".to_string(),
+                "catalog:".to_string(),
+            ),
+        ]);
+        let catalogs = BTreeMap::from([(
+            "default".to_string(),
+            BTreeMap::from([
+                ("lodash".to_string(), "4.17.21".to_string()),
+                ("@scope/pkg".to_string(), "2.0.0".to_string()),
+            ]),
+        )]);
+
+        assert_eq!(
+            resolve_catalog_refs_in_overrides(&overrides, &catalogs),
+            BTreeMap::from([
+                ("parent/lodash@>=4.0.0".to_string(), "4.17.21".to_string(),),
+                ("parent/@scope/pkg@>1.0.0".to_string(), "2.0.0".to_string(),),
+            ])
+        );
+    }
+
+    #[test]
     fn stale_when_override_catalog_ref_diverges_from_lockfile() {
         // If the catalog moves to a new version, the resolved override
         // no longer matches the lockfile — drift must fire, not silently
