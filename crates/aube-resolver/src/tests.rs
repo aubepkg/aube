@@ -4399,6 +4399,43 @@ async fn fresh_resolve_handles_versionless_scoped_npm_alias_from_catalog() {
     let entry = catalog.get("popper2").unwrap();
     assert_eq!(entry.specifier, "npm:@popperjs/core");
     assert_eq!(entry.version, "2.11.8");
+    assert_eq!(
+        graph.importers["."][0].specifier.as_deref(),
+        Some("catalog:"),
+        "an ordinary catalog dependency keeps its manifest specifier"
+    );
+}
+
+#[tokio::test]
+async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
+    let is_number = make_packument("is-number", &["7.0.0"], "7.0.0");
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let catalogs = BTreeMap::from([(
+        "default".to_string(),
+        BTreeMap::from([("is-number".to_string(), "7.0.0".to_string())]),
+    )]);
+    let overrides = BTreeMap::from([("is-number".to_string(), "catalog:".to_string())]);
+    let mut resolver = Resolver::new(client)
+        .with_catalogs(catalogs)
+        .with_overrides(overrides);
+    resolver.cache.insert("is-number".to_string(), is_number);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dev_dependencies
+        .insert("is-number".to_string(), "catalog:".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("catalog override should resolve");
+
+    assert_eq!(graph.overrides["is-number"], "7.0.0");
+    let dep = &graph.importers["."][0];
+    assert_eq!(dep.name, "is-number");
+    assert_eq!(dep.specifier.as_deref(), Some("7.0.0"));
 }
 
 // Catalog-aliased dep + selector override targeting the original
@@ -4457,6 +4494,11 @@ async fn override_with_bare_range_undoes_prior_catalog_alias() {
     );
     assert!(!graph.packages.contains_key("js-yaml@0.0.11"));
     assert!(!graph.packages.contains_key("@zkochan/js-yaml@0.0.11"));
+    assert_eq!(
+        graph.importers["."][0].specifier.as_deref(),
+        Some("^3.14.2"),
+        "version-keyed overrides rewrite direct importer specifiers"
+    );
 }
 
 #[tokio::test]

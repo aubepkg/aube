@@ -1797,6 +1797,13 @@ impl<'a> ResolveDriver<'a> {
                     }
                     None => (override_spec, None),
                 };
+                // pnpm records the override-applied specifier for direct
+                // importer dependencies. Keep ordinary `catalog:` dependencies
+                // verbatim, but once an override fires use its effective value
+                // (including catalog expansion) in the lockfile importer.
+                if task.is_root {
+                    task.original_specifier = Some(effective_spec.clone());
+                }
                 if task.range != effective_spec {
                     if let Some((catalog_name, real_range)) = pending_pick {
                         self.catalog_picks
