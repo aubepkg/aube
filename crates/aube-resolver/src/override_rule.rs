@@ -102,51 +102,26 @@ fn parse_key(key: &str) -> Option<(Vec<Segment>, Segment)> {
 /// are applied because a yarn-style selector may contain `>` inside a
 /// version comparator.
 ///
-/// The `>` split isn't a blind `str::split('>')` because a `>`
-/// character is also legal *inside* a version req (`>=2`, `>1.0.0`).
-/// We walk the key instead, tracking whether we're sitting inside a
-/// version req (entered via an `@` that isn't the scope prefix) and
-/// only splitting on `>` that *starts a new segment* — i.e. isn't
-/// followed by something that looks like a semver comparator
-/// continuation (`=`, a digit, whitespace, or a leading `v`). Any
-/// other `>` ends the current version req and introduces the next
-/// segment.
+/// The `>` split isn't a blind `str::split('>')` because a `>` is also
+/// legal inside a version req (`>=2`, `>1.0.0`). pnpm recognizes a
+/// parent delimiter with `/[^ |@]>/`: a `>` preceded by a space, `|`,
+/// or `@` remains part of the range, and every other `>` is a boundary.
 fn split_segments(key: &str) -> Option<Vec<&str>> {
     let mut pnpm_parts: Vec<&str> = Vec::new();
     let bytes = key.as_bytes();
     let mut start = 0;
     let mut i = 0;
-    // `in_req` flips true as soon as we see the `@` that
-    // introduces a segment's version req. It resets to false on
-    // every segment boundary.
-    let mut in_req = false;
     while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'@' && !in_req && i != start {
-            // A non-leading `@` inside a segment starts the
-            // version req. (A leading `@` is the scope prefix
-            // and is handled by `parse_segment`.)
-            in_req = true;
-        } else if c == b'>' {
-            if in_req {
-                // Could be part of a semver comparator: `>=2`,
-                // `>1.0`, `> 1` (whitespace), `>v2`. If so, keep
-                // consuming as part of the version req.
-                let looks_like_comparator_cont = bytes
-                    .get(i + 1)
-                    .is_some_and(|&n| matches!(n, b'=' | b' ' | b'v') || n.is_ascii_digit());
-                if looks_like_comparator_cont {
-                    i += 1;
-                    continue;
-                }
-            }
+        if bytes[i] == b'>' && i == 0 {
+            return None;
+        }
+        if bytes[i] == b'>' && !matches!(bytes[i - 1], b' ' | b'|' | b'@') {
             // Segment boundary.
             if start == i {
                 return None; // empty segment, e.g. `>foo` or `foo>>bar`
             }
             pnpm_parts.push(&key[start..i]);
             start = i + 1;
-            in_req = false;
         }
         i += 1;
     }
@@ -476,6 +451,14 @@ mod tests {
         assert_eq!(scoped.parents[0].name, "parent");
         assert_eq!(scoped.target.name, "@scope/pkg");
         assert_eq!(scoped.target.version_req.as_deref(), Some(">1.0.0"));
+    }
+
+    #[test]
+    fn parses_numeric_pnpm_chain_target() {
+        let rule = rule("parent@^1>123numeric", "catalog:");
+        assert_eq!(rule.parents[0].name, "parent");
+        assert_eq!(rule.parents[0].version_req.as_deref(), Some("^1"));
+        assert_eq!(rule.target.name, "123numeric");
     }
 
     #[test]

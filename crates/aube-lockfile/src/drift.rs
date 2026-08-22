@@ -1341,12 +1341,14 @@ mod drift_tests {
                 "parent/@scope/pkg@>1.0.0".to_string(),
                 "catalog:".to_string(),
             ),
+            ("parent@^1>123numeric".to_string(), "catalog:".to_string()),
         ]);
         let catalogs = BTreeMap::from([(
             "default".to_string(),
             BTreeMap::from([
                 ("lodash".to_string(), "4.17.21".to_string()),
                 ("@scope/pkg".to_string(), "2.0.0".to_string()),
+                ("123numeric".to_string(), "1.0.0".to_string()),
             ]),
         )]);
 
@@ -1355,6 +1357,7 @@ mod drift_tests {
             BTreeMap::from([
                 ("parent/lodash@>=4.0.0".to_string(), "4.17.21".to_string(),),
                 ("parent/@scope/pkg@>1.0.0".to_string(), "2.0.0".to_string(),),
+                ("parent@^1>123numeric".to_string(), "1.0.0".to_string()),
             ])
         );
     }

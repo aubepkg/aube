@@ -103,33 +103,24 @@ fn parse_key(key: &str) -> Option<(String, Option<String>)> {
 /// Split `key` on pnpm `>` chain separators (and yarn `/` ancestors),
 /// while keeping `>` characters that belong to a version comparator
 /// (`>=`, `>1.0.0`, `> 1`) attached to the segment they qualify.
+/// pnpm treats `>` as a parent delimiter unless the preceding byte is
+/// a space, `|`, or `@`; this matches its `/[^ |@]>/` boundary rule.
 /// Mirrors `aube-resolver::override_rule::split_segments`.
 fn split_segments(key: &str) -> Option<Vec<&str>> {
     let bytes = key.as_bytes();
     let mut pnpm_parts: Vec<&str> = Vec::new();
     let mut start = 0;
     let mut i = 0;
-    let mut in_req = false;
     while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'@' && !in_req && i != start {
-            in_req = true;
-        } else if c == b'>' {
-            if in_req {
-                let comparator_cont = bytes
-                    .get(i + 1)
-                    .is_some_and(|&n| matches!(n, b'=' | b' ' | b'v') || n.is_ascii_digit());
-                if comparator_cont {
-                    i += 1;
-                    continue;
-                }
-            }
+        if bytes[i] == b'>' && i == 0 {
+            return None;
+        }
+        if bytes[i] == b'>' && !matches!(bytes[i - 1], b' ' | b'|' | b'@') {
             if start == i {
                 return None;
             }
             pnpm_parts.push(&key[start..i]);
             start = i + 1;
-            in_req = false;
         }
         i += 1;
     }
@@ -328,6 +319,10 @@ mod tests {
         assert_eq!(
             target_package_name("parent/@scope/foo@>1.0.0").as_deref(),
             Some("@scope/foo")
+        );
+        assert_eq!(
+            target_package_name("parent@^1>123numeric").as_deref(),
+            Some("123numeric")
         );
     }
 
