@@ -4682,7 +4682,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5233,13 +5233,15 @@ dependencies = [
 
 [[package]]
 name = "usage-argv"
-version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "162179f728d278bd58665be652eee85d2ae555bf28128476d009e75e264f49d3"
 
 [[package]]
 name = "usage-derive"
-version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419bca1663d0d5c5fc5ed50b2150240f849310da92af5030daad6007959fa302"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5248,8 +5250,9 @@ dependencies = [
 
 [[package]]
 name = "usage-rs"
-version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f6fbc51c1c0ecb24dc799c6002c20b39736d0ddf47fa1167a21014485eb40a5"
 dependencies = [
  "usage-argv",
  "usage-derive",
@@ -5259,16 +5262,18 @@ dependencies = [
 
 [[package]]
 name = "usage-test"
-version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f487645613d586d484dfacb573c9e71daeaf95e44e342fb4e605a155bba87d"
 dependencies = [
  "usage-argv",
 ]
 
 [[package]]
 name = "usage-validation"
-version = "5.1.0"
-source = "git+https://github.com/jdx/usage?rev=8455ef42b50704475dbd3d2c956f0d8396dcf089#8455ef42b50704475dbd3d2c956f0d8396dcf089"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f312e0a2ee548c403f07ae79e03a5784b95a53a241f232f8abe9cf57b8ae105a"
 dependencies = [
  "expr-lang",
 ]

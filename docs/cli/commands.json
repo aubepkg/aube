@@ -2323,7 +2323,7 @@
         "full_cmd": [
           "completion"
         ],
-        "usage": "completion [--install] [--force] <SHELL>",
+        "usage": "completion [--force] [--install] <SHELL>",
         "subcommands": {},
         "args": [
           {
@@ -2338,20 +2338,6 @@
         ],
         "flags": [
           {
-            "name": "install",
-            "usage": "--install",
-            "help": "Install the scripts where this shell looks for them, instead of printing them",
-            "help_long": "Install the scripts where this shell looks for them, instead of printing them\n\nWrites one script per program — aube, aubr and aubx — and nothing else: no shell rc file\nand no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is\nprinted for you to add.",
-            "help_first_line": "Install the scripts where this shell looks for them, instead of printing them",
-            "short": [],
-            "long": [
-              "install"
-            ],
-            "hide": false,
-            "global": false,
-            "effect": "write"
-          },
-          {
             "name": "force",
             "usage": "--force",
             "help": "Replace a file at a target path that aube did not write",
@@ -2365,6 +2351,20 @@
             "requires": [
               "--install"
             ],
+            "effect": "write"
+          },
+          {
+            "name": "install",
+            "usage": "--install",
+            "help": "Install the scripts where this shell looks for them, instead of printing them",
+            "help_long": "Install the scripts where this shell looks for them, instead of printing them\n\nWrites one script per program — aube, aubr and aubx — and nothing else: no shell rc file\nand no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is\nprinted for you to add.",
+            "help_first_line": "Install the scripts where this shell looks for them, instead of printing them",
+            "short": [],
+            "long": [
+              "install"
+            ],
+            "hide": false,
+            "global": false,
             "effect": "write"
           }
         ],
