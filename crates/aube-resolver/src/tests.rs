@@ -68,6 +68,7 @@ fn build_age_gate_resolves_dist_tag_range() {
         parent: None,
         importer: ".".into(),
         original_specifier: None,
+        lockfile_override_specifier: None,
         real_name: None,
         ancestors: Arc::from([]),
         range_from_override: false,
@@ -92,6 +93,7 @@ fn build_no_match_falls_back_to_prereleases() {
         parent: None,
         importer: ".".into(),
         original_specifier: None,
+        lockfile_override_specifier: None,
         real_name: None,
         ancestors: Arc::from([]),
         range_from_override: false,
@@ -338,6 +340,7 @@ fn exotic_subdeps_from_local_parents_are_allowed() {
         parent: Some("pi-web-ui@file+abc123".to_string()),
         importer: ".".to_string(),
         original_specifier: None,
+        lockfile_override_specifier: None,
         real_name: None,
         ancestors: Arc::from([]),
         range_from_override: false,
@@ -367,6 +370,7 @@ fn exotic_subdeps_from_unknown_parents_stay_blocked() {
         parent: Some("pi-web-ui@file+missing".to_string()),
         importer: ".".to_string(),
         original_specifier: None,
+        lockfile_override_specifier: None,
         real_name: None,
         ancestors: Arc::from([]),
         range_from_override: false,
@@ -385,6 +389,7 @@ fn exotic_subdeps_from_registry_parents_stay_blocked() {
         parent: Some("pi-web-ui@0.68.1".to_string()),
         importer: ".".to_string(),
         original_specifier: None,
+        lockfile_override_specifier: None,
         real_name: None,
         ancestors: Arc::from([]),
         range_from_override: false,
@@ -4436,6 +4441,39 @@ async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
     let dep = &graph.importers["."][0];
     assert_eq!(dep.name, "is-number");
     assert_eq!(dep.specifier.as_deref(), Some("7.0.0"));
+}
+
+#[tokio::test]
+async fn skipped_optional_override_keeps_raw_manifest_specifier() {
+    let mut optional = make_packument("platform-only", &["7.0.0"], "7.0.0");
+    let unsupported_os = if cfg!(target_os = "macos") {
+        "linux"
+    } else {
+        "darwin"
+    };
+    optional.versions.get_mut("7.0.0").unwrap().os = vec![unsupported_os.to_string()];
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let overrides = BTreeMap::from([("platform-only".to_string(), "7.0.0".to_string())]);
+    let mut resolver = Resolver::new(client).with_overrides(overrides);
+    resolver.cache.insert("platform-only".to_string(), optional);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .optional_dependencies
+        .insert("platform-only".to_string(), "^6.0.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("platform-skipped override should resolve");
+
+    assert_eq!(
+        graph.skipped_optional_dependencies["."]["platform-only"], "^6.0.0",
+        "skipped-optional drift metadata must keep the manifest value"
+    );
 }
 
 // Catalog-aliased dep + selector override targeting the original

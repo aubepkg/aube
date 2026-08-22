@@ -618,33 +618,15 @@ fn resolve_catalog_refs_in_overrides(
                 .strip_prefix("catalog:")
                 .map(|tail| if tail.is_empty() { "default" } else { tail })
                 .and_then(|cat_name| workspace_catalogs.get(cat_name))
-                .and_then(|cat| cat.get(override_key_package_name(k)))
+                .and_then(|cat| {
+                    override_match::target_package_name(k)
+                        .and_then(|package_name| cat.get(&package_name))
+                })
                 .cloned()
                 .unwrap_or_else(|| v.clone());
             (k.clone(), resolved)
         })
         .collect()
-}
-
-/// Extract the package name from an override selector key so the catalog
-/// can be looked up by pkg name. Handles bare (`lodash`), scoped
-/// (`@babel/core`), ranged (`lodash@<5`), ancestor-chained
-/// (`parent>lodash`), and combinations. Unparseable keys return the
-/// input unchanged; the catalog lookup will then miss and leave the
-/// value as-is.
-fn override_key_package_name(key: &str) -> &str {
-    let last = key.rsplit('>').next().unwrap_or(key);
-    if let Some(after_scope) = last.strip_prefix('@') {
-        match after_scope.find('@') {
-            Some(idx) => &last[..idx + 1],
-            None => last,
-        }
-    } else {
-        match last.find('@') {
-            Some(idx) => &last[..idx],
-            None => last,
-        }
-    }
 }
 
 /// Compare two override maps and return a human-readable reason
@@ -1326,6 +1308,25 @@ mod drift_tests {
         let mut evens = BTreeMap::new();
         evens.insert("lodash".into(), "4.17.21".into());
         catalogs.insert("evens".into(), evens);
+        assert_eq!(
+            graph.check_drift(&manifest, &ws_overrides, &[], &catalogs),
+            DriftStatus::Fresh,
+        );
+    }
+
+    #[test]
+    fn fresh_when_yarn_ancestor_override_catalog_ref_matches_lockfile() {
+        let manifest = make_manifest(&[("lodash", "^4.17.0")]);
+        let mut graph = make_graph(&[("lodash", "^4.17.0", "lodash@4.17.21")]);
+        graph
+            .overrides
+            .insert("parent/lodash".into(), "4.17.21".into());
+        let ws_overrides = BTreeMap::from([("parent/lodash".to_string(), "catalog:".to_string())]);
+        let catalogs = BTreeMap::from([(
+            "default".to_string(),
+            BTreeMap::from([("lodash".to_string(), "4.17.21".to_string())]),
+        )]);
+
         assert_eq!(
             graph.check_drift(&manifest, &ws_overrides, &[], &catalogs),
             DriftStatus::Fresh,

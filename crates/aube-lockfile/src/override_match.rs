@@ -79,6 +79,14 @@ pub(crate) fn apply<'a>(
     })
 }
 
+/// Extract the final package target from any supported pnpm/yarn override key.
+/// Unlike [`compile`], this accepts ancestor chains because catalog expansion
+/// needs the target name even when the override cannot apply to an importer.
+pub(crate) fn target_package_name(key: &str) -> Option<String> {
+    let target = split_segments(key)?.pop()?;
+    parse_segment(target).map(|(name, _)| name)
+}
+
 fn parse_key(key: &str) -> Option<(String, Option<String>)> {
     if key.is_empty() {
         return None;
@@ -294,6 +302,17 @@ mod tests {
             ("parent/foo", "1.0.0"),
         ]));
         assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn target_name_supports_pnpm_and_yarn_ancestor_selectors() {
+        assert_eq!(target_package_name("parent>foo").as_deref(), Some("foo"));
+        assert_eq!(target_package_name("parent/foo").as_deref(), Some("foo"));
+        assert_eq!(target_package_name("**/foo").as_deref(), Some("foo"));
+        assert_eq!(
+            target_package_name("parent/@scope/foo@^1").as_deref(),
+            Some("@scope/foo")
+        );
     }
 
     #[test]

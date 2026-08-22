@@ -257,8 +257,13 @@ pub(crate) struct ResolveTask {
     pub(crate) importer: String,
     /// The original specifier from package.json before any rewrites
     /// (e.g. `"npm:real-pkg@^2.0.0"` for an alias, or `"^4.17.0"` for a normal range).
-    /// Only set for root deps; recorded into the lockfile for drift detection.
+    /// Only set for root deps; retained for diagnostics and skipped-optional
+    /// drift metadata even when an override changes the lockfile specifier.
     pub(crate) original_specifier: Option<String>,
+    /// Override-applied specifier pnpm records on a direct importer dependency.
+    /// `None` when no override fired, so ordinary catalog dependencies continue
+    /// to emit their raw `catalog:` manifest specifier.
+    lockfile_override_specifier: Option<String>,
     /// Real registry package name for npm-alias tasks.
     ///
     /// When a task arrives with `range` like `"npm:h3@2.0.1-rc.20"`,
@@ -307,6 +312,12 @@ impl ResolveTask {
         self.real_name.as_deref().unwrap_or(&self.name)
     }
 
+    fn lockfile_specifier(&self) -> Option<String> {
+        self.lockfile_override_specifier
+            .clone()
+            .or_else(|| self.original_specifier.clone())
+    }
+
     /// Construct a root-importer task for `(name, range)` under
     /// `importer`, with the appropriate `dep_type` and no parent/ancestry.
     /// Every root-dep enqueue site uses this shape; the factory keeps
@@ -322,6 +333,7 @@ impl ResolveTask {
             parent: None,
             importer,
             original_specifier: Some(original),
+            lockfile_override_specifier: None,
             real_name: None,
             ancestors: Arc::from([]),
             range_from_override: false,
@@ -347,6 +359,7 @@ impl ResolveTask {
             parent: Some(parent),
             importer,
             original_specifier: None,
+            lockfile_override_specifier: None,
             real_name: None,
             ancestors,
             range_from_override: false,

@@ -993,7 +993,7 @@ impl<'a> ResolveDriver<'a> {
                 name: task.name.clone(),
                 dep_path: dep_path.clone(),
                 dep_type: task.dep_type,
-                specifier: task.original_specifier.clone(),
+                specifier: task.lockfile_specifier(),
             });
         }
 
@@ -1626,7 +1626,7 @@ impl<'a> ResolveDriver<'a> {
                 name: task.name.clone(),
                 dep_path: dep_path.clone(),
                 dep_type: task.dep_type,
-                specifier: task.original_specifier.clone(),
+                specifier: task.lockfile_specifier(),
             });
         }
 
@@ -1749,8 +1749,8 @@ impl<'a> ResolveDriver<'a> {
         // Catalog protocol: rewrite `catalog:` / `catalog:<name>` to
         // the workspace catalog's actual range *before* the override
         // loop, so overrides can still target a catalog dep by bare
-        // name. The original `catalog:...` text stays in
-        // `original_specifier` for the lockfile importer.
+        // name. The raw `catalog:...` text stays in `original_specifier`;
+        // the separate lockfile field changes only if an override fires.
         if let Some((catalog_name, real_range)) = self
             .resolver
             .resolve_catalog_spec(&task.name, &task.range)?
@@ -1802,7 +1802,7 @@ impl<'a> ResolveDriver<'a> {
                 // verbatim, but once an override fires use its effective value
                 // (including catalog expansion) in the lockfile importer.
                 if task.is_root {
-                    task.original_specifier = Some(effective_spec.clone());
+                    task.lockfile_override_specifier = Some(effective_spec.clone());
                 }
                 if task.range != effective_spec {
                     if let Some((catalog_name, real_range)) = pending_pick {
@@ -1939,7 +1939,7 @@ impl<'a> ResolveDriver<'a> {
                 name: task.name.clone(),
                 dep_path: dep_path.clone(),
                 dep_type: task.dep_type,
-                specifier: task.original_specifier.clone(),
+                specifier: task.lockfile_specifier(),
             });
         }
         if let Some(ref parent_dp) = task.parent
@@ -2063,7 +2063,7 @@ impl<'a> ResolveDriver<'a> {
                 name: task.name.clone(),
                 dep_path: dep_path.clone(),
                 dep_type: task.dep_type,
-                specifier: task.original_specifier.clone(),
+                specifier: task.lockfile_specifier(),
             });
         }
         if let Some(ref parent_dp) = task.parent
