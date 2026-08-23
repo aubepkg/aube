@@ -111,6 +111,11 @@ default = [
     "hickory-dns",
     "workspace-yaml-preserve",
 ]
+# Minimum feature set for an independently linked `aubr` experiment. The
+# runner can still auto-install, so it needs the production allocator, TLS,
+# and DNS cache; it does not expose publish, config TUI, or workspace YAML
+# mutation commands after multicall dispatch rewrites argv to `aube run`.
+aubr-lean = ["mimalloc", "rustls", "hickory-dns"]
 # Include the interactive `aube config tui` browser. Builds that want the
 # smallest dependency graph can disable default features and omit this.
 config-tui = ["dep:crossterm", "dep:ratatui"]

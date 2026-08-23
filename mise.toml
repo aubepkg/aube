@@ -162,6 +162,15 @@ run = [
 dir = "{{config_root}}"
 run = "bash benchmarks/pgo.bash"
 
+# Build a separately linked runner with command-only features. Release
+# archives deliberately keep shipping `aubr` as a symlink to the PGO-trained
+# `aube`: this artifact is useful for measuring the standalone design, but it
+# adds a second ~40 MiB executable and has not beaten the multicall binary.
+[tasks."build:aubr-lean"]
+dir = "{{config_root}}"
+env = { CARGO_TARGET_DIR = "{{config_root}}/target/aubr-lean" }
+run = "cargo build --release --locked -p aube --bin aubr --no-default-features --features aubr-lean"
+
 [tasks.render]
 depends = ["build"]
 run = [
