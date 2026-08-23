@@ -165,6 +165,7 @@ script_alias_args!(InstallTestArgs, RestartArgs, StartArgs, StopArgs, TestArgs);
 pub async fn run(
     run_args: RunArgs,
     filter: aube_workspace::selector::EffectiveFilter,
+    replace_process: bool,
 ) -> miette::Result<Option<i32>> {
     run_args.network.install_overrides();
     run_args.lockfile.install_overrides();
@@ -221,8 +222,17 @@ pub async fn run(
         no_bail,
     };
     run_script_with(
-        &script, &args, &node_args, no_install, if_present, parallel, silent, &filter, recursive,
+        &script,
+        &args,
+        &node_args,
+        no_install,
+        if_present,
+        parallel,
+        silent,
+        &filter,
+        recursive,
         None,
+        replace_process,
     )
     .await
 }
@@ -533,6 +543,7 @@ pub(crate) async fn run_script(
         filter,
         RecursiveOpts::default(),
         None,
+        false,
     )
     .await
 }
@@ -562,6 +573,7 @@ pub(crate) async fn run_script_in(
         filter,
         RecursiveOpts::default(),
         Some(base_dir),
+        false,
     )
     .await
 }
@@ -578,6 +590,7 @@ pub(crate) async fn run_script_with(
     filter: &aube_workspace::selector::EffectiveFilter,
     recursive: RecursiveOpts,
     base_dir: Option<std::path::PathBuf>,
+    replace_process: bool,
 ) -> miette::Result<Option<i32>> {
     let initial_cwd = match base_dir {
         Some(dir) => dir,
@@ -663,6 +676,7 @@ pub(crate) async fn run_script_with(
         node_args,
         enable_pre_post_scripts,
         silent,
+        replace_process,
     )
     .await
 }
@@ -773,6 +787,7 @@ async fn run_script_filtered(
             node_args,
             enable_pre_post_scripts,
             silent,
+            false,
         )
         .await?
         {
@@ -1303,6 +1318,7 @@ pub(crate) async fn exec_script_chain(
     node_args: &[String],
     enable_pre_post_scripts: bool,
     silent: bool,
+    replace_process: bool,
 ) -> miette::Result<Option<i32>> {
     if enable_pre_post_scripts {
         let pre = format!("pre{script}");
@@ -1310,18 +1326,59 @@ pub(crate) async fn exec_script_chain(
             return Ok(Some(code));
         }
     }
+    let post = format!("post{script}");
+    if replace_process && (!enable_pre_post_scripts || !manifest.scripts.contains_key(&post)) {
+        return exec_script_replacing_process(cwd, manifest, script, args, node_args, silent).await;
+    }
     if let Some(code) =
         exec_script_with_node_args(cwd, manifest, script, args, node_args, silent).await?
     {
         return Ok(Some(code));
     }
-    if enable_pre_post_scripts {
-        let post = format!("post{script}");
-        if let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[], silent).await? {
-            return Ok(Some(code));
-        }
+    if enable_pre_post_scripts
+        && let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[], silent).await?
+    {
+        return Ok(Some(code));
     }
     Ok(None)
+}
+
+#[cfg(unix)]
+async fn exec_script_replacing_process(
+    cwd: &Path,
+    manifest: &PackageJson,
+    script: &str,
+    args: &[String],
+    node_args: &[String],
+    silent: bool,
+) -> miette::Result<Option<i32>> {
+    use std::os::unix::process::CommandExt;
+
+    let cmd = manifest
+        .scripts
+        .get(script)
+        .ok_or_else(|| miette!("script not found: {script}"))?;
+    let (mut command, echo_line) =
+        build_script_command(cwd, manifest, script, cmd, args, node_args).await?;
+    if !silent {
+        super::run_output::echo_script_command(&echo_line, None);
+    }
+    let error = command.as_std_mut().exec();
+    Err(error)
+        .into_diagnostic()
+        .wrap_err("failed to execute script")
+}
+
+#[cfg(not(unix))]
+async fn exec_script_replacing_process(
+    cwd: &Path,
+    manifest: &PackageJson,
+    script: &str,
+    args: &[String],
+    node_args: &[String],
+    silent: bool,
+) -> miette::Result<Option<i32>> {
+    exec_script_with_node_args(cwd, manifest, script, args, node_args, silent).await
 }
 
 /// Run a script. On a non-zero child exit, returns `Ok(Some(code))` so the

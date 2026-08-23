@@ -924,10 +924,10 @@ fn inner_main() -> miette::Result<i32> {
     let exit_code = if current_thread_run {
         runtime.block_on(commands::with_lazy_install_runtime(
             commands::LazyInstallRuntime::new(workers, blocking),
-            async_main(cli),
+            async_main(cli, invoked_as_aubr),
         ))?
     } else {
-        runtime.block_on(async_main(cli))?
+        runtime.block_on(async_main(cli, invoked_as_aubr))?
     };
     drop(runtime);
     // Return the command's exit code rather than terminating here: a
@@ -943,7 +943,7 @@ fn aubr_uses_current_thread(invoked_as_aubr: bool, cli: &Cli) -> bool {
     invoked_as_aubr && matches!(cli.command.as_ref(), Some(Commands::Run(_)))
 }
 
-async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
+async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i32>> {
     // Default log level is `warn` so routine install output doesn't collide
     // with the clx progress display. `-v` / `--verbose` and `--loglevel debug`
     // turn on debug logging, and in that mode we also force clx into Text
@@ -1235,7 +1235,7 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
                     }
                 }
                 Some(Commands::Run(args)) => {
-                    if let Some(code) = commands::run::run(args, nested_filter).await? {
+                    if let Some(code) = commands::run::run(args, nested_filter, false).await? {
                         return Ok(Some(code));
                     }
                 }
@@ -1299,7 +1299,9 @@ async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
         }
         Some(Commands::Root(args)) => commands::root::run(args).await?,
         Some(Commands::Run(args)) => {
-            if let Some(code) = commands::run::run(args, effective_filter.clone()).await? {
+            if let Some(code) =
+                commands::run::run(args, effective_filter.clone(), invoked_as_aubr).await?
+            {
                 return Ok(Some(code));
             }
         }

@@ -92,6 +92,66 @@ fn help_flag_lists_install_command() {
         .stdout(predicates::str::contains("install"));
 }
 
+#[cfg(unix)]
+#[test]
+fn aubr_replaces_itself_with_the_final_script_shell() {
+    use std::os::unix::fs::symlink;
+    use std::process::Stdio;
+
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(r#"{"name":"exec-handoff","private":true,"scripts":{"pid":"echo $$"}}"#);
+    let aubr = sbx._root.path().join("aubr");
+    symlink(assert_cmd::cargo::cargo_bin!("aube"), &aubr).unwrap();
+
+    let child = std::process::Command::new(aubr)
+        .args(["--no-install", "pid"])
+        .current_dir(&sbx.project)
+        .env("HOME", &sbx.home)
+        .env("AUBE_STORE_DIR", &sbx.store)
+        .env("AUBE_CACHE_DIR", &sbx.cache)
+        .env("XDG_CACHE_HOME", &sbx.cache)
+        .env("NO_COLOR", "1")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let child_pid = child.id();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        child_pid.to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn aubr_keeps_control_when_a_post_script_must_run() {
+    use assert_cmd::assert::OutputAssertExt;
+    use std::os::unix::fs::symlink;
+
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(
+        r#"{"name":"exec-handoff","private":true,"scripts":{"build":"echo build","postbuild":"echo postbuild"}}"#,
+    );
+    let aubr = sbx._root.path().join("aubr");
+    symlink(assert_cmd::cargo::cargo_bin!("aube"), &aubr).unwrap();
+
+    std::process::Command::new(aubr)
+        .args(["--no-install", "build"])
+        .current_dir(&sbx.project)
+        .env("HOME", &sbx.home)
+        .env("AUBE_STORE_DIR", &sbx.store)
+        .env("AUBE_CACHE_DIR", &sbx.cache)
+        .env("XDG_CACHE_HOME", &sbx.cache)
+        .env("NO_COLOR", "1")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("build\npostbuild\n"));
+}
+
 #[test]
 fn dynamic_completion_keeps_stdout_when_use_stderr_is_configured() {
     let _guard = e2e_lock();
