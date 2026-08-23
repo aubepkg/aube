@@ -88,7 +88,9 @@ mod script_settings;
 mod settings_context;
 mod workspace_helpers;
 
-pub(crate) use auto_install::{ensure_installed, ensure_installed_in};
+pub(crate) use auto_install::{
+    LazyInstallRuntime, ensure_installed, ensure_installed_in, with_lazy_install_runtime,
+};
 
 /// Resolve the directory a completion probe should inspect without changing
 /// the process cwd. Invalid `-C` targets yield no completions, matching the

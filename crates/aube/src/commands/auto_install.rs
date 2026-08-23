@@ -1,6 +1,61 @@
-use miette::miette;
+use std::future::Future;
+
+use miette::{IntoDiagnostic, WrapErr, miette};
 
 use super::install;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LazyInstallRuntime {
+    worker_threads: usize,
+    max_blocking_threads: usize,
+}
+
+impl LazyInstallRuntime {
+    pub(crate) fn new(worker_threads: usize, max_blocking_threads: usize) -> Self {
+        Self {
+            worker_threads,
+            max_blocking_threads,
+        }
+    }
+}
+
+tokio::task_local! {
+    static LAZY_INSTALL_RUNTIME: LazyInstallRuntime;
+}
+
+/// Allow an auto-install reached from a lightweight CLI runtime to create the
+/// full install runtime only after the freshness check misses. Task-local
+/// scoping keeps in-process embedding calls on their host's ambient runtime.
+pub(crate) async fn with_lazy_install_runtime<F: Future>(
+    config: LazyInstallRuntime,
+    future: F,
+) -> F::Output {
+    LAZY_INSTALL_RUNTIME.scope(config, future).await
+}
+
+async fn run_with_install_runtime<T, F, Fut>(operation: F) -> miette::Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = miette::Result<T>> + 'static,
+{
+    let Ok(config) = LAZY_INSTALL_RUNTIME.try_with(|config| *config) else {
+        return operation().await;
+    };
+    tokio::task::spawn_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(config.worker_threads)
+            .max_blocking_threads(config.max_blocking_threads)
+            .enable_all()
+            .build()
+            .into_diagnostic()
+            .wrap_err("failed to build lazy install runtime")?;
+        runtime.block_on(operation())
+    })
+    .await
+    .into_diagnostic()
+    .wrap_err("lazy install runtime task failed")?
+}
 
 pub(crate) async fn ensure_installed(no_install: bool) -> miette::Result<()> {
     ensure_installed_in(no_install, None).await
@@ -102,7 +157,7 @@ pub(crate) async fn ensure_installed_in(
     // Anchor the auto-install at the resolved tree, not the process cwd,
     // so an embedding host installs the project it asked to run.
     opts.project_dir = Some(cwd);
-    install::run(opts).await?;
+    run_with_install_runtime(|| install::run(opts)).await?;
 
     Ok(())
 }
@@ -128,4 +183,34 @@ fn resolve_verify_deps_before_run(cwd: &std::path::Path) -> miette::Result<Verif
         "prompt" | "install" => VerifyDepsBeforeRun::Install,
         _ => VerifyDepsBeforeRun::Install,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lazy_install_switches_from_current_thread_to_multi_thread() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread test runtime should build");
+
+        let ambient = runtime
+            .block_on(run_with_install_runtime(|| async {
+                Ok(tokio::runtime::Handle::current().runtime_flavor())
+            }))
+            .expect("ambient operation should run");
+        assert_eq!(ambient, tokio::runtime::RuntimeFlavor::CurrentThread);
+
+        let lazy = runtime
+            .block_on(with_lazy_install_runtime(
+                LazyInstallRuntime::new(1, 2),
+                run_with_install_runtime(|| async {
+                    Ok(tokio::runtime::Handle::current().runtime_flavor())
+                }),
+            ))
+            .expect("lazy operation should run");
+        assert_eq!(lazy, tokio::runtime::RuntimeFlavor::MultiThread);
+    }
 }

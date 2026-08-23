@@ -904,10 +904,10 @@ fn inner_main() -> miette::Result<i32> {
         .unwrap_or(4);
     let workers = parse_env("AUBE_TOKIO_WORKERS", cpu_count.min(8));
     let blocking = parse_env("AUBE_TOKIO_BLOCKING", 128);
-    // A non-installing aubr invocation only needs one async task to supervise
-    // the script process. Keep auto-install-capable runs on the multi-thread
-    // runtime: a stale tree can enter the full parallel install pipeline.
-    let current_thread_run = aubr_can_use_current_thread(invoked_as_aubr, &cli);
+    // Every aubr invocation starts on the lightweight runtime. If its
+    // synchronous freshness probe finds that dependencies need installing,
+    // auto_install lazily creates a multi-thread runtime for that work only.
+    let current_thread_run = aubr_uses_current_thread(invoked_as_aubr, &cli);
     let mut runtime_builder = if current_thread_run {
         tokio::runtime::Builder::new_current_thread()
     } else {
@@ -921,7 +921,14 @@ fn inner_main() -> miette::Result<i32> {
         .build()
         .into_diagnostic()
         .wrap_err("failed to build tokio runtime")?;
-    let exit_code = runtime.block_on(async_main(cli))?;
+    let exit_code = if current_thread_run {
+        runtime.block_on(commands::with_lazy_install_runtime(
+            commands::LazyInstallRuntime::new(workers, blocking),
+            async_main(cli),
+        ))?
+    } else {
+        runtime.block_on(async_main(cli))?
+    };
     drop(runtime);
     // Return the command's exit code rather than terminating here: a
     // non-zero result (e.g. `run`/`exec` propagating a child's status)
@@ -932,12 +939,8 @@ fn inner_main() -> miette::Result<i32> {
     Ok(exit_code.unwrap_or(0))
 }
 
-fn aubr_can_use_current_thread(invoked_as_aubr: bool, cli: &Cli) -> bool {
-    invoked_as_aubr
-        && matches!(
-            cli.command.as_ref(),
-            Some(Commands::Run(args)) if args.no_install
-        )
+fn aubr_uses_current_thread(invoked_as_aubr: bool, cli: &Cli) -> bool {
+    invoked_as_aubr && matches!(cli.command.as_ref(), Some(Commands::Run(_)))
 }
 
 async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
@@ -1485,15 +1488,15 @@ mod cli_spec_tests {
     use super::*;
 
     #[test]
-    fn only_non_installing_aubr_uses_current_thread_runtime() {
+    fn every_aubr_run_uses_current_thread_runtime() {
         let aubr = Cli::try_parse_test_from(["aubr", "--no-install", "build"])
             .expect("aubr --no-install should parse");
-        assert!(aubr_can_use_current_thread(true, &aubr));
+        assert!(aubr_uses_current_thread(true, &aubr));
 
         let installing =
             Cli::try_parse_test_from(["aubr", "build"]).expect("aubr script should parse");
-        assert!(!aubr_can_use_current_thread(true, &installing));
-        assert!(!aubr_can_use_current_thread(false, &aubr));
+        assert!(aubr_uses_current_thread(true, &installing));
+        assert!(!aubr_uses_current_thread(false, &aubr));
     }
 
     #[test]
