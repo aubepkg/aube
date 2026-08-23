@@ -1,5 +1,9 @@
 #!/usr/bin/env bats
 
+# `run --separate-stderr` is a 1.5.0 flag; declaring the floor turns the
+# BW02 warning it otherwise emits into a hard version check.
+bats_require_minimum_version 1.5.0
+
 setup() {
 	load 'test_helper/common_setup'
 	_common_setup
@@ -714,4 +718,91 @@ JSON
 	run aube run --complete
 	assert_success
 	assert_output "ok:echo ok"
+}
+
+@test "aube run echoes the script command line to stderr" {
+	# npm, pnpm, and bun all print `$ <cmd>` before running a script.
+	# It is the only thing that says what a script name expanded to,
+	# which is what makes a failing CI log readable.
+	printf '{ "name": "echo-cmd", "scripts": { "hello": "echo hi" } }' >package.json
+	run aube run --no-install hello
+	assert_success
+	assert_line "$ echo hi"
+	assert_line "hi"
+}
+
+@test "aube run echoes pre and post scripts separately" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "echo-chain",
+		  "scripts": {
+		    "prebuild": "echo before",
+		    "build": "echo main",
+		    "postbuild": "echo after"
+		  }
+		}
+	JSON
+	run aube run --no-install build
+	assert_success
+	assert_line "$ echo before"
+	assert_line "$ echo main"
+	assert_line "$ echo after"
+}
+
+@test "aube run echoes forwarded args, quoting only what needs it" {
+	# pnpm and bun echo shell-safe args bare; anything with whitespace or
+	# metacharacters is quoted so the line stays copy-pasteable.
+	printf '{ "name": "echo-args", "scripts": { "go": "echo" } }' >package.json
+	run aube run --no-install go --watch 'two words'
+	assert_success
+	assert_line "$ echo --watch 'two words'"
+}
+
+@test "aube run writes the echoed command to stderr, not stdout" {
+	# `aube run print-json > out.json` has to stay parseable.
+	printf '{ "name": "echo-stream", "scripts": { "hello": "echo hi" } }' >package.json
+	run --separate-stderr aube run --no-install hello
+	assert_success
+	assert_output "hi"
+	[[ "$stderr" == *'$ echo hi'* ]]
+}
+
+@test "aube run --silent suppresses the echoed command but not script output" {
+	printf '{ "name": "echo-silent", "scripts": { "hello": "echo hi" } }' >package.json
+	run aube run --no-install -s hello
+	assert_success
+	assert_output "hi"
+	refute_output --partial '$ echo hi'
+
+	run aube --silent run --no-install hello
+	assert_success
+	assert_output "hi"
+	refute_output --partial '$ echo hi'
+}
+
+@test "aube run does not echo for the node_modules/.bin fallback" {
+	# Matches bun: the `$ <cmd>` line reports a package.json script body.
+	# A bare binary name is already exactly what the user typed.
+	printf '{ "name": "echo-bin", "scripts": {} }' >package.json
+	mkdir -p node_modules/.bin
+	printf '#!/bin/sh\necho from-bin\n' >node_modules/.bin/mybin
+	chmod +x node_modules/.bin/mybin
+	run aube run --no-install mybin
+	assert_success
+	assert_output "from-bin"
+	refute_output --partial '$ '
+}
+
+@test "aube run -r --parallel prefixes the echoed command with the package" {
+	# Parallel output is multiplexed, so an unprefixed `$ <cmd>` line
+	# could not be attributed to a package.
+	printf '{ "name": "root", "private": true }' >package.json
+	printf 'packages:\n  - "packages/*"\n' >pnpm-workspace.yaml
+	mkdir -p packages/a packages/b
+	printf '{ "name": "pkg-a", "scripts": { "build": "echo a-done" } }' >packages/a/package.json
+	printf '{ "name": "pkg-b", "scripts": { "build": "echo b-done" } }' >packages/b/package.json
+	run aube run --no-install -r --parallel build
+	assert_success
+	assert_line "pkg-a: $ echo a-done"
+	assert_line "pkg-b: $ echo b-done"
 }

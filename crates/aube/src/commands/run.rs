@@ -662,6 +662,7 @@ pub(crate) async fn run_script_with(
         args,
         node_args,
         enable_pre_post_scripts,
+        silent,
     )
     .await
 }
@@ -771,6 +772,7 @@ async fn run_script_filtered(
             args,
             node_args,
             enable_pre_post_scripts,
+            silent,
         )
         .await?
         {
@@ -1017,6 +1019,7 @@ async fn run_filtered_parallel(
                     &args,
                     &node_args,
                     enable_pre_post_scripts,
+                    silent,
                     &output_mode,
                 )
                 .await
@@ -1089,11 +1092,14 @@ pub(crate) async fn exec_optional(
     manifest: &PackageJson,
     script: &str,
     args: &[String],
+    silent: bool,
 ) -> miette::Result<Option<Option<i32>>> {
     if !manifest.scripts.contains_key(script) {
         return Ok(None);
     }
-    Ok(Some(exec_script(cwd, manifest, script, args).await?))
+    Ok(Some(
+        exec_script(cwd, manifest, script, args, silent).await?,
+    ))
 }
 
 /// Run a single script. Returns `Ok(Some(code))` on a non-zero child exit
@@ -1104,8 +1110,9 @@ pub(crate) async fn exec_script(
     manifest: &PackageJson,
     script: &str,
     args: &[String],
+    silent: bool,
 ) -> miette::Result<Option<i32>> {
-    exec_script_with_node_args(cwd, manifest, script, args, &[]).await
+    exec_script_with_node_args(cwd, manifest, script, args, &[], silent).await
 }
 
 /// Build a fully-configured `tokio::process::Command` for running a
@@ -1115,6 +1122,13 @@ pub(crate) async fn exec_script(
 /// returns the raw status so the parallel path can collect all outcomes).
 /// Keeping one place to configure these means future security fixes land
 /// once, not twice.
+///
+/// Returns the command alongside the `$ <cmd>` line to echo for it. The
+/// echoed line is built here rather than at the call sites because this
+/// is where `cmd` has already been through node-arg injection — echoing
+/// the raw manifest body would hide the `--inspect` a user just asked
+/// for. See [`display_arg`] for why the echoed args are quoted more
+/// loosely than the executed ones.
 async fn build_script_command(
     cwd: &Path,
     manifest: &PackageJson,
@@ -1122,15 +1136,16 @@ async fn build_script_command(
     cmd: &str,
     args: &[String],
     node_args: &[String],
-) -> miette::Result<tokio::process::Command> {
+) -> miette::Result<(tokio::process::Command, String)> {
     // Raw script body as written in package.json, exported as
     // `npm_lifecycle_script` (pnpm parity). Captured before node-arg
     // injection and arg quoting so it mirrors the manifest, not the
     // spliced shell command line.
     let lifecycle_script = cmd.to_string();
     let cmd = inject_node_args(cmd, node_args);
-    let shell_cmd = if args.is_empty() {
-        cmd
+    let (shell_cmd, echo_line) = if args.is_empty() {
+        let echo_line = cmd.clone();
+        (cmd, echo_line)
     } else {
         // Quote each forwarded arg. Args land inside `sh -c "..."` or
         // cmd `/c "..."` which reparses. Unquoted $, backticks, ;, |,
@@ -1140,11 +1155,15 @@ async fn build_script_command(
         let mut buf =
             String::with_capacity(cmd.len() + args.iter().map(|a| a.len() + 3).sum::<usize>());
         buf.push_str(&cmd);
+        let mut echo = String::with_capacity(buf.capacity());
+        echo.push_str(&cmd);
         for a in args {
             buf.push(' ');
             buf.push_str(&aube_scripts::shell_quote_arg(a));
+            echo.push(' ');
+            echo.push_str(&display_arg(a));
         }
-        buf
+        (buf, echo)
     };
 
     let bin_dir = super::project_modules_dir(cwd).join(".bin");
@@ -1218,7 +1237,30 @@ async fn build_script_command(
         let init_cwd = crate::dirs::cwd().ok().unwrap_or_else(|| cwd.to_path_buf());
         command.env("INIT_CWD", init_cwd);
     }
-    Ok(command)
+    Ok((command, echo_line))
+}
+
+/// Quote `arg` for the echoed `$ <cmd>` line only — never for execution.
+///
+/// The executed command line quotes every arg unconditionally via
+/// `shell_quote_arg`, which is correct but turns `aube run test foo` into
+/// a displayed `... 'foo'`. npm, pnpm, and bun all echo shell-safe args
+/// bare, so do the same: pass through anything drawn from a conservative
+/// safe set, and fall back to the *exact* execution quoting for anything
+/// else. Routing the interesting cases through `shell_quote_arg` rather
+/// than a second quoting implementation means the echoed line can never
+/// disagree with what actually ran.
+fn display_arg(arg: &str) -> std::borrow::Cow<'_, str> {
+    let safe = !arg.is_empty()
+        && arg.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '_' | '-' | '.' | '/' | '=' | ':' | '@' | ',' | '+')
+        });
+    if safe {
+        std::borrow::Cow::Borrowed(arg)
+    } else {
+        std::borrow::Cow::Owned(aube_scripts::shell_quote_arg(arg))
+    }
 }
 
 fn inject_node_args(cmd: &str, node_args: &[String]) -> String {
@@ -1255,19 +1297,22 @@ pub(crate) async fn exec_script_chain(
     args: &[String],
     node_args: &[String],
     enable_pre_post_scripts: bool,
+    silent: bool,
 ) -> miette::Result<Option<i32>> {
     if enable_pre_post_scripts {
         let pre = format!("pre{script}");
-        if let Some(Some(code)) = exec_optional(cwd, manifest, &pre, &[]).await? {
+        if let Some(Some(code)) = exec_optional(cwd, manifest, &pre, &[], silent).await? {
             return Ok(Some(code));
         }
     }
-    if let Some(code) = exec_script_with_node_args(cwd, manifest, script, args, node_args).await? {
+    if let Some(code) =
+        exec_script_with_node_args(cwd, manifest, script, args, node_args, silent).await?
+    {
         return Ok(Some(code));
     }
     if enable_pre_post_scripts {
         let post = format!("post{script}");
-        if let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[]).await? {
+        if let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[], silent).await? {
             return Ok(Some(code));
         }
     }
@@ -1285,13 +1330,18 @@ async fn exec_script_with_node_args(
     script: &str,
     args: &[String],
     node_args: &[String],
+    silent: bool,
 ) -> miette::Result<Option<i32>> {
     let cmd = manifest
         .scripts
         .get(script)
         .ok_or_else(|| miette!("script not found: {script}"))?;
 
-    let mut command = build_script_command(cwd, manifest, script, cmd, args, node_args).await?;
+    let (mut command, echo_line) =
+        build_script_command(cwd, manifest, script, cmd, args, node_args).await?;
+    if !silent {
+        super::run_output::echo_script_command(&echo_line, None);
+    }
 
     let status = command
         .status()
@@ -1314,11 +1364,13 @@ pub(crate) async fn exec_script_status(
     manifest: &PackageJson,
     script: &str,
     args: &[String],
+    silent: bool,
     output_mode: &super::run_output::OutputMode,
 ) -> miette::Result<std::process::ExitStatus> {
-    exec_script_status_with_node_args(cwd, manifest, script, args, &[], output_mode).await
+    exec_script_status_with_node_args(cwd, manifest, script, args, &[], silent, output_mode).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn exec_script_status_chain(
     cwd: &Path,
     manifest: &PackageJson,
@@ -1326,58 +1378,116 @@ pub(crate) async fn exec_script_status_chain(
     args: &[String],
     node_args: &[String],
     enable_pre_post_scripts: bool,
+    silent: bool,
     output_mode: &super::run_output::OutputMode,
 ) -> miette::Result<std::process::ExitStatus> {
     if enable_pre_post_scripts {
         let pre = format!("pre{script}");
         if manifest.scripts.contains_key(&pre) {
-            let status = exec_script_status(cwd, manifest, &pre, &[], output_mode).await?;
+            let status = exec_script_status(cwd, manifest, &pre, &[], silent, output_mode).await?;
             if !status.success() {
                 return Ok(status);
             }
         }
     }
-    let status =
-        exec_script_status_with_node_args(cwd, manifest, script, args, node_args, output_mode)
-            .await?;
+    let status = exec_script_status_with_node_args(
+        cwd,
+        manifest,
+        script,
+        args,
+        node_args,
+        silent,
+        output_mode,
+    )
+    .await?;
     if !status.success() {
         return Ok(status);
     }
     if enable_pre_post_scripts {
         let post = format!("post{script}");
         if manifest.scripts.contains_key(&post) {
-            return exec_script_status(cwd, manifest, &post, &[], output_mode).await;
+            return exec_script_status(cwd, manifest, &post, &[], silent, output_mode).await;
         }
     }
     Ok(status)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn exec_script_status_with_node_args(
     cwd: &Path,
     manifest: &PackageJson,
     script: &str,
     args: &[String],
     node_args: &[String],
+    silent: bool,
     output_mode: &super::run_output::OutputMode,
 ) -> miette::Result<std::process::ExitStatus> {
     let cmd = manifest
         .scripts
         .get(script)
         .ok_or_else(|| miette!("script not found: {script}"))?;
-    let command = build_script_command(cwd, manifest, script, cmd, args, node_args).await?;
+    let (command, echo_line) =
+        build_script_command(cwd, manifest, script, cmd, args, node_args).await?;
+    if !silent {
+        super::run_output::echo_script_command(&echo_line, Some(output_mode));
+    }
     super::run_output::run_command(command, output_mode).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        RecursiveOpts, command_column_width, completion_line, effective_concurrency,
+        RecursiveOpts, command_column_width, completion_line, display_arg, effective_concurrency,
         inject_node_args, name_column_width, node_args_from_run_flags, order_matched_packages,
     };
     use aube_manifest::PackageJson;
     use aube_workspace::selector::SelectedPackage;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// Shell-safe args echo bare, matching what npm, pnpm, and bun print.
+    /// Quoting these would make `aube run test --watch` echo as
+    /// `... '--watch'`, which is noise no other package manager emits.
+    #[test]
+    fn display_arg_leaves_shell_safe_args_bare() {
+        for arg in [
+            "build",
+            "--watch",
+            "-v",
+            "src/index.ts",
+            "--reporter=json",
+            "@scope/pkg",
+            "a,b",
+            "1.2.3",
+            "NODE_ENV=production",
+        ] {
+            assert_eq!(display_arg(arg), arg, "{arg} should echo unquoted");
+        }
+    }
+
+    /// Anything outside the safe set falls back to `shell_quote_arg` — the
+    /// same function that builds the executed command line. Asserting
+    /// equality against it (rather than a hardcoded string) is what keeps
+    /// the echoed line from ever drifting from what actually ran.
+    #[test]
+    fn display_arg_falls_back_to_exec_quoting() {
+        for arg in [
+            "",
+            "a b",
+            "$(rm -rf ~)",
+            "it's",
+            "a;b",
+            "*",
+            "a\nb",
+            "\u{e9}",
+        ] {
+            assert_eq!(
+                display_arg(arg),
+                aube_scripts::shell_quote_arg(arg),
+                "{arg:?} should reuse the execution quoting"
+            );
+        }
+    }
 
     fn pkg(name: &str, deps: &[&str]) -> SelectedPackage {
         let manifest = PackageJson {
