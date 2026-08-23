@@ -3,8 +3,16 @@ use aube_registry::client::RegistryClient;
 use aube_registry::{Packument, VersionTrustMetadata};
 use aube_util::adaptive::AdaptiveLimit;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::task::JoinSet;
+
+/// Bound synchronous cache reads and JSON parsing independently from registry
+/// capacity. The permit moves into `spawn_blocking` so cancellation cannot
+/// release it while the blocking task is still running.
+static PACKUMENT_CACHE_IO: LazyLock<Arc<tokio::sync::Semaphore>> = LazyLock::new(|| {
+    let concurrency = std::thread::available_parallelism().map_or(4, |n| n.get().clamp(4, 32));
+    Arc::new(tokio::sync::Semaphore::new(concurrency))
+});
 
 /// Spawns and tracks in-flight packument fetches.
 ///
@@ -239,32 +247,31 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
             .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)));
     let _diag_inflight = aube_util::diag::inflight(aube_util::diag::Slot::Pack);
-    let permit_wait = std::time::Instant::now();
-    let permit = sem.acquire().await;
-    let permit_wait_ms = permit_wait.elapsed();
-    if permit_wait_ms.as_millis() > 1 {
-        aube_util::diag::event_lazy(
-            aube_util::diag::Category::Resolver,
-            "packument_permit_wait",
-            permit_wait_ms,
-            || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
-        );
-    }
-    aube_util::diag::attribute_wait(aube_util::diag::Slot::Pack, &name, permit_wait_ms);
-    let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
-    if force_refresh
-        && needs_time
-        && let Some(dir) = full_cache_dir.as_ref()
-    {
-        client.invalidate_full_packument_cache(&name, dir);
-    }
-    let mut cached = if needs_time {
-        match full_cache_dir.as_ref() {
-            Some(dir) => client.cached_full_packument_lookup(&name, dir),
-            None => Default::default(),
-        }
-    } else if let Some(ref dir) = cache_dir {
-        client.cached_packument_lookup(&name, dir)
+    let cache_lookup_dir = if needs_time {
+        full_cache_dir.clone()
+    } else {
+        cache_dir.clone()
+    };
+    let mut cached = if let Some(cache_lookup_dir) = cache_lookup_dir {
+        let cache_io_permit = Arc::clone(&PACKUMENT_CACHE_IO)
+            .acquire_owned()
+            .await
+            .map_err(|e| Error::Registry(name.clone(), e.to_string()))?;
+        let lookup_client = Arc::clone(&client);
+        let lookup_name = name.clone();
+        tokio::task::spawn_blocking(move || {
+            let _cache_io_permit = cache_io_permit;
+            if force_refresh && needs_time {
+                lookup_client.invalidate_full_packument_cache(&lookup_name, &cache_lookup_dir);
+            }
+            if needs_time {
+                lookup_client.cached_full_packument_lookup(&lookup_name, &cache_lookup_dir)
+            } else {
+                lookup_client.cached_packument_lookup(&lookup_name, &cache_lookup_dir)
+            }
+        })
+        .await
+        .map_err(|e| Error::Registry(name.clone(), format!("packument cache lookup: {e}")))?
     } else {
         Default::default()
     };
@@ -280,9 +287,23 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
                 )
             },
         );
-        permit.record_cancelled();
         return Ok((name, packument, FetchSource::Disk, None));
     }
+    // The adaptive limit models registry capacity. Disk metadata does not
+    // consume that capacity and must not queue behind slow HTTP requests.
+    let permit_wait = std::time::Instant::now();
+    let permit = sem.acquire().await;
+    let permit_wait_ms = permit_wait.elapsed();
+    if permit_wait_ms.as_millis() > 1 {
+        aube_util::diag::event_lazy(
+            aube_util::diag::Category::Resolver,
+            "packument_permit_wait",
+            permit_wait_ms,
+            || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
+        );
+    }
+    aube_util::diag::attribute_wait(aube_util::diag::Slot::Pack, &name, permit_wait_ms);
+    let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
     let use_metadata_primer = !force_refresh
         && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
         && primer_covers_cutoff;
@@ -525,6 +546,41 @@ mod tests {
         assert!(refreshed.versions.contains_key(new_version));
         assert_eq!(requests.load(Ordering::Relaxed), 1);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn disk_metadata_does_not_wait_for_a_network_permit() {
+        let Some(name) = crate::primer::popular_package_names()
+            .lines()
+            .find(|name| crate::primer::get(name).is_some())
+        else {
+            return;
+        };
+        let cache = tempfile::tempdir().unwrap();
+        let client = Arc::new(RegistryClient::new("https://registry.npmjs.org"));
+        client.seed_packument_cache(
+            name,
+            cache.path(),
+            &crate::primer::get(name).unwrap().packument(),
+            None,
+            None,
+            true,
+        );
+        let limiter = AdaptiveLimit::new(1, 1, 1);
+        let held_network_permit = limiter.acquire().await;
+        let resolver = Resolver::new(client).with_packument_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, limiter, false);
+
+        scheduler.ensure_fetch(name, None, false);
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_secs(1), scheduler.join_next())
+                .await
+                .expect("disk lookup queued behind the network permit");
+        let Some(Ok((FetchKey::Full(_), Ok((_, _, source, _))))) = outcome else {
+            panic!("disk fetch did not complete");
+        };
+        assert_eq!(source, FetchSource::Disk);
+        drop(held_network_permit);
     }
 
     #[tokio::test]
