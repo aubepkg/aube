@@ -784,6 +784,30 @@ pub async fn ensure_for_cwd(cwd: &Path) -> miette::Result<Arc<RuntimeContext>> {
     ensure(&project_dir, manifest.as_deref(), settings, pin.as_ref()).await
 }
 
+/// Resolve from a manifest the caller already loaded for this project.
+/// `aubr` uses this to share one live parse between runtime selection and
+/// script dispatch without relying on process-lifetime manifest state.
+pub(crate) async fn ensure_for_cwd_with_manifest(
+    cwd: &Path,
+    manifest: &PackageJson,
+) -> miette::Result<Arc<RuntimeContext>> {
+    if let Some(ctx) = current() {
+        return Ok(ctx);
+    }
+    let project_dir = crate::dirs::find_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let (settings, parse_options) = crate::commands::with_settings_ctx(&project_dir, |ctx| {
+        (
+            RuntimeSettings::from_ctx(ctx),
+            aube_lockfile::ParseOptions {
+                strict_store_integrity: aube_settings::resolved::strict_store_integrity(ctx)
+                    || aube_settings::resolved::paranoid(ctx),
+            },
+        )
+    });
+    let pin = lockfile_node_pin(&project_dir, manifest, parse_options);
+    ensure(&project_dir, Some(manifest), settings, pin.as_ref()).await
+}
+
 /// Resolve the project's runtime once for this process.
 ///
 /// `manifest` is the root manifest when the caller already has it

@@ -600,13 +600,10 @@ pub(crate) async fn run_script_with(
             ));
         }
     };
-    // Resolve once from the same project root used for manifest and script
-    // settings below. The install path re-enters ensure() with the lockfile
-    // pin, but the OnceCell makes that a no-op when this warm-path lookup won.
-    crate::runtime::ensure_for_cwd(&cwd).await?;
     let enable_pre_post_scripts = configure_script_settings_for_project(&cwd)?;
 
     if !filter.is_empty() {
+        crate::runtime::ensure_for_cwd(&cwd).await?;
         return run_script_filtered(
             &cwd,
             script,
@@ -624,6 +621,9 @@ pub(crate) async fn run_script_with(
     }
 
     let manifest = load_manifest(&cwd)?;
+    // Reuse these exact live bytes for runtime selection and dispatch. This
+    // avoids a second manifest read without introducing cross-command state.
+    crate::runtime::ensure_for_cwd_with_manifest(&cwd, &manifest).await?;
     if !manifest.scripts.contains_key(script) {
         ensure_installed_in(no_install, Some(&cwd)).await?;
         let bin_path = super::project_modules_dir(&cwd).join(".bin").join(script);
@@ -1060,8 +1060,8 @@ async fn run_filtered_parallel(
     Ok(None)
 }
 
-pub(crate) fn load_manifest(cwd: &Path) -> miette::Result<std::sync::Arc<PackageJson>> {
-    PackageJson::from_path_cached(&cwd.join("package.json"))
+pub(crate) fn load_manifest(cwd: &Path) -> miette::Result<PackageJson> {
+    PackageJson::from_path(&cwd.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err("failed to read package.json")
 }
