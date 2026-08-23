@@ -957,7 +957,9 @@ JSON
 	mkdir -p sub
 	cd sub
 	# `sh` rewrites PWD on startup; a direct exec inherits ours, so the
-	# fast path stamps it explicitly.
+	# fast path stamps it explicitly. PWD is a POSIX shell convention that
+	# cmd.exe has no equivalent for, so this lives here rather than in the
+	# cross-platform e2e suite.
 	run aube -C .. run probe
 	assert_success
 	assert_output --partial "pwd-matches: true"

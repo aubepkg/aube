@@ -287,36 +287,3 @@ fn run_reports_a_missing_command_like_a_shell() {
         assert.failure();
     }
 }
-
-#[test]
-fn run_reports_the_script_directory_as_pwd() {
-    let _guard = e2e_lock();
-    let sbx = Sandbox::new();
-    // `sh` sets PWD itself; the direct path has to stamp it. Invoke from
-    // the parent via `-C` so an inherited PWD would be visibly wrong.
-    sbx.write_manifest(
-        r#"{
-            "name": "e2e-run-pwd",
-            "version": "0.0.0",
-            "scripts": { "probe": "node pwd-probe.js" }
-        }"#,
-    );
-    fs::write(
-        sbx.project.join("pwd-probe.js"),
-        "console.log('PWD=' + (process.env.PWD === process.cwd()))",
-    )
-    .unwrap();
-
-    let mut cmd = sbx.cmd();
-    cmd.current_dir(sbx.project.parent().unwrap());
-    cmd.args([
-        "-C",
-        sbx.project.to_str().unwrap(),
-        "run",
-        "--no-install",
-        "probe",
-    ])
-    .assert()
-    .success()
-    .stdout(predicates::str::contains("PWD=true"));
-}
