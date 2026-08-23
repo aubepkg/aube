@@ -182,7 +182,7 @@ fn parse_verify_deps_before_run(raw: &str) -> VerifyDepsBeforeRun {
 }
 
 #[cfg(test)]
-mod tests {
+mod verify_deps_tests {
     use super::{VerifyDepsBeforeRun, parse_verify_deps_before_run};
 
     #[test]
