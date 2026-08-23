@@ -8,6 +8,8 @@ on:
       - "aube.usage.kdl"
       - "crates/**"
       - "Cargo.lock"
+      - "mise.toml"
+      - "mise.lock"
       - "benchmarks/results.json"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
