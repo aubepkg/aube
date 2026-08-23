@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1](https://github.com/jdx/aube/compare/aube-settings-v2.0.0...aube-settings-v2.0.1) - 2026-08-23
+
+### Added
+
+- *(resolver)* [**breaking**] expose lowest-direct resolution mode ([#1345](https://github.com/jdx/aube/pull/1345))
+- *(global)* [**breaking**] keep aube's global dirs under its own data root ([#1231](https://github.com/jdx/aube/pull/1231))
+
 ## [1.41.0](https://github.com/jdx/aube/compare/aube-settings-v1.40.0...aube-settings-v1.41.0) - 2026-08-16
 
 ### Added

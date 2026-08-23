@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1](https://github.com/jdx/aube/compare/v1.41.0...v2.0.1) - 2026-08-23
+
+### Added
+
+- *(resolver)* [**breaking**] expose lowest-direct resolution mode ([#1345](https://github.com/jdx/aube/pull/1345))
+- *(global)* [**breaking**] keep aube's global dirs under its own data root ([#1231](https://github.com/jdx/aube/pull/1231))
+- *(util)* add EngineContext runtime embedder seam ([#1326](https://github.com/jdx/aube/pull/1326))
+- *(store)* add structured prune previews ([#1321](https://github.com/jdx/aube/pull/1321))
+
+### Fixed
+
+- *(install)* preserve applied builds after cache cleanup ([#1339](https://github.com/jdx/aube/pull/1339))
+- *(pack)* resolve catalog dependencies before archiving ([#1334](https://github.com/jdx/aube/pull/1334))
+- *(resolver)* compact exact optional package histories ([#1315](https://github.com/jdx/aube/pull/1315))
+
+### Other
+
+- replace clap with usage ([#1336](https://github.com/jdx/aube/pull/1336))
+- refresh benchmarks for v1.41.0 ([#1322](https://github.com/jdx/aube/pull/1322))
+- *(store)* stream large tar entries into CAS ([#1318](https://github.com/jdx/aube/pull/1318))
+
 ## [1.41.0](https://github.com/jdx/aube/compare/v1.40.0...v1.41.0) - 2026-08-16
 
 ### Added
