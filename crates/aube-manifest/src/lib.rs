@@ -1338,6 +1338,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("package.json");
         std::fs::write(&path, r#"{"scripts":{"dev":"echo one"}}"#).unwrap();
+        let original_mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
 
         let first = PackageJson::from_path_cached(&path).unwrap();
         assert_eq!(
@@ -1345,11 +1346,15 @@ mod tests {
             Some("echo one")
         );
 
-        std::fs::write(&path, r#"{"scripts":{"dev":"echo a longer two"}}"#).unwrap();
+        std::fs::write(&path, r#"{"scripts":{"dev":"echo two"}}"#).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_modified(original_mtime)
+            .unwrap();
         let second = PackageJson::from_path_cached(&path).unwrap();
         assert_eq!(
             second.scripts.get("dev").map(String::as_str),
-            Some("echo a longer two")
+            Some("echo two")
         );
     }
 

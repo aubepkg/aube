@@ -13,7 +13,7 @@
 
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::SystemTime;
@@ -168,9 +168,8 @@ impl DiskCache {
     }
 }
 
-/// `(mtime, size, blake3)` triple. `is_fresh` checks the cheap pair
-/// first and only re-hashes on mismatch, so the warm path is two
-/// stats and a memcmp.
+/// `(mtime, size, blake3)` triple. Freshness is content-validated so
+/// same-length rewrites remain visible on coarse-timestamp filesystems.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreshnessSnapshot {
     pub mtime: SystemTime,
@@ -189,16 +188,13 @@ impl FreshnessSnapshot {
     pub fn read(path: &Path) -> io::Result<(Vec<u8>, Self)> {
         const MAX_ATTEMPTS: usize = 3;
         for _ in 0..MAX_ATTEMPTS {
-            let mut file = std::fs::File::open(path)?;
-            let before = file.metadata()?;
-            let mut bytes = Vec::with_capacity(before.len() as usize);
-            file.read_to_end(&mut bytes)?;
-            let after = file.metadata()?;
-            let current = std::fs::metadata(path)?;
-            if before.len() == after.len()
+            let first = std::fs::read(path)?;
+            let before = std::fs::metadata(path)?;
+            let bytes = std::fs::read(path)?;
+            let after = std::fs::metadata(path)?;
+            if first == bytes
+                && before.len() == after.len()
                 && before.modified()? == after.modified()?
-                && after.len() == current.len()
-                && after.modified()? == current.modified()?
             {
                 let snapshot = Self {
                     mtime: after.modified()?,
@@ -214,27 +210,12 @@ impl FreshnessSnapshot {
         ))
     }
 
-    /// Returns `Ok(true)` when the snapshot's `(mtime, size)` pair
-    /// still matches OR, on mismatch, the BLAKE3 hash of the file
-    /// equals the recorded hash. Trusts the cheap mtime+size pair as
-    /// "fresh, no hash needed" — on filesystems with coarse mtime
-    /// resolution (FAT32) a same-second in-place overwrite to the
-    /// same byte length could slip past, but every other file
-    /// system reports nanosecond mtime so the trust is sound. Hash
-    /// fallback runs only when mtime or size differs.
+    /// Returns `Ok(true)` when a stable read of the current file has
+    /// the recorded BLAKE3 hash. Metadata alone cannot prove freshness:
+    /// timestamp granularity differs across supported filesystems.
     pub fn is_fresh(&self, path: &Path) -> io::Result<bool> {
-        let meta = std::fs::metadata(path)?;
-        if meta.len() != self.size {
-            return Ok(false);
-        }
-        if let Ok(mtime) = meta.modified()
-            && mtime == self.mtime
-        {
-            return Ok(true);
-        }
-        let bytes = std::fs::read(path)?;
-        let hash = *blake3::hash(&bytes).as_bytes();
-        Ok(hash == self.hash)
+        let (_, current) = Self::read(path)?;
+        Ok(current.hash == self.hash)
     }
 }
 
