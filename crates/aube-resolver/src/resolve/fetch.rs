@@ -289,21 +289,6 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         );
         return Ok((name, packument, FetchSource::Disk, None));
     }
-    // The adaptive limit models registry capacity. Disk metadata does not
-    // consume that capacity and must not queue behind slow HTTP requests.
-    let permit_wait = std::time::Instant::now();
-    let permit = sem.acquire().await;
-    let permit_wait_ms = permit_wait.elapsed();
-    if permit_wait_ms.as_millis() > 1 {
-        aube_util::diag::event_lazy(
-            aube_util::diag::Category::Resolver,
-            "packument_permit_wait",
-            permit_wait_ms,
-            || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
-        );
-    }
-    aube_util::diag::attribute_wait(aube_util::diag::Slot::Pack, &name, permit_wait_ms);
-    let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
     let use_metadata_primer = !force_refresh
         && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
         && primer_covers_cutoff;
@@ -353,9 +338,23 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
                 )
             },
         );
-        permit.record_cancelled();
         return Ok((name, packument, FetchSource::Primer, None));
     }
+    // The adaptive limit models registry capacity. Local metadata does not
+    // consume that capacity and must not queue behind slow HTTP requests.
+    let permit_wait = std::time::Instant::now();
+    let permit = sem.acquire().await;
+    let permit_wait_ms = permit_wait.elapsed();
+    if permit_wait_ms.as_millis() > 1 {
+        aube_util::diag::event_lazy(
+            aube_util::diag::Category::Resolver,
+            "packument_permit_wait",
+            permit_wait_ms,
+            || format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)),
+        );
+    }
+    aube_util::diag::attribute_wait(aube_util::diag::Slot::Pack, &name, permit_wait_ms);
+    let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
     let fetch_outcome = if needs_time {
         match full_cache_dir.as_ref() {
             Some(dir) => {
@@ -580,6 +579,32 @@ mod tests {
             panic!("disk fetch did not complete");
         };
         assert_eq!(source, FetchSource::Disk);
+        drop(held_network_permit);
+    }
+
+    #[tokio::test]
+    async fn primer_metadata_does_not_wait_for_a_network_permit() {
+        let Some(name) = crate::primer::popular_package_names()
+            .lines()
+            .find(|name| crate::primer::get(name).is_some())
+        else {
+            return;
+        };
+        let limiter = AdaptiveLimit::new(1, 1, 1);
+        let held_network_permit = limiter.acquire().await;
+        let resolver = Resolver::new(Arc::new(RegistryClient::new("https://registry.npmjs.org")))
+            .with_force_metadata_primer(true);
+        let mut scheduler = FetchScheduler::new(&resolver, limiter, false);
+
+        scheduler.ensure_fetch(name, None, false);
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_secs(1), scheduler.join_next())
+                .await
+                .expect("primer lookup queued behind the network permit");
+        let Some(Ok((FetchKey::Full(_), Ok((_, _, source, _))))) = outcome else {
+            panic!("primer fetch did not complete");
+        };
+        assert_eq!(source, FetchSource::Primer);
         drop(held_network_permit);
     }
 
