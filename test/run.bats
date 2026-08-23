@@ -806,3 +806,26 @@ JSON
 	assert_line "pkg-a: $ echo a-done"
 	assert_line "pkg-b: $ echo b-done"
 }
+
+@test "aube run echoes an injected --inspect like the manifest form" {
+	# The executed line quotes injected node args; the echoed one must not,
+	# or the same flag would render differently depending on whether it came
+	# from the CLI or from the script body.
+	cat >package.json <<-'JSON'
+		{
+		  "name": "echo-inspect",
+		  "scripts": {
+		    "cli": "node app.js",
+		    "manual": "node --inspect=9229 app.js"
+		  }
+		}
+	JSON
+	echo 'console.log("ran")' >app.js
+	run aube run --no-install --inspect=9229 cli
+	assert_success
+	assert_line "$ node --inspect=9229 app.js"
+
+	run aube run --no-install manual
+	assert_success
+	assert_line "$ node --inspect=9229 app.js"
+}

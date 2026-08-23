@@ -1142,10 +1142,10 @@ async fn build_script_command(
     // injection and arg quoting so it mirrors the manifest, not the
     // spliced shell command line.
     let lifecycle_script = cmd.to_string();
-    let cmd = inject_node_args(cmd, node_args);
+    let echo_cmd = inject_node_args(cmd, node_args, |a| display_arg(a).into_owned());
+    let cmd = inject_node_args(cmd, node_args, aube_scripts::shell_quote_arg);
     let (shell_cmd, echo_line) = if args.is_empty() {
-        let echo_line = cmd.clone();
-        (cmd, echo_line)
+        (cmd, echo_cmd)
     } else {
         // Quote each forwarded arg. Args land inside `sh -c "..."` or
         // cmd `/c "..."` which reparses. Unquoted $, backticks, ;, |,
@@ -1156,7 +1156,7 @@ async fn build_script_command(
             String::with_capacity(cmd.len() + args.iter().map(|a| a.len() + 3).sum::<usize>());
         buf.push_str(&cmd);
         let mut echo = String::with_capacity(buf.capacity());
-        echo.push_str(&cmd);
+        echo.push_str(&echo_cmd);
         for a in args {
             buf.push(' ');
             buf.push_str(&aube_scripts::shell_quote_arg(a));
@@ -1263,7 +1263,12 @@ fn display_arg(arg: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn inject_node_args(cmd: &str, node_args: &[String]) -> String {
+/// Splice `node_args` in after a leading bare `node`, quoting each with
+/// `quote`. Callers pass `shell_quote_arg` to build the line that is
+/// actually executed and [`display_arg`] to build the echoed one, so a
+/// CLI `--inspect` echoes exactly like the same flag written into the
+/// manifest body instead of picking up quotes the manifest form never has.
+fn inject_node_args(cmd: &str, node_args: &[String], quote: impl Fn(&str) -> String) -> String {
     if node_args.is_empty() {
         return cmd.to_string();
     }
@@ -1280,7 +1285,7 @@ fn inject_node_args(cmd: &str, node_args: &[String]) -> String {
     out.push_str(&cmd[..leading_len + 4]);
     for arg in node_args {
         out.push(' ');
-        out.push_str(&aube_scripts::shell_quote_arg(arg));
+        out.push_str(&quote(arg));
     }
     out.push_str(rest);
     out
@@ -1629,17 +1634,31 @@ mod tests {
     #[test]
     fn inject_node_args_only_touches_direct_node_commands() {
         let args = vec!["--inspect".to_string()];
+        let quote = aube_scripts::shell_quote_arg;
         assert_eq!(
-            inject_node_args("node test.js", &args),
+            inject_node_args("node test.js", &args, quote),
             format!(
                 "node {} test.js",
                 aube_scripts::shell_quote_arg("--inspect")
             )
         );
-        assert_eq!(inject_node_args("tsx test.ts", &args), "tsx test.ts");
+        assert_eq!(inject_node_args("tsx test.ts", &args, quote), "tsx test.ts");
         assert_eq!(
-            inject_node_args("node-gyp rebuild", &args),
+            inject_node_args("node-gyp rebuild", &args, quote),
             "node-gyp rebuild"
+        );
+    }
+
+    /// A CLI `--inspect` has to echo exactly like the same flag written
+    /// into the manifest body. Quoting only the injected one would put
+    /// the noise `display_arg` removes right back on the path this
+    /// feature newly exposes.
+    #[test]
+    fn injected_node_args_echo_unquoted_like_the_manifest_form() {
+        let args = vec!["--inspect=127.0.0.1:9229".to_string()];
+        assert_eq!(
+            inject_node_args("node app.js", &args, |a| display_arg(a).into_owned()),
+            "node --inspect=127.0.0.1:9229 app.js"
         );
     }
 
