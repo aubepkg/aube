@@ -130,13 +130,16 @@ JSON
 	assert_dir_exists node_modules/is-number
 	assert_not_exists packages/app/node_modules/is-number
 
+	# `assert_line` rather than `assert_output`: `aube run` also echoes the
+	# `$ <cmd>` line. Using `-s` to get an exact match would mute the
+	# "Auto-installing" notice this test is here to refute.
 	run aube run ok
 	assert_success
-	assert_output "ok"
+	assert_line "ok"
 	refute_output --partial "Auto-installing"
 	run aube run ok
 	assert_success
-	assert_output "ok"
+	assert_line "ok"
 	refute_output --partial "Auto-installing"
 }
 

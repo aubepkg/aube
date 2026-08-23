@@ -310,7 +310,9 @@ _basic_project() {
 	assert_success
 	eval "$output"
 
-	run aube run --no-install nested-pnpm
+	# `-s` drops aube's wrapper output (the echoed `$ <cmd>` line) so the
+	# assertion stays an exact match on what the script itself printed.
+	run aube run --no-install -s nested-pnpm
 	assert_success
 	assert_output "$AUBE_SHIM_DIR/pnpm"
 }
@@ -337,7 +339,9 @@ SH
 	assert_success
 	eval "$output"
 
-	run aube run --no-install nested-pnpm
+	# `-s` drops aube's wrapper output (the echoed `$ <cmd>` line) so the
+	# assertion stays an exact match on what the script itself printed.
+	run aube run --no-install -s nested-pnpm
 	assert_success
 	assert_output "$AUBE_SHIM_DIR/pnpm"
 }
