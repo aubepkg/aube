@@ -353,11 +353,18 @@ jobs:
               .split('\n')
               .map((line) => {
                 if (!line.startsWith(`${name} = {`) || !line.includes('path = ')) return line;
-                const updated = line.replace(`version = "${oldVersion}"`, `version = "${newVersion}"`);
-                if (updated === line) {
-                  throw new Error(`path dependency ${name} did not contain version ${oldVersion}`);
+                const exact = `version = "${oldVersion}"`;
+                if (line.includes(exact)) {
+                  return line.replace(exact, `version = "${newVersion}"`);
                 }
-                return updated;
+                const oldMajor = oldVersion.split('.')[0];
+                const newMajor = newVersion.split('.')[0];
+                if (oldMajor === newMajor && line.includes(`version = "${oldMajor}"`)) {
+                  return line;
+                }
+                throw new Error(
+                  `path dependency ${name} did not contain version ${oldVersion} or compatible major ${oldMajor}`,
+                );
               })
               .join('\n');
           }
