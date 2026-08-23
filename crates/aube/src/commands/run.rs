@@ -626,6 +626,9 @@ pub(crate) async fn run_script_with(
         .await;
     }
 
+    // Installation hooks may rewrite package.json. Resolve the launch plan
+    // only after auto-install so this invocation uses the post-hook manifest.
+    ensure_installed_in(no_install, Some(&cwd)).await?;
     let install_root = crate::dirs::find_workspace_root(&cwd).unwrap_or_else(|| cwd.clone());
     let plan_root = install_root.clone();
     let plan_cwd = cwd.clone();
@@ -635,7 +638,6 @@ pub(crate) async fn run_script_with(
             .into_diagnostic()?;
     let manifest = plan.map(Ok).unwrap_or_else(|| load_manifest(&cwd))?;
     if !manifest.scripts.contains_key(script) {
-        ensure_installed_in(no_install, Some(&cwd)).await?;
         let bin_path = super::project_modules_dir(&cwd).join(".bin").join(script);
         if bin_path.exists() {
             return super::exec::exec_bin_with_node_args(
@@ -661,7 +663,6 @@ pub(crate) async fn run_script_with(
         return Err(miette!("script not found: {script}\n  {hint}"));
     }
 
-    ensure_installed_in(no_install, Some(&cwd)).await?;
     exec_script_chain(
         &cwd,
         &manifest,
