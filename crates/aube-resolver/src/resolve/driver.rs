@@ -649,9 +649,10 @@ impl<'a> ResolveDriver<'a> {
 
         // Direct deps in time-based and lowest-direct modes pick the
         // lowest satisfying version; everything else picks highest.
-        let pick_lowest = (self.resolver.resolution_mode == ResolutionMode::TimeBased
-            || self.resolver.lowest_direct)
-            && task.is_root;
+        let pick_lowest = matches!(
+            self.resolver.resolution_mode,
+            ResolutionMode::TimeBased | ResolutionMode::LowestDirect
+        ) && task.is_root;
         // `minimumReleaseAgeExclude` is applied per-candidate-version
         // inside `pick_version` via the `is_age_exempt` closure below. A
         // name-only exclude rule matches every version; a `pkg@1.2.3`

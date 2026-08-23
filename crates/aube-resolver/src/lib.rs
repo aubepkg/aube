@@ -145,13 +145,8 @@ pub struct Resolver {
     /// dropped before enqueueing — the resolver never fetches or locks it.
     /// Mirrors pnpm's `createOptionalDependenciesRemover` read-package hook.
     ignored_optional_dependencies: BTreeSet<String>,
-    /// pnpm's `resolution-mode` — `Highest` (default) or `TimeBased`.
+    /// pnpm's `resolution-mode`.
     resolution_mode: ResolutionMode,
-    /// Pick the lowest satisfying version for direct dependencies without
-    /// enabling the publish-time cutoff used by `TimeBased`. Kept separate
-    /// from the public `ResolutionMode` enum so adding pnpm's `lowest-direct`
-    /// mode does not break downstream exhaustive matches in aube v1.
-    lowest_direct: bool,
     /// Project root used to resolve `file:` / `link:` paths to the
     /// target directory. Defaults to the current working directory;
     /// callers set it via `with_project_root`.

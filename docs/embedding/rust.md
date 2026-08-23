@@ -1,10 +1,16 @@
 # Embedding in Rust
 
+## Migrating to aube 2
+
+`aube_resolver::ResolutionMode` now includes `LowestDirect` and is
+`#[non_exhaustive]`. Downstream matches must include a wildcard arm so future
+resolution modes can be added without another source-breaking enum change.
+
 Add aube without its binary-only default features:
 
 ```toml
 [dependencies]
-aube = { version = "1", default-features = false }
+aube = { version = "2", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 

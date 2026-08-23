@@ -2,30 +2,14 @@ use super::version_from_dep_path;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ResolutionModeConfig {
-    mode: aube_resolver::ResolutionMode,
-    lowest_direct: bool,
-}
-
 /// Accept pnpm's documented aliases (`highest`, `time-based`, `time`,
-/// `lowest-direct`) and map them to the resolver's v1-compatible controls.
-/// Unknown values fall back to `None` so the caller's `.npmrc` / default path
-/// still runs.
-fn parse_resolution_mode(s: &str) -> Option<ResolutionModeConfig> {
+/// `lowest-direct`). Unknown values fall back to `None` so the caller's
+/// `.npmrc` / default path still runs.
+fn parse_resolution_mode(s: &str) -> Option<aube_resolver::ResolutionMode> {
     match s.trim().to_ascii_lowercase().as_str() {
-        "highest" => Some(ResolutionModeConfig {
-            mode: aube_resolver::ResolutionMode::Highest,
-            lowest_direct: false,
-        }),
-        "time-based" | "time" => Some(ResolutionModeConfig {
-            mode: aube_resolver::ResolutionMode::TimeBased,
-            lowest_direct: false,
-        }),
-        "lowest-direct" => Some(ResolutionModeConfig {
-            mode: aube_resolver::ResolutionMode::Highest,
-            lowest_direct: true,
-        }),
+        "highest" => Some(aube_resolver::ResolutionMode::Highest),
+        "time-based" | "time" => Some(aube_resolver::ResolutionMode::TimeBased),
+        "lowest-direct" => Some(aube_resolver::ResolutionMode::LowestDirect),
         _ => None,
     }
 }
@@ -34,7 +18,7 @@ fn parse_resolution_mode(s: &str) -> Option<ResolutionModeConfig> {
 /// (CLI > env > `.npmrc` > `aube-workspace.yaml` > default). The `.cli`
 /// source carries `--resolution-mode` via `to_cli_flag_bag`, so every
 /// caller feeds the same ctx and gets the same answer.
-fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> ResolutionModeConfig {
+fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> aube_resolver::ResolutionMode {
     // Legacy alias: pnpm's CLI / `.npmrc` / env accept the shorthand
     // `time` for `time-based`. The generator-side `from_str_normalized`
     // only knows the canonical variants declared in `settings.toml`,
@@ -64,20 +48,17 @@ fn resolve_resolution_mode(ctx: &aube_settings::ResolveCtx<'_>) -> ResolutionMod
 
 /// Translate the settings-side `ResolutionMode` enum into the
 /// resolver's runtime enum.
-fn map_resolution_mode(m: aube_settings::resolved::ResolutionMode) -> ResolutionModeConfig {
+fn map_resolution_mode(
+    m: aube_settings::resolved::ResolutionMode,
+) -> aube_resolver::ResolutionMode {
     match m {
-        aube_settings::resolved::ResolutionMode::Highest => ResolutionModeConfig {
-            mode: aube_resolver::ResolutionMode::Highest,
-            lowest_direct: false,
-        },
-        aube_settings::resolved::ResolutionMode::TimeBased => ResolutionModeConfig {
-            mode: aube_resolver::ResolutionMode::TimeBased,
-            lowest_direct: false,
-        },
-        aube_settings::resolved::ResolutionMode::LowestDirect => ResolutionModeConfig {
-            mode: aube_resolver::ResolutionMode::Highest,
-            lowest_direct: true,
-        },
+        aube_settings::resolved::ResolutionMode::Highest => aube_resolver::ResolutionMode::Highest,
+        aube_settings::resolved::ResolutionMode::TimeBased => {
+            aube_resolver::ResolutionMode::TimeBased
+        }
+        aube_settings::resolved::ResolutionMode::LowestDirect => {
+            aube_resolver::ResolutionMode::LowestDirect
+        }
     }
 }
 
@@ -1130,8 +1111,7 @@ pub(crate) fn configure_resolver(
         .with_supported_architectures(supported_architectures)
         .with_overrides(effective_overrides)
         .with_ignored_optional_dependencies(ignored_optional)
-        .with_resolution_mode(resolution_mode.mode)
-        .with_lowest_direct(resolution_mode.lowest_direct)
+        .with_resolution_mode(resolution_mode)
         .with_minimum_release_age(minimum_release_age)
         .with_catalogs(workspace_catalogs.clone())
         .with_project_root(cwd.to_path_buf())
@@ -1310,13 +1290,10 @@ mod resolution_mode_tests {
     use super::*;
 
     #[test]
-    fn lowest_direct_uses_the_v1_compatible_resolver_controls() {
+    fn lowest_direct_maps_to_the_public_resolver_mode() {
         assert_eq!(
             parse_resolution_mode("lowest-direct"),
-            Some(ResolutionModeConfig {
-                mode: aube_resolver::ResolutionMode::Highest,
-                lowest_direct: true,
-            })
+            Some(aube_resolver::ResolutionMode::LowestDirect)
         );
     }
 
@@ -1324,10 +1301,7 @@ mod resolution_mode_tests {
     fn time_alias_keeps_time_based_mode() {
         assert_eq!(
             parse_resolution_mode("time"),
-            Some(ResolutionModeConfig {
-                mode: aube_resolver::ResolutionMode::TimeBased,
-                lowest_direct: false,
-            })
+            Some(aube_resolver::ResolutionMode::TimeBased)
         );
     }
 }
