@@ -681,9 +681,11 @@ pub(crate) async fn run_script_with(
         script,
         args,
         node_args,
-        enable_pre_post_scripts,
-        silent,
-        replace_process,
+        ScriptChainOptions {
+            enable_pre_post_scripts,
+            silent,
+            replace_process,
+        },
     )
     .await
 }
@@ -792,9 +794,11 @@ async fn run_script_filtered(
             script,
             args,
             node_args,
-            enable_pre_post_scripts,
-            silent,
-            false,
+            ScriptChainOptions {
+                enable_pre_post_scripts,
+                silent,
+                replace_process: false,
+            },
         )
         .await?
         {
@@ -1317,33 +1321,48 @@ fn inject_node_args(cmd: &str, node_args: &[String], quote: impl Fn(&str) -> Str
 /// any stage short-circuits and returns `Ok(Some(code))` (the pre/main/post
 /// ordering matches npm/pnpm: a failing pre-script stops the chain before
 /// the main script runs). `Ok(None)` means every stage that ran succeeded.
-pub(crate) async fn exec_script_chain(
+#[derive(Clone, Copy)]
+struct ScriptChainOptions {
+    enable_pre_post_scripts: bool,
+    silent: bool,
+    replace_process: bool,
+}
+
+async fn exec_script_chain(
     cwd: &Path,
     manifest: &PackageJson,
     script: &str,
     args: &[String],
     node_args: &[String],
-    enable_pre_post_scripts: bool,
-    silent: bool,
-    replace_process: bool,
+    options: ScriptChainOptions,
 ) -> miette::Result<Option<i32>> {
-    if enable_pre_post_scripts {
+    if options.enable_pre_post_scripts {
         let pre = format!("pre{script}");
-        if let Some(Some(code)) = exec_optional(cwd, manifest, &pre, &[], silent).await? {
+        if let Some(Some(code)) = exec_optional(cwd, manifest, &pre, &[], options.silent).await? {
             return Ok(Some(code));
         }
     }
     let post = format!("post{script}");
-    if replace_process && (!enable_pre_post_scripts || !manifest.scripts.contains_key(&post)) {
-        return exec_script_replacing_process(cwd, manifest, script, args, node_args, silent).await;
+    if options.replace_process
+        && (!options.enable_pre_post_scripts || !manifest.scripts.contains_key(&post))
+    {
+        return exec_script_replacing_process(
+            cwd,
+            manifest,
+            script,
+            args,
+            node_args,
+            options.silent,
+        )
+        .await;
     }
     if let Some(code) =
-        exec_script_with_node_args(cwd, manifest, script, args, node_args, silent).await?
+        exec_script_with_node_args(cwd, manifest, script, args, node_args, options.silent).await?
     {
         return Ok(Some(code));
     }
-    if enable_pre_post_scripts
-        && let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[], silent).await?
+    if options.enable_pre_post_scripts
+        && let Some(Some(code)) = exec_optional(cwd, manifest, &post, &[], options.silent).await?
     {
         return Ok(Some(code));
     }
