@@ -1235,7 +1235,7 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
                     }
                 }
                 Some(Commands::Run(args)) => {
-                    if let Some(code) = commands::run::run(args, nested_filter, false).await? {
+                    if let Some(code) = commands::run::run(args, nested_filter).await? {
                         return Ok(Some(code));
                     }
                 }
@@ -1299,8 +1299,12 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
         }
         Some(Commands::Root(args)) => commands::root::run(args).await?,
         Some(Commands::Run(args)) => {
-            if let Some(code) =
-                commands::run::run(args, effective_filter.clone(), invoked_as_aubr).await?
+            if let Some(code) = commands::run::run_with_process_replacement(
+                args,
+                effective_filter.clone(),
+                invoked_as_aubr,
+            )
+            .await?
             {
                 return Ok(Some(code));
             }

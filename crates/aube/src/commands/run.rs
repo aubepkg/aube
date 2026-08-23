@@ -165,6 +165,13 @@ script_alias_args!(InstallTestArgs, RestartArgs, StartArgs, StopArgs, TestArgs);
 pub async fn run(
     run_args: RunArgs,
     filter: aube_workspace::selector::EffectiveFilter,
+) -> miette::Result<Option<i32>> {
+    run_with_process_replacement(run_args, filter, false).await
+}
+
+pub(crate) async fn run_with_process_replacement(
+    run_args: RunArgs,
+    filter: aube_workspace::selector::EffectiveFilter,
     replace_process: bool,
 ) -> miette::Result<Option<i32>> {
     run_args.network.install_overrides();
@@ -1364,9 +1371,10 @@ async fn exec_script_replacing_process(
         super::run_output::echo_script_command(&echo_line, None);
     }
     let error = command.as_std_mut().exec();
-    Err(error)
-        .into_diagnostic()
-        .wrap_err("failed to execute script")
+    Err(miette::Report::new(aube_scripts::Error::Spawn(
+        script.to_string(),
+        error.to_string(),
+    )))
 }
 
 #[cfg(not(unix))]
