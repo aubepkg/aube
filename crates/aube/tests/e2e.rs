@@ -237,3 +237,86 @@ fn run_failing_pre_script_short_circuits_with_its_code() {
         .code(5)
         .stdout(predicates::str::contains("MAIN_RAN").not());
 }
+
+#[test]
+fn run_forwards_extra_args_verbatim() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    // A quote-free body takes the direct-exec path on Unix and the shell
+    // on Windows, so this pins the same argv contract on both: forwarded
+    // args reach the script as written, with nothing expanded or split.
+    sbx.write_manifest(
+        r#"{
+            "name": "e2e-run-args",
+            "version": "0.0.0",
+            "scripts": { "probe": "node probe.js" }
+        }"#,
+    );
+    fs::write(
+        sbx.project.join("probe.js"),
+        "console.log(JSON.stringify(process.argv.slice(2)))",
+    )
+    .unwrap();
+
+    sbx.cmd()
+        .args(["run", "--no-install", "probe", "--", "a b", "$HOME", "*"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(r#"["a b","$HOME","*"]"#));
+}
+
+#[test]
+fn run_reports_a_missing_command_like_a_shell() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(
+        r#"{
+            "name": "e2e-run-missing",
+            "version": "0.0.0",
+            "scripts": { "nope": "aube-definitely-not-a-real-binary" }
+        }"#,
+    );
+
+    // The body is shaped for direct exec, but the program does not
+    // resolve, so it must fall back to the shell rather than inventing an
+    // error — which is what keeps 127 (and the shell's own stderr) intact.
+    let assert = sbx.cmd().args(["run", "--no-install", "nope"]).assert();
+    if cfg!(unix) {
+        assert.code(127);
+    } else {
+        assert.failure();
+    }
+}
+
+#[test]
+fn run_reports_the_script_directory_as_pwd() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    // `sh` sets PWD itself; the direct path has to stamp it. Invoke from
+    // the parent via `-C` so an inherited PWD would be visibly wrong.
+    sbx.write_manifest(
+        r#"{
+            "name": "e2e-run-pwd",
+            "version": "0.0.0",
+            "scripts": { "probe": "node pwd-probe.js" }
+        }"#,
+    );
+    fs::write(
+        sbx.project.join("pwd-probe.js"),
+        "console.log('PWD=' + (process.env.PWD === process.cwd()))",
+    )
+    .unwrap();
+
+    let mut cmd = sbx.cmd();
+    cmd.current_dir(sbx.project.parent().unwrap());
+    cmd.args([
+        "-C",
+        sbx.project.to_str().unwrap(),
+        "run",
+        "--no-install",
+        "probe",
+    ])
+    .assert()
+    .success()
+    .stdout(predicates::str::contains("PWD=true"));
+}

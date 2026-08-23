@@ -1142,29 +1142,6 @@ async fn build_script_command(
     // injection and arg quoting so it mirrors the manifest, not the
     // spliced shell command line.
     let lifecycle_script = cmd.to_string();
-    let echo_cmd = inject_node_args(cmd, node_args, |a| display_arg(a).into_owned());
-    let cmd = inject_node_args(cmd, node_args, aube_scripts::shell_quote_arg);
-    let (shell_cmd, echo_line) = if args.is_empty() {
-        (cmd, echo_cmd)
-    } else {
-        // Quote each forwarded arg. Args land inside `sh -c "..."` or
-        // cmd `/c "..."` which reparses. Unquoted $, backticks, ;, |,
-        // () all get interpreted. `aube run echo '$(rm -rf ~)'` would
-        // run the subshell. Same npm/pnpm bug class from years ago.
-        // shell_quote_arg wraps per-platform. See aube-scripts.
-        let mut buf =
-            String::with_capacity(cmd.len() + args.iter().map(|a| a.len() + 3).sum::<usize>());
-        buf.push_str(&cmd);
-        let mut echo = String::with_capacity(buf.capacity());
-        echo.push_str(&echo_cmd);
-        for a in args {
-            buf.push(' ');
-            buf.push_str(&aube_scripts::shell_quote_arg(a));
-            echo.push(' ');
-            echo.push_str(&display_arg(a));
-        }
-        (buf, echo)
-    };
 
     let bin_dir = super::project_modules_dir(cwd).join(".bin");
     let node_gyp_bin_dir = super::install::node_gyp_bootstrap::lazy_shim_bin_dir(&bin_dir)?;
@@ -1196,15 +1173,79 @@ async fn build_script_command(
     let node_gyp_project_dir =
         crate::dirs::find_workspace_root(&script_dir).unwrap_or_else(|| script_dir.clone());
 
-    // npm-compat env vars. `spawn_shell` already stamped the
-    // invocation-level vars (`npm_execpath`, `npm_node_execpath` /
-    // `NODE`, `npm_command`, `npm_config_user_agent`) from the
+    // npm-compat env vars. Whichever spawn helper runs below already
+    // stamped the invocation-level vars (`npm_execpath`,
+    // `npm_node_execpath` / `NODE`, `npm_command`,
+    // `npm_config_user_agent`) from the
     // process-global ScriptSettings configured for this run. Here we
     // add the per-script + manifest vars so build scripts that branch
     // on `$npm_lifecycle_event`, stamp `$npm_package_version`, or read
     // `$npm_package_engines_node` behave the same under `aube run` as
     // under `aube install` postinstall.
-    let mut command = aube_scripts::spawn_shell(&shell_cmd);
+    //
+    // A body that is one plain command gets exec'd directly — `sh` would
+    // only add a resident parent process. `direct_argv` resolves the
+    // program against `new_path` (not the process PATH, which is what
+    // `execvp` would search) and declines for anything a shell might
+    // actually be interpreting, in which case we splice and quote exactly
+    // as before. `--inspect` keeps the shell too: `inject_node_args`
+    // rewrites the command line textually, and one implementation of that
+    // is enough.
+    let direct = if node_args.is_empty() {
+        aube_scripts::direct::direct_argv(cmd, &new_path)
+    } else {
+        None
+    };
+    let (mut command, echo_line) = match &direct {
+        // Forwarded args become real argv entries instead of quoted text.
+        // Behavior-identical: `shell_quote_arg` single-quotes, which
+        // already suppresses every expansion — this just stops round
+        // tripping them through a parser that would otherwise need it.
+        Some((program, arg0, words)) => {
+            let argv = words
+                .iter()
+                .map(|w| std::ffi::OsString::from(*w))
+                .chain(args.iter().map(std::ffi::OsString::from));
+            // The echoed line has to read the same whichever path ran, so
+            // build it exactly as the shell arm does below. `node_args` is
+            // empty here (a direct plan requires it), so there is nothing
+            // to splice — only the forwarded args to append.
+            let mut echo = String::with_capacity(cmd.len() + 16);
+            echo.push_str(cmd);
+            for a in args {
+                echo.push(' ');
+                echo.push_str(&display_arg(a));
+            }
+            (aube_scripts::spawn_program(program, arg0, argv), echo)
+        }
+        None => {
+            let echo_cmd = inject_node_args(cmd, node_args, |a| display_arg(a).into_owned());
+            let cmd = inject_node_args(cmd, node_args, aube_scripts::shell_quote_arg);
+            let (shell_cmd, echo_line) = if args.is_empty() {
+                (cmd, echo_cmd)
+            } else {
+                // Quote each forwarded arg. Args land inside `sh -c "..."` or
+                // cmd `/c "..."` which reparses. Unquoted $, backticks, ;, |,
+                // () all get interpreted. `aube run echo '$(rm -rf ~)'` would
+                // run the subshell. Same npm/pnpm bug class from years ago.
+                // shell_quote_arg wraps per-platform. See aube-scripts.
+                let mut buf = String::with_capacity(
+                    cmd.len() + args.iter().map(|a| a.len() + 3).sum::<usize>(),
+                );
+                buf.push_str(&cmd);
+                let mut echo = String::with_capacity(buf.capacity());
+                echo.push_str(&echo_cmd);
+                for a in args {
+                    buf.push(' ');
+                    buf.push_str(&aube_scripts::shell_quote_arg(a));
+                    echo.push(' ');
+                    echo.push_str(&display_arg(a));
+                }
+                (buf, echo)
+            };
+            (aube_scripts::spawn_shell(&shell_cmd), echo_line)
+        }
+    };
     command
         .env("PATH", &new_path)
         .current_dir(cwd)
@@ -1236,6 +1277,15 @@ async fn build_script_command(
     if std::env::var_os("INIT_CWD").is_none() {
         let init_cwd = crate::dirs::cwd().ok().unwrap_or_else(|| cwd.to_path_buf());
         command.env("INIT_CWD", init_cwd);
+    }
+    if direct.is_some() {
+        // `sh` rewrites PWD to its own cwd on startup; a directly-exec'd
+        // child just inherits ours. Measured against dash, PWD was the
+        // only difference in the whole child environment, so stamp it and
+        // the two paths stay indistinguishable. Without this, a tool that
+        // reads `process.env.PWD` instead of `process.cwd()` would see
+        // aube's invocation dir under `aube -C dir run x`.
+        command.env("PWD", &script_dir);
     }
     Ok((command, echo_line))
 }

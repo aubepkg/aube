@@ -829,3 +829,155 @@ JSON
 	assert_success
 	assert_line "$ node --inspect=9229 app.js"
 }
+
+# A script body that is one plain command has no need of a shell, and
+# `sh` does not exec in place — it stays resident as the script's parent.
+# These four tests pin both halves of that decision. The probe is a fake
+# `sh` earlier on PATH than the real one: aube spawns the shell as bare
+# `sh` (resolved through its own PATH), so anything routed through a shell
+# leaves a trace in sh.log and anything exec'd directly does not.
+_setup_sh_probe() {
+	mkdir -p fakebin
+	cat >fakebin/sh <<'EOF'
+#!/bin/sh
+echo used >> "$SH_PROBE_LOG"
+exec /bin/sh "$@"
+EOF
+	chmod +x fakebin/sh
+	export SH_PROBE_LOG="$PWD/sh.log"
+	export PATH="$PWD/fakebin:$PATH"
+	cat >probe.js <<'EOF'
+console.log("probe-ran")
+EOF
+}
+
+@test "aube run execs a plain command without a shell" {
+	_setup_sh_probe
+	cat >package.json <<'JSON'
+{
+  "name": "run-direct-test",
+  "version": "1.0.0",
+  "scripts": { "probe": "node probe.js" }
+}
+JSON
+	run aube run probe
+	assert_success
+	assert_output --partial "probe-ran"
+	assert_file_not_exists sh.log
+}
+
+@test "aube run still uses a shell for a chained command" {
+	_setup_sh_probe
+	cat >package.json <<'JSON'
+{
+  "name": "run-chained-test",
+  "version": "1.0.0",
+  "scripts": { "probe": "true && node probe.js" }
+}
+JSON
+	run aube run probe
+	assert_success
+	assert_output --partial "probe-ran"
+	# `&&` is load-bearing, so the shell must still run it.
+	assert_file_exists sh.log
+}
+
+@test "aube run exports the full npm_* env set for a direct command" {
+	# The pnpm-parity env test above uses a quoted `node -e` body, which
+	# takes the shell path — so it cannot cover the direct path at all.
+	# Same assertions, quote-free body, probe moved into a file.
+	cat >env-probe.js <<'EOF'
+for (const k of ["npm_execpath","npm_node_execpath","npm_package_json","npm_command","npm_config_node_gyp","npm_package_engines_node","npm_package_name","npm_package_version","npm_lifecycle_script","npm_lifecycle_event"]) {
+	console.log(k + "=" + (process.env[k] || ""))
+}
+EOF
+	cat >package.json <<'JSON'
+{
+  "name": "@scope/run-direct-env",
+  "version": "3.1.4",
+  "engines": { "node": ">=18.0.0" },
+  "scripts": { "probe": "node env-probe.js" }
+}
+JSON
+	run aube run probe
+	assert_success
+	assert_output --partial "npm_command=run-script"
+	assert_output --partial "npm_lifecycle_event=probe"
+	assert_output --regexp "npm_execpath=[^[:space:]]*aube"
+	assert_output --regexp "npm_node_execpath=[^[:space:]]+"
+	assert_output --regexp "npm_package_json=[^[:space:]]*package\.json"
+	assert_output --regexp "npm_config_node_gyp=[^[:space:]]*node-gyp\.js"
+	assert_output --partial "npm_package_engines_node=>=18.0.0"
+	assert_output --partial "npm_package_name=@scope/run-direct-env"
+	assert_output --partial "npm_package_version=3.1.4"
+	# The raw body, not a spliced command line.
+	assert_output --partial "npm_lifecycle_script=node env-probe.js"
+}
+
+@test "aube run honors scriptShell for a plain command" {
+	# The settings test above also uses a quoted body, so without this the
+	# scriptShell veto on the direct path would be untested.
+	cat >shell-wrapper.sh <<'EOF'
+#!/bin/sh
+echo custom-shell >> shell.log
+exec /bin/sh "$@"
+EOF
+	chmod +x shell-wrapper.sh
+	cat >.npmrc <<EOF
+scriptShell=$PWD/shell-wrapper.sh
+EOF
+	cat >probe.js <<'EOF'
+console.log("probe-ran")
+EOF
+	cat >package.json <<'JSON'
+{
+  "name": "run-direct-script-shell",
+  "version": "1.0.0",
+  "scripts": { "probe": "node probe.js" }
+}
+JSON
+	run aube run probe
+	assert_success
+	assert_output --partial "probe-ran"
+	# The user asked for a specific shell; the fast path must stand down.
+	assert_file_exists shell.log
+}
+
+@test "aube run sets PWD for a direct command run from a subdirectory" {
+	cat >pwd-probe.js <<'EOF'
+console.log("pwd-matches:", process.env.PWD === process.cwd())
+EOF
+	cat >package.json <<'JSON'
+{
+  "name": "run-direct-pwd",
+  "version": "1.0.0",
+  "scripts": { "probe": "node pwd-probe.js" }
+}
+JSON
+	mkdir -p sub
+	cd sub
+	# `sh` rewrites PWD on startup; a direct exec inherits ours, so the
+	# fast path stamps it explicitly.
+	run aube -C .. run probe
+	assert_success
+	assert_output --partial "pwd-matches: true"
+}
+
+@test "aube run forwards args to a direct command without shell reparse" {
+	cat >args-probe.js <<'EOF'
+console.log(JSON.stringify(process.argv.slice(2)))
+EOF
+	cat >package.json <<'JSON'
+{
+  "name": "run-direct-args",
+  "version": "1.0.0",
+  "scripts": { "probe": "node args-probe.js" }
+}
+JSON
+	# shellcheck disable=SC2016  # literal `$HOME` is the point: nothing may expand it
+	run aube run probe -- '$HOME' 'a b' '*'
+	assert_success
+	# Real argv entries, so nothing expands or splits.
+	# shellcheck disable=SC2016
+	assert_output --partial '["$HOME","a b","*"]'
+}

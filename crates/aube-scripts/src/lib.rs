@@ -13,6 +13,7 @@
 //! - `--ignore-scripts` forces everything off, matching pnpm/npm.
 
 pub mod content_sniff;
+pub mod direct;
 pub mod policy;
 
 #[cfg(target_os = "linux")]
@@ -409,6 +410,40 @@ mod path_entry_tests {
 pub fn spawn_shell(script_cmd: &str) -> tokio::process::Command {
     let settings = script_settings();
     spawn_shell_with_settings(script_cmd, &settings)
+}
+
+/// Spawn a resolved program directly, skipping the shell.
+///
+/// The counterpart to [`spawn_shell`] for a script body that
+/// [`direct::direct_argv`] found to be a single plain command. `program`
+/// is the absolute path `direct_argv` resolved; `arg0` is the program as
+/// written in the script body, passed through as `argv[0]` so the child
+/// sees what a shell would have given it.
+///
+/// Env parity with the shell path is structural, not a parallel list:
+/// this calls the same [`apply_script_settings_env`] and shares
+/// `kill_on_drop`. Which now kills the tool itself rather than a shell
+/// holding it as a child — strictly more direct, and the reason the
+/// Windows Job Object story in [`spawn_shell`] does not apply here (the
+/// fast path is Unix-only).
+pub fn spawn_program<I, S>(program: &Path, arg0: &str, args: I) -> tokio::process::Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let settings = script_settings();
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.as_std_mut().arg0(arg0);
+    }
+    #[cfg(not(unix))]
+    let _ = arg0;
+    cmd.args(args);
+    apply_script_settings_env(&mut cmd, &settings);
+    cmd.kill_on_drop(true);
+    cmd
 }
 
 fn spawn_shell_with_settings(
@@ -1604,6 +1639,60 @@ mod user_agent_tests {
             ),
             "arch `{arch}` should follow Node's `process.arch` vocabulary"
         );
+    }
+}
+
+#[cfg(test)]
+mod spawn_program_tests {
+    use super::*;
+
+    fn env_keys(cmd: &tokio::process::Command) -> Vec<String> {
+        let mut keys: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// The direct path must be indistinguishable from the shell path as
+    /// far as the child's environment goes. Diffing the two commands
+    /// pins that mechanically, rather than trusting that two call sites
+    /// stamp the same list — `aube run` exports a documented `npm_*`
+    /// surface that build tooling reads.
+    #[tokio::test]
+    async fn spawn_program_stamps_the_same_env_as_spawn_shell() {
+        let settings = ScriptSettings {
+            node_options: Some("--max-old-space-size=100".to_string()),
+            node_program: Some(PathBuf::from("/usr/bin/node")),
+            node_execpath: Some(PathBuf::from("/usr/bin/node")),
+            command: Some("run-script".to_string()),
+            http_proxy: Some("http://proxy.invalid".to_string()),
+            https_proxy: Some("http://proxy.invalid".to_string()),
+            ..ScriptSettings::default()
+        };
+        scope(async move {
+            set_script_settings(settings);
+            let shell = spawn_shell("tool --flag");
+            let direct = spawn_program(Path::new("/usr/bin/tool"), "tool", ["--flag"]);
+            assert_eq!(
+                env_keys(&shell),
+                env_keys(&direct),
+                "direct exec must export the same env keys as `sh -c`"
+            );
+        })
+        .await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawn_program_runs_the_program_with_its_args() {
+        let mut cmd = spawn_program(Path::new("/bin/echo"), "echo", ["a b", "$HOME"]);
+        let out = cmd.output().await.unwrap();
+        assert!(out.status.success());
+        // `$HOME` arrives literally: there is no shell to expand it.
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "a b $HOME\n");
     }
 }
 
