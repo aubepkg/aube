@@ -180,11 +180,17 @@ pub struct FreshnessSnapshot {
 
 impl FreshnessSnapshot {
     pub fn capture(path: &Path) -> io::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        Self::from_bytes(path, &bytes)
+    }
+
+    /// Build a snapshot for bytes the caller already read from `path`,
+    /// avoiding a duplicate file read when parsing and caching together.
+    pub fn from_bytes(path: &Path, bytes: &[u8]) -> io::Result<Self> {
         let meta = std::fs::metadata(path)?;
         let mtime = meta.modified()?;
         let size = meta.len();
-        let bytes = std::fs::read(path)?;
-        let hash = *blake3::hash(&bytes).as_bytes();
+        let hash = *blake3::hash(bytes).as_bytes();
         Ok(Self { mtime, size, hash })
     }
 

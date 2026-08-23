@@ -347,11 +347,16 @@ impl Workspaces {
     }
 }
 
-/// Process-wide cache of parsed `package.json` files keyed by absolute
-/// path. Hit by `aube run` 2-3 times per invocation (prompt path, type
-/// parse, External catch-all). Miss falls through to a fresh read +
-/// parse and inserts into the cache.
-static PACKAGE_JSON_CACHE: aube_util::cache::ProcessCache<PathBuf, PackageJson> =
+struct CachedPackageJson {
+    freshness: aube_util::cache::FreshnessSnapshot,
+    manifest: std::sync::Arc<PackageJson>,
+}
+
+/// Process-wide cache of parsed `package.json` files keyed by absolute path.
+/// Hits validate mtime + size and fall back to BLAKE3 when metadata changed,
+/// so long-lived embedders see edits while repeated reads inside one command
+/// remain pointer copies.
+static PACKAGE_JSON_CACHE: aube_util::cache::ProcessCache<PathBuf, CachedPackageJson> =
     aube_util::cache::ProcessCache::new();
 
 impl PackageJson {
@@ -372,16 +377,28 @@ impl PackageJson {
         Self::parse(path, content)
     }
 
-    /// Cached variant of [`Self::from_path`]. First caller per-path
-    /// pays the read + parse; later callers receive an `Arc` clone.
-    /// Errors are NOT cached (the next caller retries).
+    /// Cached variant of [`Self::from_path`]. The first caller per path pays
+    /// the read + parse; later callers validate a cheap freshness snapshot
+    /// before receiving an `Arc` clone. Errors are not cached.
     pub fn from_path_cached(path: &Path) -> Result<std::sync::Arc<Self>, Error> {
         let key = path.to_path_buf();
-        if let Some(hit) = PACKAGE_JSON_CACHE.get(&key) {
-            return Ok(hit);
+        if let Some(hit) = PACKAGE_JSON_CACHE.get(&key)
+            && hit.freshness.is_fresh(path).unwrap_or(false)
+        {
+            return Ok(std::sync::Arc::clone(&hit.manifest));
         }
-        let parsed = Self::from_path(path)?;
-        Ok(PACKAGE_JSON_CACHE.get_or_compute(key, || parsed))
+        let content = std::fs::read_to_string(path).map_err(|e| Error::Io(key.clone(), e))?;
+        let freshness = aube_util::cache::FreshnessSnapshot::from_bytes(path, content.as_bytes())
+            .map_err(|e| Error::Io(key.clone(), e))?;
+        let manifest = std::sync::Arc::new(Self::parse(path, content)?);
+        PACKAGE_JSON_CACHE.insert(
+            key,
+            std::sync::Arc::new(CachedPackageJson {
+                freshness,
+                manifest: std::sync::Arc::clone(&manifest),
+            }),
+        );
+        Ok(manifest)
     }
 
     /// Parse an in-memory `package.json` string. On failure, produces a
@@ -1310,6 +1327,26 @@ pub fn serialize_json_with_indent<T: serde::Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_manifest_invalidates_after_file_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("package.json");
+        std::fs::write(&path, r#"{"scripts":{"dev":"echo one"}}"#).unwrap();
+
+        let first = PackageJson::from_path_cached(&path).unwrap();
+        assert_eq!(
+            first.scripts.get("dev").map(String::as_str),
+            Some("echo one")
+        );
+
+        std::fs::write(&path, r#"{"scripts":{"dev":"echo a longer two"}}"#).unwrap();
+        let second = PackageJson::from_path_cached(&path).unwrap();
+        assert_eq!(
+            second.scripts.get("dev").map(String::as_str),
+            Some("echo a longer two")
+        );
+    }
 
     #[test]
     fn test_detect_json_indent() {
