@@ -293,7 +293,7 @@ jobs:
   # PGO-optimized targets: x86_64 Linux GNU/musl (cross-built on amd64)
   # plus native aarch64 Linux GNU and native macOS arm64. Each builds
   # via benchmarks/pgo.bash — instrument under release-pgo, train against
-  # the hermetic Verdaccio registry, rebuild with -Cprofile-use. The
+  # the committed offline registry, rebuild with -Cprofile-use. The
   # x86_64 Linux targets use build-tool=cross so the resulting binary
   # preserves the current glibc baseline; the cross-built instrumented
   # binary runs on the host for training (cross's older glibc is
@@ -444,9 +444,8 @@ jobs:
           echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
           /usr/lib/llvm-18/bin/llvm-bolt --version | head -2
           /usr/lib/llvm-18/bin/merge-fdata --help | head -2 || true
-      # verdaccio is installed lazily by hermetic.bash's
-      # _hermetic_ensure_verdaccio (called from pgo.bash via hermetic_start),
-      # so no explicit install step is needed here.
+      # PGO training is served from test/registry/storage by a dependency-free
+      # local Node server. Release builds never contact npmjs.org.
       - name: Import codesign certs
         if: startsWith(matrix.os, 'macos')
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
