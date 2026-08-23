@@ -983,3 +983,26 @@ JSON
 	# shellcheck disable=SC2016
 	assert_output --partial '["$HOME","a b","*"]'
 }
+
+@test "aube run keeps the shell for an executable without a shebang" {
+	# `sh -c tool` interprets a mode-executable file with no shebang as a
+	# shell script. Exec'ing it directly would fail with ENOEXEC, so the
+	# fast path must stand down and let the shell keep its interpretation.
+	_setup_sh_probe
+	mkdir -p node_modules/.bin
+	cat >node_modules/.bin/noshebang <<'EOF'
+echo no-shebang-ran
+EOF
+	chmod +x node_modules/.bin/noshebang
+	cat >package.json <<'JSON'
+{
+  "name": "run-noshebang",
+  "version": "1.0.0",
+  "scripts": { "probe": "noshebang" }
+}
+JSON
+	run aube run probe
+	assert_success
+	assert_output --partial "no-shebang-ran"
+	assert_file_exists sh.log
+}

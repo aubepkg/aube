@@ -13,7 +13,7 @@
 //! certainty falls back to `sh -c`, which is the pre-existing behavior.
 //! Every bail is a correctness win traded for a process we keep paying.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Bytes allowed to appear anywhere in a directly-exec'd command line.
 ///
@@ -96,6 +96,18 @@ pub(crate) fn simple_command_argv(body: &str) -> Option<(&str, Vec<&str>)> {
     Some((program, words.collect()))
 }
 
+/// What a PATH candidate is, from the point of view of "may we exec it
+/// ourselves without changing what the script does".
+enum Candidate {
+    /// Executable by us, and the kernel can launch it directly.
+    Runnable,
+    /// Not a usable hit. Keep walking PATH, as a shell would.
+    Miss,
+    /// Exists and we could run it, but `sh` would do something else with
+    /// it — so hand the whole body back to `sh`.
+    DeferToShell,
+}
+
 /// Find `program` on `path`, mirroring how the shell would resolve it.
 ///
 /// This is a correctness requirement, not an optimization: on Unix
@@ -104,10 +116,11 @@ pub(crate) fn simple_command_argv(body: &str) -> Option<(&str, Vec<&str>)> {
 /// without resolving here ourselves, a `node_modules/.bin` program would
 /// not be found at all.
 ///
-/// Costs one `stat` per PATH entry until a hit (typically one for a
-/// project-local bin, three for `node`), which is noise next to the fork
-/// and shell startup it replaces. Deliberately uncached: a cache would
-/// have to be invalidated on every install, and there is nothing to win.
+/// Costs a `stat` and a 4-byte read per candidate until a hit (typically
+/// one for a project-local bin, three for `node`), which is noise next to
+/// the fork and shell startup it replaces. Deliberately uncached: a cache
+/// would have to be invalidated on every install, and there is nothing to
+/// win.
 pub fn resolve_program(program: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     for dir in std::env::split_paths(path) {
         // POSIX reads an empty entry as the cwd. Rather than reason about
@@ -117,32 +130,104 @@ pub fn resolve_program(program: &str, path: &std::ffi::OsStr) -> Option<PathBuf>
             return None;
         }
         let candidate = dir.join(program);
-        // `metadata` follows symlinks, so a `.bin/tsc -> ../pkg/cli.js`
-        // link resolves to the real file and its mode.
-        let Ok(meta) = std::fs::metadata(&candidate) else {
-            continue;
-        };
-        if !meta.is_file() {
-            continue;
+        match classify(&candidate) {
+            Candidate::Runnable => return Some(candidate),
+            Candidate::Miss => continue,
+            Candidate::DeferToShell => return None,
         }
-        if !is_executable(&meta) {
-            continue;
-        }
-        return Some(candidate);
     }
     None
 }
 
+fn classify(candidate: &Path) -> Candidate {
+    // `metadata` follows symlinks, so a `.bin/tsc -> ../pkg/cli.js` link
+    // resolves to the real file.
+    let Ok(meta) = std::fs::metadata(candidate) else {
+        return Candidate::Miss;
+    };
+    if !meta.is_file() {
+        return Candidate::Miss;
+    }
+    // Mode bits alone answer "is this marked executable", not "may *we*
+    // execute it" — a file can carry `--x` for an owner we are not. A
+    // shell keeps walking PATH in that case, so a hit we could not launch
+    // must not end the search, or a later runnable entry gets shadowed by
+    // an EACCES we would report as a spawn failure.
+    if !can_execute(candidate, &meta) {
+        return Candidate::Miss;
+    }
+    // `sh -c tool` runs an executable *without* a shebang or a native
+    // header as a shell script; exec'ing it ourselves fails with
+    // ENOEXEC. Only launch what the kernel can launch on its own and let
+    // `sh` keep the rest, including its own interpretation of them.
+    match launchable(candidate) {
+        Some(true) => Candidate::Runnable,
+        Some(false) => Candidate::DeferToShell,
+        // Unreadable but executable (`--x`) is legal and the kernel may
+        // well run it; we just cannot tell what it is, so we do not guess.
+        None => Candidate::DeferToShell,
+    }
+}
+
+/// Whether the file starts with `#!` or a native executable header —
+/// i.e. whether `execve` alone can launch it.
+fn launchable(candidate: &Path) -> Option<bool> {
+    use std::io::Read;
+
+    let mut head = [0u8; 4];
+    let mut file = std::fs::File::open(candidate).ok()?;
+    let read = file.read(&mut head).ok()?;
+    let head = &head[..read];
+    if head.starts_with(b"#!") {
+        return Some(true);
+    }
+    // ELF, the Mach-O 32/64-bit and fat variants, and PE. Matching
+    // aube-linker's magic list without taking a dependency on it for four
+    // byte comparisons.
+    const NATIVE: &[&[u8]] = &[
+        b"\x7fELF",
+        &[0xfe, 0xed, 0xfa, 0xce],
+        &[0xfe, 0xed, 0xfa, 0xcf],
+        &[0xce, 0xfa, 0xed, 0xfe],
+        &[0xcf, 0xfa, 0xed, 0xfe],
+        &[0xca, 0xfe, 0xba, 0xbe],
+        &[0xbe, 0xba, 0xfe, 0xca],
+        b"MZ",
+    ];
+    Some(NATIVE.iter().any(|m| head.starts_with(m)))
+}
+
 #[cfg(unix)]
-fn is_executable(meta: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    meta.mode() & 0o111 != 0
+fn can_execute(candidate: &Path, _meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    // `access(X_OK)` is what a shell's PATH search asks, so ask the same
+    // question rather than re-deriving it from mode bits and our uid.
+    let Ok(c_path) = std::ffi::CString::new(candidate.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c_path` is a valid NUL-terminated C string that outlives
+    // the call, and `access` only reads it.
+    unsafe { libc::access(c_path.as_ptr(), libc::X_OK) == 0 }
 }
 
 #[cfg(not(unix))]
-fn is_executable(_meta: &std::fs::Metadata) -> bool {
+fn can_execute(_candidate: &Path, _meta: &std::fs::Metadata) -> bool {
     // Only reachable from tests; the fast path itself is Unix-only.
     true
+}
+
+/// Whether `BASH_ENV` or `ENV` reaches the child, from either our own
+/// environment or an embedder's `extra_env` contribution.
+fn shell_init_var_set(settings: &crate::ScriptSettings) -> bool {
+    const SHELL_INIT_VARS: [&str; 2] = ["BASH_ENV", "ENV"];
+    SHELL_INIT_VARS.iter().any(|var| {
+        std::env::var_os(var).is_some()
+            || settings
+                .extra_env
+                .iter()
+                .any(|(key, _)| key.as_os_str() == std::ffi::OsStr::new(var))
+    })
 }
 
 /// Plan a direct exec of `body` against `path`, or `None` to use `sh`.
@@ -181,7 +266,12 @@ pub fn direct_argv<'a>(
     // non-interactive shells, so a script body can legitimately depend on
     // functions or PATH edits from that file. Same for `$ENV` under a
     // POSIX sh. If either is set, the shell is load-bearing.
-    if std::env::var_os("BASH_ENV").is_some() || std::env::var_os("ENV").is_some() {
+    //
+    // Check the child's effective environment, not just ours: an embedder
+    // can contribute either var through `extra_env`, which
+    // `apply_script_settings_env` stamps onto the command we are about to
+    // build.
+    if shell_init_var_set(&settings) {
         return None;
     }
 
@@ -195,7 +285,6 @@ pub fn direct_argv<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn argv(body: &str) -> Option<(String, Vec<String>)> {
         simple_command_argv(body)
@@ -411,6 +500,79 @@ mod tests {
             resolve_program("tool", &join(&[Path::new("relative"), &dir])),
             None
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_program_defers_an_executable_without_a_shebang() {
+        // `sh -c tool` runs this as a shell script; exec'ing it would fail
+        // with ENOEXEC. Bail so the shell keeps interpreting it.
+        let dir = scratch("noexec-hdr");
+        let tool = dir.join("tool");
+        std::fs::write(&tool, "echo hi\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(resolve_program("tool", &join(&[&dir])), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_program_accepts_a_native_binary() {
+        let dir = scratch("elf");
+        let tool = dir.join("tool");
+        std::fs::write(&tool, b"\x7fELF\x02\x01\x01").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            resolve_program("tool", &join(&[&dir])),
+            Some(dir.join("tool"))
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_program_keeps_searching_past_an_unexecutable_hit() {
+        // Marked executable for a user we are not: a shell walks on to the
+        // next PATH entry, so a later runnable entry must not be shadowed.
+        let shadow = scratch("shadow");
+        let real = scratch("real");
+        let blocked = shadow.join("tool");
+        std::fs::write(&blocked, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        // `--x------` with our uid stripped of the bit is not expressible
+        // without changing owner, so use 0o100 and skip when running as
+        // root (which bypasses the check entirely).
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        exe(&real.join("tool"));
+        let got = resolve_program("tool", &join(&[&shadow, &real]));
+        if unsafe { libc::geteuid() } == 0 {
+            // root ignores permission bits; the first hit legitimately wins.
+            assert!(got.is_some());
+        } else {
+            assert_eq!(got, Some(real.join("tool")));
+        }
+        std::fs::remove_dir_all(&shadow).ok();
+        std::fs::remove_dir_all(&real).ok();
+    }
+
+    #[tokio::test]
+    async fn direct_argv_declines_when_extra_env_sets_bash_env() {
+        let dir = scratch("extra-env");
+        exe(&dir.join("tool"));
+        let settings = crate::ScriptSettings {
+            extra_env: vec![(
+                std::ffi::OsString::from("BASH_ENV"),
+                std::ffi::OsString::from("/tmp/init.sh"),
+            )],
+            ..Default::default()
+        };
+        // An embedder can inject a shell init file through extra_env, and
+        // `apply_script_settings_env` would stamp it on the child — so the
+        // shell is load-bearing even though our own env is clean.
+        assert!(!plans_under(settings, &dir).await);
         std::fs::remove_dir_all(&dir).ok();
     }
 
