@@ -743,7 +743,7 @@ fn collect_gvs_nested_links(
 pub struct WriteStateInput<'a> {
     pub section_filtered: bool,
     pub package_json_hashes: BTreeMap<String, String>,
-    pub manifests: &'a [(String, aube_manifest::PackageJson)],
+    pub run_manifests: BTreeMap<String, aube_manifest::PackageJson>,
     pub cli_flags: &'a [(String, String)],
     pub package_content_hashes: BTreeMap<String, String>,
     pub graph_lthash: String,
@@ -756,7 +756,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     let WriteStateInput {
         section_filtered,
         package_json_hashes,
-        manifests,
+        run_manifests,
         cli_flags,
         package_content_hashes,
         graph_lthash,
@@ -788,8 +788,6 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
             ))
         })
         .collect();
-    let run_manifests = collect_run_manifests(project_dir, manifests);
-
     // Capture (size, mtime) per manifest so the next freshness check
     // can skip the BLAKE3 hash on the warm path. See R1 docstring on
     // FreshnessState.package_json_meta.
@@ -1427,60 +1425,58 @@ fn read_installed_package_manifest(
     Ok(Some(parsed))
 }
 
-pub fn collect_package_json_hashes_from_manifests(
+pub fn collect_package_json_run_state(
     project_dir: &Path,
     manifests: &[(String, aube_manifest::PackageJson)],
-) -> BTreeMap<String, String> {
-    manifests
+) -> (
+    BTreeMap<String, String>,
+    BTreeMap<String, aube_manifest::PackageJson>,
+) {
+    let snapshots: Vec<_> = manifests
         .par_iter()
         .filter_map(|(rel, _)| {
-            let pkg_json = if rel == "." {
+            let manifest_path = if rel == "." {
                 project_dir.join("package.json")
             } else {
                 project_dir.join(rel).join("package.json")
             };
-            if !pkg_json.is_file() {
-                return None;
-            }
+            let content = std::fs::read_to_string(&manifest_path).ok()?;
             let key = if rel == "." {
                 ".".to_string()
             } else {
-                relative_path_or_original(&pkg_json, project_dir)
+                relative_path_or_original(&manifest_path, project_dir)
             };
-            Some((key, hash_file(&pkg_json)))
+            let hash = hash_bytes(content.as_bytes());
+            let plan = aube_manifest::PackageJson::parse(&manifest_path, content)
+                .ok()
+                .map(|manifest| {
+                    let mut extra = BTreeMap::new();
+                    for field in ["config", "bin"] {
+                        if let Some(value) = manifest.extra.get(field) {
+                            extra.insert(field.to_string(), value.clone());
+                        }
+                    }
+                    aube_manifest::PackageJson {
+                        name: manifest.name,
+                        version: manifest.version,
+                        scripts: manifest.scripts,
+                        engines: manifest.engines,
+                        extra,
+                        ..Default::default()
+                    }
+                });
+            Some((key, hash, plan))
         })
-        .collect()
-}
-
-fn collect_run_manifests(
-    project_dir: &Path,
-    manifests: &[(String, aube_manifest::PackageJson)],
-) -> BTreeMap<String, aube_manifest::PackageJson> {
-    manifests
-        .iter()
-        .map(|(rel, manifest)| {
-            let key = if rel == "." {
-                ".".to_string()
-            } else {
-                relative_path_or_original(&project_dir.join(rel).join("package.json"), project_dir)
-            };
-            let mut extra = BTreeMap::new();
-            for field in ["config", "bin"] {
-                if let Some(value) = manifest.extra.get(field) {
-                    extra.insert(field.to_string(), value.clone());
-                }
-            }
-            let plan = aube_manifest::PackageJson {
-                name: manifest.name.clone(),
-                version: manifest.version.clone(),
-                scripts: manifest.scripts.clone(),
-                engines: manifest.engines.clone(),
-                extra,
-                ..Default::default()
-            };
-            (key, plan)
-        })
-        .collect()
+        .collect();
+    let mut hashes = BTreeMap::new();
+    let mut plans = BTreeMap::new();
+    for (key, hash, plan) in snapshots {
+        hashes.insert(key.clone(), hash);
+        if let Some(plan) = plan {
+            plans.insert(key, plan);
+        }
+    }
+    (hashes, plans)
 }
 
 fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
@@ -1724,11 +1720,11 @@ fn empty_blake3_hash() -> &'static str {
 mod tests {
     use super::{
         InstallLayoutMode, InstallLayoutState, InstallState, InstalledPackageState,
-        WriteStateLayout, collect_package_json_hashes_from_manifests, empty_blake3_hash,
-        fresh_state_file, gvs_nested_links_are_current, hash_file, hash_settings,
-        install_state_file, member_lockfiles_stale, read_hoisted_placements,
-        read_or_migrate_fresh_state, read_run_manifest, relative_path_or_original, remove_state,
-        verify_install_layout, write_hoisted_placements,
+        WriteStateLayout, collect_package_json_run_state, empty_blake3_hash, fresh_state_file,
+        gvs_nested_links_are_current, hash_bytes, hash_file, hash_settings, install_state_file,
+        member_lockfiles_stale, read_hoisted_placements, read_or_migrate_fresh_state,
+        read_run_manifest, relative_path_or_original, remove_state, verify_install_layout,
+        write_hoisted_placements,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -2121,7 +2117,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_package_json_hashes_from_manifests_uses_file_paths_for_workspaces() {
+    fn collect_package_json_run_state_uses_file_paths_for_workspaces() {
         let project_dir = temp_project_dir("manifest-hash-keys");
         let root_pkg = project_dir.join("package.json");
         let ws_pkg = project_dir.join("packages/foo/package.json");
@@ -2138,7 +2134,7 @@ mod tests {
             ),
         ];
 
-        let hashes = collect_package_json_hashes_from_manifests(&project_dir, &manifests);
+        let (hashes, _) = collect_package_json_run_state(&project_dir, &manifests);
 
         assert_eq!(hashes.get("."), Some(&hash_file(&root_pkg)));
         assert_eq!(
@@ -2182,6 +2178,30 @@ mod tests {
         )
         .expect("edited manifest should write");
         assert!(read_run_manifest(&project_dir, &project_dir).is_none());
+    }
+
+    #[test]
+    fn run_plan_and_hash_share_the_post_hook_snapshot() {
+        let project_dir = temp_project_dir("run-plan-snapshot");
+        let manifest_path = project_dir.join("package.json");
+        let before = aube_manifest::PackageJson::parse(
+            &manifest_path,
+            r#"{"scripts":{"dev":"echo before"}}"#.to_string(),
+        )
+        .expect("initial manifest should parse");
+        let after = r#"{"scripts":{"dev":"echo after"}}"#;
+        std::fs::write(&manifest_path, after).expect("post-hook manifest should write");
+
+        let (hashes, plans) =
+            collect_package_json_run_state(&project_dir, &[(".".to_string(), before)]);
+        assert_eq!(hashes.get("."), Some(&hash_bytes(after.as_bytes())));
+        assert_eq!(
+            plans
+                .get(".")
+                .and_then(|plan| plan.scripts.get("dev"))
+                .map(String::as_str),
+            Some("echo after")
+        );
     }
 
     #[test]

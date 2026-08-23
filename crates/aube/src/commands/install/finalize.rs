@@ -278,7 +278,8 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             delta::compute_subtree_hashes_from_leaf(graph, &package_content_hashes)
         });
         let graph_lthash = hex::encode(delta::lthash_of(&package_content_hashes).digest());
-        let package_json_hashes = state::collect_package_json_hashes_from_manifests(cwd, manifests);
+        let (package_json_hashes, run_manifests) =
+            state::collect_package_json_run_state(cwd, manifests);
         // Diff against the previous install. Logs delta counts at
         // debug so `-v` installs surface what actually moved. A
         // later pass feeds the plan into fetch and link as a
@@ -385,7 +386,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             state::WriteStateInput {
                 section_filtered: dep_selection.prod_or_dev_axis(),
                 package_json_hashes,
-                manifests,
+                run_manifests,
                 cli_flags,
                 package_content_hashes,
                 graph_lthash,

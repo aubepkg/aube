@@ -627,9 +627,13 @@ pub(crate) async fn run_script_with(
     }
 
     let install_root = crate::dirs::find_workspace_root(&cwd).unwrap_or_else(|| cwd.clone());
-    let manifest = crate::state::read_run_manifest(&install_root, &cwd)
-        .map(Ok)
-        .unwrap_or_else(|| load_manifest(&cwd))?;
+    let plan_root = install_root.clone();
+    let plan_cwd = cwd.clone();
+    let plan =
+        tokio::task::spawn_blocking(move || crate::state::read_run_manifest(&plan_root, &plan_cwd))
+            .await
+            .into_diagnostic()?;
+    let manifest = plan.map(Ok).unwrap_or_else(|| load_manifest(&cwd))?;
     if !manifest.scripts.contains_key(script) {
         ensure_installed_in(no_install, Some(&cwd)).await?;
         let bin_path = super::project_modules_dir(&cwd).join(".bin").join(script);
