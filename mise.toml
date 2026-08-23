@@ -7,6 +7,7 @@ cargo.binstall_native = true
 
 [tools]
 actionlint = "latest"
+usage = "6.1.0"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
 "github:foresterre/cargo-msrv" = "latest"
@@ -162,18 +163,13 @@ dir = "{{config_root}}"
 run = "bash benchmarks/pgo.bash"
 
 [tasks.render]
-depends = ["build", "build-usage"]
+depends = ["build"]
 run = [
   "./target/debug/aube usage > aube.usage.kdl",
   "rm -rf docs/cli && mkdir -p docs/cli",
-  "target/usage-cli/bin/usage g markdown -mf aube.usage.kdl --out-dir docs/cli --url-prefix /cli",
-  "target/usage-cli/bin/usage g json -f aube.usage.kdl > docs/cli/commands.json",
+  "usage g markdown -mf aube.usage.kdl --out-dir docs/cli --url-prefix /cli",
+  "usage g json -f aube.usage.kdl > docs/cli/commands.json",
   "node scripts/patch-generated-cli-docs.mjs",
   "cargo run -p aube-settings --bin generate-settings-docs",
   "cargo run -p aube-codes --bin generate-error-codes-docs",
 ]
-
-[tasks.build-usage]
-run = "cargo install --locked --root target/usage-cli --version 6.1.0 usage-cli"
-sources = ["Cargo.lock", "mise.toml"]
-outputs = ["target/usage-cli/bin/usage"]
