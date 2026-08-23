@@ -600,21 +600,9 @@ pub(crate) async fn run_script_with(
             ));
         }
     };
-    let enable_pre_post_scripts = configure_script_settings_for_project(&cwd)?;
-
     if !filter.is_empty() {
-        crate::runtime::ensure_for_cwd(&cwd).await?;
         return run_script_filtered(
-            &cwd,
-            script,
-            args,
-            node_args,
-            no_install,
-            if_present,
-            parallel,
-            silent,
-            filter,
-            enable_pre_post_scripts,
+            &cwd, script, args, node_args, no_install, if_present, parallel, silent, filter,
             recursive,
         )
         .await;
@@ -624,6 +612,7 @@ pub(crate) async fn run_script_with(
     // Reuse these exact live bytes for runtime selection and dispatch. This
     // avoids a second manifest read without introducing cross-command state.
     crate::runtime::ensure_for_cwd_with_manifest(&cwd, &manifest).await?;
+    let enable_pre_post_scripts = configure_script_settings_for_project(&cwd)?;
     if !manifest.scripts.contains_key(script) {
         ensure_installed_in(no_install, Some(&cwd)).await?;
         let bin_path = super::project_modules_dir(&cwd).join(".bin").join(script);
@@ -688,7 +677,6 @@ async fn run_script_filtered(
     parallel: bool,
     silent: bool,
     filter: &aube_workspace::selector::EffectiveFilter,
-    enable_pre_post_scripts: bool,
     recursive: RecursiveOpts,
 ) -> miette::Result<Option<i32>> {
     // `cwd` is the nearest ancestor with a `package.json`, which in a
@@ -696,7 +684,9 @@ async fn run_script_filtered(
     // shared helper walks up to the real workspace root before
     // enumerating packages, so yarn / npm / bun monorepos work from a
     // subpackage.
-    let (_root, matched) = super::select_workspace_packages(cwd, filter, "run")?;
+    let (root, matched) = super::select_workspace_packages(cwd, filter, "run")?;
+    crate::runtime::ensure_for_cwd(&root).await?;
+    let enable_pre_post_scripts = configure_script_settings_for_project(&root)?;
 
     let matched = order_matched_packages(matched, &recursive)?;
 
@@ -704,7 +694,7 @@ async fn run_script_filtered(
     // isolated linker already materializes every workspace package's
     // deps in a single pass, so per-package reinstalls would just
     // re-check the same lockfile N times.
-    ensure_installed_in(no_install, Some(cwd)).await?;
+    ensure_installed_in(no_install, Some(&root)).await?;
 
     if let Some(concurrency) = effective_concurrency(parallel, recursive.workspace_concurrency) {
         return run_filtered_parallel(
