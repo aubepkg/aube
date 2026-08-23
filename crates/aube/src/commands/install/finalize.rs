@@ -385,6 +385,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             state::WriteStateInput {
                 section_filtered: dep_selection.prod_or_dev_axis(),
                 package_json_hashes,
+                manifests,
                 cli_flags,
                 package_content_hashes,
                 graph_lthash,

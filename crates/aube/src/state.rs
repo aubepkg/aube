@@ -142,6 +142,11 @@ struct FreshnessState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     member_lockfile_meta: BTreeMap<String, FileMeta>,
     package_json_hashes: BTreeMap<String, String>,
+    /// Script-launch subset of each installed workspace manifest, keyed like
+    /// `package_json_hashes`. Kept only in the compact freshness sidecar so it
+    /// is not duplicated in the full delta/install state.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    run_manifests: BTreeMap<String, aube_manifest::PackageJson>,
     /// Mtime + size per `package.json` keyed identically to
     /// `package_json_hashes`. Lets `package_jsons_stale` skip the
     /// BLAKE3 hash on the fast path: stat once, compare both fields,
@@ -222,6 +227,7 @@ impl From<&InstallState> for FreshnessState {
             member_lockfile_hashes: state.member_lockfile_hashes.clone(),
             member_lockfile_meta: state.member_lockfile_meta.clone(),
             package_json_hashes: state.package_json_hashes.clone(),
+            run_manifests: BTreeMap::new(),
             package_json_meta: state.package_json_meta.clone(),
             local_directory_hashes: state.local_directory_hashes.clone(),
             section_filtered: state.section_filtered,
@@ -546,6 +552,31 @@ fn package_jsons_stale(project_dir: &Path, state: &FreshnessState) -> Option<Str
     None
 }
 
+/// Load the install-generated script plan for `package_dir` after proving it
+/// still corresponds byte-for-byte to the live manifest. The content hash is
+/// intentionally checked even when mtime and size match: executing stale
+/// script text is a correctness and security boundary, so the normal
+/// freshness check's metadata shortcut is not sufficient here.
+pub(crate) fn read_run_manifest(
+    project_dir: &Path,
+    package_dir: &Path,
+) -> Option<aube_manifest::PackageJson> {
+    let state_path = state_dir(project_dir);
+    let state = read_fresh_state(&state_path)?;
+    let manifest_path = package_dir.join("package.json");
+    let key = if package_dir == project_dir {
+        ".".to_string()
+    } else {
+        relative_path_or_original(&manifest_path, project_dir)
+    };
+    let stored_hash = state.package_json_hashes.get(&key)?;
+    let content = std::fs::read(&manifest_path).ok()?;
+    if hash_bytes(&content) != *stored_hash {
+        return None;
+    }
+    state.run_manifests.get(&key).cloned()
+}
+
 /// Fingerprint every workspace member's lockfile for the
 /// `sharedWorkspaceLockfile=false` layout. Returns `(hashes, meta)`
 /// keyed by the member's importer path relative to `project_dir`.
@@ -712,6 +743,7 @@ fn collect_gvs_nested_links(
 pub struct WriteStateInput<'a> {
     pub section_filtered: bool,
     pub package_json_hashes: BTreeMap<String, String>,
+    pub manifests: &'a [(String, aube_manifest::PackageJson)],
     pub cli_flags: &'a [(String, String)],
     pub package_content_hashes: BTreeMap<String, String>,
     pub graph_lthash: String,
@@ -724,6 +756,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
     let WriteStateInput {
         section_filtered,
         package_json_hashes,
+        manifests,
         cli_flags,
         package_content_hashes,
         graph_lthash,
@@ -755,6 +788,7 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
             ))
         })
         .collect();
+    let run_manifests = collect_run_manifests(project_dir, manifests);
 
     // Capture (size, mtime) per manifest so the next freshness check
     // can skip the BLAKE3 hash on the warm path. See R1 docstring on
@@ -798,7 +832,8 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
         unreviewed_builds,
     };
 
-    let fresh_state = FreshnessState::from(&state);
+    let mut fresh_state = FreshnessState::from(&state);
+    fresh_state.run_manifests = run_manifests;
     if read_package_licenses(&state_path)
         .as_ref()
         .is_none_or(|licenses| licenses.fingerprint != license_fingerprint)
@@ -1417,6 +1452,37 @@ pub fn collect_package_json_hashes_from_manifests(
         .collect()
 }
 
+fn collect_run_manifests(
+    project_dir: &Path,
+    manifests: &[(String, aube_manifest::PackageJson)],
+) -> BTreeMap<String, aube_manifest::PackageJson> {
+    manifests
+        .iter()
+        .map(|(rel, manifest)| {
+            let key = if rel == "." {
+                ".".to_string()
+            } else {
+                relative_path_or_original(&project_dir.join(rel).join("package.json"), project_dir)
+            };
+            let mut extra = BTreeMap::new();
+            for field in ["config", "bin"] {
+                if let Some(value) = manifest.extra.get(field) {
+                    extra.insert(field.to_string(), value.clone());
+                }
+            }
+            let plan = aube_manifest::PackageJson {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                scripts: manifest.scripts.clone(),
+                engines: manifest.engines.clone(),
+                extra,
+                ..Default::default()
+            };
+            (key, plan)
+        })
+        .collect()
+}
+
 fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     // hash resolved settings not raw file bytes. old byte hash tripped on
     // noop edits like `optimisticRepeatInstall=true` (same as default).
@@ -1661,7 +1727,7 @@ mod tests {
         WriteStateLayout, collect_package_json_hashes_from_manifests, empty_blake3_hash,
         fresh_state_file, gvs_nested_links_are_current, hash_file, hash_settings,
         install_state_file, member_lockfiles_stale, read_hoisted_placements,
-        read_or_migrate_fresh_state, relative_path_or_original, remove_state,
+        read_or_migrate_fresh_state, read_run_manifest, relative_path_or_original, remove_state,
         verify_install_layout, write_hoisted_placements,
     };
     use std::collections::BTreeMap;
@@ -2082,6 +2148,43 @@ mod tests {
     }
 
     #[test]
+    fn persisted_run_manifest_requires_the_live_content_hash() {
+        let project_dir = temp_project_dir("run-plan-hash");
+        let manifest_path = project_dir.join("package.json");
+        let original = r#"{"name":"app","scripts":{"dev":"echo one"}}"#;
+        std::fs::write(&manifest_path, original).expect("manifest should write");
+        let state_path = project_dir.join("node_modules/.aube-state");
+        std::fs::create_dir_all(&state_path).expect("state dir should write");
+        let fresh = serde_json::json!({
+            "lockfile_hash": "",
+            "package_json_hashes": { ".": hash_file(&manifest_path) },
+            "run_manifests": {
+                ".": { "name": "app", "scripts": { "dev": "echo one" } }
+            }
+        });
+        std::fs::write(
+            fresh_state_file(&state_path),
+            serde_json::to_vec(&fresh).expect("fresh state should serialize"),
+        )
+        .expect("fresh state should write");
+
+        let plan = read_run_manifest(&project_dir, &project_dir).expect("plan should match");
+        assert_eq!(
+            plan.scripts.get("dev").map(String::as_str),
+            Some("echo one")
+        );
+
+        // Same byte length, different command. Hash validation must reject it
+        // even on filesystems where timestamp resolution is too coarse.
+        std::fs::write(
+            &manifest_path,
+            r#"{"name":"app","scripts":{"dev":"echo two"}}"#,
+        )
+        .expect("edited manifest should write");
+        assert!(read_run_manifest(&project_dir, &project_dir).is_none());
+    }
+
+    #[test]
     fn state_json_migrates_fresh_state_without_delta_maps() {
         let project_dir = temp_project_dir("fresh-migration");
         let state_path = project_dir.join(".aube-state");
@@ -2317,6 +2420,7 @@ mod tests {
             member_lockfile_hashes: hashes,
             member_lockfile_meta: BTreeMap::new(),
             package_json_hashes: BTreeMap::new(),
+            run_manifests: BTreeMap::new(),
             package_json_meta: BTreeMap::new(),
             local_directory_hashes: Some(BTreeMap::new()),
             section_filtered: false,

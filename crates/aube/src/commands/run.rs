@@ -626,7 +626,10 @@ pub(crate) async fn run_script_with(
         .await;
     }
 
-    let manifest = load_manifest(&cwd)?;
+    let install_root = crate::dirs::find_workspace_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let manifest = crate::state::read_run_manifest(&install_root, &cwd)
+        .map(Ok)
+        .unwrap_or_else(|| load_manifest(&cwd))?;
     if !manifest.scripts.contains_key(script) {
         ensure_installed_in(no_install, Some(&cwd)).await?;
         let bin_path = super::project_modules_dir(&cwd).join(".bin").join(script);
