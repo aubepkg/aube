@@ -1347,7 +1347,9 @@ mod tests {
         );
 
         std::fs::write(&path, r#"{"scripts":{"dev":"echo two"}}"#).unwrap();
-        std::fs::File::open(&path)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
             .unwrap()
             .set_modified(original_mtime)
             .unwrap();
