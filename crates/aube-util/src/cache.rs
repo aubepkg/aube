@@ -13,7 +13,7 @@
 
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::SystemTime;
@@ -180,18 +180,38 @@ pub struct FreshnessSnapshot {
 
 impl FreshnessSnapshot {
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let bytes = std::fs::read(path)?;
-        Self::from_bytes(path, &bytes)
+        Self::read(path).map(|(_, snapshot)| snapshot)
     }
 
-    /// Build a snapshot for bytes the caller already read from `path`,
-    /// avoiding a duplicate file read when parsing and caching together.
-    pub fn from_bytes(path: &Path, bytes: &[u8]) -> io::Result<Self> {
-        let meta = std::fs::metadata(path)?;
-        let mtime = meta.modified()?;
-        let size = meta.len();
-        let hash = *blake3::hash(bytes).as_bytes();
-        Ok(Self { mtime, size, hash })
+    /// Read a file and capture metadata for the same version of its contents.
+    /// Retries concurrent rewrites rather than pairing old bytes with new
+    /// metadata, which would make a later cheap freshness check lie.
+    pub fn read(path: &Path) -> io::Result<(Vec<u8>, Self)> {
+        const MAX_ATTEMPTS: usize = 3;
+        for _ in 0..MAX_ATTEMPTS {
+            let mut file = std::fs::File::open(path)?;
+            let before = file.metadata()?;
+            let mut bytes = Vec::with_capacity(before.len() as usize);
+            file.read_to_end(&mut bytes)?;
+            let after = file.metadata()?;
+            let current = std::fs::metadata(path)?;
+            if before.len() == after.len()
+                && before.modified()? == after.modified()?
+                && after.len() == current.len()
+                && after.modified()? == current.modified()?
+            {
+                let snapshot = Self {
+                    mtime: after.modified()?,
+                    size: after.len(),
+                    hash: *blake3::hash(&bytes).as_bytes(),
+                };
+                return Ok((bytes, snapshot));
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "file changed repeatedly while capturing freshness snapshot",
+        ))
     }
 
     /// Returns `Ok(true)` when the snapshot's `(mtime, size)` pair

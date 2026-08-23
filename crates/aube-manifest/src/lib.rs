@@ -387,9 +387,14 @@ impl PackageJson {
         {
             return Ok(std::sync::Arc::clone(&hit.manifest));
         }
-        let content = std::fs::read_to_string(path).map_err(|e| Error::Io(key.clone(), e))?;
-        let freshness = aube_util::cache::FreshnessSnapshot::from_bytes(path, content.as_bytes())
+        let (bytes, freshness) = aube_util::cache::FreshnessSnapshot::read(path)
             .map_err(|e| Error::Io(key.clone(), e))?;
+        let content = String::from_utf8(bytes).map_err(|e| {
+            Error::Io(
+                key.clone(),
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+            )
+        })?;
         let manifest = std::sync::Arc::new(Self::parse(path, content)?);
         PACKAGE_JSON_CACHE.insert(
             key,
