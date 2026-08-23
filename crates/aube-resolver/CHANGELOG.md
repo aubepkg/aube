@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/jdx/aube/compare/aube-resolver-v2.0.1...aube-resolver-v2.1.0) - 2026-08-23
+
+### Other
+
+- *(resolver)* bypass network limit for primer metadata ([#1353](https://github.com/jdx/aube/pull/1353))
+- *(resolver)* bypass network limit for disk metadata ([#1352](https://github.com/jdx/aube/pull/1352))
+- refresh benchmarks for v2.0.1 ([#1350](https://github.com/jdx/aube/pull/1350))
+
 ## [1.41.0](https://github.com/jdx/aube/compare/aube-resolver-v1.40.0...aube-resolver-v1.41.0) - 2026-08-16
 
 ### Fixed

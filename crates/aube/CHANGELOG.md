@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/jdx/aube/compare/v2.0.1...v2.1.0) - 2026-08-23
+
+### Added
+
+- *(run)* echo the script command line before running it ([#1358](https://github.com/jdx/aube/pull/1358))
+
+### Fixed
+
+- *(install)* apply global virtual store flags in ci ([#1355](https://github.com/jdx/aube/pull/1355))
+
+### Other
+
+- *(run)* exec final aubr script shell on unix ([#1360](https://github.com/jdx/aube/pull/1360))
+- *(run)* reuse manifest and settings contexts ([#1359](https://github.com/jdx/aube/pull/1359))
+- *(run)* exec plain script command lines without a shell ([#1363](https://github.com/jdx/aube/pull/1363))
+- *(run)* only rewrite node-gyp shims when they change ([#1361](https://github.com/jdx/aube/pull/1361))
+- *(run)* defer aubr install runtime startup ([#1357](https://github.com/jdx/aube/pull/1357))
+- refresh benchmarks for v2.0.1 ([#1350](https://github.com/jdx/aube/pull/1350))
+
 ## [2.0.1](https://github.com/jdx/aube/compare/v1.41.0...v2.0.1) - 2026-08-23
 
 ### Added
