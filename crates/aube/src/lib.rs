@@ -723,6 +723,9 @@ fn report_exit_code(report: &miette::Report) -> i32 {
 
 fn inner_main() -> miette::Result<i32> {
     let mut argv: Vec<OsString> = std::env::args_os().collect();
+    let invoked_as_aubr = argv
+        .first()
+        .is_some_and(|arg| crate::tool_shims::stem_of_argv0(arg) == "aubr");
     if argv.get(1).and_then(|arg| arg.to_str()) == Some("__complete_word__") {
         let name = argv
             .first()
@@ -901,8 +904,18 @@ fn inner_main() -> miette::Result<i32> {
         .unwrap_or(4);
     let workers = parse_env("AUBE_TOKIO_WORKERS", cpu_count.min(8));
     let blocking = parse_env("AUBE_TOKIO_BLOCKING", 128);
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(workers)
+    // A non-installing aubr invocation only needs one async task to supervise
+    // the script process. Keep auto-install-capable runs on the multi-thread
+    // runtime: a stale tree can enter the full parallel install pipeline.
+    let current_thread_run = aubr_can_use_current_thread(invoked_as_aubr, &cli);
+    let mut runtime_builder = if current_thread_run {
+        tokio::runtime::Builder::new_current_thread()
+    } else {
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder.worker_threads(workers);
+        builder
+    };
+    let runtime = runtime_builder
         .max_blocking_threads(blocking)
         .enable_all()
         .build()
@@ -917,6 +930,14 @@ fn inner_main() -> miette::Result<i32> {
     // embeds the command layer in-process. `None` means "no explicit
     // code" — the normal success exit of 0.
     Ok(exit_code.unwrap_or(0))
+}
+
+fn aubr_can_use_current_thread(invoked_as_aubr: bool, cli: &Cli) -> bool {
+    invoked_as_aubr
+        && matches!(
+            cli.command.as_ref(),
+            Some(Commands::Run(args)) if args.no_install
+        )
 }
 
 async fn async_main(cli: Cli) -> miette::Result<Option<i32>> {
@@ -1462,6 +1483,18 @@ async fn run_install_command(
 #[cfg(test)]
 mod cli_spec_tests {
     use super::*;
+
+    #[test]
+    fn only_non_installing_aubr_uses_current_thread_runtime() {
+        let aubr = Cli::try_parse_test_from(["aubr", "--no-install", "build"])
+            .expect("aubr --no-install should parse");
+        assert!(aubr_can_use_current_thread(true, &aubr));
+
+        let installing =
+            Cli::try_parse_test_from(["aubr", "build"]).expect("aubr script should parse");
+        assert!(!aubr_can_use_current_thread(true, &installing));
+        assert!(!aubr_can_use_current_thread(false, &aubr));
+    }
 
     #[test]
     fn install_accepts_subcommand_registry_flag() {
