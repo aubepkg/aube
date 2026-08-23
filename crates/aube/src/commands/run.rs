@@ -201,12 +201,6 @@ pub async fn run(
         },
     };
     let node_args = node_args_from_run_flags(inspect, inspect_brk);
-    // Resolve the project's Node runtime before anything spawns —
-    // covers the warm path where no install runs (the install path
-    // re-enters ensure() with the lockfile pin, but the OnceCell makes
-    // that a no-op if we already resolved here; both read the same
-    // version sources so they agree).
-    crate::runtime::ensure_for_cwd(&crate::dirs::cwd()?).await?;
     let recursive = RecursiveOpts {
         // pnpm parity: topo sort is on by default. `--sort` and
         // `--no-sort` use clap `overrides_with`, so only one can land
@@ -549,7 +543,6 @@ pub(crate) async fn run_script_in(
     if_present: bool,
     filter: &aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<Option<i32>> {
-    crate::runtime::ensure_for_cwd(&base_dir).await?;
     let silent = super::global_output_flags().silent;
     run_script_with(
         script,
@@ -607,6 +600,10 @@ pub(crate) async fn run_script_with(
             ));
         }
     };
+    // Resolve once from the same project root used for manifest and script
+    // settings below. The install path re-enters ensure() with the lockfile
+    // pin, but the OnceCell makes that a no-op when this warm-path lookup won.
+    crate::runtime::ensure_for_cwd(&cwd).await?;
     let enable_pre_post_scripts = configure_script_settings_for_project(&cwd)?;
 
     if !filter.is_empty() {
@@ -1063,8 +1060,8 @@ async fn run_filtered_parallel(
     Ok(None)
 }
 
-pub(crate) fn load_manifest(cwd: &Path) -> miette::Result<PackageJson> {
-    PackageJson::from_path(&cwd.join("package.json"))
+pub(crate) fn load_manifest(cwd: &Path) -> miette::Result<std::sync::Arc<PackageJson>> {
+    PackageJson::from_path_cached(&cwd.join("package.json"))
         .map_err(miette::Report::new)
         .wrap_err("failed to read package.json")
 }

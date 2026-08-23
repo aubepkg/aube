@@ -769,12 +769,15 @@ pub async fn ensure_for_cwd(cwd: &Path) -> miette::Result<Arc<RuntimeContext>> {
     let project_dir = crate::dirs::find_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
     let manifest =
         aube_manifest::PackageJson::from_path_cached(&project_dir.join("package.json")).ok();
-    let settings = crate::commands::with_settings_ctx(&project_dir, RuntimeSettings::from_ctx);
-    let parse_options =
-        crate::commands::with_settings_ctx(&project_dir, |ctx| aube_lockfile::ParseOptions {
-            strict_store_integrity: aube_settings::resolved::strict_store_integrity(ctx)
-                || aube_settings::resolved::paranoid(ctx),
-        });
+    let (settings, parse_options) = crate::commands::with_settings_ctx(&project_dir, |ctx| {
+        (
+            RuntimeSettings::from_ctx(ctx),
+            aube_lockfile::ParseOptions {
+                strict_store_integrity: aube_settings::resolved::strict_store_integrity(ctx)
+                    || aube_settings::resolved::paranoid(ctx),
+            },
+        )
+    });
     let pin = manifest
         .as_deref()
         .and_then(|m| lockfile_node_pin(&project_dir, m, parse_options));

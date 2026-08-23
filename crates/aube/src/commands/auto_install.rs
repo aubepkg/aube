@@ -104,7 +104,7 @@ pub(crate) async fn ensure_installed_in(
     let cwd = crate::dirs::find_workspace_root(&initial_cwd)
         .or_else(|| crate::dirs::find_project_root(&initial_cwd))
         .unwrap_or(initial_cwd);
-    // Resolve both pieces of auto-install policy in a single
+    // Resolve the auto-install policy in a single
     // `with_settings_ctx` call so the `.npmrc` + workspace-yaml read
     // pays off once. `aubeNoAutoInstall` lets a project/workspace opt
     // out of the staleness check entirely (env alias:
@@ -112,12 +112,14 @@ pub(crate) async fn ensure_installed_in(
     // disables the cheap lockfile/manifest hash short-circuit so every
     // check becomes a full install — matches pnpm's semantics where
     // the fast path is opt-out, not a staleness contract.
-    let (skip_auto_install, optimistic_repeat) = super::with_settings_ctx(&cwd, |ctx| {
-        (
-            aube_settings::resolved::aube_no_auto_install(ctx),
-            aube_settings::resolved::optimistic_repeat_install(ctx),
-        )
-    });
+    let (skip_auto_install, optimistic_repeat, verify_mode) =
+        super::with_settings_ctx(&cwd, |ctx| {
+            (
+                aube_settings::resolved::aube_no_auto_install(ctx),
+                aube_settings::resolved::optimistic_repeat_install(ctx),
+                parse_verify_deps_before_run(&aube_settings::resolved::verify_deps_before_run(ctx)),
+            )
+        });
     if skip_auto_install {
         return Ok(());
     }
@@ -127,7 +129,6 @@ pub(crate) async fn ensure_installed_in(
     } else {
         Some("optimisticRepeatInstall=false".to_string())
     };
-    let verify_mode = resolve_verify_deps_before_run(&cwd)?;
     // A global `--frozen-lockfile` / `--no-frozen-lockfile` /
     // `--prefer-frozen-lockfile` re-triggers the install path even
     // when the state file says the tree is fresh, so the flag is
@@ -170,19 +171,43 @@ enum VerifyDepsBeforeRun {
     Skip,
 }
 
-fn resolve_verify_deps_before_run(cwd: &std::path::Path) -> miette::Result<VerifyDepsBeforeRun> {
-    let files = super::FileSources::load(cwd);
-    let empty_ws = std::collections::BTreeMap::new();
-    let env = aube_settings::values::process_env();
-    let ctx = files.ctx(&empty_ws, env, &[]);
-    let raw = aube_settings::resolved::verify_deps_before_run(&ctx);
-    Ok(match raw.trim().to_ascii_lowercase().as_str() {
+fn parse_verify_deps_before_run(raw: &str) -> VerifyDepsBeforeRun {
+    match raw.trim().to_ascii_lowercase().as_str() {
         "false" | "0" => VerifyDepsBeforeRun::Skip,
         "warn" => VerifyDepsBeforeRun::Warn,
         "error" => VerifyDepsBeforeRun::Error,
         "prompt" | "install" => VerifyDepsBeforeRun::Install,
         _ => VerifyDepsBeforeRun::Install,
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VerifyDepsBeforeRun, parse_verify_deps_before_run};
+
+    #[test]
+    fn verify_deps_parser_preserves_existing_aliases_and_fallback() {
+        assert_eq!(
+            parse_verify_deps_before_run(" false "),
+            VerifyDepsBeforeRun::Skip
+        );
+        assert_eq!(
+            parse_verify_deps_before_run("WARN"),
+            VerifyDepsBeforeRun::Warn
+        );
+        assert_eq!(
+            parse_verify_deps_before_run("error"),
+            VerifyDepsBeforeRun::Error
+        );
+        assert_eq!(
+            parse_verify_deps_before_run("prompt"),
+            VerifyDepsBeforeRun::Install
+        );
+        assert_eq!(
+            parse_verify_deps_before_run("unknown"),
+            VerifyDepsBeforeRun::Install
+        );
+    }
 }
 
 #[cfg(test)]
