@@ -1,6 +1,41 @@
 use super::version_from_dep_path;
 use miette::{Context, IntoDiagnostic, miette};
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::LazyLock,
+};
+
+/// Curated manifest repairs shipped by Yarn and pnpm for standalone aube.
+///
+/// Keep these out of `packageExtensionsChecksum`: updates to bundled
+/// compatibility data must not invalidate an existing project lockfile.
+static STANDALONE_BUNDLED_PACKAGE_EXTENSIONS: LazyLock<Vec<(String, serde_json::Value)>> =
+    LazyLock::new(|| {
+        let yarn: Vec<(String, serde_json::Value)> = serde_json::from_str(include_str!(
+            "../../../assets/yarn-compat-package-extensions.json"
+        ))
+        // WHY: this is checked-in, release-tested data rather than user input.
+        .expect("bundled Yarn package extensions must be valid JSON");
+        let pnpm: Vec<(String, serde_json::Value)> = serde_json::from_str(include_str!(
+            "../../../assets/pnpm-compat-package-extensions.json"
+        ))
+        // WHY: this is checked-in, release-tested data rather than user input.
+        .expect("bundled pnpm package extensions must be valid JSON");
+
+        let mut selectors = BTreeSet::new();
+        let mut extensions = Vec::with_capacity(yarn.len() + pnpm.len());
+        for (selector, body) in yarn.into_iter().chain(pnpm) {
+            // WHY: duplicate selectors in checked-in catalogs make precedence
+            // ambiguous and must fail release tests instead of silently
+            // replacing an earlier repair.
+            assert!(
+                selectors.insert(selector.clone()),
+                "duplicate bundled package-extension selector: {selector}"
+            );
+            extensions.push((selector, body));
+        }
+        extensions
+    });
 
 /// Accept pnpm's documented aliases (`highest`, `time-based`, `time`,
 /// `lowest-direct`). Unknown values fall back to `None` so the caller's
@@ -446,25 +481,29 @@ pub(crate) fn resolve_dependency_policy(
 
     validate_package_extension_containers(manifest, ctx)?;
     let package_extensions = effective_package_extensions(manifest, ctx);
-    // User/project extensions first, then bundled ecosystem defaults
-    // (supplied by an embedder via `EngineContext::bundled_package_extensions`)
-    // appended LAST. `apply_package_extensions` iterates this Vec in order and
-    // `extend_missing` is first-write-wins per dependency key, so this ordering
-    // gives user extensions precedence over bundled ones for free. The bundled
-    // map is read from the `bundled_package_extensions` seam — NEVER from
-    // `effective_package_extensions`, which feeds the lockfile
+    // User/project extensions first, then standalone and embedder-supplied
+    // bundled ecosystem defaults appended LAST. `apply_package_extensions`
+    // iterates this Vec in order and `extend_missing` is first-write-wins per
+    // dependency key, so user extensions take precedence over bundled ones.
+    // Bundled data is NEVER routed through `effective_package_extensions`,
+    // which feeds the lockfile
     // `packageExtensionsChecksum`: routing bundled defaults through the
     // checksum would drift every existing lockfile on each bundled-list bump
     // and abort `--frozen-lockfile` under `enforce_package_extensions_checksum`.
     let mut extensions = parse_package_extensions(package_extensions)?;
-    if let Some(bundled) = aube_util::engine_context()
-        .bundled_package_extensions
-        .as_ref()
-    {
+    if std::ptr::eq(aube_util::embedder(), &aube_util::identity::AUBE) {
+        // Catalog order is significant when semver selectors overlap: the
+        // first matching extension wins per dependency key.
+        match parse_package_extensions(STANDALONE_BUNDLED_PACKAGE_EXTENSIONS.clone()) {
+            Ok(parsed) => extensions.extend(parsed),
+            Err(err) => tracing::warn!("ignoring malformed bundled package extension: {err}"),
+        }
+    }
+    if let Some(bundled) = aube_util::engine_context().bundled_package_extensions {
         // Bundled extensions are embedder-supplied data, not user config.
         // A malformed entry should warn and be skipped, not abort the install
         // with an error naming a selector the user never wrote.
-        match parse_package_extensions(bundled.clone()) {
+        match parse_package_extensions(bundled) {
             Ok(parsed) => extensions.extend(parsed),
             Err(err) => tracing::warn!("ignoring malformed bundled package extension: {err}"),
         }
@@ -834,7 +873,7 @@ fn json_string_map(map: BTreeMap<String, serde_json::Value>) -> BTreeMap<String,
 }
 
 fn parse_package_extensions(
-    raw: BTreeMap<String, serde_json::Value>,
+    raw: impl IntoIterator<Item = (String, serde_json::Value)>,
 ) -> miette::Result<Vec<aube_resolver::PackageExtension>> {
     raw.into_iter()
         .map(|(selector, value)| {
@@ -1283,6 +1322,57 @@ fn compile_peer_patterns(field: &str, raw: &[String]) -> Vec<glob::Pattern> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod bundled_compat_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_matches_curated_upstreams_and_preserves_order() {
+        let extensions = &*STANDALONE_BUNDLED_PACKAGE_EXTENSIONS;
+
+        assert_eq!(extensions.len(), 161);
+        let extension = |selector: &str| {
+            extensions
+                .iter()
+                .find_map(|(candidate, body)| (candidate == selector).then_some(body))
+                .unwrap_or_else(|| panic!("missing bundled selector {selector}"))
+        };
+        assert_eq!(
+            extension("@angular/build@*")["dependencies"]["tslib"],
+            "^2.3.0"
+        );
+        assert_eq!(
+            extension("@nuxt/vite-builder@>=4.5.0")["dependencies"]["unplugin"],
+            "^3.3.0"
+        );
+        let selector_position = |selector: &str| {
+            extensions
+                .iter()
+                .position(|(candidate, _)| candidate == selector)
+                .unwrap_or_else(|| panic!("missing bundled selector {selector}"))
+        };
+        assert!(
+            selector_position("consolidate@<=0.16.0") < selector_position("consolidate@<0.16.0")
+        );
+    }
+
+    #[test]
+    fn catalog_does_not_inject_type_only_or_singleton_runtimes() {
+        // These are the bare runtime targets the reverted scanner rules
+        // injected. Their `@types/*` counterparts are legitimate packages and
+        // intentionally remain allowed in curated repairs.
+        for target in ["estree", "typescript", "react", "eslint"] {
+            for (selector, extension) in &*STANDALONE_BUNDLED_PACKAGE_EXTENSIONS {
+                let injects_target = extension
+                    .get("dependencies")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|dependencies| dependencies.contains_key(target));
+                assert!(!injects_target, "{selector} must not inject {target}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
