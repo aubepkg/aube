@@ -2686,10 +2686,8 @@ mod trust_policy_validation_cache_tests {
     }
 
     fn no_downgrade_policy() -> aube_resolver::DependencyPolicy {
-        aube_resolver::DependencyPolicy {
-            trust_policy: aube_resolver::TrustPolicy::NoDowngrade,
-            ..Default::default()
-        }
+        aube_resolver::DependencyPolicy::default()
+            .with_trust_policy(aube_resolver::TrustPolicy::NoDowngrade)
     }
 
     #[test]
