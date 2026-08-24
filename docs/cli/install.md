@@ -57,7 +57,7 @@ Install all dependencies
 
   Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve against the project root; absolute paths are used as-is. Wins over `pnpmfilePath` from `pnpm-workspace.yaml`. A typo (target missing) is a hard miss with a warning rather than a silent fallback to the default.
 - **`--prefer-offline`** — Prefer cached metadata over revalidation; only hit the network on a miss.
-- **`--public-hoist-pattern… <GLOB>`** — Selectively hoist matching transitive deps to the root node_modules.
+- **`--public-hoist-pattern <GLOB>`** — Selectively hoist matching transitive deps to the root node_modules.
 
   Repeatable; comma-separated values are also accepted.
 - **`--resolution-mode <MODE>`** — How to resolve version ranges.

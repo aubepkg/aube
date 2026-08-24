@@ -17,7 +17,7 @@ Add a dependency
 
   Installs into the aube/pnpm global directory and links its binaries into the global bin directory. Mirrors `pnpm add -g`.
 - **`-O --save-optional`** — Add as optional dependency
-- **`--allow-build…=<PKG>`** — Pre-approve a dependency's lifecycle scripts as part of the add.
+- **`--allow-build=<PKG>`** — Pre-approve a dependency's lifecycle scripts as part of the add.
 
   Writes `allowBuilds: { <pkg>: true }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's `preinstall` / `install` / `postinstall` scripts execute on this invocation. Repeatable — pass the flag once per package. Mirrors `pnpm add --allow-build=<pkg>`.
 
@@ -28,7 +28,7 @@ Add a dependency
 - **`--dangerously-allow-all-builds`** — Allow every dependency's lifecycle scripts to run.
 
   Bypasses the `allowBuilds` allowlist for this invocation. Do not use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.
-- **`--deny-build…=<PKG>`** — Mark a dependency's lifecycle scripts as reviewed and denied.
+- **`--deny-build=<PKG>`** — Mark a dependency's lifecycle scripts as reviewed and denied.
 
   Writes `allowBuilds: { <pkg>: false }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's lifecycle scripts stay skipped without tripping `strictDepBuilds=true`. Repeatable — pass the flag once per package.
 

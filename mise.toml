@@ -7,7 +7,7 @@ cargo.binstall_native = true
 
 [tools]
 actionlint = "latest"
-usage = "6.2.0"
+usage = "6.4.0"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
 "github:foresterre/cargo-msrv" = "latest"

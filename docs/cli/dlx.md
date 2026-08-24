@@ -14,10 +14,10 @@ Fetch a package into a throwaway environment and run its binary
 - **`-c --shell-mode`** — Run the assembled command line through `sh -c`.
 
   `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
-- **`-p --package… <PACKAGE>`** — Install a specific package (repeatable).
+- **`-p --package <PACKAGE>`** — Install a specific package (repeatable).
 
   Overrides inferring from the command.
-- **`--allow-build…=<PKG>`** — Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.
+- **`--allow-build=<PKG>`** — Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.
 
   Repeatable — pass once per package. The named package's `preinstall` / `install` / `postinstall` scripts execute during the transient install. Requires the equals form (`--allow-build=<pkg>`); space-separated forms are rejected. Mirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility surface while keeping dlx scripts skipped unless explicitly approved.
 - **`-h --help`** — Print help

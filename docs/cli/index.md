@@ -9,7 +9,7 @@
 - **`-C --dir <DIR>`** — Change to directory before running (like `make -C` or `mise --cd`)
 
   **Aliases:** `--cd`, `--prefix`
-- **`-F --filter… <WORKSPACE>`** — Scope command execution to workspace packages matching PATTERN.
+- **`-F --filter <WORKSPACE>`** — Scope command execution to workspace packages matching PATTERN.
 
   Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.
 
@@ -36,7 +36,7 @@
 - **`--fail-if-no-match`** — Error when a workspace selector matches no packages.
 
   Accepted globally; selected commands already fail on empty matches.
-- **`--filter-prod… <PATTERN>`** — Production-only variant of `--filter`.
+- **`--filter-prod <PATTERN>`** — Production-only variant of `--filter`.
 
   Same selector grammar as `--filter`, but graph walks (`pkg...`, `...pkg`) only follow `dependencies` / `optionalDependencies` / `peerDependencies` edges — `devDependencies` (and packages reachable solely through them) are skipped. Non-graph forms (exact name, glob, path, `[git-ref]`) behave identically to `--filter`. Repeatable; can be combined with `--filter`.
 - **`--loglevel <LEVEL>`** — Set the log level. Logs at or above this level are shown.

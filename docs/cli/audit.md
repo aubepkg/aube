@@ -18,7 +18,7 @@ Check installed packages against the registry advisory DB
   Bare `--fix` writes package.json overrides for backwards compatibility. `--fix=update` refreshes the lockfile without writing overrides.
 
   **Choices:** `update`, `override`
-- **`--ignore… <ID>`** — Drop advisories whose ID matches one of these values.
+- **`--ignore <ID>`** — Drop advisories whose ID matches one of these values.
 
   Matches against the numeric npm advisory `id`, `github_advisory_id` (`GHSA-…`), and any entry in `cves[]` (case-insensitive). Repeatable; comma-separated values are also accepted.
 - **`--ignore-registry-errors`** — Use exit code 0 if the registry responds with an error.

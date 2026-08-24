@@ -837,7 +837,7 @@
           },
           {
             "name": "allow-build",
-            "usage": "--allow-build…=<PKG>",
+            "usage": "--allow-build=<PKG>",
             "help": "Pre-approve a dependency's lifecycle scripts as part of the add.",
             "help_long": "Pre-approve a dependency's lifecycle scripts as part of the add.\n\nWrites `allowBuilds: { <pkg>: true }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's `preinstall` / `install` / `postinstall` scripts execute on this invocation. Repeatable — pass the flag once per package. Mirrors `pnpm add --allow-build=<pkg>`.\n\nConflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned approval in the workspace yaml on restore. Also conflicts with `--deny-build` for the same package name.",
             "help_first_line": "Pre-approve a dependency's lifecycle scripts as part of the add.",
@@ -890,7 +890,7 @@
           },
           {
             "name": "deny-build",
-            "usage": "--deny-build…=<PKG>",
+            "usage": "--deny-build=<PKG>",
             "help": "Mark a dependency's lifecycle scripts as reviewed and denied.",
             "help_long": "Mark a dependency's lifecycle scripts as reviewed and denied.\n\nWrites `allowBuilds: { <pkg>: false }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's lifecycle scripts stay skipped without tripping `strictDepBuilds=true`. Repeatable — pass the flag once per package.\n\nConflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned denial in the workspace yaml on restore. Also conflicts with `--allow-build` for the same package name and with `--dangerously-allow-all-builds`.",
             "help_first_line": "Mark a dependency's lifecycle scripts as reviewed and denied.",
@@ -1496,7 +1496,7 @@
           },
           {
             "name": "ignore",
-            "usage": "--ignore… <ID>",
+            "usage": "--ignore <ID>",
             "help": "Drop advisories whose ID matches one of these values.",
             "help_long": "Drop advisories whose ID matches one of these values.\n\nMatches against the numeric npm advisory `id`, `github_advisory_id` (`GHSA-…`), and any entry in `cves[]` (case-insensitive). Repeatable; comma-separated values are also accepted.",
             "help_first_line": "Drop advisories whose ID matches one of these values.",
@@ -5459,7 +5459,7 @@
           },
           {
             "name": "package",
-            "usage": "-p --package… <PACKAGE>",
+            "usage": "-p --package <PACKAGE>",
             "help": "Install a specific package (repeatable).",
             "help_long": "Install a specific package (repeatable).\n\nOverrides inferring from the command.",
             "help_first_line": "Install a specific package (repeatable).",
@@ -5482,7 +5482,7 @@
           },
           {
             "name": "allow-build",
-            "usage": "--allow-build…=<PKG>",
+            "usage": "--allow-build=<PKG>",
             "help": "Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.",
             "help_long": "Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.\n\nRepeatable — pass once per package. The named package's `preinstall` / `install` / `postinstall` scripts execute during the transient install. Requires the equals form (`--allow-build=<pkg>`); space-separated forms are rejected. Mirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility surface while keeping dlx scripts skipped unless explicitly approved.",
             "help_first_line": "Allow named packages to run lifecycle scripts during the transient install. Use `--allow-build=<pkg>`.",
@@ -7511,7 +7511,7 @@
           },
           {
             "name": "public-hoist-pattern",
-            "usage": "--public-hoist-pattern… <GLOB>",
+            "usage": "--public-hoist-pattern <GLOB>",
             "help": "Selectively hoist matching transitive deps to the root node_modules.",
             "help_long": "Selectively hoist matching transitive deps to the root node_modules.\n\nRepeatable; comma-separated values are also accepted.",
             "help_first_line": "Selectively hoist matching transitive deps to the root node_modules.",
@@ -16619,7 +16619,7 @@
       },
       {
         "name": "filter",
-        "usage": "-F --filter… <WORKSPACE>",
+        "usage": "-F --filter <WORKSPACE>",
         "help": "Scope command execution to workspace packages matching PATTERN.",
         "help_long": "Scope command execution to workspace packages matching PATTERN.\n\nSupports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.\n\nCurrently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.",
         "help_first_line": "Scope command execution to workspace packages matching PATTERN.",
@@ -16791,7 +16791,7 @@
       },
       {
         "name": "filter-prod",
-        "usage": "--filter-prod… <PATTERN>",
+        "usage": "--filter-prod <PATTERN>",
         "help": "Production-only variant of `--filter`.",
         "help_long": "Production-only variant of `--filter`.\n\nSame selector grammar as `--filter`, but graph walks (`pkg...`, `...pkg`) only follow `dependencies` / `optionalDependencies` / `peerDependencies` edges — `devDependencies` (and packages reachable solely through them) are skipped. Non-graph forms (exact name, glob, path, `[git-ref]`) behave identically to `--filter`. Repeatable; can be combined with `--filter`.",
         "help_first_line": "Production-only variant of `--filter`.",
