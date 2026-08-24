@@ -363,14 +363,19 @@ fn require_call<'a>(call: &'a oxc_ast::ast::CallExpression<'a>) -> Option<(&'a s
     Some((spec, kind))
 }
 
-/// True if `callee` names `createRequire` — bare (`createRequire(...)`) or a
-/// member (`module.createRequire(...)`). The receiver is not checked: only Node's
-/// `createRequire` uses this name, and the outer call's argument must still be a
-/// string literal for anything to be recorded.
+/// True if `callee` names `createRequire` — bare (`createRequire(...)`) or the
+/// member form Node's own docs use (`module.createRequire(...)`). The member
+/// form's RECEIVER is checked (must be named `module`) so an unrelated object
+/// that happens to expose its own `.createRequire` method (`helper.createRequire()`)
+/// is not mistaken for Node's module loader; a name bound to `createRequire(...)`
+/// and called later still needs dataflow and stays skipped either way.
 fn is_create_require(callee: &Expression<'_>) -> bool {
     match callee {
         Expression::Identifier(id) => id.name == "createRequire",
-        Expression::StaticMemberExpression(m) => m.property.name == "createRequire",
+        Expression::StaticMemberExpression(m) => {
+            m.property.name == "createRequire"
+                && matches!(&m.object, Expression::Identifier(id) if id.name == "module")
+        }
         _ => false,
     }
 }
@@ -646,6 +651,24 @@ mod tests {
         assert!(
             !has("pre-${x}") && got.iter().all(|(s, _, _)| !s.starts_with("pre-")),
             "a substituted template stays skipped"
+        );
+    }
+
+    #[test]
+    fn unrelated_object_method_named_create_require_is_not_recognized() {
+        // An unrelated object exposing its own `.createRequire` method must
+        // not be mistaken for Node's module loader — only the bare
+        // `createRequire(...)` form and the `module.createRequire(...)` member
+        // form (the shape Node's own docs use) are recognized.
+        let got = specs(
+            r#"
+            const a = helper.createRequire()("not-a-dependency");
+            const b = someObj.createRequire(import.meta.url)("also-not-a-dependency");
+            "#,
+        );
+        assert!(
+            got.is_empty(),
+            "an unrelated object's createRequire method must not be recognized: {got:?}"
         );
     }
 }
