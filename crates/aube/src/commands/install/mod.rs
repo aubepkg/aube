@@ -2686,8 +2686,13 @@ mod trust_policy_validation_cache_tests {
     }
 
     fn no_downgrade_policy() -> aube_resolver::DependencyPolicy {
-        aube_resolver::DependencyPolicy::default()
-            .with_trust_policy(aube_resolver::TrustPolicy::NoDowngrade)
+        // Field assignment, not struct-update syntax: `DependencyPolicy`
+        // carries a crate-private field, so `Foo { trust_policy: x,
+        // ..Default::default() }` doesn't compile from this crate. Setting
+        // an already-`pub` field directly on an existing instance does.
+        let mut policy = aube_resolver::DependencyPolicy::default();
+        policy.trust_policy = aube_resolver::TrustPolicy::NoDowngrade;
+        policy
     }
 
     #[test]

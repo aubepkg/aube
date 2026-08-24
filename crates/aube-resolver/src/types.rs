@@ -57,13 +57,7 @@ impl Default for MinimumReleaseAge {
     }
 }
 
-/// `#[non_exhaustive]`: an external crate must construct this via
-/// `DependencyPolicy::default()` plus the `with_*` builders below, never a
-/// struct literal — so adding a field here (like
-/// `package_extensions_drifted`, below) never breaks a downstream crate the
-/// way it would on a plain struct.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct DependencyPolicy {
     pub package_extensions: Vec<PackageExtension>,
     pub allowed_deprecated_versions: BTreeMap<String, String>,
@@ -78,9 +72,10 @@ pub struct DependencyPolicy {
     /// Defaults to `false`; an embedder that enforces a packageExtensions
     /// checksum (e.g. nub) sets this when drift is detected via
     /// [`Self::with_package_extensions_drifted`]. Standalone aube leaves it
-    /// `false`, so the reuse path is unchanged. Kept crate-private: with the
-    /// struct `#[non_exhaustive]`, an external crate can only reach it
-    /// through the builder method, never a struct literal.
+    /// `false`, so the reuse path is unchanged. Kept crate-private (not
+    /// `pub`) so adding it isn't a semver-breaking change: it never appears
+    /// in a downstream struct literal either way, since a caller reaches it
+    /// only through the builder method.
     pub(crate) package_extensions_drifted: bool,
 }
 
@@ -90,14 +85,6 @@ impl DependencyPolicy {
     /// resolver skips lockfile reuse for extension-targeted packages.
     pub fn with_package_extensions_drifted(mut self, drifted: bool) -> Self {
         self.package_extensions_drifted = drifted;
-        self
-    }
-
-    /// Set the trust policy. Needed because `#[non_exhaustive]` blocks a
-    /// struct literal (even `Foo { trust_policy: x, ..Default::default() }`)
-    /// from a downstream crate.
-    pub fn with_trust_policy(mut self, trust_policy: TrustPolicy) -> Self {
-        self.trust_policy = trust_policy;
         self
     }
 }
