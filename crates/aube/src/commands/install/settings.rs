@@ -1,41 +1,20 @@
 use super::version_from_dep_path;
 use miette::{Context, IntoDiagnostic, miette};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::LazyLock,
-};
+use std::collections::BTreeMap;
 
 /// Curated manifest repairs shipped by Yarn and pnpm for standalone aube.
 ///
 /// Keep these out of `packageExtensionsChecksum`: updates to bundled
 /// compatibility data must not invalidate an existing project lockfile.
-static STANDALONE_BUNDLED_PACKAGE_EXTENSIONS: LazyLock<Vec<(String, serde_json::Value)>> =
-    LazyLock::new(|| {
-        let yarn: Vec<(String, serde_json::Value)> = serde_json::from_str(include_str!(
-            "../../../assets/yarn-compat-package-extensions.json"
-        ))
-        // WHY: this is checked-in, release-tested data rather than user input.
-        .expect("bundled Yarn package extensions must be valid JSON");
-        let pnpm: Vec<(String, serde_json::Value)> = serde_json::from_str(include_str!(
-            "../../../assets/pnpm-compat-package-extensions.json"
-        ))
-        // WHY: this is checked-in, release-tested data rather than user input.
-        .expect("bundled pnpm package extensions must be valid JSON");
+struct BundledPackageExtension {
+    selector: &'static str,
+    dependencies: &'static [(&'static str, &'static str)],
+    optional_dependencies: &'static [(&'static str, &'static str)],
+    peer_dependencies: &'static [(&'static str, &'static str)],
+    peer_dependencies_meta: &'static [(&'static str, bool)],
+}
 
-        let mut selectors = BTreeSet::new();
-        let mut extensions = Vec::with_capacity(yarn.len() + pnpm.len());
-        for (selector, body) in yarn.into_iter().chain(pnpm) {
-            // WHY: duplicate selectors in checked-in catalogs make precedence
-            // ambiguous and must fail release tests instead of silently
-            // replacing an earlier repair.
-            assert!(
-                selectors.insert(selector.clone()),
-                "duplicate bundled package-extension selector: {selector}"
-            );
-            extensions.push((selector, body));
-        }
-        extensions
-    });
+include!(concat!(env!("OUT_DIR"), "/bundled_package_extensions.rs"));
 
 /// Accept pnpm's documented aliases (`highest`, `time-based`, `time`,
 /// `lowest-direct`). Unknown values fall back to `None` so the caller's
@@ -501,9 +480,7 @@ pub(crate) fn resolve_dependency_policy(
     if is_standalone_aube(aube_util::embedder()) {
         // Catalog order is significant when semver selectors overlap: the
         // first matching extension wins per dependency key.
-        extensions.extend(parse_bundled_package_extensions(
-            STANDALONE_BUNDLED_PACKAGE_EXTENSIONS.clone(),
-        ));
+        extensions.extend(standalone_bundled_package_extensions());
     }
     if let Some(bundled) = aube_util::engine_context().bundled_package_extensions {
         // Bundled extensions are embedder-supplied data, not user config.
@@ -900,6 +877,35 @@ fn parse_bundled_package_extensions(
                 }
             },
         )
+        .collect()
+}
+
+fn standalone_bundled_package_extensions() -> Vec<aube_resolver::PackageExtension> {
+    STANDALONE_BUNDLED_PACKAGE_EXTENSIONS
+        .iter()
+        .map(|extension| aube_resolver::PackageExtension {
+            selector: extension.selector.to_owned(),
+            dependencies: extension
+                .dependencies
+                .iter()
+                .map(|&(name, range)| (name.to_owned(), range.to_owned()))
+                .collect(),
+            optional_dependencies: extension
+                .optional_dependencies
+                .iter()
+                .map(|&(name, range)| (name.to_owned(), range.to_owned()))
+                .collect(),
+            peer_dependencies: extension
+                .peer_dependencies
+                .iter()
+                .map(|&(name, range)| (name.to_owned(), range.to_owned()))
+                .collect(),
+            peer_dependencies_meta: extension
+                .peer_dependencies_meta
+                .iter()
+                .map(|&(name, optional)| (name.to_owned(), aube_registry::PeerDepMeta { optional }))
+                .collect(),
+        })
         .collect()
 }
 
@@ -1368,27 +1374,27 @@ mod bundled_compat_tests {
 
     #[test]
     fn catalog_matches_curated_upstreams_and_preserves_order() {
-        let extensions = &*STANDALONE_BUNDLED_PACKAGE_EXTENSIONS;
+        let extensions = standalone_bundled_package_extensions();
 
         assert_eq!(extensions.len(), 161);
         let extension = |selector: &str| {
             extensions
                 .iter()
-                .find_map(|(candidate, body)| (candidate == selector).then_some(body))
+                .find(|extension| extension.selector == selector)
                 .unwrap_or_else(|| panic!("missing bundled selector {selector}"))
         };
         assert_eq!(
-            extension("@angular/build@*")["dependencies"]["tslib"],
+            extension("@angular/build@*").dependencies["tslib"],
             "^2.3.0"
         );
         assert_eq!(
-            extension("@nuxt/vite-builder@>=4.5.0")["dependencies"]["unplugin"],
+            extension("@nuxt/vite-builder@>=4.5.0").dependencies["unplugin"],
             "^3.3.0"
         );
         let selector_position = |selector: &str| {
             extensions
                 .iter()
-                .position(|(candidate, _)| candidate == selector)
+                .position(|extension| extension.selector == selector)
                 .unwrap_or_else(|| panic!("missing bundled selector {selector}"))
         };
         assert!(
@@ -1401,13 +1407,14 @@ mod bundled_compat_tests {
         // These are the bare runtime targets the reverted scanner rules
         // injected. Their `@types/*` counterparts are legitimate packages and
         // intentionally remain allowed in curated repairs.
+        let extensions = standalone_bundled_package_extensions();
         for target in ["estree", "typescript", "react", "eslint"] {
-            for (selector, extension) in &*STANDALONE_BUNDLED_PACKAGE_EXTENSIONS {
-                let injects_target = extension
-                    .get("dependencies")
-                    .and_then(serde_json::Value::as_object)
-                    .is_some_and(|dependencies| dependencies.contains_key(target));
-                assert!(!injects_target, "{selector} must not inject {target}");
+            for extension in &extensions {
+                assert!(
+                    !extension.dependencies.contains_key(target),
+                    "{} must not inject {target}",
+                    extension.selector
+                );
             }
         }
     }

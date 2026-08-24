@@ -141,6 +141,9 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 
+[build-dependencies]
+serde_json = { workspace = true }
+
 [[test]]
 name = "e2e"
 path = "tests/e2e.rs"
