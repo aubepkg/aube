@@ -38,9 +38,31 @@ fn main() {
     let code = if is_usage_invocation() {
         print_usage_spec(embedder)
     } else {
+        aube_util::update_engine_context(|ctx| {
+            ctx.bundled_package_extensions = Some(bundled_package_extensions());
+        });
         aube::cli_main(embedder)
     };
     std::process::exit(code);
+}
+
+/// Curated manifest repairs shipped by Yarn and pnpm.
+///
+/// Keep these out of `packageExtensionsChecksum`: updates to aube's bundled
+/// compatibility data must not invalidate an existing project lockfile.
+fn bundled_package_extensions() -> std::collections::BTreeMap<String, serde_json::Value> {
+    let yarn: Vec<(String, serde_json::Value)> = serde_json::from_str(include_str!(
+        "../assets/yarn-compat-package-extensions.json"
+    ))
+    // WHY: this is checked-in, release-tested data rather than user input.
+    .expect("bundled Yarn package extensions must be valid JSON");
+    let pnpm: Vec<(String, serde_json::Value)> = serde_json::from_str(include_str!(
+        "../assets/pnpm-compat-package-extensions.json"
+    ))
+    // WHY: this is checked-in, release-tested data rather than user input.
+    .expect("bundled pnpm package extensions must be valid JSON");
+
+    yarn.into_iter().chain(pnpm).collect()
 }
 
 /// Print the usage.jdx.dev KDL spec for the CLI and return an exit code.
@@ -114,7 +136,37 @@ fn is_usage_invocation() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::extra_usage_spec;
+    use super::{bundled_package_extensions, extra_usage_spec};
+
+    #[test]
+    fn bundled_package_extensions_match_curated_upstreams() {
+        let extensions = bundled_package_extensions();
+
+        assert_eq!(extensions.len(), 161);
+        assert_eq!(
+            extensions["@angular/build@*"]["dependencies"]["tslib"],
+            "^2.3.0"
+        );
+        assert_eq!(
+            extensions["@nuxt/vite-builder@>=4.5.0"]["dependencies"]["unplugin"],
+            "^3.3.0"
+        );
+    }
+
+    #[test]
+    fn bundled_package_extensions_do_not_inject_type_only_or_singleton_packages() {
+        let extensions = bundled_package_extensions();
+
+        for target in ["estree", "typescript", "react", "eslint"] {
+            for (selector, extension) in &extensions {
+                let injects_target = extension
+                    .get("dependencies")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|dependencies| dependencies.contains_key(target));
+                assert!(!injects_target, "{selector} must not inject {target}");
+            }
+        }
+    }
 
     #[test]
     fn external_completers_use_the_compiled_runtime_bridge() {
