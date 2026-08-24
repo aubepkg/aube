@@ -154,19 +154,19 @@ jobs:
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
 
   # Flip the draft release to non-draft once *every* asset uploaded
-  # cleanly. With immutable GitHub releases enabled, a published
-  # release can't have its assets replaced — so if any matrix target
-  # failed, we leave the draft in place rather than ship a release
-  # with missing platform binaries (downstream npm / COPR / PPA jobs
-  # would also fail trying to fetch the holes). To recover: manually
+  # cleanly and Communiqué has written the final notes. With immutable
+  # GitHub releases enabled, a published release can't have its assets
+  # replaced — so if any matrix target failed, we leave the draft in
+  # place rather than ship a release with missing platform binaries
+  # (downstream npm / COPR / PPA jobs would also fail trying to fetch
+  # the holes). To recover: manually
   # re-run `release.yml` (CLI binaries) or `ffi.yml` (C ABI libraries)
-  # via workflow_dispatch with the tag input, which fills in the
-  # missing assets, then either flip the draft by hand
-  # (`gh release edit $TAG --draft=false`) or workflow_dispatch the
-  # whole release-plz workflow again so this job runs.
+  # via workflow_dispatch with the tag input, which fills in the missing
+  # assets, then retry the failed jobs here. A manual publish should only
+  # happen after confirming the Communiqué notes are present too.
   publish-release:
     name: Publish release
-    needs: [release-plz-release, upload-assets, upload-ffi-assets]
+    needs: [release-plz-release, upload-assets, upload-ffi-assets, enhance-release]
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
     runs-on: namespace-profile-endev-linux-amd64
     permissions:
@@ -184,7 +184,7 @@ jobs:
   # the broken release-note generation is visible and actionable.
   enhance-release:
     name: Enhance release notes
-    needs: [release-plz-release, publish-release]
+    needs: release-plz-release
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
     runs-on: namespace-profile-endev-linux-amd64
     permissions:

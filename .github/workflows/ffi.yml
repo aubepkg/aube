@@ -68,9 +68,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag (e.g. v1.28.0) to publish packages for. Empty runs a smoke build."
+        description: "Existing release tag (e.g. v1.28.0) to build packages and recover draft assets for. Empty runs a smoke build."
         required: false
         default: ""
+      publish_packages:
+        description: "Publish the built npm packages (for an explicit npm backfill)."
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ffi-${{ inputs.tag || github.ref }}
@@ -220,10 +225,9 @@ jobs:
             packages/libaube-*
             packages/aube.h
       - name: Publish platform and root packages
-        # `release: published` (or a manual dispatch backfill, where
-        # draft_phase is undeclared and thus falsy) only — never the
-        # workflow_call draft phase; see the trigger comment.
-        if: github.event_name == 'release' || (inputs.tag != '' && !inputs.draft_phase)
+        # `release: published` or an explicit manual npm backfill only —
+        # never an asset-recovery dispatch or the workflow_call draft phase.
+        if: github.event_name == 'release' || (inputs.tag != '' && !inputs.draft_phase && inputs.publish_packages == true)
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}

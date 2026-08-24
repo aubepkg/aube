@@ -1036,7 +1036,8 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
 
     match cli.command {
         Some(Commands::NodeGypBootstrap { project_dir }) => {
-            commands::install::node_gyp_bootstrap::print_bootstrapped_binary(&project_dir).await?
+            let binary = embed::bootstrap_node_gyp(&project_dir).await?;
+            println!("{}", binary.display());
         }
         Some(Commands::Access(args)) => commands::access::run(args).await?,
         Some(Commands::Activate(args)) => commands::activate::run(args)?,

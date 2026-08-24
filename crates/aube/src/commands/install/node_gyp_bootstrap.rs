@@ -66,11 +66,14 @@ fn node_gyp_on_path() -> bool {
 /// (sometimes `.exe` alongside), so a bare-string check would always
 /// miss the bootstrapped shim and the fast-path would never fire.
 pub(crate) fn node_gyp_bin_exists(bin_dir: &Path) -> bool {
-    BINARY_NAMES.iter().any(|name| bin_dir.join(name).exists())
+    node_gyp_binary(bin_dir).is_some()
 }
 
-fn primary_binary_name() -> &'static str {
-    BINARY_NAMES[0]
+fn node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
+    BINARY_NAMES
+        .iter()
+        .map(|name| bin_dir.join(name))
+        .find(|path| path.is_file())
 }
 
 fn tool_root() -> miette::Result<PathBuf> {
@@ -79,7 +82,7 @@ fn tool_root() -> miette::Result<PathBuf> {
     Ok(cache.join("tools").join("node-gyp"))
 }
 
-pub async fn ensure_cached(project_dir: &Path) -> miette::Result<PathBuf> {
+pub(crate) async fn ensure_cached(project_dir: &Path) -> miette::Result<PathBuf> {
     let root = tool_root()?;
     let tool_dir = root.join(BUCKET);
     let bin_dir = tool_dir.join("node_modules").join(".bin");
@@ -160,10 +163,26 @@ pub(crate) fn lazy_js_shim_path() -> miette::Result<PathBuf> {
     Ok(shim_dir.join("node-gyp.js"))
 }
 
-pub(crate) async fn print_bootstrapped_binary(project_dir: &Path) -> miette::Result<()> {
+/// Materialize aube's cached node-gyp installation and return its executable.
+///
+/// Aube's lazy `node-gyp` shims invoke the current executable with the private
+/// `__node-gyp-bootstrap <project-dir>` command. For a standalone aube process
+/// that executable is aube itself. An embedding host must intercept that
+/// command before its own argument parser, call this function, and print the
+/// returned path to stdout.
+///
+/// The bootstrap stays fully in-process and inherits the outer project's
+/// registry configuration. Aube owns the cache layout, version selection, and
+/// cross-process locking; the host does not need an `aube` or `npm` executable.
+pub async fn bootstrap_node_gyp(project_dir: &Path) -> miette::Result<PathBuf> {
     let bin_dir = ensure_cached(project_dir).await?;
-    println!("{}", bin_dir.join(primary_binary_name()).display());
-    Ok(())
+    node_gyp_binary(&bin_dir).ok_or_else(|| {
+        miette!(
+            code = aube_codes::errors::ERR_AUBE_EMBED_INSTALL_FAILED,
+            "node-gyp bootstrap completed but no executable exists in {}",
+            bin_dir.display()
+        )
+    })
 }
 
 /// The `node-gyp` shell shim: resolves the real binary through the
@@ -481,6 +500,18 @@ mod tests {
         let path = dir.join("node-gyp");
         std::fs::create_dir_all(&path).unwrap();
         assert!(!shim_is_current(&path, SH_SHIM));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_exe_only_cache() {
+        let dir = tempdir();
+        let exe = dir.join("node-gyp.exe");
+        std::fs::write(&exe, b"").unwrap();
+
+        assert_eq!(node_gyp_binary(&dir), Some(exe.clone()));
+        assert!(exe.is_file());
         let _ = std::fs::remove_dir_all(dir);
     }
 }
