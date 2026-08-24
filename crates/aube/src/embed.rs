@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 pub use crate::commands::add::AddToProjectOptions;
+pub use crate::commands::install::node_gyp_bootstrap::bootstrap_node_gyp;
 pub use crate::commands::install::{
     DepSelection, EmbedderInstallOverrides, FrozenMode, INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT,
     InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode, InstallPhase,
