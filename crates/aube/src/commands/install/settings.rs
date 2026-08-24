@@ -480,8 +480,6 @@ fn is_standalone_aube(embedder: &aube_util::Embedder) -> bool {
     embedder.name == aube_util::identity::AUBE.name
 }
 
-#[cold]
-#[inline(never)]
 pub(crate) fn resolve_dependency_policy(
     manifest: &aube_manifest::PackageJson,
     ctx: &aube_settings::ResolveCtx<'_>,
