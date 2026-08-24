@@ -113,6 +113,7 @@ fn build_report(anchor: &Path, in_project: bool) -> miette::Result<Report> {
         check_install_state(anchor, &mut report);
         check_foreign_package_manager_dirs(anchor, &mut report);
         check_virtual_store_links(anchor, &mut report)?;
+        check_phantom_dependencies(anchor, &mut report);
     } else {
         let mut s = Section::new("project");
         s.push(
@@ -364,6 +365,55 @@ fn check_foreign_package_manager_dirs(anchor: &Path, report: &mut Report) {
     }
 }
 
+/// Scan every direct dependency's published code for a phantom import — a
+/// static import its own `package.json` does not declare. Resolves by
+/// accident under npm's flat `node_modules`; breaks under aube's strict,
+/// symlinked virtual store. Scoped to DIRECT deps only, one level deep: a
+/// transitive phantom is that transitive dependency's own maintainer's
+/// problem, surfaced when doctor runs against that package's own repo.
+fn check_phantom_dependencies(anchor: &Path, report: &mut Report) {
+    let Ok(manifest) = aube_manifest::PackageJson::from_path(&anchor.join("package.json")) else {
+        return;
+    };
+    let modules_dir = super::project_modules_dir(anchor);
+    let mut direct: Vec<&str> = manifest.dependencies.keys().map(String::as_str).collect();
+    direct.extend(manifest.optional_dependencies.keys().map(String::as_str));
+    direct.sort_unstable();
+    direct.dedup();
+    let declared_at_root: std::collections::BTreeSet<&str> = direct.iter().copied().collect();
+
+    for dep_name in direct {
+        let dep_dir = modules_dir.join(dep_name);
+        if !dep_dir.join("package.json").is_file() {
+            continue;
+        }
+        let Some(findings) = aube_phantom_scan::scan(&dep_dir) else {
+            continue;
+        };
+        for finding in findings {
+            if finding.verdict != aube_phantom_scan::Verdict::HardPhantom {
+                continue;
+            }
+            // Already declared at the project root — the flat layout resolves it
+            // the same way a direct root dependency does, so it is not phantom
+            // from the consumer's perspective even if this dep's OWN manifest
+            // does not declare it.
+            if declared_at_root.contains(finding.package.as_str()) {
+                continue;
+            }
+            let adapter = if finding.is_subpath_adapter() {
+                " (reachable only via a subpath import)"
+            } else {
+                ""
+            };
+            report.warnings.push(format!(
+                "{dep_name} imports '{}' without declaring it{adapter}",
+                finding.package
+            ));
+        }
+    }
+}
+
 fn check_virtual_store_links(anchor: &Path, report: &mut Report) -> miette::Result<()> {
     let links = super::check::run_report(anchor).wrap_err("failed to walk the virtual store")?;
     if !links.issues.is_empty() {
@@ -490,5 +540,38 @@ mod tests {
         .unwrap();
         let report = build_report(cwd, true).unwrap();
         assert!(report.sections.iter().any(|s| s.title == "project"));
+    }
+
+    #[test]
+    fn flags_a_direct_dependency_with_an_undeclared_import() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+        std::fs::write(
+            cwd.join("package.json"),
+            r#"{"name":"demo","dependencies":{"dep-with-phantom":"1.0.0"}}"#,
+        )
+        .unwrap();
+        let dep_dir = crate::commands::project_modules_dir(cwd).join("dep-with-phantom");
+        std::fs::create_dir_all(&dep_dir).unwrap();
+        std::fs::write(
+            dep_dir.join("package.json"),
+            r#"{"name":"dep-with-phantom","main":"index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dep_dir.join("index.js"),
+            "module.exports = require('undeclared-ghost');",
+        )
+        .unwrap();
+
+        let report = build_report(cwd, true).unwrap();
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("dep-with-phantom") && w.contains("undeclared-ghost")),
+            "expected a phantom-dependency warning: {:?}",
+            report.warnings
+        );
     }
 }

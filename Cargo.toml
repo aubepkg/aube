@@ -201,6 +201,8 @@ aube-store = { path = "crates/aube-store", version = "2" }
 aube-linker = { path = "crates/aube-linker", version = "2" }
 aube-lockfile = { path = "crates/aube-lockfile", version = "2" }
 aube-manifest = { path = "crates/aube-manifest", version = "2", default-features = false }
+aube-phantom-core = { path = "crates/aube-phantom-core", version = "2" }
+aube-phantom-scan = { path = "crates/aube-phantom-scan", version = "2" }
 aube-runtime = { path = "crates/aube-runtime", version = "2" }
 aube-scripts = { path = "crates/aube-scripts", version = "2" }
 aube-workspace = { path = "crates/aube-workspace", version = "2" }

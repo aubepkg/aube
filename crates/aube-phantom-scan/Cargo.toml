@@ -1,0 +1,26 @@
+# aube-phantom-scan — the reachable-graph phantom SCANNER for `aube doctor`,
+# ported from nub's `nub-phantom-scan` (jdx/nub / nubjs/nub, MIT), trimmed to
+# the filesystem-backed walk only. nub's CAS-index variant (extract-time
+# scanning before a navigable tree exists) is specific to nub's own
+# package-linking pipeline and does not apply to diagnosing an
+# already-installed node_modules tree.
+[package]
+name = "aube-phantom-scan"
+description = "reachable-graph phantom-dependency scanner for Aube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+include = ["src/**/*.rs"]
+
+[lib]
+name = "aube_phantom_scan"
+path = "src/lib.rs"
+
+[dependencies]
+aube-phantom-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

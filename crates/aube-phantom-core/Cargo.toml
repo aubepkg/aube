@@ -1,0 +1,32 @@
+# aube-phantom-core — the precision-critical phantom-classification
+# primitives (specifier extraction, package-name classification, Node
+# builtin recognition), ported from nub's `nub-phantom-core` (jdx/nub /
+# nubjs/nub, MIT) so `aube doctor` can flag a dependency that statically
+# imports a package it does not declare.
+#
+# LEAN OXC SUBSET: depends on the individual oxc parser/AST crates, not
+# the `oxc` umbrella with features=["full"] — the umbrella pulls the
+# transformer, codegen, semantic, minifier, and mangler, none of which
+# specifier extraction needs.
+[package]
+name = "aube-phantom-core"
+description = "phantom-dependency classification primitives for Aube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+include = ["src/**/*.rs"]
+
+[lib]
+name = "aube_phantom_core"
+path = "src/lib.rs"
+
+[dependencies]
+oxc_allocator = "0.140"
+oxc_ast = "0.140"
+oxc_ast_visit = "0.140"
+oxc_parser = "0.140"
+oxc_span = "0.140"
