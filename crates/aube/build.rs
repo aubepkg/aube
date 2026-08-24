@@ -24,9 +24,10 @@ fn generate_bundled_package_extensions() {
     ];
 
     let mut selectors = BTreeSet::new();
-    let mut generated = String::from(
-        "static STANDALONE_BUNDLED_PACKAGE_EXTENSIONS: &[BundledPackageExtension] = &[\n",
-    );
+    let mut strings = StringTable::default();
+    let mut pairs = Vec::new();
+    let mut peer_meta = Vec::new();
+    let mut extensions = Vec::new();
     for path in CATALOGS {
         println!("cargo:rerun-if-changed={path}");
         let raw = std::fs::read_to_string(path)
@@ -41,32 +42,63 @@ fn generate_bundled_package_extensions() {
             let body = body.as_object().unwrap_or_else(|| {
                 panic!("bundled package extension {selector:?} must be an object")
             });
-            writeln!(generated, "    BundledPackageExtension {{").unwrap();
-            writeln!(generated, "        selector: {selector:?},").unwrap();
-            write_string_map(
-                &mut generated,
-                body,
-                &selector,
-                "dependencies",
-                "dependencies",
-            );
-            write_string_map(
-                &mut generated,
-                body,
-                &selector,
-                "optionalDependencies",
-                "optional_dependencies",
-            );
-            write_string_map(
-                &mut generated,
-                body,
-                &selector,
-                "peerDependencies",
-                "peer_dependencies",
-            );
-            write_peer_meta(&mut generated, body, &selector);
-            generated.push_str("    },\n");
+            extensions.push(GeneratedExtension {
+                selector: strings.intern(&selector),
+                dependencies: collect_string_map(
+                    &mut strings,
+                    &mut pairs,
+                    body,
+                    &selector,
+                    "dependencies",
+                ),
+                optional_dependencies: collect_string_map(
+                    &mut strings,
+                    &mut pairs,
+                    body,
+                    &selector,
+                    "optionalDependencies",
+                ),
+                peer_dependencies: collect_string_map(
+                    &mut strings,
+                    &mut pairs,
+                    body,
+                    &selector,
+                    "peerDependencies",
+                ),
+                peer_dependencies_meta: collect_peer_meta(
+                    &mut strings,
+                    &mut peer_meta,
+                    body,
+                    &selector,
+                ),
+            });
         }
+    }
+
+    let mut generated = format!("static BUNDLED_STRINGS: &str = {:?};\n", strings.data);
+    generated
+        .push_str("static BUNDLED_STRING_PAIRS: &[(BundledStringRef, BundledStringRef)] = &[\n");
+    for (name, value) in pairs {
+        writeln!(generated, "    ({name:?}, {value:?}),").unwrap();
+    }
+    generated.push_str("];\nstatic BUNDLED_PEER_META: &[(BundledStringRef, bool)] = &[\n");
+    for (name, optional) in peer_meta {
+        writeln!(generated, "    ({name:?}, {optional}),").unwrap();
+    }
+    generated.push_str(
+        "];\nstatic STANDALONE_BUNDLED_PACKAGE_EXTENSIONS: &[BundledPackageExtension] = &[\n",
+    );
+    for extension in extensions {
+        writeln!(
+            generated,
+            "    BundledPackageExtension {{ selector: {:?}, dependencies: {:?}, optional_dependencies: {:?}, peer_dependencies: {:?}, peer_dependencies_meta: {:?} }},",
+            extension.selector,
+            extension.dependencies,
+            extension.optional_dependencies,
+            extension.peer_dependencies,
+            extension.peer_dependencies_meta,
+        )
+        .unwrap();
     }
     generated.push_str("];\n");
 
@@ -75,16 +107,44 @@ fn generate_bundled_package_extensions() {
         .expect("failed to write generated bundled package extensions");
 }
 
-fn write_string_map(
-    generated: &mut String,
+type StringRef = (u32, u32);
+type TableRef = (u32, u32);
+
+#[derive(Default)]
+struct StringTable {
+    data: String,
+    entries: std::collections::BTreeMap<String, StringRef>,
+}
+
+impl StringTable {
+    fn intern(&mut self, value: &str) -> StringRef {
+        if let Some(reference) = self.entries.get(value) {
+            return *reference;
+        }
+        let start = u32::try_from(self.data.len()).expect("bundled string table must fit in u32");
+        let len = u32::try_from(value.len()).expect("bundled string must fit in u32");
+        self.data.push_str(value);
+        self.entries.insert(value.to_owned(), (start, len));
+        (start, len)
+    }
+}
+
+struct GeneratedExtension {
+    selector: StringRef,
+    dependencies: TableRef,
+    optional_dependencies: TableRef,
+    peer_dependencies: TableRef,
+    peer_dependencies_meta: TableRef,
+}
+
+fn collect_string_map(
+    strings: &mut StringTable,
+    pairs: &mut Vec<(StringRef, StringRef)>,
     body: &serde_json::Map<String, serde_json::Value>,
     selector: &str,
     field: &str,
-    rust_field: &str,
-) {
-    use std::fmt::Write as _;
-
-    write!(generated, "        {rust_field}: &[").unwrap();
+) -> TableRef {
+    let start = u32::try_from(pairs.len()).expect("bundled pair table must fit in u32");
     if let Some(value) = body.get(field) {
         let entries = value.as_object().unwrap_or_else(|| {
             panic!("bundled package extension {selector:?}.{field} must be an object")
@@ -93,20 +153,20 @@ fn write_string_map(
             let range = range.as_str().unwrap_or_else(|| {
                 panic!("bundled package extension {selector:?}.{field}.{name} must be a string")
             });
-            write!(generated, "({name:?}, {range:?}),").unwrap();
+            pairs.push((strings.intern(name), strings.intern(range)));
         }
     }
-    generated.push_str("],\n");
+    let len = u32::try_from(pairs.len()).expect("bundled pair table must fit in u32") - start;
+    (start, len)
 }
 
-fn write_peer_meta(
-    generated: &mut String,
+fn collect_peer_meta(
+    strings: &mut StringTable,
+    peer_meta: &mut Vec<(StringRef, bool)>,
     body: &serde_json::Map<String, serde_json::Value>,
     selector: &str,
-) {
-    use std::fmt::Write as _;
-
-    generated.push_str("        peer_dependencies_meta: &[");
+) -> TableRef {
+    let start = u32::try_from(peer_meta.len()).expect("bundled peer-meta table must fit in u32");
     if let Some(value) = body.get("peerDependenciesMeta") {
         let entries = value.as_object().unwrap_or_else(|| {
             panic!("bundled package extension {selector:?}.peerDependenciesMeta must be an object")
@@ -127,10 +187,12 @@ fn write_peer_meta(
                     })
                 })
                 .unwrap_or(false);
-            write!(generated, "({name:?}, {optional}),").unwrap();
+            peer_meta.push((strings.intern(name), optional));
         }
     }
-    generated.push_str("],\n");
+    let len =
+        u32::try_from(peer_meta.len()).expect("bundled peer-meta table must fit in u32") - start;
+    (start, len)
 }
 
 /// Capture the build host's UTC date as `YYYY-MM-DD` for the `aube

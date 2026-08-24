@@ -6,12 +6,17 @@ use std::collections::BTreeMap;
 ///
 /// Keep these out of `packageExtensionsChecksum`: updates to bundled
 /// compatibility data must not invalidate an existing project lockfile.
+// Integer offsets keep the generated tables free of per-entry pointer
+// relocations, which otherwise add measurable work to every CLI startup.
+type BundledStringRef = (u32, u32);
+type BundledTableRef = (u32, u32);
+
 struct BundledPackageExtension {
-    selector: &'static str,
-    dependencies: &'static [(&'static str, &'static str)],
-    optional_dependencies: &'static [(&'static str, &'static str)],
-    peer_dependencies: &'static [(&'static str, &'static str)],
-    peer_dependencies_meta: &'static [(&'static str, bool)],
+    selector: BundledStringRef,
+    dependencies: BundledTableRef,
+    optional_dependencies: BundledTableRef,
+    peer_dependencies: BundledTableRef,
+    peer_dependencies_meta: BundledTableRef,
 }
 
 include!(concat!(env!("OUT_DIR"), "/bundled_package_extensions.rs"));
@@ -884,29 +889,42 @@ fn standalone_bundled_package_extensions() -> Vec<aube_resolver::PackageExtensio
     STANDALONE_BUNDLED_PACKAGE_EXTENSIONS
         .iter()
         .map(|extension| aube_resolver::PackageExtension {
-            selector: extension.selector.to_owned(),
-            dependencies: extension
-                .dependencies
-                .iter()
-                .map(|&(name, range)| (name.to_owned(), range.to_owned()))
-                .collect(),
-            optional_dependencies: extension
-                .optional_dependencies
-                .iter()
-                .map(|&(name, range)| (name.to_owned(), range.to_owned()))
-                .collect(),
-            peer_dependencies: extension
-                .peer_dependencies
-                .iter()
-                .map(|&(name, range)| (name.to_owned(), range.to_owned()))
-                .collect(),
-            peer_dependencies_meta: extension
-                .peer_dependencies_meta
-                .iter()
-                .map(|&(name, optional)| (name.to_owned(), aube_registry::PeerDepMeta { optional }))
-                .collect(),
+            selector: bundled_string(extension.selector).to_owned(),
+            dependencies: bundled_string_map(extension.dependencies),
+            optional_dependencies: bundled_string_map(extension.optional_dependencies),
+            peer_dependencies: bundled_string_map(extension.peer_dependencies),
+            peer_dependencies_meta: bundled_peer_meta(extension.peer_dependencies_meta),
         })
         .collect()
+}
+
+fn bundled_string(reference: BundledStringRef) -> &'static str {
+    let start = reference.0 as usize;
+    &BUNDLED_STRINGS[start..start + reference.1 as usize]
+}
+
+fn bundled_string_map(reference: BundledTableRef) -> BTreeMap<String, String> {
+    let start = reference.0 as usize;
+    let mut map = BTreeMap::new();
+    for &(name, value) in &BUNDLED_STRING_PAIRS[start..start + reference.1 as usize] {
+        map.insert(
+            bundled_string(name).to_owned(),
+            bundled_string(value).to_owned(),
+        );
+    }
+    map
+}
+
+fn bundled_peer_meta(reference: BundledTableRef) -> BTreeMap<String, aube_registry::PeerDepMeta> {
+    let start = reference.0 as usize;
+    let mut map = BTreeMap::new();
+    for &(name, optional) in &BUNDLED_PEER_META[start..start + reference.1 as usize] {
+        map.insert(
+            bundled_string(name).to_owned(),
+            aube_registry::PeerDepMeta { optional },
+        );
+    }
+    map
 }
 
 fn parse_package_extension(
