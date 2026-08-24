@@ -139,7 +139,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`updateNotifier`](#setting-updatenotifier) | `bool` | Show an update notification when a newer aube is available. |
 | [`updateRewritesSpecifier`](#setting-updaterewritesspecifier) | `bool` | Rewrite caret/tilde manifest specifiers on `aube update` without `--latest`. |
 | [`preferSymlinkedExecutables`](#setting-prefersymlinkedexecutables) | `bool` | Create symlinks instead of shims for `.bin` entries. |
-| [`ignoreCompatibilityDb`](#setting-ignorecompatibilitydb) | `bool` | Disable pnpm's automatic dependency patching database. |
+| [`ignoreCompatibilityDb`](#setting-ignorecompatibilitydb) | `bool` | Disable bundled package compatibility repairs. |
 | [`resolutionMode`](#setting-resolutionmode) | `"highest" \| "time-based" \| "lowest-direct"` | Dependency version resolution strategy. |
 | [`registrySupportsTimeField`](#setting-registrysupportstimefield) | `bool` | Whether the configured registry returns a `time` field in metadata. |
 | [`forceMetadataPrimer`](#setting-forcemetadataprimer) | `bool` | Force the bundled metadata primer on for custom registries. |
@@ -2841,17 +2841,16 @@ symlinks require Developer Mode / admin rights.
 
 ### `ignoreCompatibilityDb` {#setting-ignorecompatibilitydb}
 
-Disable pnpm's automatic dependency patching database.
+Disable bundled package compatibility repairs.
 
 - Type: `bool`
 - Default: `false`
 - Environment: `npm_config_ignore_compatibility_db`, `NPM_CONFIG_IGNORE_COMPATIBILITY_DB`, `AUBE_IGNORE_COMPATIBILITY_DB`
 - .npmrc keys: `ignoreCompatibilityDb`, `ignore-compatibility-db`
 
-Accepted for pnpm config parity. pnpm ships a built-in compatibility
-database of auto-patches for known-broken packages; aube has no such
-database, so this setting has nothing to toggle. Parsed without
-warning so shared `.npmrc` files that set it remain portable.
+Disables aube's bundled Yarn and pnpm compatibility repairs for
+known-broken package manifests. Project-defined `packageExtensions`
+still apply.
 
 ### `resolutionMode` {#setting-resolutionmode}
 

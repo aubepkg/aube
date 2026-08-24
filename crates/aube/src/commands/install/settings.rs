@@ -482,16 +482,18 @@ pub(crate) fn resolve_dependency_policy(
     // checksum would drift every existing lockfile on each bundled-list bump
     // and abort `--frozen-lockfile` under `enforce_package_extensions_checksum`.
     let mut extensions = parse_package_extensions(package_extensions)?;
-    if is_standalone_aube(aube_util::embedder()) {
-        // Catalog order is significant when semver selectors overlap: the
-        // first matching extension wins per dependency key.
-        extensions.extend(standalone_bundled_package_extensions());
-    }
-    if let Some(bundled) = aube_util::engine_context().bundled_package_extensions {
-        // Bundled extensions are embedder-supplied data, not user config.
-        // A malformed entry should warn and be skipped, not abort the install
-        // with an error naming a selector the user never wrote.
-        extensions.extend(parse_bundled_package_extensions(bundled));
+    if !aube_settings::resolved::ignore_compatibility_db(ctx) {
+        if is_standalone_aube(aube_util::embedder()) {
+            // Catalog order is significant when semver selectors overlap: the
+            // first matching extension wins per dependency key.
+            extensions.extend(standalone_bundled_package_extensions());
+        }
+        if let Some(bundled) = aube_util::engine_context().bundled_package_extensions {
+            // Bundled extensions are embedder-supplied data, not user config.
+            // A malformed entry should warn and be skipped, not abort the install
+            // with an error naming a selector the user never wrote.
+            extensions.extend(parse_bundled_package_extensions(bundled));
+        }
     }
     policy.package_extensions = extensions;
 
@@ -1452,6 +1454,27 @@ mod bundled_compat_tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].selector, "valid@*");
         assert_eq!(parsed[0].dependencies["left-pad"], "^1.3.0");
+    }
+
+    #[test]
+    fn ignore_compatibility_db_skips_bundled_but_keeps_project_extensions() {
+        let npmrc = [("ignoreCompatibilityDb".to_string(), "true".to_string())];
+        let workspace = BTreeMap::new();
+        let ctx = aube_settings::ResolveCtx::files_only(&npmrc, &workspace);
+        let manifest = serde_json::from_value(serde_json::json!({
+            "pnpm": {
+                "packageExtensions": {
+                    "project-extension@*": {"dependencies": {"left-pad": "^1.3.0"}}
+                }
+            }
+        }))
+        .expect("test manifest should parse");
+
+        let policy =
+            resolve_dependency_policy(&manifest, &ctx).expect("test policy should resolve");
+
+        assert_eq!(policy.package_extensions.len(), 1);
+        assert_eq!(policy.package_extensions[0].selector, "project-extension@*");
     }
 }
 

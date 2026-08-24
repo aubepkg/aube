@@ -2838,22 +2838,18 @@ sources.npmrc = ["preferSymlinkedExecutables"]
 examples = []
 
 [ignoreCompatibilityDb]
-description = "Disable pnpm's automatic dependency patching database."
+description = "Disable bundled package compatibility repairs."
 type = "bool"
 default = "false"
 docs = """
-Accepted for pnpm config parity. pnpm ships a built-in compatibility
-database of auto-patches for known-broken packages; aube has no such
-database, so this setting has nothing to toggle. Parsed without
-warning so shared `.npmrc` files that set it remain portable.
+Disables aube's bundled Yarn and pnpm compatibility repairs for
+known-broken package manifests. Project-defined `packageExtensions`
+still apply.
 """
 sources.cli = []
 sources.env = ["npm_config_ignore_compatibility_db", "NPM_CONFIG_IGNORE_COMPATIBILITY_DB", "AUBE_IGNORE_COMPATIBILITY_DB"]
 sources.npmrc = ["ignoreCompatibilityDb"]
 examples = []
-# Parity no-op: aube has no compatibility database to disable. Remove
-# this flag if aube ever ships a patch database.
-typedAccessorUnused = true
 
 [resolutionMode]
 description = "Dependency version resolution strategy."
