@@ -178,6 +178,7 @@ pub async fn bootstrap_node_gyp(project_dir: &Path) -> miette::Result<PathBuf> {
     let bin_dir = ensure_cached(project_dir).await?;
     node_gyp_binary(&bin_dir).ok_or_else(|| {
         miette!(
+            code = aube_codes::errors::ERR_AUBE_EMBED_INSTALL_FAILED,
             "node-gyp bootstrap completed but no executable exists in {}",
             bin_dir.display()
         )
