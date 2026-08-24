@@ -260,7 +260,9 @@ Automatically answer yes to prompts.
 Parsed for pnpm compatibility; aube does not currently prompt on these paths.
 """#
 }
+flag "-h --help" help="Print help" action=help builtin=#true
 cmd __node-gyp-bootstrap help="Bootstrap aube's cached node-gyp and print the executable path." hide=#true effect=write {
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <PROJECT_DIR>
 }
 cmd access help="Manage package access and visibility on the registry" effect=read subcommand_required=#true {
@@ -269,38 +271,49 @@ cmd access help="Manage package access and visibility on the registry" effect=re
         arg <OTP>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd get help="Get package visibility status." effect=read subcommand_required=#true {
+        flag "-h --help" help="Print help" action=help builtin=#true
         cmd status help="Get a package's public or restricted status." effect=read {
+            flag "-h --help" help="Print help" action=help builtin=#true
             arg <PACKAGE> help="Package name."
         }
     }
     cmd grant help="Grant a team read-only or read-write access to a package." effect=write {
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <PERMISSIONS> help="`read-only` or `read-write`."
         arg <TEAM> help="Team in `@scope:team` form."
         arg <PACKAGE> help="Package name."
     }
     cmd list help="List packages visible to a user, organization, or team." effect=read subcommand_required=#true {
+        flag "-h --help" help="Print help" action=help builtin=#true
         cmd collaborators help="List collaborators for a package, optionally filtering to one user." effect=read {
+            flag "-h --help" help="Print help" action=help builtin=#true
             arg <PACKAGE> help="Package name."
             arg "[USER]" help="Optional user name."
         }
         cmd packages help="List packages visible to the current user or an optional entity." effect=read {
+            flag "-h --help" help="Print help" action=help builtin=#true
             arg "[ENTITY]" help="User, `@organization`, or `@scope:team`."
         }
     }
     cmd ls help="Alias for `list packages`." effect=read {
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg "[ENTITIES]..." help="User, `@organization`, or `@scope:team`. Also accepts pnpm's `packages [ENTITY]` compatibility form. Accepted forms are `aube access ls [ENTITY]` and `aube access ls packages [ENTITY]`." var_max=2
     }
     cmd revoke help="Revoke a team's access to a package." effect=destructive {
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <TEAM> help="Team in `@scope:team` form."
         arg <PACKAGE> help="Package name."
     }
     cmd set help="Set package visibility or a publish MFA requirement." effect=write {
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <SETTING> help="`status=public|private|restricted` or `mfa=none|publish|automation`."
         arg <PACKAGE> help="Package name."
     }
 }
 cmd activate help="Emit shell activation code for runtime tool shims" effect=write {
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <SHELL> help="Shell to emit activation code for"
 }
 cmd add help="Add a dependency" effect=write {
@@ -418,6 +431,7 @@ By default aube refuses to add dependencies to the root `package.json` of a work
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGES]..." help="Package(s) to add"
 }
 cmd approve-builds help="Approve ignored dependency build scripts." effect=write {
@@ -428,6 +442,7 @@ Writes entries under `allowBuilds` in `aube-workspace.yaml` (or `pnpm-workspace.
 """#
     flag --all help="Approve every pending ignored build without prompting."
     flag "-g --global" help="Operate on globally-installed packages instead of the current project."
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PKG]..." help="Packages to approve directly, skipping the picker." {
         long_help #"""
 Packages to approve directly, skipping the picker.
@@ -494,6 +509,7 @@ Filters out advisories for which no non-vulnerable version is available in the p
     flag --no-optional help="Skip `optionalDependencies`."
     flag "-P --prod --production" help="Only audit `dependencies` and `optionalDependencies`." conflicts=--dev
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd bin help="Print the path to `node_modules/.bin`" effect=read {
     flag "-g --global" help="Print the global bin directory instead of the project's" conflicts=--workspace-root
@@ -504,6 +520,7 @@ Print the workspace-root bin directory instead of the current package's.
 Mirrors `pnpm bin -w`: from a sub-package, resolves the enclosing workspace root and prints its `node_modules/.bin`. No-op when no workspace root exists above cwd (single-project install), so the flag is safe to leave in shell aliases.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd bugs help="Open package bug tracker URLs" effect=read {
     alias issues
@@ -518,15 +535,18 @@ Examples:
 
 """#
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGES]..." help="Packages to open bug trackers for. Defaults to the current project."
 }
 cmd cache help="Inspect and manage the packument metadata cache" effect=read subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd delete help="Delete metadata cache for the specified package(s)." effect=write {
         long_help #"""
 Delete metadata cache for the specified package(s).
 
 Supports glob patterns; matches against the package name (e.g. `lodash`, `@babel/*`).
 """#
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <PATTERNS>... help="One or more package name patterns." {
             long_help #"""
 One or more package name patterns.
@@ -541,6 +561,7 @@ List the available packages in the metadata cache.
 
 Optional glob filters narrow the result; with no filter every cached package is listed.
 """#
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg "[PATTERNS]..." help="Optional glob patterns to filter the listing." {
             long_help #"""
 Optional glob patterns to filter the listing.
@@ -555,14 +576,17 @@ List configured registries from the project + user `.npmrc`.
 
 Aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
 """#
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd path help="Print the directory used for metadata and policy caches." effect=read {
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd prune help="Remove stale extracted primer files from the metadata cache." effect=write {
         flag --age-days help="Minimum age in days before an old primer file is removed." default="30" {
             arg <AGE_DAYS>
         }
         flag --dry-run help="Do not actually delete anything."
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd view help="View the cached metadata for a single package." effect=read {
         long_help #"""
@@ -571,10 +595,12 @@ View the cached metadata for a single package.
 Prints a summary (versions, dist-tags, ETag, fetched-at) by default; `--json` dumps the raw cache file.
 """#
         flag --json help="Dump the raw on-disk cache JSON instead of a summary."
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <NAME> help="Package name (scoped names like `@babel/core` are accepted)."
     }
 }
 cmd cat-file help="Print a file from the global store by integrity or hex hash" effect=read {
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <HASH> help="File hash to look up." {
         long_help #"""
 File hash to look up.
@@ -584,6 +610,7 @@ Accepts `sha512-<base64>` (pnpm integrity format) or a raw hex CAS digest.
     }
 }
 cmd cat-index help="Print the cached package index JSON for `<name>@<version>`" effect=read {
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <PACKAGE> help="Package to inspect, in `name@version` form (e.g. `lodash@4.17.21`, `@babel/core@7.26.0`)." {
         long_help #"""
 Package to inspect, in `name@version` form (e.g. `lodash@4.17.21`, `@babel/core@7.26.0`).
@@ -599,6 +626,7 @@ Verify installed packages can resolve their declared deps.
 Walks the `node_modules/` symlink tree and confirms every dependency in each `package.json` resolves to a real entry.
 """#
     flag --json help="Emit a JSON report instead of the human-readable list."
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd ci help="Clean install: delete node_modules, then install with frozen lockfile." effect=write {
     alias clean-install
@@ -614,6 +642,7 @@ Use in CI to guarantee a reproducible install from the committed lockfile.
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd clean help="Remove `node_modules` across every workspace project." effect=write {
     long_help #"""
@@ -628,6 +657,7 @@ Also remove lockfiles at the workspace root.
 Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock`.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd completion help="Generate shell completions (bash, zsh, fish)" effect=read {
     flag --force help="Replace a file at a target path that aube did not write" effect=write requires=--install
@@ -638,6 +668,7 @@ Install the scripts where this shell looks for them, instead of printing them
 Writes one script per program — aube, aubr and aubx — and nothing else: no shell rc file and no PowerShell profile is edited. Where a shell needs a one-time line of its own, it is printed for you to add.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <SHELL> help="The shell to generate completions for (bash, zsh, fish)"
 }
 cmd config help="Read and write settings in `.npmrc`" effect=read {
@@ -681,6 +712,7 @@ Which config location(s) to list.
             }
         }
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd delete help="Delete a key from aube config or the selected `.npmrc` file" effect=destructive {
         alias rm
         alias remove
@@ -700,6 +732,7 @@ Defaults to `user`. Delete sweeps both aube's own config (`~/.config/aube/config
                 }
             }
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <KEY> help="The setting key." {
             long_help #"""
 The setting key.
@@ -709,10 +742,12 @@ Accepts either a pnpm canonical name (e.g. `autoInstallPeers`) or an `.npmrc` al
         }
     }
     cmd explain help="Explain a known setting, including defaults and supported config sources" effect=read {
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <KEY> help="Setting key, `.npmrc` alias, env var, workspace YAML key, or CLI flag."
     }
     cmd find help="Search known settings by name, source key, or description" effect=read {
         alias search
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <QUERY>... help="Words to search for."
     }
     cmd get help="Print the effective value of a key" effect=read {
@@ -739,6 +774,7 @@ Defaults to `merged` — the last-write-wins view of user aube config, `~/.npmrc
                 }
             }
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <KEY> help="The setting key." {
             long_help #"""
 The setting key.
@@ -788,6 +824,7 @@ Which config location(s) to list.
                 }
             }
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd set help="Write a key=value pair to aube config or the selected `.npmrc` file" effect=write {
         flag --local help="Shortcut for `--location project`." conflicts=--location
@@ -807,14 +844,17 @@ Dotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …
                 }
             }
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <KEY> help="Setting key (canonical name or `.npmrc` alias)."
         arg <VALUE> help="Value to write. Stored verbatim after `key=`."
     }
     cmd tui help="Browse known settings in an interactive terminal UI" effect=write {
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
 }
 cmd create help="Scaffold a project from a `create-*` starter kit (via dlx)" {
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PARAMS]..." help="Template package name followed by any args to pass through to the scaffold binary." double_dash=automatic {
         long_help #"""
 Template package name followed by any args to pass through to the scaffold binary.
@@ -834,6 +874,7 @@ Exits non-zero when dedupe would make changes — useful in CI.
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd deploy help="Deploy a workspace package into a target directory with deps inlined" effect=write {
     flag "-D --dev" help="Install only `devDependencies`." {
@@ -871,6 +912,7 @@ Never hits the network. Useful in multi-stage Dockerfiles where an earlier `aube
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <TARGET> help="Target directory to deploy into." {
         long_help #"""
 Target directory to deploy into.
@@ -885,6 +927,7 @@ cmd deprecate help="Mark published versions of a package as deprecated on the re
         arg <CODE>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <PACKAGE> help="Package spec: `name`, `name@version`, or `name@<range>`." {
         long_help #"""
 Package spec: `name`, `name@version`, or `name@<range>`.
@@ -905,9 +948,12 @@ cmd deprecations help="Report deprecated packages in the resolved dependency gra
     flag --json help="Emit JSON instead of the default text layout."
     flag --transitive help="Include transitive dependencies as well as direct ones."
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd diag help="Diagnostic trace analysis (compare/analyze JSONL traces)" effect=read subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd analyze help="Show critical path / starvation / per-pkg lifecycle from a saved trace." effect=read {
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <PATH> help="Trace JSONL"
     }
     cmd compare help="Diff two diag JSONL traces and surface per-operation regressions." effect=read {
@@ -917,6 +963,7 @@ cmd diag help="Diagnostic trace analysis (compare/analyze JSONL traces)" effect=
         flag --min-pct help="Minimum |%change| to surface (default 10)" default="10" {
             arg <MIN_PCT>
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <A> help="Baseline trace"
         arg <B> help="Comparison trace"
     }
@@ -924,6 +971,7 @@ cmd diag help="Diagnostic trace analysis (compare/analyze JSONL traces)" effect=
 cmd dist-tag help="Manage package distribution tags on the registry" effect=read subcommand_required=#true {
     alias dist-tags
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd add help="Add or update a dist-tag on a package." effect=write {
         long_help #"""
 Add or update a dist-tag on a package.
@@ -933,6 +981,7 @@ Spec must include a concrete version: `aube dist-tag add react@18.2.0 stable`. T
         flag --otp help="One-time password from a 2FA authenticator; sent as `npm-otp`." {
             arg <OTP>
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <SPEC> help="Package spec in `name@version` form (exact version required, ranges and tags aren't resolved here)."
         arg "[TAG]" help="Tag to create or update. Defaults to `latest`."
     }
@@ -942,6 +991,7 @@ List every dist-tag for a package.
 
 Reads the package name from `./package.json` when no argument is given.
 """#
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg "[PACKAGE]" help="Package name (no version)." {
             long_help #"""
 Package name (no version).
@@ -955,6 +1005,7 @@ Defaults to the current project's `package.json` `name` field.
         flag --otp help="One-time password from a 2FA authenticator; sent as `npm-otp`." {
             arg <OTP>
         }
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <PACKAGE> help="Package name (no version)."
         arg <TAG> help="Tag to remove."
     }
@@ -986,6 +1037,7 @@ Repeatable — pass once per package. The named package's `preinstall` / `instal
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PARAMS]..." help="Command (binary) to run, followed by arguments to pass through to it." double_dash=automatic {
         long_help #"""
 Command (binary) to run, followed by arguments to pass through to it.
@@ -996,6 +1048,7 @@ The first positional is the command; the rest are forwarded verbatim to the bina
 }
 cmd doctor help="Run broad install-health diagnostics" effect=read {
     flag "-J --json" help="Emit a machine-readable JSON report instead of the grouped text."
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd exec help="Execute a locally installed binary" {
     alias x
@@ -1057,6 +1110,7 @@ Setting this implicitly enables parallel mode at width `N`. `0` means "use the a
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <BIN> help="Binary name"
     arg "[ARGS]..." help="Arguments to pass to the binary" double_dash=automatic
 }
@@ -1066,6 +1120,7 @@ cmd fetch help="Download lockfile dependencies into the store without linking no
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd find-hash help="List packages whose cached index references a given file hash" effect=read {
     flag --json help="Emit machine-readable JSON instead of a plain text listing." {
@@ -1076,6 +1131,7 @@ Output is an array of `{ "name", "version", "path" }` objects.
 """#
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <HASH> help="Hash to look up." {
         long_help #"""
 Hash to look up.
@@ -1108,6 +1164,7 @@ Defaults to `merged` — the last-write-wins view of user aube config, `~/.npmrc
             }
         }
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <KEY> help="The setting key." {
         long_help #"""
 The setting key.
@@ -1118,6 +1175,7 @@ Accepts either a pnpm canonical name (e.g. `autoInstallPeers`) or an `.npmrc` al
 }
 cmd ignored-builds help="Print packages whose install scripts were skipped by `pnpm.allowBuilds`" effect=read {
     flag "-g --global" help="Operate on globally-installed packages instead of the current project."
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd import help="Convert a supported lockfile into aube-lock.yaml" effect=write {
     flag --force help="Overwrite an existing aube-lock.yaml"
@@ -1135,6 +1193,7 @@ Write only the converted lockfile and skip linking `node_modules` afterwards.
 `aube import` already exits without touching `node_modules` today, so this flag is a no-op kept for compatibility — CI scripts that pass `--lockfile-only` keep working without complaint.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd init help="Create a `package.json` in the current directory" effect=write {
     flag --bare help="Create a `package.json` with only the bare minimum of required fields"
@@ -1149,6 +1208,7 @@ Adds a `packageManager` field to `package.json`.
         arg <commonjs|module>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd install help="Install all dependencies" effect=write {
     alias i
@@ -1305,6 +1365,7 @@ Runs install from the workspace root regardless of cwd (`pnpm install -w`).
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd install-test help="Install dependencies, then run the `test` script (pnpm compat alias)." hide=#true {
     alias it
@@ -1314,6 +1375,7 @@ Install dependencies, then run the `test` script (pnpm compat alias).
 Hidden from help because `aube test` already auto-installs.
 """#
     use script-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash=automatic
 }
 cmd la help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#true effect=read {
@@ -1360,6 +1422,7 @@ Emit one tab-separated line per package.
 """#
         conflicts --format --json
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PATTERN]" help="Optional package name (or glob-like prefix match) to filter the output"
 }
 cmd licenses help="Report the licenses of installed dependencies" effect=read {
@@ -1368,6 +1431,7 @@ cmd licenses help="Report the licenses of installed dependencies" effect=read {
     flag --long help="Include the resolved path on disk for each package"
     flag "-P --prod --production" help="Show only production dependencies (skip devDependencies)" conflicts=--dev
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[SUBCOMMAND]" help="pnpm-compat subcommand marker." hide=#true {
         long_help #"""
 pnpm-compat subcommand marker.
@@ -1386,6 +1450,7 @@ Register into (or resolve from) the global link registry.
 The registry lives at `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links` when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\aube\global-links` on Windows. Default behavior for bare `aube link` / `aube link <name>` — the flag exists for pnpm parity and makes the intent explicit.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGE]" help="Package name, or path to a local directory"
 }
 cmd list help="Print the resolved dependency tree" effect=read {
@@ -1471,6 +1536,7 @@ Emit one tab-separated line per package.
 """#
         conflicts --format --json
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PATTERN]" help="Optional package name (or glob-like prefix match) to filter the output"
 }
 cmd ll help="Alias for `list --long` (hidden; prefer `list --long`)" hide=#true effect=read {
@@ -1517,6 +1583,7 @@ Emit one tab-separated line per package.
 """#
         conflicts --format --json
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PATTERN]" help="Optional package name (or glob-like prefix match) to filter the output"
 }
 cmd login help="Store a registry auth token in the user's ~/.npmrc" effect=write {
@@ -1533,14 +1600,17 @@ When set, the scope->registry mapping is also written to `~/.npmrc`.
         arg <SCOPE>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd logout help="Remove a registry auth token from the user's ~/.npmrc" effect=destructive {
     flag --scope help="Scope whose registry mapping should also be removed (e.g. `@myorg`)." {
         arg <SCOPE>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd node help="Run Node.js through aube's project runtime resolver" {
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Arguments to pass to Node.js" double_dash=automatic
 }
 cmd outdated help="Report dependencies whose installed version lags behind the registry" effect=read {
@@ -1557,10 +1627,12 @@ Mirrors pnpm's `-w/--workspace-root`: from a sub-package, `aube outdated -w` rep
 """#
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PATTERN]" help="Optional package name (prefix match) to filter the report"
 }
 cmd owner help="Manage package owners (not implemented — use `npm owner`)" hide=#true effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd pack help="Create a publishable `.tgz` tarball from the current project" effect=write {
@@ -1571,6 +1643,7 @@ cmd pack help="Create a publishable `.tgz` tarball from the current project" eff
         arg <DIR>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd patch help="Extract a package into an edit directory so it can be patched" effect=write {
     flag --edit-dir help="Directory to extract the writable copy into." {
@@ -1588,6 +1661,7 @@ Ignore any existing patch entry for this package.
 Extracts a pristine copy from `node_modules` rather than re-applying the existing patch first. Accepted for pnpm parity; aube already extracts from the *linked* (post-patch) tree, so this flag is effectively informational here.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <PACKAGE> help="Package spec, `<name>@<version>`." {
         long_help #"""
 Package spec, `<name>@<version>`.
@@ -1607,6 +1681,7 @@ Ignored when the dependency already has a declared patch path; the existing path
 """#
         arg <DIR>
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <DIR> help="The edit directory printed by `aube patch`." {
         long_help #"""
 The edit directory printed by `aube patch`.
@@ -1616,6 +1691,7 @@ The matching source snapshot is read from a sibling `source/` dir, located via t
     }
 }
 cmd patch-remove help="Remove patch entries from `pnpm.patchedDependencies`" effect=destructive {
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PATCH]..." help="Patch keys to remove, formatted as `<name>@<version>`." {
         long_help #"""
 Patch keys to remove, formatted as `<name>@<version>`.
@@ -1625,6 +1701,7 @@ Same shape used as the `pnpm.patchedDependencies` map key. With no arguments, ev
     }
 }
 cmd peers help="Inspect peer-dependency resolution from the lockfile" effect=read subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd check help="Check for unmet and missing peer-dependency issues by reading the lockfile." effect=read {
         long_help #"""
 Check for unmet and missing peer-dependency issues by reading the lockfile.
@@ -1651,14 +1728,17 @@ Examples:
 
 """#
         flag --json help="Emit a JSON report instead of the human-readable tree."
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
 }
 cmd pkg help="Manage package.json entries (not implemented — use `npm pkg`)" hide=#true effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd prefix help="Print the current package prefix directory" effect=read {
     flag "-g --global" help="Print the global prefix directory instead of the project's root"
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd prune help="Remove extraneous packages from project `node_modules`." effect=write {
     long_help #"""
@@ -1668,6 +1748,7 @@ Reads the lockfile, computes the packages still reachable from each importer, an
 """#
     flag "-P --prod --production" help="Remove devDependencies from node_modules"
     flag --no-optional help="Also remove optionalDependencies"
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd publish help="Publish the current package to the registry" effect=write {
     flag --access help="Publish as `public` or `restricted`." {
@@ -1726,6 +1807,7 @@ Requires an OIDC-capable CI environment (GitHub Actions with `id-token: write`, 
         arg <TAG>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[TARBALL|FOLDER]" help="Tarball or package directory to publish (default: current package)."
 }
 cmd purge help="Alias for `clean` — remove `node_modules` across every workspace project." effect=write {
@@ -1735,12 +1817,14 @@ Alias for `clean` — remove `node_modules` across every workspace project.
 A `purge` script in the root `package.json` overrides the built-in.
 """#
     use clean-args
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd query help="Query packages in the resolved dependency graph" effect=read {
     flag "-D --dev" help="Only match devDependency roots and their transitive deps." conflicts=--prod
     flag "-P --prod --production" help="Only match production/optional roots and their transitive deps." conflicts=--dev
     flag --json help="Emit a JSON array instead of the default text layout." conflicts=--parseable
     flag --parseable help="Emit tab-separated rows: dep_path, name, version, source, flags."
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <SELECTOR> help="Selector expression." {
         long_help #"""
 Selector expression.
@@ -1758,11 +1842,13 @@ With one or more package names, run lifecycle scripts only for the named deps an
 
 Unlike the other lifecycle shortcuts, `rebuild` intentionally does not auto-install: `aube install` already runs these same four hooks after linking, so triggering an install here would double-run every script on a stale tree. Users who actually want a fresh install should run `aube install`.
 """#
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGE]..." help="Optional package names. When supplied, only matching deps' scripts run; the root lifecycle hooks (preinstall, install, postinstall, prepare) are skipped. Match is by graph `name`, not by `dep_path`. The active `allowBuilds` / `onlyBuiltDependencies` policy is bypassed for the named deps — naming the package is the explicit opt-in."
 }
 cmd recursive help="Run a supported command across workspace packages" {
     alias multi
     alias m
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Command and arguments to run recursively across workspace packages" double_dash=automatic
 }
 cmd remove help="Remove a dependency" effect=destructive {
@@ -1783,14 +1869,17 @@ Applies regardless of the current working directory: walks up from cwd looking f
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGES]..." help="Package(s) to remove"
 }
 cmd restart help="Restart a package (shortcut for `run restart`; falls back to `stop` + `start`)" {
     use script-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash=automatic
 }
 cmd root help="Print the path to `node_modules`" effect=read {
     flag "-g --global" help="Print the global package directory instead of the project's"
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd run help="Run a script defined in package.json" {
     alias run-script
@@ -1884,6 +1973,7 @@ Setting this implicitly enables parallel mode at width `N`. `0` means "use the a
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[SCRIPT]" help="Script or local binary name." {
         long_help #"""
 Script or local binary name.
@@ -1895,8 +1985,10 @@ Omit on an interactive TTY to pick from `package.json` scripts. If no script mat
 }
 cmd runtime help="Manage the project's Node.js runtime (pin, install, inspect)" effect=read subcommand_required=#true {
     alias rt
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd list help="Show the resolved runtime and installed versions" effect=read {
         alias ls
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd set help="Pin a runtime in package.json devEngines.runtime and install it" effect=write {
         flag "-g --global" help="Install for the user instead of the project (delegates to `mise use -g node@<version>` when mise manages installs)"
@@ -1904,6 +1996,7 @@ cmd runtime help="Manage the project's Node.js runtime (pin, install, inspect)" 
             arg <POLICY>
         }
         flag --save-exact help="Pin the exact resolved version instead of a caret range"
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <NAME> help="Runtime name (only `node` is supported)"
         arg <VERSION> help="Version request: an exact version, a range (`^24`, `22`), `lts`, `latest`, or an LTS codename (`lts/jod`)"
     }
@@ -1921,9 +2014,11 @@ cmd sbom help="Generate a Software Bill of Materials (CycloneDX or SPDX)" effect
     }
     flag --lockfile-only help="Describe the complete platform-independent lockfile graph"
     flag "-P --prod --production" help="Show only production dependencies (skip devDependencies)" conflicts=--dev
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd search help="Search the registry for packages (not implemented — use `npm search`)" hide=#true effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd set help="Alias for `config set` (hidden; prefer `config set`)" hide=#true effect=write {
@@ -1944,37 +2039,46 @@ Dotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …
             }
         }
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <KEY> help="Setting key (canonical name or `.npmrc` alias)."
     arg <VALUE> help="Value to write. Stored verbatim after `key=`."
 }
 cmd set-script help="Set a `package.json` script (not implemented — use `npm set-script`)" hide=#true effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd sponsors help="Show the companies sponsoring aube and the jdx.dev open source tools" effect=read {
+    flag "-h --help" help="Print help" action=help builtin=#true
 }
 cmd stage help="Stage packages for publishing (not implemented — use `npm stage`)" effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd start help="Start a package (shortcut for `run start`)" {
     use script-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash=automatic
 }
 cmd stop help="Stop a package (shortcut for `run stop`)" {
     use script-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash=automatic
 }
 cmd store help="Manage the global store" effect=read subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd add help="Add one or more packages to the global store without linking them into any project." effect=write {
         long_help #"""
 Add one or more packages to the global store without linking them into any project.
 
 Each argument is a package spec: `lodash`, `lodash@4.17.21`, `react@next`, or `express@^4`.
 """#
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <PACKAGES>... help="Package specs to fetch into the store."
     }
     cmd path help="Show the store path." effect=read {
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd prune help="Remove unreferenced packages from the global store." effect=write {
         long_help #"""
@@ -1988,6 +2092,7 @@ On reflink filesystems such as APFS or btrfs, link counts cannot prove project r
 """#
         flag --dry-run help="Do not actually delete anything; report what would be pruned."
         flag --json help="Emit the dry-run plan as one machine-readable JSON document." requires=--dry-run
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
     cmd status help="Verify the store against cached package indexes." effect=read {
         long_help #"""
@@ -1995,18 +2100,22 @@ Verify the store against cached package indexes.
 
 Confirms every file referenced by a cached package index is still present in the store and that its BLAKE3 hash matches. Exits non-zero when any corruption is detected.
 """#
+        flag "-h --help" help="Print help" action=help builtin=#true
     }
 }
 cmd test help="Run the `test` script (shortcut for `run test`)" {
     alias t
     use script-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Arguments to pass to the script" double_dash=automatic
 }
 cmd token help="Manage registry auth tokens (not implemented — use `npm token`)" hide=#true effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd trust help="Inspect npm package publishing trust" effect=read subcommand_required=#true {
+    flag "-h --help" help="Print help" action=help builtin=#true
     cmd check help="Check one package version for a publishing-trust downgrade" effect=read {
         after_long_help #"""
 Examples:
@@ -2027,6 +2136,7 @@ Examples:
         flag --ignore-default-excludes help="Evaluate the policy without aube's built-in package exceptions"
         flag --json help="Emit a JSON report"
         use network-args
+        flag "-h --help" help="Print help" action=help builtin=#true
         arg <PACKAGE@VERSION> help="Exact npm package version to inspect" {
             long_help #"""
 Exact npm package version to inspect
@@ -2042,6 +2152,7 @@ cmd undeprecate help="Clear an existing deprecation on the registry" effect=writ
         arg <CODE>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <PACKAGE> help="Package spec: `name`, `name@version`, or `name@<range>`." {
         long_help #"""
 Package spec: `name`, `name@version`, or `name@<range>`.
@@ -2059,6 +2170,7 @@ Operate on the global link registry instead of the current project.
 `aube unlink -g` removes the current package's entry from `$XDG_CACHE_HOME/aube/global-links`, `$HOME/.cache/aube/global-links` when `XDG_CACHE_HOME` is unset, or `%LOCALAPPDATA%\aube\global-links` on Windows; `aube unlink -g <name>` removes the named entry.
 """#
     }
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGE]" help="Package name to unlink (omit to unlink all linked dependencies)"
 }
 cmd unpublish help="Remove a package (or a single version) from the registry" effect=destructive {
@@ -2079,6 +2191,7 @@ Sent verbatim as the `npm-otp` header.
         arg <CODE>
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[SPEC]" help="Package spec: `name`, `name@version`, or omitted to use the current project's `package.json`."
 }
 cmd update help="Update dependencies" effect=write {
@@ -2165,6 +2278,7 @@ Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve against the project r
     use lockfile-args
     use network-args
     use virtual-store-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGES]..." help="Package(s) to update (all if empty)"
 }
 cmd version help="Bump the version in package.json (and optionally create a git commit + tag)" effect=write {
@@ -2191,6 +2305,7 @@ By default `aube version` commits the manifest change and tags it `v<version>`.
         arg <ID>
     }
     flag --sign-git-tag help="GPG-sign the created tag (`git tag -s`)."
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[NEW_VERSION]" help="Bump keyword or an explicit version string." {
         long_help #"""
 Bump keyword or an explicit version string.
@@ -2246,6 +2361,7 @@ Mutually exclusive with `field`.
 """#
     }
     use network-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[PACKAGE]" help="Package to view, optionally with a version or dist-tag." {
         long_help #"""
 Package to view, optionally with a version or dist-tag.
@@ -2263,6 +2379,7 @@ Examples: `version`, `dependencies`, `dist.tarball`, `maintainers.0.name`. When 
 }
 cmd whoami help="Report the current registry user (not implemented — use `npm whoami`)" hide=#true effect=read {
     use fallback-args
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic
 }
 cmd why help="Print reverse dependency chains explaining why a package is installed" effect=read {
@@ -2297,6 +2414,7 @@ Examples:
     flag --json help="Output as JSON — an array of chain objects" conflicts=--parseable
     flag --long help="Append each node's `.aube/<dep_path>` store path to the tree output"
     flag --parseable help="Tab-separated output: one line per chain, `importer\\tdep_type\\tname@ver\\t...`"
+    flag "-h --help" help="Print help" action=help builtin=#true
     arg <PACKAGE> help="Package name to search for (exact match against package names)"
 }
 
