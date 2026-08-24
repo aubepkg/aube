@@ -22,7 +22,7 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, ConditionalExpression, Expression, IfStatement, ImportDeclarationSpecifier,
+    ConditionalExpression, Expression, IfStatement, ImportDeclarationSpecifier,
     LogicalExpression, Statement, TryStatement,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -339,7 +339,9 @@ fn strip_html_comments(source: &str) -> String {
 
 /// If `call` is `require("lit")`, `require.resolve("lit")`, or the immediately-
 /// invoked `createRequire(...)("lit")`, return the literal specifier and which.
-/// Any non-string-literal argument yields `None`.
+/// The argument may be a string literal or a no-substitution template, matching
+/// the same static-string rule `import(...)` uses (see [`static_string`]); any
+/// other argument shape yields `None`.
 fn require_call<'a>(call: &'a oxc_ast::ast::CallExpression<'a>) -> Option<(&'a str, RefKind)> {
     let kind = match &call.callee {
         Expression::Identifier(id) if id.name == "require" => RefKind::Require,
@@ -351,16 +353,14 @@ fn require_call<'a>(call: &'a oxc_ast::ast::CallExpression<'a>) -> Option<(&'a s
         },
         // `createRequire(import.meta.url)("lit")` — the immediately-invoked form:
         // the callee is itself a `createRequire(...)` call whose result is a
-        // require function, so a string-literal outer argument is a real edge.
+        // require function, so a static-string outer argument is a real edge.
         // ONLY the direct IIFE is handled; a name bound to `createRequire(...)`
         // and called later needs dataflow and stays skipped (no false positives).
         Expression::CallExpression(inner) if is_create_require(&inner.callee) => RefKind::Require,
         _ => return None,
     };
-    match call.arguments.first() {
-        Some(Argument::StringLiteral(s)) => Some((&s.value, kind)),
-        _ => None,
-    }
+    let spec = static_string(call.arguments.first()?.as_expression()?)?;
+    Some((spec, kind))
 }
 
 /// True if `callee` names `createRequire` — bare (`createRequire(...)`) or a
@@ -621,6 +621,31 @@ mod tests {
         assert!(
             neg.is_empty(),
             "bound-then-called createRequire + substituted template stay skipped"
+        );
+    }
+
+    #[test]
+    fn require_accepts_no_substitution_template_arguments() {
+        // A bare `require`/`require.resolve` call with a no-substitution
+        // template argument (`` require(`lit`) ``) carries the same
+        // attributable static string as a string literal — must be recorded
+        // the same way `import(...)` already is.
+        let got = specs(
+            r#"
+            const a = require(`tpl-dep`);
+            const b = require.resolve(`tpl-resolve-dep`);
+            const c = require(`pre-${x}`);
+            "#,
+        );
+        let has = |n: &str| got.iter().any(|(s, _, _)| s == n);
+        assert!(has("tpl-dep"), "require(`lit`) is analyzable");
+        assert!(
+            has("tpl-resolve-dep"),
+            "require.resolve(`lit`) is analyzable"
+        );
+        assert!(
+            !has("pre-${x}") && got.iter().all(|(s, _, _)| !s.starts_with("pre-")),
+            "a substituted template stays skipped"
         );
     }
 }

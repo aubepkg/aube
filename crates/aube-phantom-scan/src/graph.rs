@@ -229,7 +229,11 @@ fn fs_resolve(
     // Keep the walk inside the package tree (a `../../` that climbs out is not
     // part of the published surface).
     let base = normalize(&joined);
-    if !base.starts_with(root) {
+    // `root` itself must go through the same lexical normalization as `base` —
+    // a caller-supplied root carrying a `.`/`..` component (e.g.
+    // `./node_modules/foo`) would otherwise never satisfy `starts_with` against
+    // the normalized `base`, silently resolving nothing.
+    if !base.starts_with(normalize(root)) {
         return None;
     }
     let exts = surface_exts(prefer_dts);
@@ -345,6 +349,27 @@ mod tests {
             path: path.to_string(),
             kind: EntryKind::Main,
         }
+    }
+
+    #[test]
+    fn root_with_a_dot_component_still_resolves() {
+        // A caller passing `root` with a lexical `.`/`..` component (e.g. via
+        // `some_dir.join("./node_modules/foo")`) must still walk correctly —
+        // `root` needs the same normalization `base` already gets, or the
+        // `starts_with` containment check never matches and the walk silently
+        // resolves nothing.
+        let real_root = scratch("dot-root");
+        fs::write(real_root.join("index.js"), "require('real-dep');").unwrap();
+        let dotted_root = real_root.join(".");
+
+        let w = walk(&dotted_root, &[main_entry("index.js")]);
+        assert_eq!(w.files_analyzed, 1, "entry must resolve through a dotted root");
+        assert!(
+            w.references.iter().any(|r| r.package == "real-dep"),
+            "reference must be collected: {:?}",
+            w.references
+        );
+        let _ = fs::remove_dir_all(&real_root);
     }
 
     #[test]
