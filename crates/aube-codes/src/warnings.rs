@@ -35,6 +35,8 @@ pub const WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED: &str = "WARN_AUBE_STORE_PRUNE
 // ── settings / config validation ────────────────────────────────────
 pub const WARN_AUBE_INVALID_CONCURRENCY: &str = "WARN_AUBE_INVALID_CONCURRENCY";
 pub const WARN_AUBE_INVALID_TRUST_POLICY: &str = "WARN_AUBE_INVALID_TRUST_POLICY";
+pub const WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION: &str =
+    "WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION";
 pub const WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE: &str =
     "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE";
 pub const WARN_AUBE_OVERRIDE_MISSING_DEP: &str = "WARN_AUBE_OVERRIDE_MISSING_DEP";
@@ -290,6 +292,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_INVALID_TRUST_POLICY,
         category: category::SETTINGS_CONFIG,
         description: "A `trustPolicyExclude` entry was malformed and skipped.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION,
+        category: category::SETTINGS_CONFIG,
+        description: "A bundled package-extension entry was malformed and skipped.",
         exit_code: None,
     },
     CodeMeta {
