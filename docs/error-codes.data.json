@@ -711,6 +711,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION",
+      "category": "Settings / config validation",
+      "description": "A bundled package-extension entry was malformed and skipped.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE",
       "category": "Settings / config validation",
       "description": "A `minimumReleaseAgeExclude` entry was malformed and skipped.",
