@@ -294,6 +294,8 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      MBX_TARGET_VIEWS: "0"
     permissions:
       contents: read
       id-token: write

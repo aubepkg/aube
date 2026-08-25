@@ -101,6 +101,8 @@ jobs:
     runs-on: ${{ (github.event_name == 'release' || inputs.tag != '' || inputs.draft_phase || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]'))) && matrix.runner || matrix.namespace_runner }}
     timeout-minutes: 60
     permissions: { contents: read, id-token: write }
+    env:
+      MBX_TARGET_VIEWS: ${{ matrix.os == 'win32' && '0' || '1' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, ref: "${{ inputs.tag || github.ref }}" }
