@@ -12,7 +12,7 @@ yourself without skipping or weakening the check:
 ```sh
 cargo build
 cargo test
-cargo clippy --workspace --quiet
+cargo clippy --all-targets -- -D warnings
 ```
 
 If Cargo succeeds where mbx fails, or mbx introduces a papercut, please start a
