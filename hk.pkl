@@ -14,7 +14,7 @@ local linters = new Mapping<String, Step> {
     ["actionlint"] = Builtins.actionlint
     ["cargo-fmt"] = Builtins.cargo_fmt
     ["cargo-clippy"] = (Builtins.cargo_clippy) {
-        check = "mbx clippy --manifest-path {{workspace_indicator}} --quiet"
+        check = "mbx clippy --manifest-path {{workspace_indicator}} --quiet -- -D warnings"
     }
     ["shfmt"] = (Builtins.shfmt) {
         glob = List("**/*.bats", "**/*.sh", "**/*.bash")
