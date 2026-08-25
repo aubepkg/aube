@@ -21,7 +21,8 @@ jobs:
   # no-op.
   release-plz-release:
     name: release-plz release
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    # Release and release-PR jobs must never restore or save persistent caches.
+    runs-on: namespace-profile-endev-linux-amd64
     # Two commits landing on main in quick succession must not double-publish.
     concurrency:
       group: release-plz-release-${{ github.ref }}
@@ -198,6 +199,7 @@ jobs:
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           install_args: communique
+          cache: false
       - name: Enhance GitHub release with communique
         env:
           GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
@@ -249,7 +251,7 @@ jobs:
   # an out-of-date `aube.usage.kdl`.
   release-plz-pr:
     name: release-plz PR
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    runs-on: namespace-profile-endev-linux-amd64
     permissions:
       contents: write
       pull-requests: write
@@ -269,6 +271,8 @@ jobs:
       # release-plz refuses to run against a dirty tree, and intentional
       # lockfile bumps should land via their own PR.
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+        with:
+          cache: false
         env:
           MISE_LOCKED: "1"
       - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11

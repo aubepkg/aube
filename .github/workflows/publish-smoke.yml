@@ -64,6 +64,7 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
       - name: Build aube
         run: cargo build -p aube

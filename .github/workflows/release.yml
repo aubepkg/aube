@@ -88,6 +88,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Generate metadata primer
         id: primer
         shell: bash
@@ -228,7 +229,8 @@ jobs:
   # musl).
   upload-assets-musl-arm64:
     needs: generate-primer
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    # Release builds must never restore or save persistent caches.
+    runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 60
     permissions:
       contents: read
@@ -338,17 +340,17 @@ jobs:
           # not in tree.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64-large;overrides.cache-tag=aube-rust-linux
+            runner: namespace-profile-endev-linux-amd64-large
             build-tool: cross
             bolt: true
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64-large;overrides.cache-tag=aube-rust-linux
+            runner: namespace-profile-endev-linux-amd64-large
             build-tool: cross
             bolt: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            runner: namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
+            runner: namespace-profile-endev-linux-arm64-large
             build-tool: cargo
             bolt: true
           - target: aarch64-apple-darwin
@@ -378,6 +380,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+          package-manager-cache: false
       # rustc 1.94.0 on aarch64-apple-darwin miscompiles the
       # PGO-instrumented binary — the resulting `aube install` SIGSEGVs
       # on its first invocation during phase 2 training. Verified
