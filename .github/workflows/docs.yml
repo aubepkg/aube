@@ -38,7 +38,7 @@ jobs:
       - uses: ./.github/actions/mbx
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
       - name: Build aube
-        run: mbx build build
+        run: mbx build
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Render CLI docs from usage spec

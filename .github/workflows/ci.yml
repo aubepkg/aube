@@ -85,7 +85,7 @@ jobs:
       - run: cargo-machete
       - run: mise x cargo:cargo-audit@0.22.1 -- cargo audit --deny warnings
       - run: mise x cargo:cargo-deny@0.19.6 -- cargo deny check bans licenses sources
-      - run: mbx build msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
+      - run: mbx msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
       - name: assert render produces no diff
         run: |
@@ -151,7 +151,7 @@ jobs:
             run: |
               set +e
               (
-                mbx build build --locked --profile ffi -p aube-ffi &&
+                mbx build --locked --profile ffi -p aube-ffi &&
                 grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt &&
                 nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
                   | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt &&
@@ -302,8 +302,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/mbx
-      - run: mbx build build --workspace
-      - run: mbx build test --workspace
+      - run: mbx build --workspace
+      - run: mbx test --workspace
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is

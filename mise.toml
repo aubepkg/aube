@@ -50,10 +50,10 @@ run = "hk fix --all --slow"
 run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --allow-dirty --allow-staged"
 
 [tasks.build]
-run = "mbx build build"
+run = "mbx build"
 
 [tasks.test]
-run = "mbx build test"
+run = "mbx test"
 
 [tasks."docs:dev"]
 depends = ["build"]
