@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0](https://github.com/jdx/aube/compare/v2.1.0...v2.2.0) - 2026-08-25
+
+### Added
+
+- *(embed)* expose node-gyp bootstrap ([#1365](https://github.com/jdx/aube/pull/1365))
+
+### Fixed
+
+- *(install)* bundle curated package extensions ([#1369](https://github.com/jdx/aube/pull/1369))
+
+### Other
+
+- refresh benchmarks for v2.1.0 ([#1372](https://github.com/jdx/aube/pull/1372))
+
 ## [2.1.0](https://github.com/jdx/aube/compare/v2.0.1...v2.1.0) - 2026-08-23
 
 ### Added
