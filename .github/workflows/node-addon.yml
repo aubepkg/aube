@@ -60,26 +60,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15, target: aarch64-apple-darwin, os: darwin, cpu: arm64, package: darwin-arm64, binary: libaube_node.dylib, smoke: true }
-          - { runner: macos-15-intel, target: x86_64-apple-darwin, os: darwin, cpu: x64, package: darwin-x64, binary: libaube_node.dylib, smoke: true }
-          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, os: linux, cpu: arm64, package: linux-arm64, binary: libaube_node.so, smoke: true }
-          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, os: linux, cpu: x64, package: linux-x64, binary: libaube_node.so, smoke: true }
-          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, os: linux, cpu: arm64, libc: musl, package: linux-arm64-musl, binary: libaube_node.so }
-          - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl, os: linux, cpu: x64, libc: musl, package: linux-x64-musl, binary: libaube_node.so }
-          - { runner: windows-latest, target: aarch64-pc-windows-msvc, os: win32, cpu: arm64, package: win32-arm64, binary: aube_node.dll }
-          - { runner: windows-latest, target: x86_64-pc-windows-msvc, os: win32, cpu: x64, package: win32-x64, binary: aube_node.dll, smoke: true }
-    runs-on: ${{ matrix.runner }}
+          - { runner: macos-15, namespace_runner: namespace-profile-endev-macos-arm64, target: aarch64-apple-darwin, os: darwin, cpu: arm64, package: darwin-arm64, binary: libaube_node.dylib, smoke: true }
+          - { runner: macos-15-intel, namespace_runner: namespace-profile-endev-macos-arm64, target: x86_64-apple-darwin, os: darwin, cpu: x64, package: darwin-x64, binary: libaube_node.dylib, smoke: true }
+          - { runner: ubuntu-24.04-arm, namespace_runner: namespace-profile-endev-linux-arm64-large, target: aarch64-unknown-linux-gnu, os: linux, cpu: arm64, package: linux-arm64, binary: libaube_node.so, smoke: true }
+          - { runner: ubuntu-latest, namespace_runner: namespace-profile-endev-linux-amd64, target: x86_64-unknown-linux-gnu, os: linux, cpu: x64, package: linux-x64, binary: libaube_node.so, smoke: true }
+          - { runner: ubuntu-24.04-arm, namespace_runner: namespace-profile-endev-linux-arm64-large, target: aarch64-unknown-linux-musl, os: linux, cpu: arm64, libc: musl, package: linux-arm64-musl, binary: libaube_node.so }
+          - { runner: ubuntu-latest, namespace_runner: namespace-profile-endev-linux-amd64, target: x86_64-unknown-linux-musl, os: linux, cpu: x64, libc: musl, package: linux-x64-musl, binary: libaube_node.so }
+          - { runner: windows-latest, namespace_runner: windows-latest, target: aarch64-pc-windows-msvc, os: win32, cpu: arm64, package: win32-arm64, binary: aube_node.dll }
+          - { runner: windows-latest, namespace_runner: windows-latest, target: x86_64-pc-windows-msvc, os: win32, cpu: x64, package: win32-x64, binary: aube_node.dll, smoke: true }
+    runs-on: ${{ (github.event_name == 'release' || inputs.tag != '' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && matrix.runner || matrix.namespace_runner }}
     timeout-minutes: 60
-    permissions: { contents: read }
+    permissions: { contents: read, id-token: write }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, ref: "${{ inputs.tag || github.ref }}" }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: "24", package-manager-cache: false }
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 # zizmor: ignore[cache-poisoning] PRs are read-only
+        if: github.event_name == 'release' || inputs.tag != ''
         with:
           shared-key: node-addon-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/mbx
+        if: github.event_name != 'release' && inputs.tag == ''
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
@@ -87,6 +90,15 @@ jobs:
         if: matrix.libc == 'musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build addon
+        if: github.event_name != 'release' && inputs.tag == ''
+        shell: bash
+        run: |
+          if [[ '${{ matrix.libc }}' == musl ]]; then
+            export RUSTFLAGS='-C target-feature=-crt-static'
+          fi
+          mbx build build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
+      - name: Build release addon
+        if: github.event_name == 'release' || inputs.tag != ''
         shell: bash
         run: |
           if [[ '${{ matrix.libc }}' == musl ]]; then

@@ -36,19 +36,18 @@ jobs:
             runner: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
           - os: macos-latest
             runner: namespace-profile-endev-macos-arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && matrix.os || matrix.runner }}
     timeout-minutes: 20
     permissions:
       contents: read
+      id-token: write
     env:
       RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
-        with:
-          cache: rust
+      - uses: ./.github/actions/mbx
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -65,19 +64,18 @@ jobs:
   # lint failures don't block the BATS jobs from starting against a
   # known-good binary.
   test-linux:
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     env:
       RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
-        with:
-          cache: rust
+      - uses: ./.github/actions/mbx
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -87,7 +85,7 @@ jobs:
       - run: cargo-machete
       - run: mise x cargo:cargo-audit@0.22.1 -- cargo audit --deny warnings
       - run: mise x cargo:cargo-deny@0.19.6 -- cargo deny check bans licenses sources
-      - run: cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
+      - run: mbx build msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
       - name: assert render produces no diff
         run: |
@@ -106,10 +104,11 @@ jobs:
     # PR-time gate only. `final` treats the resulting skipped job as a pass on
     # push/tag/dispatch runs.
     if: github.event_name == 'pull_request'
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=aube-rust-linux
+    runs-on: ${{ github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 20
     permissions:
       contents: read
+      id-token: write
     env:
       CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
       RUSTFLAGS: "-D warnings"
@@ -118,9 +117,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
-        with:
-          cache: rust
+      - uses: ./.github/actions/mbx
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: false
@@ -154,7 +151,7 @@ jobs:
             run: |
               set +e
               (
-                cargo build --locked --profile ffi -p aube-ffi &&
+                mbx build build --locked --profile ffi -p aube-ffi &&
                 grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt &&
                 nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
                   | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt &&
@@ -299,19 +296,14 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 # zizmor: ignore[cache-poisoning] save-if gates writes to main; PRs read-only
-        with:
-          shared-key: windows
-          # Only main may write the shared cache; PRs restore from it but
-          # cannot update it. Prevents a malicious PR from poisoning the
-          # cache that subsequent main runs / other PRs would restore.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo build --workspace
-      - run: cargo test --workspace
+      - uses: ./.github/actions/mbx
+      - run: mbx build build --workspace
+      - run: mbx build test --workspace
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is
@@ -326,7 +318,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 2
     permissions: {}
     # Run on success or upstream failure but skip when the workflow is cancelled
