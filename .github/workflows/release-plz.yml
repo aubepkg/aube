@@ -128,6 +128,9 @@ jobs:
       AUBE_GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
   # Build + codesign the C ABI libraries and attach them (plus aube.h)
   # to the draft release. Must complete before `publish-release`:
