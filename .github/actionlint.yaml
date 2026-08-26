@@ -19,7 +19,7 @@ self-hosted-runner:
     - namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
 
 paths:
-  .github/workflows/ci.yml:
+  .github/workflows/ci-impl.yml:
     # actionlint 1.7.12 predates GitHub's native parallel step groups.
     # Remove this once actionlint recognizes the `parallel` keyword.
     ignore:
