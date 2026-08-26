@@ -98,7 +98,7 @@ jobs:
           - { runner: ubuntu-latest, namespace_runner: namespace-profile-endev-linux-amd64, target: x86_64-unknown-linux-musl, os: linux, cpu: x64, libc: musl, package: linux-x64-musl, binary: libaube_ffi.so, ext: so }
           - { runner: windows-latest, namespace_runner: windows-latest, target: aarch64-pc-windows-msvc, os: win32, cpu: arm64, package: win32-arm64, binary: aube_ffi.dll, ext: dll }
           - { runner: windows-latest, namespace_runner: windows-latest, target: x86_64-pc-windows-msvc, os: win32, cpu: x64, package: win32-x64, binary: aube_ffi.dll, ext: dll }
-    runs-on: ${{ (github.event_name == 'release' || inputs.tag != '' || inputs.draft_phase || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]'))) && matrix.runner || matrix.namespace_runner }}
+    runs-on: ${{ (github.event_name == 'release' || inputs.tag != '' || inputs.draft_phase || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx'))) && matrix.runner || matrix.namespace_runner }}
     timeout-minutes: 60
     permissions: { contents: read, id-token: write }
     env:

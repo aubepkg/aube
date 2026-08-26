@@ -36,7 +36,7 @@ jobs:
             runner: namespace-profile-endev-linux-amd64
           - os: macos-latest
             runner: namespace-profile-endev-macos-arm64
-    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && matrix.os || matrix.runner }}
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx') && matrix.os || matrix.runner }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -64,7 +64,7 @@ jobs:
   # lint failures don't block the BATS jobs from starting against a
   # known-good binary.
   test-linux:
-    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx') && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -104,7 +104,7 @@ jobs:
     # PR-time gate only. `final` treats the resulting skipped job as a pass on
     # push/tag/dispatch runs.
     if: github.event_name == 'pull_request'
-    runs-on: ${{ (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx') && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -324,7 +324,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
-    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx') && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 2
     permissions: {}
     # Run on success or upstream failure but skip when the workflow is cancelled
