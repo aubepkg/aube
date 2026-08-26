@@ -196,7 +196,7 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: |
+        run: | # zizmor: ignore[use-trusted-publishing] publishes each tarball with npm provenance via OIDC
           version=${RELEASE_TAG#v}; tag=latest; [[ "$version" == *-* ]] && tag=next
           publish_package() {
             local package=$1 name
