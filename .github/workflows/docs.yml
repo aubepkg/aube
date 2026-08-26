@@ -12,6 +12,7 @@ on:
       - "mise.lock"
       - "benchmarks/results.json"
       - ".github/workflows/docs.yml"
+      - ".github/workflows/docs-impl.yml"
   workflow_dispatch:
 
 permissions: {}

@@ -17,6 +17,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/ffi.yml"
+      - ".github/workflows/ffi-impl.yml"
   push:
     branches: [main]
     paths:
@@ -34,6 +35,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/ffi.yml"
+      - ".github/workflows/ffi-impl.yml"
   release:
     types: [published]
   workflow_call:

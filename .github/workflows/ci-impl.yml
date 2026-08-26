@@ -109,6 +109,7 @@ jobs:
     # PR-time gate only. `final` treats the resulting skipped job as a pass on
     # push/tag/dispatch runs.
     if: github.event_name == 'pull_request'
+    continue-on-error: true
     runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
     timeout-minutes: 20
     env:

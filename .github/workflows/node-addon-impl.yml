@@ -13,6 +13,11 @@ on:
       mbx-backend:
         required: true
         type: string
+    secrets:
+      CERTIFICATES_P12:
+        required: false
+      CERTIFICATES_P12_PASS:
+        required: false
 
 concurrency:
   group: node-addon-${{ inputs.tag || github.ref }}
