@@ -10,16 +10,13 @@ on:
         required: true
         type: string
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
   build:
     runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    timeout-minutes: 30
     steps:
       - name: Assert OIDC is unavailable to untrusted docs builds
         if: ${{ !inputs.trusted }}
@@ -68,11 +65,15 @@ jobs:
 
   deploy:
     if: inputs.trusted
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     needs: build
     runs-on: namespace-profile-endev-linux-amd64
+    timeout-minutes: 10
     name: Deploy
     steps:
       - name: Deploy to GitHub Pages
