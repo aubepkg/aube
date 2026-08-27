@@ -115,7 +115,9 @@ jobs:
       results_present: ${{ steps.report.outputs.results_present }}
       checks_passed: ${{ steps.report.outputs.checks_passed }}
     runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
-    timeout-minutes: 20
+    # cargo-semver-checks builds both revisions of every published crate. A
+    # cold cache can exceed 20 minutes, especially alongside the C ABI build.
+    timeout-minutes: 30
     env:
       CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
       RUSTFLAGS: "-D warnings"
