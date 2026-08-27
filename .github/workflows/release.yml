@@ -298,24 +298,148 @@ jobs:
         with:
           subject-path: ${{ steps.archive.outputs.path }}
 
+  # Native aarch64 GNU release. Build inside a cached Ubuntu 20.04 image so
+  # the linked artifact has a natural glibc 2.31 baseline while retaining
+  # native ARM64 execution for both Rust PGO and BOLT instrumentation training.
+  upload-assets-pgo-arm64-linux:
+    needs: generate-primer
+    runs-on: namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      TARGET: aarch64-unknown-linux-gnu
+      LLVM_VERSION: "20"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref != '' && fromJSON(inputs.dry_run || 'false') && inputs.ref || format('refs/tags/{0}', inputs.tag) }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: metadata-primer
+          path: crates/aube-resolver/data
+      # Persist Cargo's registry and target across the container boundary;
+      # BuildKit only caches the image environment, not docker-run state.
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/target
+      # BuildKit reuses unchanged dependency/toolchain layers from the GHA
+      # cache; changing the Containerfile or mise.toml invalidates only the
+      # layers after that change.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build cached ARM64 PGO environment
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .github/containers/release-arm64
+          file: .github/containers/release-arm64/Containerfile
+          platforms: linux/arm64
+          load: true
+          tags: aube-release-arm64:local
+          build-args: |
+            LLVM_VERSION=${{ env.LLVM_VERSION }}
+          cache-from: type=gha,scope=aube-release-arm64
+          # Only trusted release refs may write the shared cache. Dry runs
+          # can restore it but must not let an arbitrary ref poison it.
+          cache-to: ${{ !fromJSON(inputs.dry_run || 'false') && inputs.ref == '' && github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=aube-release-arm64' || '' }}
+
+      - name: PGO build (Focal + LLD + BOLT)
+        shell: bash
+        env:
+          AUBE_PGO_NO_LOCK: "1"
+          AUBE_PGO_BUILD_TOOL: cargo
+          AUBE_PGO_BOLT: "1"
+          AUBE_PGO_USE_LLD: "1"
+          AUBE_PGO_LLVM_VERSION: ${{ env.LLVM_VERSION }}
+        run: |
+          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$HOME/.cargo/registry:/tmp/aube-home/.cargo/registry" \
+            --volume "$HOME/.cargo/git:/tmp/aube-home/.cargo/git" \
+            --workdir /workspace \
+            --env AUBE_PGO_NO_LOCK \
+            --env AUBE_PGO_BUILD_TOOL \
+            --env AUBE_PGO_BOLT \
+            --env AUBE_PGO_USE_LLD \
+            --env AUBE_PGO_LLVM_VERSION \
+            --env HOME=/tmp/aube-home \
+            --env CARGO_HOME=/tmp/aube-home/.cargo \
+            --env MISE_CACHE_DIR=/tmp/mise-cache \
+            aube-release-arm64:local \
+            bash -euo pipefail -c '
+              ldd --version | head -1
+              mise run --skip-tools build:pgo
+            '
+
+      - name: Validate glibc baseline
+        shell: bash
+        run: |
+          bin=target/release-pgo/aube
+          max_glibc=$(
+            readelf --version-info "$bin" \
+              | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' \
+              | sort -Vu \
+              | tail -1
+          )
+          echo "Maximum required glibc symbol version: ${max_glibc:-none}"
+          if [ -n "$max_glibc" ] && \
+             [ "$(printf '%s\n' GLIBC_2.31 "$max_glibc" | sort -V | tail -1)" != "GLIBC_2.31" ]; then
+            echo "::error::ARM64 release requires $max_glibc, newer than GLIBC_2.31"
+            exit 1
+          fi
+          "$bin" --version
+
+      - name: Archive PGO binaries
+        id: archive
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          archive="aube-${TAG}-${TARGET}.tar.gz"
+          BIN_DIR="target/release-pgo"
+          ln -sf aube "$BIN_DIR/aubr"
+          ln -sf aube "$BIN_DIR/aubx"
+          tar -czf "$archive" -C "$BIN_DIR" aube aubr aubx
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload archive to release
+        if: ${{ !fromJSON(inputs.dry_run || 'false') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+        run: gh release upload "$TAG" "$ARCHIVE" --clobber
+
+      - name: Upload archive as workflow artifact (dry run)
+        if: ${{ fromJSON(inputs.dry_run || 'false') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: aube-${{ inputs.tag }}-aarch64-unknown-linux-gnu
+          path: ${{ steps.archive.outputs.path }}
+
+      - name: Attest release archive
+        if: ${{ !fromJSON(inputs.dry_run || 'false') }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.archive.outputs.path }}
+
   # PGO-optimized targets: x86_64 Linux GNU/musl (cross-built on amd64)
-  # plus native aarch64 Linux GNU and native macOS arm64. Each builds
-  # via benchmarks/pgo.bash — instrument under release-pgo, train against
-  # the committed offline registry, rebuild with -Cprofile-use. The
-  # x86_64 Linux targets use build-tool=cross so the resulting binary
-  # preserves the current glibc baseline; the cross-built instrumented
-  # binary runs on the host for training (cross's older glibc is
-  # forward-compatible with the runner's). Cross.toml passes RUSTFLAGS
-  # through to the container so phase 1 / 3b RUSTFLAGS reach cargo
-  # inside cross. The aarch64 Linux row runs natively on
-  # `namespace-profile-endev-linux-arm64-large` (32 GB) so the same
-  # fat-LTO + profile-generate headroom argument from
-  # acdf415 applies, and we don't need QEMU to train. macOS arm64 is
-  # on the `-large` (12×28) variant because the previous instrumented
-  # binary segfaulted during training on the 6×14 base profile — fork
-  # pressure from `aube install` may have been racing under resource
-  # contention. Revisit moving back to base if `-large` proves stable
-  # across a few release cycles.
+  # plus native macOS arm64. The aarch64 GNU release is isolated above
+  # so its entire build runs inside Focal. Each remaining target builds via
+  # benchmarks/pgo.bash — instrument under release-pgo, train against the
+  # committed offline registry, and rebuild with -Cprofile-use. The x86_64
+  # Linux targets use build-tool=cross so the resulting binaries preserve
+  # their current libc baselines. macOS arm64 remains native on its existing
+  # hosted runner.
   upload-assets-pgo:
     needs: generate-primer
     runs-on: ${{ matrix.runner }}
@@ -354,11 +478,6 @@ jobs:
             runner: namespace-profile-endev-linux-amd64-large
             build-tool: cross
             bolt: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            runner: namespace-profile-endev-linux-arm64-large
-            build-tool: cargo
-            bolt: true
           - target: aarch64-apple-darwin
             os: macos-latest
             # Trying GitHub's standard Apple Silicon runner — the
@@ -468,6 +587,7 @@ jobs:
           AUBE_PGO_BUILD_TOOL: ${{ matrix.build-tool }}
           AUBE_PGO_TARGET: ${{ matrix.target }}
           AUBE_PGO_BOLT: ${{ matrix.bolt && '1' || '' }}
+          AUBE_PGO_LLVM_VERSION: ${{ matrix.bolt && '18' || '' }}
         run: bash benchmarks/pgo.bash
       - name: Codesign macOS binaries
         if: startsWith(matrix.os, 'macos')

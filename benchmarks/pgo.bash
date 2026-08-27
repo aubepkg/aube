@@ -44,6 +44,14 @@
 #                               the resulting binary keeps cross's older
 #                               glibc baseline. Cross.toml passes RUSTFLAGS
 #                               through to the container.
+#   AUBE_PGO_USE_LLD=1          link both PGO build phases with clang + LLD.
+#                               Uses the LLVM installation selected below.
+#   AUBE_PGO_LLVM_VERSION=<n>   require /usr/lib/llvm-<n>/bin. Release CI
+#                               pins this for reproducibility; local builds
+#                               may omit it to auto-discover the newest
+#                               complete toolchain, then PATH as a fallback.
+#   RUSTFLAGS=<flags>           caller-provided flags are preserved and
+#                               prepended to the phase-specific PGO flags.
 #   AUBE_PGO_SKIP_FINAL_BUILD=1 stop after merging .profraw. Use when the
 #                               final optimized build is delegated to a
 #                               separate step (e.g. taiki-e action) that
@@ -81,6 +89,79 @@ PGO_REGISTRY_URL="http://127.0.0.1:$PGO_REGISTRY_PORT"
 PGO_NODE_BIN="$(node -p 'process.execPath')"
 PGO_NODE_DIR="$(dirname "$PGO_NODE_BIN")"
 PGO_TRAIN_PATH="$PGO_NODE_DIR:$PATH"
+BASE_RUSTFLAGS="${RUSTFLAGS:-}"
+
+find_llvm_prefix() {
+	local required_tools=""
+	local prefix tool complete tool_path
+
+	if [ -n "${AUBE_PGO_USE_LLD:-}" ]; then
+		required_tools="clang ld.lld"
+	fi
+	if [ -n "$PGO_BOLT" ]; then
+		required_tools="${required_tools:+$required_tools }llvm-bolt merge-fdata"
+	fi
+
+	prefix="${AUBE_PGO_LLVM_VERSION:+/usr/lib/llvm-$AUBE_PGO_LLVM_VERSION}"
+	if [ -n "$prefix" ]; then
+		for tool in $required_tools; do
+			if [ ! -x "$prefix/bin/$tool" ]; then
+				echo "ERROR: LLVM prefix $prefix is missing $tool" >&2
+				exit 1
+			fi
+		done
+		printf '%s\n' "$prefix"
+		return 0
+	fi
+
+	while IFS= read -r prefix; do
+		complete=1
+		for tool in $required_tools; do
+			if [ ! -x "$prefix/bin/$tool" ]; then
+				complete=0
+				break
+			fi
+		done
+		if [ "$complete" -eq 1 ]; then
+			printf '%s\n' "$prefix"
+			return 0
+		fi
+	done < <(find /usr/lib -maxdepth 1 -type d -name 'llvm-[0-9]*' 2>/dev/null | sort -V -r)
+
+	for tool in $required_tools; do
+		tool_path=$(command -v "$tool" || true)
+		if [ -z "$tool_path" ] || [ ! -x "$tool_path" ]; then
+			echo "ERROR: no installed LLVM toolchain found" >&2
+			exit 1
+		fi
+	done
+	printf '%s\n' PATH
+}
+
+LLVM_PREFIX=""
+LLVM_BINDIR=""
+if [ -n "${AUBE_PGO_USE_LLD:-}" ] || [ -n "$PGO_BOLT" ]; then
+	LLVM_PREFIX="$(find_llvm_prefix)"
+	if [ "$LLVM_PREFIX" = PATH ]; then
+		echo ">>> LLVM toolchain: PATH"
+	else
+		LLVM_BINDIR="$LLVM_PREFIX/bin"
+		export PATH="$LLVM_BINDIR:$PATH"
+		echo ">>> LLVM toolchain: $LLVM_PREFIX"
+	fi
+
+	if [ -n "${AUBE_PGO_USE_LLD:-}" ]; then
+		if [ -n "$LLVM_BINDIR" ]; then
+			PGO_CLANG="$LLVM_BINDIR/clang"
+			PGO_LLD="$LLVM_BINDIR/ld.lld"
+		else
+			PGO_CLANG="$(command -v clang)"
+			PGO_LLD="$(command -v ld.lld)"
+		fi
+		BASE_RUSTFLAGS="${BASE_RUSTFLAGS:+$BASE_RUSTFLAGS }-C linker=$PGO_CLANG -C link-arg=-fuse-ld=lld"
+		echo ">>> PGO linker: $PGO_CLANG + $PGO_LLD"
+	fi
+fi
 
 case "$PGO_WORKFLOW_RUNS" in
 '' | *[!0-9]*)
@@ -97,41 +178,15 @@ case "$PGO_REGISTRY_PORT" in
 esac
 
 if [ -n "$PGO_BOLT" ]; then
-	# Prefer `/usr/lib/llvm-NN/bin/llvm-bolt` over the unversioned
-	# `/usr/bin/llvm-bolt`. BOLT derives its runtime-lib search dir
-	# from `dirname(dirname(argv[0]))/lib`, so the versioned path
-	# resolves to `/usr/lib/llvm-NN/lib/libbolt_rt_instr.a` (where
-	# Debian/Ubuntu actually ship the static archive). The
-	# unversioned path looks in `/usr/lib/` and fails.
-	LLVM_BOLT=""
-	for candidate in /usr/lib/llvm-18/bin/llvm-bolt /usr/lib/llvm-19/bin/llvm-bolt /usr/lib/llvm-20/bin/llvm-bolt; do
-		if [ -x "$candidate" ]; then
-			LLVM_BOLT="$candidate"
-			break
-		fi
-	done
-	if [ -z "$LLVM_BOLT" ]; then
-		LLVM_BOLT=$(command -v llvm-bolt || true)
-	fi
-	if [ -z "$LLVM_BOLT" ]; then
-		echo "ERROR: AUBE_PGO_BOLT=1 but llvm-bolt is not installed" >&2
-		echo "  Install via apt.llvm.org: bolt-18 (or newer)" >&2
-		exit 1
-	fi
-	# Resolve `merge-fdata` next to `llvm-bolt` so a versioned
-	# bolt-18 install works without its directory being on PATH
-	# (e.g. local runs without the workflow's GITHUB_PATH append).
-	# Fall back to PATH only if no sibling exists.
-	bolt_bindir=$(dirname "$LLVM_BOLT")
-	if [ -x "$bolt_bindir/merge-fdata" ]; then
-		MERGE_FDATA="$bolt_bindir/merge-fdata"
+	# Keep BOLT and merge-fdata on the same versioned LLVM installation
+	# selected above. Using the versioned prefix also preserves BOLT's
+	# runtime lookup for /usr/lib/llvm-NN/lib/libbolt_rt_instr.a.
+	if [ -n "$LLVM_BINDIR" ]; then
+		LLVM_BOLT="$LLVM_BINDIR/llvm-bolt"
+		MERGE_FDATA="$LLVM_BINDIR/merge-fdata"
 	else
-		MERGE_FDATA=$(command -v merge-fdata || true)
-	fi
-	if [ -z "$MERGE_FDATA" ]; then
-		echo "ERROR: AUBE_PGO_BOLT=1 but merge-fdata is not installed" >&2
-		echo "  Expected next to llvm-bolt at $bolt_bindir/merge-fdata" >&2
-		exit 1
+		LLVM_BOLT="$(command -v llvm-bolt)"
+		MERGE_FDATA="$(command -v merge-fdata)"
 	fi
 	echo ">>> BOLT toolchain: $LLVM_BOLT ($MERGE_FDATA)"
 fi
@@ -220,7 +275,7 @@ fi
 # ---------- Phase 1: instrumented build ----------
 echo ">>> [1/3] Building instrumented binary ($PGO_BUILD_TOOL, profile=$PGO_PROFILE${PGO_TARGET:+, target=$PGO_TARGET})"
 # shellcheck disable=SC2086 # intentional word-splitting on $target_arg
-RUSTFLAGS="-Cprofile-generate=$PGO_PROFRAW_DIR" \
+RUSTFLAGS="${BASE_RUSTFLAGS:+$BASE_RUSTFLAGS }-Cprofile-generate=$PGO_PROFRAW_DIR" \
 	"$PGO_BUILD_TOOL" build --profile="$PGO_PROFILE" $target_arg -p aube --bin aube
 
 INSTRUMENTED_BIN="$REPO_ROOT/target/${target_dir_part}${PGO_PROFILE}/aube"
@@ -379,7 +434,7 @@ echo ">>> Rebuilding with -Cprofile-use${PGO_BOLT:+ + --emit-relocs}"
 # branch targets when it moves blocks around; without them it falls
 # back to a much less effective mode that only reorders within
 # functions.
-phase3b_rustflags="-Cprofile-use=$PGO_MERGED -Cllvm-args=-pgo-warn-missing-function=false"
+phase3b_rustflags="${BASE_RUSTFLAGS:+$BASE_RUSTFLAGS }-Cprofile-use=$PGO_MERGED -Cllvm-args=-pgo-warn-missing-function=false"
 if [ -n "$PGO_BOLT" ]; then
 	phase3b_rustflags="$phase3b_rustflags -C link-arg=-Wl,--emit-relocs -C link-arg=-Wl,-q"
 fi
