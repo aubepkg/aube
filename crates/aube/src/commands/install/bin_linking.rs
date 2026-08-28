@@ -599,8 +599,7 @@ pub(crate) fn remove_managed_bin_links(
             for (path, expected) in expected_files {
                 match read_managed_bin_entry(path)? {
                     Some(current) if current == *expected => matching.push(path),
-                    Some(_) => replaced = true,
-                    None => {}
+                    Some(_) | None => replaced = true,
                 }
             }
             if replaced {
@@ -961,6 +960,41 @@ mod tests {
             std::fs::read_to_string(launcher).unwrap(),
             "lifecycle replacement\n"
         );
+        assert_eq!(
+            std::fs::read_to_string(sibling).unwrap(),
+            "generated sibling\n"
+        );
+    }
+
+    #[test]
+    fn managed_bin_cleanup_preserves_siblings_of_a_deleted_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let launcher = bin_dir.join("tool");
+        let sibling = bin_dir.join("tool.cmd");
+        std::fs::write(&launcher, "generated launcher\n").unwrap();
+        std::fs::write(&sibling, "generated sibling\n").unwrap();
+
+        let mut expected_files = BTreeMap::new();
+        expected_files.insert(
+            launcher.clone(),
+            read_managed_bin_entry(&launcher).unwrap().unwrap(),
+        );
+        expected_files.insert(
+            sibling.clone(),
+            read_managed_bin_entry(&sibling).unwrap().unwrap(),
+        );
+        let mut commands = BTreeMap::new();
+        commands.insert("tool".to_string(), expected_files);
+        let mut managed = ManagedBinLinks::capturing();
+        managed.entries.insert(bin_dir.clone(), commands);
+
+        std::fs::remove_file(&launcher).unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+
+        assert!(preserved[&bin_dir].contains("tool"));
+        assert!(!launcher.exists());
         assert_eq!(
             std::fs::read_to_string(sibling).unwrap(),
             "generated sibling\n"
