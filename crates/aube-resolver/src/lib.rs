@@ -35,7 +35,8 @@ pub use primer::{
 pub use semver_util::{PickResult, pick_version_for_add};
 pub use trust::{
     MissingTimeDetails as MissingTrustTimeDetails, PriorTrustEvidence, TrustCheckError,
-    TrustDowngradeDetails, check_no_downgrade, evidence_for, strongest_prior_evidence,
+    TrustDowngradeDetails, check_no_downgrade, check_no_downgrade_history, evidence_for,
+    strongest_prior_evidence,
 };
 pub use trust::{PackageVersionPolicy, TrustEvidence, TrustExcludeParseError, TrustExcludeRules};
 pub use types::{

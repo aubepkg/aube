@@ -214,7 +214,9 @@ pub struct Packument {
 /// trust-downgrade policies for an exact version. Deserializing this shape
 /// skips dependency maps and distribution metadata for every historical
 /// release, avoiding the large retained heap of a full [`Packument`].
-#[derive(Debug, Clone, Deserialize)]
+/// Serializable so the lockfile trust-policy validator can persist it in
+/// its compact on-disk cache (`trust-history-v1/`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PackumentTrustHistory {
     #[serde(default, deserialize_with = "non_string_tolerant_map")]
     pub time: BTreeMap<String, String>,
@@ -359,20 +361,25 @@ struct TolerantStringMap(
     #[serde(deserialize_with = "non_string_tolerant_map")] BTreeMap<String, String>,
 );
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionTrustMetadata {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approver: Option<serde_json::Value>,
-    #[serde(default, rename = "_npmUser", deserialize_with = "npm_user_tolerant")]
+    #[serde(
+        default,
+        rename = "_npmUser",
+        deserialize_with = "npm_user_tolerant",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub npm_user: Option<NpmUser>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dist: Option<VersionTrustDist>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VersionTrustDist {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attestations: Option<Attestations>,
 }
 

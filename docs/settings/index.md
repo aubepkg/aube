@@ -2752,7 +2752,8 @@ its own name to; this setting takes a complete path instead, so
 
 The global virtual store (`<cacheDir>/virtual-store/`) and cached
 packument metadata (`<cacheDir>/packuments-v1/`,
-`<cacheDir>/packuments-full-v1/`) live under this directory. The
+`<cacheDir>/packuments-full-v1/`, and the `trustPolicy` trust histories
+in `<cacheDir>/trust-history-v1/`) live under this directory. The
 content-addressable store is *not* here — it is `storeDir`, which
 defaults under `$XDG_DATA_HOME` instead. A few smaller caches (the OSV
 advisory mirror, the bootstrapped `node-gyp`, git clones) still follow
