@@ -193,6 +193,26 @@ struct FreshnessState {
 /// mtime granularity below 2 seconds anyway, so callers running on
 /// it should not rely on the fast path. The size comparison still
 /// catches any change that grows or shrinks the file.
+///
+/// # Accepted limitation
+///
+/// A rewrite that keeps the byte length identical *and* restores the
+/// recorded mtime reports fresh without re-hashing. This is a
+/// deliberate trade, accepted for every consumer of this type
+/// (`lockfile_meta`, `package_json_meta`, `member_lockfile_meta`):
+/// closing it would mean hashing the file on every check, which is the
+/// cost the fast path exists to remove. Producing that collision takes
+/// deliberate mtime restoration — ordinary editors, formatters, VCS
+/// checkouts and package managers all move mtime forward, and a tool
+/// that restores it defeats make, ninja and git's stat cache the same
+/// way. Everything short of that collision is caught: content that
+/// changes length fails the size compare, and content rewritten at any
+/// other timestamp fails the mtime compare.
+///
+/// Callers must keep the failure direction one-way — capture the
+/// snapshot *before* hashing, never after, so a write racing the
+/// capture yields "re-hash unnecessarily" rather than "declare stale
+/// content fresh".
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileMeta {
     pub size: u64,
