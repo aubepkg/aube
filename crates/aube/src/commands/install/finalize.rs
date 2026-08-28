@@ -214,7 +214,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // shim after builds (including side-effects-cache restores) so launch
         // metadata reflects the final package contents.
         let phase_start = std::time::Instant::now();
-        remove_managed_bin_links(managed_bin_links)?;
+        let preserved = remove_managed_bin_links(managed_bin_links)?;
         let _ = link_all_bins(LinkAllBinsInput {
             project_dir: cwd,
             settings_ctx,
@@ -229,6 +229,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             node_linker,
             has_workspace,
             link_dependency_bins: true,
+            preserved: Some(&preserved),
         })?;
         tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("relink_bins", phase_start.elapsed());

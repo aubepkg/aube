@@ -387,6 +387,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             node_linker,
             has_workspace,
             link_dependency_bins: !ignore_scripts && build_policy.has_any_allow_rule(),
+            preserved: None,
         })?;
         tracing::debug!("phase:link_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("link_bins", phase_start.elapsed());

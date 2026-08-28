@@ -181,15 +181,18 @@ pub async fn run(
             };
             let mut pkg_json_cache = super::install::PkgJsonCache::new();
             let mut managed_bin_links = super::install::ManagedBinLinks::new();
-            super::install::link_dep_bins(
-                &aube_dir,
-                &graph,
-                super::resolve_virtual_store_dir_max_length(&settings_ctx),
-                hoisted_placements.as_ref(),
+            super::install::link_dep_bins(super::install::LinkDepBinsInput {
+                aube_dir: &aube_dir,
+                graph: &graph,
+                virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
+                    &settings_ctx,
+                ),
+                placements: hoisted_placements.as_ref(),
                 shim_opts,
-                &mut pkg_json_cache,
-                &mut managed_bin_links,
-            )?;
+                cache: &mut pkg_json_cache,
+                managed: &mut managed_bin_links,
+                preserved: None,
+            })?;
             super::install::run_dep_lifecycle_scripts(
                 &cwd,
                 &modules_dir_name,
@@ -217,6 +220,21 @@ pub async fn run(
                 selected.as_ref(),
             )
             .await?;
+            let preserved = super::install::remove_managed_bin_links(&managed_bin_links)?;
+            let mut refreshed_pkg_json_cache = super::install::PkgJsonCache::new();
+            let mut refreshed_bin_links = super::install::ManagedBinLinks::new();
+            super::install::link_dep_bins(super::install::LinkDepBinsInput {
+                aube_dir: &aube_dir,
+                graph: &graph,
+                virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
+                    &settings_ctx,
+                ),
+                placements: hoisted_placements.as_ref(),
+                shim_opts,
+                cache: &mut refreshed_pkg_json_cache,
+                managed: &mut refreshed_bin_links,
+                preserved: Some(&preserved),
+            })?;
         }
     }
 

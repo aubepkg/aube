@@ -1,6 +1,6 @@
 use aube_lockfile::dep_path_filename::dep_path_to_filename;
 use miette::{Context, IntoDiagnostic, miette};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) type PkgJsonCache = BTreeMap<String, Option<serde_json::Value>>;
@@ -10,10 +10,30 @@ pub(crate) type PkgJsonCache = BTreeMap<String, Option<serde_json::Value>>;
 /// by many importers gets read and parsed once, not once per consumer.
 pub(crate) type WsPkgJsonCache = BTreeMap<PathBuf, Option<serde_json::Value>>;
 
-/// Bin entries created during the pre-lifecycle linking pass, keyed by their
-/// `.bin` directory and command name. The target lets the refresh distinguish
-/// an unchanged Aube shim from a lifecycle-produced replacement.
-pub(crate) type ManagedBinLinks = BTreeMap<PathBuf, BTreeMap<String, PathBuf>>;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ManagedBinEntry {
+    File(Vec<u8>),
+    Symlink(PathBuf),
+    Other,
+}
+
+/// Exact shim files created during the pre-lifecycle linking pass, keyed by
+/// their `.bin` directory and command name. Snapshots distinguish unchanged
+/// Aube output from lifecycle-produced replacements on every platform.
+pub(crate) type ManagedBinLinks =
+    BTreeMap<PathBuf, BTreeMap<String, BTreeMap<PathBuf, ManagedBinEntry>>>;
+pub(crate) type PreservedBinLinks = BTreeMap<PathBuf, BTreeSet<String>>;
+
+pub(crate) struct LinkDepBinsInput<'a> {
+    pub(crate) aube_dir: &'a Path,
+    pub(crate) graph: &'a aube_lockfile::LockfileGraph,
+    pub(crate) virtual_store_dir_max_length: usize,
+    pub(crate) placements: Option<&'a aube_linker::HoistedPlacements>,
+    pub(crate) shim_opts: aube_linker::BinShimOptions<'a>,
+    pub(crate) cache: &'a mut PkgJsonCache,
+    pub(crate) managed: &'a mut ManagedBinLinks,
+    pub(crate) preserved: Option<&'a PreservedBinLinks>,
+}
 
 pub(super) struct LinkAllBinsInput<'a> {
     pub(super) project_dir: &'a Path,
@@ -29,6 +49,7 @@ pub(super) struct LinkAllBinsInput<'a> {
     pub(super) node_linker: aube_linker::NodeLinker,
     pub(super) has_workspace: bool,
     pub(super) link_dependency_bins: bool,
+    pub(super) preserved: Option<&'a PreservedBinLinks>,
 }
 
 /// Link bin entries from packages to node_modules/.bin/
@@ -182,6 +203,7 @@ pub(super) fn link_bins_for_dep(
     placements: Option<&aube_linker::HoistedPlacements>,
     shim_opts: aube_linker::BinShimOptions,
     managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     let pkg_dir = materialized_pkg_dir(
         aube_dir,
@@ -199,9 +221,19 @@ pub(super) fn link_bins_for_dep(
         placements,
     )? && let Some(bin) = pkg_json.get("bin")
     {
-        link_bin_entries(bin_dir, &pkg_dir, Some(name), bin, shim_opts, managed)?;
+        link_bin_entries(
+            bin_dir,
+            &pkg_dir,
+            Some(name),
+            bin,
+            shim_opts,
+            managed,
+            preserved,
+        )?;
     }
-    link_bundled_bins(bin_dir, &pkg_dir, graph, dep_path, shim_opts, managed)?;
+    link_bundled_bins(
+        bin_dir, &pkg_dir, graph, dep_path, shim_opts, managed, preserved,
+    )?;
     Ok(())
 }
 
@@ -218,13 +250,16 @@ pub(super) fn link_bins(
     ws_dirs: Option<&BTreeMap<String, PathBuf>>,
     ws_cache: &mut WsPkgJsonCache,
     managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     let bin_dir = project_dir.join(modules_dir_name).join(".bin");
     std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
 
     for dep in graph.root_deps() {
         if let Some(ws_dir) = ws_dirs.and_then(|m| m.get(&dep.name)) {
-            link_bins_for_workspace_dep(ws_cache, &bin_dir, ws_dir, &dep.name, shim_opts, managed)?;
+            link_bins_for_workspace_dep(
+                ws_cache, &bin_dir, ws_dir, &dep.name, shim_opts, managed, preserved,
+            )?;
         } else {
             link_bins_for_dep(
                 cache,
@@ -237,6 +272,7 @@ pub(super) fn link_bins(
                 placements,
                 shim_opts,
                 managed,
+                preserved,
             )?;
         }
     }
@@ -262,6 +298,7 @@ pub(super) fn link_bins_for_workspace_dep(
     name: &str,
     shim_opts: aube_linker::BinShimOptions,
     managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     let pkg_json = if let Some(cached) = cache.get(ws_dir) {
         cached.clone()
@@ -289,7 +326,15 @@ pub(super) fn link_bins_for_workspace_dep(
     if let Some(pkg_json) = pkg_json
         && let Some(bin) = pkg_json.get("bin")
     {
-        link_bin_entries(bin_dir, ws_dir, Some(name), bin, shim_opts, managed)?;
+        link_bin_entries(
+            bin_dir,
+            ws_dir,
+            Some(name),
+            bin,
+            shim_opts,
+            managed,
+            preserved,
+        )?;
     }
     Ok(())
 }
@@ -309,15 +354,17 @@ pub(super) fn link_bins_for_workspace_dep(
 /// root's `node_modules/` and generally relies on the single top-level
 /// `.bin`; nested transitive bins under hoisted are a known rough edge
 /// and out of scope here.
-pub(crate) fn link_dep_bins(
-    aube_dir: &std::path::Path,
-    graph: &aube_lockfile::LockfileGraph,
-    virtual_store_dir_max_length: usize,
-    placements: Option<&aube_linker::HoistedPlacements>,
-    shim_opts: aube_linker::BinShimOptions,
-    cache: &mut PkgJsonCache,
-    managed: &mut ManagedBinLinks,
-) -> miette::Result<()> {
+pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
+    let LinkDepBinsInput {
+        aube_dir,
+        graph,
+        virtual_store_dir_max_length,
+        placements,
+        shim_opts,
+        cache,
+        managed,
+        preserved,
+    } = input;
     if placements.is_some() {
         // Hoisted — skip. See function doc.
         return Ok(());
@@ -370,6 +417,7 @@ pub(crate) fn link_dep_bins(
                 placements,
                 shim_opts,
                 managed,
+                preserved,
             )?;
         }
     }
@@ -396,6 +444,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
         node_linker,
         has_workspace,
         link_dependency_bins,
+        preserved,
     } = input;
 
     let extend_node_path = aube_settings::resolved::extend_node_path(settings_ctx);
@@ -426,6 +475,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
         ws_dirs_for_bins,
         &mut ws_pkg_json_cache,
         &mut managed,
+        preserved,
     )?;
 
     // Root self-bins override dependency bins with the same name. Force a
@@ -443,6 +493,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
             bin,
             self_shim_opts,
             &mut managed,
+            preserved,
         )?;
     }
 
@@ -463,6 +514,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
                         &dep.name,
                         shim_opts,
                         &mut managed,
+                        preserved,
                     )?;
                 } else {
                     link_bins_for_dep(
@@ -476,6 +528,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
                         placements,
                         shim_opts,
                         &mut managed,
+                        preserved,
                     )?;
                 }
             }
@@ -494,72 +547,89 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
                     bin,
                     self_shim_opts,
                     &mut managed,
+                    preserved,
                 )?;
             }
         }
     }
 
     if link_dependency_bins {
-        link_dep_bins(
+        link_dep_bins(LinkDepBinsInput {
             aube_dir,
             graph,
             virtual_store_dir_max_length,
             placements,
             shim_opts,
-            &mut pkg_json_cache,
-            &mut managed,
-        )?;
+            cache: &mut pkg_json_cache,
+            managed: &mut managed,
+            preserved,
+        })?;
     }
     Ok(managed)
 }
 
 /// Remove only shims that still match entries created by the pre-build pass.
 /// Lifecycle-produced files or retargeted symlinks are left untouched.
-pub(super) fn remove_managed_bin_links(managed: &ManagedBinLinks) -> miette::Result<()> {
+pub(crate) fn remove_managed_bin_links(
+    managed: &ManagedBinLinks,
+) -> miette::Result<PreservedBinLinks> {
+    let mut preserved = PreservedBinLinks::new();
     for (bin_dir, entries) in managed {
-        for (name, expected_target) in entries {
-            if managed_bin_target(bin_dir, name)?
-                .is_some_and(|target| target == aube_linker::normalize_path(expected_target))
-            {
-                aube_linker::remove_bin_shim(bin_dir, name);
+        for (name, expected_files) in entries {
+            let mut matching = Vec::new();
+            let mut replaced = false;
+            for (path, expected) in expected_files {
+                match read_managed_bin_entry(path)? {
+                    Some(current) if current == *expected => matching.push(path),
+                    Some(_) => replaced = true,
+                    None => {}
+                }
+            }
+            if replaced {
+                preserved
+                    .entry(bin_dir.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
+            for path in matching {
+                std::fs::remove_file(path).into_diagnostic()?;
             }
         }
     }
-    Ok(())
+    Ok(preserved)
 }
 
-fn managed_bin_target(bin_dir: &Path, name: &str) -> miette::Result<Option<PathBuf>> {
-    let link = bin_dir.join(name);
-    match std::fs::symlink_metadata(&link) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            let target = std::fs::read_link(&link).into_diagnostic()?;
-            let target = if target.is_absolute() {
-                target
-            } else {
-                link.parent().unwrap_or(bin_dir).join(target)
-            };
-            return Ok(Some(aube_linker::normalize_path(&target)));
-        }
-        Ok(_) => return resolved_wrapper_target(&link),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+fn read_managed_bin_entry(path: &Path) -> miette::Result<Option<ManagedBinEntry>> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).into_diagnostic(),
+    };
+    if metadata.file_type().is_symlink() {
+        return std::fs::read_link(path)
+            .map(ManagedBinEntry::Symlink)
+            .map(Some)
+            .into_diagnostic();
     }
-
-    #[cfg(windows)]
-    {
-        return resolved_wrapper_target(&bin_dir.join(format!("{name}.cmd")));
+    if metadata.is_file() {
+        return std::fs::read(path)
+            .map(ManagedBinEntry::File)
+            .map(Some)
+            .into_diagnostic();
     }
-    #[cfg(not(windows))]
-    Ok(None)
+    Ok(Some(ManagedBinEntry::Other))
 }
 
-fn resolved_wrapper_target(path: &Path) -> miette::Result<Option<PathBuf>> {
-    match aube_linker::sys::resolve_bin_shim(path) {
-        Ok(Some(shim)) => Ok(Some(aube_linker::normalize_path(&shim.target))),
-        Ok(None) => Ok(None),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).into_diagnostic(),
-    }
+fn bin_link_paths(bin_dir: &Path, name: &str) -> Vec<PathBuf> {
+    let link = bin_dir.join(name);
+    #[cfg(windows)]
+    return vec![
+        link,
+        bin_dir.join(format!("{name}.cmd")),
+        bin_dir.join(format!("{name}.ps1")),
+    ];
+    #[cfg(not(windows))]
+    vec![link]
 }
 
 /// Hoist bins declared by a package's `bundledDependencies` into
@@ -578,6 +648,7 @@ fn link_bundled_bins(
     dep_path: &str,
     shim_opts: aube_linker::BinShimOptions,
     managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     let Some(locked) = graph.get_package(dep_path) else {
         return Ok(());
@@ -601,6 +672,7 @@ fn link_bundled_bins(
             bin,
             shim_opts,
             managed,
+            preserved,
         )?;
     }
     Ok(())
@@ -626,6 +698,7 @@ pub(super) fn link_bin_entries(
     bin: &serde_json::Value,
     shim_opts: aube_linker::BinShimOptions,
     managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     match bin {
         serde_json::Value::String(bin_path) => {
@@ -642,6 +715,7 @@ pub(super) fn link_bin_entries(
                     &pkg_dir.join(bin_path),
                     shim_opts,
                     managed,
+                    preserved,
                 )?;
             }
         }
@@ -657,6 +731,7 @@ pub(super) fn link_bin_entries(
                         &pkg_dir.join(path_str),
                         shim_opts,
                         managed,
+                        preserved,
                     )?;
                 }
             }
@@ -672,7 +747,15 @@ fn create_bin_link(
     target: &std::path::Path,
     shim_opts: aube_linker::BinShimOptions,
     managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
+    if preserved.is_some_and(|entries| {
+        entries
+            .get(bin_dir)
+            .is_some_and(|names| names.contains(name))
+    }) {
+        return Ok(());
+    }
     // `link_dep_bins` skips eager `create_dir_all` on per-dep `.bin/`.
     // Deps whose children ship no bins stay empty on disk. First shim
     // write materializes the dir on demand.
@@ -735,10 +818,16 @@ fn create_bin_link(
                 target.display()
             )
         })?;
+    let mut files = BTreeMap::new();
+    for path in bin_link_paths(bin_dir, name) {
+        if let Some(entry) = read_managed_bin_entry(&path)? {
+            files.insert(path, entry);
+        }
+    }
     managed
         .entry(bin_dir.to_path_buf())
         .or_default()
-        .insert(name.to_string(), aube_linker::normalize_path(target));
+        .insert(name.to_string(), files);
     Ok(())
 }
 
@@ -773,11 +862,36 @@ mod tests {
             ..Default::default()
         };
         let mut managed = ManagedBinLinks::new();
-        create_bin_link(&bin_dir, "removed", &removed_target, opts, &mut managed).unwrap();
-        create_bin_link(&bin_dir, "replaced", &replaced_target, opts, &mut managed).unwrap();
+        create_bin_link(
+            &bin_dir,
+            "removed",
+            &removed_target,
+            opts,
+            &mut managed,
+            None,
+        )
+        .unwrap();
+        create_bin_link(
+            &bin_dir,
+            "replaced",
+            &replaced_target,
+            opts,
+            &mut managed,
+            None,
+        )
+        .unwrap();
 
         std::fs::write(bin_dir.join("replaced"), "#!/bin/sh\necho custom\n").unwrap();
-        remove_managed_bin_links(&managed).unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+        create_bin_link(
+            &bin_dir,
+            "replaced",
+            &replaced_target,
+            opts,
+            &mut ManagedBinLinks::new(),
+            Some(&preserved),
+        )
+        .unwrap();
 
         assert!(!bin_dir.join("removed").exists());
         assert_eq!(
@@ -838,6 +952,7 @@ mod tests {
             None,
             &mut WsPkgJsonCache::new(),
             &mut managed,
+            None,
         )
         .unwrap();
         let shim = project_dir.join("node_modules/.bin/removed-bin");
@@ -850,7 +965,7 @@ mod tests {
             r#"{"name":"removes-bin","version":"1.0.0"}"#,
         )
         .unwrap();
-        remove_managed_bin_links(&managed).unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
         link_bins(
             project_dir,
             "node_modules",
@@ -863,6 +978,7 @@ mod tests {
             None,
             &mut WsPkgJsonCache::new(),
             &mut ManagedBinLinks::new(),
+            Some(&preserved),
         )
         .unwrap();
 
@@ -926,6 +1042,7 @@ mod tests {
             None,
             &mut WsPkgJsonCache::new(),
             &mut ManagedBinLinks::new(),
+            None,
         )
         .unwrap();
 
