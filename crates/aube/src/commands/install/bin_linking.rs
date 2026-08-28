@@ -20,8 +20,20 @@ pub(crate) enum ManagedBinEntry {
 /// Exact shim files created during the pre-lifecycle linking pass, keyed by
 /// their `.bin` directory and command name. Snapshots distinguish unchanged
 /// Aube output from lifecycle-produced replacements on every platform.
-pub(crate) type ManagedBinLinks =
-    BTreeMap<PathBuf, BTreeMap<String, BTreeMap<PathBuf, ManagedBinEntry>>>;
+#[derive(Debug, Default)]
+pub(crate) struct ManagedBinLinks {
+    entries: BTreeMap<PathBuf, BTreeMap<String, BTreeMap<PathBuf, ManagedBinEntry>>>,
+    capture: bool,
+}
+
+impl ManagedBinLinks {
+    pub(crate) fn capturing() -> Self {
+        Self {
+            capture: true,
+            ..Default::default()
+        }
+    }
+}
 pub(crate) type PreservedBinLinks = BTreeMap<PathBuf, BTreeSet<String>>;
 
 pub(crate) struct LinkDepBinsInput<'a> {
@@ -49,6 +61,7 @@ pub(super) struct LinkAllBinsInput<'a> {
     pub(super) node_linker: aube_linker::NodeLinker,
     pub(super) has_workspace: bool,
     pub(super) link_dependency_bins: bool,
+    pub(super) capture_managed: bool,
     pub(super) preserved: Option<&'a PreservedBinLinks>,
 }
 
@@ -444,6 +457,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
         node_linker,
         has_workspace,
         link_dependency_bins,
+        capture_managed,
         preserved,
     } = input;
 
@@ -461,7 +475,11 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
 
     let mut pkg_json_cache = PkgJsonCache::new();
     let mut ws_pkg_json_cache = WsPkgJsonCache::new();
-    let mut managed = ManagedBinLinks::new();
+    let mut managed = if capture_managed {
+        ManagedBinLinks::capturing()
+    } else {
+        ManagedBinLinks::default()
+    };
     let ws_dirs_for_bins = has_workspace.then_some(ws_dirs);
     link_bins(
         project_dir,
@@ -574,7 +592,7 @@ pub(crate) fn remove_managed_bin_links(
     managed: &ManagedBinLinks,
 ) -> miette::Result<PreservedBinLinks> {
     let mut preserved = PreservedBinLinks::new();
-    for (bin_dir, entries) in managed {
+    for (bin_dir, entries) in &managed.entries {
         for (name, expected_files) in entries {
             let mut matching = Vec::new();
             let mut replaced = false;
@@ -818,6 +836,9 @@ fn create_bin_link(
                 target.display()
             )
         })?;
+    if !managed.capture {
+        return Ok(());
+    }
     let mut files = BTreeMap::new();
     for path in bin_link_paths(bin_dir, name) {
         if let Some(entry) = read_managed_bin_entry(&path)? {
@@ -825,6 +846,7 @@ fn create_bin_link(
         }
     }
     managed
+        .entries
         .entry(bin_dir.to_path_buf())
         .or_default()
         .insert(name.to_string(), files);
@@ -861,7 +883,7 @@ mod tests {
             prefer_symlinked_executables: Some(false),
             ..Default::default()
         };
-        let mut managed = ManagedBinLinks::new();
+        let mut managed = ManagedBinLinks::capturing();
         create_bin_link(
             &bin_dir,
             "removed",
@@ -888,7 +910,7 @@ mod tests {
             "replaced",
             &replaced_target,
             opts,
-            &mut ManagedBinLinks::new(),
+            &mut ManagedBinLinks::default(),
             Some(&preserved),
         )
         .unwrap();
@@ -939,7 +961,7 @@ mod tests {
             prefer_symlinked_executables: Some(false),
             ..Default::default()
         };
-        let mut managed = ManagedBinLinks::new();
+        let mut managed = ManagedBinLinks::capturing();
         link_bins(
             project_dir,
             "node_modules",
@@ -977,7 +999,7 @@ mod tests {
             &mut PkgJsonCache::new(),
             None,
             &mut WsPkgJsonCache::new(),
-            &mut ManagedBinLinks::new(),
+            &mut ManagedBinLinks::default(),
             Some(&preserved),
         )
         .unwrap();
@@ -1041,7 +1063,7 @@ mod tests {
             &mut PkgJsonCache::new(),
             None,
             &mut WsPkgJsonCache::new(),
-            &mut ManagedBinLinks::new(),
+            &mut ManagedBinLinks::default(),
             None,
         )
         .unwrap();
@@ -1100,7 +1122,7 @@ mod tests {
             "prebuild-install",
             &target,
             aube_linker::BinShimOptions::default(),
-            &mut ManagedBinLinks::new(),
+            &mut ManagedBinLinks::default(),
             None,
         )
         .unwrap();
@@ -1168,7 +1190,7 @@ mod tests {
             "@scope/tool",
             &target,
             aube_linker::BinShimOptions::default(),
-            &mut ManagedBinLinks::new(),
+            &mut ManagedBinLinks::default(),
             None,
         )
         .unwrap();

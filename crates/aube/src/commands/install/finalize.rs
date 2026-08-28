@@ -229,6 +229,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             node_linker,
             has_workspace,
             link_dependency_bins: true,
+            capture_managed: false,
             preserved: Some(&preserved),
         })?;
         tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());

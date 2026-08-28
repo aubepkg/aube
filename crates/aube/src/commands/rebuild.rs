@@ -180,7 +180,7 @@ pub async fn run(
                 hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
             };
             let mut pkg_json_cache = super::install::PkgJsonCache::new();
-            let mut managed_bin_links = super::install::ManagedBinLinks::new();
+            let mut managed_bin_links = super::install::ManagedBinLinks::capturing();
             super::install::link_dep_bins(super::install::LinkDepBinsInput {
                 aube_dir: &aube_dir,
                 graph: &graph,
@@ -222,7 +222,7 @@ pub async fn run(
             .await?;
             let preserved = super::install::remove_managed_bin_links(&managed_bin_links)?;
             let mut refreshed_pkg_json_cache = super::install::PkgJsonCache::new();
-            let mut refreshed_bin_links = super::install::ManagedBinLinks::new();
+            let mut refreshed_bin_links = super::install::ManagedBinLinks::default();
             super::install::link_dep_bins(super::install::LinkDepBinsInput {
                 aube_dir: &aube_dir,
                 graph: &graph,
