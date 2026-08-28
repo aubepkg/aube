@@ -57,10 +57,9 @@ JSON
 	# Top-level symlink follows.
 	assert_link_exists node_modules/use-sync-external-store
 
-	# Auto-installed peer is hoisted to the root importer — pnpm
-	# parity. react should be a top-level symlink even though the
-	# user didn't list it.
-	assert_link_exists node_modules/react
+	# A dependency's peer stays private to its peer context. pnpm does not
+	# expose it as an importer dependency or top-level link.
+	assert_not_exists node_modules/react
 
 	# Some react version must exist under .aube (which version doesn't
 	# matter — depends on whatever latest satisfies ^16.8 || ^17 || ^18).
@@ -68,13 +67,10 @@ JSON
 	assert_success
 	assert_output --partial "react@"
 
-	# Lockfile's importers section lists react with the declared peer
-	# range as the specifier — that's what pnpm writes for hoisted
-	# auto-installed peers.
-	run bash -c 'grep -A2 "^      react:" aube-lock.yaml | head -3'
-	assert_success
-	assert_output --partial "specifier:"
-	assert_output --partial "^16.8.0"
+	# The root importer contains only the manifest dependency. react still
+	# appears in the package snapshots and peer suffix below.
+	run bash -c 'sed -n "/^  \.:/,/^packages:/p" aube-lock.yaml | grep "^      react:"'
+	assert_failure
 
 	# The use-sync-external-store directory name should include a
 	# `_react@...` peer suffix — that's the core parity change. The
@@ -97,6 +93,79 @@ JSON
 	run node -e 'console.log(require.resolve("react", { paths: [require.resolve("use-sync-external-store")] }))'
 	assert_success
 	assert_output --partial "react"
+}
+
+@test "importer's own required peer is auto-installed as a direct dependency" {
+	cat >package.json <<'JSON'
+{
+  "name": "importer-peer-test",
+  "version": "1.0.0",
+  "peerDependencies": {
+    "react": "18.3.1"
+  }
+}
+JSON
+	run aube install
+	assert_success
+
+	assert_link_exists node_modules/react
+	run bash -c 'sed -n "/^  \.:/,/^packages:/p" aube-lock.yaml | grep -A2 "^      react:"'
+	assert_success
+	assert_output --partial "specifier: 18.3.1"
+
+	# The freshly written lockfile must remain valid on the frozen path.
+	run aube install --frozen-lockfile
+	assert_success
+}
+
+@test "workspace importer peers match pnpm lockfile and link semantics" {
+	cat >package.json <<'JSON'
+{
+  "name": "peer-workspace-root",
+  "private": true,
+  "version": "1.0.0"
+}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - packages/*
+YAML
+	mkdir -p packages/case-a packages/case-b
+	cat >packages/case-a/package.json <<'JSON'
+{
+  "name": "case-a",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "react-dom": "18.3.1"
+  }
+}
+JSON
+	cat >packages/case-b/package.json <<'JSON'
+{
+  "name": "case-b",
+  "private": true,
+  "version": "1.0.0",
+  "peerDependencies": {
+    "react": "18.3.1"
+  }
+}
+JSON
+
+	run aube install
+	assert_success
+	assert_link_exists packages/case-a/node_modules/react-dom
+	assert_not_exists packages/case-a/node_modules/react
+	assert_link_exists packages/case-b/node_modules/react
+
+	run bash -c 'sed -n "/^  packages\/case-a:/,/^  packages\/case-b:/p" aube-lock.yaml | grep "^      react:"'
+	assert_failure
+	run bash -c 'sed -n "/^  packages\/case-b:/,/^packages:/p" aube-lock.yaml | grep -A2 "^      react:"'
+	assert_success
+	assert_output --partial "specifier: 18.3.1"
+
+	run aube install --frozen-lockfile
+	assert_success
 }
 
 @test "required peer dedupes to a root-installed version and still sibling-links" {

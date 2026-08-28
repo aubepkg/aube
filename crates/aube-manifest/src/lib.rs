@@ -196,6 +196,24 @@ pub struct PackageJson {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
+impl PackageJson {
+    /// Whether `peerDependenciesMeta.<name>.optional` is explicitly true.
+    ///
+    /// `peerDependenciesMeta` stays in [`PackageJson::extra`] for forward
+    /// compatibility, but resolver and lockfile code both need this common
+    /// interpretation when deciding whether a peer is auto-installable.
+    pub fn peer_dependency_is_optional(&self, name: &str) -> bool {
+        self.extra
+            .get("peerDependenciesMeta")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|meta| meta.get(name))
+            .and_then(serde_json::Value::as_object)
+            .and_then(|entry| entry.get("optional"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+}
+
 /// Deserialize-only mirror of [`PackageJson`] that splits the
 /// `bundled_dependencies` field into two name-distinct slots so a
 /// manifest carrying *both* `bundledDependencies` and `bundleDependencies`

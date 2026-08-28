@@ -152,13 +152,22 @@ impl<'a> ResolveDriver<'a> {
         let importer_declared_dep_names: BTreeMap<String, BTreeSet<String>> = manifests
             .iter()
             .map(|(importer_path, manifest)| {
-                let names = manifest
+                let mut names: BTreeSet<String> = manifest
                     .dependencies
                     .keys()
                     .chain(manifest.dev_dependencies.keys())
                     .chain(manifest.optional_dependencies.keys())
                     .cloned()
                     .collect();
+                if resolver.auto_install_peers {
+                    names.extend(
+                        manifest
+                            .peer_dependencies
+                            .keys()
+                            .filter(|name| !manifest.peer_dependency_is_optional(name))
+                            .cloned(),
+                    );
+                }
                 (importer_path.clone(), names)
             })
             .collect();
@@ -177,6 +186,7 @@ impl<'a> ResolveDriver<'a> {
         seed_direct_deps(
             manifests,
             &resolver.ignored_optional_dependencies,
+            resolver.auto_install_peers,
             &mut queue,
             &mut importers,
         );

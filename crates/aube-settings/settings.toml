@@ -1944,9 +1944,11 @@ type = "bool"
 default = "true"
 docs = """
 When true (the default), missing peer dependencies are auto-installed
-during resolution and hoisted into the importer. Set to `false` to
-match pnpm's opt-out behavior: peers are left alone and unmet peers
-are silent (set `strict-peer-dependencies=true` for diagnostics).
+during resolution. An importer's own required peers are added to that
+importer's dependencies; peers required by installed packages remain in
+those packages' peer contexts. Set to `false` to match pnpm's opt-out
+behavior: peers are left alone and unmet peers are silent (set
+`strict-peer-dependencies=true` for diagnostics).
 """
 sources.cli = ["auto-install-peers"]
 sources.env = ["npm_config_auto_install_peers", "NPM_CONFIG_AUTO_INSTALL_PEERS", "AUBE_AUTO_INSTALL_PEERS"]

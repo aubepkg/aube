@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub(super) fn seed_direct_deps(
     manifests: &[(String, PackageJson)],
     ignored_optional_dependencies: &BTreeSet<String>,
+    auto_install_peers: bool,
     queue: &mut VecDeque<ResolveTask>,
     importers: &mut BTreeMap<String, Vec<DirectDep>>,
 ) {
@@ -60,6 +61,25 @@ pub(super) fn seed_direct_deps(
                 DepType::Optional,
                 importer_path.clone(),
             ));
+        }
+        if auto_install_peers {
+            for (name, range) in &manifest.peer_dependencies {
+                if manifest.peer_dependency_is_optional(name)
+                    || manifest.dependencies.contains_key(name)
+                    || manifest.dev_dependencies.contains_key(name)
+                    || manifest.optional_dependencies.contains_key(name)
+                {
+                    continue;
+                }
+                // pnpm materializes an importer's own required peers in its
+                // dependencies section when autoInstallPeers is enabled.
+                queue.push_back(ResolveTask::root(
+                    name.clone(),
+                    range.clone(),
+                    DepType::Production,
+                    importer_path.clone(),
+                ));
+            }
         }
     }
 }
