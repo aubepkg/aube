@@ -330,7 +330,32 @@ fn graph_entries(global_virtual_store: &Path) -> miette::Result<Vec<OsString>> {
 }
 
 fn project_links_into(aube_dir: &Path, global_virtual_store: &Path) -> miette::Result<bool> {
-    Ok(!project_entries(global_virtual_store, aube_dir)?.is_empty())
+    // Boolean-only variant of `project_entries`: stop at the first entry
+    // that resolves into the GVS instead of readlink+canonicalize-ing the
+    // entire `.aube/` directory. This runs on the install fast path
+    // (`register_fast_path_project`), where the full walk is O(graph) for
+    // an answer that is almost always "yes" at the first entry.
+    if !aube_dir.exists() {
+        return Ok(false);
+    }
+    let canonical_gvs =
+        std::fs::canonicalize(global_virtual_store).unwrap_or_else(|_| global_virtual_store.into());
+    for entry in std::fs::read_dir(aube_dir).map_err(|e| prune_error(aube_dir, e))? {
+        let entry = entry.map_err(|e| prune_error(aube_dir, e))?;
+        if !is_graph_entry_name(&entry.file_name()) {
+            continue;
+        }
+        let Some(canonical_target) = resolved_link_target(&entry.path(), aube_dir) else {
+            continue;
+        };
+        // Proper-prefix check, matching `project_entries`' strip_prefix +
+        // first-component semantics: a target equal to the GVS root
+        // itself carries no entry component and doesn't count.
+        if canonical_target.starts_with(&canonical_gvs) && canonical_target != canonical_gvs {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn project_entries(

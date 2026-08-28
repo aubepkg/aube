@@ -279,12 +279,21 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         });
         let graph_lthash = hex::encode(delta::lthash_of(&package_content_hashes).digest());
         let package_json_hashes = state::collect_package_json_hashes_from_manifests(cwd, manifests);
+        // One parse for every prior-install field this block consumes.
+        // The per-field accessors each re-parse the full O(graph) state
+        // file; on a large monorepo that was four parses of the same
+        // bytes.
+        let prior_state = state::read_state_delta_snapshot(cwd);
         // Diff against the previous install. Logs delta counts at
         // debug so `-v` installs surface what actually moved. A
         // later pass feeds the plan into fetch and link as a
         // pre-filter.
-        if let Some(prior) = state::read_state_package_content_hashes(cwd) {
-            let plan = delta::diff(&prior, &package_content_hashes);
+        if let Some(prior) = prior_state
+            .as_ref()
+            .map(|s| &s.package_content_hashes)
+            .filter(|prior| !prior.is_empty())
+        {
+            let plan = delta::diff(prior, &package_content_hashes);
             if !plan.is_empty() {
                 // Touched set built once. Doubles as a membership
                 // probe so future wiring exercises the same shape
@@ -306,11 +315,12 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             // Cheap sanity on the homomorphic add/remove ops. The
             // future causal scheduler needs these two to stay in
             // lockstep with the full recompute.
-            if let Some(prior_lthash_hex) = state::read_state_graph_lthash(cwd)
-                && let Ok(prior_bytes) = hex::decode(&prior_lthash_hex)
+            if let Some(prior_lthash_hex) =
+                prior_state.as_ref().and_then(|s| s.graph_lthash.as_deref())
+                && let Ok(prior_bytes) = hex::decode(prior_lthash_hex)
                 && prior_bytes.len() == 32
             {
-                let mut incr = delta::lthash_of(&prior);
+                let mut incr = delta::lthash_of(prior);
                 for dp in &plan.removed {
                     if let Some(fp) = prior.get(dp) {
                         incr.remove(fp);
@@ -343,7 +353,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // LtHash diagnostic. One 32-byte compare proves graph
         // equivalence with the last install. Beats the map diff
         // when both sides are known good.
-        if let Some(prior_lthash) = state::read_state_graph_lthash(cwd)
+        if let Some(prior_lthash) = prior_state.as_ref().and_then(|s| s.graph_lthash.as_deref())
             && prior_lthash != graph_lthash
         {
             tracing::debug!(
@@ -357,7 +367,11 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // Merkle subtree diagnostic. How many subtree roots moved
         // vs how many leaves moved. Fewer roots means tighter
         // re-link scope once the delta linker lands.
-        if let Some(prior_subtrees) = state::read_state_subtree_hashes(cwd) {
+        if let Some(prior_subtrees) = prior_state
+            .as_ref()
+            .map(|s| &s.package_subtree_hashes)
+            .filter(|prior| !prior.is_empty())
+        {
             let changed_subtrees = package_subtree_hashes
                 .iter()
                 .filter(|(k, v)| prior_subtrees.get(*k).is_none_or(|old| old != *v))

@@ -472,9 +472,8 @@ pub(super) async fn fetch_packages_with_root<F>(
     // `.aube/<dep>` already exists on disk. Callers pass true when
     // either:
     //
-    //   - the linker will wipe `node_modules/` before running
-    //     (`link_workspace`), so the `AlreadyLinked` classification
-    //     would be immediately invalidated; or
+    //   - the linker will need a verified index for packages this
+    //     shortcut would skip (`link_workspace`); or
     //   - the caller needs `load_index` to actually run as its store
     //     verification step (`aube fetch`, which treats the act of
     //     walking the store-file existence check as the operation's
@@ -523,14 +522,29 @@ where
     // Two call sites disable the fast path entirely via
     // `skip_already_linked_shortcut=true`:
     //
-    //   - **Workspace installs.** `link_workspace` unconditionally
-    //     wipes `node_modules/` (including `.aube/`) before
-    //     rebuilding, so every `AlreadyLinked` classification would
-    //     be invalidated by the time the linker runs. With the fast
-    //     path enabled, the linker would then fall back to
-    //     `self.store.load_index` *serially* inside `link_workspace`'s
-    //     for-loop, which is strictly slower than loading them here
-    //     in parallel via rayon.
+    //   - **Workspace installs.** The shortcut's precondition ("the
+    //     entry resolves") is weaker than what the linker actually
+    //     needs ("the entry resolves *to the target this graph
+    //     expects*"). The local `.aube/<dep_path>` name is keyed by
+    //     dep_path alone, while the global virtual-store subdir folds
+    //     in graph hashes (`virtual_store_subdir` vs
+    //     `aube_dir_entry_name`), so a build-state change moves the
+    //     expected target while the entry keeps resolving to the old
+    //     one. `classify_entry_state` then reports `Stale`, the linker
+    //     needs an index it was never handed, and its fallback is the
+    //     *unverified* `store.load_index` — which happily returns a
+    //     stale index whose CAS shards are gone, failing the link
+    //     instead of re-fetching. Verifying every package here keeps
+    //     that self-healing (a stale index drops to `NeedsFetch` and
+    //     the tarball is re-downloaded while the network is still
+    //     available; the linker has no such option).
+    //
+    //     Enabling the shortcut for workspaces is worth doing — it is
+    //     a stat per store file per package on every repeat install of
+    //     a monorepo — but only once the classification compares
+    //     against the expected virtual-store subdir, which needs the
+    //     graph hashes that are currently computed inside the
+    //     concurrent prewarm task rather than before this call.
     //
     //   - **`aube fetch`.** The command exists to populate the
     //     global store (typical use: Docker layer caching, warming
