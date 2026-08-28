@@ -1,4 +1,6 @@
-use super::bin_linking::{LinkAllBinsInput, link_all_bins};
+use super::bin_linking::{
+    LinkAllBinsInput, ManagedBinLinks, link_all_bins, remove_managed_bin_links,
+};
 use super::dep_selection::DepSelection;
 use super::lifecycle::{
     JailBuildPolicy, run_dep_lifecycle_scripts, run_root_lifecycle, unreviewed_dep_builds,
@@ -28,6 +30,7 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) build_policy: &'a aube_scripts::BuildPolicy,
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
+    pub(super) managed_bin_links: &'a ManagedBinLinks,
     pub(super) node_linker: aube_linker::NodeLinker,
     pub(super) has_workspace: bool,
     pub(super) planned_gvs: bool,
@@ -70,6 +73,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         build_policy,
         jail_policy,
         stats,
+        managed_bin_links,
         node_linker,
         has_workspace,
         planned_gvs,
@@ -210,7 +214,8 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // shim after builds (including side-effects-cache restores) so launch
         // metadata reflects the final package contents.
         let phase_start = std::time::Instant::now();
-        link_all_bins(LinkAllBinsInput {
+        remove_managed_bin_links(managed_bin_links)?;
+        let _ = link_all_bins(LinkAllBinsInput {
             project_dir: cwd,
             settings_ctx,
             modules_dir_name,

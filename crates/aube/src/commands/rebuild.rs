@@ -180,6 +180,7 @@ pub async fn run(
                 hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
             };
             let mut pkg_json_cache = super::install::PkgJsonCache::new();
+            let mut managed_bin_links = super::install::ManagedBinLinks::new();
             super::install::link_dep_bins(
                 &aube_dir,
                 &graph,
@@ -187,6 +188,7 @@ pub async fn run(
                 hoisted_placements.as_ref(),
                 shim_opts,
                 &mut pkg_json_cache,
+                &mut managed_bin_links,
             )?;
             super::install::run_dep_lifecycle_scripts(
                 &cwd,

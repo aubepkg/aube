@@ -1,4 +1,4 @@
-use super::bin_linking::{LinkAllBinsInput, link_all_bins};
+use super::bin_linking::{LinkAllBinsInput, ManagedBinLinks, link_all_bins};
 use super::sweep::invalidate_changed_aube_entries;
 use super::{InstallPhaseTimings, lifecycle::resolve_link_strategy};
 use super::{delta, gvs};
@@ -41,6 +41,7 @@ pub(super) struct LinkPhaseOutput {
     pub(super) current_leaf_hashes: Option<BTreeMap<String, String>>,
     pub(super) current_subtree_hashes: Option<BTreeMap<String, String>>,
     pub(super) patch_hashes: BTreeMap<String, String>,
+    pub(super) managed_bin_links: ManagedBinLinks,
 }
 
 pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPhaseOutput> {
@@ -371,8 +372,8 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
     //    invoke their own dependencies. Approved builds get a refresh pass in
     //    finalize because a lifecycle may replace its bin target.
     let phase_start = std::time::Instant::now();
-    if !virtual_store_only {
-        link_all_bins(LinkAllBinsInput {
+    let managed_bin_links = if !virtual_store_only {
+        let managed = link_all_bins(LinkAllBinsInput {
             project_dir: cwd,
             settings_ctx,
             modules_dir_name,
@@ -389,7 +390,10 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         })?;
         tracing::debug!("phase:link_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("link_bins", phase_start.elapsed());
-    }
+        managed
+    } else {
+        ManagedBinLinks::new()
+    };
     Ok(LinkPhaseOutput {
         stats,
         node_linker,
@@ -397,5 +401,6 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         current_leaf_hashes,
         current_subtree_hashes,
         patch_hashes,
+        managed_bin_links,
     })
 }
