@@ -540,23 +540,26 @@ fn managed_bin_target(bin_dir: &Path, name: &str) -> miette::Result<Option<PathB
             };
             return Ok(Some(aube_linker::normalize_path(&target)));
         }
-        Ok(_) => {}
+        Ok(_) => return resolved_wrapper_target(&link),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e).into_diagnostic(),
     }
 
-    let candidates = std::iter::once(link);
     #[cfg(windows)]
-    let candidates = candidates.chain(std::iter::once(bin_dir.join(format!("{name}.cmd"))));
-    for candidate in candidates {
-        match aube_linker::sys::resolve_bin_shim(&candidate) {
-            Ok(Some(shim)) => return Ok(Some(aube_linker::normalize_path(&shim.target))),
-            Ok(None) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e).into_diagnostic(),
-        }
+    {
+        return resolved_wrapper_target(&bin_dir.join(format!("{name}.cmd")));
     }
+    #[cfg(not(windows))]
     Ok(None)
+}
+
+fn resolved_wrapper_target(path: &Path) -> miette::Result<Option<PathBuf>> {
+    match aube_linker::sys::resolve_bin_shim(path) {
+        Ok(Some(shim)) => Ok(Some(aube_linker::normalize_path(&shim.target))),
+        Ok(None) => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).into_diagnostic(),
+    }
 }
 
 /// Hoist bins declared by a package's `bundledDependencies` into
