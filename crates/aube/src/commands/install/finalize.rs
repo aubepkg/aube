@@ -189,7 +189,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 }
             })
             .unwrap_or(SideEffectsCacheConfig::Disabled);
-        let ran = run_dep_lifecycle_scripts(
+        let lifecycle_outcome = run_dep_lifecycle_scripts(
             cwd,
             modules_dir_name,
             aube_dir,
@@ -204,8 +204,11 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             None,
         )
         .await?;
-        if ran > 0 {
-            tracing::debug!("allowBuilds: ran {ran} dep lifecycle script(s)");
+        if lifecycle_outcome.scripts_run > 0 {
+            tracing::debug!(
+                "allowBuilds: ran {} dep lifecycle script(s)",
+                lifecycle_outcome.scripts_run
+            );
         }
         phase_timings.record("dep_lifecycle", phase_start.elapsed());
 
@@ -213,27 +216,29 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // executable or rewrite package.json's bin map. Refresh every exposed
         // shim after builds (including side-effects-cache restores) so launch
         // metadata reflects the final package contents.
-        let phase_start = std::time::Instant::now();
-        let preserved = remove_managed_bin_links(managed_bin_links)?;
-        let _ = link_all_bins(LinkAllBinsInput {
-            project_dir: cwd,
-            settings_ctx,
-            modules_dir_name,
-            aube_dir,
-            graph: graph_for_link,
-            virtual_store_dir_max_length,
-            placements: placements_ref,
-            ws_dirs,
-            manifests,
-            manifest,
-            node_linker,
-            has_workspace,
-            link_dependency_bins: true,
-            capture_managed: false,
-            preserved: Some(&preserved),
-        })?;
-        tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
-        phase_timings.record("relink_bins", phase_start.elapsed());
+        if lifecycle_outcome.package_contents_changed {
+            let phase_start = std::time::Instant::now();
+            let preserved = remove_managed_bin_links(managed_bin_links)?;
+            let _ = link_all_bins(LinkAllBinsInput {
+                project_dir: cwd,
+                settings_ctx,
+                modules_dir_name,
+                aube_dir,
+                graph: graph_for_link,
+                virtual_store_dir_max_length,
+                placements: placements_ref,
+                ws_dirs,
+                manifests,
+                manifest,
+                node_linker,
+                has_workspace,
+                link_dependency_bins: true,
+                capture_managed: false,
+                preserved: Some(&preserved),
+            })?;
+            tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
+            phase_timings.record("relink_bins", phase_start.elapsed());
+        }
     }
 
     // 7b. Post-link root lifecycle hooks: install → postinstall → prepare.
