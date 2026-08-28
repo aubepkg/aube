@@ -1101,6 +1101,7 @@ mod tests {
             &target,
             aube_linker::BinShimOptions::default(),
             &mut ManagedBinLinks::new(),
+            None,
         )
         .unwrap();
 
@@ -1168,6 +1169,7 @@ mod tests {
             &target,
             aube_linker::BinShimOptions::default(),
             &mut ManagedBinLinks::new(),
+            None,
         )
         .unwrap();
 
