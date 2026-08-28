@@ -1,5 +1,6 @@
 use super::bin_linking::{
     LinkAllBinsInput, ManagedBinLinks, link_all_bins, remove_managed_bin_links,
+    remove_unclaimed_preserved_bin_links,
 };
 use super::dep_selection::DepSelection;
 use super::lifecycle::{
@@ -219,7 +220,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         if lifecycle_outcome.package_contents_changed {
             let phase_start = std::time::Instant::now();
             let preserved = remove_managed_bin_links(managed_bin_links)?;
-            let _ = link_all_bins(LinkAllBinsInput {
+            let relinked = link_all_bins(LinkAllBinsInput {
                 project_dir: cwd,
                 settings_ctx,
                 modules_dir_name,
@@ -236,6 +237,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 capture_managed: false,
                 preserved: Some(&preserved),
             })?;
+            remove_unclaimed_preserved_bin_links(managed_bin_links, &preserved, &relinked)?;
             tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
             phase_timings.record("relink_bins", phase_start.elapsed());
         }

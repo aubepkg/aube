@@ -23,6 +23,7 @@ pub(crate) enum ManagedBinEntry {
 #[derive(Debug, Default)]
 pub(crate) struct ManagedBinLinks {
     entries: BTreeMap<PathBuf, BTreeMap<String, BTreeMap<PathBuf, ManagedBinEntry>>>,
+    seen: BTreeMap<PathBuf, BTreeSet<String>>,
     capture: bool,
 }
 
@@ -623,6 +624,45 @@ pub(crate) fn remove_managed_bin_links(
     Ok(preserved)
 }
 
+/// Remove preserved command families that are no longer declared by the
+/// post-lifecycle package manifests. Commands encountered by the relink pass
+/// stay preserved, including any intentionally replaced or deleted launcher.
+pub(crate) fn remove_unclaimed_preserved_bin_links(
+    managed: &ManagedBinLinks,
+    preserved: &PreservedBinLinks,
+    relinked: &ManagedBinLinks,
+) -> miette::Result<()> {
+    for (bin_dir, names) in preserved {
+        for name in names {
+            if relinked
+                .seen
+                .get(bin_dir)
+                .is_some_and(|seen| seen.contains(name))
+            {
+                continue;
+            }
+            let Some(expected_files) = managed
+                .entries
+                .get(bin_dir)
+                .and_then(|entries| entries.get(name))
+            else {
+                continue;
+            };
+            for path in expected_files.keys() {
+                match std::fs::symlink_metadata(path) {
+                    Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                        std::fs::remove_dir_all(path).into_diagnostic()?;
+                    }
+                    Ok(_) => std::fs::remove_file(path).into_diagnostic()?,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e).into_diagnostic(),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_managed_bin_entry(path: &Path) -> miette::Result<Option<ManagedBinEntry>> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -773,12 +813,18 @@ fn create_bin_link(
     managed: &mut ManagedBinLinks,
     preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
-    if preserved.is_some_and(|entries| {
-        entries
+    if let Some(preserved) = preserved {
+        managed
+            .seen
+            .entry(bin_dir.to_path_buf())
+            .or_default()
+            .insert(name.to_string());
+        if preserved
             .get(bin_dir)
             .is_some_and(|names| names.contains(name))
-    }) {
-        return Ok(());
+        {
+            return Ok(());
+        }
     }
     // `link_dep_bins` skips eager `create_dir_all` on per-dep `.bin/`.
     // Deps whose children ship no bins stay empty on disk. First shim
@@ -992,6 +1038,17 @@ mod tests {
 
         std::fs::remove_file(&launcher).unwrap();
         let preserved = remove_managed_bin_links(&managed).unwrap();
+        let mut relinked = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            dir.path().join("target.js").as_path(),
+            Default::default(),
+            &mut relinked,
+            Some(&preserved),
+        )
+        .unwrap();
+        remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
 
         assert!(preserved[&bin_dir].contains("tool"));
         assert!(!launcher.exists());
@@ -1066,7 +1123,9 @@ mod tests {
             r#"{"name":"removes-bin","version":"1.0.0"}"#,
         )
         .unwrap();
+        std::fs::remove_file(&shim).unwrap();
         let preserved = remove_managed_bin_links(&managed).unwrap();
+        let mut relinked = ManagedBinLinks::default();
         link_bins(
             project_dir,
             "node_modules",
@@ -1078,10 +1137,11 @@ mod tests {
             &mut PkgJsonCache::new(),
             None,
             &mut WsPkgJsonCache::new(),
-            &mut ManagedBinLinks::default(),
+            &mut relinked,
             Some(&preserved),
         )
         .unwrap();
+        remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
 
         assert!(!shim.exists());
     }
