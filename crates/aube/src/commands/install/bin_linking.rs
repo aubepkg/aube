@@ -24,7 +24,6 @@ pub(super) struct LinkAllBinsInput<'a> {
     pub(super) node_linker: aube_linker::NodeLinker,
     pub(super) has_workspace: bool,
     pub(super) link_dependency_bins: bool,
-    pub(super) reset_existing: bool,
 }
 
 /// Link bin entries from packages to node_modules/.bin/
@@ -370,7 +369,7 @@ pub(crate) fn link_dep_bins(
 ///
 /// This runs before dependency lifecycle scripts so builds can invoke their
 /// dependencies, then again after approved builds. The second pass refreshes
-/// packages whose lifecycle replaces a bin target or rewrites its bin map.
+/// packages whose lifecycle replaces a bin target.
 pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<()> {
     let LinkAllBinsInput {
         project_dir,
@@ -386,41 +385,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<()> {
         node_linker,
         has_workspace,
         link_dependency_bins,
-        reset_existing,
     } = input;
-
-    if reset_existing {
-        reset_bin_dir(&project_dir.join(modules_dir_name).join(".bin"))?;
-        if has_workspace {
-            for importer_path in graph.importers.keys() {
-                if importer_path != "." && aube_linker::is_physical_importer(importer_path) {
-                    reset_bin_dir(
-                        &project_dir
-                            .join(importer_path)
-                            .join(modules_dir_name)
-                            .join(".bin"),
-                    )?;
-                }
-            }
-        }
-        if link_dependency_bins && placements.is_none() {
-            for (dep_path, pkg) in &graph.packages {
-                if pkg.dependencies.is_empty() {
-                    continue;
-                }
-                let pkg_dir = materialized_pkg_dir(
-                    aube_dir,
-                    dep_path,
-                    &pkg.name,
-                    virtual_store_dir_max_length,
-                    placements,
-                );
-                if pkg_dir.exists() {
-                    reset_bin_dir(&dep_modules_dir_for(&pkg_dir, &pkg.name).join(".bin"))?;
-                }
-            }
-        }
-    }
 
     let extend_node_path = aube_settings::resolved::extend_node_path(settings_ctx);
     let isolated = !matches!(node_linker, aube_linker::NodeLinker::Hoisted);
@@ -528,16 +493,6 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<()> {
         )?;
     }
     Ok(())
-}
-
-fn reset_bin_dir(bin_dir: &Path) -> miette::Result<()> {
-    match std::fs::remove_dir_all(bin_dir) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("failed to reset bin directory {}", bin_dir.display())),
-    }
 }
 
 /// Hoist bins declared by a package's `bundledDependencies` into
@@ -698,18 +653,6 @@ fn create_bin_link(
 mod tests {
     use super::*;
     use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
-
-    #[test]
-    fn reset_bin_dir_removes_stale_entries_and_tolerates_missing_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let bin_dir = dir.path().join("node_modules/.bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        std::fs::write(bin_dir.join("old-command"), "stale").unwrap();
-
-        reset_bin_dir(&bin_dir).unwrap();
-        assert!(!bin_dir.exists());
-        reset_bin_dir(&bin_dir).unwrap();
-    }
 
     fn locked(name: &str, version: &str, bin: BTreeMap<String, String>) -> LockedPackage {
         LockedPackage {

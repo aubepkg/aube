@@ -369,7 +369,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
 
     // 7. Link .bin entries before dependency lifecycle scripts so builds can
     //    invoke their own dependencies. Approved builds get a refresh pass in
-    //    finalize because a lifecycle may replace its bin target or bin map.
+    //    finalize because a lifecycle may replace its bin target.
     let phase_start = std::time::Instant::now();
     if !virtual_store_only {
         link_all_bins(LinkAllBinsInput {
@@ -386,7 +386,6 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             node_linker,
             has_workspace,
             link_dependency_bins: !ignore_scripts && build_policy.has_any_allow_rule(),
-            reset_existing: false,
         })?;
         tracing::debug!("phase:link_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("link_bins", phase_start.elapsed());
