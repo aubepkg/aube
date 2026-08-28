@@ -1069,6 +1069,13 @@ pub fn remove_state(project_dir: &Path) -> Result<(), std::io::Error> {
 ///
 /// Returns the display name (for messages) plus the resolved path, if
 /// any exists.
+/// Path of the lockfile [`check_needs_install`] treats as active, if
+/// any. The install fast path keys the trust-policy file stamp on this
+/// same file so both checks agree on which lockfile governs the project.
+pub(crate) fn active_lockfile_path(project_dir: &Path) -> Option<PathBuf> {
+    active_lockfile(project_dir).1
+}
+
 fn active_lockfile(project_dir: &Path) -> (String, Option<PathBuf>) {
     let basename = aube_util::embedder().lockfile_basename;
     let stem = basename.rsplit_once('.').map_or(basename, |(s, _)| s);

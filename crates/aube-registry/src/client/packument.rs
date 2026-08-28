@@ -364,6 +364,111 @@ impl RegistryClient {
         }
     }
 
+    /// Fetch the compact trust history (`time` map plus per-version trust
+    /// evidence) for a package, backed by its own small on-disk cache.
+    ///
+    /// The lockfile trust-policy validator calls this once per package
+    /// *name* in the locked graph. It hits the same full-packument
+    /// endpoint as [`Self::fetch_packument_with_time_cached`], but
+    /// decodes only the fields the no-downgrade check reads and caches
+    /// that compact shape instead of the multi-megabyte raw document —
+    /// cold validations skip the `serde_json::Value` round-trip and the
+    /// full-packument cache write, warm revalidations re-read kilobytes
+    /// instead of megabytes per name.
+    pub async fn fetch_trust_history_cached(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+    ) -> Result<crate::PackumentTrustHistory, Error> {
+        let cache_registry_url = self.config.registry_for(name).to_string();
+        // Same per-origin/name file layout as the packument caches;
+        // only the cache root differs (`trust-history-v1/`).
+        let cache_path = packument_full_cache_path(cache_dir, name, &cache_registry_url)
+            .ok_or_else(|| Error::InvalidName(name.to_string()))?;
+        let force_cache = self.force_cache();
+        let cached = read_cached_trust_history(&cache_path);
+        if let Some(c) = &cached
+            && (force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs))
+        {
+            return Ok(c.history.clone());
+        }
+        if self.network_mode == NetworkMode::Offline {
+            // A stale entry beats failing outright: offline installs
+            // can't revalidate anything, and the caller already decided
+            // offline installs may proceed.
+            if let Some(c) = cached {
+                return Ok(c.history);
+            }
+            return Err(Error::Offline(format!("trust history for {name}")));
+        }
+
+        let (url, registry_url) = self.packument_url(name);
+        let etag = cached.as_ref().and_then(|c| c.etag.clone());
+        let last_modified = cached.as_ref().and_then(|c| c.last_modified.clone());
+        let resp = self
+            .send_metadata_with_retry(&format!("trust history {name}"), || {
+                let mut req = self
+                    .authed_get_for_package(&url, registry_url, name)
+                    .header("Accept", PACKUMENT_FULL_ACCEPT);
+                if let Some(ref etag) = etag {
+                    req = req.header("If-None-Match", etag);
+                }
+                if let Some(ref lm) = last_modified {
+                    req = req.header("If-Modified-Since", lm);
+                }
+                req
+            })
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(Error::NotFound(name.to_string()));
+        }
+        if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+            if let Some(mut c) = cached {
+                c.max_age_secs = parse_cache_control_max_age(&resp).or(c.max_age_secs);
+                c.fetched_at = now_secs();
+                if let Err(e) = write_cached_trust_history(&cache_path, &c) {
+                    tracing::warn!(
+                        code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                        "failed to write trust-history cache {}: {e}",
+                        cache_path.display()
+                    );
+                }
+                return Ok(c.history);
+            }
+            // 304 without a cached entry means we never sent conditional
+            // headers — a misbehaving registry. Treat as a hard error
+            // rather than parsing the empty body.
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("registry returned 304 for unconditional trust-history request: {name}"),
+            )));
+        }
+        let resp = resp.error_for_status()?;
+        check_body_cap(
+            &resp,
+            self.fetch_policy.packument_max_bytes,
+            "packument-trust-history",
+        )?;
+        let (etag, last_modified) = extract_cache_headers(&resp);
+        let max_age_secs = parse_cache_control_max_age(&resp);
+        let history: crate::PackumentTrustHistory = parse_full_response(resp).await?;
+        let cached = CachedTrustHistory {
+            etag,
+            last_modified,
+            fetched_at: now_secs(),
+            max_age_secs,
+            history,
+        };
+        if let Err(e) = write_cached_trust_history(&cache_path, &cached) {
+            tracing::warn!(
+                code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                "failed to write trust-history cache {}: {e}",
+                cache_path.display()
+            );
+        }
+        Ok(cached.history)
+    }
+
     pub(super) async fn revalidate_full_packument_typed(
         &self,
         name: &str,

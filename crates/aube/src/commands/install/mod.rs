@@ -104,6 +104,10 @@ use workspace::{
 const TRUST_POLICY_VALIDATION_CACHE_DIR: &str = "trust-policy-v1";
 const TRUST_POLICY_VALIDATION_CACHE_TTL: std::time::Duration =
     std::time::Duration::from_secs(5 * 60);
+/// Compact per-name trust histories (`aube_registry::PackumentTrustHistory`)
+/// cached by the lockfile trust-policy validator. Regenerable from the
+/// registry, like the packument caches it sits next to.
+const TRUST_HISTORY_CACHE_DIR: &str = "trust-history-v1";
 
 #[cfg(test)]
 mod reentrancy_tests {
@@ -278,31 +282,53 @@ fn apply_computed_integrities(
     }
 }
 
+/// Validate the locked graph against `trustPolicy=no-downgrade` using
+/// compact per-name trust histories. No-op when the policy is off, the
+/// install is offline, or a fresh stamp already covers this graph.
+///
+/// Runs to completion before the fetch phase, like it always has —
+/// overlapping it with tarball downloads was tried and reverted: on a
+/// bandwidth-shared link the extra concurrent metadata traffic inflates
+/// tarball RTTs enough to destabilize the adaptive fetch limiter.
+/// Revisit once the fetch-phase contention issues (blocking-pool
+/// ceiling, CUSUM shrink) are addressed.
+///
+/// `stamp_lockfile_file` additionally records a stamp keyed on the
+/// active lockfile's raw bytes, which the install fast path consults
+/// (see `startup::trust_policy_requires_validation`). Pass `true` only
+/// when `graph` is exactly the parse of that file — no member-lockfile
+/// merging, no `lockfileDir` remap — so a file-keyed hit can never
+/// cover packages this validation didn't see.
 async fn validate_lockfile_trust_policy(
     cwd: &std::path::Path,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
     graph: &aube_lockfile::LockfileGraph,
     network_mode: aube_registry::NetworkMode,
     policy: &aube_resolver::DependencyPolicy,
+    stamp_lockfile_file: bool,
 ) -> miette::Result<()> {
     let Some(cache_key) = trust_policy_validation_cache_key(cwd, graph, network_mode, policy)
     else {
         return Ok(());
     };
     let cache_dir = super::resolved_cache_dir_with_ctx(cwd, settings_ctx);
+    let file_stamp_key = if stamp_lockfile_file {
+        lockfile_trust_policy_file_stamp_key(cwd, settings_ctx, network_mode)
+    } else {
+        None
+    };
     if trust_policy_validation_cache_hit(&cache_dir, &cache_key) {
         tracing::debug!("trustPolicy=no-downgrade: reused lockfile validation cache");
+        if let Some(key) = &file_stamp_key {
+            record_lockfile_trust_policy_validation(&cache_dir, key);
+        }
         return Ok(());
     }
 
-    let client = std::sync::Arc::new(make_client(cwd).with_network_mode(network_mode));
-    let full_cache_dir = cache_dir.join("packuments-full-v1");
-    let concurrency = default_lockfile_network_concurrency().max(1);
-    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
-    let mut seen = std::collections::BTreeSet::new();
-    let mut checks: tokio::task::JoinSet<Result<(), aube_resolver::Error>> =
-        tokio::task::JoinSet::new();
-
+    // One compact trust-history fetch per registry name covers every
+    // locked version of that name.
+    let mut by_name: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
     for dep_path in reachable_package_dep_paths(graph) {
         let Some(pkg) = graph.packages.get(&dep_path) else {
             continue;
@@ -310,14 +336,22 @@ async fn validate_lockfile_trust_policy(
         if pkg.local_source.is_some() {
             continue;
         }
-        let name = pkg.registry_name().to_string();
-        let version = pkg.version.clone();
-        if !seen.insert((name.clone(), version.clone())) {
-            continue;
-        }
+        by_name
+            .entry(pkg.registry_name().to_string())
+            .or_default()
+            .insert(pkg.version.clone());
+    }
 
+    let client = std::sync::Arc::new(make_client(cwd).with_network_mode(network_mode));
+    let trust_cache_dir = cache_dir.join(TRUST_HISTORY_CACHE_DIR);
+    let concurrency = default_lockfile_network_concurrency().max(1);
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut checks: tokio::task::JoinSet<Result<(), aube_resolver::Error>> =
+        tokio::task::JoinSet::new();
+
+    for (name, versions) in by_name {
         let client = client.clone();
-        let full_cache_dir = full_cache_dir.clone();
+        let trust_cache_dir = trust_cache_dir.clone();
         let exclude = policy.trust_policy_exclude.clone();
         let ignore_after = policy.trust_policy_ignore_after;
         let semaphore = semaphore.clone();
@@ -325,17 +359,25 @@ async fn validate_lockfile_trust_policy(
             let _permit = semaphore.acquire_owned().await.map_err(|e| {
                 aube_resolver::Error::Registry(name.clone(), format!("trust check cancelled: {e}"))
             })?;
-            let packument = client
-                .fetch_packument_with_time_cached(&name, &full_cache_dir)
+            let history = client
+                .fetch_trust_history_cached(&name, &trust_cache_dir)
                 .await
                 .map_err(|e| aube_resolver::Error::Registry(name.clone(), e.to_string()))?;
-            let picked = packument.versions.get(&version).ok_or_else(|| {
-                aube_resolver::Error::Registry(
-                    name.clone(),
-                    format!("registry packument has no metadata for {name}@{version}"),
+            for version in versions {
+                let picked = history.versions.get(&version).ok_or_else(|| {
+                    aube_resolver::Error::Registry(
+                        name.clone(),
+                        format!("registry packument has no metadata for {name}@{version}"),
+                    )
+                })?;
+                aube_resolver::check_no_downgrade_history(
+                    &name,
+                    &history,
+                    &version,
+                    picked,
+                    &exclude,
+                    ignore_after,
                 )
-            })?;
-            aube_resolver::check_no_downgrade(&packument, &version, picked, &exclude, ignore_after)
                 .map_err(|e| match e {
                     aube_resolver::TrustCheckError::Downgrade(d) => {
                         aube_resolver::Error::TrustDowngrade(Box::new(d))
@@ -343,7 +385,9 @@ async fn validate_lockfile_trust_policy(
                     aube_resolver::TrustCheckError::MissingTime(d) => {
                         aube_resolver::Error::TrustCheckMissingTime(Box::new(d))
                     }
-                })
+                })?;
+            }
+            Ok(())
         });
     }
 
@@ -353,7 +397,95 @@ async fn validate_lockfile_trust_policy(
     }
 
     record_lockfile_trust_policy_validation(&cache_dir, &cache_key);
+    if let Some(key) = &file_stamp_key {
+        record_lockfile_trust_policy_validation(&cache_dir, key);
+    }
     Ok(())
+}
+
+/// Cache key for the file-content trust-policy stamp the install fast
+/// path consults. Hashes the active lockfile's raw bytes plus every
+/// non-graph input the graph-shaped key hashes — the file bytes subsume
+/// the graph, so any lockfile edit (and any registry/policy change)
+/// produces a different key. Returns `None` when no lockfile exists or
+/// it can't be read.
+fn lockfile_trust_policy_file_stamp_key(
+    cwd: &std::path::Path,
+    settings_ctx: &aube_settings::ResolveCtx<'_>,
+    network_mode: aube_registry::NetworkMode,
+) -> Option<String> {
+    let lockfile_path = crate::state::active_lockfile_path(cwd)?;
+    let bytes = std::fs::read(&lockfile_path).ok()?;
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"aube:trust-policy-validation-file:v1\0");
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(b"\0network=");
+    hasher.update(format!("{network_mode:?}").as_bytes());
+    hasher.update(b"\0ignore_after=");
+    hasher.update(
+        format!(
+            "{:?}",
+            aube_settings::resolved::trust_policy_ignore_after(settings_ctx)
+        )
+        .as_bytes(),
+    );
+    // Raw (unparsed) exclude rules: both the record site and the fast
+    // path read the same resolved setting strings, so the two sides
+    // can't drift the way parsed-rule formatting could.
+    hasher.update(b"\0exclude=");
+    for rule in aube_settings::resolved::trust_policy_exclude(settings_ctx) {
+        hasher.update(rule.as_bytes());
+        hasher.update(b"\x1e");
+    }
+
+    let config = super::load_npm_config(cwd);
+    hasher.update(b"\0registry=");
+    hasher.update(config.registry.as_bytes());
+    hasher.update(b"\0scoped_registries=");
+    for (scope, url) in config.scoped_registries {
+        hasher.update(scope.as_bytes());
+        hasher.update(b"\x1f");
+        hasher.update(url.as_bytes());
+        hasher.update(b"\x1e");
+    }
+
+    hasher.update(b"\0lockfile=");
+    hasher.update(
+        lockfile_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .as_bytes(),
+    );
+    hasher.update(b"\x1f");
+    hasher.update(blake3::hash(&bytes).to_hex().as_bytes());
+
+    Some(hasher.finalize().to_hex().to_string())
+}
+
+/// True when a trust-policy validation stamp keyed on the active
+/// lockfile's current content is within its TTL — the full pipeline
+/// would skip validation anyway, so the install fast path may proceed
+/// without it.
+///
+/// Callers must still gate on `state::check_needs_install`. The graph
+/// this stamp covers had platform rules applied
+/// (`resolve::apply_lockfile_graph_platform_rules`), whose inputs —
+/// the root manifest, workspace YAML, and resolved settings — are
+/// exactly what the state check hashes. Keeping both conditions means
+/// a widened `supportedArchitectures` re-runs validation instead of
+/// riding a stamp that never saw the newly-included packages.
+pub(super) fn lockfile_trust_policy_file_stamp_fresh(
+    cwd: &std::path::Path,
+    settings_ctx: &aube_settings::ResolveCtx<'_>,
+    network_mode: aube_registry::NetworkMode,
+) -> bool {
+    let Some(key) = lockfile_trust_policy_file_stamp_key(cwd, settings_ctx, network_mode) else {
+        return false;
+    };
+    let cache_dir = super::resolved_cache_dir_with_ctx(cwd, settings_ctx);
+    trust_policy_validation_cache_hit(&cache_dir, &key)
 }
 
 fn trust_policy_validation_cache_key(
@@ -1136,6 +1268,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 &graph,
                 opts.network_mode,
                 &dependency_policy,
+                /*stamp_lockfile_file=*/
+                lockfile_dir == cwd && (shared_workspace_lockfile || !has_workspace),
             )
             .await?;
             control::check_cancelled()?;
@@ -2764,6 +2898,71 @@ mod trust_policy_validation_cache_tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn trust_policy_file_stamp_tracks_lockfile_bytes_and_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_npmrc(dir.path(), "https://registry.npmjs.org/");
+        let online = aube_registry::NetworkMode::Online;
+
+        // No lockfile on disk -> no key, and consulting can't be fresh.
+        crate::commands::with_settings_ctx(dir.path(), |ctx| {
+            assert!(lockfile_trust_policy_file_stamp_key(dir.path(), ctx, online).is_none());
+            assert!(!lockfile_trust_policy_file_stamp_fresh(
+                dir.path(),
+                ctx,
+                online
+            ));
+        });
+
+        std::fs::write(
+            dir.path().join("aube-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        let key = crate::commands::with_settings_ctx(dir.path(), |ctx| {
+            lockfile_trust_policy_file_stamp_key(dir.path(), ctx, online).unwrap()
+        });
+
+        // Recording the key makes the fast-path consult fresh...
+        crate::commands::with_settings_ctx(dir.path(), |ctx| {
+            let cache_dir = crate::commands::resolved_cache_dir_with_ctx(dir.path(), ctx);
+            record_lockfile_trust_policy_validation(&cache_dir, &key);
+            assert!(lockfile_trust_policy_file_stamp_fresh(
+                dir.path(),
+                ctx,
+                online
+            ));
+        });
+
+        // ...until the lockfile bytes change.
+        std::fs::write(
+            dir.path().join("aube-lock.yaml"),
+            "lockfileVersion: '9.0'\n# drift\n",
+        )
+        .unwrap();
+        crate::commands::with_settings_ctx(dir.path(), |ctx| {
+            let changed = lockfile_trust_policy_file_stamp_key(dir.path(), ctx, online).unwrap();
+            assert_ne!(key, changed);
+            assert!(!lockfile_trust_policy_file_stamp_fresh(
+                dir.path(),
+                ctx,
+                online
+            ));
+        });
+
+        // A registry change invalidates too, same as the graph key.
+        std::fs::write(
+            dir.path().join("aube-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        write_project_npmrc(dir.path(), "https://registry.example.test/");
+        crate::commands::with_settings_ctx(dir.path(), |ctx| {
+            let changed = lockfile_trust_policy_file_stamp_key(dir.path(), ctx, online).unwrap();
+            assert_ne!(key, changed);
+        });
     }
 
     #[test]

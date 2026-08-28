@@ -306,20 +306,68 @@ pub fn check_no_downgrade_compact(
     exclude: &TrustExcludeRules,
     ignore_after_minutes: Option<u64>,
 ) -> Result<(), TrustCheckError> {
+    check_no_downgrade_over_history(
+        &packument.name,
+        &packument.time,
+        picked_version,
+        evidence_for(picked_meta),
+        history,
+        exclude,
+        ignore_after_minutes,
+    )
+}
+
+/// Trust-policy check over a standalone compact trust history — no full
+/// [`Packument`] or [`VersionMetadata`] in hand. Used by the lockfile
+/// validator, which fetches [`aube_registry::PackumentTrustHistory`]
+/// per name; `history.versions` here *includes* the picked version
+/// (the shared loop skips it when ranking prior evidence).
+pub fn check_no_downgrade_history(
+    name: &str,
+    history: &aube_registry::PackumentTrustHistory,
+    picked_version: &str,
+    picked_meta: &aube_registry::VersionTrustMetadata,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    check_no_downgrade_over_history(
+        name,
+        &history.time,
+        picked_version,
+        compact_evidence_for(picked_meta),
+        &history.versions,
+        exclude,
+        ignore_after_minutes,
+    )
+}
+
+/// Shared core for the compact-history trust checks: rank the strongest
+/// prior evidence in `history` and reject a picked version that weakens
+/// it. `history` may or may not contain `picked_version` itself — the
+/// ranking loop always skips it.
+fn check_no_downgrade_over_history(
+    name: &str,
+    time: &std::collections::BTreeMap<String, String>,
+    picked_version: &str,
+    picked_evidence: Option<TrustEvidence>,
+    history: &std::collections::BTreeMap<String, aube_registry::VersionTrustMetadata>,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
     let picked_parsed = node_semver::Version::parse(picked_version).ok();
     if let Some(ref version) = picked_parsed {
-        if exclude.matches(&packument.name, version) {
+        if exclude.matches(name, version) {
             return Ok(());
         }
-    } else if exclude.matches_name_only(&packument.name) {
+    } else if exclude.matches_name_only(name) {
         return Ok(());
     }
-    if packument.time.is_empty() {
+    if time.is_empty() {
         return Ok(());
     }
-    let Some(picked_time) = packument.time.get(picked_version) else {
+    let Some(picked_time) = time.get(picked_version) else {
         return Err(TrustCheckError::MissingTime(MissingTimeDetails {
-            name: packument.name.clone(),
+            name: name.to_string(),
             version: picked_version.to_string(),
         }));
     };
@@ -340,7 +388,7 @@ pub fn check_no_downgrade_compact(
         if version == picked_version {
             continue;
         }
-        let Some(published_at) = packument.time.get(version) else {
+        let Some(published_at) = time.get(version) else {
             continue;
         };
         if published_at >= picked_time {
@@ -374,12 +422,11 @@ pub fn check_no_downgrade_compact(
     let Some(prior) = strongest else {
         return Ok(());
     };
-    let current = evidence_for(picked_meta);
-    if current.map_or(0, TrustEvidence::rank) < prior.evidence.rank() {
+    if picked_evidence.map_or(0, TrustEvidence::rank) < prior.evidence.rank() {
         return Err(TrustCheckError::Downgrade(TrustDowngradeDetails {
-            name: packument.name.clone(),
+            name: name.to_string(),
             picked_version: picked_version.to_string(),
-            current_evidence: current,
+            current_evidence: picked_evidence,
             prior_evidence: prior.evidence,
             prior_version: prior.version,
         }));
@@ -1039,6 +1086,67 @@ mod tests {
         };
         assert_eq!(details.prior_version, "2.0.0");
         assert_eq!(details.prior_evidence, TrustEvidence::Provenance);
+    }
+
+    #[test]
+    fn standalone_history_detects_downgrade_and_skips_picked_version() {
+        let trust_meta =
+            |dist: Option<aube_registry::VersionTrustDist>| aube_registry::VersionTrustMetadata {
+                approver: None,
+                npm_user: None,
+                dist,
+            };
+        let provenance_dist = aube_registry::VersionTrustDist {
+            attestations: Some(Attestations {
+                provenance: Some(serde_json::json!({
+                    "predicateType": "https://slsa.dev/provenance/v1"
+                })),
+            }),
+        };
+        // Unlike the compact map, the standalone history includes the
+        // picked version itself — the ranking loop must skip it even
+        // when it carries evidence.
+        let history = aube_registry::PackumentTrustHistory {
+            time: BTreeMap::from([
+                ("2.0.0".to_string(), "2025-02-01T00:00:00.000Z".to_string()),
+                ("3.0.0".to_string(), "2025-03-01T00:00:00.000Z".to_string()),
+            ]),
+            versions: BTreeMap::from([
+                ("2.0.0".to_string(), trust_meta(Some(provenance_dist))),
+                ("3.0.0".to_string(), trust_meta(None)),
+            ]),
+        };
+
+        let picked = &history.versions["3.0.0"];
+        let err = check_no_downgrade_history(
+            "foo",
+            &history,
+            "3.0.0",
+            picked,
+            &TrustExcludeRules::default(),
+            None,
+        )
+        .expect_err("prior provenance must block a downgrade");
+        let TrustCheckError::Downgrade(details) = err else {
+            panic!("expected Downgrade");
+        };
+        assert_eq!(details.name, "foo");
+        assert_eq!(details.prior_version, "2.0.0");
+        assert_eq!(details.prior_evidence, TrustEvidence::Provenance);
+        assert_eq!(details.current_evidence, None);
+
+        // Same history, but picking the version that carries the
+        // evidence: no prior outranks it, so the check passes.
+        let picked = &history.versions["2.0.0"];
+        check_no_downgrade_history(
+            "foo",
+            &history,
+            "2.0.0",
+            picked,
+            &TrustExcludeRules::default(),
+            None,
+        )
+        .expect("strongest evidence so far must pass");
     }
 
     #[test]
