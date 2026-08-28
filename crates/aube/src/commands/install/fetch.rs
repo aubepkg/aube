@@ -754,8 +754,20 @@ where
          * Cross run persisted under `tarball:default` so this path
          * shares its converged operating point with the streaming
          * tarball path.
+         *
+         * Ceiling is the blocking pool size (an explicit
+         * `networkConcurrency` above it is honored): every streaming
+         * import holds one blocking thread for its whole download, so
+         * permits past the pool only open sockets whose imports queue
+         * behind earlier ones. The previous literal 256 sat at 2x the
+         * pool and let slow-start park half the fleet in that queue.
          */
         let sem_seed = network_concurrency.unwrap_or_else(default_lockfile_network_concurrency);
+        // `.max(4)` keeps the bounds valid (min_limit is 4) under a
+        // tiny AUBE_TOKIO_BLOCKING benchmarking override.
+        let sem_max = crate::tokio_blocking_pool_size()
+            .max(network_concurrency.unwrap_or(0))
+            .max(4);
         let lockfile_persistent = aube_util::adaptive::global_persistent_state();
         let semaphore = match lockfile_persistent.as_ref() {
             Some(state) => aube_util::adaptive::AdaptiveLimit::from_persistent(
@@ -763,9 +775,9 @@ where
                 "tarball:default",
                 sem_seed.clamp(64, 128),
                 4,
-                256,
+                sem_max,
             ),
-            None => aube_util::adaptive::AdaptiveLimit::new(sem_seed.clamp(64, 128), 4, 256),
+            None => aube_util::adaptive::AdaptiveLimit::new(sem_seed.clamp(64, 128), 4, sem_max),
         };
         if let Some(state) = lockfile_persistent.clone() {
             lockfile_persist_handle = Some((state, std::sync::Arc::clone(&semaphore)));

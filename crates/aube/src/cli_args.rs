@@ -138,7 +138,8 @@ pub struct VirtualStoreArgs {
     /// Force the shared global virtual store off for this invocation.
     ///
     /// Packages are materialized inside the project's virtual store
-    /// instead of symlinked from `~/.cache/aube/virtual-store/`.
+    /// instead of symlinked from the shared store-adjacent tree
+    /// (`~/.local/share/aube/store/v1/virtual-store/`).
     #[usage(long, long = "disable-gvs", conflicts = "--enable-gvs")]
     pub disable_global_virtual_store: bool,
 

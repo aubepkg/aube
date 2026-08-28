@@ -1345,12 +1345,13 @@ JSON
 	rm "$victim"
 
 	# Wipe both node_modules AND the global virtual store. The GVS at
-	# `$XDG_CACHE_HOME/aube/virtual-store/` holds hardlinks back to the
+	# `<store>/v1/virtual-store/` (legacy installs: under
+	# `$XDG_CACHE_HOME/aube/virtual-store/`) holds hardlinks back to the
 	# (deleted) CAS path, and `ensure_in_virtual_store` short-circuits
 	# on `pkg_nm_dir.exists()` — leaving the GVS in place would let the
 	# materializer skip the broken package entirely and mask the very
 	# bug this test exists to catch.
-	rm -rf node_modules "$XDG_CACHE_HOME/aube/virtual-store"
+	rm -rf node_modules "$store_v1/virtual-store" "$XDG_CACHE_HOME/aube/virtual-store"
 
 	# Without the verified probe, this install would fail with
 	# `ERR_AUBE_MISSING_STORE_FILE` from the GVS prewarm path; with

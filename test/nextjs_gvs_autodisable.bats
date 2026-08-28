@@ -56,25 +56,28 @@ JSON
 	assert_output --partial "\`next\`"
 
 	# The whole point of the auto-disable: `.aube/<pkg>` must be a
-	# real directory, not a symlink into
-	# `~/.cache/aube/virtual-store/`. A symlink here is what trips
-	# Turbopack's filesystem-root check.
+	# real directory, not a symlink into the shared global virtual
+	# store. A symlink here is what trips Turbopack's
+	# filesystem-root check.
 	[ -d node_modules/.aube/is-odd@3.0.1 ]
 	[ ! -L node_modules/.aube/is-odd@3.0.1 ]
 	[ -L node_modules/next ]
 
 	# Regression guard: the fetch-pipelined prewarm task builds its
 	# own Linker and used to miss this override, so it would spend
-	# the fetch phase materializing packages into
-	# `$XDG_CACHE_HOME/aube/virtual-store/` even though the main
-	# linker ran in per-project mode and threw all of that work
-	# away. HOME is isolated in setup, so the shared virtual store
-	# stays empty on a clean run — no per-dep_path subdir under
-	# `virtual-store/` means prewarm correctly skipped the pour.
-	if [ -d "$XDG_CACHE_HOME/aube/virtual-store" ]; then
-		run find "$XDG_CACHE_HOME/aube/virtual-store" -mindepth 1 -maxdepth 1 -type d
-		assert_output ""
-	fi
+	# the fetch phase materializing packages into the shared global
+	# virtual store even though the main linker ran in per-project
+	# mode and threw all of that work away. HOME is isolated in
+	# setup, so the shared virtual store stays empty on a clean run
+	# — no per-dep_path subdir under `virtual-store/` means prewarm
+	# correctly skipped the pour. (Both the store-adjacent default
+	# and the legacy cache-dir location are checked.)
+	for gvs_root in "$XDG_DATA_HOME/aube/store/v1/virtual-store" "$XDG_CACHE_HOME/aube/virtual-store"; do
+		if [ -d "$gvs_root" ]; then
+			run find "$gvs_root" -mindepth 1 -maxdepth 1 -type d
+			assert_output ""
+		fi
+	done
 }
 
 @test "aube install warns when next is in devDependencies" {
@@ -153,7 +156,7 @@ JSON
 
 	run sed -n 's/.*"virtualStoreDir": "\(.*\)".*/\1/p' node_modules/.modules.yaml
 	assert_success
-	[[ "$output" == /*/aube/virtual-store/v1 ]]
+	[[ "$output" == /*/virtual-store/v1 ]]
 
 	rm node_modules/.modules.yaml
 	run aube install
@@ -182,7 +185,7 @@ JSON
 
 	run sed -n 's/.*"virtualStoreDir": "\(.*\)".*/\1/p' packages/app/node_modules/.modules.yaml
 	assert_success
-	[[ "$output" == /*/aube/virtual-store/v1 ]]
+	[[ "$output" == /*/virtual-store/v1 ]]
 }
 
 @test "disableGlobalVirtualStoreForPackages=[] opts out of the auto-disable" {

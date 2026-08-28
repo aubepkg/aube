@@ -134,7 +134,7 @@ Aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`globalBinDir`](#setting-globalbindir) | `path` | Directory where global binaries are symlinked. |
 | [`npmrcAuthFile`](#setting-npmrcauthfile) | `path` | Path to an additional .npmrc file consulted for registry authentication tokens. |
 | [`stateDir`](#setting-statedir) | `path` | Directory for aube install-state files. |
-| [`cacheDir`](#setting-cachedir) | `path` | Directory for the global virtual store and cached package metadata. |
+| [`cacheDir`](#setting-cachedir) | `path` | Directory for cached package metadata. |
 | [`useStderr`](#setting-usestderr) | `bool` | Write all output to stderr instead of stdout. |
 | [`updateNotifier`](#setting-updatenotifier) | `bool` | Show an update notification when a newer aube is available. |
 | [`updateRewritesSpecifier`](#setting-updaterewritesspecifier) | `bool` | Rewrite caret/tilde manifest specifiers on `aube update` without `--latest`. |
@@ -1215,17 +1215,19 @@ Location of the shared virtual store used by every project.
 
 Relocates the global virtual store — the shared tree of materialized
 package directories that `node_modules/.aube/<dep>` symlinks into when
-`enableGlobalVirtualStore` is on. Unset, it lives at
-`<cacheDir>/virtual-store/`. Aube stores registry-managed entries in a
-versioned child directory below this root so older releases cannot share
-entries that a current `aube store prune` may remove.
+`enableGlobalVirtualStore` is on. Unset, it lives store-adjacent at
+`<storeDir>/v1/virtual-store/`, next to the CAS `files/` and `index/`
+directories — on the same volume as the content store (so the hardlink
+fast path always applies) and outside `cacheDir` (so deleting the cache
+never severs the symlinks every installed project points into it).
+Installs whose virtual store predates this default keep using the
+legacy `<cacheDir>/virtual-store/` tree for as long as it exists.
+Aube stores registry-managed entries in a versioned child directory
+below this root so older releases cannot share entries that a current
+`aube store prune` may remove.
 
 Set this when the global virtual store belongs somewhere other than
-the rest of the cache — typically to put it on the same volume as
-`storeDir` while leaving packument metadata on the system disk.
-Setting `cacheDir` moves the virtual store too, so reach for that one
-when you want the whole cache to travel together and this one when you
-want to split them.
+the store — for example a dedicated volume shared between machines.
 
 Entries in the global virtual store are hardlinked out of the content
 store, so keep this on the same volume as `storeDir`. When they land
@@ -2734,7 +2736,7 @@ Overrides the directory that holds the `.aube-state` install-state file. Default
 
 ### `cacheDir` {#setting-cachedir}
 
-Directory for the global virtual store and cached package metadata.
+Directory for cached package metadata.
 
 - Type: `path`
 - Default: `` platform cache dir (`$XDG_CACHE_HOME/aube`) ``
@@ -2748,23 +2750,22 @@ Overrides the cache directory. Unset, aube derives it per platform
 its own name to; this setting takes a complete path instead, so
 `AUBE_CACHE_DIR=/mnt/fast/aube` puts the cache directly there.
 
-The global virtual store (`<cacheDir>/virtual-store/`) and cached
-packument metadata (`<cacheDir>/packuments-v1/`,
-`<cacheDir>/packuments-full-v1/`) live under this directory. The
+Cached packument metadata (`<cacheDir>/packuments-v1/`,
+`<cacheDir>/packuments-full-v1/`) lives under this directory. The
 content-addressable store is *not* here — it is `storeDir`, which
-defaults under `$XDG_DATA_HOME` instead. A few smaller caches (the OSV
-advisory mirror, the bootstrapped `node-gyp`, git clones) still follow
-the platform cache dir regardless of this setting.
+defaults under `$XDG_DATA_HOME` instead, and the global virtual store
+defaults next to that store (`<storeDir>/v1/virtual-store/`), not under
+the cache; a virtual store created by an older aube at
+`<cacheDir>/virtual-store/` keeps being used for as long as it exists.
+A few smaller caches (the OSV advisory mirror, the bootstrapped
+`node-gyp`, git clones) still follow the platform cache dir regardless
+of this setting.
 
-Set this alongside `storeDir` when the store lives on a non-default
-volume. Entries in the global virtual store are hardlinked out of the
-CAS, so on installs with the global virtual store enabled, a `cacheDir`
-and `storeDir` split across filesystems degrades every install to a
-per-file copy and aube warns about it. Pointing both at the same volume
-(`AUBE_CACHE_DIR=/mnt/dev/cache/aube` plus
-`AUBE_STORE_DIR=/mnt/dev/stores/aube`) keeps the hardlink fast path.
-Use `globalVirtualStoreDir` to move only the virtual store and leave
-the metadata caches where they are.
+Once the virtual store no longer lives here, everything under this
+directory is regenerable: deleting it costs the next install some
+registry round-trips but breaks nothing. Use `globalVirtualStoreDir`
+to move only the virtual store and leave the metadata caches where
+they are.
 
 Examples:
 

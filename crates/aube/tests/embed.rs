@@ -242,7 +242,7 @@ async fn facade_warm_install_registers_the_host_virtual_store() {
     let overrides = aube::embed::EmbedderInstallOverrides {
         use_global_virtual_store: Some(true),
         cache_dir: Some(host_cache.clone()),
-        store_dir: Some(host_store),
+        store_dir: Some(host_store.clone()),
     };
 
     let mut options = InstallOptions::new(project.path());
@@ -253,7 +253,9 @@ async fn facade_warm_install_registers_the_host_virtual_store() {
         .await
         .unwrap();
 
-    let projects_dir = host_cache.join("virtual-store/v1/.projects");
+    // The GVS defaults store-adjacent (`<storeDir>/v1/virtual-store`),
+    // not under the embedder cache dir.
+    let projects_dir = host_store.join("v1/virtual-store/v1/.projects");
     std::fs::remove_dir_all(&projects_dir).unwrap();
 
     let mut options = InstallOptions::new(project.path());

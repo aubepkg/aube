@@ -1246,7 +1246,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -2710,7 +2710,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -4031,7 +4031,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -4387,7 +4387,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -5685,7 +5685,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -6166,7 +6166,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -6451,7 +6451,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -7790,7 +7790,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -8065,7 +8065,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -11590,7 +11590,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -11868,7 +11868,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -12420,7 +12420,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -13686,7 +13686,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -13958,7 +13958,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -14462,7 +14462,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -15865,7 +15865,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [

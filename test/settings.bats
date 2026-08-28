@@ -195,11 +195,13 @@ _make_env_probe_project() {
 
 # --- relocating the global virtual store ---
 #
-# The global virtual store is the biggest thing under `cacheDir`, and
-# it hardlinks out of the CAS, so users who move `storeDir` to another
-# volume need to move this with it. Before these settings were honored
-# here, the only lever was `XDG_CACHE_HOME`. `cacheDir` moves the whole
-# cache; `globalVirtualStoreDir` moves only the virtual store.
+# The global virtual store hardlinks out of the CAS, so it defaults
+# store-adjacent (`<storeDir>/v1/virtual-store/`) — same volume as the
+# CAS by construction, and outside `cacheDir` so deleting the cache
+# never severs project symlinks. A tree created by an older aube at
+# `<cacheDir>/virtual-store/` stays authoritative for as long as it
+# exists (existing projects embed that path in their symlink farms).
+# `globalVirtualStoreDir` moves only the virtual store.
 
 # Assert `.aube/<dep_path>` is an absolute symlink into `$1`, the
 # expected global virtual store root.
@@ -211,30 +213,45 @@ _assert_links_into_gvs() {
 	[[ "$target" == "$gvs/"* ]]
 }
 
-@test "AUBE_CACHE_DIR relocates the global virtual store" {
+@test "global virtual store defaults next to the content store" {
+	_setup_basic_fixture
+
+	run aube install
+	assert_success
+
+	local gvs_default="$XDG_DATA_HOME/aube/store/v1/virtual-store"
+	assert_dir_exists "$gvs_default"
+	_assert_links_into_gvs "$gvs_default"
+	# Nothing lands under the cache dir — deleting the cache must never
+	# sever project symlinks.
+	[ ! -d "$HOME/.cache/aube/virtual-store" ]
+}
+
+@test "AUBE_CACHE_DIR no longer relocates the global virtual store" {
 	_setup_basic_fixture
 	local custom_cache="$TEST_TEMP_DIR/custom-cache"
 
 	AUBE_CACHE_DIR="$custom_cache" run aube install
 	assert_success
 
-	assert_dir_exists "$custom_cache/virtual-store"
-	# `.aube/<dep_path>` is a symlink into the relocated global store,
-	# not into the XDG default.
-	_assert_links_into_gvs "$custom_cache/virtual-store"
+	# The virtual store stays store-adjacent; only metadata follows
+	# `cacheDir`.
+	_assert_links_into_gvs "$XDG_DATA_HOME/aube/store/v1/virtual-store"
+	[ ! -d "$custom_cache/virtual-store" ]
 	[ ! -d "$HOME/.cache/aube/virtual-store" ]
 }
 
-@test "cacheDir in .npmrc relocates the global virtual store" {
+@test "a legacy cache-dir virtual store stays authoritative" {
 	_setup_basic_fixture
-	local custom_cache="$TEST_TEMP_DIR/npmrc-cache"
-	echo "cacheDir=$custom_cache" >>"$HOME/.npmrc"
+	# Simulate an install whose GVS predates the store-adjacent
+	# default: the legacy root exists, so projects out there embed it
+	# in their symlink farms and it must keep winning.
+	mkdir -p "$XDG_CACHE_HOME/aube/virtual-store"
 
 	run aube install
 	assert_success
-	assert_dir_exists "$custom_cache/virtual-store"
-	_assert_links_into_gvs "$custom_cache/virtual-store"
-	[ ! -d "$HOME/.cache/aube/virtual-store" ]
+	_assert_links_into_gvs "$XDG_CACHE_HOME/aube/virtual-store"
+	[ ! -d "$XDG_DATA_HOME/aube/store/v1/virtual-store" ]
 }
 
 @test "AUBE_GLOBAL_VIRTUAL_STORE_DIR relocates only the virtual store" {

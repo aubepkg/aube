@@ -8,10 +8,18 @@ This is separate from the global content store:
 - The **global content store** (`$XDG_DATA_HOME/aube/store/v1/`) stores
   package files by BLAKE3 hash. Every install uses it.
 - The **global virtual store**
-  (`<cacheDir>/virtual-store/v1/`, defaulting to
-  `$XDG_CACHE_HOME/aube/virtual-store/v1/`, then
-  `~/.cache/aube/virtual-store/v1/`) stores package directory trees keyed by
-  dependency graph. Project `node_modules` entries symlink into it.
+  (`<storeDir>/v1/virtual-store/v1/`, defaulting to
+  `$XDG_DATA_HOME/aube/store/v1/virtual-store/v1/`, then
+  `~/.local/share/aube/store/v1/virtual-store/v1/`) stores package directory
+  trees keyed by dependency graph. Project `node_modules` entries symlink
+  into it.
+
+The virtual store sits next to the content store on purpose: entries are
+hardlinked out of the CAS (same volume by construction), and projects'
+`node_modules` symlinks point into it — so it must not live somewhere users
+routinely delete, the way a cache directory is. A virtual store created by an
+older aube release at `<cacheDir>/virtual-store/` keeps being used for as long
+as that directory exists, so existing project symlinks stay valid.
 
 ## Default behavior
 
@@ -40,16 +48,16 @@ project-b/
 ## With the global virtual store
 
 With the global virtual store enabled, aube builds the package tree once in the
-shared cache. Each project points directly at that shared tree:
+shared store-adjacent tree. Each project points directly at that shared tree:
 
 ```text
 project-a/
   node_modules/
-    react -> <cacheDir>/virtual-store/v1/react@18.2.0/<graph-hash>/node_modules/react
+    react -> <storeDir>/v1/virtual-store/v1/react@18.2.0/<graph-hash>/node_modules/react
 
 project-b/
   node_modules/
-    react -> <cacheDir>/virtual-store/v1/react@18.2.0/<graph-hash>/node_modules/react
+    react -> <storeDir>/v1/virtual-store/v1/react@18.2.0/<graph-hash>/node_modules/react
 ```
 
 The global virtual store still imports package files from the global content
@@ -119,26 +127,22 @@ aube install --disable-global-virtual-store
 
 ### Moving it off the default volume
 
-Two settings relocate the global virtual store, and neither requires moving
-`XDG_CACHE_HOME` (which would drag every other tool's cache along with it).
+The virtual store follows [`storeDir`](/settings/#setting-storedir), so moving
+the store moves it too:
+
+```sh
+export AUBE_STORE_DIR=/Volumes/Mini/dev/stores/aube
+```
 
 [`globalVirtualStoreDir`](/settings/#setting-globalvirtualstoredir) moves the
-virtual store on its own and leaves packument metadata where it is:
+virtual store on its own:
 
 ```sh
 export AUBE_GLOBAL_VIRTUAL_STORE_DIR=/Volumes/Mini/dev/aube-virtual-store
 export AUBE_STORE_DIR=/Volumes/Mini/dev/stores/aube
 ```
 
-[`cacheDir`](/settings/#setting-cachedir) moves the whole cache — virtual store
-and metadata together:
-
-```sh
-export AUBE_CACHE_DIR=/Volumes/Mini/dev/cache/aube
-export AUBE_STORE_DIR=/Volumes/Mini/dev/stores/aube
-```
-
-Either way, keep the virtual store on the *same* volume as `storeDir`. Its
+When splitting them, keep the virtual store on the *same* volume as `storeDir`. Its
 entries are hardlinked out of the content store, so a split across filesystems
 makes every global-virtual-store install fall back to a per-file copy. aube
 warns (`WARN_AUBE_GVS_CROSS_VOLUME`) when it detects that split:

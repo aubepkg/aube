@@ -580,11 +580,11 @@ pub(crate) fn resolved_cache_dir_with_ctx(
 /// entries symlink into.
 ///
 /// `globalVirtualStoreDir` wins when set and is used as the store root (no
-/// `virtual-store` suffix); otherwise the root lands under the resolved
-/// [`resolved_cache_dir`]. Registry-aware entries live in a versioned child
-/// directory so older aube releases cannot create or reuse entries that the
-/// current project registry may later prune. The dedicated setting exists
-/// because this tree — unlike the rest of the cache — has to sit on
+/// `virtual-store` suffix); otherwise the root defaults store-adjacent
+/// (see [`default_global_virtual_store_root`]). Registry-aware entries
+/// live in a versioned child directory so older aube releases cannot
+/// create or reuse entries that the current project registry may later
+/// prune. The dedicated setting exists because this tree has to sit on
 /// the same volume as `storeDir` to be hardlinkable, which is not
 /// necessarily where the packument caches belong.
 ///
@@ -602,10 +602,58 @@ pub(crate) fn global_virtual_store_dir_with_ctx(
 ) -> std::path::PathBuf {
     let root = aube_settings::resolved::global_virtual_store_dir(ctx)
         .and_then(|raw| expand_setting_path(&raw, cwd))
-        .unwrap_or_else(|| {
-            resolved_cache_dir_with_ctx(cwd, ctx).join(aube_store::VIRTUAL_STORE_SUBDIR)
-        });
+        .unwrap_or_else(|| default_global_virtual_store_root(cwd, ctx));
     root.join(GVS_REGISTRY_NAMESPACE_VERSION)
+}
+
+/// Default root of the global virtual store when `globalVirtualStoreDir`
+/// is unset: `<storeDir>/v1/virtual-store`, next to the CAS `files/` and
+/// `index/` dirs.
+///
+/// Store-adjacent rather than under `cacheDir` for the same reason the
+/// cached indexes migrated out of the cache dir: the cache is the one
+/// tree users (and CI cache eviction, and `rm -rf ~/.cache`) may delete
+/// at any time, while this tree is not regenerable state in the same
+/// sense — every project's `node_modules/.aube/<dep_path>` symlinks
+/// point into it, so deleting it severs every GVS-linked project at
+/// once. Colocation also puts it on the CAS volume by construction, so
+/// the hardlink fast path holds without the `WARN_AUBE_GVS_CROSS_VOLUME`
+/// copy fallback that the cache-relative default hit whenever cache and
+/// data lived on different filesystems.
+///
+/// Installs that predate this default keep their `<cacheDir>/virtual-store`
+/// tree for as long as it exists. Unlike the index migration this tree
+/// cannot be renamed into place: existing projects embed its absolute
+/// path in their symlink farms, and renaming it would dangle them all —
+/// exactly the breakage the relocation is meant to prevent. Once the
+/// legacy tree is gone (the user cleared their cache), the next install
+/// materializes into the store-adjacent root and projects re-link there.
+fn default_global_virtual_store_root(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> std::path::PathBuf {
+    let legacy = resolved_cache_dir_with_ctx(cwd, ctx).join(aube_store::VIRTUAL_STORE_SUBDIR);
+    if legacy.exists() {
+        return legacy;
+    }
+    let store_v1 = match resolved_store_dir_with_ctx(cwd, ctx) {
+        // Mirrors `open_store_for_maintenance_with_ctx`: a custom
+        // `storeDir` gets the `v1` schema suffix appended.
+        Some(custom) => custom.join("v1"),
+        None => match aube_store::dirs::store_dir() {
+            // `store_dir()` is `<data>/aube/store/v1/files`; the GVS
+            // sits next to `files/` under the same schema version.
+            Some(files) => files
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(files),
+            // No home dir to derive a data dir from: stay on the
+            // legacy cache-relative root rather than inventing a
+            // third location.
+            None => return legacy,
+        },
+    };
+    store_v1.join(aube_store::VIRTUAL_STORE_SUBDIR)
 }
 
 /// Resolve the `virtualStoreDirMaxLength` setting, falling back to the
@@ -826,5 +874,103 @@ mod package_manager_mismatch_tests {
     #[test]
     fn skip_auto_install_defaults_off() {
         assert!(!skip_auto_install_on_package_manager_mismatch());
+    }
+}
+
+#[cfg(test)]
+mod global_virtual_store_dir_tests {
+    use super::global_virtual_store_dir_with_ctx;
+    use aube_settings::ResolveCtx;
+    use std::collections::BTreeMap;
+
+    fn ctx_with_env<'a>(
+        env: &'a [(String, String)],
+        ws: &'a BTreeMap<String, yaml_serde::Value>,
+    ) -> ResolveCtx<'a> {
+        ResolveCtx {
+            managed_aube_config: &[],
+            project_aube_config: &[],
+            project_npmrc: &[],
+            user_aube_config: &[],
+            user_npmrc: &[],
+            workspace_yaml: ws,
+            env,
+            cli: &[],
+            embedder_defaults: &[],
+        }
+    }
+
+    #[test]
+    fn gvs_defaults_next_to_store_when_no_legacy_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        let store = tmp.path().join("store");
+        let env = vec![
+            (
+                "AUBE_CACHE_DIR".into(),
+                cache.to_string_lossy().into_owned(),
+            ),
+            (
+                "AUBE_STORE_DIR".into(),
+                store.to_string_lossy().into_owned(),
+            ),
+        ];
+        let ws = BTreeMap::new();
+        let ctx = ctx_with_env(&env, &ws);
+        assert_eq!(
+            global_virtual_store_dir_with_ctx(tmp.path(), &ctx),
+            store.join("v1").join("virtual-store").join("v1"),
+        );
+    }
+
+    #[test]
+    fn gvs_keeps_legacy_cache_tree_when_present() {
+        // Pre-relocation installs have projects whose `.aube` symlink
+        // farms embed the cache-relative path; the legacy root stays
+        // authoritative for as long as it exists.
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(cache.join("virtual-store")).unwrap();
+        let env = vec![
+            (
+                "AUBE_CACHE_DIR".into(),
+                cache.to_string_lossy().into_owned(),
+            ),
+            (
+                "AUBE_STORE_DIR".into(),
+                store.to_string_lossy().into_owned(),
+            ),
+        ];
+        let ws = BTreeMap::new();
+        let ctx = ctx_with_env(&env, &ws);
+        assert_eq!(
+            global_virtual_store_dir_with_ctx(tmp.path(), &ctx),
+            cache.join("virtual-store").join("v1"),
+        );
+    }
+
+    #[test]
+    fn explicit_setting_wins_over_both_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        let gvs = tmp.path().join("gvs");
+        std::fs::create_dir_all(cache.join("virtual-store")).unwrap();
+        let env = vec![
+            (
+                "AUBE_CACHE_DIR".into(),
+                cache.to_string_lossy().into_owned(),
+            ),
+            (
+                "AUBE_GLOBAL_VIRTUAL_STORE_DIR".into(),
+                gvs.to_string_lossy().into_owned(),
+            ),
+        ];
+        let ws = BTreeMap::new();
+        let ctx = ctx_with_env(&env, &ws);
+        assert_eq!(
+            global_virtual_store_dir_with_ctx(tmp.path(), &ctx),
+            gvs.join("v1"),
+        );
     }
 }

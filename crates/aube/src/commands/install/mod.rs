@@ -1470,19 +1470,22 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                  * Adaptive tarball concurrency. Loaded from the
                  * cross run persistent store when available so the
                  * limiter starts where a previous run converged
-                 * instead of cold ramping from the ceiling. Falls
-                 * back to seed 256 (h2 stream cap) on first ever
-                 * run. Floor 4 keeps progress under continuous
-                 * 429 / 503. Persisted back at end of fetch phase
-                 * so the next invocation benefits.
+                 * instead of cold ramping from the ceiling. Floor 4
+                 * keeps progress under continuous 429 / 503.
+                 * Persisted back at end of fetch phase so the next
+                 * invocation benefits.
                  */
                 // Honor user-configured `networkConcurrency` (or
                 // `AUBE_NETWORK_CONCURRENCY` env override) as the
                 // seed. Adaptive grow/shrink still operate around
                 // it. Floor 4 keeps progress under continuous
-                // throttling regardless of seed.
+                // throttling regardless of seed. Ceiling is the
+                // blocking pool size (a larger explicit seed wins):
+                // each streaming import holds one blocking thread for
+                // its whole download, so permits past the pool only
+                // queue imports behind earlier ones.
                 let tarball_seed = fetch_network_concurrency.max(4);
-                let tarball_max = tarball_seed.max(256);
+                let tarball_max = tarball_seed.max(crate::tokio_blocking_pool_size());
                 let persistent = aube_util::adaptive::global_persistent_state();
                 let semaphore = match persistent.as_ref() {
                     Some(state) => aube_util::adaptive::AdaptiveLimit::from_persistent(

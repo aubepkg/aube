@@ -88,7 +88,7 @@ JS
 	refute_output --partial "disableGlobalVirtualStoreForPackages"
 	run realpath node_modules/parcel
 	assert_success
-	[[ "$output" == */aube/virtual-store/v1/* ]]
+	[[ "$output" == */virtual-store/v1/* ]]
 
 	run aube run build
 	assert_success

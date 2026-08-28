@@ -77,7 +77,7 @@ Run a script defined in package.json
 ## Virtual store
 - **`--disable-global-virtual-store`** — Force the shared global virtual store off for this invocation.
 
-  Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+  Packages are materialized inside the project's virtual store instead of symlinked from the shared store-adjacent tree (`~/.local/share/aube/store/v1/virtual-store/`).
 
   **Aliases:** `--disable-gvs`
 - **`--enable-global-virtual-store`** — Force the shared global virtual store on for this invocation.

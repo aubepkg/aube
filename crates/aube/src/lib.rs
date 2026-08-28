@@ -888,7 +888,10 @@ fn inner_main() -> miette::Result<i32> {
      * while the linker is also fanning out hardlinks on the same
      * pool. 64 was saturating, queueing late tarballs behind
      * earlier finishers. 128 covers worst case fat tarball
-     * pipeline plus linker plus side effects.
+     * pipeline plus linker plus side effects. The tarball
+     * AdaptiveLimit ceilings derive from this same number (see
+     * `tokio_blocking_pool_size`), so the two can't drift apart
+     * again.
      *
      * AUBE_TOKIO_WORKERS / AUBE_TOKIO_BLOCKING for benchmarking.
      */
@@ -903,7 +906,7 @@ fn inner_main() -> miette::Result<i32> {
         .map(|n| n.get())
         .unwrap_or(4);
     let workers = parse_env("AUBE_TOKIO_WORKERS", cpu_count.min(8));
-    let blocking = parse_env("AUBE_TOKIO_BLOCKING", 128);
+    let blocking = tokio_blocking_pool_size();
     // Every aubr invocation starts on the lightweight runtime. If its
     // synchronous freshness probe finds that dependencies need installing,
     // auto_install lazily creates a multi-thread runtime for that work only.
@@ -941,6 +944,24 @@ fn inner_main() -> miette::Result<i32> {
 
 fn aubr_uses_current_thread(invoked_as_aubr: bool, cli: &Cli) -> bool {
     invoked_as_aubr && matches!(cli.command.as_ref(), Some(Commands::Run(_)))
+}
+
+/// Size of the tokio blocking-thread pool the install runtime is built
+/// with (`AUBE_TOKIO_BLOCKING` overrides the default of 128).
+///
+/// Every streaming tarball import pins one blocking thread for the
+/// whole download (the `ChunkReader` bridge blocks on the chunk
+/// channel), so a tarball limiter allowed to grow past this pool only
+/// opens sockets whose imports queue behind earlier ones — the extra
+/// permits hold connections without making progress. The tarball
+/// `AdaptiveLimit` ceilings therefore derive from this value rather
+/// than carrying their own literal.
+pub(crate) fn tokio_blocking_pool_size() -> usize {
+    std::env::var("AUBE_TOKIO_BLOCKING")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(128)
 }
 
 async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i32>> {

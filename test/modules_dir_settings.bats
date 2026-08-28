@@ -100,8 +100,8 @@ teardown() {
 	assert [ ! -e node_modules/.bin ]
 	# The project still references GVS entries through `.aube`, so pruning
 	# must include it in reachability even without top-level links.
-	assert_dir_exists "$HOME/.cache/aube/virtual-store/v1/.projects"
-	assert [ -n "$(find "$HOME/.cache/aube/virtual-store/v1/.projects" -type f -name '*.json' -print -quit)" ]
+	assert_dir_exists "$XDG_DATA_HOME/aube/store/v1/virtual-store/v1/.projects"
+	assert [ -n "$(find "$XDG_DATA_HOME/aube/store/v1/virtual-store/v1/.projects" -type f -name '*.json' -print -quit)" ]
 }
 
 @test "virtualStoreOnly=false (default) writes the usual top-level symlinks" {
@@ -209,7 +209,7 @@ teardown() {
 @test "modulesCacheMaxAge unlinks orphan symlinks without touching the target" {
 	# Defense for the cursor-bot review on PR #202: in
 	# global-virtual-store mode `.aube/<dep>` entries are symlinks
-	# into the shared `~/.cache/aube/virtual-store/`. On older
+	# into the shared store-adjacent virtual store. On older
 	# Linux kernels `remove_dir_all` could follow the symlink and
 	# recursively destroy the shared target, breaking other
 	# projects. The sweep must only unlink the local symlink.
