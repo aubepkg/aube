@@ -135,6 +135,54 @@ _assert_installed_is_odd() {
 	_assert_installed_is_odd
 }
 
+@test "workspace install self-heals a stale index when the entry resolves elsewhere" {
+	# The case that keeps `skip_already_linked_shortcut` on for workspace
+	# installs. The local `.aube/<dep>` name is keyed by dep_path alone
+	# while the virtual-store subdir folds in graph hashes, so an entry
+	# can keep resolving while the target the graph expects moves. If the
+	# fetch phase skipped verification for such a package, the linker
+	# would need an index it was never handed and fall back to the
+	# *unverified* `store.load_index` — returning a stale index whose CAS
+	# shards are gone and failing the link, with no way to re-fetch.
+	#
+	# Verifying at fetch time keeps this self-healing: the stale index
+	# drops to `NeedsFetch`, the tarball is re-downloaded, and the store,
+	# the expected target and the link are all restored.
+	_setup_ws_fixture
+
+	run aube install
+	assert_success
+
+	entry="node_modules/.aube/is-odd@3.0.1"
+	expected="$(readlink "$entry")"
+	[ -n "$expected" ]
+
+	store_v1="$(aube store path)"
+	index="$(find "$store_v1/index" -name 'is-odd@*' -print -quit)"
+	[ -n "$index" ]
+	# Remove a NON-first CAS shard so the cheap first-file probe inside
+	# `load_index` still succeeds and only the verified walk catches it.
+	victim="$(grep -o '"store_path":"[^"]*"' "$index" | sed -n '2p' | sed 's/.*":"//;s/"$//')"
+	[ -n "$victim" ]
+	rm -f "$victim"
+
+	# Point the entry at a directory that exists but is not the target
+	# this graph expects, and remove the expected target.
+	decoy="$TEST_TEMP_DIR/decoy"
+	mkdir -p "$decoy/node_modules"
+	cp -r "$expected/node_modules/is-odd" "$decoy/node_modules/" 2>/dev/null || true
+	rm -rf "${expected:?}"
+	rm -f "$entry"
+	ln -s "$decoy" "$entry"
+	[ -e "$entry" ]
+
+	run aube install
+	assert_success
+	assert_file_exists "$victim"
+	assert_dir_exists "$expected"
+	_assert_installed_is_odd
+}
+
 @test "workspace install with a changed store-dir produces a correct tree" {
 	# `has_explicit_store_dir_override` only inspects embedder and CLI
 	# sources, so an `.npmrc` store-dir change leaves the shortcut

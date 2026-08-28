@@ -1250,7 +1250,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 &packument_cache_dir,
                 Some(lock_materialize_tx),
                 /*skip_already_linked_shortcut=*/
-                explicit_store_dir_override,
+                has_workspace || explicit_store_dir_override,
                 &lock_project_local_dep_paths,
                 virtual_store_dir_max_length,
                 opts.ignore_scripts,
@@ -2300,7 +2300,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                         &packument_cache_dir,
                         /*materialize_tx=*/ None,
                         /*skip_already_linked_shortcut=*/
-                        explicit_store_dir_override,
+                        has_workspace || explicit_store_dir_override,
                         &project_local_dep_paths,
                         virtual_store_dir_max_length,
                         opts.ignore_scripts,

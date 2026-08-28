@@ -472,13 +472,12 @@ pub(super) async fn fetch_packages_with_root<F>(
     // `.aube/<dep>` already exists on disk. Callers pass true when
     // either:
     //
+    //   - the linker will need a verified index for packages this
+    //     shortcut would skip (`link_workspace`); or
     //   - the caller needs `load_index` to actually run as its store
     //     verification step (`aube fetch`, which treats the act of
     //     walking the store-file existence check as the operation's
-    //     primary side effect); or
-    //   - `storeDir` was explicitly overridden for this invocation, so
-    //     existing `.aube/<dep>` entries may describe a different
-    //     store than the one this install materializes from.
+    //     primary side effect).
     //
     // Both cases share the same implementation: skip the `.aube/`
     // existence check entirely so every package goes through
@@ -520,24 +519,32 @@ where
     // fixture drops from ~38 ms of parallel index reads to a handful
     // of `stat(2)`s.
     //
-    // Callers disable the fast path via
-    // `skip_already_linked_shortcut=true` for:
+    // Two call sites disable the fast path entirely via
+    // `skip_already_linked_shortcut=true`:
     //
-    //   - **Explicit `storeDir` overrides.** An existing `.aube/<dep>`
-    //     entry may have been materialized from a different store, so
-    //     every package must re-verify through `store.load_index`
-    //     against the store this install actually uses.
+    //   - **Workspace installs.** The shortcut's precondition ("the
+    //     entry resolves") is weaker than what the linker actually
+    //     needs ("the entry resolves *to the target this graph
+    //     expects*"). The local `.aube/<dep_path>` name is keyed by
+    //     dep_path alone, while the global virtual-store subdir folds
+    //     in graph hashes (`virtual_store_subdir` vs
+    //     `aube_dir_entry_name`), so a build-state change moves the
+    //     expected target while the entry keeps resolving to the old
+    //     one. `classify_entry_state` then reports `Stale`, the linker
+    //     needs an index it was never handed, and its fallback is the
+    //     *unverified* `store.load_index` — which happily returns a
+    //     stale index whose CAS shards are gone, failing the link
+    //     instead of re-fetching. Verifying every package here keeps
+    //     that self-healing (a stale index drops to `NeedsFetch` and
+    //     the tarball is re-downloaded while the network is still
+    //     available; the linker has no such option).
     //
-    //     (Workspace installs used to be in this list, justified by a
-    //     `link_workspace` that wiped `node_modules/` up front. That
-    //     linker has long since gained `link_all`'s incremental
-    //     Fresh/Missing/Stale handling — existing entries are kept, and
-    //     a package whose index is missing from the sparse map is
-    //     loaded via `store.load_index` inside the linker's own rayon
-    //     par_iter (`link_workspace` step 1, `link_hoisted_workspace`'s
-    //     placement pass). Keeping the shortcut off for workspaces
-    //     meant a stat per store file per package on *every* repeat
-    //     install of a monorepo, for no correctness gain.)
+    //     Enabling the shortcut for workspaces is worth doing — it is
+    //     a stat per store file per package on every repeat install of
+    //     a monorepo — but only once the classification compares
+    //     against the expected virtual-store subdir, which needs the
+    //     graph hashes that are currently computed inside the
+    //     concurrent prewarm task rather than before this call.
     //
     //   - **`aube fetch`.** The command exists to populate the
     //     global store (typical use: Docker layer caching, warming
