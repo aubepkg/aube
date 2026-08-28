@@ -10,6 +10,22 @@ pub(crate) type PkgJsonCache = BTreeMap<String, Option<serde_json::Value>>;
 /// by many importers gets read and parsed once, not once per consumer.
 pub(crate) type WsPkgJsonCache = BTreeMap<PathBuf, Option<serde_json::Value>>;
 
+pub(super) struct LinkAllBinsInput<'a> {
+    pub(super) project_dir: &'a Path,
+    pub(super) settings_ctx: &'a aube_settings::ResolveCtx<'a>,
+    pub(super) modules_dir_name: &'a str,
+    pub(super) aube_dir: &'a Path,
+    pub(super) graph: &'a aube_lockfile::LockfileGraph,
+    pub(super) virtual_store_dir_max_length: usize,
+    pub(super) placements: Option<&'a aube_linker::HoistedPlacements>,
+    pub(super) ws_dirs: &'a BTreeMap<String, PathBuf>,
+    pub(super) manifests: &'a [(String, aube_manifest::PackageJson)],
+    pub(super) manifest: &'a aube_manifest::PackageJson,
+    pub(super) node_linker: aube_linker::NodeLinker,
+    pub(super) has_workspace: bool,
+    pub(super) link_dependency_bins: bool,
+}
+
 /// Link bin entries from packages to node_modules/.bin/
 /// Compute the on-disk directory a dep's materialized package lives
 /// in. Matches the path `aube-linker` writes under
@@ -345,6 +361,136 @@ pub(crate) fn link_dep_bins(
                 shim_opts,
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Link every bin surface exposed by an install.
+///
+/// This runs before dependency lifecycle scripts so builds can invoke their
+/// dependencies, then again after approved builds. The second pass refreshes
+/// packages whose lifecycle replaces a bin target or rewrites its bin map.
+pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<()> {
+    let LinkAllBinsInput {
+        project_dir,
+        settings_ctx,
+        modules_dir_name,
+        aube_dir,
+        graph,
+        virtual_store_dir_max_length,
+        placements,
+        ws_dirs,
+        manifests,
+        manifest,
+        node_linker,
+        has_workspace,
+        link_dependency_bins,
+    } = input;
+
+    let extend_node_path = aube_settings::resolved::extend_node_path(settings_ctx);
+    let isolated = !matches!(node_linker, aube_linker::NodeLinker::Hoisted);
+    let prefer_symlinked_executables =
+        aube_settings::resolved::prefer_symlinked_executables(settings_ctx)
+            .or(isolated.then_some(false));
+    let hidden_modules_dir = aube_dir.join("node_modules");
+    let shim_opts = aube_linker::BinShimOptions {
+        extend_node_path,
+        prefer_symlinked_executables,
+        hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
+    };
+
+    let mut pkg_json_cache = PkgJsonCache::new();
+    let mut ws_pkg_json_cache = WsPkgJsonCache::new();
+    let ws_dirs_for_bins = has_workspace.then_some(ws_dirs);
+    link_bins(
+        project_dir,
+        modules_dir_name,
+        aube_dir,
+        graph,
+        virtual_store_dir_max_length,
+        placements,
+        shim_opts,
+        &mut pkg_json_cache,
+        ws_dirs_for_bins,
+        &mut ws_pkg_json_cache,
+    )?;
+
+    // Root self-bins override dependency bins with the same name. Force a
+    // wrapper because generated output may not exist yet or be executable.
+    if let Some(bin) = manifest.extra.get("bin") {
+        let root_bin_dir = project_dir.join(modules_dir_name).join(".bin");
+        let self_shim_opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..shim_opts
+        };
+        link_bin_entries(
+            &root_bin_dir,
+            project_dir,
+            manifest.name.as_deref(),
+            bin,
+            self_shim_opts,
+        )?;
+    }
+
+    if has_workspace {
+        for (importer_path, deps) in &graph.importers {
+            if importer_path == "." || !aube_linker::is_physical_importer(importer_path) {
+                continue;
+            }
+            let pkg_dir = project_dir.join(importer_path);
+            let bin_dir = pkg_dir.join(modules_dir_name).join(".bin");
+            std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
+            for dep in deps {
+                if let Some(ws_dir) = ws_dirs.get(&dep.name) {
+                    link_bins_for_workspace_dep(
+                        &mut ws_pkg_json_cache,
+                        &bin_dir,
+                        ws_dir,
+                        &dep.name,
+                        shim_opts,
+                    )?;
+                } else {
+                    link_bins_for_dep(
+                        &mut pkg_json_cache,
+                        aube_dir,
+                        &bin_dir,
+                        graph,
+                        &dep.dep_path,
+                        &dep.name,
+                        virtual_store_dir_max_length,
+                        placements,
+                        shim_opts,
+                    )?;
+                }
+            }
+            if let Some((_, member_manifest)) =
+                manifests.iter().find(|(path, _)| path == importer_path)
+                && let Some(bin) = member_manifest.extra.get("bin")
+            {
+                let self_shim_opts = aube_linker::BinShimOptions {
+                    prefer_symlinked_executables: Some(false),
+                    ..shim_opts
+                };
+                link_bin_entries(
+                    &bin_dir,
+                    &pkg_dir,
+                    member_manifest.name.as_deref(),
+                    bin,
+                    self_shim_opts,
+                )?;
+            }
+        }
+    }
+
+    if link_dependency_bins {
+        link_dep_bins(
+            aube_dir,
+            graph,
+            virtual_store_dir_max_length,
+            placements,
+            shim_opts,
+            &mut pkg_json_cache,
+        )?;
     }
     Ok(())
 }

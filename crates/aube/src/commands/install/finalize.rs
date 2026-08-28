@@ -1,3 +1,4 @@
+use super::bin_linking::{LinkAllBinsInput, link_all_bins};
 use super::dep_selection::DepSelection;
 use super::lifecycle::{
     JailBuildPolicy, run_dep_lifecycle_scripts, run_root_lifecycle, unreviewed_dep_builds,
@@ -17,7 +18,9 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) store: &'a aube_store::Store,
     pub(super) graph: &'a aube_lockfile::LockfileGraph,
     pub(super) graph_for_link: &'a aube_lockfile::LockfileGraph,
+    pub(super) ws_dirs: &'a BTreeMap<String, std::path::PathBuf>,
     pub(super) manifests: &'a [(String, aube_manifest::PackageJson)],
+    pub(super) manifest: &'a aube_manifest::PackageJson,
     pub(super) lifecycle_manifests: &'a [(String, aube_manifest::PackageJson)],
     pub(super) direct_dep_info: &'a std::collections::HashMap<String, aube_resolver::DirectDepInfo>,
     pub(super) deprecations:
@@ -26,6 +29,7 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
     pub(super) node_linker: aube_linker::NodeLinker,
+    pub(super) has_workspace: bool,
     pub(super) planned_gvs: bool,
     pub(super) virtual_store_only: bool,
     pub(super) current_leaf_hashes: Option<BTreeMap<String, String>>,
@@ -57,7 +61,9 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         store,
         graph,
         graph_for_link,
+        ws_dirs,
         manifests,
+        manifest,
         lifecycle_manifests,
         direct_dep_info,
         deprecations,
@@ -65,6 +71,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         jail_policy,
         stats,
         node_linker,
+        has_workspace,
         planned_gvs,
         virtual_store_only,
         current_leaf_hashes,
@@ -197,6 +204,29 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             tracing::debug!("allowBuilds: ran {ran} dep lifecycle script(s)");
         }
         phase_timings.record("dep_lifecycle", phase_start.elapsed());
+
+        // Lifecycle scripts may replace a declared bin target with a native
+        // executable or rewrite package.json's bin map. Refresh every exposed
+        // shim after builds (including side-effects-cache restores) so launch
+        // metadata reflects the final package contents.
+        let phase_start = std::time::Instant::now();
+        link_all_bins(LinkAllBinsInput {
+            project_dir: cwd,
+            settings_ctx,
+            modules_dir_name,
+            aube_dir,
+            graph: graph_for_link,
+            virtual_store_dir_max_length,
+            placements: placements_ref,
+            ws_dirs,
+            manifests,
+            manifest,
+            node_linker,
+            has_workspace,
+            link_dependency_bins: true,
+        })?;
+        tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
+        phase_timings.record("relink_bins", phase_start.elapsed());
     }
 
     // 7b. Post-link root lifecycle hooks: install → postinstall → prepare.
