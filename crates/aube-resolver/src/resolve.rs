@@ -7,7 +7,6 @@ use crate::local_source::is_non_registry_specifier;
 use crate::semver_util::version_satisfies;
 use crate::{
     Error, FxHashMap, PeerContextOptions, ReadPackageHook, Resolver, apply_peer_contexts, catalog,
-    hoist_auto_installed_peers,
 };
 use aube_lockfile::{DirectDep, LockedPackage, LockfileGraph};
 use aube_manifest::PackageJson;
@@ -176,19 +175,7 @@ impl Resolver {
             pnpmfile_checksum: None,
         };
 
-        // Second pass: hoist every auto-installed peer to a synthetic
-        // importer direct dep so the isolated linker creates the required
-        // `node_modules/<peer>` top-level symlink. The synthetic root keeps
-        // the requiring direct dependency's section classification.
-        // Skipped entirely when the setting is off — matches pnpm, which
-        // leaves the importer's `dependencies` untouched in that mode.
-        let hoisted = if self.auto_install_peers {
-            hoist_auto_installed_peers(canonical)
-        } else {
-            canonical
-        };
-
-        // Third pass: compute peer-context suffixes for every reachable
+        // Second pass: compute peer-context suffixes for every reachable
         // package. See `apply_peer_contexts` for the details.
         let peer_options = PeerContextOptions {
             dedupe_peer_dependents: self.dedupe_peer_dependents,
@@ -198,7 +185,7 @@ impl Resolver {
         };
         let _diag_peer =
             aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "peer_context_apply");
-        let contextualized = apply_peer_contexts(hoisted, &peer_options)?;
+        let contextualized = apply_peer_contexts(canonical, &peer_options)?;
         drop(_diag_peer);
         tracing::debug!(
             "peer-context pass produced {} contextualized packages",

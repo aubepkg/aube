@@ -1987,9 +1987,11 @@ Automatically install missing peer dependencies.
 - Workspace YAML keys: `autoInstallPeers`
 
 When true (the default), missing peer dependencies are auto-installed
-during resolution and hoisted into the importer. Set to `false` to
-match pnpm's opt-out behavior: peers are left alone and unmet peers
-are silent (set `strict-peer-dependencies=true` for diagnostics).
+during resolution. An importer's own required peers are added to that
+importer's dependencies; peers required by installed packages remain in
+those packages' peer contexts. Set to `false` to match pnpm's opt-out
+behavior: peers are left alone and unmet peers are silent (set
+`strict-peer-dependencies=true` for diagnostics).
 
 ### `dedupePeerDependents` {#setting-dedupepeerdependents}
 

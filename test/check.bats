@@ -41,6 +41,7 @@ JSON
     "is-odd": "^3.0.1"
   }
 }
+
 JSON
 	run aube install
 	assert_success
@@ -53,6 +54,26 @@ JSON
 	assert_failure
 	assert_output --partial "is-odd@3.0.1"
 	assert_output --partial "is-number"
+}
+
+@test "aube check reports a dangling importer link when its cell is missing" {
+	cat >package.json <<'JSON'
+{
+  "name": "check-missing-cell",
+  "version": "1.0.0",
+  "dependencies": {
+    "is-odd": "3.0.1"
+  }
+}
+JSON
+	run aube install
+	assert_success
+
+	rm -rf node_modules/.aube/is-odd@3.0.1
+	run aube check
+	assert_failure
+	assert_output --partial "dangling dependency link"
+	assert_output --partial "is-odd"
 }
 
 @test "aube check --json emits a structured report" {

@@ -3707,6 +3707,71 @@ async fn auto_install_peers_installs_missing_required_peer() {
         graph_has_package(&graph, "react", "18.2.0"),
         "missing required peer should be auto-installed"
     );
+    let importer = graph.importers.get(".").unwrap();
+    assert_eq!(
+        importer
+            .iter()
+            .map(|dep| dep.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["consumer"],
+        "a dependency's peer stays in its peer context instead of becoming an importer dependency"
+    );
+}
+
+#[tokio::test]
+async fn auto_install_peers_installs_importers_own_required_peer() {
+    let react = make_packument("react", &["19.2.0"], "19.2.0");
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    resolver.cache.insert("react".to_string(), react);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .peer_dependencies
+        .insert("react".to_string(), "19.2.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("resolve failed");
+
+    let importer = graph.importers.get(".").unwrap();
+    assert_eq!(importer.len(), 1);
+    assert_eq!(importer[0].name, "react");
+    assert_eq!(importer[0].specifier.as_deref(), Some("19.2.0"));
+    assert_eq!(importer[0].dep_type, DepType::Production);
+    assert!(graph_has_package(&graph, "react", "19.2.0"));
+}
+
+#[tokio::test]
+async fn auto_install_peers_skips_importers_own_optional_peer() {
+    let react = make_packument("react", &["19.2.0"], "19.2.0");
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    resolver.cache.insert("react".to_string(), react);
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .peer_dependencies
+        .insert("react".to_string(), "19.2.0".to_string());
+    manifest.extra.insert(
+        "peerDependenciesMeta".to_string(),
+        serde_json::json!({"react": {"optional": true}}),
+    );
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("resolve failed");
+
+    assert!(graph.importers.get(".").unwrap().is_empty());
+    assert!(!graph_has_package(&graph, "react", "19.2.0"));
 }
 
 #[tokio::test]
