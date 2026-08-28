@@ -436,6 +436,12 @@ impl LockfileGraph {
                     };
                 }
                 Some(locked_spec) if *locked_spec != spec => {
+                    let importer_peer_only = !manifest.dependencies.contains_key(name)
+                        && !manifest.dev_dependencies.contains_key(name)
+                        && !manifest.optional_dependencies.contains_key(name);
+                    if importer_peer_only && retained_peer_spec_is_compatible(spec, locked_spec) {
+                        continue;
+                    }
                     // pnpm rewrites the importer specifier to the
                     // override-applied value when an override fires on
                     // a direct dep, so a pnpm-generated lockfile shows
@@ -539,10 +545,11 @@ impl LockfileGraph {
             }
         }
 
-        // Anything in the lockfile but missing from the manifest is stale.
-        // Required importer peers are included in `manifest_names` when
-        // autoInstallPeers is enabled; peers declared by dependencies stay
-        // contextual to those packages and must not appear here.
+        // Anything in the lockfile but missing from the manifest's owned
+        // dependency sections is stale unless it is retained for an
+        // importer-owned peer. Required importer peers are included in
+        // `manifest_names` when autoInstallPeers is enabled; otherwise a
+        // retained exact version must satisfy the declared peer range.
         let manifest_names: std::collections::HashSet<&str> = manifest
             .dependencies
             .keys()
@@ -564,8 +571,21 @@ impl LockfileGraph {
             )
             .map(|s| s.as_str())
             .collect();
-        for locked_name in lockfile_specs.keys() {
+        for (locked_name, locked_spec) in &lockfile_specs {
             if manifest_names.contains(locked_name) {
+                continue;
+            }
+            // pnpm retains importer entries when an owned dependency is
+            // removed but a peer declaration for the same package remains.
+            // It may preserve the old exact dependency specifier (for
+            // example `5.3.4` for a `^5` peer), so accept either an exact
+            // peer-spec match or an exact locked version satisfying the
+            // importer's declared peer range.
+            if manifest
+                .peer_dependencies
+                .get(*locked_name)
+                .is_some_and(|peer_range| retained_peer_spec_is_compatible(peer_range, locked_spec))
+            {
                 continue;
             }
             let workspace_link = importer_path == "."
@@ -585,6 +605,21 @@ impl LockfileGraph {
 
         DriftStatus::Fresh
     }
+}
+
+fn retained_peer_spec_is_compatible(peer_range: &str, locked_spec: &str) -> bool {
+    if peer_range == locked_spec {
+        return true;
+    }
+    let normalized_range = if peer_range.trim().is_empty() {
+        "*"
+    } else {
+        peer_range
+    };
+    node_semver::Version::parse(locked_spec)
+        .ok()
+        .zip(node_semver::Range::parse(normalized_range).ok())
+        .is_some_and(|(version, range)| version.satisfies(&range))
 }
 
 /// Merge `pnpm-workspace.yaml` overrides on top of the manifest's
@@ -982,6 +1017,68 @@ mod drift_tests {
             graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
             DriftStatus::Fresh
         );
+    }
+
+    #[test]
+    fn fresh_when_lockfile_retains_importer_peer_with_matching_range() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("@tanstack/react-table".into(), "^8".into());
+        let graph = make_graph(&[(
+            "@tanstack/react-table",
+            "^8",
+            "@tanstack/react-table@8.21.3",
+        )]);
+
+        assert_eq!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn fresh_when_lockfile_retains_importer_peer_with_satisfying_exact_version() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("react-router-dom".into(), "^5".into());
+        let graph = make_graph(&[("react-router-dom", "5.3.4", "react-router-dom@5.3.4")]);
+
+        assert_eq!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn fresh_when_retained_importer_peer_range_is_empty() {
+        for peer_range in ["", "  \t"] {
+            let mut manifest = make_manifest(&[]);
+            manifest
+                .peer_dependencies
+                .insert("react-router-dom".into(), peer_range.into());
+            let graph = make_graph(&[("react-router-dom", "5.3.4", "react-router-dom@5.3.4")]);
+
+            assert_eq!(
+                graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+                DriftStatus::Fresh
+            );
+        }
+    }
+
+    #[test]
+    fn stale_when_retained_importer_peer_version_does_not_satisfy_range() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("react-router-dom".into(), "^6".into());
+        let graph = make_graph(&[("react-router-dom", "5.3.4", "react-router-dom@5.3.4")]);
+
+        match graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()) {
+            DriftStatus::Stale { reason } => assert!(reason.contains("react-router-dom")),
+            DriftStatus::Fresh => panic!("an incompatible retained peer must be stale"),
+        }
     }
 
     // Regression: when a user explicitly pinned a dep that also happens
