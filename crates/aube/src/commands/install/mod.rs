@@ -37,7 +37,8 @@ pub(crate) use resolve::check_patch_drift;
 use advisory::resolve_osv_routing_settings;
 pub use args::{EmbedderInstallOverrides, InstallArgs, InstallOptions};
 pub(crate) use bin_linking::{
-    PkgJsonCache, dep_modules_dir_for, link_dep_bins, materialized_pkg_dir,
+    LinkDepBinsInput, ManagedBinLinks, PkgJsonCache, dep_modules_dir_for, link_dep_bins,
+    materialized_pkg_dir, remove_managed_bin_links, remove_unclaimed_preserved_bin_links,
 };
 pub use control::{
     INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,
@@ -2657,6 +2658,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         current_leaf_hashes,
         current_subtree_hashes,
         patch_hashes,
+        managed_bin_links,
     } = link::run_link_phase(link::LinkPhaseInput {
         cwd: &cwd,
         settings_ctx: &settings_ctx,
@@ -2695,14 +2697,18 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         store: store.as_ref(),
         graph: &graph,
         graph_for_link: &graph_for_link,
+        ws_dirs: &ws_dirs,
         manifests: &manifests,
+        manifest: &manifest,
         lifecycle_manifests: &lifecycle_manifests,
         direct_dep_info: &direct_dep_info,
         deprecations: &deprecations,
         build_policy: &build_policy,
         jail_policy: &jail_policy,
         stats: &stats,
+        managed_bin_links: &managed_bin_links,
         node_linker,
+        has_workspace,
         planned_gvs,
         virtual_store_only,
         current_leaf_hashes,

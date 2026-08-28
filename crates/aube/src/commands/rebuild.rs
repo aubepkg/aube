@@ -180,14 +180,19 @@ pub async fn run(
                 hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
             };
             let mut pkg_json_cache = super::install::PkgJsonCache::new();
-            super::install::link_dep_bins(
-                &aube_dir,
-                &graph,
-                super::resolve_virtual_store_dir_max_length(&settings_ctx),
-                hoisted_placements.as_ref(),
+            let mut managed_bin_links = super::install::ManagedBinLinks::capturing();
+            super::install::link_dep_bins(super::install::LinkDepBinsInput {
+                aube_dir: &aube_dir,
+                graph: &graph,
+                virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
+                    &settings_ctx,
+                ),
+                placements: hoisted_placements.as_ref(),
                 shim_opts,
-                &mut pkg_json_cache,
-            )?;
+                cache: &mut pkg_json_cache,
+                managed: &mut managed_bin_links,
+                preserved: None,
+            })?;
             super::install::run_dep_lifecycle_scripts(
                 &cwd,
                 &modules_dir_name,
@@ -215,6 +220,26 @@ pub async fn run(
                 selected.as_ref(),
             )
             .await?;
+            let preserved = super::install::remove_managed_bin_links(&managed_bin_links)?;
+            let mut refreshed_pkg_json_cache = super::install::PkgJsonCache::new();
+            let mut refreshed_bin_links = super::install::ManagedBinLinks::default();
+            super::install::link_dep_bins(super::install::LinkDepBinsInput {
+                aube_dir: &aube_dir,
+                graph: &graph,
+                virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
+                    &settings_ctx,
+                ),
+                placements: hoisted_placements.as_ref(),
+                shim_opts,
+                cache: &mut refreshed_pkg_json_cache,
+                managed: &mut refreshed_bin_links,
+                preserved: Some(&preserved),
+            })?;
+            super::install::remove_unclaimed_preserved_bin_links(
+                &managed_bin_links,
+                &preserved,
+                &refreshed_bin_links,
+            )?;
         }
     }
 

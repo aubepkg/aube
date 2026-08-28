@@ -400,6 +400,12 @@ pub(super) fn resolve_link_strategy(
 /// without a second disk read, and the actual execution cwd is
 /// `node_modules/.aube/<dep_path>/node_modules/<name>` — i.e. the
 /// linked dir inside the virtual store.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DepLifecycleOutcome {
+    pub(crate) scripts_run: usize,
+    pub(crate) package_contents_changed: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_dep_lifecycle_scripts(
     project_dir: &std::path::Path,
@@ -420,7 +426,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     // gates which ones actually run. Match is by `pkg.name`, matching
     // pnpm's `pnpm rebuild <name>`.
     selected_names: Option<&std::collections::HashSet<String>>,
-) -> miette::Result<usize> {
+) -> miette::Result<DepLifecycleOutcome> {
     // Pass 1 (serial, cheap): walk the graph, keep only the packages
     // the policy allows AND that actually define at least one dep
     // lifecycle hook in their on-disk `package.json`. Filtering up front
@@ -579,7 +585,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     }
 
     if jobs.is_empty() {
-        return Ok(0);
+        return Ok(DepLifecycleOutcome::default());
     }
 
     // Pass 2 (parallel, bounded): fan out across `child_concurrency`
@@ -605,7 +611,8 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     let should_save_side_effects_cache = side_effects_cache.should_save();
     let overwrite_side_effects_cache = side_effects_cache.overwrite_existing();
     let jail_policy = std::sync::Arc::new((*jail_policy).clone());
-    let mut set: tokio::task::JoinSet<miette::Result<usize>> = tokio::task::JoinSet::new();
+    let mut set: tokio::task::JoinSet<miette::Result<DepLifecycleOutcome>> =
+        tokio::task::JoinSet::new();
     for job in jobs {
         let sem = semaphore.clone();
         let project_dir = project_dir.clone();
@@ -628,8 +635,14 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                     )
                 })?;
                 match restore_result? {
-                    SideEffectsCacheRestore::Restored | SideEffectsCacheRestore::AlreadyApplied => {
-                        return Ok(0);
+                    SideEffectsCacheRestore::Restored => {
+                        return Ok(DepLifecycleOutcome {
+                            package_contents_changed: true,
+                            ..Default::default()
+                        });
+                    }
+                    SideEffectsCacheRestore::AlreadyApplied => {
+                        return Ok(DepLifecycleOutcome::default());
                     }
                     SideEffectsCacheRestore::Miss => {}
                 }
@@ -711,23 +724,28 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                     );
                 }
             }
-            Ok(ran_here)
+            Ok(DepLifecycleOutcome {
+                scripts_run: ran_here,
+                package_contents_changed: ran_here > 0,
+            })
         });
         let task = crate::runtime::scope_current(task);
         let task = aube_scripts::scope_current(task);
         set.spawn(task);
     }
 
-    let mut ran = 0usize;
+    let mut outcome = DepLifecycleOutcome::default();
     while let Some(res) = set.join_next().await {
         // `?` on the outer `Result` propagates a real task-level panic
         // (tokio's `JoinError`); `?` on the inner `miette::Result`
         // propagates a script failure. Either way, the function
         // returns, `set` is dropped, and the remaining in-flight
         // scripts are aborted before they can scribble on disk.
-        ran += res.into_diagnostic()??;
+        let job_outcome = res.into_diagnostic()??;
+        outcome.scripts_run += job_outcome.scripts_run;
+        outcome.package_contents_changed |= job_outcome.package_contents_changed;
     }
-    Ok(ran)
+    Ok(outcome)
 }
 
 async fn lifecycle_package_dir(
