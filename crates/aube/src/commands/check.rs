@@ -125,21 +125,15 @@ pub(crate) fn run_report(cwd: &Path) -> miette::Result<CheckReport> {
     // directory is absent. Inspect root and workspace importer links first so
     // a dangling `node_modules/<dep>` is still reported in that state.
     let modules_dir_name = super::resolve_modules_dir_name_for_cwd(&workspace_root);
-    scan_importer_links(
-        &workspace_root,
-        &workspace_root,
-        &modules_dir_name,
-        &mut report,
-    );
+    let mut importer_dirs = BTreeMap::from([(".".to_string(), workspace_root.clone())]);
     let workspace_packages = aube_workspace::find_workspace_packages(&workspace_root)
         .map_err(|error| miette::miette!("failed to discover workspace packages: {error}"))?;
     for workspace_package in workspace_packages {
-        scan_importer_links(
-            &workspace_root,
-            &workspace_package,
-            &modules_dir_name,
-            &mut report,
-        );
+        let importer = super::workspace_importer_path(&workspace_root, &workspace_package)?;
+        importer_dirs.insert(importer, workspace_package);
+    }
+    for (importer, importer_dir) in importer_dirs {
+        scan_importer_links(&importer, &importer_dir, &modules_dir_name, &mut report);
     }
 
     let Ok(cells) = std::fs::read_dir(&aube_dir) else {
@@ -176,7 +170,7 @@ fn sort_issues(report: &mut CheckReport) {
 
 /// Report dangling direct dependency links in one workspace importer.
 fn scan_importer_links(
-    workspace_root: &Path,
+    importer: &str,
     importer_dir: &Path,
     modules_dir_name: &str,
     report: &mut CheckReport,
@@ -185,13 +179,6 @@ fn scan_importer_links(
     let Ok(entries) = std::fs::read_dir(&modules_dir) else {
         return;
     };
-    let importer = importer_dir
-        .strip_prefix(workspace_root)
-        .ok()
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|| ".".to_string());
-
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name_str) = name.to_str() else {
@@ -210,14 +197,14 @@ fn scan_importer_links(
                     continue;
                 };
                 report_dangling_importer_link(
-                    &importer,
+                    importer,
                     &format!("{name_str}/{package}"),
                     &scoped.path(),
                     report,
                 );
             }
         } else {
-            report_dangling_importer_link(&importer, name_str, &path, report);
+            report_dangling_importer_link(importer, name_str, &path, report);
         }
     }
 }
@@ -672,6 +659,49 @@ mod tests {
         assert_eq!(report.issues[0].consumer_name, "packages/b");
         assert_eq!(report.issues[0].dep_name, "argon2");
         assert!(matches!(report.issues[0].kind, BrokenKind::Dangling));
+    }
+
+    #[test]
+    fn workspace_root_selected_as_member_is_scanned_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("package.json"), r#"{"name":"root"}"#).unwrap();
+        std::fs::write(root.join("pnpm-workspace.yaml"), "packages:\n  - .\n").unwrap();
+
+        let cell = root.join("node_modules/.aube/argon2@0.45.1/node_modules/argon2");
+        std::fs::create_dir_all(&cell).unwrap();
+        aube_linker::create_dir_link(&cell, &root.join("node_modules/argon2")).unwrap();
+        std::fs::remove_dir_all(root.join("node_modules/.aube/argon2@0.45.1")).unwrap();
+
+        let report = run_report(root).unwrap();
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].consumer_name, ".");
+    }
+
+    #[test]
+    fn workspace_member_outside_root_uses_parent_relative_importer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("workspace");
+        let sibling = tmp.path().join("sibling");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(root.join("package.json"), r#"{"name":"root"}"#).unwrap();
+        std::fs::write(
+            root.join("pnpm-workspace.yaml"),
+            "packages:\n  - ../sibling\n",
+        )
+        .unwrap();
+        std::fs::write(sibling.join("package.json"), r#"{"name":"sibling"}"#).unwrap();
+
+        let cell = root.join("node_modules/.aube/argon2@0.45.1/node_modules/argon2");
+        std::fs::create_dir_all(&cell).unwrap();
+        std::fs::create_dir_all(sibling.join("node_modules")).unwrap();
+        aube_linker::create_dir_link(&cell, &sibling.join("node_modules/argon2")).unwrap();
+        std::fs::remove_dir_all(root.join("node_modules/.aube/argon2@0.45.1")).unwrap();
+
+        let report = run_report(&root).unwrap();
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].consumer_name, "../sibling");
     }
 
     #[test]
