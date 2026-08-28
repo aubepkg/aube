@@ -608,9 +608,16 @@ pub(crate) fn remove_managed_bin_links(
                     .entry(bin_dir.clone())
                     .or_default()
                     .insert(name.clone());
-            }
-            for path in matching {
-                std::fs::remove_file(path).into_diagnostic()?;
+            } else {
+                // A command can be a family of launchers on Windows
+                // (`name`, `name.cmd`, and `name.ps1`). If a lifecycle
+                // script replaces any member, keep the unchanged siblings
+                // too: the relink pass preserves the whole command, and
+                // deleting only its matching members would make it
+                // unavailable from some shells.
+                for path in matching {
+                    std::fs::remove_file(path).into_diagnostic()?;
+                }
             }
         }
     }
@@ -919,6 +926,44 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(bin_dir.join("replaced")).unwrap(),
             "#!/bin/sh\necho custom\n"
+        );
+    }
+
+    #[test]
+    fn managed_bin_cleanup_preserves_siblings_of_a_replaced_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let launcher = bin_dir.join("tool");
+        let sibling = bin_dir.join("tool.cmd");
+        std::fs::write(&launcher, "generated launcher\n").unwrap();
+        std::fs::write(&sibling, "generated sibling\n").unwrap();
+
+        let mut expected_files = BTreeMap::new();
+        expected_files.insert(
+            launcher.clone(),
+            read_managed_bin_entry(&launcher).unwrap().unwrap(),
+        );
+        expected_files.insert(
+            sibling.clone(),
+            read_managed_bin_entry(&sibling).unwrap().unwrap(),
+        );
+        let mut commands = BTreeMap::new();
+        commands.insert("tool".to_string(), expected_files);
+        let mut managed = ManagedBinLinks::capturing();
+        managed.entries.insert(bin_dir.clone(), commands);
+
+        std::fs::write(&launcher, "lifecycle replacement\n").unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+
+        assert!(preserved[&bin_dir].contains("tool"));
+        assert_eq!(
+            std::fs::read_to_string(launcher).unwrap(),
+            "lifecycle replacement\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sibling).unwrap(),
+            "generated sibling\n"
         );
     }
 
