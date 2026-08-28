@@ -38,7 +38,7 @@ use advisory::resolve_osv_routing_settings;
 pub use args::{EmbedderInstallOverrides, InstallArgs, InstallOptions};
 pub(crate) use bin_linking::{
     LinkDepBinsInput, ManagedBinLinks, PkgJsonCache, dep_modules_dir_for, link_dep_bins,
-    materialized_pkg_dir, remove_managed_bin_links,
+    materialized_pkg_dir, remove_managed_bin_links, remove_unclaimed_preserved_bin_links,
 };
 pub use control::{
     INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,

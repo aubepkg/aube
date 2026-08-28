@@ -235,6 +235,11 @@ pub async fn run(
                 managed: &mut refreshed_bin_links,
                 preserved: Some(&preserved),
             })?;
+            super::install::remove_unclaimed_preserved_bin_links(
+                &managed_bin_links,
+                &preserved,
+                &refreshed_bin_links,
+            )?;
         }
     }
 
