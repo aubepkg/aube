@@ -404,18 +404,34 @@ async fn validate_lockfile_trust_policy(
 }
 
 /// Cache key for the file-content trust-policy stamp the install fast
-/// path consults. Hashes the active lockfile's raw bytes plus every
-/// non-graph input the graph-shaped key hashes — the file bytes subsume
-/// the graph, so any lockfile edit (and any registry/policy change)
-/// produces a different key. Returns `None` when no lockfile exists or
-/// it can't be read.
+/// path consults. Hashes **every** lockfile present in the project plus
+/// every non-graph input the graph-shaped key hashes — the file bytes
+/// subsume the graph, so any lockfile edit (and any registry/policy
+/// change) produces a different key. Returns `None` when the project has
+/// no lockfile at all.
+///
+/// Hashing all of them rather than just the one this install parsed is
+/// deliberate: which lockfile wins depends on the embedder
+/// (`canonical_lockfile_always_wins`), and a foreign-first embedder in a
+/// project that also has an `aube-lock.yaml` would otherwise let an edit
+/// to the file it actually parsed ride a stamp keyed on the other one.
+/// Over-invalidating costs a revalidation; under-invalidating skips a
+/// security check.
 fn lockfile_trust_policy_file_stamp_key(
     cwd: &std::path::Path,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
     network_mode: aube_registry::NetworkMode,
 ) -> Option<String> {
-    let lockfile_path = crate::state::active_lockfile_path(cwd)?;
-    let bytes = std::fs::read(&lockfile_path).ok()?;
+    let mut lockfiles: Vec<(String, [u8; 32])> = Vec::new();
+    for name in lockfile_stamp_candidate_names(cwd) {
+        let Ok(bytes) = std::fs::read(cwd.join(&name)) else {
+            continue;
+        };
+        lockfiles.push((name, *blake3::hash(&bytes).as_bytes()));
+    }
+    if lockfiles.is_empty() {
+        return None;
+    }
 
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"aube:trust-policy-validation-file:v1\0");
@@ -450,18 +466,50 @@ fn lockfile_trust_policy_file_stamp_key(
         hasher.update(b"\x1e");
     }
 
-    hasher.update(b"\0lockfile=");
-    hasher.update(
-        lockfile_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .as_bytes(),
-    );
-    hasher.update(b"\x1f");
-    hasher.update(blake3::hash(&bytes).to_hex().as_bytes());
+    hasher.update(b"\0lockfiles=");
+    for (name, digest) in &lockfiles {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\x1f");
+        hasher.update(digest);
+        hasher.update(b"\x1e");
+    }
 
     Some(hasher.finalize().to_hex().to_string())
+}
+
+/// Every lockfile basename that could be the one an install parses, in
+/// no particular order — the stamp key hashes all of them that exist, so
+/// precedence doesn't matter here. Mirrors `aube-lockfile`'s candidate
+/// set, including the branch-lockfile variants.
+fn lockfile_stamp_candidate_names(cwd: &std::path::Path) -> Vec<String> {
+    let basename = aube_util::embedder().lockfile_basename;
+    let stem = basename.rsplit_once('.').map_or(basename, |(s, _)| s);
+    let branch = aube_lockfile::aube_lock_filename(cwd);
+    let pnpm_branch = branch
+        .strip_prefix(&format!("{stem}."))
+        .map(|rest| format!("pnpm-lock.{rest}"));
+
+    let mut names = vec![basename.to_string()];
+    if branch != basename {
+        names.push(branch);
+    }
+    if let Some(pnpm_branch) = pnpm_branch
+        && pnpm_branch != "pnpm-lock.yaml"
+    {
+        names.push(pnpm_branch);
+    }
+    names.extend(
+        [
+            "pnpm-lock.yaml",
+            "bun.lock",
+            "yarn.lock",
+            "npm-shrinkwrap.json",
+            "package-lock.json",
+        ]
+        .into_iter()
+        .map(String::from),
+    );
+    names
 }
 
 /// True when a trust-policy validation stamp keyed on the active
@@ -2963,6 +3011,62 @@ mod trust_policy_validation_cache_tests {
             let changed = lockfile_trust_policy_file_stamp_key(dir.path(), ctx, online).unwrap();
             assert_ne!(key, changed);
         });
+    }
+
+    #[test]
+    fn trust_policy_file_stamp_tracks_every_lockfile_present() {
+        // Which lockfile an install parses depends on the embedder, so
+        // the stamp must notice an edit to *any* of them — otherwise a
+        // foreign-first embedder could ride a stamp keyed on the aube
+        // lockfile while installing a changed foreign graph.
+        let dir = tempfile::tempdir().unwrap();
+        write_project_npmrc(dir.path(), "https://registry.npmjs.org/");
+        let online = aube_registry::NetworkMode::Online;
+        let key_of = || {
+            crate::commands::with_settings_ctx(dir.path(), |ctx| {
+                lockfile_trust_policy_file_stamp_key(dir.path(), ctx, online)
+            })
+        };
+
+        std::fs::write(
+            dir.path().join("aube-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        let aube_only = key_of().unwrap();
+
+        // Adding a foreign lockfile changes the key...
+        std::fs::write(
+            dir.path().join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        let with_pnpm = key_of().unwrap();
+        assert_ne!(aube_only, with_pnpm);
+
+        // ...and so does editing it while the aube lockfile stands still.
+        std::fs::write(
+            dir.path().join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\n# drift\n",
+        )
+        .unwrap();
+        assert_ne!(with_pnpm, key_of().unwrap());
+
+        // Same for the other supported formats.
+        for name in [
+            "bun.lock",
+            "yarn.lock",
+            "npm-shrinkwrap.json",
+            "package-lock.json",
+        ] {
+            let before = key_of().unwrap();
+            std::fs::write(dir.path().join(name), "{}\n").unwrap();
+            assert_ne!(
+                before,
+                key_of().unwrap(),
+                "{name} must affect the stamp key"
+            );
+        }
     }
 
     #[test]

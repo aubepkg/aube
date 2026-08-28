@@ -405,8 +405,16 @@ impl RegistryClient {
         let (url, registry_url) = self.packument_url(name);
         let etag = cached.as_ref().and_then(|c| c.etag.clone());
         let last_modified = cached.as_ref().and_then(|c| c.last_modified.clone());
-        let resp = self
-            .send_metadata_with_retry(&format!("trust history {name}"), || {
+        let label = format!("trust history {name}");
+        let started = std::time::Instant::now();
+        // Single attempt loop covering send *and* body decode, matching
+        // `fetch_packument_full_cached`: a truncated or malformed body on
+        // an otherwise-successful response is retriable, and letting it
+        // through would abort trust validation for the whole install.
+        let max_attempts = self.fetch_policy.retries.saturating_add(1);
+        for attempt in 0..max_attempts {
+            let is_last = attempt + 1 >= max_attempts;
+            let resp = match {
                 let mut req = self
                     .authed_get_for_package(&url, registry_url, name)
                     .header("Accept", PACKUMENT_FULL_ACCEPT);
@@ -417,56 +425,107 @@ impl RegistryClient {
                     req = req.header("If-Modified-Since", lm);
                 }
                 req
-            })
-            .await?;
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(name.to_string()));
-        }
-        if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
-            if let Some(mut c) = cached {
-                c.max_age_secs = parse_cache_control_max_age(&resp).or(c.max_age_secs);
-                c.fetched_at = now_secs();
-                if let Err(e) = write_cached_trust_history(&cache_path, &c) {
-                    tracing::warn!(
-                        code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
-                        "failed to write trust-history cache {}: {e}",
-                        cache_path.display()
-                    );
-                }
-                return Ok(c.history);
             }
-            // 304 without a cached entry means we never sent conditional
-            // headers — a misbehaving registry. Treat as a hard error
-            // rather than parsing the empty body.
-            return Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("registry returned 304 for unconditional trust-history request: {name}"),
-            )));
+            .send()
+            .await
+            {
+                Ok(resp) if is_retriable_status(resp.status()) && !is_last => {
+                    let wait = retry_after_from(&resp)
+                        .unwrap_or_else(|| self.fetch_policy.backoff_for_attempt(attempt + 1));
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts,
+                        backoff_ms = wait.as_millis() as u64,
+                        status = resp.status().as_u16(),
+                        label,
+                        code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSIENT,
+                        "retrying HTTP request after transient failure",
+                    );
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Ok(resp) => resp,
+                Err(_) if !is_last => {
+                    let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                self.maybe_record_slow_metadata(&label, started);
+                return Err(Error::NotFound(name.to_string()));
+            }
+            if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+                if let Some(mut c) = cached {
+                    c.max_age_secs = parse_cache_control_max_age(&resp).or(c.max_age_secs);
+                    c.fetched_at = now_secs();
+                    if let Err(e) = write_cached_trust_history(&cache_path, &c) {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                            "failed to write trust-history cache {}: {e}",
+                            cache_path.display()
+                        );
+                    }
+                    self.maybe_record_slow_metadata(&label, started);
+                    return Ok(c.history);
+                }
+                // 304 without a cached entry means we never sent
+                // conditional headers — a misbehaving registry. Treat as
+                // a hard error rather than parsing the empty body.
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "registry returned 304 for unconditional trust-history request: {name}"
+                    ),
+                )));
+            }
+
+            let resp = resp.error_for_status()?;
+            check_body_cap(
+                &resp,
+                self.fetch_policy.packument_max_bytes,
+                "packument-trust-history",
+            )?;
+            let (etag, last_modified) = extract_cache_headers(&resp);
+            let max_age_secs = parse_cache_control_max_age(&resp);
+            match parse_full_response::<crate::PackumentTrustHistory>(resp).await {
+                Ok(history) => {
+                    let to_cache = CachedTrustHistory {
+                        etag,
+                        last_modified,
+                        fetched_at: now_secs(),
+                        max_age_secs,
+                        history,
+                    };
+                    if let Err(e) = write_cached_trust_history(&cache_path, &to_cache) {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                            "failed to write trust-history cache {}: {e}",
+                            cache_path.display()
+                        );
+                    }
+                    self.maybe_record_slow_metadata(&label, started);
+                    return Ok(to_cache.history);
+                }
+                Err(err) if !is_last => {
+                    let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts,
+                        backoff_ms = wait.as_millis() as u64,
+                        label,
+                        error = %err,
+                        code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSIENT,
+                        "retrying HTTP request after body read failure",
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+                Err(err) => return Err(err),
+            }
         }
-        let resp = resp.error_for_status()?;
-        check_body_cap(
-            &resp,
-            self.fetch_policy.packument_max_bytes,
-            "packument-trust-history",
-        )?;
-        let (etag, last_modified) = extract_cache_headers(&resp);
-        let max_age_secs = parse_cache_control_max_age(&resp);
-        let history: crate::PackumentTrustHistory = parse_full_response(resp).await?;
-        let cached = CachedTrustHistory {
-            etag,
-            last_modified,
-            fetched_at: now_secs(),
-            max_age_secs,
-            history,
-        };
-        if let Err(e) = write_cached_trust_history(&cache_path, &cached) {
-            tracing::warn!(
-                code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
-                "failed to write trust-history cache {}: {e}",
-                cache_path.display()
-            );
-        }
-        Ok(cached.history)
+        unreachable!("retry loop exited without returning; max_attempts was {max_attempts}")
     }
 
     pub(super) async fn revalidate_full_packument_typed(
