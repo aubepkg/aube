@@ -189,7 +189,7 @@ fn scan_importer_links(
         .strip_prefix(workspace_root)
         .ok()
         .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| path.display().to_string())
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|| ".".to_string());
 
     for entry in entries.flatten() {
