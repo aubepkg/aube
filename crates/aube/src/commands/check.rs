@@ -115,18 +115,31 @@ pub(crate) enum BrokenKind {
 /// exist yet (never installed, or hoisted layout without an isolated
 /// tree); callers that want to treat that as an error do so themselves.
 pub(crate) fn run_report(cwd: &Path) -> miette::Result<CheckReport> {
-    let aube_dir = super::resolve_virtual_store_dir_for_cwd(cwd);
+    // Installation is workspace-rooted even when invoked from a member, so
+    // inspect that same shared virtual store and every importer from here.
+    let workspace_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let aube_dir = super::resolve_virtual_store_dir_for_cwd(&workspace_root);
     let mut report = CheckReport::default();
 
     // The cell walk below cannot discover a package whose entire virtual-store
     // directory is absent. Inspect root and workspace importer links first so
     // a dangling `node_modules/<dep>` is still reported in that state.
-    let modules_dir_name = super::resolve_modules_dir_name_for_cwd(cwd);
-    scan_importer_links(cwd, cwd, &modules_dir_name, &mut report);
-    let workspace_packages = aube_workspace::find_workspace_packages(cwd)
+    let modules_dir_name = super::resolve_modules_dir_name_for_cwd(&workspace_root);
+    scan_importer_links(
+        &workspace_root,
+        &workspace_root,
+        &modules_dir_name,
+        &mut report,
+    );
+    let workspace_packages = aube_workspace::find_workspace_packages(&workspace_root)
         .map_err(|error| miette::miette!("failed to discover workspace packages: {error}"))?;
     for workspace_package in workspace_packages {
-        scan_importer_links(cwd, &workspace_package, &modules_dir_name, &mut report);
+        scan_importer_links(
+            &workspace_root,
+            &workspace_package,
+            &modules_dir_name,
+            &mut report,
+        );
     }
 
     let Ok(cells) = std::fs::read_dir(&aube_dir) else {
@@ -626,6 +639,37 @@ mod tests {
         assert_eq!(report.checked, 0);
         assert_eq!(report.issues.len(), 1);
         assert_eq!(report.issues[0].consumer_name, ".");
+        assert_eq!(report.issues[0].dep_name, "argon2");
+        assert!(matches!(report.issues[0].kind, BrokenKind::Dangling));
+    }
+
+    #[test]
+    fn workspace_member_check_scans_shared_store_and_other_importers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let member_a = root.join("packages/a");
+        let member_b = root.join("packages/b");
+        std::fs::create_dir_all(&member_a).unwrap();
+        std::fs::create_dir_all(&member_b).unwrap();
+        std::fs::write(root.join("package.json"), r#"{"name":"root"}"#).unwrap();
+        std::fs::write(
+            root.join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )
+        .unwrap();
+        std::fs::write(member_a.join("package.json"), r#"{"name":"a"}"#).unwrap();
+        std::fs::write(member_b.join("package.json"), r#"{"name":"b"}"#).unwrap();
+
+        let cell = root.join("node_modules/.aube/argon2@0.45.1/node_modules/argon2");
+        std::fs::create_dir_all(&cell).unwrap();
+        std::fs::create_dir_all(member_b.join("node_modules")).unwrap();
+        aube_linker::create_dir_link(&cell, &member_b.join("node_modules/argon2")).unwrap();
+        std::fs::remove_dir_all(root.join("node_modules/.aube/argon2@0.45.1")).unwrap();
+
+        let report = run_report(&member_a).unwrap();
+        assert_eq!(report.checked, 0);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].consumer_name, "packages/b");
         assert_eq!(report.issues[0].dep_name, "argon2");
         assert!(matches!(report.issues[0].kind, BrokenKind::Dangling));
     }
