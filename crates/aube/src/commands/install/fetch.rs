@@ -472,13 +472,13 @@ pub(super) async fn fetch_packages_with_root<F>(
     // `.aube/<dep>` already exists on disk. Callers pass true when
     // either:
     //
-    //   - the linker will wipe `node_modules/` before running
-    //     (`link_workspace`), so the `AlreadyLinked` classification
-    //     would be immediately invalidated; or
     //   - the caller needs `load_index` to actually run as its store
     //     verification step (`aube fetch`, which treats the act of
     //     walking the store-file existence check as the operation's
-    //     primary side effect).
+    //     primary side effect); or
+    //   - `storeDir` was explicitly overridden for this invocation, so
+    //     existing `.aube/<dep>` entries may describe a different
+    //     store than the one this install materializes from.
     //
     // Both cases share the same implementation: skip the `.aube/`
     // existence check entirely so every package goes through
@@ -520,17 +520,24 @@ where
     // fixture drops from ~38 ms of parallel index reads to a handful
     // of `stat(2)`s.
     //
-    // Two call sites disable the fast path entirely via
-    // `skip_already_linked_shortcut=true`:
+    // Callers disable the fast path via
+    // `skip_already_linked_shortcut=true` for:
     //
-    //   - **Workspace installs.** `link_workspace` unconditionally
-    //     wipes `node_modules/` (including `.aube/`) before
-    //     rebuilding, so every `AlreadyLinked` classification would
-    //     be invalidated by the time the linker runs. With the fast
-    //     path enabled, the linker would then fall back to
-    //     `self.store.load_index` *serially* inside `link_workspace`'s
-    //     for-loop, which is strictly slower than loading them here
-    //     in parallel via rayon.
+    //   - **Explicit `storeDir` overrides.** An existing `.aube/<dep>`
+    //     entry may have been materialized from a different store, so
+    //     every package must re-verify through `store.load_index`
+    //     against the store this install actually uses.
+    //
+    //     (Workspace installs used to be in this list, justified by a
+    //     `link_workspace` that wiped `node_modules/` up front. That
+    //     linker has long since gained `link_all`'s incremental
+    //     Fresh/Missing/Stale handling — existing entries are kept, and
+    //     a package whose index is missing from the sparse map is
+    //     loaded via `store.load_index` inside the linker's own rayon
+    //     par_iter (`link_workspace` step 1, `link_hoisted_workspace`'s
+    //     placement pass). Keeping the shortcut off for workspaces
+    //     meant a stat per store file per package on *every* repeat
+    //     install of a monorepo, for no correctness gain.)
     //
     //   - **`aube fetch`.** The command exists to populate the
     //     global store (typical use: Docker layer caching, warming
