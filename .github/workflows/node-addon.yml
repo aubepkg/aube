@@ -62,7 +62,6 @@ jobs:
     with:
       tag: ${{ inputs.tag || '' }}
       trusted: true
-      mbx-backend: server
     secrets:
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
@@ -75,7 +74,6 @@ jobs:
     with:
       tag: ""
       trusted: false
-      mbx-backend: github
 
   packages:
     name: packages

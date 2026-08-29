@@ -81,7 +81,6 @@ jobs:
       draft_phase: ${{ inputs.draft_phase || false }}
       publish_packages: ${{ inputs.publish_packages || false }}
       trusted: true
-      mbx-backend: server
     secrets:
       AUBE_GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
@@ -97,7 +96,6 @@ jobs:
       draft_phase: false
       publish_packages: false
       trusted: false
-      mbx-backend: github
 
   packages:
     name: packages

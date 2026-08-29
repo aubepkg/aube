@@ -17,7 +17,6 @@ jobs:
     uses: ./.github/workflows/ci-impl.yml
     with:
       trusted: true
-      mbx-backend: server
 
   untrusted:
     if: ${{ github.actor != 'jdx' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx')) }}
@@ -26,7 +25,6 @@ jobs:
     uses: ./.github/workflows/ci-impl.yml
     with:
       trusted: false
-      mbx-backend: github
 
   final:
     name: final
