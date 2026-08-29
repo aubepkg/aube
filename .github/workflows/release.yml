@@ -358,10 +358,12 @@ jobs:
           AUBE_PGO_USE_LLD: "1"
           AUBE_PGO_LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
-          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
+          container_home="$RUNNER_TEMP/aube-home"
+          mkdir -p "$container_home/.cargo" "$HOME/.cargo/registry" "$HOME/.cargo/git"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$container_home:/tmp/aube-home" \
             --volume "$HOME/.cargo/registry:/tmp/aube-home/.cargo/registry" \
             --volume "$HOME/.cargo/git:/tmp/aube-home/.cargo/git" \
             --workdir /workspace \
