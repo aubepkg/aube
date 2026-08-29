@@ -58,6 +58,28 @@ _assert_installed_is_odd() {
 	assert_output --partial '3.0.1'
 }
 
+_setup_single_fixture() {
+	cat >package.json <<'JSON'
+{
+  "name": "single-root",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "is-odd": "3.0.1"
+  }
+}
+JSON
+}
+
+# Single-project counterpart of `_assert_installed_is_odd`: the root
+# importer's own `node_modules/` is the tree under test.
+_assert_installed_is_odd_root() {
+	run cat node_modules/is-odd/package.json
+	assert_success
+	assert_output --partial '"is-odd"'
+	assert_output --partial '3.0.1'
+}
+
 @test "workspace install rebuilds a removed virtual store entry" {
 	# The shortcut keys off `Path::exists`, which follows symlinks, so a
 	# `.aube/<dep>` entry whose target is gone must NOT classify as
@@ -181,6 +203,55 @@ _assert_installed_is_odd() {
 	assert_file_exists "$victim"
 	assert_dir_exists "$expected"
 	_assert_installed_is_odd
+}
+
+@test "install self-heals a stale index when the entry resolves elsewhere" {
+	# Non-workspace form of the test above, and the one the shortcut is
+	# actually enabled for. It used to fail with "failed to link
+	# node_modules" on every retry: the shortcut classified the package
+	# `AlreadyLinked` because its `.aube/<dep>` entry merely *resolved*,
+	# so the linker was handed no index, found the entry `Stale` against
+	# the target this graph expects, and fell back to the *unverified*
+	# `store.load_index` — a stale index whose CAS shards are gone. Only
+	# the fetch phase can re-download, so nothing recovered.
+	#
+	# The shortcut now compares the entry's target against the expected
+	# virtual-store subdir, so this package misses it, takes the verified
+	# index load, drops to `NeedsFetch`, and the store, the expected
+	# target and the link are all restored.
+	_setup_single_fixture
+
+	run aube install
+	assert_success
+
+	entry="node_modules/.aube/is-odd@3.0.1"
+	expected="$(readlink "$entry")"
+	[ -n "$expected" ]
+
+	store_v1="$(aube store path)"
+	index="$(find "$store_v1/index" -name 'is-odd@*' -print -quit)"
+	[ -n "$index" ]
+	# Remove a NON-first CAS shard so the cheap first-file probe inside
+	# `load_index` still succeeds and only the verified walk catches it.
+	victim="$(grep -o '"store_path":"[^"]*"' "$index" | sed -n '2p' | sed 's/.*":"//;s/"$//')"
+	[ -n "$victim" ]
+	rm -f "$victim"
+
+	# Point the entry at a directory that exists but is not the target
+	# this graph expects, and remove the expected target.
+	decoy="$TEST_TEMP_DIR/decoy"
+	mkdir -p "$decoy/node_modules"
+	cp -r "$expected/node_modules/is-odd" "$decoy/node_modules/" 2>/dev/null || true
+	rm -rf "${expected:?}"
+	rm -f "$entry"
+	ln -s "$decoy" "$entry"
+	[ -e "$entry" ]
+
+	run aube install
+	assert_success
+	assert_file_exists "$victim"
+	assert_dir_exists "$expected"
+	_assert_installed_is_odd_root
 }
 
 @test "workspace install with a changed store-dir produces a correct tree" {

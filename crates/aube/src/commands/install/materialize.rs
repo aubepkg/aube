@@ -1,8 +1,8 @@
+use aube_lockfile::dep_path_filename::dep_path_to_filename;
 use miette::{Context, IntoDiagnostic, miette};
 
 // Inputs for the GVS-prewarm materializer task. Built once before
 // fetch starts, moved into spawned task.
-#[allow(clippy::too_many_arguments)]
 pub(super) struct GvsPrewarmInputs {
     pub graph: std::sync::Arc<aube_lockfile::LockfileGraph>,
     pub store: std::sync::Arc<aube_store::Store>,
@@ -11,10 +11,180 @@ pub(super) struct GvsPrewarmInputs {
     pub link_strategy: aube_linker::LinkStrategy,
     pub link_concurrency: Option<usize>,
     pub patches: aube_linker::Patches,
+    pub use_global_virtual_store_override: Option<bool>,
+    pub virtual_store_plan: VirtualStorePlan,
+}
+
+/// Where this install materializes package trees, decided before the
+/// fetch phase starts.
+///
+/// The fetch phase's already-linked shortcut skips a package's store
+/// index whenever its `node_modules/.aube/<dep_path>` entry is one the
+/// linker will accept as-is, and deciding that needs the layout. Under
+/// the global virtual store the local entry name is keyed by dep_path
+/// alone (`aube_dir_entry_name`) while the shared subdir folds in graph
+/// hashes (`virtual_store_subdir`), so a build-state change moves the
+/// expected target while the entry keeps *resolving* to the old one.
+/// The linker classifies such an entry `Stale`, needs a `PackageIndex`
+/// the fetch phase never handed it, and its only fallback is the
+/// *unverified* `store.load_index` — which returns a stale index whose
+/// CAS shards are gone and fails the link. The linker cannot
+/// re-download; only fetch can. So the comparison happens there,
+/// against these hashes, and a package that fails it falls through to
+/// the verified index load that re-fetches when the store has drifted.
+#[derive(Clone)]
+pub(super) enum VirtualStorePlan {
+    /// `.aube/<dep_path>` entries are symlinks into the shared store at
+    /// `virtual_store`, under subdir names derived from `hashes`.
+    Global {
+        virtual_store: std::path::PathBuf,
+        hashes: std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
+    },
+    /// `.aube/<dep_path>` entries are per-project directories keyed by
+    /// dep_path alone, so their existence *is* the linker's freshness
+    /// test and there is no shared target to compare against.
+    PerProject,
+}
+
+impl VirtualStorePlan {
+    /// Whether `entry` is a `node_modules/.aube/<dep_path>` the linker
+    /// will reuse without a `PackageIndex`. Mirrors `aube-linker`'s own
+    /// freshness tests: `classify_entry_state` under the global virtual
+    /// store (the stored target must be the subdir this graph expects
+    /// *and* still exist) and the plain existence check the per-project
+    /// materializer uses.
+    pub(super) fn entry_is_current(
+        &self,
+        entry: &std::path::Path,
+        dep_path: &str,
+        virtual_store_dir_max_length: usize,
+    ) -> bool {
+        match self {
+            Self::Global {
+                virtual_store,
+                hashes,
+            } => {
+                let expected = virtual_store.join(dep_path_to_filename(
+                    &hashes.hashed_dep_path(dep_path),
+                    virtual_store_dir_max_length,
+                ));
+                // `read_link` then `exists`: the link has to name the
+                // target this graph expects, and that target has to be
+                // there. `exists` follows the link, so a dangling entry
+                // is a miss.
+                matches!(std::fs::read_link(entry), Ok(target) if target == expected)
+                    && entry.exists()
+            }
+            Self::PerProject => entry.exists(),
+        }
+    }
+
+    /// The graph hashes, when this install uses the global virtual
+    /// store. `None` in per-project mode, where nothing reads them.
+    fn hashes(&self) -> Option<&std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>> {
+        match self {
+            Self::Global { hashes, .. } => Some(hashes),
+            Self::PerProject => None,
+        }
+    }
+}
+
+/// Everything [`plan_virtual_store`] needs to name each package's
+/// virtual-store subdir. Mirrors the inputs the link phase folds into
+/// `compute_graph_hashes_full`, minus the per-package content
+/// fingerprints — those depend on trees the fetch phase hasn't imported
+/// yet, so a source-backed dep and its ancestors simply miss the
+/// already-linked shortcut and take the verified path instead.
+pub(super) struct VirtualStorePlanInputs<'a> {
+    pub graph: &'a std::sync::Arc<aube_lockfile::LockfileGraph>,
+    pub store: &'a aube_store::Store,
+    pub link_strategy: aube_linker::LinkStrategy,
+    pub virtual_store_dir_max_length: usize,
+    pub use_global_virtual_store_override: Option<bool>,
     pub patch_hashes: std::collections::BTreeMap<String, String>,
     pub node_version: Option<String>,
     pub build_policy: std::sync::Arc<aube_scripts::BuildPolicy>,
-    pub use_global_virtual_store_override: Option<bool>,
+}
+
+/// Decide the virtual-store layout and, under the global virtual
+/// store, compute the graph hashes that name every package's subdir.
+///
+/// This runs before the fetch phase rather than inside the prewarm
+/// task that overlaps it, because the already-linked shortcut needs the
+/// hashes to classify an entry correctly (see [`VirtualStorePlan`]).
+/// The prewarm and link phases then reuse the same `Arc` instead of
+/// repeating the walk, so the only cost is that on the lockfile-reuse
+/// path the walk no longer hides behind the fetch tail. Measured on a
+/// warm install of the 1.4k-package medium fixture (debug build): the
+/// fetch phase goes 5.1 ms -> 7.7 ms, the prewarm loses the matching
+/// 1.7 ms `hash_await`, and total install time is unchanged inside
+/// run-to-run noise. The cold-resolve path pays nothing at all — its
+/// tarball fetch is already in flight by the time this is called.
+pub(super) async fn plan_virtual_store(
+    inputs: VirtualStorePlanInputs<'_>,
+) -> miette::Result<VirtualStorePlan> {
+    let VirtualStorePlanInputs {
+        graph,
+        store,
+        link_strategy,
+        virtual_store_dir_max_length,
+        use_global_virtual_store_override,
+        patch_hashes,
+        node_version,
+        build_policy,
+    } = inputs;
+
+    // Probe linker built exactly the way the prewarm and link phases
+    // build theirs, so all three agree on whether the global virtual
+    // store is in play.
+    let mut probe = aube_linker::Linker::new(store, link_strategy)
+        .with_virtual_store_dir_max_length(virtual_store_dir_max_length);
+    if let Some(enabled) = use_global_virtual_store_override {
+        probe = probe.with_use_global_virtual_store(enabled);
+    }
+    if !probe.uses_global_virtual_store() {
+        return Ok(VirtualStorePlan::PerProject);
+    }
+    let virtual_store = store.virtual_store_dir();
+
+    let engine = node_version
+        .as_deref()
+        .map(aube_lockfile::graph_hash::engine_name_default);
+    let graph = graph.clone();
+    aube_util::diag::instant(
+        aube_util::diag::Category::Materialize,
+        "hash_compute_spawn",
+        None,
+    );
+    // CPU-bound BLAKE3 walk over every package; keep it off the tokio
+    // worker so the caller's remaining setup keeps making progress.
+    let hashes = tokio::task::spawn_blocking(move || {
+        let _diag = aube_util::diag::Span::new(
+            aube_util::diag::Category::Materialize,
+            "graph_hash_compute",
+        );
+        let allow = |pkg: &aube_lockfile::LockedPackage| {
+            super::package_build_is_allowed(&build_policy, pkg)
+        };
+        let patch_hash_fn = |name: &str, version: &str| -> Option<String> {
+            let key = format!("{name}@{version}");
+            patch_hashes.get(&key).cloned()
+        };
+        aube_lockfile::graph_hash::compute_graph_hashes_with_patches(
+            &graph,
+            &allow,
+            engine.as_ref(),
+            &patch_hash_fn,
+        )
+    })
+    .await
+    .into_diagnostic()
+    .wrap_err("graph_hash compute task failed")?;
+
+    Ok(VirtualStorePlan::Global {
+        virtual_store,
+        hashes: std::sync::Arc::new(hashes),
+    })
 }
 
 /// Initial capacity for the (canonical_key, PackageIndex) channel
@@ -103,64 +273,21 @@ pub(super) async fn run_gvs_prewarm_materializer(
         link_strategy,
         link_concurrency,
         patches,
-        patch_hashes,
-        node_version,
-        build_policy,
         use_global_virtual_store_override,
+        virtual_store_plan,
     } = inputs;
 
-    let engine = node_version
-        .as_deref()
-        .map(aube_lockfile::graph_hash::engine_name_default);
-
-    // Build a probe linker without graph_hashes to check GVS mode
-    // first. compute_graph_hashes_with_patches walks every package
-    // BLAKE3-style, expensive on huge graphs. Skip it when GVS is
-    // off so per-project installs and cold CI (CI=true gates GVS)
-    // don't pay for hashes nothing reads.
+    // Same builder state `plan_virtual_store` probed with, so
+    // `virtual_store_plan` and this linker agree on the layout.
     let mut probe = aube_linker::Linker::new(store.as_ref(), link_strategy)
         .with_virtual_store_dir_max_length(virtual_store_dir_max_length);
     if let Some(enabled) = use_global_virtual_store_override {
         probe = probe.with_use_global_virtual_store(enabled);
     }
-    if !probe.uses_global_virtual_store() {
+    let Some(graph_hashes_arc) = virtual_store_plan.hashes().cloned() else {
         return run_aube_dir_materializer(probe, graph, cwd, link_concurrency, materialize_rx)
             .await;
-    }
-
-    // Hash compute walks every package BLAKE3-style. spawn_blocking
-    // pushes it off the tokio worker so the canonical_to_contextualized
-    // build below + nested_link_targets walk + first materialize_rx
-    // recv keep making progress in parallel. compute_graph_hashes_with_patches
-    // is CPU-bound and was previously blocking the executor.
-    let graph_for_hash = graph.clone();
-    let build_policy_for_hash = build_policy.clone();
-    let engine_for_hash = engine.clone();
-    let patch_hashes_for_hash = patch_hashes.clone();
-    aube_util::diag::instant(
-        aube_util::diag::Category::Materialize,
-        "hash_compute_spawn",
-        None,
-    );
-    let hash_handle = tokio::task::spawn_blocking(move || {
-        let _diag = aube_util::diag::Span::new(
-            aube_util::diag::Category::Materialize,
-            "graph_hash_compute",
-        );
-        let allow = |pkg: &aube_lockfile::LockedPackage| {
-            super::package_build_is_allowed(&build_policy_for_hash, pkg)
-        };
-        let patch_hash_fn = |name: &str, version: &str| -> Option<String> {
-            let key = format!("{name}@{version}");
-            patch_hashes_for_hash.get(&key).cloned()
-        };
-        aube_lockfile::graph_hash::compute_graph_hashes_with_patches(
-            &graph_for_hash,
-            &allow,
-            engine_for_hash.as_ref(),
-            &patch_hash_fn,
-        )
-    });
+    };
 
     let nested_link_targets =
         aube_linker::build_nested_link_targets(&cwd, &graph).map(std::sync::Arc::new);
@@ -200,19 +327,11 @@ pub(super) async fn run_gvs_prewarm_materializer(
     // final content-ful path.
     let content_affected = aube_lockfile::graph_hash::content_affected_dep_paths(&graph);
 
-    let _diag_hash_wait =
-        aube_util::diag::Span::new(aube_util::diag::Category::Materialize, "hash_await");
-    let graph_hashes = hash_handle
-        .await
-        .into_diagnostic()
-        .wrap_err("graph_hash compute task failed")?;
-    drop(_diag_hash_wait);
     aube_util::diag::instant(
         aube_util::diag::Category::Materialize,
         "drain_rx_begin",
         None,
     );
-    let graph_hashes_arc = std::sync::Arc::new(graph_hashes);
     let mut linker = probe.with_graph_hashes((*graph_hashes_arc).clone());
     if !patches.is_empty() {
         linker = linker.with_patches(patches);

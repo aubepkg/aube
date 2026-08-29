@@ -73,7 +73,8 @@ use lockfile_dir::{
     parse_lockfile_dir_remapped_with_kind_and_options, write_lockfile_dir_remapped,
 };
 use materialize::{
-    GvsPrewarmInputs, combine_install_pipeline_errors, materialize_channel, spawn_gvs_prewarm,
+    GvsPrewarmInputs, VirtualStorePlanInputs, combine_install_pipeline_errors, materialize_channel,
+    plan_virtual_store, spawn_gvs_prewarm,
 };
 pub(crate) use settings::PeerDependencyRules;
 pub(crate) use settings::resolve_catalog_prune;
@@ -1390,26 +1391,39 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             let (lock_patches, lock_patch_hashes) =
                 crate::patches::load_patches_for_linker(&cwd, &graph.patched_dependencies)?;
             let (lock_materialize_tx, lock_materialize_rx) = materialize_channel();
-            let lock_materialize_graph = filter_graph_for_install(
+            let lock_materialize_graph = std::sync::Arc::new(filter_graph_for_install(
                 &cwd,
                 &workspace_packages,
                 &graph,
                 &opts,
                 has_workspace && !link_all_workspace_importers,
                 false,
-            )?;
+            )?);
+            // Hoisted out of the prewarm task (where it used to run
+            // concurrently with fetch) because the already-linked
+            // shortcut below cannot classify an entry without it. The
+            // prewarm and link phases reuse the same hashes.
+            let lock_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
+                graph: &lock_materialize_graph,
+                store: &store,
+                link_strategy: lock_strategy,
+                virtual_store_dir_max_length,
+                use_global_virtual_store_override,
+                patch_hashes: lock_patch_hashes,
+                node_version: lock_node_version,
+                build_policy: lock_build_policy,
+            })
+            .await?;
             let lock_prewarm_inputs = GvsPrewarmInputs {
-                graph: std::sync::Arc::new(lock_materialize_graph),
+                graph: lock_materialize_graph,
                 store: store.clone(),
                 cwd: cwd.clone(),
                 virtual_store_dir_max_length,
                 link_strategy: lock_strategy,
                 link_concurrency: link_concurrency_setting,
                 patches: lock_patches,
-                patch_hashes: lock_patch_hashes,
-                node_version: lock_node_version,
-                build_policy: lock_build_policy,
                 use_global_virtual_store_override,
+                virtual_store_plan: lock_virtual_store_plan.clone(),
             };
             let lock_materialize_handle =
                 spawn_gvs_prewarm(lock_prewarm_inputs, lock_materialize_rx);
@@ -1432,8 +1446,9 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 &aube_dir,
                 &packument_cache_dir,
                 Some(lock_materialize_tx),
-                /*skip_already_linked_shortcut=*/
-                has_workspace || explicit_store_dir_override,
+                /*already_linked_shortcut=*/
+                (!(has_workspace || explicit_store_dir_override))
+                    .then_some(&lock_virtual_store_plan),
                 &lock_project_local_dep_paths,
                 virtual_store_dir_max_length,
                 opts.ignore_scripts,
@@ -2195,6 +2210,20 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
             let materialize_strategy = resolve_link_strategy(&cwd, &settings_ctx, planned_gvs)?;
             let (materialize_patches, materialize_patch_hashes) =
                 crate::patches::load_patches_for_linker(&cwd, &graph.patched_dependencies)?;
+            // Shared with the catch-up fetch below, which needs it to
+            // classify already-linked packages the same way the linker
+            // will.
+            let materialize_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
+                graph: &materialize_graph_arc,
+                store: &store,
+                link_strategy: materialize_strategy,
+                virtual_store_dir_max_length,
+                use_global_virtual_store_override,
+                patch_hashes: materialize_patch_hashes,
+                node_version: node_version_for_prewarm.clone(),
+                build_policy: build_policy_for_prewarm.clone(),
+            })
+            .await?;
             let materialize_inputs = GvsPrewarmInputs {
                 graph: materialize_graph_arc.clone(),
                 store: store.clone(),
@@ -2203,10 +2232,8 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                 link_strategy: materialize_strategy,
                 link_concurrency: link_concurrency_setting,
                 patches: materialize_patches,
-                patch_hashes: materialize_patch_hashes,
-                node_version: node_version_for_prewarm.clone(),
-                build_policy: build_policy_for_prewarm.clone(),
                 use_global_virtual_store_override,
+                virtual_store_plan: materialize_virtual_store_plan.clone(),
             };
             aube_util::diag::instant(
                 aube_util::diag::Category::Install,
@@ -2482,8 +2509,9 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                         &aube_dir,
                         &packument_cache_dir,
                         /*materialize_tx=*/ None,
-                        /*skip_already_linked_shortcut=*/
-                        has_workspace || explicit_store_dir_override,
+                        /*already_linked_shortcut=*/
+                        (!(has_workspace || explicit_store_dir_override))
+                            .then_some(&materialize_virtual_store_plan),
                         &project_local_dep_paths,
                         virtual_store_dir_max_length,
                         opts.ignore_scripts,
