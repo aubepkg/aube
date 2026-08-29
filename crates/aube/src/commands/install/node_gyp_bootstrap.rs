@@ -84,19 +84,21 @@ fn node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
 /// a broken node-gyp install. Unknown regular files are retained for forward
 /// compatibility; only wrappers we can decode are held to target existence.
 fn cached_node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
-    BINARY_NAMES
-        .iter()
-        .map(|name| bin_dir.join(name))
-        .find(|path| {
-            if !path.is_file() {
-                return false;
-            }
-            match aube_linker::sys::resolve_bin_shim(path) {
-                Ok(Some(shim)) => shim.target.is_file(),
-                Ok(None) => true,
-                Err(_) => false,
-            }
-        })
+    let mut opaque_binary = None;
+    for path in BINARY_NAMES.iter().map(|name| bin_dir.join(name)) {
+        if !path.is_file() {
+            continue;
+        }
+        match aube_linker::sys::resolve_bin_shim(&path) {
+            // A decoded aube wrapper is authoritative. On Windows it has
+            // opaque extensionless/PowerShell siblings, which must not make a
+            // stale `.cmd` wrapper look healthy after its target disappears.
+            Ok(Some(shim)) => return shim.target.is_file().then_some(path),
+            Ok(None) => opaque_binary.get_or_insert(path),
+            Err(_) => continue,
+        };
+    }
+    opaque_binary
 }
 
 fn tool_root() -> miette::Result<PathBuf> {
