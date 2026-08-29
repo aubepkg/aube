@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1](https://github.com/jdx/aube/compare/aube-manifest-v2.2.0...aube-manifest-v2.2.1) - 2026-08-29
+
+### Fixed
+
+- *(resolver)* match pnpm importer peer semantics ([#1399](https://github.com/jdx/aube/pull/1399))
+
+### Other
+
+- refresh benchmarks for v2.2.0 ([#1384](https://github.com/jdx/aube/pull/1384))
+- *(sponsors)* replace 37signals with omacom foundation ([#1380](https://github.com/jdx/aube/pull/1380))
+
 ## [2.2.0](https://github.com/jdx/aube/compare/aube-manifest-v2.1.0...aube-manifest-v2.2.0) - 2026-08-25
 
 ### Other
