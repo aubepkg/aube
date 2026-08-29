@@ -10,9 +10,6 @@ on:
       trusted:
         required: true
         type: boolean
-      mbx-backend:
-        required: true
-        type: string
     secrets:
       CERTIFICATES_P12:
         required: false
@@ -73,8 +70,6 @@ jobs:
         with: { node-version: "24", package-manager-cache: false }
       - uses: ./.github/actions/mbx
         if: github.event_name != 'release' && inputs.tag == ''
-        with:
-          backend: ${{ inputs.mbx-backend }}
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
