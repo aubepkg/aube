@@ -73,6 +73,25 @@ JSON
 	assert_file_exists "$XDG_CACHE_HOME/aube/tools/node-gyp/v12/node_modules/.bin/node-gyp"
 }
 
+@test "bootstrap repairs a cached node-gyp whose virtual store was deleted" {
+	if [ -z "${AUBE_TEST_REGISTRY:-}" ]; then
+		skip "AUBE_TEST_REGISTRY not set (Verdaccio not running)"
+	fi
+
+	run aube __node-gyp-bootstrap "$PWD"
+	assert_success
+	assert_file_exists "$output"
+
+	# Isolated installs write a regular .bin wrapper. Deleting its target
+	# used to leave the wrapper looking healthy to the bootstrap fast path.
+	rm -rf "$XDG_CACHE_HOME/aube/virtual-store"
+	run aube __node-gyp-bootstrap "$PWD"
+	assert_success
+	assert_file_exists "$output"
+	run "$output" --help
+	assert_success
+}
+
 @test "dep lifecycle does not bootstrap node-gyp unless invoked" {
 	if [ -z "${AUBE_TEST_REGISTRY:-}" ]; then
 		skip "AUBE_TEST_REGISTRY not set (Verdaccio not running)"
