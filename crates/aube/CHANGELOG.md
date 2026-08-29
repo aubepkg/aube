@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1](https://github.com/jdx/aube/compare/v2.2.0...v2.2.1) - 2026-08-29
+
+### Fixed
+
+- *(install)* repair stale cached node-gyp ([#1407](https://github.com/jdx/aube/pull/1407))
+- *(install)* verify the already-linked shortcut against the expected target ([#1406](https://github.com/jdx/aube/pull/1406))
+- *(install)* refresh bin shims after dependency builds ([#1404](https://github.com/jdx/aube/pull/1404))
+- *(resolver)* match pnpm importer peer semantics ([#1399](https://github.com/jdx/aube/pull/1399))
+
+### Other
+
+- *(install)* validate trustPolicy from compact trust histories ([#1403](https://github.com/jdx/aube/pull/1403))
+- *(install)* cut freshness and repeat-install overhead on large repos ([#1400](https://github.com/jdx/aube/pull/1400))
+- refresh benchmarks for v2.2.0 ([#1384](https://github.com/jdx/aube/pull/1384))
+- *(sponsors)* replace 37signals with omacom foundation ([#1380](https://github.com/jdx/aube/pull/1380))
+
 ## [2.2.0](https://github.com/jdx/aube/compare/v2.1.0...v2.2.0) - 2026-08-25
 
 ### Added
