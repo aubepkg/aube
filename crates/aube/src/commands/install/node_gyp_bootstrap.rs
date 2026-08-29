@@ -85,20 +85,24 @@ fn node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
 /// compatibility; only wrappers we can decode are held to target existence.
 fn cached_node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
     let mut opaque_binary = None;
+    let mut stale_wrapper = false;
     for path in BINARY_NAMES.iter().map(|name| bin_dir.join(name)) {
         if !path.is_file() {
             continue;
         }
         match aube_linker::sys::resolve_bin_shim(&path) {
-            // A decoded aube wrapper is authoritative. On Windows it has
-            // opaque extensionless/PowerShell siblings, which must not make a
-            // stale `.cmd` wrapper look healthy after its target disappears.
-            Ok(Some(shim)) => return shim.target.is_file().then_some(path),
-            Ok(None) => opaque_binary.get_or_insert(path),
+            // A decoded live wrapper wins. Record stale wrappers so their
+            // opaque Windows siblings cannot make the cache look healthy,
+            // while still allowing a later decoded live wrapper to win.
+            Ok(Some(shim)) if shim.target.is_file() => return Some(path),
+            Ok(Some(_)) => stale_wrapper = true,
+            Ok(None) => {
+                opaque_binary.get_or_insert(path);
+            }
             Err(_) => continue,
         };
     }
-    opaque_binary
+    (!stale_wrapper).then_some(opaque_binary).flatten()
 }
 
 fn tool_root() -> miette::Result<PathBuf> {
@@ -537,6 +541,37 @@ mod tests {
 
         assert_eq!(node_gyp_binary(&dir), Some(exe.clone()));
         assert!(exe.is_file());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn live_decoded_wrapper_wins_over_an_earlier_stale_wrapper() {
+        let dir = tempdir();
+        let target = dir.join("target/node-gyp.js");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "#!/usr/bin/env node\n").unwrap();
+        aube_linker::create_bin_shim(
+            &dir,
+            "node-gyp",
+            &target,
+            aube_linker::BinShimOptions::default(),
+        )
+        .unwrap();
+        std::fs::remove_file(target).unwrap();
+        let live_target = dir.join("live.js");
+        std::fs::write(&live_target, "#!/usr/bin/env node\n").unwrap();
+        let shell_wrapper = dir.join("node-gyp");
+        std::fs::write(
+            &shell_wrapper,
+            format!(
+                "#!/bin/sh\n{}live.js\n",
+                aube_linker::sys::POSIX_SHIM_MARKER_PREFIX
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(cached_node_gyp_binary(&dir), Some(shell_wrapper));
         let _ = std::fs::remove_dir_all(dir);
     }
 
