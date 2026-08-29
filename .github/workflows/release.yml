@@ -363,6 +363,7 @@ jobs:
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$GITHUB_WORKSPACE/target:/workspace/target" \
             --volume "$container_home:/tmp/aube-home" \
             --volume "$HOME/.cargo/registry:/tmp/aube-home/.cargo/registry" \
             --volume "$HOME/.cargo/git:/tmp/aube-home/.cargo/git" \
