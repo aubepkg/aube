@@ -76,6 +76,29 @@ fn node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// Resolve a cached binary all the way through an aube-generated wrapper.
+///
+/// Isolated installs use regular shell/cmd wrappers rather than symlinks so
+/// they can inject `NODE_PATH`. The wrapper itself remains a valid file after
+/// its virtual-store target disappears, which made the cache fast path accept
+/// a broken node-gyp install. Unknown regular files are retained for forward
+/// compatibility; only wrappers we can decode are held to target existence.
+fn cached_node_gyp_binary(bin_dir: &Path) -> Option<PathBuf> {
+    BINARY_NAMES
+        .iter()
+        .map(|name| bin_dir.join(name))
+        .find(|path| {
+            if !path.is_file() {
+                return false;
+            }
+            match aube_linker::sys::resolve_bin_shim(path) {
+                Ok(Some(shim)) => shim.target.is_file(),
+                Ok(None) => true,
+                Err(_) => false,
+            }
+        })
+}
+
 fn tool_root() -> miette::Result<PathBuf> {
     let cache = aube_store::dirs::cache_dir()
         .ok_or_else(|| miette!("could not resolve cache dir for node-gyp bootstrap"))?;
@@ -86,7 +109,7 @@ pub(crate) async fn ensure_cached(project_dir: &Path) -> miette::Result<PathBuf>
     let root = tool_root()?;
     let tool_dir = root.join(BUCKET);
     let bin_dir = tool_dir.join("node_modules").join(".bin");
-    if node_gyp_bin_exists(&bin_dir) {
+    if cached_node_gyp_binary(&bin_dir).is_some() {
         return Ok(bin_dir);
     }
     let tool_dir_blocking = tool_dir.clone();
@@ -104,7 +127,7 @@ pub(crate) async fn ensure_cached(project_dir: &Path) -> miette::Result<PathBuf>
     let lock = crate::commands::take_project_lock(&tool_dir)?;
     // Re-check under the lock: another process may have raced us between the
     // check above and acquisition.
-    if node_gyp_bin_exists(&bin_dir) {
+    if cached_node_gyp_binary(&bin_dir).is_some() {
         return Ok(bin_dir);
     }
 
@@ -126,7 +149,7 @@ pub(crate) async fn ensure_cached(project_dir: &Path) -> miette::Result<PathBuf>
             )
         })?;
 
-    if !node_gyp_bin_exists(&bin_dir) {
+    if cached_node_gyp_binary(&bin_dir).is_none() {
         return Err(miette!(
             "node-gyp bootstrap into {} reported success but left no node-gyp binary in {}",
             tool_dir.display(),
@@ -512,6 +535,36 @@ mod tests {
 
         assert_eq!(node_gyp_binary(&dir), Some(exe.clone()));
         assert!(exe.is_file());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cached_wrapper_requires_its_target() {
+        let dir = tempdir();
+        let bin_dir = dir.join("node_modules/.bin");
+        let target = dir.join("node_modules/node-gyp/bin/node-gyp.js");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "#!/usr/bin/env node\n").unwrap();
+        aube_linker::create_bin_shim(
+            &bin_dir,
+            "node-gyp",
+            &target,
+            aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(node_gyp_bin_exists(&bin_dir));
+        assert!(cached_node_gyp_binary(&bin_dir).is_some());
+
+        std::fs::remove_file(target).unwrap();
+        assert!(
+            node_gyp_bin_exists(&bin_dir),
+            "the wrapper itself should still exist"
+        );
+        assert!(cached_node_gyp_binary(&bin_dir).is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 }
