@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3](https://github.com/jdx/aube/compare/v2.2.2...v2.2.3) - 2026-08-29
+
+### Fixed
+
+- *(release)* mount cached arm64 build target ([#1412](https://github.com/jdx/aube/pull/1412))
+
 ## [2.2.2](https://github.com/jdx/aube/compare/v2.2.1...v2.2.2) - 2026-08-29
 
 ### Fixed
