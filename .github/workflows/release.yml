@@ -378,7 +378,9 @@ jobs:
             --env MISE_CACHE_DIR=/tmp/mise-cache \
             aube-release-arm64:local \
             bash -euo pipefail -c '
-              ldd --version | head -1
+              # sed consumes the full stream; head can make ldd exit with
+              # SIGPIPE (141), which pipefail incorrectly treats as a build failure.
+              ldd --version | sed -n "1p"
               mise run --skip-tools build:pgo
             '
 
