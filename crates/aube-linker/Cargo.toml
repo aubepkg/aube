@@ -30,6 +30,7 @@ diffy = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tempfile = "3"
+libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }
