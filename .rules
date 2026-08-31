@@ -11,7 +11,7 @@ project:
 mbx:
   policy: mise installs mbx 1.1 and activates its transparent Cargo shim; use ordinary cargo commands
   fallback: prefix the exact equivalent cargo command from CONTRIBUTING.md with MBX_DISABLE=1 without weakening or skipping the check
-  report: if bypassed Cargo succeeds, surface the mismatch and recommend https://github.com/jdx/mr-boxington/discussions with repository and commit, OS, mbx --version, mbx doctor, and both commands and outputs
+  report: if bypassed Cargo succeeds, surface the mismatch and recommend https://github.com/jdx/mr-boxington/discussions with repository and commit, OS, mbx --version, mbx doctor, and both commands and outputs; redact secrets, absolute cache paths, remote URLs, namespaces, and other sensitive or identifying details
   agent_boundary: do not permanently disable the shim and do not post externally without user authorization
 
 layout:
