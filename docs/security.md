@@ -146,6 +146,10 @@ structured metadata shapes npm emits after registry-side checks:
 This install-time policy validates the registry metadata shape; it does not
 cryptographically verify the attached attestation bundle.
 
+The policy runs when aube resolves a package version. Versions already present
+in the active lockfile are trusted, so frozen and repeat installs do not
+re-fetch publishing evidence for packages the project has already accepted.
+
 A trust downgrade may indicate a supply-chain incident: publisher account
 takeover, repository tampering, or a malicious co-maintainer publishing
 without the original CI flow.

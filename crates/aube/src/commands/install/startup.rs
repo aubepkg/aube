@@ -83,7 +83,7 @@ fn install_fast_path_eligible(
     if !preconditions_met {
         return false;
     }
-    if trust_policy_requires_validation(cwd, opts) {
+    if paranoid_requires_full_pipeline(cwd, opts) {
         return false;
     }
     // Surface *why* the warm path was missed at debug level — the state
@@ -162,28 +162,17 @@ fn compatibility_metadata_is_current(cwd: &Path, opts: &InstallOptions) -> bool 
     metadata_current
 }
 
-fn trust_policy_requires_validation(cwd: &Path, opts: &InstallOptions) -> bool {
+fn paranoid_requires_full_pipeline(cwd: &Path, opts: &InstallOptions) -> bool {
     if opts.network_mode == aube_registry::NetworkMode::Offline {
         return false;
     }
     let files = crate::commands::FileSources::load(cwd);
     let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
     let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
-    // `paranoid` bundles more than trustPolicy (strict advisory checks,
-    // strict store integrity, ...), so it always takes the full pipeline.
-    if aube_settings::resolved::paranoid(&ctx) {
-        return true;
-    }
-    if !matches!(
-        aube_settings::resolved::trust_policy(&ctx),
-        aube_settings::resolved::TrustPolicy::NoDowngrade
-    ) {
-        return false;
-    }
-    // Validation already ran for this exact lockfile content within the
-    // stamp TTL — the full pipeline would reuse that stamp and do no
-    // network work, so the warm fast path may skip it the same way.
-    !super::lockfile_trust_policy_file_stamp_fresh(cwd, &ctx, opts.network_mode)
+    // `paranoid` bundles strict advisory checks and store-integrity gates,
+    // so it always takes the full pipeline. A locked package is already a
+    // trust decision, so trustPolicy alone does not invalidate the fast path.
+    aube_settings::resolved::paranoid(&ctx)
 }
 
 pub(super) fn emit_up_to_date(cwd: &Path) {
