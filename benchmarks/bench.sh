@@ -307,7 +307,9 @@ for i in "${!TOOLS[@]}"; do
 
 	case "$tool" in
 	aube)
-		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" "$bin" install
+		# Aube's built-in trusted-dependency list can allow known-safe
+		# install scripts; opt out explicitly to match every other PM.
+		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" "$bin" install --ignore-scripts
 		;;
 	npm)
 		# `--legacy-peer-deps` is the only way npm tolerates the
@@ -465,7 +467,7 @@ AUBE_ENV_GVS_ON="$AUBE_ENV npm_config_enable_global_virtual_store=true"
 cmd_template() {
 	case "$1:$2" in
 	gvs-warm:aube | gvs-cold:aube)
-		echo "cd {project} && $AUBE_ENV_GVS_ON {bin} install --frozen-lockfile >/dev/null 2>&1"
+		echo "cd {project} && $AUBE_ENV_GVS_ON {bin} install --frozen-lockfile --ignore-scripts >/dev/null 2>&1"
 		;;
 	gvs-warm:bun | gvs-cold:bun)
 		echo "cd {project} && $BUN_BASE --frozen-lockfile >/dev/null 2>&1"
