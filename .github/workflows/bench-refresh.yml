@@ -25,6 +25,9 @@ concurrency:
 
 env:
   CARGO_INCREMENTAL: "0"
+  # Rust 1.97.1 is part of the digest-pinned benchmark image.
+  MISE_DISABLE_TOOLS: rust
+  RUSTUP_TOOLCHAIN: 1.97.1
 
 jobs:
   # Gate: only run bench if `benchmarks/results.json` is pinned to an older
@@ -76,7 +79,7 @@ jobs:
       dirty: ${{ steps.dirty.outputs.dirty }}
     runs-on: [self-hosted, jdx-perf-v1]
     container:
-      image: ghcr.io/jdx/perf-runner@sha256:6f35a3dec67758d195d8fd01103f10f6c7aeaf8815dd41bf2aa2726fa3e9d4a9
+      image: ghcr.io/jdx/perf-runner@sha256:0f4ee40929472883a32cc29bcd4bd22068c4382b72697da299d6769475b263b5
       options: --cpuset-cpus 0-7
     timeout-minutes: 60
     permissions:
