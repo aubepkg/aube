@@ -46,7 +46,7 @@ use sha1::Sha1;
 use sha2::{Digest as _, Sha256, Sha384, Sha512};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -180,7 +180,7 @@ impl Store {
         }
     }
 
-    /// Enable the macOS direct-write fast path for CAS imports. Bypasses
+    /// Enable the Linux/macOS direct-write fast path for CAS imports. Bypasses
     /// the tempfile + persist_noclobber pattern and writes straight to
     /// the final content-addressed path, saving ~80µs/file on APFS. The
     /// caller MUST hold an exclusive lock against the store for the
@@ -188,14 +188,9 @@ impl Store {
     /// concurrent installer can observe a partial file and the
     /// `AlreadyExisted` recovery dance can clobber an in-flight write.
     ///
-    /// macOS-gated rather than just declared inert on other platforms.
-    /// On Linux the `O_TMPFILE+linkat` path has no inline length-check
-    /// recovery — that recovery only lives inside the macOS fast-path
-    /// branch — so the outer skip in `import_bytes` (also macOS-gated
-    /// via `cfg!`) must never see the flag set on Linux. Removing the
-    /// method on non-macOS platforms makes that mismatch a build error
-    /// rather than a silent acceptance of torn CAS files.
-    #[cfg(target_os = "macos")]
+    /// Unix-gated because the implementation relies on `OpenOptionsExt`.
+    /// Windows retains the named-tempfile publication path.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn enable_fast_path(&self) {
         self.fast_path.store(true, Ordering::Release);
     }
