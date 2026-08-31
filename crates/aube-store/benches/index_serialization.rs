@@ -17,18 +17,45 @@ fn main() {
         );
     }
 
-    const ITERATIONS: usize = 100_000;
-    let started = Instant::now();
-    for _ in 0..ITERATIONS {
-        black_box(serde_json::to_vec(black_box(&index)).unwrap());
+    const WARMUP_ITERATIONS: usize = 1_000;
+    for iteration in 0..WARMUP_ITERATIONS {
+        if iteration % 2 == 0 {
+            black_box(serde_json::to_vec(black_box(&index)).unwrap());
+            black_box(sonic_rs::to_vec(black_box(&index)).unwrap());
+        } else {
+            black_box(sonic_rs::to_vec(black_box(&index)).unwrap());
+            black_box(serde_json::to_vec(black_box(&index)).unwrap());
+        }
     }
-    let serde_json = started.elapsed();
 
-    let started = Instant::now();
-    for _ in 0..ITERATIONS {
-        black_box(sonic_rs::to_vec(black_box(&index)).unwrap());
+    const ROUNDS: usize = 20;
+    const ITERATIONS_PER_ROUND: usize = 5_000;
+    let measure_serde_json = || {
+        let started = Instant::now();
+        for _ in 0..ITERATIONS_PER_ROUND {
+            black_box(serde_json::to_vec(black_box(&index)).unwrap());
+        }
+        started.elapsed()
+    };
+    let measure_sonic = || {
+        let started = Instant::now();
+        for _ in 0..ITERATIONS_PER_ROUND {
+            black_box(sonic_rs::to_vec(black_box(&index)).unwrap());
+        }
+        started.elapsed()
+    };
+
+    let mut serde_json = std::time::Duration::ZERO;
+    let mut sonic = std::time::Duration::ZERO;
+    for round in 0..ROUNDS {
+        if round % 2 == 0 {
+            serde_json += measure_serde_json();
+            sonic += measure_sonic();
+        } else {
+            sonic += measure_sonic();
+            serde_json += measure_serde_json();
+        }
     }
-    let sonic = started.elapsed();
 
     println!("serde_json: {serde_json:?}");
     println!("sonic-rs:   {sonic:?}");
