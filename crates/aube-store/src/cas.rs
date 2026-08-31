@@ -928,9 +928,9 @@ fn cas_small_file_threshold() -> usize {
     })
 }
 
-// Open anonymous file in parent dir, write, linkat via /proc/self/fd.
-// Skips the tempfile unique-name probe and explicit fchmod. Falls
-// back via Unsupported on EOPNOTSUPP, ENOENT (no /proc), or EXDEV.
+// Open an anonymous file in the parent dir, write it, then publish it
+// directly with linkat(AT_EMPTY_PATH). Kernels that reject the direct
+// form fall back to /proc/self/fd before the named-tempfile fallback.
 // AUBE_DISABLE_O_TMPFILE forces the legacy path.
 #[cfg(target_os = "linux")]
 fn try_o_tmpfile_publish(path: &Path, bytes: &[u8]) -> Result<CasWriteOutcome, OTmpfileFallback> {
@@ -992,62 +992,98 @@ fn try_o_tmpfile_publish(path: &Path, bytes: &[u8]) -> Result<CasWriteOutcome, O
     // between write and linkat is acceptable, lockfile + state hash
     // recovers the missing entry on next install.
 
-    let proc_link = format!("/proc/self/fd/{}", std::os::fd::AsRawFd::as_raw_fd(&file));
-    let proc_c = CString::new(proc_link.as_bytes()).map_err(|_| {
-        OTmpfileFallback::Hard(Error::Io(
-            path.to_path_buf(),
-            std::io::Error::other("fd path has nul"),
-        ))
-    })?;
     let final_c = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         OTmpfileFallback::Hard(Error::Io(
             path.to_path_buf(),
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has nul"),
         ))
     })?;
-    // SAFETY: both CStrings live through the call. AT_SYMLINK_FOLLOW
-    // resolves the /proc/self/fd magic-link to the anon inode.
-    let r = unsafe {
+
+    // Publish directly from the owned O_TMPFILE descriptor. This avoids
+    // allocating and resolving `/proc/self/fd/<fd>` for every CAS object.
+    // Some kernels/filesystems require CAP_DAC_READ_SEARCH for
+    // AT_EMPTY_PATH; those fall back to the procfs method below.
+    let empty = c"";
+    // SAFETY: `file` owns a valid fd and both C strings live through the call.
+    let direct = unsafe {
         libc::linkat(
-            libc::AT_FDCWD,
-            proc_c.as_ptr(),
+            std::os::fd::AsRawFd::as_raw_fd(&file),
+            empty.as_ptr(),
             libc::AT_FDCWD,
             final_c.as_ptr(),
-            libc::AT_SYMLINK_FOLLOW,
+            libc::AT_EMPTY_PATH,
         )
     };
-    if r == 0 {
-        // CAS bytes are read-once into reflinks/hardlinks. Drop them
-        // from the page cache so the parallel linker pass over many
-        // packages doesn't push the working set out. Per-file cost is
-        // roughly fixed regardless of size, so small files paid a
-        // disproportionate share — gate on `small_threshold` to match
-        // the fallocate gate above.
-        if is_large {
-            use std::os::fd::AsRawFd;
-            let fd = file.as_raw_fd();
-            // SAFETY: fd is still owned by `file` here. POSIX_FADV_DONTNEED
-            // is advisory, return value is ignored.
-            unsafe {
-                libc::posix_fadvise(fd, 0, 0, libc::POSIX_FADV_DONTNEED);
+    if direct != 0 {
+        let direct_err = std::io::Error::last_os_error();
+        match direct_err.raw_os_error() {
+            Some(libc::EEXIST) => return Ok(CasWriteOutcome::AlreadyExisted),
+            Some(libc::EPERM)
+            | Some(libc::EACCES)
+            | Some(libc::EINVAL)
+            | Some(libc::ENOENT)
+            | Some(libc::EOPNOTSUPP) => {
+                let proc_link = format!("/proc/self/fd/{}", std::os::fd::AsRawFd::as_raw_fd(&file));
+                let proc_c = CString::new(proc_link.as_bytes()).map_err(|_| {
+                    OTmpfileFallback::Hard(Error::Io(
+                        path.to_path_buf(),
+                        std::io::Error::other("fd path has nul"),
+                    ))
+                })?;
+                // SAFETY: both CStrings live through the call.
+                // AT_SYMLINK_FOLLOW resolves the procfs magic-link.
+                let proc_result = unsafe {
+                    libc::linkat(
+                        libc::AT_FDCWD,
+                        proc_c.as_ptr(),
+                        libc::AT_FDCWD,
+                        final_c.as_ptr(),
+                        libc::AT_SYMLINK_FOLLOW,
+                    )
+                };
+                if proc_result != 0 {
+                    let err = std::io::Error::last_os_error();
+                    return match err.raw_os_error() {
+                        Some(libc::EEXIST) => Ok(CasWriteOutcome::AlreadyExisted),
+                        // No /proc in this sandbox.
+                        Some(libc::ENOENT) => Err(OTmpfileFallback::Unsupported),
+                        // Kernel opens O_TMPFILE but rejects linkat from
+                        // /proc/self/fd. ENOTSUP equals EOPNOTSUPP on Linux.
+                        Some(libc::EOPNOTSUPP) | Some(libc::EXDEV) => {
+                            Err(OTmpfileFallback::Unsupported)
+                        }
+                        // Seccomp-filtered containers can block linkat.
+                        Some(libc::EPERM) | Some(libc::EACCES) => {
+                            Err(OTmpfileFallback::Unsupported)
+                        }
+                        _ => Err(OTmpfileFallback::Hard(Error::Io(path.to_path_buf(), err))),
+                    };
+                }
+            }
+            _ => {
+                return Err(OTmpfileFallback::Hard(Error::Io(
+                    path.to_path_buf(),
+                    direct_err,
+                )));
             }
         }
-        return Ok(CasWriteOutcome::Created);
     }
-    let err = std::io::Error::last_os_error();
-    match err.raw_os_error() {
-        Some(libc::EEXIST) => Ok(CasWriteOutcome::AlreadyExisted),
-        // No /proc in this sandbox.
-        Some(libc::ENOENT) => Err(OTmpfileFallback::Unsupported),
-        // Kernel opens O_TMPFILE but rejects linkat from /proc/self/fd.
-        // ENOTSUP is same value as EOPNOTSUPP on Linux.
-        Some(libc::EOPNOTSUPP) | Some(libc::EXDEV) => Err(OTmpfileFallback::Unsupported),
-        // Seccomp-filtered containers (gVisor, strict k8s pod-security
-        // profiles) block linkat and return EPERM/EACCES. Fall through
-        // to the tempfile path instead of aborting the install.
-        Some(libc::EPERM) | Some(libc::EACCES) => Err(OTmpfileFallback::Unsupported),
-        _ => Err(OTmpfileFallback::Hard(Error::Io(path.to_path_buf(), err))),
+    // CAS bytes are read-once into reflinks/hardlinks. Drop them
+    // from the page cache so the parallel linker pass over many
+    // packages doesn't push the working set out. Per-file cost is
+    // roughly fixed regardless of size, so small files paid a
+    // disproportionate share — gate on `small_threshold` to match
+    // the fallocate gate above.
+    if is_large {
+        use std::os::fd::AsRawFd;
+        let fd = file.as_raw_fd();
+        // SAFETY: fd is still owned by `file` here. POSIX_FADV_DONTNEED
+        // is advisory, return value is ignored.
+        unsafe {
+            libc::posix_fadvise(fd, 0, 0, libc::POSIX_FADV_DONTNEED);
+        }
     }
+    Ok(CasWriteOutcome::Created)
 }
 
 /// Map a nibble (0–15) to its lowercase hex ASCII byte. Used by
