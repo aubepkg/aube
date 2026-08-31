@@ -44,7 +44,7 @@ jobs:
       options: --cpuset-cpus 0-7
     timeout-minutes: 60
     env:
-  TAK_RUNNER: jdx-perf-v1-ubuntu24.04-x64-aube-rust1.97.1
+      TAK_RUNNER: jdx-perf-v1-ubuntu24.04-x64-aube-rust1.97.1
     permissions:
       contents: read # listing releases and downloading assets; no write here
     steps:
@@ -65,7 +65,7 @@ jobs:
           {
             echo '### Runner metadata'
             echo '```text'
-            echo 'environment-revision: perf-runner@d7c0e81'
+            echo 'environment-revision: perf-runner@78e4231'
             echo 'image: ghcr.io/jdx/perf-runner@sha256:1b44fc9f1c93fc1b7a2db56a1ef743bbf8a8df60035121d455c9834fe8001922'
             uname -a
             lscpu
