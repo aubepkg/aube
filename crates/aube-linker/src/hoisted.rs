@@ -794,11 +794,18 @@ fn materialize_hoisted_plan(
             std::fs::create_dir_all(parent).map_err(|e| Error::Io(parent.clone(), e))?;
         }
 
+        // Match the isolated materializer's Linux fast path: resolve every
+        // destination relative to one open package directory.
+        #[cfg(target_os = "linux")]
+        let pkg_dir_fd = std::fs::File::open(&pkg_dir).ok();
+        #[cfg(not(target_os = "linux"))]
+        let pkg_dir_fd: Option<std::fs::File> = None;
+
         for (rel_path, stored) in index {
             // Key already validated in the parent-collection loop
             // above. The index is immutable between the two loops.
             let target = pkg_dir.join(rel_path);
-            if let Err(e) = linker.link_file_fresh(stored, rel_path, &target, None) {
+            if let Err(e) = linker.link_file_fresh(stored, rel_path, &target, pkg_dir_fd.as_ref()) {
                 if let Error::MissingStoreFile { .. } = &e {
                     crate::invalidate_stale_index_for_package(&linker.store, pkg);
                 }
