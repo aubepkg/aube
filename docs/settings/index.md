@@ -724,8 +724,10 @@ Fail install when a package's trust evidence weakens between releases.
 - Workspace YAML keys: `trustPolicy`
 - Managed policy: `ranked:off<no-downgrade`
 
-When `no-downgrade` (the default), aube rejects a version that carries weaker
-trust evidence than any earlier-published version of the same package.
+When `no-downgrade` (the default), aube rejects a newly resolved version that
+carries weaker trust evidence than any earlier-published version of the same
+package. Versions already present in the active lockfile are trusted without
+re-fetching their publishing evidence.
 Recognized evidence: npm staged-publish approval metadata (`approver`)
 outranks structured npm trusted-publisher metadata
 (`_npmUser.trustedPublisher.id`), which outranks structured SLSA provenance
