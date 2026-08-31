@@ -44,7 +44,7 @@
 ## Why Try It
 
 <!-- BENCH_RATIOS:START -->
-**[Fast installs](https://aube.jdx.dev/benchmarks).** Warm installs are about 9x faster than pnpm and about 3x faster than Bun in the current benchmarks. Repeat test commands run up to 27x faster than pnpm and up to 2x faster than Bun.
+**[Fast installs](https://aube.jdx.dev/benchmarks).** Warm installs are about 8x faster than pnpm and about 3x faster than Bun in the current benchmarks. Repeat test commands run up to 24x faster than pnpm and up to 2x faster than Bun.
 <!-- BENCH_RATIOS:END -->
 
 **[Existing lockfiles](https://aube.jdx.dev/package-manager/lockfiles).** Reads and writes `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock` in place.
