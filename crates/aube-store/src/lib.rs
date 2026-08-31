@@ -518,6 +518,61 @@ mod tests {
         contender.try_lock().unwrap();
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn unlocked_import_waits_for_direct_writer_before_recovery() {
+        use std::io::Write;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("v1/files");
+        let store = Store::at(root);
+        store.ensure_shards_exist().unwrap();
+
+        let content = b"a direct writer may still be filling this CAS object";
+        let hex_hash = blake3_hex(content);
+        let store_path = store.file_path_from_hex(&hex_hash);
+        let lock_path = tmp.path().join("v1/.install.lock");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        lock.try_lock().unwrap();
+
+        let mut partial = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&store_path)
+            .unwrap();
+        partial.write_all(&content[..1]).unwrap();
+        partial.flush().unwrap();
+
+        let import_store = store.clone();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let importer = std::thread::spawn(move || {
+            let result = import_store.import_bytes(content, false);
+            finished_tx.send(()).unwrap();
+            result
+        });
+
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(200)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        partial.write_all(&content[1..]).unwrap();
+        partial.flush().unwrap();
+        drop(partial);
+        drop(lock);
+
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let stored = importer.join().unwrap().unwrap();
+        assert_eq!(std::fs::read(stored.store_path).unwrap(), content);
+    }
+
     #[test]
     fn migrate_legacy_index_dir_relocates_files_and_subdirs() {
         let tmp = tempfile::tempdir().unwrap();
