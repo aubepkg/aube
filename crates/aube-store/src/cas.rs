@@ -1022,7 +1022,8 @@ fn try_o_tmpfile_publish(path: &Path, bytes: &[u8]) -> Result<CasWriteOutcome, O
             | Some(libc::EACCES)
             | Some(libc::EINVAL)
             | Some(libc::ENOENT)
-            | Some(libc::EOPNOTSUPP) => {
+            | Some(libc::EOPNOTSUPP)
+            | Some(libc::EXDEV) => {
                 let proc_link = format!("/proc/self/fd/{}", std::os::fd::AsRawFd::as_raw_fd(&file));
                 let proc_c = CString::new(proc_link.as_bytes()).map_err(|_| {
                     OTmpfileFallback::Hard(Error::Io(
