@@ -142,7 +142,7 @@ dir = "{{config_root}}"
 # work-stealing races do not move the install count by 10%+ between runs.
 env = { npm_config_enable_global_virtual_store = "true", TOKIO_WORKER_THREADS = "1", RAYON_NUM_THREADS = "1", AUBE_LINK_CONCURRENCY = "1" }
 run = [
-  "cargo build --release",
+  "MBX_DISABLE=1 cargo build --release",
   "./target/release/aube -C fixtures/medium install --frozen-lockfile",
   "tak run",
 ]
@@ -154,7 +154,7 @@ run = [
 dir = "{{config_root}}"
 env = { npm_config_enable_global_virtual_store = "true", TOKIO_WORKER_THREADS = "1", RAYON_NUM_THREADS = "1", AUBE_LINK_CONCURRENCY = "1" }
 run = [
-  "cargo build --release",
+  "MBX_DISABLE=1 cargo build --release",
   "./target/release/aube -C fixtures/medium install --frozen-lockfile",
   "tak run --record",
 ]
