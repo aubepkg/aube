@@ -101,7 +101,7 @@ run = [
 ]
 
 # Regenerate `benchmarks/results.json` (and the markdown summary) by
-# re-running the full hyperfine scenario matrix with a release build
+# re-running the full hyperfine scenario matrix with a release-mode binary
 # and 10 runs × 3 warmups, then writing the structured output into
 # the repo in-place. Commit the updated JSON and the chart on the
 # VitePress benchmarks page picks it up automatically — the page's
@@ -120,7 +120,7 @@ env = {
   AUBE_FORCE_METADATA_PRIMER = "true",
 }
 run = [
-  "cargo build --release",
+  "if [ -z \"${AUBE_BIN:-}\" ]; then cargo build --release; fi",
   "mise x aqua:sharkdp/hyperfine@latest github:pnpm/pnpm@latest npm:@yarnpkg/cli-dist@latest bun@latest deno@latest npm:vlt@latest node@24 -- bash benchmarks/bench.sh",
   "node benchmarks/update-readme.mts",
 ]

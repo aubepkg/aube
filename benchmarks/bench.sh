@@ -5,7 +5,8 @@ set -euo pipefail
 # and vlt install performance.
 #
 # Prerequisites:
-#   - aube built in release mode: cargo build --release
+#   - aube built in release mode: cargo build --release, or AUBE_BIN set
+#     to an executable released binary
 #   - benchmark dependencies from mise (use `mise run bench` or
 #     `mise run bench:bump`; missing package managers are skipped with
 #     a warning rather than failing the whole run)
@@ -31,6 +32,7 @@ set -euo pipefail
 #   BENCH_SCENARIOS — comma-separated scenario keys to run
 #                     (default: all)
 #   BENCH_PHASES — set to 0 to skip aube phase timing samples
+#   AUBE_BIN     — override the aube executable to benchmark
 #
 #   BENCH_HERMETIC=1 — route all registry traffic through a local
 #                      Verdaccio instance pre-populated from npmjs. This
@@ -48,7 +50,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-AUBE_BIN="$REPO_DIR/target/release/aube"
+AUBE_BIN="${AUBE_BIN:-$REPO_DIR/target/release/aube}"
 PNPM_BIN="$(command -v pnpm || true)"
 YARN_BIN="$(command -v yarn || true)"
 NPM_BIN="$(command -v npm || true)"
@@ -80,8 +82,8 @@ if ! command -v hyperfine &>/dev/null; then
 fi
 
 if [ ! -f "$AUBE_BIN" ]; then
-	echo "error: aube release binary not found at $AUBE_BIN" >&2
-	echo "Run: cargo build --release" >&2
+	echo "error: aube binary not found at $AUBE_BIN" >&2
+	echo "Run: cargo build --release, or set AUBE_BIN to a released binary" >&2
 	exit 1
 fi
 
