@@ -732,7 +732,7 @@ fn test_link_file_fresh_hardlink_short_circuits_when_source_missing() {
 
     let linker = Linker::new_with_gvs(&store, LinkStrategy::Hardlink, true);
     let err = linker
-        .link_file_fresh(&stored, "hello.txt", &dst)
+        .link_file_fresh(&stored, "hello.txt", &dst, None)
         .expect_err("source missing must fail");
     assert!(
         matches!(
@@ -805,7 +805,7 @@ fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy) -> b
         // Hold the guard across the materialize so a sibling test can't flip
         // the global flag mid-call; the flag is restored on drop, panic-safe.
         let _forced = ForcedReflinkFailure::engage();
-        linker.link_file_fresh(&stored, "payload.bin", &dst)
+        linker.link_file_fresh(&stored, "payload.bin", &dst, None)
     };
     result.expect("a reflink strategy must still materialize the file via its fallback");
 

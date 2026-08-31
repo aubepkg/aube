@@ -616,6 +616,15 @@ impl Linker {
             std::fs::create_dir_all(parent).map_err(|e| Error::Io(parent.clone(), e))?;
         }
 
+        // Linux can resolve every destination relative to one open package
+        // directory instead of walking the long GVS staging path per file.
+        // Failure to open is harmless: `link_file_fresh` retains the portable
+        // full-path operation and its existing copy fallback.
+        #[cfg(target_os = "linux")]
+        let pkg_nm_dir_fd = std::fs::File::open(&pkg_nm_dir).ok();
+        #[cfg(not(target_os = "linux"))]
+        let pkg_nm_dir_fd: Option<std::fs::File> = None;
+
         // `materialize_into` always writes into a fresh location
         // (either a `.tmp-<pid>-...` staging dir for the global virtual
         // store or a per-project `.aube/<dep_path>` just created by
@@ -628,7 +637,8 @@ impl Linker {
             // above. The index is immutable between the two loops.
             let target = pkg_nm_dir.join(rel_path);
 
-            if let Err(e) = self.link_file_fresh(stored, rel_path, &target) {
+            if let Err(e) = self.link_file_fresh(stored, rel_path, &target, pkg_nm_dir_fd.as_ref())
+            {
                 if let Error::MissingStoreFile { .. } = &e {
                     invalidate_stale_index_for_package(&self.store, pkg);
                 }
@@ -793,6 +803,7 @@ impl Linker {
         stored: &StoredFile,
         rel_path: &str,
         dst: &Path,
+        dst_dir: Option<&std::fs::File>,
     ) -> Result<(), Error> {
         #[cfg(target_os = "macos")]
         const SMALL_FILE_COPY_MAX: u64 = 16 * 1024;
@@ -909,7 +920,48 @@ impl Linker {
                 }
             }
             LinkStrategy::Hardlink => {
-                if let Err(e) = std::fs::hard_link(&stored.store_path, dst) {
+                #[cfg(target_os = "linux")]
+                let hardlink_result = if let Some(dst_dir) = dst_dir {
+                    use std::ffi::CString;
+                    use std::os::fd::AsRawFd;
+                    use std::os::unix::ffi::OsStrExt;
+
+                    let source = CString::new(stored.store_path.as_os_str().as_bytes());
+                    let relative = CString::new(rel_path.as_bytes());
+                    match (source, relative) {
+                        (Ok(source), Ok(relative)) => {
+                            // SAFETY: both C strings live through the call and
+                            // `dst_dir` owns a valid package-directory fd.
+                            let result = unsafe {
+                                libc::linkat(
+                                    libc::AT_FDCWD,
+                                    source.as_ptr(),
+                                    dst_dir.as_raw_fd(),
+                                    relative.as_ptr(),
+                                    0,
+                                )
+                            };
+                            if result == 0 {
+                                Ok(())
+                            } else {
+                                Err(std::io::Error::last_os_error())
+                            }
+                        }
+                        _ => Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "hardlink path contains nul",
+                        )),
+                    }
+                } else {
+                    std::fs::hard_link(&stored.store_path, dst)
+                };
+                #[cfg(not(target_os = "linux"))]
+                let hardlink_result = {
+                    let _ = dst_dir;
+                    std::fs::hard_link(&stored.store_path, dst)
+                };
+
+                if let Err(e) = hardlink_result {
                     if !stored.store_path.exists() {
                         return Err(missing_source());
                     }
