@@ -752,7 +752,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     if let Err(e) = store.ensure_shards_exist() {
         tracing::debug!("ensure_shards_exist failed (slow path will cover): {e}");
     }
-    // macOS fast-path gate: take an exclusive `try_lock` on
+    // Linux/macOS fast-path gate: take an exclusive `try_lock` on
     // `<store>/v1/.install.lock`. If we get it, no other aube install is
     // running against this store right now, so the CAS write path can
     // skip the tempfile + persist_noclobber dance and write straight to
@@ -762,13 +762,13 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // back to the safe tempfile path — concurrent installers still
     // proceed, just at the existing speed.
     //
-    // Linux is unaffected: `create_cas_file` always uses O_TMPFILE+linkat
-    // there, which is already atomic-by-construction and faster than
-    // both options. Windows keeps the tempfile path; the fast-path branch
+    // Linux normally uses atomic O_TMPFILE+linkat, but direct writes save
+    // the anonymous-file publication syscall while this lock excludes other
+    // aube writers. Windows keeps the tempfile path; the fast-path branch
     // in `aube-store` is unix-only (`OpenOptionsExt::mode`), so gating
-    // the lock acquisition on macOS too avoids opening a lock file that
+    // the lock acquisition on Unix too avoids opening a lock file that
     // nothing would consult.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let _store_lock = {
         let lock_dir = store
             .root()
