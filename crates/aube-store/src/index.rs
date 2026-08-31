@@ -262,8 +262,7 @@ impl Store {
                 "refusing to cache: invalid coordinate {name:?}@{version:?} or integrity {integrity:?}"
             ))
         })?;
-        let json =
-            serde_json::to_string(index).map_err(|e| Error::Tar(format!("serialize: {e}")))?;
+        let json = sonic_rs::to_vec(index).map_err(|e| Error::Tar(format!("serialize: {e}")))?;
         xx::file::write(&index_path, json).map_err(|e| Error::Xx(e.to_string()))?;
         trace!("cached index: {name}@{version}");
         Ok(())
