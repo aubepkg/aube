@@ -7,7 +7,7 @@ cargo.binstall_native = true
 
 [tools]
 actionlint = "latest"
-"github:jdx/mr-boxington" = "latest"
+mr-boxington = { version = "1.1.0", postinstall = "mbx setup --yes" }
 usage = "6.4.0"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
@@ -50,10 +50,10 @@ run = "hk fix --all --slow"
 run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --allow-dirty --allow-staged"
 
 [tasks.build]
-run = "mbx build"
+run = "cargo build"
 
 [tasks.test]
-run = "mbx test"
+run = "cargo test"
 
 [tasks."docs:dev"]
 depends = ["build"]
