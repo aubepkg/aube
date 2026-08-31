@@ -7,7 +7,7 @@ cargo.binstall_native = true
 
 [tools]
 actionlint = "latest"
-"github:jdx/mr-boxington" = "latest"
+mr-boxington = { version = "1.1.0", postinstall = "mbx setup --global" }
 usage = "6.4.0"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
@@ -50,10 +50,10 @@ run = "hk fix --all --slow"
 run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --allow-dirty --allow-staged"
 
 [tasks.build]
-run = "mbx build"
+run = "cargo build"
 
 [tasks.test]
-run = "mbx test"
+run = "cargo test"
 
 [tasks."docs:dev"]
 depends = ["build"]
@@ -136,16 +136,20 @@ run = [
 # The store warm-up is the one networked step. It has to happen before tak runs
 # because the install benchmark uses --offline, and it is outside the
 # measurement on purpose — nothing tak times ever touches the registry.
+[tasks."perf:build"]
+env = { MBX_DISABLE = "1" }
+run = "cargo build --release"
+
 [tasks.perf]
 dir = "{{config_root}}"
 # Cachegrind aggregates instructions from every worker. Pin the pools so idle
 # work-stealing races do not move the install count by 10%+ between runs.
 env = { npm_config_enable_global_virtual_store = "true", TOKIO_WORKER_THREADS = "1", RAYON_NUM_THREADS = "1", AUBE_LINK_CONCURRENCY = "1" }
 run = [
-  "cargo build --release",
   "./target/release/aube -C fixtures/medium install --frozen-lockfile",
   "tak run",
 ]
+depends = ["perf:build"]
 
 # Same measurement, appended to refs/notes/tak for this commit. Run by the
 # `perf` workflow on every push to main; the notes are what the history is.
@@ -154,10 +158,10 @@ run = [
 dir = "{{config_root}}"
 env = { npm_config_enable_global_virtual_store = "true", TOKIO_WORKER_THREADS = "1", RAYON_NUM_THREADS = "1", AUBE_LINK_CONCURRENCY = "1" }
 run = [
-  "cargo build --release",
   "./target/release/aube -C fixtures/medium install --frozen-lockfile",
   "tak run --record",
 ]
+depends = ["perf:build"]
 
 [tasks."build:pgo"]
 dir = "{{config_root}}"

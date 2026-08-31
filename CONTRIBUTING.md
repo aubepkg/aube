@@ -4,19 +4,21 @@ See the [contributing guide](https://aube.jdx.dev/contributing).
 
 ## mbx build cache
 
-The normal `mise run build`, `mise run test`, and `mise run lint` workflows use
-[mbx](https://mr-boxington.jdx.dev) for compilation-heavy Cargo work. If mbx
-appears to be the problem, use the equivalent Cargo commands to unblock
-yourself without skipping or weakening the check:
+`mise install` installs [mbx](https://mr-boxington.jdx.dev) 1.1 and activates
+its transparent Cargo shim. The normal `mise run build`, `mise run test`, and
+`mise run lint` workflows therefore use the cache while invoking Cargo
+normally. To bypass mbx without skipping or weakening a check, prefix the
+equivalent Cargo command with `MBX_DISABLE=1`:
 
 ```sh
-cargo build
-cargo test
-cargo clippy --all-targets -- -D warnings
+MBX_DISABLE=1 cargo build
+MBX_DISABLE=1 cargo test
+MBX_DISABLE=1 cargo clippy --all-targets -- -D warnings
 ```
 
-If Cargo succeeds where mbx fails, or mbx introduces a papercut, please start a
+If bypassed Cargo succeeds where the shim fails, or mbx introduces a papercut, please start a
 [mr-boxington Discussion](https://github.com/jdx/mr-boxington/discussions).
-Include the repository and commit, operating system, `mbx --version`, both
-commands and their output, the mbx cache summary, and an `MBX_BYPASS_LOG` when
-relevant (for example, `MBX_BYPASS_LOG=mbx-bypasses.log mise run build`).
+Include the repository and commit, operating system, `mbx --version`,
+`mbx doctor`, and both commands and their output. Before posting, redact
+secrets, absolute cache paths, remote URLs, namespaces, and other sensitive or
+identifying details.
