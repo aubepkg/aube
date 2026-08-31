@@ -757,10 +757,10 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // running against this store right now, so the CAS write path can
     // skip the tempfile + persist_noclobber dance and write straight to
     // the final content-addressed path (`Store::enable_fast_path`). The
-    // guard is held in `_store_lock` for the rest of this `run` call;
-    // dropping it at function exit releases the lock. Contention falls
-    // back to the safe tempfile path — concurrent installers still
-    // proceed, just at the existing speed.
+    // `Store` takes ownership of the guard so blocking imports retain it
+    // even if their Tokio parent is aborted during error unwinding.
+    // Contention falls back to the safe tempfile path — concurrent
+    // installers still proceed, just at the existing speed.
     //
     // Linux normally uses atomic O_TMPFILE+linkat, but direct writes save
     // the anonymous-file publication syscall while this lock excludes other
@@ -769,7 +769,7 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
     // the lock acquisition on Unix too avoids opening a lock file that
     // nothing would consult.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let _store_lock = {
+    {
         let lock_dir = store
             .root()
             .parent()
@@ -785,19 +785,16 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         {
             Ok(file) => match file.try_lock() {
                 Ok(()) => {
-                    store.enable_fast_path();
+                    store.enable_fast_path(file);
                     tracing::debug!("CAS fast path enabled (exclusive store lock acquired)");
-                    Some(file)
                 }
                 Err(std::fs::TryLockError::WouldBlock) => {
                     tracing::debug!(
                         "another aube install is using this store; staying on tempfile path"
                     );
-                    None
                 }
                 Err(std::fs::TryLockError::Error(e)) => {
                     tracing::debug!("store lock probe failed ({e}); staying on tempfile path");
-                    None
                 }
             },
             Err(e) => {
@@ -805,7 +802,6 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
                     "could not open store lock at {} ({e}); staying on tempfile path",
                     lock_path.display()
                 );
-                None
             }
         }
     };

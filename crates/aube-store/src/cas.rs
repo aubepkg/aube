@@ -639,6 +639,29 @@ impl Store {
             if !cas_file_matches_len(&store_path, content.len() as u64) {
                 wait_for_cas_file_len(&store_path, content.len() as u64);
             }
+            // An unlocked writer may have observed a direct writer's
+            // in-progress final path. Coordinate with that writer before
+            // deciding the entry is torn, then recheck under the lock.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let _recovery_lock = if !cas_file_matches_len(&store_path, content.len() as u64) {
+                let lock_dir = self
+                    .root
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| self.root.clone());
+                std::fs::create_dir_all(&lock_dir).map_err(|e| Error::Io(lock_dir.clone(), e))?;
+                let lock_path = lock_dir.join(".install.lock");
+                let file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(&lock_path)
+                    .map_err(|e| Error::Io(lock_path.clone(), e))?;
+                file.lock().map_err(|e| Error::Io(lock_path, e))?;
+                Some(file)
+            } else {
+                None
+            };
             if !cas_file_matches_len(&store_path, content.len() as u64) {
                 let _ = xx::file::remove_file(&store_path);
                 self.create_cas_file(&store_path, Some(content))?;

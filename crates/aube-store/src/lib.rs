@@ -105,12 +105,13 @@ pub struct Store {
     maintenance: Arc<MaintenanceState>,
     migration_done: Arc<OnceLock<()>>,
     /// When set, `create_cas_file` writes directly to the final
-    /// content-addressed path on non-Linux platforms instead of the
-    /// tempfile-then-rename dance. Caller must guarantee no concurrent
-    /// installer is writing into this store — typically via an exclusive
-    /// file lock taken at install start. Linux is unaffected because the
-    /// O_TMPFILE+linkat path is already atomic-by-construction.
+    /// content-addressed path on Linux/macOS instead of using atomic
+    /// publication. The paired lock file remains owned by every clone of
+    /// this state, so detached blocking imports cannot outlive the exclusive
+    /// store lock that makes direct writes safe.
     fast_path: Arc<AtomicBool>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fast_path_lock: Arc<Mutex<Option<std::fs::File>>>,
 }
 
 impl Store {
@@ -153,6 +154,8 @@ impl Store {
             maintenance: Arc::new(MaintenanceState::default()),
             migration_done: Arc::new(OnceLock::new()),
             fast_path: Arc::new(AtomicBool::new(false)),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            fast_path_lock: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -177,21 +180,26 @@ impl Store {
             maintenance: Arc::new(MaintenanceState::default()),
             migration_done: Arc::new(OnceLock::new()),
             fast_path: Arc::new(AtomicBool::new(false)),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            fast_path_lock: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Enable the Linux/macOS direct-write fast path for CAS imports. Bypasses
     /// the tempfile + persist_noclobber pattern and writes straight to
     /// the final content-addressed path, saving ~80µs/file on APFS. The
-    /// caller MUST hold an exclusive lock against the store for the
-    /// duration any thread might invoke `import_bytes`; otherwise a
-    /// concurrent installer can observe a partial file and the
-    /// `AlreadyExisted` recovery dance can clobber an in-flight write.
+    /// `lock` MUST already hold the store's exclusive install lock. The
+    /// store takes ownership so the lock remains held until all clones used
+    /// by blocking imports are dropped.
     ///
     /// Unix-gated because the implementation relies on `OpenOptionsExt`.
     /// Windows retains the named-tempfile publication path.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    pub fn enable_fast_path(&self) {
+    pub fn enable_fast_path(&self, lock: std::fs::File) {
+        *self
+            .fast_path_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lock);
         self.fast_path.store(true, Ordering::Release);
     }
 
@@ -470,7 +478,44 @@ mod tests {
             maintenance: Arc::new(MaintenanceState::default()),
             migration_done: Arc::new(OnceLock::new()),
             fast_path: Arc::new(AtomicBool::new(false)),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            fast_path_lock: Arc::new(Mutex::new(None)),
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn fast_path_lock_lives_until_last_store_clone_drops() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("v1/files");
+        std::fs::create_dir_all(&root).unwrap();
+        let lock_path = tmp.path().join("v1/.install.lock");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        lock.try_lock().unwrap();
+
+        let store = Store::at(root);
+        store.enable_fast_path(lock);
+        let blocking_import_store = store.clone();
+        drop(store);
+
+        let contender = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+
+        drop(blocking_import_store);
+        contender.try_lock().unwrap();
     }
 
     #[test]
