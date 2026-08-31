@@ -344,6 +344,13 @@ impl Store {
     /// Acquire the shared writer lease and perform any pending legacy-index
     /// migration. The lease is retained by this `Store` and all of its clones.
     pub fn prepare_for_write(&self) -> Result<(), Error> {
+        // `migration_done` is set only after the shared lease has been stored
+        // in `maintenance.shared` and migration has completed. Once visible,
+        // the Arc-owned lease remains live for every Store clone, so hot CAS
+        // and index writes can skip the maintenance mutex entirely.
+        if self.migration_done.get().is_some() {
+            return Ok(());
+        }
         let mut shared = self.maintenance.shared.lock().map_err(|_| {
             Error::Io(
                 self.maintenance_lock_path(),
