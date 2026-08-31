@@ -38,10 +38,13 @@ jobs:
     # Same runner class as perf.yml. Absolute instruction counts shift between
     # machine types by more than a real regression does, so the backfilled
     # series and the ongoing one have to come from the same kind of machine.
-    runs-on: bamboo-perf
+    runs-on: [self-hosted, jdx-perf-v1]
+    container:
+      image: ghcr.io/jdx/perf-runner@sha256:1b44fc9f1c93fc1b7a2db56a1ef743bbf8a8df60035121d455c9834fe8001922
+      options: --cpuset-cpus 0-7
     timeout-minutes: 60
     env:
-      TAK_RUNNER: bamboo-v2-ubuntu24.04-x64-30vcpu-24gb-rust1.97.1
+  TAK_RUNNER: jdx-perf-v1-ubuntu24.04-x64-aube-rust1.97.1
     permissions:
       contents: read # listing releases and downloading assets; no write here
     steps:
@@ -57,13 +60,27 @@ jobs:
         env:
           MISE_LOCKED: "1"
 
-      - name: Install valgrind
+      - name: Runner metadata
         run: |
-          command -v valgrind || {
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends valgrind
-          }
-          valgrind --version
+          {
+            echo '### Runner metadata'
+            echo '```text'
+            echo 'environment-revision: perf-runner@d7c0e81'
+            echo 'image: ghcr.io/jdx/perf-runner@sha256:1b44fc9f1c93fc1b7a2db56a1ef743bbf8a8df60035121d455c9834fe8001922'
+            uname -a
+            lscpu
+            mise --version
+            rustc --version
+            cargo --version
+            valgrind --version
+            for zone in /sys/class/thermal/thermal_zone*/temp; do
+              [ -r "$zone" ] && printf '%s: %s\n' "$zone" "$(cat "$zone")"
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify valgrind
+        run: valgrind --version
 
       # `sbom` rather than tak's default of `--version`. aube's `-V` is
       # documented as "print version and check for updates", and a subject that
@@ -90,7 +107,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LIMIT: ${{ inputs.limit }}
         run: |
-          tak backfill --bench release-graph --limit "$LIMIT" -- \
+          taskset -c 0-3 tak backfill --bench release-graph --limit "$LIMIT" -- \
             -C "$GITHUB_WORKSPACE/fixtures/medium" sbom
 
       # A bundle is how the notes reach the publish job: it carries the ref and
