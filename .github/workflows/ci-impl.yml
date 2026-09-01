@@ -163,7 +163,7 @@ jobs:
             run: |
               set +e
               (
-                mbx build --locked --profile ffi -p aube-ffi &&
+                cargo build --locked --profile ffi -p aube-ffi &&
                 grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt &&
                 nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
                   | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt &&
@@ -325,8 +325,8 @@ jobs:
         with:
           backend: ${{ inputs.trusted && 'server' || 'github' }}
           mirror-github-cache: "true"
-      - run: mbx build --workspace
-      - run: mbx test --workspace
+      - run: cargo build --workspace
+      - run: cargo test --workspace
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is

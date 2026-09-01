@@ -95,7 +95,7 @@ jobs:
           if [[ '${{ matrix.libc }}' == musl ]]; then
             export RUSTFLAGS='-C target-feature=-crt-static'
           fi
-          mbx build --locked --profile ffi -p aube-ffi --target '${{ matrix.target }}'
+          cargo build --locked --profile ffi -p aube-ffi --target '${{ matrix.target }}'
       - name: Build release C ABI library
         if: github.event_name == 'release' || inputs.tag != '' || inputs.draft_phase
         shell: bash
