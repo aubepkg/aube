@@ -57,6 +57,7 @@ jobs:
     timeout-minutes: 60
     env:
       MBX_TARGET_VIEWS: ${{ matrix.os == 'win32' && '0' || '1' }}
+      MISE_EXEC_AUTO_INSTALL: "false"
     steps:
       - name: Assert OIDC is unavailable to untrusted CI
         if: ${{ !inputs.trusted && github.event_name != 'release' && inputs.tag == '' }}
@@ -70,6 +71,14 @@ jobs:
         with: { node-version: "24", package-manager-cache: false }
       - uses: ./.github/actions/mbx
         if: github.event_name != 'release' && inputs.tag == ''
+        with:
+          backend: ${{ inputs.trusted && 'server' || 'github' }}
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        if: github.event_name != 'release' && inputs.tag == ''
+        with:
+          install: false
+          cache: false
+          add_shims_to_path: false
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
@@ -83,7 +92,7 @@ jobs:
           if [[ '${{ matrix.libc }}' == musl ]]; then
             export RUSTFLAGS='-C target-feature=-crt-static'
           fi
-          mbx build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
+          mise exec -- cargo build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
       - name: Build release addon
         if: github.event_name == 'release' || inputs.tag != ''
         shell: bash
