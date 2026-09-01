@@ -81,7 +81,7 @@ jobs:
       - run: mise run test
       - run: mise run lint
       - run: cargo-machete
-      - run: mise x cargo:cargo-audit@0.22.1 -- cargo-audit --deny warnings
+      - run: mise x cargo:cargo-audit@0.22.1 -- cargo-audit audit --deny warnings
       - run: mise x cargo:cargo-deny@0.19.6 -- cargo-deny check bans licenses sources
       - run: cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
