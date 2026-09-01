@@ -232,9 +232,9 @@ jobs:
 
           ## 💚 Sponsor aube
 
-          aube is maintained by [@jdx](https://github.com/jdx), an open source developer for [**entire.io**](https://entire.io), the title sponsor of the [jdx.dev](https://jdx.dev) open source tools including [mise](https://mise.jdx.dev/). Work on aube is funded by sponsors.
+          aube is built and maintained by [@jdx](https://github.com/jdx), an open source developer at [**entire.io**](https://entire.io/), the title sponsor of his open source work.
 
-          If aube is saving your team install time or CI minutes, please consider [sponsoring at jdx.dev](https://jdx.dev/sponsors.html). Individual and company sponsorships are what keep the project fast, free, and independent.
+          If aube saves your team install time or CI minutes, please consider becoming an [individual or company sponsor](https://jdx.dev/sponsors.html). Your support funds ongoing development and helps keep aube fast, free, and independent.
           EOF
           } > /tmp/release-notes.md
           gh release edit "$TAG" --notes-file /tmp/release-notes.md
