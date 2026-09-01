@@ -82,6 +82,11 @@ jobs:
         if: github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase
         with:
           backend: ${{ inputs.trusted && 'server' || 'github' }}
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        if: github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase
+        with:
+          install: false
+          cache: false
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
@@ -95,7 +100,7 @@ jobs:
           if [[ '${{ matrix.libc }}' == musl ]]; then
             export RUSTFLAGS='-C target-feature=-crt-static'
           fi
-          cargo build --locked --profile ffi -p aube-ffi --target '${{ matrix.target }}'
+          mise exec -- cargo build --locked --profile ffi -p aube-ffi --target '${{ matrix.target }}'
       - name: Build release C ABI library
         if: github.event_name == 'release' || inputs.tag != '' || inputs.draft_phase
         shell: bash

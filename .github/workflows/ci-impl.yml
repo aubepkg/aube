@@ -88,7 +88,7 @@ jobs:
       - run: cargo-machete
       - run: mise x cargo:cargo-audit@0.22.1 -- cargo-audit audit --deny warnings
       - run: mise x cargo:cargo-deny@0.19.6 -- cargo-deny check bans licenses sources
-      - run: cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
+      - run: mise exec -- cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
       - name: assert render produces no diff
         run: |
@@ -163,7 +163,7 @@ jobs:
             run: |
               set +e
               (
-                cargo build --locked --profile ffi -p aube-ffi &&
+                mise exec -- cargo build --locked --profile ffi -p aube-ffi &&
                 grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt &&
                 nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
                   | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt &&
@@ -325,8 +325,12 @@ jobs:
         with:
           backend: ${{ inputs.trusted && 'server' || 'github' }}
           mirror-github-cache: "true"
-      - run: cargo build --workspace
-      - run: cargo test --workspace
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: false
+          cache: false
+      - run: mise exec -- cargo build --workspace
+      - run: mise exec -- cargo test --workspace
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is

@@ -72,6 +72,11 @@ jobs:
         if: github.event_name != 'release' && inputs.tag == ''
         with:
           backend: ${{ inputs.trusted && 'server' || 'github' }}
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        if: github.event_name != 'release' && inputs.tag == ''
+        with:
+          install: false
+          cache: false
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
@@ -85,7 +90,7 @@ jobs:
           if [[ '${{ matrix.libc }}' == musl ]]; then
             export RUSTFLAGS='-C target-feature=-crt-static'
           fi
-          cargo build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
+          mise exec -- cargo build --locked --profile napi -p aube-node --target '${{ matrix.target }}'
       - name: Build release addon
         if: github.event_name == 'release' || inputs.tag != ''
         shell: bash
