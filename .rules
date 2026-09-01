@@ -9,7 +9,7 @@ project:
   error_codes: every error/warning carries a stable ERR_AUBE_*/WARN_AUBE_* identifier from aube-codes crate; bespoke exit codes for a curated subset; see error_codes section below for conventions
 
 mbx:
-  policy: mise installs mbx 1.3 and activates its transparent Cargo wrapper; use ordinary cargo commands
+  policy: mise install installs mbx 1.3; mise run activates the project wrapper, and standalone cargo commands require an activated mise shell
   fallback: prefix the exact equivalent cargo command from CONTRIBUTING.md with MBX_DISABLE=1 without weakening or skipping the check
   report: if bypassed Cargo succeeds, surface the mismatch and recommend https://github.com/jdx/mr-boxington/discussions with repository and commit, OS, mbx --version, mbx doctor, and both commands and outputs; redact secrets, absolute cache paths, remote URLs, namespaces, and other sensitive or identifying details
   agent_boundary: do not permanently disable the wrapper and do not post externally without user authorization
