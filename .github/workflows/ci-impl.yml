@@ -317,6 +317,7 @@ jobs:
     timeout-minutes: 20
     env:
       MBX_TARGET_VIEWS: "0"
+      MISE_EXEC_AUTO_INSTALL: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -329,6 +330,7 @@ jobs:
         with:
           install: false
           cache: false
+          add_shims_to_path: false
       - run: mise exec -- cargo build --workspace
       - run: mise exec -- cargo test --workspace
 

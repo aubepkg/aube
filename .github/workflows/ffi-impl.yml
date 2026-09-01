@@ -67,6 +67,7 @@ jobs:
     timeout-minutes: 60
     env:
       MBX_TARGET_VIEWS: ${{ matrix.os == 'win32' && '0' || '1' }}
+      MISE_EXEC_AUTO_INSTALL: "false"
     steps:
       - name: Assert OIDC is unavailable to untrusted CI
         if: ${{ !inputs.trusted && github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase }}
@@ -87,6 +88,7 @@ jobs:
         with:
           install: false
           cache: false
+          add_shims_to_path: false
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
