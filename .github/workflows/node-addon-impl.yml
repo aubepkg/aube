@@ -70,6 +70,8 @@ jobs:
         with: { node-version: "24", package-manager-cache: false }
       - uses: ./.github/actions/mbx
         if: github.event_name != 'release' && inputs.tag == ''
+        with:
+          backend: ${{ inputs.trusted && 'server' || 'github' }}
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
