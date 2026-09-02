@@ -463,7 +463,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_MISSING_PACKAGE_INDEX,
         category: category::LINKER,
-        description: "Internal error: the linker needed a package index that wasn't loaded and the package wasn't already materialized. Re-run install; if it persists, report it at https://github.com/jdx/aube/discussions.",
+        description: "A package could not be linked because its store index was unavailable and the package was not already materialized. Re-run the install; if it persists, report it at https://github.com/jdx/aube/discussions.",
         exit_code: Some(62),
     },
     CodeMeta {

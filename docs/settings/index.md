@@ -69,7 +69,7 @@ aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`httpProxy`](#setting-httpproxy) | `url` | Proxy URL for outgoing HTTP requests. |
 | [`noProxy`](#setting-noproxy) | `string` | Comma-separated list of domains that bypass the proxy. |
 | [`localAddress`](#setting-localaddress) | `string` | Local interface IP address to bind registry connections to. |
-| [`maxsockets`](#setting-maxsockets) | `int` | Maximum concurrent connections per origin. |
+| [`maxsockets`](#setting-maxsockets) | `int` | Idle connection pool size per host. |
 | [`strictSsl`](#setting-strictssl) | `bool` | Validate SSL certificates for HTTPS requests. |
 | [`lockfile`](#setting-lockfile) | `bool` | Read and generate `aube-lock.yaml`. |
 | [`defaultLockfileFormat`](#setting-defaultlockfileformat) | `"aube" \| "pnpm"` | Lockfile format to create when a project has no supported lockfile. |
@@ -82,7 +82,7 @@ aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`sharedWorkspaceLockfile`](#setting-sharedworkspacelockfile) | `bool` | Record every workspace package in a single shared root lockfile instead of one lockfile per package. |
 | [`peersSuffixMaxLength`](#setting-peerssuffixmaxlength) | `int` | Max length of the peer-ID suffix in lockfile dep_paths. |
 | [`gitShallowHosts`](#setting-gitshallowhosts) | `list<string>` | Hosts for which aube performs shallow git clones. |
-| [`networkConcurrency`](#setting-networkconcurrency) | `int` | Maximum concurrent HTTP(S) requests. |
+| [`networkConcurrency`](#setting-networkconcurrency) | `int` | Starting concurrency for registry requests; aube adapts from it at runtime. |
 | [`fetchRetries`](#setting-fetchretries) | `int` | Number of retry attempts for failed registry fetches. |
 | [`fetchRetryFactor`](#setting-fetchretryfactor) | `int` | Exponential backoff factor for fetch retries. |
 | [`fetchRetryMintimeout`](#setting-fetchretrymintimeout) | `int` | Minimum retry timeout in milliseconds. |
@@ -1473,7 +1473,7 @@ dropped at load time with a warning.
 
 ### `maxsockets` {#setting-maxsockets}
 
-Maximum concurrent connections per origin.
+Idle connection pool size per host.
 
 - Type: `int`
 - Default: `networkConcurrency x 3`
@@ -1795,7 +1795,7 @@ regardless of which strategy produced it.
 
 ### `networkConcurrency` {#setting-networkconcurrency}
 
-Maximum concurrent HTTP(S) requests.
+Starting concurrency for registry requests; aube adapts from it at runtime.
 
 - Type: `int`
 - Default: `auto (workers x3 clamped to 16-128)`
@@ -1804,11 +1804,15 @@ Maximum concurrent HTTP(S) requests.
 - .npmrc keys: `network-concurrency`, `networkConcurrency`
 - Workspace YAML keys: `networkConcurrency`
 
-Caps the number of concurrent tarball downloads and packument
-(metadata) fetches during install. When unset, aube
-matches pnpm's dynamic default shape: worker count x3, clamped to
-16-128.
-Set this value explicitly to override the automatic scaling.
+Sets the starting concurrency for tarball downloads and packument
+(metadata) fetches. It is a starting point, not a hard ceiling: aube
+adapts from this seed while installing, backing off when the registry
+throttles (429 / 503) and growing again as requests succeed, within a
+floor of 4 and a ceiling of at least 256.
+
+When unset, aube derives the seed from the worker count the way pnpm
+derives its dynamic default: worker count x3, clamped to 16-128. Set
+this value explicitly to override the automatic scaling.
 
 Examples:
 

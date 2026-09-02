@@ -266,7 +266,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: WARN_AUBE_GVS_MODE_CHANGED,
         category: category::INSTALL_LIFECYCLE,
-        description: "The global virtual store was switched on or off since the last install; removing `node_modules` and reinstalling from scratch.",
+        description: "The global virtual store was switched on or off since the last install, so aube is removing `node_modules` and reinstalling from scratch.",
         exit_code: None,
     },
     CodeMeta {
