@@ -22,11 +22,11 @@ use std::path::{Path, PathBuf};
 /// Default base for release archives. `AUBE_SELF_DOWNLOAD_BASE`
 /// overrides for tests and mirrors; archives live at
 /// `{base}/v{V}/aube-v{V}-{triple}.{ext}`.
-const RELEASE_BASE: &str = "https://github.com/jdx/aube/releases/download";
+const RELEASE_BASE: &str = "https://github.com/aubepkg/aube/releases/download";
 
 /// mise-versions host: CDN-cached, rate-limit-free mirrors of the
 /// release version list (`/aube`, plaintext) and GitHub release
-/// metadata (`/api/github/repos/jdx/aube/releases/<tag>`, including
+/// metadata (`/api/github/repos/aubepkg/aube/releases/<tag>`, including
 /// `assets[].digest`) — the same service mise itself consults before
 /// falling back to the GitHub API. `AUBE_VERSIONS_HOST` overrides for
 /// tests.
@@ -37,7 +37,7 @@ const VERSIONS_HOST: &str = "https://mise-versions.jdx.dev";
 /// tamper-evident under immutable releases). Consulted when the
 /// versions host misses; honors `GITHUB_TOKEN`. `AUBE_SELF_API_BASE`
 /// overrides for tests.
-const RELEASE_API_BASE: &str = "https://api.github.com/repos/jdx/aube/releases/tags";
+const RELEASE_API_BASE: &str = "https://api.github.com/repos/aubepkg/aube/releases/tags";
 
 /// Endpoint announcing the newest release (one line, bare version).
 /// Shared with the update notifier. `AUBE_SELF_VERSION_URL` overrides.
@@ -488,7 +488,7 @@ async fn fetch_release_digest(
 
     // 1. mise-versions proxy: CDN-cached, no rate limits, no token.
     let host_url = format!(
-        "{}/api/github/repos/jdx/aube/releases/v{version}",
+        "{}/api/github/repos/aubepkg/aube/releases/v{version}",
         versions_host()
     );
     if let Some(digest) =

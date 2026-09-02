@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately via GitHub's security advisory form:
-**[github.com/jdx/aube/security/advisories/new](https://github.com/jdx/aube/security/advisories/new)**
+**[github.com/aubepkg/aube/security/advisories/new](https://github.com/aubepkg/aube/security/advisories/new)**
 
 Do not file a public discussion for vulnerabilities. We will acknowledge
 receipt within a few business days, work with you on a fix, and credit you in

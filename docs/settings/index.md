@@ -4,7 +4,7 @@
 
 Every setting tracked by `settings.toml`, grouped the same way as the registry.
 
-aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob/main/crates/aube-settings/settings.toml). Edit that registry and rerun `cargo run -p aube-settings --bin generate-settings-docs` instead of editing this page by hand.
+aube generates this page from [`settings.toml`](https://github.com/aubepkg/aube/blob/main/crates/aube-settings/settings.toml). Edit that registry and rerun `cargo run -p aube-settings --bin generate-settings-docs` instead of editing this page by hand.
 
 ## Summary
 

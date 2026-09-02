@@ -1316,7 +1316,7 @@ JSON
 }
 
 @test "aube install self-heals when a CAS shard goes missing under a cached index" {
-	# Regression for the BuildKit cache-mount class (jdx/aube#345):
+	# Regression for the BuildKit cache-mount class (aubepkg/aube#345):
 	# a stale cached package index points at a CAS shard that's been
 	# pruned out from under it (foreign sync tool, partial wipe, a
 	# cache-mount that only covered part of the store, etc.). The fast

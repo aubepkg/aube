@@ -311,15 +311,15 @@ Thanks to [Namespace](https://namespace.so) for providing CI for aube.
 
 <a href="https://www.star-history.com/?repos=jdx%2Faube&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=jdx/aube&type=date&theme=dark&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=jdx/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jdx/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&theme=dark&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
  </picture>
 </a>
 
 ## Contributors
 
-[![Contributors](https://contrib.rocks/image?repo=jdx/aube)](https://github.com/jdx/aube/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=aubepkg/aube)](https://github.com/aubepkg/aube/graphs/contributors)
 
 <p>
   <a href="https://jdx.dev">

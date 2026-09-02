@@ -5,7 +5,7 @@
   "homepage": "https://aube.sh",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jdx/aube"
+    "url": "https://github.com/aubepkg/aube"
   },
   "license": "MIT",
   "files": [

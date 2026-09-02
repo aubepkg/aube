@@ -38,8 +38,8 @@ edition = "2024"
 # `cargo msrv verify` — bump deliberately, not as a side effect.
 rust-version = "1.91"
 license = "MIT"
-repository = "https://github.com/jdx/aube"
-homepage = "https://github.com/jdx/aube"
+repository = "https://github.com/aubepkg/aube"
+homepage = "https://github.com/aubepkg/aube"
 readme = "README.md"
 
 [workspace.dependencies]

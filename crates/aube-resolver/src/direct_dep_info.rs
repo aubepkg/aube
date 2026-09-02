@@ -25,7 +25,7 @@ pub struct AgeGatedUpdate {
 /// summary, so the badge column just signals "this direct dep is one
 /// of the WARN lines you saw" without duplicating the message.
 ///
-/// [crate-deprecations]: https://github.com/jdx/aube/blob/main/crates/aube/src/deprecations.rs
+/// [crate-deprecations]: https://github.com/aubepkg/aube/blob/main/crates/aube/src/deprecations.rs
 #[derive(Debug, Clone, Default)]
 pub struct DirectDepInfo {
     /// True when the packument marks the *resolved* version as
