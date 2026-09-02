@@ -22,7 +22,7 @@ jobs:
   release-plz-release:
     name: release-plz release
     # Release and release-PR jobs must never restore or save persistent caches.
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
     # Two commits landing on main in quick succession must not double-publish.
     concurrency:
       group: release-plz-release-${{ github.ref }}
@@ -172,7 +172,7 @@ jobs:
     name: Publish release
     needs: [release-plz-release, upload-assets, upload-ffi-assets, enhance-release]
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
     permissions:
       contents: write
     steps:
@@ -190,7 +190,7 @@ jobs:
     name: Enhance release notes
     needs: release-plz-release
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
     permissions:
       contents: write
     steps:
@@ -254,7 +254,7 @@ jobs:
   # an out-of-date `aube.usage.kdl`.
   release-plz-pr:
     name: release-plz PR
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
     permissions:
       contents: write
       pull-requests: write

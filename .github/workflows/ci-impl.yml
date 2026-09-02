@@ -32,9 +32,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64
+            runner: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
           - os: macos-latest
-            runner: namespace-profile-endev-macos-arm64
+            runner: namespace-profile-endev-macos-arm64;overrides.cache-tag=cache
     runs-on: ${{ !inputs.trusted && matrix.os || matrix.runner }}
     timeout-minutes: 20
     env:
@@ -68,7 +68,7 @@ jobs:
   # lint failures don't block the BATS jobs from starting against a
   # known-good binary.
   test-linux:
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
     timeout-minutes: 30
     env:
       RUSTFLAGS: "-D warnings"
@@ -111,7 +111,7 @@ jobs:
     outputs:
       results_present: ${{ steps.report.outputs.results_present }}
       checks_passed: ${{ steps.report.outputs.checks_passed }}
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
     # cargo-semver-checks builds both revisions of every published crate. A
     # cold cache can exceed 20 minutes, especially alongside the C ABI build.
     timeout-minutes: 30
@@ -348,7 +348,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
     timeout-minutes: 2
     permissions: {}
     # Run on success or upstream failure but skip when the workflow is cancelled

@@ -37,7 +37,7 @@ jobs:
   # a rewrite when benchmark methodology changes but the version does not.
   check:
     name: Check version drift
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
     outputs:
       drift: ${{ steps.drift.outputs.drift }}
       workspace: ${{ steps.drift.outputs.workspace }}
