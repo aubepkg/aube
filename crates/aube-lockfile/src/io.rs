@@ -811,7 +811,7 @@ pub enum Error {
     /// act on, and the remedy, are the same as a declared pre-v9
     /// version.
     #[error(
-        "lockfile {path} declares lockfileVersion {version} but its body uses the pre-v9 pnpm layout (package key `{dep_path}`)"
+        "lockfile {path} declares lockfileVersion {version} but its body uses the pre-v9 pnpm layout ({marker})"
     )]
     #[diagnostic(
         code(ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION),
@@ -822,7 +822,9 @@ pub enum Error {
     PnpmLockfileLegacyLayout {
         path: std::path::PathBuf,
         version: String,
-        dep_path: String,
+        /// Which pre-v9 shape was seen, rendered into the message so the
+        /// user can see what gave the file away.
+        marker: String,
     },
     #[error("failed to read lockfile {0}: {1}")]
     Io(std::path::PathBuf, std::io::Error),

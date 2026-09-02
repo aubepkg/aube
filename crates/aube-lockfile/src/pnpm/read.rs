@@ -110,20 +110,36 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
 
     // Layout guard for a lockfile whose declared version does not match
     // its body: `lockfileVersion: '9.0'` over a pre-v9 body passes the
-    // version check, and the importer deps (`name@version`) then never
-    // line up with the package keys, so the declared dependencies go
+    // version check, and its root deps are then dropped on the floor —
+    // the graph comes back empty and the declared dependencies go
     // unlinked.
     //
-    // The signature is a slash-prefixed package key (`/is-odd@3.0.1` in
-    // v6, `/is-odd/3.0.1` in v5). A package name cannot begin with `/`,
-    // so neither pnpm nor aube writes such a key at v9 — and keying on
-    // this rather than on an empty `importers:` map catches a pre-v9
-    // *workspace* body too, which already has importers populated.
-    if let Some(key) = raw.packages.keys().find(|key| key.starts_with('/')) {
+    // Two independent signatures, because either can appear alone: a
+    // root-level dependency block (the only shape a `link:`/`file:`-only
+    // project has, since it has no `packages:` at all), and a
+    // slash-prefixed package key (`/is-odd@3.0.1` in v6,
+    // `/is-odd/3.0.1` in v5). A package name cannot begin with `/`, and
+    // no v9+ document puts dependencies at the root, so neither shape is
+    // one pnpm or aube writes at v9.
+    let legacy_marker = [
+        ("dependencies", raw.dependencies.is_some()),
+        ("devDependencies", raw.dev_dependencies.is_some()),
+        ("optionalDependencies", raw.optional_dependencies.is_some()),
+        ("specifiers", raw.specifiers.is_some()),
+    ]
+    .into_iter()
+    .find_map(|(block, present)| present.then(|| format!("root-level `{block}:` block")))
+    .or_else(|| {
+        raw.packages
+            .keys()
+            .find(|key| key.starts_with('/'))
+            .map(|key| format!("package key `{key}`"))
+    });
+    if let Some(marker) = legacy_marker {
         return Err(Error::PnpmLockfileLegacyLayout {
             path: path.to_path_buf(),
             version: render_lockfile_version(&raw.lockfile_version),
-            dep_path: key.clone(),
+            marker,
         });
     }
 

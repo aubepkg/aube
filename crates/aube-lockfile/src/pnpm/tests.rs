@@ -2423,6 +2423,47 @@ fn parse_rejects_v9_header_over_legacy_body() {
     );
 }
 
+/// A pre-v9 body whose deps are all `link:`/`file:` has no `packages:`
+/// block at all, so no package key betrays it — the root-level
+/// dependency block is the only signature left.
+#[test]
+fn parse_rejects_v9_header_over_legacy_local_only_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: '9.0'\n\ndependencies:\n  a:\n    specifier: link:../a\n    version: link:../a\n",
+    )
+    .unwrap();
+
+    let err = parse(&path).expect_err("legacy local-only body must be rejected");
+    assert!(
+        matches!(
+            &err,
+            crate::Error::PnpmLockfileLegacyLayout { marker, .. }
+                if marker.contains("root-level `dependencies:`")
+        ),
+        "unexpected error: {err:?}"
+    );
+}
+
+/// v5 kept the root importer's ranges in a `specifiers:` block, so that
+/// key is a pre-v9 signature in its own right.
+#[test]
+fn parse_rejects_v9_header_over_legacy_specifiers_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: '9.0'\n\nspecifiers:\n  is-odd: ^3.0.1\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        parse(&path),
+        Err(crate::Error::PnpmLockfileLegacyLayout { .. })
+    ));
+}
+
 /// A pre-v9 *workspace* body already has a populated `importers:`
 /// block, so an empty-importers check alone would let a mislabeled one
 /// through — the slash-prefixed package keys are the signature that

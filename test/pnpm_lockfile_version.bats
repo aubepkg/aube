@@ -141,6 +141,37 @@ teardown() {
 	assert_failure
 }
 
+# A pre-v9 body whose only dep is a local link has no `packages:` block,
+# so the root-level dependency block is what gives it away.
+@test "pnpm v9 header over a link-only pre-v9 body is refused" {
+	mkdir -p linked
+	cat >linked/package.json <<-'EOF'
+		{ "name": "linked", "version": "1.0.0" }
+	EOF
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-pnpm-legacy-link-lock",
+		  "version": "1.0.0",
+		  "dependencies": { "linked": "link:./linked" }
+		}
+	EOF
+	cat >pnpm-lock.yaml <<-'EOF'
+		lockfileVersion: '9.0'
+
+		dependencies:
+		  linked:
+		    specifier: link:./linked
+		    version: link:./linked
+	EOF
+
+	run aube install
+	assert_failure
+	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
+	assert_output --partial "root-level \`dependencies:\` block"
+	run test -e node_modules/linked
+	assert_failure
+}
+
 # A non-numeric version component is not read as its leading number:
 # `9.invalid` must not pass as version 9.
 @test "pnpm malformed lockfileVersion is refused" {
