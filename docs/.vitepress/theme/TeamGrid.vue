@@ -4,18 +4,21 @@ const members = [
     name: "Jeff Dickey",
     handle: "jdx",
     role: "BDFL",
+    company: "Entire",
     description: "Creator and lead maintainer of aube.",
   },
   {
     name: "Colin McDonnell",
     handle: "colinhacks",
     role: "Core team",
-    description: "Creator of Zod.",
+    company: "Pullfrog",
+    description: "Creator of Zod and Nub.",
   },
   {
     name: "John-David Dalton",
     handle: "jdalton",
     role: "Core team",
+    company: "Socket.dev",
     description: "Creator of Lodash.",
   },
 ];
@@ -40,6 +43,7 @@ const members = [
       <span class="aube-team-role">{{ member.role }}</span>
       <h2>{{ member.name }}</h2>
       <span class="aube-team-handle">@{{ member.handle }}</span>
+      <span class="aube-team-company">Works at {{ member.company }}</span>
       <p>{{ member.description }}</p>
     </a>
   </div>

@@ -138,6 +138,12 @@ body {
   font-size: 12px;
 }
 
+.aube-team-company {
+  color: var(--aube-muted);
+  font-size: 13px;
+  margin-top: 12px;
+}
+
 .aube-team-member p {
   color: var(--aube-muted);
   font-size: 15px;
