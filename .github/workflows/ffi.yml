@@ -90,7 +90,6 @@ jobs:
     if: ${{ github.event_name != 'release' && inputs.tag == '' && (github.actor != 'jdx' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx'))) }}
     permissions:
       contents: read
-      id-token: write
     uses: ./.github/workflows/ffi-impl.yml
     with:
       tag: ""
