@@ -43,7 +43,7 @@ const members = [
       <span class="aube-team-role">{{ member.role }}</span>
       <h2>{{ member.name }}</h2>
       <span class="aube-team-handle">@{{ member.handle }}</span>
-      <span class="aube-team-company">Works at {{ member.company }}</span>
+      <span class="aube-team-company">{{ member.company }}</span>
       <p>{{ member.description }}</p>
     </a>
   </div>
