@@ -25,7 +25,7 @@ runs:
       shell: bash
       env:
         MBX_VERSION: ${{ inputs.version }}
-      run: |
+      run: | # zizmor: ignore[github-env] mise where returns the trusted tool install directory
         tool=mr-boxington
         if [[ -n "$MBX_VERSION" ]]; then
           tool="mr-boxington@$MBX_VERSION"
