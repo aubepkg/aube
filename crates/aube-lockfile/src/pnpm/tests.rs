@@ -2423,6 +2423,25 @@ fn parse_rejects_v9_header_over_legacy_body() {
     );
 }
 
+/// A pre-v9 *workspace* body already has a populated `importers:`
+/// block, so an empty-importers check alone would let a mislabeled one
+/// through — the slash-prefixed package keys are the signature that
+/// does not depend on importer shape.
+#[test]
+fn parse_rejects_v9_header_over_legacy_workspace_body() {
+    const V6_WORKSPACE: &str = include_str!("../../tests/fixtures/pnpm-v6-workspace.yaml");
+    let relabeled = V6_WORKSPACE.replacen("lockfileVersion: '6.0'", "lockfileVersion: '9.0'", 1);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, &relabeled).unwrap();
+
+    let err = parse(&path).expect_err("mislabeled legacy workspace body must be rejected");
+    assert!(
+        matches!(&err, crate::Error::PnpmLockfileLegacyLayout { .. }),
+        "unexpected error: {err:?}"
+    );
+}
+
 /// An empty v9 lockfile has importers and no packages, which must stay
 /// readable — the layout guard keys on packages *without* importers.
 #[test]

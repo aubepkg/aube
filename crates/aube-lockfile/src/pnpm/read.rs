@@ -110,18 +110,20 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
 
     // Layout guard for a lockfile whose declared version does not match
     // its body: `lockfileVersion: '9.0'` over a pre-v9 body passes the
-    // version check but still yields zero importers, so it would link
-    // nothing and exit 0.
+    // version check, and the importer deps (`name@version`) then never
+    // line up with the package keys, so the declared dependencies go
+    // unlinked.
     //
     // The signature is a slash-prefixed package key (`/is-odd@3.0.1` in
-    // v6, `/is-odd/3.0.1` in v5) with nothing imported. Neither pnpm nor
-    // aube writes slash-prefixed keys at v9. Both halves are needed: an
-    // empty `importers:` map on its own is a shape the writer emits for
-    // a graph with no importers, and it has to keep round-tripping.
-    if raw.importers.is_empty() && raw.packages.keys().any(|key| key.starts_with('/')) {
+    // v6, `/is-odd/3.0.1` in v5). A package name cannot begin with `/`,
+    // so neither pnpm nor aube writes such a key at v9 — and keying on
+    // this rather than on an empty `importers:` map catches a pre-v9
+    // *workspace* body too, which already has importers populated.
+    if let Some(key) = raw.packages.keys().find(|key| key.starts_with('/')) {
         return Err(Error::PnpmLockfileLegacyLayout {
             path: path.to_path_buf(),
             version: render_lockfile_version(&raw.lockfile_version),
+            dep_path: key.clone(),
         });
     }
 
