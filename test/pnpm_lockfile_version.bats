@@ -9,6 +9,20 @@ teardown() {
 	_common_teardown
 }
 
+# miette hard-wraps its diagnostics, and the wrap point moves with the
+# lockfile path's length — macOS `/private/var/folders/...` temp dirs are
+# long enough to split a phrase mid-sentence, which is how the first
+# revision of these tests failed only on macOS. Match against
+# whitespace-squeezed output so a wrapped phrase still counts.
+assert_output_unwrapped() {
+	local flat
+	flat="$(printf '%s' "$output" | tr -s '[:space:]' ' ')"
+	if [[ "$flat" != *"$1"* ]]; then
+		printf 'expected (ignoring wrapping): %s\nactual output:\n%s\n' "$1" "$output" >&2
+		return 1
+	fi
+}
+
 # aube reads pnpm lockfile version 9 only. Pre-v9 files are valid YAML
 # that carries no `importers:`, so without an explicit version guard
 # they parse into an empty graph: the install links nothing, writes
@@ -40,8 +54,8 @@ teardown() {
 	run aube install
 	assert_failure
 	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
-	assert_output --partial "lockfileVersion 6.0"
-	assert_output --partial "npx pnpm@latest install"
+	assert_output_unwrapped "lockfileVersion 6.0"
+	assert_output_unwrapped "npx pnpm@latest install"
 	# The failure must be total: nothing linked, no install state left
 	# behind that a later run would treat as fresh.
 	run test -e node_modules/is-odd
@@ -77,7 +91,7 @@ teardown() {
 	run aube install
 	assert_failure
 	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
-	assert_output --partial "lockfileVersion 5.4"
+	assert_output_unwrapped "lockfileVersion 5.4"
 }
 
 @test "pnpm lockfileVersion 6.0 install exits 16" {
@@ -136,7 +150,7 @@ teardown() {
 	run aube install
 	assert_failure
 	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
-	assert_output --partial "pre-v9 pnpm layout"
+	assert_output_unwrapped "pre-v9 pnpm layout"
 	run test -e node_modules/is-odd
 	assert_failure
 }
@@ -167,7 +181,7 @@ teardown() {
 	run aube install
 	assert_failure
 	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
-	assert_output --partial "root-level \`dependencies:\` block"
+	assert_output_unwrapped "root-level \`dependencies:\` block"
 	run test -e node_modules/linked
 	assert_failure
 }
