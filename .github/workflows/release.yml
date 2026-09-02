@@ -236,7 +236,7 @@ jobs:
   upload-assets-musl-arm64:
     needs: generate-primer
     # Release builds must never restore or save persistent caches.
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
+    runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 60
     permissions:
       contents: read
