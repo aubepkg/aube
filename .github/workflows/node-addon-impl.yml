@@ -72,7 +72,7 @@ jobs:
       - uses: ./.github/actions/mbx
         if: github.event_name != 'release' && inputs.tag == ''
         with:
-          backend: ${{ inputs.trusted && 'local' || 'github' }}
+          backend: ${{ matrix.namespace_runner == 'windows-latest' && 'github' || (inputs.trusted && 'local' || 'github') }}
           version: 1.4.1
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         if: github.event_name != 'release' && inputs.tag == ''
