@@ -193,10 +193,10 @@ pub(crate) async fn add_to_project_with_overrides(
 pub struct AddArgs {
     /// Package(s) to add
     pub packages: Vec<String>,
-    /// Add as dev dependency
+    /// Add as dev dependency.
     #[usage(short = 'D', long)]
     pub save_dev: bool,
-    /// Pin the exact resolved version (no `^` prefix)
+    /// Pin the exact resolved version (no `^` prefix).
     #[usage(short = 'E', long)]
     pub save_exact: bool,
     /// Install the package globally.
@@ -205,7 +205,7 @@ pub struct AddArgs {
     /// binaries into the global bin directory. Mirrors `pnpm add -g`.
     #[usage(short = 'g', long)]
     pub global: bool,
-    /// Add as optional dependency
+    /// Add as optional dependency.
     #[usage(short = 'O', long)]
     pub save_optional: bool,
     /// Pre-approve a dependency's lifecycle scripts as part of the add.
@@ -229,13 +229,13 @@ pub struct AddArgs {
         validate_error = "The --allow-build flag is missing a package name. Please specify the package name(s) that are allowed to run installation scripts."
     )]
     pub allow_build: Vec<String>,
-    /// Bypass the similar-name, new-name, and [`lowDownloadThreshold`]
+    /// Bypass the similar-name, new-name, and `lowDownloadThreshold`
     /// confirm prompts / refusals for this invocation.
     ///
     /// `aube add` looks up each candidate's weekly download count and
     /// prompts (interactive) or fails (CI) when the count is below
-    /// [`lowDownloadThreshold`], resembles a top-100,000 npm package,
-    /// or is newer than [`minimumPackageAge`]. The flag is intended
+    /// `lowDownloadThreshold`, resembles a top-100,000 npm package,
+    /// or is newer than `minimumPackageAge`. The flag is intended
     /// for cases where you've already verified the package out-of-band.
     /// It does not affect the OSV malicious-package check, which remains
     /// a hard block.

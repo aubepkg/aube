@@ -164,7 +164,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_LOCKFILE_PARSE,
         category: category::LOCKFILE,
-        description: "Lockfile is structurally invalid — version guard failed, YAML shape is wrong, or `yaml_serde` couldn't round-trip the contents.",
+        description: "Lockfile is structurally invalid — version guard failed, YAML shape is wrong, or the contents couldn't be parsed.",
         exit_code: Some(11),
     },
     CodeMeta {
@@ -237,7 +237,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED,
         category: category::RESOLVER,
-        description: "Peer-context fixed-point loop hit `MAX_ITERATIONS=16` without converging — usually mutually-recursive peers.",
+        description: "Peer-dependency resolution didn't converge after 16 passes — usually mutually-recursive peers.",
         exit_code: Some(27),
     },
     CodeMeta {
@@ -310,7 +310,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_STORE_PRUNE_LOCK_FAILED,
         category: category::TARBALL_STORE,
-        description: "Aube couldn't acquire the store-wide maintenance lock for pruning.",
+        description: "aube couldn't acquire the store-wide maintenance lock for pruning.",
         exit_code: None,
     },
     CodeMeta {
@@ -359,7 +359,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_INVALID_PACKAGE_NAME,
         category: category::REGISTRY_NETWORK,
-        description: "A name doesn't match npm's grammar — rejected before any I/O so a hostile manifest can't use the cache-path builder as a write primitive.",
+        description: "A name doesn't match npm's grammar — rejected before any I/O so a hostile manifest can't turn a package name into an arbitrary filesystem path.",
         exit_code: Some(44),
     },
     CodeMeta {
@@ -371,7 +371,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_MALICIOUS_PACKAGE,
         category: category::REGISTRY_NETWORK,
-        description: "`aube add` refused a package because OSV reports it as malicious (`MAL-*` advisory). Hard block — confirmed-malicious advisories aren't a judgement call.",
+        description: "`aube add` or an install's OSV advisory check (`advisoryCheck`, `advisoryCheckOnInstall`, `advisoryBloomCheck`) refused a package because OSV reports it as malicious (`MAL-*` advisory). Hard block — confirmed-malicious advisories aren't a judgement call.",
         exit_code: Some(46),
     },
     CodeMeta {
@@ -401,7 +401,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_ADVISORY_CHECK_FAILED,
         category: category::REGISTRY_NETWORK,
-        description: "`aube add` couldn't reach the OSV advisory API and `advisoryCheck = required` is set. Distinct from `ERR_AUBE_MALICIOUS_PACKAGE` so CI tooling can tell a network outage from a confirmed malicious advisory.",
+        description: "An OSV advisory check couldn't complete — the live API was unreachable, or the local mirror / bloom filter couldn't refresh — and the governing setting (`advisoryCheck`, `advisoryCheckOnInstall`, or `advisoryBloomCheck`) is `required`. Distinct from `ERR_AUBE_MALICIOUS_PACKAGE` so CI tooling can tell a network outage from a confirmed malicious advisory.",
         exit_code: Some(49),
     },
     CodeMeta {
@@ -463,7 +463,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_MISSING_PACKAGE_INDEX,
         category: category::LINKER,
-        description: "Internal: a caller skipped `load_index` but the package wasn't already materialized.",
+        description: "A package could not be linked because its store index was unavailable and the package was not already materialized. Re-run the install; if it persists, report it at https://github.com/jdx/aube/discussions.",
         exit_code: Some(62),
     },
     CodeMeta {
@@ -482,7 +482,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_MANIFEST_PARSE,
         category: category::MANIFEST_WORKSPACE,
-        description: "A `package.json` had a syntax error. miette renders a pointer at the offending byte.",
+        description: "A `package.json` had a syntax error. The diagnostic points at the offending byte.",
         exit_code: Some(70),
     },
     CodeMeta {
@@ -537,7 +537,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_NPM_ONLY_COMMAND,
         category: category::ENGINE_CLI,
-        description: "The user invoked an npm-only command (`whoami`, `token`, `owner`, `search`, `pkg`, `set-script`) — aube doesn't implement these; use npm.",
+        description: "The user invoked an npm-only command (`whoami`, `token`, `owner`, `search`, `pkg`, `set-script`, `stage`) — aube doesn't implement these; run them with npm, or set `npmPath` to let aube delegate them.",
         exit_code: Some(82),
     },
     CodeMeta {
@@ -652,7 +652,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_SELF_UPDATE_UNSUPPORTED_PLATFORM,
         category: category::ENGINE_CLI,
-        description: "`aube self-update` has no published aube release archive for this OS/architecture (e.g. FreeBSD, Intel macOS). Install aube via your system package manager or mise. Distinct from ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM, which is about the Node.js download.",
+        description: "`aube self-update` has no published aube release archive for this OS/architecture (e.g. FreeBSD, Intel macOS). Install aube via your system package manager or mise. Distinct from `ERR_AUBE_RUNTIME_UNSUPPORTED_PLATFORM`, which is about the Node.js download.",
         exit_code: None,
     },
     // Misc / safety
@@ -671,7 +671,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: ERR_AUBE_UNSAFE_SHEBANG_INTERPRETER,
         category: category::MISC_SAFETY,
-        description: "A `#!` shebang named an unsafe interpreter when generating a shim — substituted with `node` instead. Surfaced as `tracing::error!` but install continues.",
+        description: "A `#!` shebang named an unsafe interpreter when generating a shim — substituted with `node` instead. Reported as an error, but install continues.",
         exit_code: Some(91),
     },
     CodeMeta {

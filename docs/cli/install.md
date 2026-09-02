@@ -8,8 +8,8 @@
 Install all dependencies
 
 ## Flags
-- **`-D --dev`** — Install only devDependencies
-- **`-P --prod`** — Skip devDependencies; install only production deps
+- **`-D --dev`** — Install only devDependencies.
+- **`-P --prod`** — Skip devDependencies; install only production deps.
 
   **Aliases:** `--production`
 - **`--dangerously-allow-all-builds`** — Allow every dependency's lifecycle scripts to run.
@@ -25,8 +25,8 @@ Install all dependencies
 - **`--global-pnpmfile <PATH>`** — Add a global pnpmfile that runs before the local one.
 
   Mirrors pnpm's `--global-pnpmfile <path>`. Relative paths resolve against the project root. The global hook runs first and the local hook (if any) runs second, so local mutations win on conflicts — matching pnpm's composition order.
-- **`--ignore-pnpmfile`** — Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install
-- **`--ignore-scripts`** — Skip lifecycle scripts (no-op; aube already skips by default)
+- **`--ignore-pnpmfile`** — Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install.
+- **`--ignore-scripts`** — Skip lifecycle scripts (no-op; aube already skips by default).
 - **`--lockfile-dir <PATH>`** — Read and write the lockfile in the given directory.
 
   Instead of placing the lockfile alongside `package.json`, the project becomes an importer keyed by its relative path from the lockfile directory. Mirrors pnpm's `--lockfile-dir`.
@@ -36,10 +36,10 @@ Install all dependencies
 - **`--merge-git-branch-lockfiles`** — Merge per-branch lockfiles into the main `aube-lock.yaml`.
 
   Combines every `aube-lock.<branch>.yaml` file in the project into `aube-lock.yaml` and deletes the branch files. Companion to `gitBranchLockfile`. When `mergeGitBranchLockfilesBranchPattern` is set in `pnpm-workspace.yaml`, this happens automatically on matching branches; the flag forces it regardless.
-- **`--network-concurrency <N>`** — Cap concurrent tarball downloads.
+- **`--network-concurrency <N>`** — Set the starting concurrency for registry requests.
 
-  Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-64.
-- **`--no-optional`** — Skip optionalDependencies; don't install optional native modules
+  Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Seeds aube's adaptive limiter rather than capping it: concurrency still grows and shrinks in response to registry throttling. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.
+- **`--no-optional`** — Skip optionalDependencies; don't install optional native modules.
 - **`--no-side-effects-cache`** — Inverse of `--side-effects-cache`.
 - **`--no-verify-store-integrity`** — Inverse of `--verify-store-integrity`.
 
@@ -52,7 +52,7 @@ Install all dependencies
   Never hits the network.
 - **`--package-import-method <METHOD>`** — How to import package files from the global store into the virtual store.
 
-  One of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy pending strict enforcement), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.
+  One of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.
 - **`--pnpmfile <PATH>`** — Override the local pnpmfile location.
 
   Mirrors pnpm's `--pnpmfile <path>`. Relative paths resolve against the project root; absolute paths are used as-is. Wins over `pnpmfilePath` from `pnpm-workspace.yaml`. A typo (target missing) is a hard miss with a warning rather than a silent fallback to the default.
@@ -85,7 +85,7 @@ Install all dependencies
   Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 - **`--fetch-retry-factor <N>`** — Exponential backoff factor between retry attempts.
 
-  Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
+  Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.
 - **`--fetch-retry-maxtimeout <MS>`** — Upper bound (ms) on the computed retry backoff.
 
   Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
@@ -94,7 +94,7 @@ Install all dependencies
   Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 - **`--fetch-timeout <MS>`** — Per-request HTTP timeout in milliseconds.
 
-  Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+  Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).
 - **`--registry <URL>`** — Override the default registry URL for this invocation.
 
   Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
@@ -102,7 +102,7 @@ Install all dependencies
 ## Virtual store
 - **`--disable-global-virtual-store`** — Force the shared global virtual store off for this invocation.
 
-  Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+  Packages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).
 
   **Aliases:** `--disable-gvs`
 - **`--enable-global-virtual-store`** — Force the shared global virtual store on for this invocation.

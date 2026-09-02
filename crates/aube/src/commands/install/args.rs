@@ -2,10 +2,10 @@ use super::{DepSelection, FrozenMode, FrozenOverride, GlobalVirtualStoreFlags};
 
 #[derive(Debug, usage_rs::Args)]
 pub struct InstallArgs {
-    /// Install only devDependencies
+    /// Install only devDependencies.
     #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
-    /// Skip devDependencies; install only production deps
+    /// Skip devDependencies; install only production deps.
     #[usage(short = 'P', long, long = "production")]
     pub prod: bool,
     /// Allow every dependency's lifecycle scripts to run.
@@ -47,10 +47,10 @@ pub struct InstallArgs {
     /// win on conflicts — matching pnpm's composition order.
     #[usage(long, value_name = "PATH", conflicts = "--ignore-pnpmfile")]
     pub global_pnpmfile: Option<std::path::PathBuf>,
-    /// Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install
+    /// Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install.
     #[usage(long)]
     pub ignore_pnpmfile: bool,
-    /// Skip lifecycle scripts (no-op; aube already skips by default)
+    /// Skip lifecycle scripts (no-op; aube already skips by default).
     #[usage(long)]
     pub ignore_scripts: bool,
     /// Read and write the lockfile in the given directory.
@@ -76,14 +76,16 @@ pub struct InstallArgs {
     /// branches; the flag forces it regardless.
     #[usage(long)]
     pub merge_git_branch_lockfiles: bool,
-    /// Cap concurrent tarball downloads.
+    /// Set the starting concurrency for registry requests.
     ///
     /// Overrides `network-concurrency` from `.npmrc` /
-    /// `aube-workspace.yaml` when set. Falls back to an auto-scaled
-    /// default of worker count x3, clamped to 16-64.
+    /// `aube-workspace.yaml` when set. Seeds aube's adaptive limiter
+    /// rather than capping it: concurrency still grows and shrinks in
+    /// response to registry throttling. Falls back to an auto-scaled
+    /// default of worker count x3, clamped to 16-128.
     #[usage(long, value_name = "N")]
     pub network_concurrency: Option<u64>,
-    /// Skip optionalDependencies; don't install optional native modules
+    /// Skip optionalDependencies; don't install optional native modules.
     #[usage(long)]
     pub no_optional: bool,
     /// Inverse of `--side-effects-cache`.
@@ -112,9 +114,9 @@ pub struct InstallArgs {
     /// virtual store.
     ///
     /// One of `auto` (default: detect the fastest strategy),
-    /// `hardlink`, `copy`, `clone` (reflink; falls back to copy
-    /// pending strict enforcement), or `clone-or-copy` (reflink with
-    /// a copy fallback). Overrides `package-import-method` /
+    /// `hardlink`, `copy`, `clone` (reflink; falls back to copy), or
+    /// `clone-or-copy` (reflink with a copy fallback). Overrides
+    /// `package-import-method` /
     /// `packageImportMethod` from `.npmrc` / `aube-workspace.yaml`
     /// when set.
     #[usage(long, value_name = "METHOD")]

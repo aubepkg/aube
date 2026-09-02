@@ -39,6 +39,7 @@ jobs:
           rm -rf docs/cli && mkdir -p docs/cli
           usage g markdown -mf aube.usage.kdl --out-dir docs/cli --url-prefix /cli
           usage g json     -f aube.usage.kdl > docs/cli/commands.json
+          node scripts/patch-generated-cli-docs.mjs
       - name: Install docs dependencies with aube
         run: |
           cd docs
