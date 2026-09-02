@@ -27,8 +27,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # Persistent appliance-local store; no remote backend is configured.
-  MBX_CACHE_DIR: /var/cache/mbx
   # Rust 1.97.1 is part of the digest-pinned benchmark image.
   MISE_DISABLE_TOOLS: rust
   RUSTUP_TOOLCHAIN: 1.97.1
@@ -36,6 +34,9 @@ env:
 
 jobs:
   measure:
+    env:
+      # Persistent appliance-local store; no remote backend is configured.
+      MBX_CACHE_DIR: /var/cache/mbx
     name: Measure
     # Pinned to one runner class on purpose. Absolute instruction counts shift
     # between machine types by more than a real regression does, so a series
