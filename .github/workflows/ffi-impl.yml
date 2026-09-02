@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.targets.outputs.include) }}
-    runs-on: ${{ (github.event_name == 'release' || inputs.tag != '' || inputs.draft_phase || !inputs.trusted) && matrix.runner || matrix.namespace_runner }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
       MBX_TARGET_VIEWS: ${{ matrix.os == 'win32' && '0' || '1' }}
@@ -76,7 +76,7 @@ jobs:
       - uses: ./.github/actions/mbx
         if: github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase
         with:
-          backend: ${{ inputs.trusted && matrix.namespace_runner != 'windows-latest' && 'local' || 'server' }}
+          backend: server
           version: 1.5.0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         if: github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase

@@ -35,7 +35,7 @@ jobs:
             runner: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
           - os: macos-latest
             runner: namespace-profile-endev-macos-arm64;overrides.cache-tag=cache
-    runs-on: ${{ !inputs.trusted && matrix.os || matrix.runner }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
       RUSTFLAGS: "-D warnings"
@@ -48,7 +48,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'local' || 'server' }}
+          backend: server
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -62,7 +62,7 @@ jobs:
   # lint failures don't block the BATS jobs from starting against a
   # known-good binary.
   test-linux:
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       RUSTFLAGS: "-D warnings"
@@ -75,7 +75,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'local' || 'server' }}
+          backend: server
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -105,7 +105,7 @@ jobs:
     outputs:
       results_present: ${{ steps.report.outputs.results_present }}
       checks_passed: ${{ steps.report.outputs.checks_passed }}
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
+    runs-on: ubuntu-latest
     # cargo-semver-checks builds both revisions of every published crate. A
     # cold cache can exceed 20 minutes, especially alongside the C ABI build.
     timeout-minutes: 30
@@ -122,7 +122,7 @@ jobs:
           cache_save: false
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'local' || 'server' }}
+          backend: server
       # Both parallel API checks invoke Cargo. Complete rustup's lazy toolchain
       # installation first so they cannot race while installing components.
       - name: Prepare Rust toolchain
