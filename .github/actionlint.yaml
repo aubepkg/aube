@@ -5,8 +5,10 @@ self-hosted-runner:
     - namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
     - namespace-profile-endev-linux-amd64-large;overrides.cache-tag=cache
     - namespace-profile-endev-linux-amd64
+    - namespace-profile-endev-linux-amd64-large
     - namespace-profile-endev-linux-arm64;overrides.cache-tag=cache
     - namespace-profile-endev-linux-arm64-large;overrides.cache-tag=cache
+    - namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
     - namespace-profile-endev-macos-arm64;overrides.cache-tag=cache
     - namespace-profile-endev-macos-arm64-large;overrides.cache-tag=cache
 

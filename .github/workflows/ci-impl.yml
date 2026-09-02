@@ -53,7 +53,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'github' }}
           mirror-github-cache: "true"
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -81,7 +81,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'github' }}
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -128,7 +128,7 @@ jobs:
           cache_save: false
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'github' }}
       # Both parallel API checks invoke Cargo. Complete rustup's lazy toolchain
       # installation first so they cannot race while installing components.
       - name: Prepare Rust toolchain
@@ -324,7 +324,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'github' }}
           mirror-github-cache: "true"
           version: 1.4.1
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0

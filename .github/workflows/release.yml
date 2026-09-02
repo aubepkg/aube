@@ -81,7 +81,7 @@ jobs:
 
   generate-primer:
     needs: validate-inputs
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
+    runs-on: namespace-profile-endev-linux-amd64
     timeout-minutes: 15
     permissions:
       contents: read
@@ -303,7 +303,7 @@ jobs:
   # native ARM64 execution for both Rust PGO and BOLT instrumentation training.
   upload-assets-pgo-arm64-linux:
     needs: generate-primer
-    runs-on: namespace-profile-endev-linux-arm64-large;overrides.cache-tag=cache
+    runs-on: namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
     timeout-minutes: 180
     permissions:
       contents: read
@@ -475,12 +475,12 @@ jobs:
           # not in tree.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64-large;overrides.cache-tag=cache
+            runner: namespace-profile-endev-linux-amd64-large
             build-tool: cross
             bolt: true
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64-large;overrides.cache-tag=cache
+            runner: namespace-profile-endev-linux-amd64-large
             build-tool: cross
             bolt: false
           - target: aarch64-apple-darwin
