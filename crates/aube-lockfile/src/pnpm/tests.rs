@@ -2368,6 +2368,75 @@ fn parse_rejects_unreadable_lockfile_version() {
     );
 }
 
+/// A `lockfileVersion` whose components aren't all numeric is not a
+/// version aube can reason about. Reading only the leading component
+/// would accept `9.invalid` as v9 and hand a lockfile of unknown shape
+/// to the passes below — the same silent-empty-install path this guard
+/// exists to close.
+#[test]
+fn parse_rejects_malformed_lockfile_version_components() {
+    for version in ["'9.invalid'", "'9.'", "'.9'", "'9.0.x'", "'v9'", "''"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        std::fs::write(
+            &path,
+            format!("lockfileVersion: {version}\n\nimporters:\n\n  .:\n    dependencies: {{}}\n"),
+        )
+        .unwrap();
+        let err = parse(&path).unwrap_err();
+        assert!(
+            matches!(&err, crate::Error::UnsupportedPnpmLockfileVersion { .. }),
+            "lockfileVersion {version} must be rejected, got {err:?}"
+        );
+    }
+}
+
+/// A pre-v9 body mislabeled with a v9 header passes the version check,
+/// so the layout is checked too: packages exist only because an
+/// importer needs them, so packages without importers is never a shape
+/// pnpm or aube writes at v9.
+#[test]
+fn parse_rejects_v9_header_over_legacy_body() {
+    const V6: &str = include_str!("../../tests/fixtures/pnpm-v6.yaml");
+    let relabeled = V6.replacen("lockfileVersion: '6.0'", "lockfileVersion: '9.0'", 1);
+    assert!(relabeled.starts_with("lockfileVersion: '9.0'"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, &relabeled).unwrap();
+
+    let err = parse(&path).expect_err("mislabeled legacy body must be rejected");
+    assert!(
+        matches!(
+            &err,
+            crate::Error::PnpmLockfileLegacyLayout { version, .. } if version == "9.0"
+        ),
+        "unexpected error: {err:?}"
+    );
+    // Same stable code as a declared pre-v9 version: same cause for the
+    // user, same remedy.
+    assert_eq!(
+        miette::Diagnostic::code(&err)
+            .map(|c| c.to_string())
+            .as_deref(),
+        Some(aube_codes::errors::ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION)
+    );
+}
+
+/// An empty v9 lockfile has importers and no packages, which must stay
+/// readable — the layout guard keys on packages *without* importers.
+#[test]
+fn parse_accepts_v9_lockfile_with_no_packages() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies: {}\n",
+    )
+    .unwrap();
+    assert!(parse(&path).is_ok());
+}
+
 /// Versions at or above the v9 baseline stay readable, including a
 /// hypothetical future major so a newer pnpm isn't locked out.
 #[test]
@@ -4413,4 +4482,55 @@ fn runtime_pin_drift_detection() {
         no_pin.check_drift(&manifest_with("^24.4.0"), &empty, &[], &empty_catalogs),
         DriftStatus::Fresh
     );
+}
+
+/// Property coverage for the `lockfileVersion` guard, which is new
+/// parser code in `aube-lockfile` (see CLAUDE.md's `property_based`
+/// rule). The invariant under test: acceptance depends only on the
+/// numeric major, in either encoding pnpm has used, and any
+/// non-numeric component is refused rather than half-read.
+mod lockfile_version_properties {
+    use super::super::read::lockfile_version_major;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Quoted `major.minor` strings resolve to their major, so the
+        /// v9 baseline is the only thing that decides acceptance.
+        #[test]
+        fn quoted_major_minor_resolves_to_major(major in 0u64..64, minor in 0u64..64) {
+            let value = yaml_serde::Value::String(format!("{major}.{minor}"));
+            prop_assert_eq!(lockfile_version_major(&value), Some(major));
+        }
+
+        /// A bare integer is read as the major itself.
+        #[test]
+        fn bare_integer_resolves_to_itself(major in 0u64..64) {
+            let value = yaml_serde::Value::Number(major.into());
+            prop_assert_eq!(lockfile_version_major(&value), Some(major));
+        }
+
+        /// Any component that isn't digits makes the whole value
+        /// unreadable — never a partial read of the leading number.
+        #[test]
+        fn non_numeric_component_is_refused(
+            major in 0u64..64,
+            suffix in "[a-z][a-z0-9]*",
+        ) {
+            let value = yaml_serde::Value::String(format!("{major}.{suffix}"));
+            prop_assert_eq!(lockfile_version_major(&value), None);
+        }
+
+        /// Whatever the encoding, a version resolves iff the reader
+        /// would accept it, and the accept threshold is exactly 9.
+        #[test]
+        fn acceptance_tracks_the_v9_baseline(major in 0u64..64) {
+            let quoted = yaml_serde::Value::String(format!("{major}.0"));
+            let bare = yaml_serde::Value::Number(major.into());
+            let accepted = |v: &yaml_serde::Value| {
+                lockfile_version_major(v).is_some_and(|m| m >= super::super::read::MIN_LOCKFILE_VERSION)
+            };
+            prop_assert_eq!(accepted(&quoted), major >= 9);
+            prop_assert_eq!(accepted(&bare), major >= 9);
+        }
+    }
 }

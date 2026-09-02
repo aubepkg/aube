@@ -805,6 +805,24 @@ pub enum Error {
         path: std::path::PathBuf,
         version: String,
     },
+    /// A lockfile whose declared `lockfileVersion` is v9 or newer but
+    /// whose body is pre-v9 (top-level `dependencies:`, no
+    /// `importers:`). Shares the code above: the cause the user has to
+    /// act on, and the remedy, are the same as a declared pre-v9
+    /// version.
+    #[error(
+        "lockfile {path} declares lockfileVersion {version} but its body uses the pre-v9 pnpm layout (packages with no importers)"
+    )]
+    #[diagnostic(
+        code(ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION),
+        help(
+            "aube reads pnpm lockfile version 9 (pnpm v9 and newer). regenerate it with `npx pnpm@latest install`, or delete the lockfile and run `aube install` to resolve from package.json"
+        )
+    )]
+    PnpmLockfileLegacyLayout {
+        path: std::path::PathBuf,
+        version: String,
+    },
     #[error("failed to read lockfile {0}: {1}")]
     Io(std::path::PathBuf, std::io::Error),
     /// Structural/serialization lockfile errors that have no source

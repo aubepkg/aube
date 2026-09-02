@@ -37,20 +37,32 @@ fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource
 /// with `importers:` + `snapshots:`; every pass below assumes that
 /// shape, so older files must be rejected rather than parsed into an
 /// empty graph.
-const MIN_LOCKFILE_VERSION: u64 = 9;
+pub(super) const MIN_LOCKFILE_VERSION: u64 = 9;
 
 /// Major component of a `lockfileVersion`. pnpm has written the value
 /// both as a quoted string (`'9.0'`, `'6.0'`) and as a bare YAML float
-/// (`5.4`), so both encodings are accepted. Returns `None` for
-/// anything that isn't a readable version number.
-fn lockfile_version_major(value: &yaml_serde::Value) -> Option<u64> {
+/// (`5.4`), so both encodings are accepted.
+///
+/// Every dot-separated component must be digits: reading only the
+/// leading component would accept `9.invalid` as version 9 and let a
+/// lockfile of unknown shape through the guard. Returns `None` for
+/// anything that isn't a well-formed version number, which the caller
+/// treats as unsupported.
+pub(super) fn lockfile_version_major(value: &yaml_serde::Value) -> Option<u64> {
     if let Some(s) = value.as_str() {
-        let major = s.split('.').next().unwrap_or(s);
-        return major.trim().parse().ok();
+        let s = s.trim();
+        let mut components = s.split('.');
+        let major = components.next()?;
+        if !components.all(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit())) {
+            return None;
+        }
+        return major.parse().ok();
     }
     if let Some(u) = value.as_u64() {
         return Some(u);
     }
+    // A bare YAML float is numeric by construction, so truncating to
+    // the major is safe here — `9.5` is a v9-family lockfile.
     let f = value.as_f64()?;
     (f.is_finite() && f >= 0.0).then_some(f.trunc() as u64)
 }
@@ -94,6 +106,23 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 version: render_lockfile_version(&raw.lockfile_version),
             });
         }
+    }
+
+    // Layout guard for a lockfile whose declared version does not match
+    // its body: `lockfileVersion: '9.0'` over a pre-v9 body passes the
+    // version check but still yields zero importers, so it would link
+    // nothing and exit 0.
+    //
+    // The signature is a slash-prefixed package key (`/is-odd@3.0.1` in
+    // v6, `/is-odd/3.0.1` in v5) with nothing imported. Neither pnpm nor
+    // aube writes slash-prefixed keys at v9. Both halves are needed: an
+    // empty `importers:` map on its own is a shape the writer emits for
+    // a graph with no importers, and it has to keep round-tripping.
+    if raw.importers.is_empty() && raw.packages.keys().any(|key| key.starts_with('/')) {
+        return Err(Error::PnpmLockfileLegacyLayout {
+            path: path.to_path_buf(),
+            version: render_lockfile_version(&raw.lockfile_version),
+        });
     }
 
     // Parse importers (direct deps of each workspace package).

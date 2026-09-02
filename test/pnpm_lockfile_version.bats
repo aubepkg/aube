@@ -107,6 +107,67 @@ teardown() {
 	assert_equal "$status" 16
 }
 
+# A v9 header over a pre-v9 body passes the version check, so the
+# reader also refuses slash-prefixed package keys with nothing imported
+# — the shape that otherwise linked nothing and exited 0.
+@test "pnpm v9 header over a pre-v9 body is refused" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-pnpm-mislabeled-lock",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "^3.0.1" }
+		}
+	EOF
+	cat >pnpm-lock.yaml <<-'EOF'
+		lockfileVersion: '9.0'
+
+		dependencies:
+		  is-odd:
+		    specifier: ^3.0.1
+		    version: 3.0.1
+
+		packages:
+
+		  /is-odd@3.0.1:
+		    resolution: {integrity: sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==}
+		    dev: false
+	EOF
+
+	run aube install
+	assert_failure
+	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
+	assert_output --partial "pre-v9 pnpm layout"
+	run test -e node_modules/is-odd
+	assert_failure
+}
+
+# A non-numeric version component is not read as its leading number:
+# `9.invalid` must not pass as version 9.
+@test "pnpm malformed lockfileVersion is refused" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-pnpm-malformed-lock",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "^3.0.1" }
+		}
+	EOF
+	cat >pnpm-lock.yaml <<-'EOF'
+		lockfileVersion: '9.invalid'
+
+		importers:
+
+		  .:
+		    dependencies:
+		      is-odd:
+		        specifier: ^3.0.1
+		        version: 3.0.1
+	EOF
+
+	run aube install
+	assert_failure
+	assert_output --partial "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION"
+}
+
 # Deleting the unreadable lockfile is the documented escape hatch — it
 # has to actually work, so the guard must not leave other state behind.
 @test "install succeeds after removing a pre-v9 pnpm lockfile" {
