@@ -76,10 +76,12 @@ pub struct InstallArgs {
     /// branches; the flag forces it regardless.
     #[usage(long)]
     pub merge_git_branch_lockfiles: bool,
-    /// Cap concurrent tarball downloads.
+    /// Set the starting concurrency for registry requests.
     ///
     /// Overrides `network-concurrency` from `.npmrc` /
-    /// `aube-workspace.yaml` when set. Falls back to an auto-scaled
+    /// `aube-workspace.yaml` when set. Seeds aube's adaptive limiter
+    /// rather than capping it: concurrency still grows and shrinks in
+    /// response to registry throttling. Falls back to an auto-scaled
     /// default of worker count x3, clamped to 16-128.
     #[usage(long, value_name = "N")]
     pub network_concurrency: Option<u64>,

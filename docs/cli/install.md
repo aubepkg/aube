@@ -36,9 +36,9 @@ Install all dependencies
 - **`--merge-git-branch-lockfiles`** — Merge per-branch lockfiles into the main `aube-lock.yaml`.
 
   Combines every `aube-lock.<branch>.yaml` file in the project into `aube-lock.yaml` and deletes the branch files. Companion to `gitBranchLockfile`. When `mergeGitBranchLockfilesBranchPattern` is set in `pnpm-workspace.yaml`, this happens automatically on matching branches; the flag forces it regardless.
-- **`--network-concurrency <N>`** — Cap concurrent tarball downloads.
+- **`--network-concurrency <N>`** — Set the starting concurrency for registry requests.
 
-  Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.
+  Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Seeds aube's adaptive limiter rather than capping it: concurrency still grows and shrinks in response to registry throttling. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.
 - **`--no-optional`** — Skip optionalDependencies; don't install optional native modules.
 - **`--no-side-effects-cache`** — Inverse of `--side-effects-cache`.
 - **`--no-verify-store-integrity`** — Inverse of `--verify-store-integrity`.

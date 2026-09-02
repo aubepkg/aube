@@ -7355,9 +7355,9 @@
           {
             "name": "network-concurrency",
             "usage": "--network-concurrency <N>",
-            "help": "Cap concurrent tarball downloads.",
-            "help_long": "Cap concurrent tarball downloads.\n\nOverrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.",
-            "help_first_line": "Cap concurrent tarball downloads.",
+            "help": "Set the starting concurrency for registry requests.",
+            "help_long": "Set the starting concurrency for registry requests.\n\nOverrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Seeds aube's adaptive limiter rather than capping it: concurrency still grows and shrinks in response to registry throttling. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.",
+            "help_first_line": "Set the starting concurrency for registry requests.",
             "short": [],
             "long": [
               "network-concurrency"
