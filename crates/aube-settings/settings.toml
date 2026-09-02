@@ -2371,7 +2371,7 @@ examples = ['jailBuildPermissions: { sharp: { env: ["SHARP_DIST_BASE_URL"], writ
 typedAccessorUnused = true
 
 [unsafePerm]
-description = "Allow scripts to keep root privileges instead of switching to a non-root user (npm's `unsafe-perm`)."
+description = "Value of npm's `unsafe-perm` exported to scripts; aube does not switch users itself."
 type = "bool"
 default = "false (as root), true (otherwise)"
 docs = """

@@ -116,7 +116,7 @@ aube generates this page from [`settings.toml`](https://github.com/jdx/aube/blob
 | [`jailBuilds`](#setting-jailbuilds) | `bool` | Run approved dependency lifecycle scripts in a restricted build jail. |
 | [`jailBuildExclusions`](#setting-jailbuildexclusions) | `list<string>` | Exclude specific dependency packages from jailed builds. |
 | [`jailBuildPermissions`](#setting-jailbuildpermissions) | `object` | Grant package-specific privileges inside jailed builds. |
-| [`unsafePerm`](#setting-unsafeperm) | `bool` | Allow scripts to keep root privileges instead of switching to a non-root user (npm's `unsafe-perm`). |
+| [`unsafePerm`](#setting-unsafeperm) | `bool` | Value of npm's `unsafe-perm` exported to scripts; aube does not switch users itself. |
 | [`nodeOptions`](#setting-nodeoptions) | `string` | Options passed to Node.js via `NODE_OPTIONS`. |
 | [`verifyDepsBeforeRun`](#setting-verifydepsbeforerun) | `"install" \| "warn" \| "error" \| "prompt" \| false` | Check dependencies before running scripts. |
 | [`strictDepBuilds`](#setting-strictdepbuilds) | `bool` | Exit with an error if dependencies have unreviewed build scripts. |
@@ -2391,7 +2391,7 @@ Examples:
 
 ### `unsafePerm` {#setting-unsafeperm}
 
-Allow scripts to keep root privileges instead of switching to a non-root user (npm's `unsafe-perm`).
+Value of npm's `unsafe-perm` exported to scripts; aube does not switch users itself.
 
 - Type: `bool`
 - Default: `false (as root), true (otherwise)`
