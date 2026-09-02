@@ -80,7 +80,7 @@ jobs:
       dirty: ${{ steps.dirty.outputs.dirty }}
     runs-on: [self-hosted, jdx-perf-v1]
     container:
-      image: ghcr.io/jdx/perf-runner@sha256:0f4ee40929472883a32cc29bcd4bd22068c4382b72697da299d6769475b263b5
+      image: ghcr.io/jdx/perf-runner@sha256:5263c143b12ce2234e7b0b21d3d6501c2ed05837b42937d0eaeaa191cd5c8e68
       options: --cpuset-cpus 0-7
     timeout-minutes: 60
     permissions:
