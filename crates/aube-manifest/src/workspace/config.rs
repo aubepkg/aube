@@ -419,7 +419,7 @@ pub struct WorkspaceConfig {
     pub child_concurrency: Option<u64>,
 
     /// Cap concurrent tarball downloads. When unset, aube uses an
-    /// auto-scaled worker count x3 default, clamped to 16-64. Same
+    /// auto-scaled worker count x3 default, clamped to 16-128. Same
     /// typed/raw duality as `child_concurrency`.
     #[serde(default, rename = "networkConcurrency")]
     pub network_concurrency: Option<u64>,

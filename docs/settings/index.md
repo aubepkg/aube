@@ -1798,7 +1798,7 @@ regardless of which strategy produced it.
 Maximum concurrent HTTP(S) requests.
 
 - Type: `int`
-- Default: `auto (workers x3 clamped to 16-64)`
+- Default: `auto (workers x3 clamped to 16-128)`
 - CLI flags: `network-concurrency`
 - Environment: `npm_config_network_concurrency`, `NPM_CONFIG_NETWORK_CONCURRENCY`, `AUBE_NETWORK_CONCURRENCY`
 - .npmrc keys: `network-concurrency`, `networkConcurrency`
@@ -1806,7 +1806,8 @@ Maximum concurrent HTTP(S) requests.
 
 Caps the number of concurrent tarball downloads and packument
 (metadata) fetches during install. When unset, aube
-matches pnpm's dynamic default: worker count x3, clamped to 16-64.
+matches pnpm's dynamic default shape: worker count x3, clamped to
+16-128.
 Set this value explicitly to override the automatic scaling.
 
 Examples:

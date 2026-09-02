@@ -1764,11 +1764,12 @@ examples = []
 [networkConcurrency]
 description = "Maximum concurrent HTTP(S) requests."
 type = "int"
-default = "auto (workers x3 clamped to 16-64)"
+default = "auto (workers x3 clamped to 16-128)"
 docs = """
 Caps the number of concurrent tarball downloads and packument
 (metadata) fetches during install. When unset, aube
-matches pnpm's dynamic default: worker count x3, clamped to 16-64.
+matches pnpm's dynamic default shape: worker count x3, clamped to
+16-128.
 Set this value explicitly to override the automatic scaling.
 """
 sources.cli = ["network-concurrency"]
