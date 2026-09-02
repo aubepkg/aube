@@ -37,6 +37,12 @@
       "exit_code": 15
     },
     {
+      "name": "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION",
+      "category": "Lockfile",
+      "description": "A `pnpm-lock.yaml` (or `aube-lock.yaml`) declares a `lockfileVersion` older than 9 — the pnpm 8.x and earlier formats, which aube cannot read.",
+      "exit_code": 16
+    },
+    {
       "name": "ERR_AUBE_NO_MATCHING_VERSION",
       "category": "Resolver",
       "description": "No published version of the named package satisfies the requested range.",

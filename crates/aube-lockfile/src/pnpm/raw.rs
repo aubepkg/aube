@@ -177,7 +177,6 @@ pub(super) fn project_lockfile_score(raw: &RawPnpmLockfile) -> u64 {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RawPnpmLockfile {
-    #[allow(dead_code)]
     pub(super) lockfile_version: yaml_serde::Value,
     #[serde(default)]
     pub(super) settings: Option<RawSettings>,

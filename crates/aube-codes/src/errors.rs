@@ -18,6 +18,7 @@ pub const ERR_AUBE_LOCKFILE_UNSUPPORTED_FORMAT: &str = "ERR_AUBE_LOCKFILE_UNSUPP
 pub const ERR_AUBE_RESOLUTION_SHAPE_MISMATCH: &str = "ERR_AUBE_RESOLUTION_SHAPE_MISMATCH";
 pub const ERR_AUBE_LOCKFILE_CONFIG_MISMATCH: &str = "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH";
 pub const ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY: &str = "ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY";
+#[rustfmt::skip] pub const ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION: &str = "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION";
 
 // ── resolver ─────────────────────────────────────────────────────────
 pub const ERR_AUBE_NO_MATCHING_VERSION: &str = "ERR_AUBE_NO_MATCHING_VERSION";
@@ -190,6 +191,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::LOCKFILE,
         description: "A pnpm lockfile contains registry-qualified package identities that aube cannot safely resolve yet.",
         exit_code: Some(15),
+    },
+    CodeMeta {
+        name: ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION,
+        category: category::LOCKFILE,
+        description: "A `pnpm-lock.yaml` (or `aube-lock.yaml`) declares a `lockfileVersion` older than 9 — the pnpm 8.x and earlier formats, which aube cannot read.",
+        exit_code: Some(16),
     },
     // Resolver
     CodeMeta {

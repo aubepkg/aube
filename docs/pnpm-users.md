@@ -98,7 +98,9 @@ aube creates `aube-workspace.yaml`.
 aube reads and writes `pnpm-lock.yaml` at **lockfile version 9** — the
 format shipped by pnpm v9 and later. Older pnpm lockfiles (versions 5, 6,
 7, and 8, used by pnpm 7.x and 8.x) are not supported and will cause aube
-to refuse the install.
+to refuse the install with
+[`ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION`](/error-codes) (exit code
+`16`).
 
 To upgrade an older pnpm lockfile, run a modern pnpm once to convert it:
 

@@ -32,6 +32,47 @@ fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource
     }
 }
 
+/// Lowest `lockfileVersion` this reader understands. pnpm v9 replaced
+/// the top-level `dependencies:` map and `/name@version` package keys
+/// with `importers:` + `snapshots:`; every pass below assumes that
+/// shape, so older files must be rejected rather than parsed into an
+/// empty graph.
+const MIN_LOCKFILE_VERSION: u64 = 9;
+
+/// Major component of a `lockfileVersion`. pnpm has written the value
+/// both as a quoted string (`'9.0'`, `'6.0'`) and as a bare YAML float
+/// (`5.4`), so both encodings are accepted. Returns `None` for
+/// anything that isn't a readable version number.
+fn lockfile_version_major(value: &yaml_serde::Value) -> Option<u64> {
+    if let Some(s) = value.as_str() {
+        let major = s.split('.').next().unwrap_or(s);
+        return major.trim().parse().ok();
+    }
+    if let Some(u) = value.as_u64() {
+        return Some(u);
+    }
+    let f = value.as_f64()?;
+    (f.is_finite() && f >= 0.0).then_some(f.trunc() as u64)
+}
+
+/// Render a `lockfileVersion` back for the error message, preserving
+/// whichever encoding the lockfile used.
+fn render_lockfile_version(value: &yaml_serde::Value) -> String {
+    if let Some(s) = value.as_str() {
+        return s.to_string();
+    }
+    if let Some(u) = value.as_u64() {
+        return u.to_string();
+    }
+    if let Some(i) = value.as_i64() {
+        return i.to_string();
+    }
+    match value.as_f64() {
+        Some(f) => f.to_string(),
+        None => "(unreadable)".to_string(),
+    }
+}
+
 /// Parse a pnpm-lock.yaml file into a LockfileGraph.
 pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     parse_with_options(path, ParseOptions::default())
@@ -41,6 +82,19 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     let content = crate::read_lockfile(path)?;
     let raw = parse_raw_lockfile(&content)
         .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
+
+    // Version guard before any structural pass: a pre-v9 lockfile is
+    // valid YAML that yields zero importers, which would otherwise
+    // link nothing and exit 0.
+    match lockfile_version_major(&raw.lockfile_version) {
+        Some(major) if major >= MIN_LOCKFILE_VERSION => {}
+        _ => {
+            return Err(Error::UnsupportedPnpmLockfileVersion {
+                path: path.to_path_buf(),
+                version: render_lockfile_version(&raw.lockfile_version),
+            });
+        }
+    }
 
     // Parse importers (direct deps of each workspace package).
     // We track synthesized LockedPackages for local (`file:` / `link:`)

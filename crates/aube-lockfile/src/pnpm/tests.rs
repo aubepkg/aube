@@ -2303,6 +2303,90 @@ fn test_parse_invalid_yaml() {
     assert!(parse(&path).is_err());
 }
 
+/// pnpm 8's v6 format (top-level `dependencies:`, `/name@version`
+/// package keys) is valid YAML that yields zero importers. Before the
+/// version guard it parsed "successfully" into an empty graph and the
+/// install linked nothing while exiting 0.
+#[test]
+fn parse_rejects_pnpm_v6_lockfile() {
+    const V6: &str = include_str!("../../tests/fixtures/pnpm-v6.yaml");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, V6).unwrap();
+
+    let err = parse(&path).expect_err("v6 lockfile must be rejected");
+    assert!(
+        matches!(
+            &err,
+            crate::Error::UnsupportedPnpmLockfileVersion { version, .. } if version == "6.0"
+        ),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(
+        miette::Diagnostic::code(&err)
+            .map(|c| c.to_string())
+            .as_deref(),
+        Some(aube_codes::errors::ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION)
+    );
+}
+
+/// pnpm 6/7 wrote `lockfileVersion` as a bare YAML float rather than a
+/// quoted string, so the guard has to read both encodings.
+#[test]
+fn parse_rejects_pnpm_v5_lockfile_with_numeric_version() {
+    const V5_4: &str = include_str!("../../tests/fixtures/pnpm-v5_4-plain.yaml");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, V5_4).unwrap();
+
+    let err = parse(&path).expect_err("v5.4 lockfile must be rejected");
+    assert!(
+        matches!(
+            &err,
+            crate::Error::UnsupportedPnpmLockfileVersion { version, .. } if version == "5.4"
+        ),
+        "unexpected error: {err:?}"
+    );
+}
+
+/// A `lockfileVersion` aube cannot read as a number is rejected too —
+/// guessing at the shape is what produced the silent empty install.
+#[test]
+fn parse_rejects_unreadable_lockfile_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: nine
+",
+    )
+    .unwrap();
+    let err = parse(&path).expect_err("non-numeric lockfileVersion must be rejected");
+    assert!(
+        matches!(&err, crate::Error::UnsupportedPnpmLockfileVersion { .. }),
+        "unexpected error: {err:?}"
+    );
+}
+
+/// Versions at or above the v9 baseline stay readable, including a
+/// hypothetical future major so a newer pnpm isn't locked out.
+#[test]
+fn parse_accepts_v9_and_newer_lockfile_versions() {
+    for version in ["'9.0'", "9", "'10.0'"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        std::fs::write(
+            &path,
+            format!("lockfileVersion: {version}\n\nimporters:\n\n  .:\n    dependencies: {{}}\n"),
+        )
+        .unwrap();
+        assert!(
+            parse(&path).is_ok(),
+            "lockfileVersion {version} must stay readable"
+        );
+    }
+}
+
 #[test]
 fn test_parse_nonexistent_file() {
     let path = Path::new("/nonexistent/pnpm-lock.yaml");

@@ -788,6 +788,23 @@ pub enum Error {
         dep_path: String,
         registry_name: String,
     },
+    /// pnpm lockfile formats older than v9 (`lockfileVersion` 5.x /
+    /// 6.0, written by pnpm 8.x and earlier) put direct deps in a
+    /// top-level `dependencies:` map and key packages as
+    /// `/name@version`, with no `importers:` or `snapshots:`. Those
+    /// parse into an *empty* graph rather than failing, so without
+    /// this guard an install would link nothing and still exit 0.
+    #[error("lockfile {path} declares lockfileVersion {version}, which aube does not support")]
+    #[diagnostic(
+        code(ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION),
+        help(
+            "aube reads pnpm lockfile version 9 (pnpm v9 and newer). regenerate it with `npx pnpm@latest install`, or delete the lockfile and run `aube install` to resolve from package.json"
+        )
+    )]
+    UnsupportedPnpmLockfileVersion {
+        path: std::path::PathBuf,
+        version: String,
+    },
     #[error("failed to read lockfile {0}: {1}")]
     Io(std::path::PathBuf, std::io::Error),
     /// Structural/serialization lockfile errors that have no source
