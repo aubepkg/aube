@@ -6,7 +6,7 @@ import { data } from './benchmarks.data.ts'
 
 The numbers below are measured end-to-end against the same
 [medium-sized real-world fixture](https://github.com/jdx/aube/blob/main/benchmarks/fixture.package.json)
-— ~1400 real-world packages — using [`hyperfine`](https://github.com/sharkdp/hyperfine)
+— ~1400 packages — using [`hyperfine`](https://github.com/sharkdp/hyperfine)
 to time each scenario under identical conditions.
 
 ::: tip Methodology

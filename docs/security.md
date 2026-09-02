@@ -462,7 +462,7 @@ allowBuilds:
   # ...whatever your project actually needs to build
 ```
 
-`trustPolicy=no-downgrade` and `minimumReleaseAge: 1440` (24h) are already
+`trustPolicy: no-downgrade` and `minimumReleaseAge: 1440` (24h) are already
 default-on; `paranoid: true` adds the rest of the bundle on top. Pair this
 with `aube audit` in CI so a newly disclosed CVE fails the build instead of
 silently shipping.
