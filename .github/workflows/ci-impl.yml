@@ -48,7 +48,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'local' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'server' }}
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -75,7 +75,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'local' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'server' }}
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -122,7 +122,7 @@ jobs:
           cache_save: false
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'local' || 'github' }}
+          backend: ${{ inputs.trusted && 'local' || 'server' }}
       # Both parallel API checks invoke Cargo. Complete rustup's lazy toolchain
       # installation first so they cannot race while installing components.
       - name: Prepare Rust toolchain
