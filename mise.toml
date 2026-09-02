@@ -143,8 +143,7 @@ run = [
 # because the install benchmark uses --offline, and it is outside the
 # measurement on purpose — nothing tak times ever touches the registry.
 [tasks."perf:build"]
-env = { MBX_DISABLE = "1" }
-run = "cargo build --release"
+run = "mbx build --release"
 
 [tasks.perf]
 dir = "{{config_root}}"
