@@ -32,19 +32,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64
+            runner: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
           - os: macos-latest
-            runner: namespace-profile-endev-macos-arm64
-    runs-on: ${{ !inputs.trusted && matrix.os || matrix.runner }}
+            runner: namespace-profile-endev-macos-arm64;overrides.cache-tag=cache
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
       RUSTFLAGS: "-D warnings"
     steps:
-      - name: Assert OIDC is unavailable to untrusted CI
-        if: ${{ !inputs.trusted }}
-        run: |
-          test -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
-          test -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -53,8 +48,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
-          mirror-github-cache: "true"
+          backend: server
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -68,7 +62,7 @@ jobs:
   # lint failures don't block the BATS jobs from starting against a
   # known-good binary.
   test-linux:
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       RUSTFLAGS: "-D warnings"
@@ -81,7 +75,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          backend: server
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -111,7 +105,7 @@ jobs:
     outputs:
       results_present: ${{ steps.report.outputs.results_present }}
       checks_passed: ${{ steps.report.outputs.checks_passed }}
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ubuntu-latest
     # cargo-semver-checks builds both revisions of every published crate. A
     # cold cache can exceed 20 minutes, especially alongside the C ABI build.
     timeout-minutes: 30
@@ -128,7 +122,7 @@ jobs:
           cache_save: false
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          backend: server
       # Both parallel API checks invoke Cargo. Complete rustup's lazy toolchain
       # installation first so they cannot race while installing components.
       - name: Prepare Rust toolchain
@@ -324,9 +318,8 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/mbx
         with:
-          backend: ${{ inputs.trusted && 'server' || 'github' }}
-          mirror-github-cache: "true"
-          version: 1.4.1
+          backend: server
+          version: 1.5.0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           install: false
@@ -348,7 +341,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64' }}
+    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
     timeout-minutes: 2
     permissions: {}
     # Run on success or upstream failure but skip when the workflow is cancelled
