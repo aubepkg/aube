@@ -23,7 +23,7 @@ Stop a package (shortcut for `run stop`)
   Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 - **`--fetch-retry-factor <N>`** — Exponential backoff factor between retry attempts.
 
-  Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
+  Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.
 - **`--fetch-retry-maxtimeout <MS>`** — Upper bound (ms) on the computed retry backoff.
 
   Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
@@ -32,7 +32,7 @@ Stop a package (shortcut for `run stop`)
   Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 - **`--fetch-timeout <MS>`** — Per-request HTTP timeout in milliseconds.
 
-  Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+  Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).
 - **`--registry <URL>`** — Override the default registry URL for this invocation.
 
   Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
@@ -40,7 +40,7 @@ Stop a package (shortcut for `run stop`)
 ## Virtual store
 - **`--disable-global-virtual-store`** — Force the shared global virtual store off for this invocation.
 
-  Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+  Packages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).
 
   **Aliases:** `--disable-gvs`
 - **`--enable-global-virtual-store`** — Force the shared global virtual store on for this invocation.

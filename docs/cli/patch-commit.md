@@ -4,7 +4,7 @@
 - **Usage:** `aube patch-commit [--patches-dir <DIR>] <DIR>`
 - **Effect:** modifies state
 
-Generate a `.patch` file from a `aube patch` edit directory
+Generate a `.patch` file from an `aube patch` edit directory
 
 ## Arguments
 - **`<DIR>`** — The edit directory printed by `aube patch`.

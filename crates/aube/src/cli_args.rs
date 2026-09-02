@@ -63,9 +63,8 @@ pub struct NetworkArgs {
     /// Exponential backoff factor between retry attempts.
     ///
     /// Overrides `fetchRetryFactor` / `fetch-retry-factor` from
-    /// `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the
-    /// underlying `FetchPolicy.retry_factor` is `u32`. Fractional
-    /// values like `1.5` are rejected by the CLI parser.
+    /// `.npmrc` / `aube-workspace.yaml` when set. Integer-only;
+    /// fractional values like `1.5` are rejected.
     #[usage(long, value_name = "N")]
     pub fetch_retry_factor: Option<u64>,
 
@@ -86,8 +85,8 @@ pub struct NetworkArgs {
     /// Per-request HTTP timeout in milliseconds.
     ///
     /// Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` /
-    /// `aube-workspace.yaml` when set. Applied via `reqwest`'s
-    /// `.timeout()` so it covers headers + body together.
+    /// `aube-workspace.yaml` when set. Covers the whole request
+    /// (headers and body together).
     #[usage(long, value_name = "MS")]
     pub fetch_timeout: Option<u64>,
 
@@ -138,7 +137,9 @@ pub struct VirtualStoreArgs {
     /// Force the shared global virtual store off for this invocation.
     ///
     /// Packages are materialized inside the project's virtual store
-    /// instead of symlinked from `~/.cache/aube/virtual-store/`.
+    /// instead of symlinked from the shared tree under
+    /// `<cacheDir>/virtual-store/v1/` (by default
+    /// `~/.cache/aube/virtual-store/v1/`).
     #[usage(long, long = "disable-gvs", conflicts = "--enable-gvs")]
     pub disable_global_virtual_store: bool,
 

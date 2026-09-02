@@ -248,7 +248,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: WARN_AUBE_LTHASH_MISMATCH,
         category: category::INSTALL_LIFECYCLE,
-        description: "Incremental and full LtHash digests disagreed — homomorphic invariant broken. Real bug signal.",
+        description: "aube's incremental install digest disagreed with a full recomputation. This indicates a bug in aube — please report it at https://github.com/jdx/aube/discussions.",
         exit_code: None,
     },
     CodeMeta {
@@ -266,13 +266,13 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: WARN_AUBE_GVS_MODE_CHANGED,
         category: category::INSTALL_LIFECYCLE,
-        description: "Switching between gvs-on and gvs-off; removing `node_modules` and reinstalling from scratch.",
+        description: "The global virtual store was switched on or off since the last install; removing `node_modules` and reinstalling from scratch.",
         exit_code: None,
     },
     CodeMeta {
         name: WARN_AUBE_GVS_CROSS_VOLUME,
         category: category::INSTALL_LIFECYCLE,
-        description: "`cacheDir` (global virtual store) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
+        description: "The global virtual store (`globalVirtualStoreDir`, by default under `cacheDir`) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
         exit_code: None,
     },
     CodeMeta {

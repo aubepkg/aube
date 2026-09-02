@@ -19,7 +19,7 @@ Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml`
         long_help #"""
 Exponential backoff factor between retry attempts.
 
-Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
+Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.
 """#
         arg <N>
     }
@@ -43,7 +43,7 @@ Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aub
         long_help #"""
 Per-request HTTP timeout in milliseconds.
 
-Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).
 """#
         arg <MS>
     }
@@ -72,7 +72,7 @@ flagset virtual-store-args {
         long_help #"""
 Force the shared global virtual store off for this invocation.
 
-Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+Packages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).
 """#
     }
     flag "--enable-global-virtual-store --enable-gvs" help="Force the shared global virtual store on for this invocation." help_heading="Virtual store" conflicts=--disable-global-virtual-store {
@@ -104,13 +104,13 @@ Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap
 flag "-C --dir --cd --prefix" help="Change to directory before running (like `make -C` or `mise --cd`)" global=#true {
     arg <DIR>
 }
-flag "-F --filter" help="Scope command execution to workspace packages matching PATTERN." global=#true var=#true {
+flag "-F --filter" help="Scope command execution to workspace packages matching a selector." global=#true var=#true {
     long_help #"""
-Scope command execution to workspace packages matching PATTERN.
+Scope command execution to workspace packages matching a selector.
 
 Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.
 
-Currently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.
+Currently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `outdated`, `publish`, `deploy`, `add`, `remove`, `update`, `query`, `rebuild`, `why`, and implicit-script invocations.
 """#
     arg <WORKSPACE>
 }
@@ -122,13 +122,7 @@ Equivalent to `--filter=*`; if `--filter` is also given, `--recursive` is a no-o
 """#
 }
 flag "-v --verbose" help="Enable verbose/debug logging (shortcut for `--loglevel debug`)" global=#true
-flag "-V --version" help="Print version and check for updates." global=#true {
-    long_help #"""
-Print version and check for updates.
-
-Manual flag so we can run the async update notifier alongside the version print — clap's auto `Action::Version` exits inside `parse_from`, before the tokio runtime is built.
-"""#
-}
+flag "-V --version" help="Print version and check for updates." global=#true
 flag --aggregate-output help="Group workspace command output after each package finishes." global=#true hide=#true conflicts=--stream {
     long_help #"""
 Group workspace command output after each package finishes.
@@ -212,14 +206,14 @@ flag --no-color help="Disable colored output." global=#true {
     long_help #"""
 Disable colored output.
 
-Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so downstream libraries (miette, clx, child processes) all see the same choice.
+Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so child processes see the same choice.
 """#
 }
 flag --reporter help="Output format: default, append-only, ndjson, silent." global=#true {
     long_help #"""
 Output format: default, append-only, ndjson, silent.
 
-`default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` swaps the tracing fmt layer for the JSON formatter (one JSON object per log event on stderr) and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).
+`default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` emits one JSON object per log event on stderr and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).
 """#
     arg <NAME> {
         choices {
@@ -318,8 +312,8 @@ cmd activate help="Emit shell activation code for runtime tool shims" effect=wri
 }
 cmd add help="Add a dependency" effect=write {
     alias a
-    flag "-D --save-dev" help="Add as dev dependency"
-    flag "-E --save-exact" help="Pin the exact resolved version (no `^` prefix)"
+    flag "-D --save-dev" help="Add as dev dependency."
+    flag "-E --save-exact" help="Pin the exact resolved version (no `^` prefix)."
     flag "-g --global" help="Install the package globally." {
         long_help #"""
 Install the package globally.
@@ -327,7 +321,7 @@ Install the package globally.
 Installs into the aube/pnpm global directory and links its binaries into the global bin directory. Mirrors `pnpm add -g`.
 """#
     }
-    flag "-O --save-optional" help="Add as optional dependency"
+    flag "-O --save-optional" help="Add as optional dependency."
     flag --allow-build help="Pre-approve a dependency's lifecycle scripts as part of the add." var=#true conflicts=--no-save require_equals=#true {
         long_help #"""
 Pre-approve a dependency's lifecycle scripts as part of the add.
@@ -338,11 +332,11 @@ Conflicts with `--no-save`, which only snapshots `package.json` and the lockfile
 """#
         arg <PKG> validate="value != ''" validate_error="The --allow-build flag is missing a package name. Please specify the package name(s) that are allowed to run installation scripts."
     }
-    flag --allow-low-downloads help="Bypass the similar-name, new-name, and [`lowDownloadThreshold`] confirm prompts / refusals for this invocation." {
+    flag --allow-low-downloads help="Bypass the similar-name, new-name, and `lowDownloadThreshold` confirm prompts / refusals for this invocation." {
         long_help #"""
-Bypass the similar-name, new-name, and [`lowDownloadThreshold`] confirm prompts / refusals for this invocation.
+Bypass the similar-name, new-name, and `lowDownloadThreshold` confirm prompts / refusals for this invocation.
 
-`aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below [`lowDownloadThreshold`], resembles a top-100,000 npm package, or is newer than [`minimumPackageAge`]. The flag is intended for cases where you've already verified the package out-of-band. It does not affect the OSV malicious-package check, which remains a hard block.
+`aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below `lowDownloadThreshold`, resembles a top-100,000 npm package, or is newer than `minimumPackageAge`. The flag is intended for cases where you've already verified the package out-of-band. It does not affect the OSV malicious-package check, which remains a hard block.
 """#
     }
     flag --dangerously-allow-all-builds help="Allow every dependency's lifecycle scripts to run." {
@@ -574,7 +568,7 @@ With no patterns, every cached package is printed.
         long_help #"""
 List configured registries from the project + user `.npmrc`.
 
-Aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
+aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
 """#
         flag "-h --help" help="Print help" action=help builtin=#true
     }
@@ -832,7 +826,7 @@ Which config location(s) to list.
             long_help #"""
 Which config location to write to.
 
-Defaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. Aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.
+Defaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.
 
 Dotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …) edit one entry at a time. At project scope (`--local`) they land in `pnpm-workspace.yaml#<map>.<entry>` or `package.json#aube.<map>.<entry>` if no workspace yaml exists, the same place install reads from. User-scope dotted writes for these maps error: aube only reads them per project.
 """#
@@ -1173,7 +1167,7 @@ Accepts either a pnpm canonical name (e.g. `autoInstallPeers`) or an `.npmrc` al
 """#
     }
 }
-cmd ignored-builds help="Print packages whose install scripts were skipped by `pnpm.allowBuilds`" effect=read {
+cmd ignored-builds help="Print packages whose install scripts were skipped by the `allowBuilds` allowlist" effect=read {
     flag "-g --global" help="Operate on globally-installed packages instead of the current project."
     flag "-h --help" help="Print help" action=help builtin=#true
 }
@@ -1212,8 +1206,8 @@ Adds a `packageManager` field to `package.json`.
 }
 cmd install help="Install all dependencies" effect=write {
     alias i
-    flag "-D --dev" help="Install only devDependencies" conflicts=--prod
-    flag "-P --prod --production" help="Skip devDependencies; install only production deps"
+    flag "-D --dev" help="Install only devDependencies." conflicts=--prod
+    flag "-P --prod --production" help="Skip devDependencies; install only production deps."
     flag --dangerously-allow-all-builds help="Allow every dependency's lifecycle scripts to run." {
         long_help #"""
 Allow every dependency's lifecycle scripts to run.
@@ -1245,8 +1239,8 @@ Mirrors pnpm's `--global-pnpmfile <path>`. Relative paths resolve against the pr
 """#
         arg <PATH>
     }
-    flag --ignore-pnpmfile help="Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install"
-    flag --ignore-scripts help="Skip lifecycle scripts (no-op; aube already skips by default)"
+    flag --ignore-pnpmfile help="Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install."
+    flag --ignore-scripts help="Skip lifecycle scripts (no-op; aube already skips by default)."
     flag --lockfile-dir help="Read and write the lockfile in the given directory." {
         long_help #"""
 Read and write the lockfile in the given directory.
@@ -1273,11 +1267,11 @@ Combines every `aube-lock.<branch>.yaml` file in the project into `aube-lock.yam
         long_help #"""
 Cap concurrent tarball downloads.
 
-Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-64.
+Overrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.
 """#
         arg <N>
     }
-    flag --no-optional help="Skip optionalDependencies; don't install optional native modules"
+    flag --no-optional help="Skip optionalDependencies; don't install optional native modules."
     flag --no-side-effects-cache help="Inverse of `--side-effects-cache`." overrides=--side-effects-cache
     flag --no-verify-store-integrity help="Inverse of `--verify-store-integrity`." overrides=--verify-store-integrity {
         long_help #"""
@@ -1305,7 +1299,7 @@ Never hits the network.
         long_help #"""
 How to import package files from the global store into the virtual store.
 
-One of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy pending strict enforcement), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.
+One of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.
 """#
         arg <METHOD>
     }
@@ -1436,7 +1430,7 @@ cmd licenses help="Report the licenses of installed dependencies" effect=read {
         long_help #"""
 pnpm-compat subcommand marker.
 
-`aube licenses ls [flags...]` is accepted as a synonym for bare `aube licenses [flags...]` so scripts written for pnpm keep working. Modeled as an optional positional instead of a clap subcommand so flags can appear on either side of `ls` (subcommands swallow the parent's flags).
+`aube licenses ls [flags...]` is accepted as a synonym for bare `aube licenses [flags...]` so scripts written for pnpm keep working. Modeled as an optional positional instead of a subcommand so flags can appear on either side of `ls` (subcommands swallow the parent's flags).
 """#
         choices ls
     }
@@ -1666,11 +1660,11 @@ Extracts a pristine copy from `node_modules` rather than re-applying the existin
         long_help #"""
 Package spec, `<name>@<version>`.
 
-The package must already be installed in `node_modules` (we copy from the linked virtual store, not from the registry, so the layout matches what install would later patch).
+The package must already be installed in `node_modules` (aube copies from the linked virtual store, not from the registry, so the layout matches what install would later patch).
 """#
     }
 }
-cmd patch-commit help="Generate a `.patch` file from a `aube patch` edit directory" effect=write {
+cmd patch-commit help="Generate a `.patch` file from an `aube patch` edit directory" effect=write {
     flag --patches-dir help="Where to write the generated `.patch` file, relative to the project root." default=patches {
         long_help #"""
 Where to write the generated `.patch` file, relative to the project root.
@@ -1959,7 +1953,7 @@ Pass to override an earlier `--no-sort` on the same invocation.
         long_help #"""
 Suppress aube's wrapper output while still showing script stdout/stderr.
 
-Short alias for the global `--silent` flag; long form is intentionally omitted to avoid shadowing the global `--silent` in clap's dispatch.
+Short alias for the global `--silent` flag.
 """#
     }
     flag --workspace-concurrency help="Cap the number of recursive packages running at once." {
@@ -2027,7 +2021,7 @@ cmd set help="Alias for `config set` (hidden; prefer `config set`)" hide=#true e
         long_help #"""
 Which config location to write to.
 
-Defaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. Aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.
+Defaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.
 
 Dotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …) edit one entry at a time. At project scope (`--local`) they land in `pnpm-workspace.yaml#<map>.<entry>` or `package.json#aube.<map>.<entry>` if no workspace yaml exists, the same place install reads from. User-scope dotted writes for these maps error: aube only reads them per project.
 """#
@@ -2051,7 +2045,7 @@ cmd set-script help="Set a `package.json` script (not implemented — use `npm s
 cmd sponsors help="Show the companies sponsoring aube and the jdx.dev open source tools" effect=read {
     flag "-h --help" help="Print help" action=help builtin=#true
 }
-cmd stage help="Stage packages for publishing (not implemented — use `npm stage`)" effect=read {
+cmd stage help="Stage packages for publishing (not implemented — use `npm stage`)" hide=#true effect=read {
     use fallback-args
     flag "-h --help" help="Print help" action=help builtin=#true
     arg "[ARGS]..." help="Unused; captured so `aube <cmd> foo bar` parses instead of erroring on unexpected args before the fallback message prints." hide=#true double_dash=automatic

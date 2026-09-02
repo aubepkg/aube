@@ -67,7 +67,7 @@ pub(crate) struct Cli {
     )]
     dir: Option<std::path::PathBuf>,
 
-    /// Scope command execution to workspace packages matching PATTERN.
+    /// Scope command execution to workspace packages matching a selector.
     ///
     /// Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`),
     /// paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`),
@@ -75,8 +75,9 @@ pub(crate) struct Cli {
     /// Repeatable; matches are OR-ed.
     ///
     /// Currently honored by `run`, `test`, `start`, `stop`, `restart`,
-    /// `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`,
-    /// `update`, `why`, and implicit-script invocations.
+    /// `install`, `exec`, `list`, `outdated`, `publish`, `deploy`, `add`,
+    /// `remove`, `update`, `query`, `rebuild`, `why`, and implicit-script
+    /// invocations.
     #[usage(short = 'F', long, global, value_name = "WORKSPACE")]
     filter: Vec<String>,
 
@@ -93,10 +94,10 @@ pub(crate) struct Cli {
     verbose: bool,
 
     /// Print version and check for updates.
-    ///
-    /// Manual flag so we can run the async update notifier alongside
-    /// the version print — clap's auto `Action::Version` exits inside
-    /// `parse_from`, before the tokio runtime is built.
+    //
+    // Manual flag so the async update notifier can run alongside the
+    // version print — an auto-generated version action would exit inside
+    // argument parsing, before the tokio runtime is built.
     #[usage(short = 'V', long = "version", global)]
     version: bool,
 
@@ -170,8 +171,7 @@ pub(crate) struct Cli {
     /// Disable colored output.
     ///
     /// Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1`
-    /// so downstream libraries (miette, clx, child processes) all see
-    /// the same choice.
+    /// so child processes see the same choice.
     #[usage(long, global)]
     no_color: bool,
 
@@ -179,9 +179,8 @@ pub(crate) struct Cli {
     ///
     /// `default` renders the progress UI when stderr is a TTY;
     /// `append-only` disables the progress UI in favor of plain
-    /// line-at-a-time logs; `ndjson` swaps the tracing fmt layer for
-    /// the JSON formatter (one JSON object per log event on stderr)
-    /// and is what tooling wrappers should consume; `silent`
+    /// line-at-a-time logs; `ndjson` emits one JSON object per log
+    /// event on stderr and is what tooling wrappers should consume; `silent`
     /// suppresses all non-error output (alias for `--loglevel silent`).
     #[usage(long, global, value_name = "NAME", value_enum)]
     reporter: Option<ReporterType>,
@@ -433,7 +432,7 @@ enum Commands {
     /// Alias for `config get` (hidden; prefer `config get`)
     #[usage(hide)]
     Get(commands::config::GetArgs),
-    /// Print packages whose install scripts were skipped by `pnpm.allowBuilds`
+    /// Print packages whose install scripts were skipped by the `allowBuilds` allowlist
     IgnoredBuilds(commands::ignored_builds::IgnoredBuildsArgs),
     /// Convert a supported lockfile into aube-lock.yaml
     Import(commands::import::ImportArgs),
@@ -477,7 +476,7 @@ enum Commands {
     Pack(commands::pack::PackArgs),
     /// Extract a package into an edit directory so it can be patched
     Patch(commands::patch::PatchArgs),
-    /// Generate a `.patch` file from a `aube patch` edit directory
+    /// Generate a `.patch` file from an `aube patch` edit directory
     PatchCommit(commands::patch_commit::PatchCommitArgs),
     /// Remove patch entries from `pnpm.patchedDependencies`
     PatchRemove(commands::patch_remove::PatchRemoveArgs),
@@ -536,6 +535,7 @@ enum Commands {
     /// Show the companies sponsoring aube and the jdx.dev open source tools
     Sponsors(commands::sponsors::SponsorsArgs),
     /// Stage packages for publishing (not implemented — use `npm stage`)
+    #[usage(hide)]
     Stage(commands::npm_fallback::StageArgs),
     /// Start a package (shortcut for `run start`)
     Start(commands::run::StartArgs),

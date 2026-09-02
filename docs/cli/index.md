@@ -9,18 +9,16 @@
 - **`-C --dir <DIR>`** — Change to directory before running (like `make -C` or `mise --cd`)
 
   **Aliases:** `--cd`, `--prefix`
-- **`-F --filter <WORKSPACE>`** — Scope command execution to workspace packages matching PATTERN.
+- **`-F --filter <WORKSPACE>`** — Scope command execution to workspace packages matching a selector.
 
   Supports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.
 
-  Currently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.
+  Currently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `outdated`, `publish`, `deploy`, `add`, `remove`, `update`, `query`, `rebuild`, `why`, and implicit-script invocations.
 - **`-r --recursive`** — Run the command across every workspace package.
 
   Equivalent to `--filter=*`; if `--filter` is also given, `--recursive` is a no-op and the explicit filter wins. Honored by the same commands as `--filter`.
 - **`-v --verbose`** — Enable verbose/debug logging (shortcut for `--loglevel debug`)
 - **`-V --version`** — Print version and check for updates.
-
-  Manual flag so we can run the async update notifier alongside the version print — clap's auto `Action::Version` exits inside `parse_from`, before the tokio runtime is built.
 - **`--color`** — Force colored output even when stderr is not a TTY.
 
   Overrides `NO_COLOR` / `CLICOLOR=0`. Mutually exclusive with `--no-color`.
@@ -44,10 +42,10 @@
   **Choices:** `trace`, `debug`, `info`, `warn`, `error`, `silent`
 - **`--no-color`** — Disable colored output.
 
-  Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so downstream libraries (miette, clx, child processes) all see the same choice.
+  Overrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so child processes see the same choice.
 - **`--reporter <NAME>`** — Output format: default, append-only, ndjson, silent.
 
-  `default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` swaps the tracing fmt layer for the JSON formatter (one JSON object per log event on stderr) and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).
+  `default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` emits one JSON object per log event on stderr and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).
 
   **Choices:** `default`, `append-only`, `ndjson`, `silent`
 - **`--silent`** — Suppress all non-error output (alias for `--loglevel silent`)
@@ -145,7 +143,6 @@
 - [`aube runtime set [FLAGS] <NAME> <VERSION>`](/cli/runtime/set.md)
 - [`aube sbom [FLAGS]`](/cli/sbom.md)
 - [`aube sponsors`](/cli/sponsors.md)
-- [`aube stage [FLAGS]`](/cli/stage.md)
 - [`aube start [FLAGS] [ARGS]…`](/cli/start.md)
 - [`aube stop [FLAGS] [ARGS]…`](/cli/stop.md)
 - [`aube store <SUBCOMMAND>`](/cli/store.md)
