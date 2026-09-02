@@ -183,7 +183,7 @@ async function buildPlatformPackage(repo, tag, version, target) {
         name: pkgName,
         version,
         description: 'Platform binaries for aube — do not install directly, see @endevco/aube.',
-        homepage: 'https://aube.jdx.dev',
+        homepage: 'https://aube.sh',
         repository: { type: 'git', url: 'https://github.com/jdx/aube' },
         license: 'MIT',
         bin: bins,

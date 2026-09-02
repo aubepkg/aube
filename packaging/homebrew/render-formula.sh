@@ -10,7 +10,7 @@ SOURCE_URL="https://github.com/jdx/aube/archive/refs/tags/${TAG}.tar.gz"
 cat <<FORMULA
 class Aube < Formula
   desc "Fast Node.js package manager that drops into existing projects"
-  homepage "https://aube.jdx.dev"
+  homepage "https://aube.sh"
   url "${SOURCE_URL}"
   sha256 "${SOURCE_SHA256}"
   license "MIT"

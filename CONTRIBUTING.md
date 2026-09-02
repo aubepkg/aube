@@ -1,6 +1,6 @@
 # Contributing
 
-See the [contributing guide](https://aube.jdx.dev/contributing).
+See the [contributing guide](https://aube.sh/contributing).
 
 ## mbx build cache
 

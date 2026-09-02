@@ -108,7 +108,7 @@ JSON
 	# SPDXRef-Root must have outgoing DEPENDS_ON edges to its direct deps,
 	# not just inter-package edges between closure entries.
 	assert_output --partial '"spdxElementId": "SPDXRef-Root"'
-	assert_output --partial 'aube.jdx.dev/spdx/'
+	assert_output --partial 'aube.sh/spdx/'
 }
 
 @test "aube sbom --format spdx emits declared but not concluded licenses" {

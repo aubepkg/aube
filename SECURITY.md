@@ -13,7 +13,7 @@ the release notes unless you prefer otherwise.
 
 aube ships with several supply-chain protections enabled by default and
 several more available as one-line opt-ins. Full reference:
-**[aube.jdx.dev/security](https://aube.jdx.dev/security)**.
+**[aube.sh/security](https://aube.sh/security)**.
 
 | Setting | Default | What it protects against |
 | --- | --- | --- |

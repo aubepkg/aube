@@ -2795,7 +2795,7 @@ Show an update notification when a newer aube is available.
 - .npmrc keys: `updateNotifier`, `update-notifier`
 
 After a successful `install`, `add`, or `update`, aube fetches
-`https://aube.jdx.dev/VERSION` and prints a one-line notice if the
+`https://aube.sh/VERSION` and prints a one-line notice if the
 advertised version is newer than the running binary. The result is
 cached under `<cacheDir>/update-check.json` so only the first run in
 any 24h window touches the network. Failures (DNS, timeout, non-200,

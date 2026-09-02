@@ -41,7 +41,7 @@ const RELEASE_API_BASE: &str = "https://api.github.com/repos/jdx/aube/releases/t
 
 /// Endpoint announcing the newest release (one line, bare version).
 /// Shared with the update notifier. `AUBE_SELF_VERSION_URL` overrides.
-const VERSION_URL: &str = "https://aube.jdx.dev/VERSION";
+const VERSION_URL: &str = "https://aube.sh/VERSION";
 
 /// A validated on-disk aube install.
 #[derive(Debug, Clone)]
@@ -230,7 +230,7 @@ fn versions_host() -> String {
 /// Every published aube version (for resolving range pins to the best
 /// satisfying release). Primary source is the versions host's
 /// plaintext list — CDN-cached, no rate limits; the
-/// `aube.jdx.dev/VERSION` latest-only announcement is the fallback,
+/// `aube.sh/VERSION` latest-only announcement is the fallback,
 /// degrading range resolution to "newest release" rather than failing.
 pub async fn available_aube_versions(retries: u32) -> Result<Vec<node_semver::Version>, Error> {
     let http = Http::new(retries);
