@@ -101,9 +101,10 @@ pub struct RunArgs {
     /// Suppress aube's wrapper output while still showing script
     /// stdout/stderr.
     ///
-    /// Short alias for the global `--silent` flag; long form is
-    /// intentionally omitted to avoid shadowing the global `--silent`
-    /// in clap's dispatch.
+    /// Short alias for the global `--silent` flag.
+    //
+    // The long form is intentionally omitted so this flag does not
+    // shadow the global `--silent` during argument dispatch.
     #[usage(short = 's')]
     pub silent: bool,
     /// Cap the number of recursive packages running at once.

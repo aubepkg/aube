@@ -42,7 +42,7 @@ pub struct LicensesArgs {
     /// `aube licenses ls [flags...]` is accepted as a synonym for
     /// bare `aube licenses [flags...]` so scripts written for pnpm
     /// keep working. Modeled as an optional positional instead of a
-    /// clap subcommand so flags can appear on either side of `ls`
+    /// subcommand so flags can appear on either side of `ls`
     /// (subcommands swallow the parent's flags).
     #[usage(arg, choices("ls"), hide)]
     pub subcommand: Option<String>,

@@ -581,7 +581,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -644,7 +644,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -781,8 +781,8 @@
           {
             "name": "save-dev",
             "usage": "-D --save-dev",
-            "help": "Add as dev dependency",
-            "help_first_line": "Add as dev dependency",
+            "help": "Add as dev dependency.",
+            "help_first_line": "Add as dev dependency.",
             "short": [
               "D"
             ],
@@ -795,8 +795,8 @@
           {
             "name": "save-exact",
             "usage": "-E --save-exact",
-            "help": "Pin the exact resolved version (no `^` prefix)",
-            "help_first_line": "Pin the exact resolved version (no `^` prefix)",
+            "help": "Pin the exact resolved version (no `^` prefix).",
+            "help_first_line": "Pin the exact resolved version (no `^` prefix).",
             "short": [
               "E"
             ],
@@ -824,8 +824,8 @@
           {
             "name": "save-optional",
             "usage": "-O --save-optional",
-            "help": "Add as optional dependency",
-            "help_first_line": "Add as optional dependency",
+            "help": "Add as optional dependency.",
+            "help_first_line": "Add as optional dependency.",
             "short": [
               "O"
             ],
@@ -865,9 +865,9 @@
           {
             "name": "allow-low-downloads",
             "usage": "--allow-low-downloads",
-            "help": "Bypass the similar-name, new-name, and [`lowDownloadThreshold`] confirm prompts / refusals for this invocation.",
-            "help_long": "Bypass the similar-name, new-name, and [`lowDownloadThreshold`] confirm prompts / refusals for this invocation.\n\n`aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below [`lowDownloadThreshold`], resembles a top-100,000 npm package, or is newer than [`minimumPackageAge`]. The flag is intended for cases where you've already verified the package out-of-band. It does not affect the OSV malicious-package check, which remains a hard block.",
-            "help_first_line": "Bypass the similar-name, new-name, and [`lowDownloadThreshold`] confirm prompts / refusals for this invocation.",
+            "help": "Bypass the similar-name, new-name, and `lowDownloadThreshold` confirm prompts / refusals for this invocation.",
+            "help_long": "Bypass the similar-name, new-name, and `lowDownloadThreshold` confirm prompts / refusals for this invocation.\n\n`aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below `lowDownloadThreshold`, resembles a top-100,000 npm package, or is newer than `minimumPackageAge`. The flag is intended for cases where you've already verified the package out-of-band. It does not affect the OSV malicious-package check, which remains a hard block.",
+            "help_first_line": "Bypass the similar-name, new-name, and `lowDownloadThreshold` confirm prompts / refusals for this invocation.",
             "short": [],
             "long": [
               "allow-low-downloads"
@@ -1141,7 +1141,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -1204,7 +1204,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -1246,7 +1246,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -1623,7 +1623,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -1686,7 +1686,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -1867,7 +1867,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -1930,7 +1930,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -2140,7 +2140,7 @@
             "hide": false,
             "args_override_self": true,
             "help": "List configured registries from the project + user `.npmrc`.",
-            "help_long": "List configured registries from the project + user `.npmrc`.\n\nAube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.",
+            "help_long": "List configured registries from the project + user `.npmrc`.\n\naube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.",
             "name": "list-registries",
             "aliases": [],
             "hidden_aliases": [],
@@ -2605,7 +2605,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -2668,7 +2668,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -2710,7 +2710,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -3425,7 +3425,7 @@
                 "name": "location",
                 "usage": "--location <LOCATION>",
                 "help": "Which config location to write to.",
-                "help_long": "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. Aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …) edit one entry at a time. At project scope (`--local`) they land in `pnpm-workspace.yaml#<map>.<entry>` or `package.json#aube.<map>.<entry>` if no workspace yaml exists, the same place install reads from. User-scope dotted writes for these maps error: aube only reads them per project.",
+                "help_long": "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …) edit one entry at a time. At project scope (`--local`) they land in `pnpm-workspace.yaml#<map>.<entry>` or `package.json#aube.<map>.<entry>` if no workspace yaml exists, the same place install reads from. User-scope dotted writes for these maps error: aube only reads them per project.",
                 "help_first_line": "Which config location to write to.",
                 "short": [],
                 "long": [
@@ -3700,7 +3700,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -3763,7 +3763,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -3926,7 +3926,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -3989,7 +3989,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -4031,7 +4031,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -4282,7 +4282,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -4345,7 +4345,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -4387,7 +4387,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -4533,7 +4533,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -4596,7 +4596,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -4732,7 +4732,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -4795,7 +4795,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -5289,7 +5289,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -5352,7 +5352,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -5580,7 +5580,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -5643,7 +5643,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -5685,7 +5685,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -6061,7 +6061,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -6124,7 +6124,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -6166,7 +6166,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -6346,7 +6346,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -6409,7 +6409,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -6451,7 +6451,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -6569,7 +6569,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -6632,7 +6632,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -6868,7 +6868,7 @@
         "unknown_flags": null,
         "hide": false,
         "args_override_self": true,
-        "help": "Print packages whose install scripts were skipped by `pnpm.allowBuilds`",
+        "help": "Print packages whose install scripts were skipped by the `allowBuilds` allowlist",
         "name": "ignored-builds",
         "aliases": [],
         "hidden_aliases": [],
@@ -7027,7 +7027,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -7090,7 +7090,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -7168,8 +7168,8 @@
           {
             "name": "dev",
             "usage": "-D --dev",
-            "help": "Install only devDependencies",
-            "help_first_line": "Install only devDependencies",
+            "help": "Install only devDependencies.",
+            "help_first_line": "Install only devDependencies.",
             "short": [
               "D"
             ],
@@ -7185,8 +7185,8 @@
           {
             "name": "prod",
             "usage": "-P --prod",
-            "help": "Skip devDependencies; install only production deps",
-            "help_first_line": "Skip devDependencies; install only production deps",
+            "help": "Skip devDependencies; install only production deps.",
+            "help_first_line": "Skip devDependencies; install only production deps.",
             "short": [
               "P"
             ],
@@ -7282,8 +7282,8 @@
           {
             "name": "ignore-pnpmfile",
             "usage": "--ignore-pnpmfile",
-            "help": "Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install",
-            "help_first_line": "Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install",
+            "help": "Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install.",
+            "help_first_line": "Skip running `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks for this install.",
             "short": [],
             "long": [
               "ignore-pnpmfile"
@@ -7294,8 +7294,8 @@
           {
             "name": "ignore-scripts",
             "usage": "--ignore-scripts",
-            "help": "Skip lifecycle scripts (no-op; aube already skips by default)",
-            "help_first_line": "Skip lifecycle scripts (no-op; aube already skips by default)",
+            "help": "Skip lifecycle scripts (no-op; aube already skips by default).",
+            "help_first_line": "Skip lifecycle scripts (no-op; aube already skips by default).",
             "short": [],
             "long": [
               "ignore-scripts"
@@ -7355,9 +7355,9 @@
           {
             "name": "network-concurrency",
             "usage": "--network-concurrency <N>",
-            "help": "Cap concurrent tarball downloads.",
-            "help_long": "Cap concurrent tarball downloads.\n\nOverrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Falls back to an auto-scaled default of worker count x3, clamped to 16-64.",
-            "help_first_line": "Cap concurrent tarball downloads.",
+            "help": "Set the starting concurrency for registry requests.",
+            "help_long": "Set the starting concurrency for registry requests.\n\nOverrides `network-concurrency` from `.npmrc` / `aube-workspace.yaml` when set. Seeds aube's adaptive limiter rather than capping it: concurrency still grows and shrinks in response to registry throttling. Falls back to an auto-scaled default of worker count x3, clamped to 16-128.",
+            "help_first_line": "Set the starting concurrency for registry requests.",
             "short": [],
             "long": [
               "network-concurrency"
@@ -7375,8 +7375,8 @@
           {
             "name": "no-optional",
             "usage": "--no-optional",
-            "help": "Skip optionalDependencies; don't install optional native modules",
-            "help_first_line": "Skip optionalDependencies; don't install optional native modules",
+            "help": "Skip optionalDependencies; don't install optional native modules.",
+            "help_first_line": "Skip optionalDependencies; don't install optional native modules.",
             "short": [],
             "long": [
               "no-optional"
@@ -7455,7 +7455,7 @@
             "name": "package-import-method",
             "usage": "--package-import-method <METHOD>",
             "help": "How to import package files from the global store into the virtual store.",
-            "help_long": "How to import package files from the global store into the virtual store.\n\nOne of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy pending strict enforcement), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.",
+            "help_long": "How to import package files from the global store into the virtual store.\n\nOne of `auto` (default: detect the fastest strategy), `hardlink`, `copy`, `clone` (reflink; falls back to copy), or `clone-or-copy` (reflink with a copy fallback). Overrides `package-import-method` / `packageImportMethod` from `.npmrc` / `aube-workspace.yaml` when set.",
             "help_first_line": "How to import package files from the global store into the virtual store.",
             "short": [],
             "long": [
@@ -7685,7 +7685,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -7748,7 +7748,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -7790,7 +7790,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -7960,7 +7960,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -8023,7 +8023,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -8065,7 +8065,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -8356,7 +8356,7 @@
             "name": "SUBCOMMAND",
             "usage": "[SUBCOMMAND]",
             "help": "pnpm-compat subcommand marker.",
-            "help_long": "pnpm-compat subcommand marker.\n\n`aube licenses ls [flags...]` is accepted as a synonym for bare `aube licenses [flags...]` so scripts written for pnpm keep working. Modeled as an optional positional instead of a clap subcommand so flags can appear on either side of `ls` (subcommands swallow the parent's flags).",
+            "help_long": "pnpm-compat subcommand marker.\n\n`aube licenses ls [flags...]` is accepted as a synonym for bare `aube licenses [flags...]` so scripts written for pnpm keep working. Modeled as an optional positional instead of a subcommand so flags can appear on either side of `ls` (subcommands swallow the parent's flags).",
             "help_first_line": "pnpm-compat subcommand marker.",
             "required": false,
             "double_dash": "Optional",
@@ -8453,7 +8453,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -8516,7 +8516,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -9159,7 +9159,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -9222,7 +9222,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -9343,7 +9343,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -9406,7 +9406,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -9655,7 +9655,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -9718,7 +9718,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -9829,7 +9829,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -9892,7 +9892,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -10047,7 +10047,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -10110,7 +10110,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -10188,7 +10188,7 @@
             "name": "PACKAGE",
             "usage": "<PACKAGE>",
             "help": "Package spec, `<name>@<version>`.",
-            "help_long": "Package spec, `<name>@<version>`.\n\nThe package must already be installed in `node_modules` (we copy from the linked virtual store, not from the registry, so the layout matches what install would later patch).",
+            "help_long": "Package spec, `<name>@<version>`.\n\nThe package must already be installed in `node_modules` (aube copies from the linked virtual store, not from the registry, so the layout matches what install would later patch).",
             "help_first_line": "Package spec, `<name>@<version>`.",
             "required": true,
             "double_dash": "Optional",
@@ -10322,7 +10322,7 @@
         "unknown_flags": null,
         "hide": false,
         "args_override_self": true,
-        "help": "Generate a `.patch` file from a `aube patch` edit directory",
+        "help": "Generate a `.patch` file from an `aube patch` edit directory",
         "name": "patch-commit",
         "aliases": [],
         "hidden_aliases": [],
@@ -10513,7 +10513,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -10576,7 +10576,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -10938,7 +10938,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -11001,7 +11001,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -11485,7 +11485,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -11548,7 +11548,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -11590,7 +11590,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -11763,7 +11763,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -11826,7 +11826,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -11868,7 +11868,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -12210,7 +12210,7 @@
             "name": "s",
             "usage": "-s",
             "help": "Suppress aube's wrapper output while still showing script stdout/stderr.",
-            "help_long": "Suppress aube's wrapper output while still showing script stdout/stderr.\n\nShort alias for the global `--silent` flag; long form is intentionally omitted to avoid shadowing the global `--silent` in clap's dispatch.",
+            "help_long": "Suppress aube's wrapper output while still showing script stdout/stderr.\n\nShort alias for the global `--silent` flag.",
             "help_first_line": "Suppress aube's wrapper output while still showing script stdout/stderr.",
             "short": [
               "s"
@@ -12315,7 +12315,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -12378,7 +12378,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -12420,7 +12420,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -12844,7 +12844,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -12907,7 +12907,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -13020,7 +13020,7 @@
             "name": "location",
             "usage": "--location <LOCATION>",
             "help": "Which config location to write to.",
-            "help_long": "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. Aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …) edit one entry at a time. At project scope (`--local`) they land in `pnpm-workspace.yaml#<map>.<entry>` or `package.json#aube.<map>.<entry>` if no workspace yaml exists, the same place install reads from. User-scope dotted writes for these maps error: aube only reads them per project.",
+            "help_long": "Which config location to write to.\n\nDefaults to `user`. Writes land in `.npmrc` for the npm-shared surface — per-host auth/cert templates, scoped registries, and settings tagged `npmShared = true` in the settings registry (`registry`, `proxy` / `https-proxy`, `engine-strict`, `ignore-scripts`, etc.) — so npm and yarn read the same value. aube-only and pnpm-only settings, plus unknown keys, land in aube's own config (`~/.config/aube/config.toml` at user scope, `<cwd>/.config/aube/config.toml` at project scope) where sibling tools don't see them.\n\nDotted writes for aube map settings (`allowBuilds.<pkg>`, `overrides.<pkg>`, …) edit one entry at a time. At project scope (`--local`) they land in `pnpm-workspace.yaml#<map>.<entry>` or `package.json#aube.<map>.<entry>` if no workspace yaml exists, the same place install reads from. User-scope dotted writes for these maps error: aube only reads them per project.",
             "help_first_line": "Which config location to write to.",
             "short": [],
             "long": [
@@ -13133,7 +13133,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -13196,7 +13196,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -13344,7 +13344,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -13407,7 +13407,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -13465,7 +13465,7 @@
         "mounts": [],
         "effect": "read",
         "unknown_flags": null,
-        "hide": false,
+        "hide": true,
         "args_override_self": true,
         "help": "Stage packages for publishing (not implemented — use `npm stage`)",
         "name": "stage",
@@ -13581,7 +13581,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -13644,7 +13644,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -13686,7 +13686,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -13853,7 +13853,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -13916,7 +13916,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -13958,7 +13958,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -14357,7 +14357,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -14420,7 +14420,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -14462,7 +14462,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -14568,7 +14568,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -14631,7 +14631,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -14773,7 +14773,7 @@
                 "name": "fetch-retry-factor",
                 "usage": "--fetch-retry-factor <N>",
                 "help": "Exponential backoff factor between retry attempts.",
-                "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+                "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
                 "help_first_line": "Exponential backoff factor between retry attempts.",
                 "short": [],
                 "long": [
@@ -14836,7 +14836,7 @@
                 "name": "fetch-timeout",
                 "usage": "--fetch-timeout <MS>",
                 "help": "Per-request HTTP timeout in milliseconds.",
-                "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+                "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
                 "help_first_line": "Per-request HTTP timeout in milliseconds.",
                 "short": [],
                 "long": [
@@ -15012,7 +15012,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -15075,7 +15075,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -15296,7 +15296,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -15359,7 +15359,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -15760,7 +15760,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -15823,7 +15823,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -15865,7 +15865,7 @@
             "name": "disable-global-virtual-store",
             "usage": "--disable-global-virtual-store",
             "help": "Force the shared global virtual store off for this invocation.",
-            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.",
+            "help_long": "Force the shared global virtual store off for this invocation.\n\nPackages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).",
             "help_first_line": "Force the shared global virtual store off for this invocation.",
             "short": [],
             "long": [
@@ -16158,7 +16158,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -16221,7 +16221,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -16337,7 +16337,7 @@
             "name": "fetch-retry-factor",
             "usage": "--fetch-retry-factor <N>",
             "help": "Exponential backoff factor between retry attempts.",
-            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.",
+            "help_long": "Exponential backoff factor between retry attempts.\n\nOverrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.",
             "help_first_line": "Exponential backoff factor between retry attempts.",
             "short": [],
             "long": [
@@ -16400,7 +16400,7 @@
             "name": "fetch-timeout",
             "usage": "--fetch-timeout <MS>",
             "help": "Per-request HTTP timeout in milliseconds.",
-            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.",
+            "help_long": "Per-request HTTP timeout in milliseconds.\n\nOverrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).",
             "help_first_line": "Per-request HTTP timeout in milliseconds.",
             "short": [],
             "long": [
@@ -16620,9 +16620,9 @@
       {
         "name": "filter",
         "usage": "-F --filter <WORKSPACE>",
-        "help": "Scope command execution to workspace packages matching PATTERN.",
-        "help_long": "Scope command execution to workspace packages matching PATTERN.\n\nSupports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.\n\nCurrently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `publish`, `deploy`, `add`, `remove`, `update`, `why`, and implicit-script invocations.",
-        "help_first_line": "Scope command execution to workspace packages matching PATTERN.",
+        "help": "Scope command execution to workspace packages matching a selector.",
+        "help_long": "Scope command execution to workspace packages matching a selector.\n\nSupports exact names (`my-pkg`), globs (`@scope/*`, `*-plugin`), paths (`./packages/api`), graph selectors (`pkg...`, `...pkg`), git-ref selectors (`[origin/main]`), and exclusions (`!pkg`). Repeatable; matches are OR-ed.\n\nCurrently honored by `run`, `test`, `start`, `stop`, `restart`, `install`, `exec`, `list`, `outdated`, `publish`, `deploy`, `add`, `remove`, `update`, `query`, `rebuild`, `why`, and implicit-script invocations.",
+        "help_first_line": "Scope command execution to workspace packages matching a selector.",
         "short": [
           "F"
         ],
@@ -16673,7 +16673,6 @@
         "name": "version",
         "usage": "-V --version",
         "help": "Print version and check for updates.",
-        "help_long": "Print version and check for updates.\n\nManual flag so we can run the async update notifier alongside the version print — clap's auto `Action::Version` exits inside `parse_from`, before the tokio runtime is built.",
         "help_first_line": "Print version and check for updates.",
         "short": [
           "V"
@@ -16889,7 +16888,7 @@
         "name": "no-color",
         "usage": "--no-color",
         "help": "Disable colored output.",
-        "help_long": "Disable colored output.\n\nOverrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so downstream libraries (miette, clx, child processes) all see the same choice.",
+        "help_long": "Disable colored output.\n\nOverrides `FORCE_COLOR` / `CLICOLOR_FORCE` and sets `NO_COLOR=1` so child processes see the same choice.",
         "help_first_line": "Disable colored output.",
         "short": [],
         "long": [
@@ -16902,7 +16901,7 @@
         "name": "reporter",
         "usage": "--reporter <NAME>",
         "help": "Output format: default, append-only, ndjson, silent.",
-        "help_long": "Output format: default, append-only, ndjson, silent.\n\n`default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` swaps the tracing fmt layer for the JSON formatter (one JSON object per log event on stderr) and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).",
+        "help_long": "Output format: default, append-only, ndjson, silent.\n\n`default` renders the progress UI when stderr is a TTY; `append-only` disables the progress UI in favor of plain line-at-a-time logs; `ndjson` emits one JSON object per log event on stderr and is what tooling wrappers should consume; `silent` suppresses all non-error output (alias for `--loglevel silent`).",
         "help_first_line": "Output format: default, append-only, ndjson, silent.",
         "short": [],
         "long": [

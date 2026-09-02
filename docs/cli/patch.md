@@ -9,7 +9,7 @@ Extract a package into an edit directory so it can be patched
 ## Arguments
 - **`<PACKAGE>`** — Package spec, `<name>@<version>`.
 
-  The package must already be installed in `node_modules` (we copy from the linked virtual store, not from the registry, so the layout matches what install would later patch).
+  The package must already be installed in `node_modules` (aube copies from the linked virtual store, not from the registry, so the layout matches what install would later patch).
 
 ## Flags
 - **`--edit-dir <DIR>`** — Directory to extract the writable copy into.

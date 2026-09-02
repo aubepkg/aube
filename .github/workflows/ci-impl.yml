@@ -48,10 +48,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/mbx
-      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/mbx
+        with:
+          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          mirror-github-cache: "true"
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -73,17 +76,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/mbx
-      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/mbx
+        with:
+          backend: ${{ inputs.trusted && 'server' || 'github' }}
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
       - run: cargo-machete
-      - run: mise x cargo:cargo-audit@0.22.1 -- cargo audit --deny warnings
-      - run: mise x cargo:cargo-deny@0.19.6 -- cargo deny check bans licenses sources
-      - run: mbx msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
+      - run: mise x cargo:cargo-audit@0.22.1 -- cargo-audit audit --deny warnings
+      - run: mise x cargo:cargo-deny@0.19.6 -- cargo-deny check bans licenses sources
+      - run: mise exec -- cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
       - name: assert render produces no diff
         run: |
@@ -118,10 +123,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: ./.github/actions/mbx
-      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: false
+      - uses: ./.github/actions/mbx
+        with:
+          backend: ${{ inputs.trusted && 'server' || 'github' }}
       # Both parallel API checks invoke Cargo. Complete rustup's lazy toolchain
       # installation first so they cannot race while installing components.
       - name: Prepare Rust toolchain
@@ -156,7 +163,7 @@ jobs:
             run: |
               set +e
               (
-                mbx build --locked --profile ffi -p aube-ffi &&
+                mise exec -- cargo build --locked --profile ffi -p aube-ffi &&
                 grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt &&
                 nm -D --defined-only --extern-only target/ffi/libaube_ffi.so \
                   | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt &&
@@ -246,7 +253,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -285,7 +292,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0 # zizmor: ignore[cache-poisoning] PRs restore only; saves are restricted to main
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -310,13 +317,23 @@ jobs:
     timeout-minutes: 20
     env:
       MBX_TARGET_VIEWS: "0"
+      MISE_EXEC_AUTO_INSTALL: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/mbx
-      - run: mbx build --workspace
-      - run: mbx test --workspace
+        with:
+          backend: ${{ inputs.trusted && 'server' || 'github' }}
+          mirror-github-cache: "true"
+          version: 1.4.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: false
+          cache: false
+          add_shims_to_path: false
+      - run: mise exec -- cargo build --workspace
+      - run: mise exec -- cargo test --workspace
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is

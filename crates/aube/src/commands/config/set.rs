@@ -22,7 +22,7 @@ pub struct SetArgs {
     /// settings tagged `npmShared = true` in the settings registry
     /// (`registry`, `proxy` / `https-proxy`, `engine-strict`,
     /// `ignore-scripts`, etc.) — so npm and yarn read the same value.
-    /// Aube-only and pnpm-only settings, plus unknown keys, land in
+    /// aube-only and pnpm-only settings, plus unknown keys, land in
     /// aube's own config (`~/.config/aube/config.toml` at user scope,
     /// `<cwd>/.config/aube/config.toml` at project scope) where
     /// sibling tools don't see them.

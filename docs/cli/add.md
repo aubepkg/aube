@@ -11,20 +11,20 @@ Add a dependency
 - **`[PACKAGES]…`** — Package(s) to add
 
 ## Flags
-- **`-D --save-dev`** — Add as dev dependency
-- **`-E --save-exact`** — Pin the exact resolved version (no `^` prefix)
+- **`-D --save-dev`** — Add as dev dependency.
+- **`-E --save-exact`** — Pin the exact resolved version (no `^` prefix).
 - **`-g --global`** — Install the package globally.
 
   Installs into the aube/pnpm global directory and links its binaries into the global bin directory. Mirrors `pnpm add -g`.
-- **`-O --save-optional`** — Add as optional dependency
+- **`-O --save-optional`** — Add as optional dependency.
 - **`--allow-build=<PKG>`** — Pre-approve a dependency's lifecycle scripts as part of the add.
 
   Writes `allowBuilds: { <pkg>: true }` into the workspace yaml (or `package.json#aube.allowBuilds`) before the install runs, so the named package's `preinstall` / `install` / `postinstall` scripts execute on this invocation. Repeatable — pass the flag once per package. Mirrors `pnpm add --allow-build=<pkg>`.
 
   Conflicts with `--no-save`, which only snapshots `package.json` and the lockfile and would leave an orphaned approval in the workspace yaml on restore. Also conflicts with `--deny-build` for the same package name.
-- **`--allow-low-downloads`** — Bypass the similar-name, new-name, and [`lowDownloadThreshold`] confirm prompts / refusals for this invocation.
+- **`--allow-low-downloads`** — Bypass the similar-name, new-name, and `lowDownloadThreshold` confirm prompts / refusals for this invocation.
 
-  `aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below [`lowDownloadThreshold`], resembles a top-100,000 npm package, or is newer than [`minimumPackageAge`]. The flag is intended for cases where you've already verified the package out-of-band. It does not affect the OSV malicious-package check, which remains a hard block.
+  `aube add` looks up each candidate's weekly download count and prompts (interactive) or fails (CI) when the count is below `lowDownloadThreshold`, resembles a top-100,000 npm package, or is newer than `minimumPackageAge`. The flag is intended for cases where you've already verified the package out-of-band. It does not affect the OSV malicious-package check, which remains a hard block.
 - **`--dangerously-allow-all-builds`** — Allow every dependency's lifecycle scripts to run.
 
   Bypasses the `allowBuilds` allowlist for this invocation. Do not use in CI. Mirrors pnpm's `--dangerously-allow-all-builds`.
@@ -76,7 +76,7 @@ Add a dependency
   Overrides `fetchRetries` / `fetch-retries` from `.npmrc` / `aube-workspace.yaml` when set. Pair with `--fetch-timeout` to fail fast in scripted test runs.
 - **`--fetch-retry-factor <N>`** — Exponential backoff factor between retry attempts.
 
-  Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only — the underlying `FetchPolicy.retry_factor` is `u32`. Fractional values like `1.5` are rejected by the CLI parser.
+  Overrides `fetchRetryFactor` / `fetch-retry-factor` from `.npmrc` / `aube-workspace.yaml` when set. Integer-only; fractional values like `1.5` are rejected.
 - **`--fetch-retry-maxtimeout <MS>`** — Upper bound (ms) on the computed retry backoff.
 
   Overrides `fetchRetryMaxtimeout` / `fetch-retry-maxtimeout` from `.npmrc` / `aube-workspace.yaml` when set.
@@ -85,7 +85,7 @@ Add a dependency
   Overrides `fetchRetryMintimeout` / `fetch-retry-mintimeout` from `.npmrc` / `aube-workspace.yaml` when set.
 - **`--fetch-timeout <MS>`** — Per-request HTTP timeout in milliseconds.
 
-  Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Applied via `reqwest`'s `.timeout()` so it covers headers + body together.
+  Overrides `fetchTimeout` / `fetch-timeout` from `.npmrc` / `aube-workspace.yaml` when set. Covers the whole request (headers and body together).
 - **`--registry <URL>`** — Override the default registry URL for this invocation.
 
   Use this npm registry URL for package metadata, tarballs, audit requests, dist-tags, and registry writes.
@@ -93,7 +93,7 @@ Add a dependency
 ## Virtual store
 - **`--disable-global-virtual-store`** — Force the shared global virtual store off for this invocation.
 
-  Packages are materialized inside the project's virtual store instead of symlinked from `~/.cache/aube/virtual-store/`.
+  Packages are materialized inside the project's virtual store instead of symlinked from the shared tree under `<cacheDir>/virtual-store/v1/` (by default `~/.cache/aube/virtual-store/v1/`).
 
   **Aliases:** `--disable-gvs`
 - **`--enable-global-virtual-store`** — Force the shared global virtual store on for this invocation.

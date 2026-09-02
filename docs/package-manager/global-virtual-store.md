@@ -178,7 +178,7 @@ package's complete sibling dependency links inside the global virtual store.
 This keeps Node resolution inside the installed dependency graph even after a
 tool follows a package symlink to its physical location.
 
-Vite 8.1 and newer supports shared virtual stores. aube writes the effective
+Vite 8.1 and newer support shared virtual stores. aube writes the effective
 store location to `node_modules/.modules.yaml`, including in linked workspace
 importers, so Vite can add the directory to its development-server filesystem
 allow-list. The file is pnpm-compatible integration metadata; aube continues to

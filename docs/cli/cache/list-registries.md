@@ -6,7 +6,7 @@
 
 List configured registries from the project + user `.npmrc`.
 
-Aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
+aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
 
 ## Flags
 - **`-h --help`** — Print help

@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 pub struct PatchArgs {
     /// Package spec, `<name>@<version>`.
     ///
-    /// The package must already be installed in `node_modules` (we
-    /// copy from the linked virtual store, not from the registry, so
+    /// The package must already be installed in `node_modules` (aube
+    /// copies from the linked virtual store, not from the registry, so
     /// the layout matches what install would later patch).
     pub package: String,
 
