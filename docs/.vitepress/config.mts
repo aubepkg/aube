@@ -112,6 +112,7 @@ export default defineConfig({
     nav: [
       { text: "Home", link: "/" },
       { text: "Benchmarks", link: "/benchmarks" },
+      { text: "Team", link: "/team" },
       { text: "CLI Reference", link: "/cli/" },
       { text: "Settings", link: "/settings/" },
       { text: "Releases", link: "https://github.com/jdx/aube/releases" },
@@ -125,6 +126,7 @@ export default defineConfig({
           { text: "Getting Started", link: "/getting-started" },
           { text: "Installation", link: "/installation" },
           { text: "Contributing", link: "/contributing" },
+          { text: "Team", link: "/team" },
           { text: "For pnpm users", link: "/pnpm-users" },
           { text: "For npm users", link: "/npm-users" },
           { text: "For yarn users", link: "/yarn-users" },

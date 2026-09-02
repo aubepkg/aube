@@ -23,7 +23,7 @@ for non-npm consumers. Package versions track the aube workspace version.
 
 ## Header and operation model
 
-The hand-written [`aube.h`](https://github.com/jdx/aube/blob/main/crates/aube-ffi/include/aube.h)
+The hand-written [`aube.h`](https://github.com/aubepkg/aube/blob/main/crates/aube-ffi/include/aube.h)
 declares these operations:
 
 ```c

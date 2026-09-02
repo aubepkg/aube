@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://aube.jdx.dev">
+  <a href="https://aube.sh">
     <img src="assets/logo.svg" alt="aube logo" width="140" height="140">
   </a>
 </p>
@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://aube.jdx.dev">Read the docs</a></strong>
+  <strong><a href="https://aube.sh">Read the docs</a></strong>
 </p>
 
 <p align="center">
@@ -44,16 +44,16 @@
 ## Why Try It
 
 <!-- BENCH_RATIOS:START -->
-**[Fast installs](https://aube.jdx.dev/benchmarks).** Warm installs are about 8x faster than pnpm and about 3x faster than Bun in the current benchmarks. Repeat test commands run up to 24x faster than pnpm and up to 2x faster than Bun.
+**[Fast installs](https://aube.sh/benchmarks).** Warm installs are about 8x faster than pnpm and about 3x faster than Bun in the current benchmarks. Repeat test commands run up to 24x faster than pnpm and up to 2x faster than Bun.
 <!-- BENCH_RATIOS:END -->
 
-**[Existing lockfiles](https://aube.jdx.dev/package-manager/lockfiles).** Reads and writes `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock` in place.
+**[Existing lockfiles](https://aube.sh/package-manager/lockfiles).** Reads and writes `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock` in place.
 
-**[Cheap repeat commands](https://aube.jdx.dev/package-manager/scripts).** `aubr test`, `aube test`, and `aube exec vitest` auto-install when dependencies are stale, then skip that work when nothing changed. `aubx` uses a local binary when one is installed, or a throwaway environment for one-off tools.
+**[Cheap repeat commands](https://aube.sh/package-manager/scripts).** `aubr test`, `aube test`, and `aube exec vitest` auto-install when dependencies are stale, then skip that work when nothing changed. `aubx` uses a local binary when one is installed, or a throwaway environment for one-off tools.
 
-**[Less disk use](https://aube.jdx.dev/package-manager/node-modules).** A global content-addressable store lets projects share package files instead of keeping a full copy of the same dependencies in every checkout.
+**[Less disk use](https://aube.sh/package-manager/node-modules).** A global content-addressable store lets projects share package files instead of keeping a full copy of the same dependencies in every checkout.
 
-**[Secure defaults](https://aube.jdx.dev/security).** Out of the box, exotic transitive deps are blocked, lifecycle scripts wait for approval, trust downgrades fail at resolve, and brand-new releases sit in a 24h cooling window. One `paranoid: true` line adds the build jail and turns the soft gates into hard fails.
+**[Secure defaults](https://aube.sh/security).** Out of the box, exotic transitive deps are blocked, lifecycle scripts wait for approval, trust downgrades fail at resolve, and brand-new releases sit in a 24h cooling window. One `paranoid: true` line adds the build jail and turns the soft gates into hard fails.
 
 ## Install
 
@@ -63,7 +63,7 @@ The recommended path is mise:
 mise use -g aube
 ```
 
-aube switches [Node.js versions](https://aube.jdx.dev/package-manager/node-runtime)
+aube switches [Node.js versions](https://aube.sh/package-manager/node-runtime)
 itself: if a project pins Node through `package.json`
 (`devEngines.runtime`), `.nvmrc`, or `.node-version`, every script and
 binary run through aube gets that version. If you want plain `node`,
@@ -104,7 +104,7 @@ Homebrew installs come from the jdx tap:
 brew install jdx/tap/aube
 ```
 
-See [other install methods](https://aube.jdx.dev/installation).
+See [other install methods](https://aube.sh/installation).
 
 ## First Run
 
@@ -292,10 +292,10 @@ aube also matches pnpm 11's runtime surface: `aube runtime set node <version>` p
 
 ## Learn More
 
-- [Documentation](https://aube.jdx.dev)
-- [Benchmarks](https://aube.jdx.dev/benchmarks)
-- [Lockfile compatibility](https://aube.jdx.dev/package-manager/lockfiles)
-- [Run scripts and binaries](https://aube.jdx.dev/package-manager/scripts)
+- [Documentation](https://aube.sh)
+- [Benchmarks](https://aube.sh/benchmarks)
+- [Lockfile compatibility](https://aube.sh/package-manager/lockfiles)
+- [Run scripts and binaries](https://aube.sh/package-manager/scripts)
 
 ## CI
 
@@ -311,15 +311,15 @@ Thanks to [Namespace](https://namespace.so) for providing CI for aube.
 
 <a href="https://www.star-history.com/?repos=jdx%2Faube&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=jdx/aube&type=date&theme=dark&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=jdx/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jdx/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&theme=dark&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
  </picture>
 </a>
 
 ## Contributors
 
-[![Contributors](https://contrib.rocks/image?repo=jdx/aube)](https://github.com/jdx/aube/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=aubepkg/aube)](https://github.com/aubepkg/aube/graphs/contributors)
 
 <p>
   <a href="https://jdx.dev">

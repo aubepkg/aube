@@ -115,7 +115,7 @@ If you want to build the current checkout yourself, use the standard source
 build flow:
 
 ```sh
-git clone https://github.com/jdx/aube
+git clone https://github.com/aubepkg/aube
 cd aube
 cargo install --path crates/aube
 ```

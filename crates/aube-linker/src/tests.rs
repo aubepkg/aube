@@ -666,7 +666,7 @@ fn workspace_selected_package_materializes_locally_while_dependencies_use_gvs() 
 
 #[test]
 fn test_link_file_fresh_reports_missing_cas_shard_and_invalidates_cache() {
-    // Reproduces jdx/aube#393: a partially corrupt CAS leaves the
+    // Reproduces aubepkg/aube#393: a partially corrupt CAS leaves the
     // cached package index pointing at a missing shard. Materialize
     // must distinguish "source CAS file missing" from a generic ENOENT
     // and drop the stale index JSON so the next install re-imports
