@@ -39,7 +39,7 @@
     {
       "name": "ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION",
       "category": "Lockfile",
-      "description": "A `pnpm-lock.yaml` (or `aube-lock.yaml`) declares a `lockfileVersion` older than 9 — the pnpm 8.x and earlier formats, which aube cannot read.",
+      "description": "A pnpm lockfile aube cannot read: a `lockfileVersion` older than 9 (the pnpm 8.x and earlier formats), a malformed version, or a v9 header over a pre-v9 body.",
       "exit_code": 16
     },
     {
