@@ -2458,10 +2458,15 @@ fn parse_rejects_v9_header_over_legacy_specifiers_body() {
         "lockfileVersion: '9.0'\n\nspecifiers:\n  is-odd: ^3.0.1\n",
     )
     .unwrap();
-    assert!(matches!(
-        parse(&path),
-        Err(crate::Error::PnpmLockfileLegacyLayout { .. })
-    ));
+    let err = parse(&path).expect_err("legacy specifiers body must be rejected");
+    assert!(
+        matches!(
+            &err,
+            crate::Error::PnpmLockfileLegacyLayout { marker, .. }
+                if marker == "root-level `specifiers:` block"
+        ),
+        "unexpected error: {err:?}"
+    );
 }
 
 /// A pre-v9 *workspace* body already has a populated `importers:`
@@ -2477,8 +2482,17 @@ fn parse_rejects_v9_header_over_legacy_workspace_body() {
     std::fs::write(&path, &relabeled).unwrap();
 
     let err = parse(&path).expect_err("mislabeled legacy workspace body must be rejected");
+    // Assert the reported marker, not just the variant: this fixture
+    // keeps its deps under `importers:`, so naming the package key
+    // proves the slash-key signature is what fired here rather than the
+    // root-block one. `/is-number@6.0.0` is the first slash-prefixed
+    // key in `BTreeMap` order.
     assert!(
-        matches!(&err, crate::Error::PnpmLockfileLegacyLayout { .. }),
+        matches!(
+            &err,
+            crate::Error::PnpmLockfileLegacyLayout { marker, .. }
+                if marker == "package key `/is-number@6.0.0`"
+        ),
         "unexpected error: {err:?}"
     );
 }
