@@ -40,14 +40,14 @@ jobs:
     # series and the ongoing one have to come from the same kind of machine.
     runs-on: [self-hosted, jdx-perf-v1]
     container:
-      image: ghcr.io/jdx/perf-runner@sha256:0f4ee40929472883a32cc29bcd4bd22068c4382b72697da299d6769475b263b5
+      image: ghcr.io/jdx/perf-runner@sha256:5263c143b12ce2234e7b0b21d3d6501c2ed05837b42937d0eaeaa191cd5c8e68
       options: --cpuset-cpus 0-7
     timeout-minutes: 60
     env:
       # Rust 1.97.1 is part of the digest-pinned benchmark image.
       MISE_DISABLE_TOOLS: rust
       RUSTUP_TOOLCHAIN: 1.97.1
-      TAK_RUNNER: jdx-perf-v1-ubuntu24.04-x64-aube-rust1.97.1
+      TAK_RUNNER: jdx-perf-v1-ubuntu24.04-x64-aube-rust1.97.1-img5263c143
     permissions:
       contents: read # listing releases and downloading assets; no write here
     steps:
@@ -70,8 +70,8 @@ jobs:
           {
             echo '### Runner metadata'
             echo '```text'
-            echo 'environment-revision: perf-runner@34a523e'
-            echo 'image: ghcr.io/jdx/perf-runner@sha256:0f4ee40929472883a32cc29bcd4bd22068c4382b72697da299d6769475b263b5'
+            echo 'environment-revision: perf-runner@fd66d9b'
+            echo 'image: ghcr.io/jdx/perf-runner@sha256:5263c143b12ce2234e7b0b21d3d6501c2ed05837b42937d0eaeaa191cd5c8e68'
             uname -a
             lscpu
             mise --version
