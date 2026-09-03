@@ -457,7 +457,7 @@ fi
 # Why instrumentation rather than the more common `perf record + perf2bolt`
 # LBR flow:
 #   - `perf record -j any,u` needs `kernel.perf_event_paranoid <= 1`, which
-#     GitHub-hosted runners don't guarantee or let workflows reconfigure.
+#     the CI runners used for PGO don't guarantee or let workflows reconfigure.
 #   - aarch64 hosts without ARM v9.2 BRBE can't do LBR sampling at all,
 #     so the perf flow would silently miss profile data on the
 #     aarch64-linux PGO row even if paranoid were 0.

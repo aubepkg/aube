@@ -2,6 +2,9 @@ self-hosted-runner:
   labels:
     - jdx-perf-v1
     - bamboo-perf
+    # Release-only PGO builds need 32 GB for fat-LTO linking.
+    - namespace-profile-endev-linux-amd64-large
+    - namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
 
 paths:
   .github/workflows/ci-impl.yml:
