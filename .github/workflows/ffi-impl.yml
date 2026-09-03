@@ -15,9 +15,6 @@ on:
         required: false
         type: boolean
         default: false
-      trusted:
-        required: true
-        type: boolean
     secrets:
       AUBE_GH_TOKEN:
         required: false
@@ -84,7 +81,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
         if: github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase
         with:
-          save-if: ${{ inputs.trusted && github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'

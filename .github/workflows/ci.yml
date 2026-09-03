@@ -9,38 +9,25 @@ on:
 permissions: {}
 
 jobs:
-  trusted:
-    if: ${{ github.actor == 'jdx' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'jdx')) }}
+  ci:
     permissions:
       contents: read
     uses: ./.github/workflows/ci-impl.yml
-    with:
-      trusted: true
-
-  untrusted:
-    if: ${{ github.actor != 'jdx' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx')) }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci-impl.yml
-    with:
-      trusted: false
 
   final:
     name: final
     if: ${{ !cancelled() }}
     permissions: {}
-    needs: [trusted, untrusted]
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - name: Check selected workflow result
+      - name: Check CI result
         env:
-          TRUSTED_RESULT: ${{ needs.trusted.result }}
-          UNTRUSTED_RESULT: ${{ needs.untrusted.result }}
+          CI_RESULT: ${{ needs.ci.result }}
         run: |
-          if [[ "$TRUSTED_RESULT" == success && "$UNTRUSTED_RESULT" == skipped ]] ||
-             [[ "$TRUSTED_RESULT" == skipped && "$UNTRUSTED_RESULT" == success ]]; then
+          if [[ "$CI_RESULT" == success ]]; then
             exit 0
           fi
-          echo "trusted=$TRUSTED_RESULT untrusted=$UNTRUSTED_RESULT"
+          echo "ci=$CI_RESULT"
           exit 1
