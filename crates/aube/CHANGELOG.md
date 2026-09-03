@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.6](https://github.com/jdx/aube/compare/v2.2.5...v2.2.6) - 2026-09-03
+
+### Fixed
+
+- *(release)* restore focal arm64 build image ([#1470](https://github.com/jdx/aube/pull/1470))
+
 ## [2.2.5](https://github.com/aubepkg/aube/compare/v2.2.4...v2.2.5) - 2026-09-03
 
 ### Other
