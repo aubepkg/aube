@@ -33,9 +33,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            runner: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
           - os: macos-latest
-            runner: namespace-profile-endev-macos-arm64;overrides.cache-tag=cache
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
@@ -197,9 +195,8 @@ jobs:
           exit $fail
 
   # BATS integration shards. Linux runs 4 shards (matches Buildkite),
-  # macOS runs 2. Keep these on GitHub-hosted runners: the jail-build
-  # tests assert native OS sandbox behavior that does not match the
-  # Namespace runner profiles.
+  # macOS runs 2. The jail-build tests assert native OS sandbox behavior,
+  # so these stay on the matching GitHub-hosted operating systems.
   # Each shard downloads the OS-matched debug binary from `build` and
   # invokes mise-task ci:bats:nonserial with its shard index. mise provisions
   # rush as the parallel driver on both platforms.
@@ -341,7 +338,7 @@ jobs:
       - bats-serial
       - windows
       - api-stability
-    runs-on: ${{ !inputs.trusted && 'ubuntu-latest' || 'namespace-profile-endev-linux-amd64;overrides.cache-tag=cache' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
     # Run on success or upstream failure but skip when the workflow is cancelled
