@@ -24,6 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  MBX_DISABLE: "1"
   CARGO_INCREMENTAL: "0"
   # Rust 1.97.1 is part of the digest-pinned benchmark image.
   MISE_DISABLE_TOOLS: rust

@@ -20,6 +20,9 @@ concurrency:
   group: node-addon-${{ inputs.tag || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'release' && inputs.tag == '' }}
 
+env:
+  MBX_DISABLE: "1"
+
 jobs:
   targets:
     runs-on: ubuntu-latest
@@ -56,24 +59,22 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      MBX_TARGET_VIEWS: ${{ matrix.os == 'win32' && '0' || '1' }}
       MISE_EXEC_AUTO_INSTALL: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, ref: "${{ inputs.tag || github.ref }}" }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: "24", package-manager-cache: false }
-      - uses: ./.github/actions/mbx
-        if: github.event_name != 'release' && inputs.tag == ''
-        with:
-          backend: server
-          version: 1.5.0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         if: github.event_name != 'release' && inputs.tag == ''
         with:
           install: false
           cache: false
           add_shims_to_path: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
+        if: github.event_name != 'release' && inputs.tag == ''
+        with:
+          save-if: ${{ inputs.trusted && github.ref == 'refs/heads/main' }}
       - name: Install Rust target
         shell: bash
         run: rustup target add '${{ matrix.target }}'
