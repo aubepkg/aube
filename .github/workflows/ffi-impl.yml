@@ -30,6 +30,9 @@ concurrency:
   group: ffi-${{ inputs.tag || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'release' && inputs.tag == '' }}
 
+env:
+  MBX_DISABLE: "1"
+
 jobs:
   targets:
     runs-on: ubuntu-latest

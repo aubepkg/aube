@@ -32,6 +32,9 @@ concurrency:
   group: perf-backfill
   cancel-in-progress: false
 
+env:
+  MBX_DISABLE: "1"
+
 jobs:
   measure:
     name: Measure released binaries

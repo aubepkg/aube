@@ -10,6 +10,7 @@ permissions:
   contents: read
 
 env:
+  MBX_DISABLE: "1"
   CARGO_INCREMENTAL: "0"
 
 jobs:
