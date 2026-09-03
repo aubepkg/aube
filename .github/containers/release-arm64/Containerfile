@@ -77,7 +77,6 @@ RUN mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" \
 COPY mise.toml /mise/config.toml
 
 RUN mise install --system \
-    && mise exec -- mbx --version \
     && mise exec -- node --version \
     && mise exec -- rustc --version \
     && chmod -R a+rX /mise /usr/local/share/mise
