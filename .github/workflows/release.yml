@@ -82,7 +82,7 @@ jobs:
 
   generate-primer:
     needs: validate-inputs
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -237,7 +237,7 @@ jobs:
   upload-assets-musl-arm64:
     needs: generate-primer
     # Release builds must never restore or save persistent caches.
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
@@ -304,6 +304,8 @@ jobs:
   # native ARM64 execution for both Rust PGO and BOLT instrumentation training.
   upload-assets-pgo-arm64-linux:
     needs: generate-primer
+    # The instrumented fat-LTO link can exceed the 16 GB available on
+    # standard GitHub-hosted runners, so this release-only job needs 32 GB.
     runs-on: namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
     timeout-minutes: 180
     permissions:
@@ -323,14 +325,6 @@ jobs:
         with:
           name: metadata-primer
           path: crates/aube-resolver/data
-      # Persist Cargo's registry and target across the container boundary;
-      # BuildKit only caches the image environment, not docker-run state.
-      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ github.workspace }}/target
       # BuildKit reuses unchanged dependency/toolchain layers from the GHA
       # cache; changing the Containerfile or mise.toml invalidates only the
       # layers after that change.
@@ -450,8 +444,8 @@ jobs:
     needs: generate-primer
     runs-on: ${{ matrix.runner }}
     # 180 to cover macos-latest (3 vCPU) which needs ~80 min for two
-    # fat-LTO compiles. Linux PGO on -large runners completes in well
-    # under 75, so the extra headroom is dead slack for them.
+    # fat-LTO compiles. The Linux rows use 32 GB release-only runners because
+    # the instrumented link has exceeded standard-runner memory in the past.
     timeout-minutes: 180
     permissions:
       contents: read
@@ -486,15 +480,6 @@ jobs:
             bolt: false
           - target: aarch64-apple-darwin
             os: macos-latest
-            # Trying GitHub's standard Apple Silicon runner — the
-            # namespace `macos-arm64-large` image segfaulted the
-            # PGO-instrumented binary on both rustc 1.94 and 1.95
-            # (#589's rustup bump fired but training still SIGSEGV'd,
-            # so the toolchain isn't the variable). Switch to GH's
-            # hosted runner to test whether the crash is image- or
-            # hardware-specific to the namespace fleet (older Apple
-            # silicon, custom kernel/Xcode bundle, sandbox quirks)
-            # before dropping macOS arm64 from the PGO matrix entirely.
             runner: macos-latest
             build-tool: cargo
             bolt: false
@@ -543,8 +528,8 @@ jobs:
           # GH macos-latest-large defaults to an x86_64-apple-darwin
           # host rustc (Rosetta) — `--target=aarch64-apple-darwin`
           # from pgo.bash then triggers a cross-compile that needs the
-          # arm64 std lib explicitly installed. Idempotent on namespace
-          # runners where the target is already present.
+          # arm64 std lib explicitly installed. The command is idempotent when
+          # the target is already present.
           rustup target add aarch64-apple-darwin
           rustup show
       - name: Install rustup llvm-tools-preview

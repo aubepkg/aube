@@ -2,15 +2,9 @@ self-hosted-runner:
   labels:
     - jdx-perf-v1
     - bamboo-perf
-    - namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
-    - namespace-profile-endev-linux-amd64-large;overrides.cache-tag=cache
-    - namespace-profile-endev-linux-amd64
+    # Release-only PGO builds need 32 GB for fat-LTO linking.
     - namespace-profile-endev-linux-amd64-large
-    - namespace-profile-endev-linux-arm64;overrides.cache-tag=cache
-    - namespace-profile-endev-linux-arm64-large;overrides.cache-tag=cache
     - namespace-profile-endev-linux-arm64-large;overrides.cache-tag=aube-rust-linux-arm64
-    - namespace-profile-endev-macos-arm64;overrides.cache-tag=cache
-    - namespace-profile-endev-macos-arm64-large;overrides.cache-tag=cache
 
 paths:
   .github/workflows/ci-impl.yml:

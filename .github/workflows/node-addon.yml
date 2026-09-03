@@ -52,8 +52,16 @@ on:
 permissions: {}
 
 jobs:
-  trusted:
-    if: ${{ github.event_name == 'release' || inputs.tag != '' || (github.actor == 'jdx' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'jdx'))) }}
+  build:
+    if: ${{ github.event_name != 'release' && inputs.tag == '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/node-addon-impl.yml
+    with:
+      tag: ""
+
+  release:
+    if: ${{ github.event_name == 'release' || inputs.tag != '' }}
     permissions:
       attestations: write
       contents: read
@@ -61,36 +69,26 @@ jobs:
     uses: ./.github/workflows/node-addon-impl.yml
     with:
       tag: ${{ inputs.tag || '' }}
-      trusted: true
     secrets:
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
 
-  untrusted:
-    if: ${{ github.event_name != 'release' && inputs.tag == '' && (github.actor != 'jdx' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login != 'jdx'))) }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/node-addon-impl.yml
-    with:
-      tag: ""
-      trusted: false
-
   packages:
     name: packages
-    if: ${{ always() && !cancelled() && needs.trusted.result != 'cancelled' && needs.untrusted.result != 'cancelled' }}
+    if: ${{ always() && !cancelled() && needs.build.result != 'cancelled' && needs.release.result != 'cancelled' }}
     permissions: {}
-    needs: [trusted, untrusted]
+    needs: [build, release]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
       - name: Check selected workflow result
         env:
-          TRUSTED_RESULT: ${{ needs.trusted.result }}
-          UNTRUSTED_RESULT: ${{ needs.untrusted.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
         run: |
-          if [[ "$TRUSTED_RESULT" == success && "$UNTRUSTED_RESULT" == skipped ]] ||
-             [[ "$TRUSTED_RESULT" == skipped && "$UNTRUSTED_RESULT" == success ]]; then
+          if [[ "$BUILD_RESULT" == success && "$RELEASE_RESULT" == skipped ]] ||
+             [[ "$BUILD_RESULT" == skipped && "$RELEASE_RESULT" == success ]]; then
             exit 0
           fi
-          echo "trusted=$TRUSTED_RESULT untrusted=$UNTRUSTED_RESULT"
+          echo "build=$BUILD_RESULT release=$RELEASE_RESULT"
           exit 1

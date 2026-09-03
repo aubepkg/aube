@@ -155,7 +155,7 @@ jobs:
     # just keeps them out of the shared series, which matters because a branch
     # may have changed the fixture or the subject while keeping the bench name.
     if: github.ref == 'refs/heads/main'
-    runs-on: namespace-profile-endev-linux-amd64;overrides.cache-tag=cache
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # pushing refs/notes/tak is a write to this repository
