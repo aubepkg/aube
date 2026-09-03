@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import spec from "../cli/commands.json";
+import { ogImagePath } from "../scripts/generate-og-images.mjs";
 
 interface Cmd {
   name: string;
@@ -37,10 +38,12 @@ const releaseMetadata = JSON.parse(
 ) as ReleaseMetadata;
 const aubeReleasedAt =
   releaseMetadata.version === aubeVersion ? (releaseMetadata.releasedAt ?? "") : "";
+const siteUrl = "https://aube.sh";
+const siteDescription = "A fast Node.js package manager";
 
 export default defineConfig({
   title: "aube",
-  description: "A fast Node.js package manager",
+  description: siteDescription,
   appearance: "force-dark",
   head: [
     [
@@ -107,6 +110,32 @@ export default defineConfig({
     ["link", { rel: "manifest", href: "/site.webmanifest" }],
     ["meta", { name: "theme-color", content: "#FFB13B" }],
   ],
+  transformHead({ pageData }) {
+    const title = pageData.relativePath === "index.md" ? siteDescription : pageData.title;
+    const description = pageData.description || siteDescription;
+    const image = `${siteUrl}/${ogImagePath(pageData.relativePath)}`;
+    const url = new URL(
+      pageData.relativePath.replace(/index\.md$/, "").replace(/\.md$/, ""),
+      `${siteUrl}/`,
+    ).toString();
+
+    return [
+      ["meta", { property: "og:type", content: "website" }],
+      ["meta", { property: "og:site_name", content: "aube" }],
+      ["meta", { property: "og:url", content: url }],
+      ["meta", { property: "og:title", content: title }],
+      ["meta", { property: "og:description", content: description }],
+      ["meta", { property: "og:image", content: image }],
+      ["meta", { property: "og:image:width", content: "1200" }],
+      ["meta", { property: "og:image:height", content: "630" }],
+      ["meta", { property: "og:image:alt", content: `${title} — aube` }],
+      ["meta", { name: "twitter:card", content: "summary_large_image" }],
+      ["meta", { name: "twitter:title", content: title }],
+      ["meta", { name: "twitter:description", content: description }],
+      ["meta", { name: "twitter:image", content: image }],
+      ["meta", { name: "twitter:image:alt", content: `${title} — aube` }],
+    ];
+  },
   themeConfig: {
     logo: "/logo.svg",
     nav: [
