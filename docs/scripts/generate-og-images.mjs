@@ -62,89 +62,14 @@ export function titleFromMarkdown(markdown, relativePath) {
     ?.replaceAll("-", " ") ?? "Documentation";
 }
 
-function escapeXml(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
-function wrapTitle(title, maxUnits) {
-  const words = title.split(/\s+/);
-  const lines = [];
-  let line = "";
-
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && candidate.length > maxUnits) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line) lines.push(line);
-
-  return lines;
-}
-
-function fitTitle(title) {
-  for (const fontSize of [110, 92, 76, 66]) {
-    // The title area is 1,048px wide. At these weights a sans glyph averages
-    // roughly 0.56em; the small safety margin keeps platform font differences
-    // from clipping the right edge.
-    const maxUnits = Math.floor(1020 / (fontSize * 0.56));
-    const lines = wrapTitle(title, maxUnits);
-    if (lines.length <= 3) return { fontSize, lines };
-  }
-
-  const fontSize = 60;
-  const maxUnits = Math.floor(1020 / (fontSize * 0.56));
-  const lines = wrapTitle(title, maxUnits).slice(0, 3);
-  lines[2] = `${lines[2].slice(0, Math.max(1, maxUnits - 1)).trimEnd()}…`;
-  return { fontSize, lines };
-}
-
-export function renderOgSvg(title) {
-  const { fontSize, lines } = fitTitle(title);
-  const lineHeight = Math.round(fontSize * 1.04);
-  const titleY = lines.length === 1 ? 270 : lines.length === 2 ? 230 : 196;
-  const tspans = lines
-    .map(
-      (line, index) =>
-        `<tspan x="76" y="${titleY + index * lineHeight}">${escapeXml(line)}</tspan>`,
-    )
-    .join("");
-
+export function renderOgSvg() {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}">
-  <defs>
-    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(600 -10) scale(520 330)" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5ee0ba" stop-opacity=".28"/>
-      <stop offset=".55" stop-color="#e2b046" stop-opacity=".13"/>
-      <stop offset="1" stop-color="#f07851" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="sunrise" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#5ee0ba"/>
-      <stop offset=".55" stop-color="#e2b046"/>
-      <stop offset="1" stop-color="#f07851"/>
-    </linearGradient>
-  </defs>
   <rect width="1200" height="630" fill="#100f0d"/>
-  <rect width="1200" height="630" fill="url(#glow)"/>
-  <rect x="28" y="28" width="1144" height="574" rx="20" fill="none" stroke="#39332d"/>
-
-  <text x="76" y="104" fill="#f07851" font-family="monospace" font-size="24" font-weight="600" letter-spacing="4">AUBE DOCUMENTATION</text>
-  <text fill="#f4f0e8" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" font-weight="600" letter-spacing="-2">${tspans}</text>
-
-  <g transform="translate(76 506)">
-    <path d="M0 48H72" stroke="#f4f0e8" stroke-width="8" stroke-linecap="round"/>
-    <path d="M15 48A21 21 0 0 1 57 48" stroke="url(#sunrise)" stroke-width="8" stroke-linecap="round"/>
-    <text x="96" y="58" fill="#f4f0e8" font-family="Georgia, serif" font-size="58">aube</text>
+  <g transform="translate(390 145.5) scale(1.5)">
+    <path d="M0 154H280" stroke="#fff" stroke-width="32" stroke-linecap="round"/>
+    <path d="M58 154A82 82 0 0 1 222 154" stroke="#fff" stroke-width="32" stroke-linecap="round"/>
   </g>
-  <text x="1124" y="561" text-anchor="end" fill="#aba297" font-family="monospace" font-size="29">aube.sh</text>
 </svg>`;
 }
 

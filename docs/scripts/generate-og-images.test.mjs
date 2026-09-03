@@ -18,8 +18,9 @@ test("maps documentation paths to stable image paths", () => {
   assert.equal(ogImagePath("cli/install.md"), "og/cli/install.png");
 });
 
-test("escapes titles embedded in the SVG", () => {
-  const svg = renderOgSvg("Install <fast> & safely");
-  assert.match(svg, /Install &lt;fast&gt; &amp;/);
-  assert.doesNotMatch(svg, /Install <fast> & safely/);
+test("renders only the white logo on the dark background", () => {
+  const svg = renderOgSvg();
+  assert.equal((svg.match(/<path /g) ?? []).length, 2);
+  assert.equal((svg.match(/stroke="#fff"/g) ?? []).length, 2);
+  assert.doesNotMatch(svg, /<text|<defs|gradient/);
 });
