@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.5](https://github.com/aubepkg/aube/compare/aube-codes-v2.2.4...aube-codes-v2.2.5) - 2026-09-03
+
+### Fixed
+
+- *(lockfile)* reject pre-v9 pnpm lockfiles instead of installing nothing ([#1456](https://github.com/aubepkg/aube/pull/1456))
+
+### Other
+
+- move routine workflows to GitHub-hosted runners ([#1469](https://github.com/aubepkg/aube/pull/1469))
+- move project to aubepkg and aube.sh ([#1460](https://github.com/aubepkg/aube/pull/1460))
+- fix prose and content in docs and cli help ([#1455](https://github.com/aubepkg/aube/pull/1455))
+- refresh benchmarks for v2.2.4 ([#1434](https://github.com/aubepkg/aube/pull/1434))
+
 ## [2.2.4](https://github.com/jdx/aube/compare/aube-codes-v2.2.3...aube-codes-v2.2.4) - 2026-08-31
 
 ### Other
