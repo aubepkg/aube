@@ -20,6 +20,13 @@
       "matchManagers": ["cargo"],
       "matchPackageNames": ["yamlpatch", "yamlpath"],
       "allowedVersions": "<1.28.0"
+    },
+    {
+      "description": "Keep the ARM64 release image on Ubuntu Focal for glibc 2.31 compatibility.",
+      "matchManagers": ["dockerfile"],
+      "matchFileNames": [".github/containers/release-arm64/Containerfile"],
+      "matchPackageNames": ["ubuntu"],
+      "allowedVersions": "/^20\\.04$/"
     }
   ]
 }
