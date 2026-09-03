@@ -48,7 +48,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ inputs.trusted && github.ref == 'refs/heads/main' }}
       - run: mise run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -75,7 +75,7 @@ jobs:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ inputs.trusted && github.ref == 'refs/heads/main' }}
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       - run: mise run lint
@@ -122,7 +122,7 @@ jobs:
           cache_save: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ inputs.trusted && github.ref == 'refs/heads/main' }}
       # Both parallel API checks invoke Cargo. Complete rustup's lazy toolchain
       # installation first so they cannot race while installing components.
       - name: Prepare Rust toolchain
@@ -323,7 +323,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
         with:
           shared-key: windows
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ inputs.trusted && github.ref == 'refs/heads/main' }}
       - run: mise exec -- cargo build --workspace
       - run: mise exec -- cargo test --workspace
 
