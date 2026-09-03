@@ -9,7 +9,6 @@ cargo.binstall_native = true
 
 [tools]
 actionlint = "latest"
-mr-boxington = "1.5.0"
 usage = "6.6.1"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
@@ -33,10 +32,6 @@ pkl = "latest"
 rush = "latest"
 shellcheck = "latest"
 shfmt = "latest"
-
-[wrappers.cargo]
-command = "mbx"
-env = { MBX_CARGO_SHIM_MODE = "1" }
 
 [tasks.lint]
 run = "hk check --all --slow"
@@ -143,7 +138,7 @@ run = [
 # because the install benchmark uses --offline, and it is outside the
 # measurement on purpose — nothing tak times ever touches the registry.
 [tasks."perf:build"]
-run = "mbx build --release"
+run = "cargo build --release"
 
 [tasks.perf]
 dir = "{{config_root}}"
