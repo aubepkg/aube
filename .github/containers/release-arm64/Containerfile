@@ -21,21 +21,21 @@ ARG PKG_CONFIG_VERSION=0.29.1-0ubuntu4
 ARG WGET_VERSION=1.20.3-1ubuntu2.1
 ARG XZ_UTILS_VERSION=5.2.4-1ubuntu1.1
 
-# The mounted repository has a broader developer tool list; missing task
-# tools must not make this focused release image install unsupported assets.
+# The mounted repository has a broader developer tool list. Keep runtime
+# auto-install disabled so this focused, non-root release image uses only the
+# system tools installed from its scoped config below.
 ENV DEBIAN_FRONTEND=noninteractive \
     MISE_CACHE_DIR=/mise/cache \
     MISE_CONFIG_DIR=/mise \
     MISE_DATA_DIR=/mise \
     MISE_INSTALL_PATH=/usr/local/bin/mise \
     MISE_SYSTEM_DATA_DIR=/usr/local/share/mise \
-    MISE_TASK_RUN_AUTO_INSTALL=false \
+    MISE_AUTO_INSTALL=false \
     MISE_TRUSTED_CONFIG_PATHS=/mise \
     MISE_YES=1 \
     CARGO_HOME=/usr/local/share/mise/cargo \
     RUSTUP_HOME=/usr/local/share/mise/rustup \
-    RUSTUP_TOOLCHAIN=1.97.0 \
-    PATH=/usr/local/share/mise/cargo/bin:/usr/local/share/mise/installs/node/24.14.0/bin:/mise/shims:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/usr/local/share/mise/cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
