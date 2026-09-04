@@ -69,6 +69,7 @@ yamlpath = ">=1.25, <1.28"
 serde_yaml = "0.9"
 sonic-rs = "0.5"
 toml = "1"
+toml_edit = "0.25"
 rkyv = "0.8"
 
 # CLI
