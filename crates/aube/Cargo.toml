@@ -98,6 +98,7 @@ is_ci = "1"
 ci_info = "0.14"
 pluralizer = "0.5"
 toml = { workspace = true }
+toml_edit = { workspace = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "std"], optional = true }
 crossterm = { version = "0.29", optional = true }
