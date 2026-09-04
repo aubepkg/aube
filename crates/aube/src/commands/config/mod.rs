@@ -251,6 +251,38 @@ pub(super) fn is_npm_shared_key(key: &str) -> bool {
     setting_for_key(key).is_some_and(|meta| meta.npm_shared)
 }
 
+/// Redact credentials before config values cross the command-output boundary.
+///
+/// This follows npm's deliberately broad treatment of underscore-prefixed
+/// authentication fields and also covers the inline TLS private-key spelling
+/// accepted by aube's registry configuration. Non-secret URLs still pass
+/// through [`aube_util::url::redact_url`] so embedded userinfo is not echoed.
+pub(super) fn display_config_value(key: &str, value: &str) -> String {
+    let lower = key.to_ascii_lowercase();
+    let suffix = lower.rsplit_once(':').map_or(lower.as_str(), |(_, v)| v);
+    let is_protected_name = |name| {
+        matches!(
+            name,
+            "auth"
+                | "authtoken"
+                | "certfile"
+                | "email"
+                | "key"
+                | "keyfile"
+                | "password"
+                | "username"
+        )
+    };
+    if lower.starts_with('_')
+        || is_protected_name(&lower)
+        || (lower.starts_with("//") && (suffix.starts_with('_') || is_protected_name(suffix)))
+    {
+        "(protected)".to_string()
+    } else {
+        aube_util::url::redact_url(value)
+    }
+}
+
 pub(super) fn setting_for_key(key: &str) -> Option<&'static settings_meta::SettingMeta> {
     settings_meta::find(key).or_else(|| {
         settings_meta::all().iter().find(|meta| {
@@ -442,6 +474,28 @@ mod tests {
         assert_eq!(
             list::canonical_list_key("//registry.example.com/:_authToken"),
             "//registry.example.com/:_authToken"
+        );
+    }
+
+    #[test]
+    fn display_config_value_protects_credentials_and_redacts_urls() {
+        for key in [
+            "_authToken",
+            "//registry.example.com/:_authToken",
+            "//registry.example.com/:username",
+            "//registry.example.com/:_password",
+            "//registry.example.com/:key",
+            "email",
+        ] {
+            assert_eq!(display_config_value(key, "secret"), "(protected)");
+        }
+        assert_eq!(
+            display_config_value("registry", "https://example.com"),
+            "https://example.com"
+        );
+        assert_eq!(
+            display_config_value("proxy", "https://user:secret@example.com"),
+            "https://***@example.com"
         );
     }
 

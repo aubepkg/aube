@@ -1,6 +1,6 @@
 use super::{
-    ListLocation, literal_aliases, read_merged, read_single, setting_default_value,
-    setting_for_key, settings_meta, user_npmrc_path,
+    ListLocation, display_config_value, literal_aliases, read_merged, read_single,
+    setting_default_value, setting_for_key, settings_meta, user_npmrc_path,
 };
 use aube_settings::meta::SettingMeta;
 use miette::miette;
@@ -137,13 +137,14 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
         let obj: serde_json::Map<String, serde_json::Value> = seen
             .into_iter()
             .map(|(k, v)| {
+                let display = display_config_value(&k, &v);
                 let value = if args.all {
                     serde_json::json!({
-                        "value": v,
+                        "value": display,
                         "default": defaults.contains(&k),
                     })
                 } else {
-                    serde_json::Value::String(v)
+                    serde_json::Value::String(display)
                 };
                 (k, value)
             })
@@ -153,10 +154,11 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
         println!("{out}");
     } else {
         for (k, v) in &seen {
+            let display = display_config_value(k, v);
             if defaults.contains(k) {
-                println!("{k}={v} (default)");
+                println!("{k}={display} (default)");
             } else {
-                println!("{k}={v}");
+                println!("{k}={display}");
             }
         }
     }
