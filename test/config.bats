@@ -267,6 +267,40 @@ TOML
 	assert_output --partial "auto-install-peers=false"
 }
 
+@test "config list protects credentials in text and JSON output" {
+	mkdir proj
+	cat >proj/.npmrc <<'EOF'
+//registry.example.com/:_authToken=token-secret
+//registry.example.com/:username=user-secret
+//registry.example.com/:_password=password-secret
+https-proxy=https://proxy-user:proxy-secret@proxy.example.com
+EOF
+	cd proj
+	run aube config list
+	assert_success
+	assert_output --partial "//registry.example.com/:_authToken=(protected)"
+	assert_output --partial "//registry.example.com/:username=(protected)"
+	assert_output --partial "//registry.example.com/:_password=(protected)"
+	assert_output --partial "https-proxy=https://***@proxy.example.com"
+	refute_output --partial "token-secret"
+	refute_output --partial "user-secret"
+	refute_output --partial "password-secret"
+	refute_output --partial "proxy-secret"
+
+	run bash -c 'aube config list --json | jq -r ".[\"//registry.example.com/:_authToken\"]"'
+	assert_success
+	assert_output "(protected)"
+}
+
+@test "config set does not echo credentials" {
+	run aube config set "//registry.example.com/:_authToken" token-secret
+	assert_success
+	assert_output --partial "//registry.example.com/:_authToken=(protected)"
+	refute_output --partial "token-secret"
+	run grep token-secret "$HOME/.npmrc"
+	assert_success
+}
+
 @test "config with no subcommand lists merged entries" {
 	mkdir proj
 	echo "registry=https://user.example.com/" >"$HOME/.npmrc"
