@@ -31,15 +31,20 @@ function getCommands(cmd: Cmd): string[][] {
 const commands = getCommands(spec.cmd as unknown as Cmd);
 const configDir = dirname(fileURLToPath(import.meta.url));
 const cargoToml = readFileSync(resolve(configDir, "../../Cargo.toml"), "utf8");
-const versionMatch = cargoToml.match(/\[workspace\.package\][\s\S]*?\nversion\s*=\s*"([^"]+)"/);
+const versionMatch = cargoToml.match(
+  /\[workspace\.package\][\s\S]*?\nversion\s*=\s*"([^"]+)"/,
+);
 const aubeVersion = versionMatch?.[1] ?? "0.0.0";
 const releaseMetadata = JSON.parse(
   readFileSync(resolve(configDir, "../../release.json"), "utf8"),
 ) as ReleaseMetadata;
 const aubeReleasedAt =
-  releaseMetadata.version === aubeVersion ? (releaseMetadata.releasedAt ?? "") : "";
+  releaseMetadata.version === aubeVersion
+    ? (releaseMetadata.releasedAt ?? "")
+    : "";
 const siteUrl = "https://aube.sh";
-const siteDescription = "A fast Node.js package manager";
+const siteDescription =
+  "A fast, secure Node.js package manager with pnpm-compatible workflows, deterministic installs, content-addressed storage, and scripts disabled by default.";
 
 export default defineConfig({
   title: "aube",
@@ -111,7 +116,10 @@ export default defineConfig({
     ["meta", { name: "theme-color", content: "#FFB13B" }],
   ],
   transformHead({ pageData }) {
-    const title = pageData.relativePath === "index.md" ? siteDescription : pageData.title;
+    const title =
+      pageData.relativePath === "index.md"
+        ? "aube — fast Node.js package management"
+        : pageData.title;
     const description = pageData.description || siteDescription;
     const image = `${siteUrl}/${ogImagePath(pageData.relativePath)}`;
     const url = new URL(
@@ -120,8 +128,10 @@ export default defineConfig({
     ).toString();
 
     return [
+      ["link", { rel: "canonical", href: url }],
       ["meta", { property: "og:type", content: "website" }],
       ["meta", { property: "og:site_name", content: "aube" }],
+      ["meta", { property: "og:locale", content: "en_US" }],
       ["meta", { property: "og:url", content: url }],
       ["meta", { property: "og:title", content: title }],
       ["meta", { property: "og:description", content: description }],
@@ -130,10 +140,23 @@ export default defineConfig({
       ["meta", { property: "og:image:height", content: "630" }],
       ["meta", { property: "og:image:alt", content: `${title} — aube` }],
       ["meta", { name: "twitter:card", content: "summary_large_image" }],
+      ["meta", { name: "twitter:site", content: "@jdxcode" }],
       ["meta", { name: "twitter:title", content: title }],
       ["meta", { name: "twitter:description", content: description }],
       ["meta", { name: "twitter:image", content: image }],
       ["meta", { name: "twitter:image:alt", content: `${title} — aube` }],
+      [
+        "script",
+        { type: "application/ld+json" },
+        JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: title,
+          description,
+          url,
+          isPartOf: { "@type": "WebSite", name: "aube", url: siteUrl },
+        }),
+      ],
     ];
   },
   themeConfig: {
@@ -168,14 +191,32 @@ export default defineConfig({
         text: "Package Manager",
         items: [
           { text: "Install dependencies", link: "/package-manager/install" },
-          { text: "Manage dependencies", link: "/package-manager/dependencies" },
-          { text: "Run scripts and binaries", link: "/package-manager/scripts" },
-          { text: "Node runtime switching", link: "/package-manager/node-runtime" },
+          {
+            text: "Manage dependencies",
+            link: "/package-manager/dependencies",
+          },
+          {
+            text: "Run scripts and binaries",
+            link: "/package-manager/scripts",
+          },
+          {
+            text: "Node runtime switching",
+            link: "/package-manager/node-runtime",
+          },
           { text: "Workspaces", link: "/package-manager/workspaces" },
           { text: "Lockfiles", link: "/package-manager/lockfiles" },
-          { text: "node_modules layout", link: "/package-manager/node-modules" },
-          { text: "Global virtual store", link: "/package-manager/global-virtual-store" },
-          { text: "Lifecycle scripts", link: "/package-manager/lifecycle-scripts" },
+          {
+            text: "node_modules layout",
+            link: "/package-manager/node-modules",
+          },
+          {
+            text: "Global virtual store",
+            link: "/package-manager/global-virtual-store",
+          },
+          {
+            text: "Lifecycle scripts",
+            link: "/package-manager/lifecycle-scripts",
+          },
           { text: "Configuration", link: "/package-manager/configuration" },
           { text: "Registry and auth", link: "/package-manager/registry-auth" },
           { text: "Publishing", link: "/package-manager/publishing" },
@@ -187,7 +228,10 @@ export default defineConfig({
           { text: "Overview", link: "/security" },
           { text: "Trust policy downgrades", link: "/trust-policy-exceptions" },
           { text: "Jailed builds", link: "/package-manager/jailed-builds" },
-          { text: "Security scanner", link: "/package-manager/security-scanner" },
+          {
+            text: "Security scanner",
+            link: "/package-manager/security-scanner",
+          },
         ],
       },
       {
@@ -201,9 +245,7 @@ export default defineConfig({
       },
       {
         text: "Performance",
-        items: [
-          { text: "Benchmarks", link: "/benchmarks" },
-        ],
+        items: [{ text: "Benchmarks", link: "/benchmarks" }],
       },
       {
         text: "CLI Reference",
