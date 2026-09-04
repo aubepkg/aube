@@ -344,6 +344,20 @@ jobs:
           # can restore it but must not let an arbitrary ref poison it.
           cache-to: ${{ !fromJSON(inputs.dry_run || 'false') && inputs.ref == '' && github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=aube-release-arm64' || '' }}
 
+      - name: Smoke-test ARM64 PGO environment
+        shell: bash
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --env MISE_CACHE_DIR=/tmp/mise-cache \
+            aube-release-arm64:local \
+            mise -C /mise exec -- bash -euo pipefail -c '
+              node --version
+              rustc --version
+              cargo --version
+            '
+
       - name: PGO build (Focal + LLD + BOLT)
         shell: bash
         env:
@@ -372,11 +386,12 @@ jobs:
             --env CARGO_HOME=/tmp/aube-home/.cargo \
             --env MISE_CACHE_DIR=/tmp/mise-cache \
             aube-release-arm64:local \
-            bash -euo pipefail -c '
+            mise -C /mise exec -- bash -euo pipefail -c '
+              cd /workspace
               # sed consumes the full stream; head can make ldd exit with
               # SIGPIPE (141), which pipefail incorrectly treats as a build failure.
               ldd --version | sed -n "1p"
-              mise run --skip-tools build:pgo
+              bash benchmarks/pgo.bash
             '
 
       - name: Validate glibc baseline
