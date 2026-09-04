@@ -368,7 +368,9 @@ jobs:
           AUBE_PGO_LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
           container_home="$RUNNER_TEMP/aube-home"
-          mkdir -p "$container_home/.cargo" "$HOME/.cargo/registry" "$HOME/.cargo/git"
+          # Docker creates missing bind-mount sources as root. Create target as
+          # the runner user so the non-root container can write PGO artifacts.
+          mkdir -p "$GITHUB_WORKSPACE/target" "$container_home/.cargo" "$HOME/.cargo/registry" "$HOME/.cargo/git"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --volume "$GITHUB_WORKSPACE:/workspace" \
@@ -388,6 +390,7 @@ jobs:
             aube-release-arm64:local \
             mise -C /mise exec -- bash -euo pipefail -c '
               cd /workspace
+              test -w target
               # sed consumes the full stream; head can make ldd exit with
               # SIGPIPE (141), which pipefail incorrectly treats as a build failure.
               ldd --version | sed -n "1p"
