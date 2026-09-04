@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.7](https://github.com/jdx/aube/compare/v2.2.6...v2.2.7) - 2026-09-03
+
+### Fixed
+
+- *(release)* remove mbx check from arm64 image ([#1473](https://github.com/jdx/aube/pull/1473))
+
 ## [2.2.6](https://github.com/jdx/aube/compare/v2.2.5...v2.2.6) - 2026-09-03
 
 ### Fixed
