@@ -176,19 +176,10 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
-          TAG: ${{ needs.release-plz-release.outputs.tag }}
-        run: |
-          mkdir -p dist
-          gh release download "$TAG" --repo "${{ github.repository }}" --dir dist --clobber \
-            --pattern 'aube-*.tar.gz' --pattern 'aube-*.zip'
-          ls -la dist
-      - uses: jdx/packslip@0121abf6972fe6ca13633233402439a715f4cc0e # v1.0.0
+      - uses: jdx/packslip@a6eddff2d884891faa2efbec374b48e7053df2c4 # v1.0.1
         with:
           tag: ${{ needs.release-plz-release.outputs.tag }}
-          artifacts: dist/aube-*.tar.gz dist/aube-*.zip
+          download: aube-*.tar.gz aube-*.zip
           bin: aube
           attest: link
           token: ${{ secrets.AUBE_GH_TOKEN }}
