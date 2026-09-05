@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.10](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.2.9...aube-lockfile-v2.2.10) - 2026-09-05
+
+### Other
+
+- Revert "fix(release): avoid major bumps for lockfile error variants" ([#1468](https://github.com/aubepkg/aube/pull/1468))
+
 ## [2.2.5](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.2.4...aube-lockfile-v2.2.5) - 2026-09-03
 
 ### Fixed
