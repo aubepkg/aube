@@ -653,7 +653,7 @@ Targets `aube-lock.yaml`, `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap
     }
     flag "-h --help" help="Print help" action=help builtin=#true
 }
-cmd completion help="Generate shell completions (bash, zsh, fish)" effect=read {
+cmd completion help="Generate shell completions (bash, zsh, fish, powershell)" effect=read {
     flag --bin help="Generate a script for just one executable: aube, aubr, or aubx" conflicts=--install {
         arg <BIN>
     }

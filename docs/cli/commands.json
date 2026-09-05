@@ -2921,7 +2921,7 @@
         "unknown_flags": null,
         "hide": false,
         "args_override_self": true,
-        "help": "Generate shell completions (bash, zsh, fish)",
+        "help": "Generate shell completions (bash, zsh, fish, powershell)",
         "name": "completion",
         "aliases": [],
         "hidden_aliases": [],

@@ -4,7 +4,7 @@
 - **Usage:** `aube completion [FLAGS] <SHELL>`
 - **Effect:** read-only
 
-Generate shell completions (bash, zsh, fish)
+Generate shell completions (bash, zsh, fish, powershell)
 
 ## Arguments
 - **`<SHELL>`** — The shell to generate completions for (bash, zsh, fish, powershell)
