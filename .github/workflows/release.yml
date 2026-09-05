@@ -732,3 +732,48 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.archive.outputs.path }}
+
+  # The packslip is this release's signed inventory: every archive's digest,
+  # the three multicall executables inside it, the shared objects it needs
+  # from the host, and the workflow identity that signed for all of it. An
+  # installer checks a download against jdx/aube's identity rather than
+  # against a key this project would have to hold. See https://packslip.dev.
+  #
+  # Its own job because the four upload jobs above each write straight to the
+  # release; one document covering the whole release can only be written once
+  # every one of them has landed. The FFI library and header from ffi.yml are
+  # not artifacts anyone installs an executable from, so they stay out.
+  packslip:
+    name: Publish the packslip
+    needs:
+      - upload-assets
+      - upload-assets-musl-arm64
+      - upload-assets-pgo-arm64-linux
+      - upload-assets-pgo
+    if: ${{ !fromJSON(inputs.dry_run || 'false') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download the release archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "$REPO" --dir dist --clobber \
+            --pattern 'aube-v*.tar.gz' --pattern 'aube-v*.zip'
+          ls -la dist
+      # The jobs that built these archives already attested them as they went,
+      # which is the stronger claim; attesting again here would only add a
+      # second statement about the same digests.
+      - uses: jdx/packslip@433c0c0f033e64c22f12433471768c255ef2bd93 # v0.3.0
+        with:
+          tag: ${{ inputs.tag }}
+          artifacts: dist/aube-v*.tar.gz dist/aube-v*.zip
+          bin: aube aubr aubx
+          attest: "false"
+          token: ${{ secrets.AUBE_GH_TOKEN }}
