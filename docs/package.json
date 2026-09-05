@@ -4,11 +4,9 @@
     "error-codes:gen": "cargo run --manifest-path ../Cargo.toml -p aube-codes --bin generate-error-codes-docs",
     "data:gen": "npm run settings:gen && npm run error-codes:gen",
     "docs:dev": "npm run data:gen && vitepress dev",
-    "docs:build": "npm run data:gen && npm run og:test && vitepress build && npm run og:generate",
+    "docs:build": "node --test .vitepress/social-images.test.mjs && npm run data:gen && vitepress build && node .vitepress/check-social-images.mjs .vitepress/dist",
     "docs:preview": "vitepress preview",
-    "icons:render": "node scripts/render-icons.mjs",
-    "og:generate": "node scripts/generate-og-images.mjs",
-    "og:test": "node --test scripts/generate-og-images.test.mjs"
+    "icons:render": "node scripts/render-icons.mjs"
   },
   "pnpm": {
     "supportedArchitectures": {
@@ -24,6 +22,7 @@
     }
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "sharp": "^0.35.0",
     "vitepress": "^1.5.0"
   }
