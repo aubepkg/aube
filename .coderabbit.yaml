@@ -1,8 +1,5 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-inheritance: true
-reviews:
-  auto_review:
-    drafts: true
-    ignore_title_keywords:
-      - "chore: release"
-      - "chore(main): release"
+remote_config:
+  repository: "aubepkg/coderabbit"
+  ref: "main"
+  path: ".coderabbit.yaml"
