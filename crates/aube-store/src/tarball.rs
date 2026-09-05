@@ -3,8 +3,7 @@ use std::path::Path;
 
 // CAS writes compete with package materialization for filesystem metadata
 // operations. Large Rayon pools can saturate that work during cold installs;
-// keep these workers bounded and separate from CPU work on macOS and Linux.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+// keep these workers bounded and separate from CPU work on every platform.
 static IMPORT_POOL: std::sync::OnceLock<Result<rayon::ThreadPool, rayon::ThreadPoolBuildError>> =
     std::sync::OnceLock::new();
 
@@ -341,28 +340,23 @@ impl Store {
                         })
                         .collect::<Vec<Result<(String, StoredFile), Error>>>()
                 };
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
-                let results = {
-                    let pool = IMPORT_POOL
-                        .get_or_init(|| {
-                            rayon::ThreadPoolBuilder::new()
-                                .num_threads(2)
-                                .thread_name(|i| format!("aube-import-{i}"))
-                                .build()
-                        })
-                        .as_ref()
-                        .map_err(|err| {
-                            Error::Io(
-                                self.root.clone(),
-                                std::io::Error::other(format!(
-                                    "failed to create CAS import worker pool: {err}"
-                                )),
-                            )
-                        })?;
-                    pool.install(import)
-                };
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-                let results = import();
+                let pool = IMPORT_POOL
+                    .get_or_init(|| {
+                        rayon::ThreadPoolBuilder::new()
+                            .num_threads(2)
+                            .thread_name(|i| format!("aube-import-{i}"))
+                            .build()
+                    })
+                    .as_ref()
+                    .map_err(|err| {
+                        Error::Io(
+                            self.root.clone(),
+                            std::io::Error::other(format!(
+                                "failed to create CAS import worker pool: {err}"
+                            )),
+                        )
+                    })?;
+                let results = pool.install(import);
                 for r in results {
                     let (rel_path, stored) = r?;
                     index.insert(rel_path, stored);
