@@ -158,6 +158,41 @@ jobs:
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
 
+  # The packslip is this release's signed inventory: every CLI archive's
+  # digest, the executable inside it, and the workflow identity that signed
+  # for all of it, so an installer can check a download against
+  # github.com/jdx/aube's identity rather than a key this project would have
+  # to hold. `upload-assets` already attests each archive's build provenance
+  # with actions/attest-build-provenance, so `attest: link` only links those
+  # statements instead of attesting a second time. The FFI libraries stay out
+  # — nothing installs a binary directly from them the way it does from these
+  # archives. See https://packslip.dev.
+  packslip:
+    name: Publish the packslip
+    needs: [release-plz-release, upload-assets]
+    if: ${{ needs.release-plz-release.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+          TAG: ${{ needs.release-plz-release.outputs.tag }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "${{ github.repository }}" --dir dist --clobber \
+            --pattern 'aube-*.tar.gz' --pattern 'aube-*.zip'
+          ls -la dist
+      - uses: jdx/packslip@0121abf6972fe6ca13633233402439a715f4cc0e # v1.0.0
+        with:
+          tag: ${{ needs.release-plz-release.outputs.tag }}
+          artifacts: dist/aube-*.tar.gz dist/aube-*.zip
+          bin: aube
+          attest: link
+          token: ${{ secrets.AUBE_GH_TOKEN }}
+
   # Flip the draft release to non-draft once *every* asset uploaded
   # cleanly and Communiqué has written the final notes. With immutable
   # GitHub releases enabled, a published release can't have its assets
@@ -171,7 +206,7 @@ jobs:
   # happen after confirming the Communiqué notes are present too.
   publish-release:
     name: Publish release
-    needs: [release-plz-release, upload-assets, upload-ffi-assets, enhance-release]
+    needs: [release-plz-release, upload-assets, upload-ffi-assets, enhance-release, packslip]
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
