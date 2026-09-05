@@ -308,6 +308,17 @@ jobs:
       - uses: taiki-e/install-action@fcf5432d9f50d67e37ee6e29bdb7a224ff67b4a7 # v2.86.8
         with:
           tool: release-plz
+      # `release-plz update` shells out to `cargo package` inside temp
+      # checkouts of the commits it diffs against the published crates. On
+      # PATH `cargo` is mise's command wrapper, which mise.toml routes to mbx
+      # — and in those checkouts mise reads *that commit's* mise.toml, so it
+      # looks for the mbx version pinned back then, which was never installed
+      # on this runner. cargo then dies with "mbx" couldn't exec process and
+      # release-plz fails with "failed to determine next versions". Put the
+      # real cargo ahead of the wrapper. Steps that go through `mise run` keep
+      # using mbx: mise prepends its own wrapper dir there.
+      - name: Put the real cargo ahead of the mbx wrapper
+        run: dirname "$(mise which cargo)" >> "$GITHUB_PATH"
       - name: Configure git identity
         run: |
           git config user.name "release-plz[bot]"
