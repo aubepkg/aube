@@ -32,6 +32,7 @@ jobs:
       MBX_DISABLE: "1"
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: ${{ inputs.packages != '' && 'target-api' || 'target' }}
       CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
       RUSTFLAGS: "-D warnings"
     steps:
@@ -49,9 +50,10 @@ jobs:
           shared-key: api-${{ inputs.check }}-v1
           save-if: ${{ github.ref == 'refs/heads/main' }}
           # rust-cache's target cleanup removes rustdoc JSON and generated
-          # manifests. Preserve semver-checks' own cache as an opaque directory.
+          # manifests even with cache-targets disabled. Keep the API target
+          # outside the default workspace target that rust-cache cleans.
           cache-targets: ${{ inputs.packages == '' }}
-          cache-directories: ${{ inputs.packages != '' && 'target/semver-checks' || '' }}
+          cache-directories: ${{ inputs.packages != '' && 'target-api' || '' }}
       - name: Select semver baseline
         if: inputs.packages != ''
         env:
