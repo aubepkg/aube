@@ -92,51 +92,96 @@ jobs:
   # Check every published Rust library against main and guard the C ABI export
   # set against the frozen crates/aube-ffi/abi-symbols.txt manifest. Any failure
   # makes this job red, while `final` treats the job as advisory.
-  # Separate runners avoid competing Cargo builds. Keep the large aube API
-  # alone; balance the remaining published crates using CI build timings.
-  rust-api-aube:
-    uses: ./.github/workflows/api-stability-check.yml
-    with:
-      check: rust-aube
-      packages: aube
-
-  rust-api-resolver:
-    uses: ./.github/workflows/api-stability-check.yml
-    with:
-      check: rust-resolver
-      packages: aube-registry aube-resolver aube-runtime
-
-  rust-api-core:
-    uses: ./.github/workflows/api-stability-check.yml
-    with:
-      check: rust-core
-      packages: aube-codes aube-linker aube-lockfile aube-manifest aube-scripts aube-settings aube-store aube-util aube-workspace
-
-  c-abi:
-    uses: ./.github/workflows/api-stability-check.yml
-    with:
-      check: c-abi
-
   api-stability:
-    needs: [rust-api-aube, rust-api-resolver, rust-api-core, c-abi]
-    if: ${{ !cancelled() }}
+    # Run on main as well so PRs can restore caches populated by trusted code.
     continue-on-error: true
     outputs:
       results_present: ${{ steps.report.outputs.results_present }}
       checks_passed: ${{ steps.report.outputs.checks_passed }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 30
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Test API result reporting
-        run: python3 -m unittest discover -s scripts -p test_ci_api_result.py
+          fetch-depth: 0
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0 # zizmor: ignore[cache-poisoning] only main saves
+        with:
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+      - name: Prepare Rust toolchain
+        run: rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] only main saves
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Cleanup of the normal target removes rustdoc JSON and generated
+          # manifests. Keep semver-checks' artifacts outside that directory.
+          cache-directories: target-api
+      - name: Select semver baseline
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Main compares against itself to warm the same build/cache paths.
+          echo "SEMVER_BASELINE=${PR_BASE_SHA:-$(git rev-parse HEAD)}" >> "$GITHUB_ENV"
+      # These checks share one runner. Run sequentially so Cargo builds do not
+      # compete for CPU/memory, and GitHub streams each step's logs normally.
+      - name: Published Rust APIs — cargo-semver-checks
+        id: rust
+        continue-on-error: true
+        env:
+          CARGO_TARGET_DIR: target-api
+        run: |
+          /usr/bin/time -v ./bin/cargo-semver-checks semver-checks \
+            --baseline-rev "$SEMVER_BASELINE" \
+            --package aube \
+            --package aube-codes \
+            --package aube-linker \
+            --package aube-lockfile \
+            --package aube-manifest \
+            --package aube-registry \
+            --package aube-resolver \
+            --package aube-runtime \
+            --package aube-scripts \
+            --package aube-settings \
+            --package aube-store \
+            --package aube-util \
+            --package aube-workspace
+      - name: C ABI — frozen export set
+        id: ffi
+        continue-on-error: true
+        run: |
+          # Exported names do not require release optimization or LTO. The
+          # dev profile also unwinds, as required by the FFI boundary.
+          /usr/bin/time -v mise exec -- cargo build --locked -p aube-ffi
+          grep -vE '^[[:space:]]*(#|$)' crates/aube-ffi/abi-symbols.txt | sort -u > /tmp/abi-expected.txt
+          nm -D --defined-only --extern-only target/debug/libaube_ffi.so \
+            | awk '{ print $3 }' | grep '^aube_' | sort -u > /tmp/abi-actual.txt
+          diff -u /tmp/abi-expected.txt /tmp/abi-actual.txt
       - name: Report API stability
         id: report
+        if: always()
         env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: python3 scripts/ci_api_result.py
+          RUST_OUTCOME: ${{ steps.rust.outcome }}
+          FFI_OUTCOME: ${{ steps.ffi.outcome }}
+        run: |
+          for outcome in "$RUST_OUTCOME" "$FFI_OUTCOME"; do
+            if [[ "$outcome" != success && "$outcome" != failure ]]; then
+              echo "results_present=false" >> "$GITHUB_OUTPUT"
+              echo "checks_passed=false" >> "$GITHUB_OUTPUT"
+              echo "::error::one or more API stability checks did not report a result"
+              exit 1
+            fi
+          done
+          echo "results_present=true" >> "$GITHUB_OUTPUT"
+          if [[ "$RUST_OUTCOME" == success && "$FFI_OUTCOME" == success ]]; then
+            echo "checks_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "checks_passed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::API compatibility check failed. Inspect the Rust and C ABI steps above."
+            exit 1
+          fi
 
   # BATS integration shards. Linux runs 4 shards (matches Buildkite),
   # macOS runs 2. The jail-build tests assert native OS sandbox behavior,
@@ -272,8 +317,7 @@ jobs:
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is
   # blocked. Lets the branch-protection rule depend on one name instead of ten.
-  # Compatibility failures remain advisory; missing API results still block.
-  # API checks also run on main to populate caches for subsequent PRs.
+  # API compatibility failures remain advisory; missing results still block.
   final:
     needs:
       - build
