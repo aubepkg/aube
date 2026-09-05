@@ -1,10 +1,10 @@
+import { socialCard, writeSocialCard } from "./social-images.mjs";
 import { defineConfig } from "vitepress";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import spec from "../cli/commands.json";
-import { ogImagePath } from "../scripts/generate-og-images.mjs";
 
 interface Cmd {
   name: string;
@@ -115,13 +115,19 @@ export default defineConfig({
     ["link", { rel: "manifest", href: "/site.webmanifest" }],
     ["meta", { name: "theme-color", content: "#FFB13B" }],
   ],
-  transformHead({ pageData }) {
+  transformHead({ pageData, siteConfig }) {
     const title =
       pageData.relativePath === "index.md"
         ? "aube — fast Node.js package management"
         : pageData.title;
     const description = pageData.description || siteDescription;
-    const image = `${siteUrl}/${ogImagePath(pageData.relativePath)}`;
+    const card = socialCard(
+      pageData.relativePath === "index.md"
+        ? "Fast Node.js package management"
+        : pageData.title,
+    );
+    writeSocialCard(siteConfig.outDir, card);
+    const image = new URL(card.path, `${siteUrl}/`).toString();
     const url = new URL(
       pageData.relativePath.replace(/index\.md$/, "").replace(/\.md$/, ""),
       `${siteUrl}/`,
