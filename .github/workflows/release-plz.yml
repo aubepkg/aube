@@ -318,7 +318,11 @@ jobs:
       # real cargo ahead of the wrapper. Steps that go through `mise run` keep
       # using mbx: mise prepends its own wrapper dir there.
       - name: Put the real cargo ahead of the mbx wrapper
-        run: dirname "$(mise which cargo)" >> "$GITHUB_PATH"
+        run: |
+          # Rust is managed by rustup, not mise. Keep the lookup separate so
+          # a failure stops this step instead of being masked by dirname.
+          cargo_path=$(rustup which cargo)
+          dirname "$cargo_path" >> "$GITHUB_PATH"
       - name: Configure git identity
         run: |
           git config user.name "release-plz[bot]"
