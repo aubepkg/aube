@@ -127,7 +127,7 @@ when_to_use_release:
 
 commits:
   format: <type>(<scope>): <description>
-  style: conventional commits — lowercase after colon, imperative mood, concise, subject typically <=80 chars (p95 in history is 73), usually no body
+  style: conventional commits — start the description lowercase, use imperative mood, keep it concise, subject typically <=80 chars (p95 in history is 73), usually no body
   why: PR titles drive release-plz version bumps (feat→minor, fix→patch, BREAKING CHANGE/`!` →major, others→no bump). enforced by .github/workflows/semantic-pr-lint.yml on PR title via amannn/action-semantic-pull-request
   types[12]: fix, feat, refactor, chore, docs, style, test, perf, build, ci, revert, security
   scope_optional: true (omit for repo-wide changes like `chore: release v1.2.0`)
@@ -140,6 +140,7 @@ commits:
   body_rules: reserve body for breaking changes, security fixes, benchmark tables, non-obvious WHY. wrap 72, use - not *
   pr_numbers: never type (#NN) yourself, GitHub squash-merge appends them automatically
   pr_titles: must match the same `<type>(<scope>): <desc>` format — the lint workflow blocks merges that don't
+  validation: CI checks the PR title on creation and edits; intermediate commits are not checked because PRs are squash-merged
   forbidden[2]:
     - "[codex]" or tool-branding prefix in subject
     - emoji in commit subject
