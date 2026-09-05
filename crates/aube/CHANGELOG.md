@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.11](https://github.com/aubepkg/aube/compare/v2.2.9...v2.2.11) - 2026-09-05
+
+### Fixed
+
+- *(config)* redact credentials from command output ([#1483](https://github.com/aubepkg/aube/pull/1483))
+- *(config)* preserve comments and order in config.toml ([#1480](https://github.com/aubepkg/aube/pull/1480))
+
+### Other
+
+- release v2.2.10 ([#1479](https://github.com/aubepkg/aube/pull/1479))
+
 ## [2.2.10](https://github.com/aubepkg/aube/compare/v2.2.9...v2.2.10) - 2026-09-05
 
 ### Fixed
