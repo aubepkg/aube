@@ -284,11 +284,32 @@ impl From<PackageJsonRaw> for PackageJson {
 /// either an array of dep names or a boolean (`true` meaning "bundle
 /// everything in `dependencies`"). We preserve both so the resolver
 /// can compute the exact name set.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum BundledDependencies {
     List(Vec<String>),
     All(bool),
+}
+
+impl<'de> Deserialize<'de> for BundledDependencies {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(values) => Ok(Self::List(
+                values
+                    .into_iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect(),
+            )),
+            serde_json::Value::Bool(value) => Ok(Self::All(value)),
+            _ => Err(serde::de::Error::custom(
+                "expected a boolean or an array of dependency names",
+            )),
+        }
+    }
 }
 
 impl BundledDependencies {
@@ -1328,6 +1349,7 @@ pub fn serialize_json_with_indent<T: serde::Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_detect_json_indent() {
@@ -1853,6 +1875,55 @@ mod tests {
             p.bundled_dependencies,
             Some(BundledDependencies::List(_))
         ));
+    }
+
+    /// Regression: `@lightdash/cli@0.103.0-alpha.9` published the
+    /// legacy field as `[true]`. npm left the malformed entry in the
+    /// registry even though bundle arrays contain dependency names.
+    /// Ignore non-string entries so one old version cannot make the
+    /// package's complete version history impossible to deserialize.
+    #[test]
+    fn bundle_dependencies_array_ignores_non_string_entries() {
+        let p = parse(r#"{"name":"x","bundleDependencies":[true,"foo",null,42,{"bar":"1"}]}"#);
+        let deps = BTreeMap::new();
+        let names = p.bundled_dependencies.as_ref().unwrap().names(&deps);
+        assert_eq!(names, vec!["foo"]);
+    }
+
+    proptest! {
+        #[test]
+        fn bundled_dependency_arrays_keep_only_names(
+            entries in proptest::collection::vec(
+                prop_oneof![
+                    "[a-z][a-z0-9-]{0,15}".prop_map(serde_json::Value::String),
+                    any::<bool>().prop_map(serde_json::Value::Bool),
+                    any::<i64>().prop_map(|value| serde_json::Value::Number(value.into())),
+                    Just(serde_json::Value::Null),
+                ],
+                0..32,
+            ),
+        ) {
+            let expected = entries
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let p: PackageJson = serde_json::from_value(serde_json::json!({
+                "name": "x",
+                "bundledDependencies": entries,
+            }))
+            .unwrap();
+            let deps = BTreeMap::new();
+            let names = p
+                .bundled_dependencies
+                .as_ref()
+                .unwrap()
+                .names(&deps)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            prop_assert_eq!(names, expected);
+        }
     }
 
     /// Regression: some publishes (e.g. `@lingui/message-utils@5.2.0`+)
