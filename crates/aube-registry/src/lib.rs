@@ -1421,4 +1421,41 @@ mod tests {
         let names = v.bundled_dependencies.as_ref().unwrap().names(&deps);
         assert_eq!(names, vec!["legacy"]);
     }
+
+    /// Regression: `@lightdash/cli@0.103.0-alpha.9` has
+    /// `bundleDependencies: [true]` in the npm registry. Full packuments
+    /// include that historical version when resolving today's `latest`,
+    /// so its malformed entry must not abort the entire version list.
+    #[test]
+    fn packument_ignores_non_string_bundle_dependency_entries() {
+        let json = r#"{
+                "name":"@lightdash/cli",
+                "versions":{
+                    "0.103.0-alpha.9":{
+                        "name":"@lightdash/cli",
+                        "version":"0.103.0-alpha.9",
+                        "bundleDependencies":[true]
+                    },
+                    "2.176.1":{
+                        "name":"@lightdash/cli",
+                        "version":"2.176.1"
+                    }
+                },
+                "dist-tags":{"latest":"2.176.1"}
+            }"#;
+        let p: Packument = sonic_rs::from_slice(json.as_bytes()).unwrap();
+        assert_eq!(p.versions.len(), 2);
+        assert_eq!(
+            p.dist_tags.get("latest").map(String::as_str),
+            Some("2.176.1")
+        );
+        let old = &p.versions["0.103.0-alpha.9"];
+        assert!(
+            old.bundled_dependencies
+                .as_ref()
+                .unwrap()
+                .names(&old.dependencies)
+                .is_empty()
+        );
+    }
 }
