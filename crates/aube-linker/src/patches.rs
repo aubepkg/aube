@@ -96,6 +96,36 @@ pub(crate) fn wipe_changed_patched_entries(
     }
 }
 
+/// Accept pnpm patches that leave an unterminated EOF line as context
+/// without annotating it. Try the unmodified patch first so explicit
+/// newline changes retain their normal meaning.
+fn apply_with_eof_context(
+    original: &str,
+    patch: &diffy::Patch<'_, str>,
+) -> Result<String, diffy::ApplyError> {
+    let error = match diffy::apply(original, patch) {
+        Ok(patched) => return Ok(patched),
+        Err(error) => error,
+    };
+    if original.is_empty() || original.ends_with('\n') {
+        return Err(error);
+    }
+    let Some(diffy::Line::Context(line)) =
+        patch.hunks().last().and_then(|hunk| hunk.lines().last())
+    else {
+        return Err(error);
+    };
+    if line.strip_suffix('\n') != original.rsplit('\n').next() {
+        return Err(error);
+    }
+    // Format the parsed patch to discard trailing non-patch text, then
+    // annotate only its final context line. Diffy's exact matching still
+    // validates every hunk, and the unterminated context can only match EOF.
+    let annotated = format!("{patch}\\ No newline at end of file\n");
+    let annotated = diffy::Patch::from_str(&annotated).map_err(|_| error)?;
+    diffy::apply(original, &annotated)
+}
+
 /// Apply a multi-file unified diff to a package directory.
 ///
 /// The patch text is split on git-style or plain unified-diff file
@@ -218,7 +248,7 @@ pub(crate) fn apply_multi_file_patch(pkg_dir: &Path, patch_text: &str) -> Result
         };
         let parsed = diffy::Patch::from_str(&section.body)
             .map_err(|e| format!("failed to parse patch for {rel}: {e}"))?;
-        let patched_lf = diffy::apply(&normalized, &parsed)
+        let patched_lf = apply_with_eof_context(&normalized, &parsed)
             .map_err(|e| format!("failed to apply patch for {rel}: {e}"))?;
         let patched = if was_crlf {
             // Promote bare `\n` to `\r\n`, then collapse any `\r\r\n`
@@ -684,6 +714,103 @@ mod tests {
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].rel_path.as_deref(), Some("empty.js"));
         assert_eq!(sections[1].rel_path.as_deref(), Some("index.js"));
+    }
+
+    #[test]
+    fn eof_context_preserves_line_endings_with_or_without_marker() {
+        for newline in ["\n", "\r\n"] {
+            for marker in ["", "\\ No newline at end of file\n"] {
+                for terminated in [false, true] {
+                    // An explicit missing-newline marker correctly rejects
+                    // a terminated source file, so it is not a tolerance case.
+                    if terminated && !marker.is_empty() {
+                        continue;
+                    }
+                    let dir = tempfile::tempdir().unwrap();
+                    let ending = if terminated { newline } else { "" };
+                    std::fs::write(
+                        dir.path().join("index.js"),
+                        format!("module.exports = 1;{newline}// end{ending}"),
+                    )
+                    .unwrap();
+                    let patch = format!(
+                        "diff --git a/index.js b/index.js\n\
+                         --- a/index.js\n\
+                         +++ b/index.js\n\
+                         @@ -1,2 +1,2 @@\n\
+                         -module.exports = 1;\n\
+                         +module.exports = 2;\n\
+                         \x20// end\n{marker}"
+                    );
+                    apply_multi_file_patch(dir.path(), &patch).unwrap();
+                    assert_eq!(
+                        std::fs::read_to_string(dir.path().join("index.js")).unwrap(),
+                        format!("module.exports = 2;{newline}// end{ending}")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn missing_eof_context_marker_supports_multiple_hunks_offsets_and_footer() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.js"), "prefix\none\ntwo\nthree\nend").unwrap();
+        let patch = "diff --git a/index.js b/index.js\n\
+                     --- a/index.js\n\
+                     +++ b/index.js\n\
+                     @@ -1 +1,2 @@\n\
+                     -one\n\
+                     +ONE\n\
+                     +extra\n\
+                     @@ -3,2 +4,2 @@\n\
+                     -three\n\
+                     +THREE\n\
+                     \x20end\n\
+                     -- \n\
+                     patch footer\n";
+        apply_multi_file_patch(dir.path(), patch).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("index.js")).unwrap(),
+            "prefix\nONE\nextra\ntwo\nTHREE\nend"
+        );
+    }
+
+    #[test]
+    fn eof_context_tolerance_does_not_hide_content_mismatches() {
+        let dir = tempfile::tempdir().unwrap();
+        for original in ["wrong\nend", "old\nwrong", "old\nend "] {
+            std::fs::write(dir.path().join("index.js"), original).unwrap();
+            let patch = "diff --git a/index.js b/index.js\n\
+                         --- a/index.js\n\
+                         +++ b/index.js\n\
+                         @@ -1,2 +1,2 @@\n\
+                         -old\n\
+                         +new\n\
+                         \x20end\n";
+            assert!(apply_multi_file_patch(dir.path(), patch).is_err());
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("index.js")).unwrap(),
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_eof_newline_changes_are_preserved() {
+        for (original, expected) in [("old", "new\n"), ("old\n", "new"), ("old", "new")] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("index.js"), original).unwrap();
+            let diff = diffy::create_patch(original, expected).to_string();
+            let body = diff.splitn(3, '\n').nth(2).unwrap();
+            let patch =
+                format!("diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n{body}");
+            apply_multi_file_patch(dir.path(), &patch).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("index.js")).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
