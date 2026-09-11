@@ -414,11 +414,11 @@ fn build_client(cwd: &std::path::Path, registry_override: Option<&str>) -> Regis
 }
 
 /// Drop advisories whose ID matches any `ignore` value. Matches
-/// against the npm numeric `id`, the `github_advisory_id`, and each
-/// entry in `cves[]`. IDs are compared case-insensitively as strings
-/// so users can pass either `GHSA-abcd-...` or the same in uppercase
-/// / lowercase, or the CVE form. Packages whose advisories all get
-/// filtered out drop from the response entirely.
+/// against the npm numeric `id`, the `github_advisory_id`, the advisory ID
+/// in `url`, and each entry in `cves[]`. IDs are compared case-insensitively
+/// as strings so users can pass either `GHSA-abcd-...` or the same in
+/// uppercase / lowercase, or the CVE form. Packages whose advisories all
+/// get filtered out drop from the response entirely.
 fn configured_audit_ignores(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
@@ -535,6 +535,15 @@ fn advisory_matches_ignore(adv: &serde_json::Value, needles: &BTreeSet<String>) 
                 return true;
             }
         }
+    }
+    if let Some(url) = adv.get("url").and_then(|v| v.as_str())
+        && let Some(advisory_id) = url
+            .split(['?', '#'])
+            .next()
+            .and_then(|path| path.trim_end_matches('/').rsplit('/').next())
+        && needles.contains(&advisory_id.to_ascii_lowercase())
+    {
+        return true;
     }
     false
 }
@@ -1442,6 +1451,43 @@ mod tests {
         );
         assert!(out.get("pkg-a").is_none());
         assert!(out.get("pkg-b").is_some());
+    }
+
+    #[test]
+    fn filter_ignored_matches_advisory_id_in_url() {
+        let raw = serde_json::json!({
+            "image-size": [
+                {
+                    "id": 1,
+                    "severity": "high",
+                    "title": "ICNS parser denial of service",
+                    "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr?source=npm"
+                },
+                {
+                    "id": 2,
+                    "severity": "high",
+                    "title": "JXL and HEIF parser denial of service",
+                    "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq/#references"
+                },
+                {
+                    "id": 3,
+                    "severity": "high",
+                    "title": "Unrelated advisory",
+                    "url": "https://github.com/advisories/GHSA-unrelated"
+                }
+            ]
+        });
+
+        let out = filter_ignored_ids(
+            &raw,
+            &[
+                "ghsa-w3rx-r6r6-pgpr".to_string(),
+                "GHSA-5P2G-FCMC-QVQQ".to_string(),
+            ],
+        );
+        let advisories = out.get("image-size").unwrap().as_array().unwrap();
+        assert_eq!(advisories.len(), 1);
+        assert_eq!(advisories[0]["id"], 3);
     }
 
     #[test]
