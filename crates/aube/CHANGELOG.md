@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.14](https://github.com/aubepkg/aube/compare/v2.2.13...v2.2.14) - 2026-09-11
+
+### Fixed
+
+- *(audit)* match GHSA IDs in URLs ([#1517](https://github.com/aubepkg/aube/pull/1517))
+
 ## [2.2.13](https://github.com/aubepkg/aube/compare/v2.2.12...v2.2.13) - 2026-09-09
 
 ### Other
