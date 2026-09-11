@@ -537,7 +537,10 @@ fn advisory_matches_ignore(adv: &serde_json::Value, needles: &BTreeSet<String>) 
         }
     }
     if let Some(url) = adv.get("url").and_then(|v| v.as_str())
-        && let Some(advisory_id) = url.trim_end_matches('/').rsplit('/').next()
+        && let Some(advisory_id) = url
+            .split(['?', '#'])
+            .next()
+            .and_then(|path| path.trim_end_matches('/').rsplit('/').next())
         && needles.contains(&advisory_id.to_ascii_lowercase())
     {
         return true;
@@ -1458,13 +1461,13 @@ mod tests {
                     "id": 1,
                     "severity": "high",
                     "title": "ICNS parser denial of service",
-                    "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr"
+                    "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr?source=npm"
                 },
                 {
                     "id": 2,
                     "severity": "high",
                     "title": "JXL and HEIF parser denial of service",
-                    "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq/"
+                    "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq/#references"
                 },
                 {
                     "id": 3,
