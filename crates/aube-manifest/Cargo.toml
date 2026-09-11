@@ -31,4 +31,5 @@ default = ["workspace-yaml-preserve"]
 workspace-yaml-preserve = ["dep:serde_yaml", "dep:yamlpatch", "dep:yamlpath"]
 
 [dev-dependencies]
+proptest = "1"
 tempfile = "3"
