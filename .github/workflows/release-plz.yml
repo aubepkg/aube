@@ -159,7 +159,7 @@ jobs:
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
 
   # The packslip is this release's signed inventory: every CLI archive's
-  # digest, the executable inside it, and the workflow identity that signed
+  # digest, the executables inside it, and the workflow identity that signed
   # for all of it, so an installer can check a download against
   # github.com/jdx/aube's identity rather than a key this project would have
   # to hold. `upload-assets` already attests each archive's build provenance
@@ -180,7 +180,7 @@ jobs:
         with:
           tag: ${{ needs.release-plz-release.outputs.tag }}
           download: aube-*.tar.gz aube-*.zip
-          bin: aube
+          bin: aube aubr aubx
           attest: link
           token: ${{ secrets.AUBE_GH_TOKEN }}
 
