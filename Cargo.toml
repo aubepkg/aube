@@ -176,7 +176,7 @@ regex = "1"
 # build, so standalone aube keeps the fast C backend.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 tar = "0.4"
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 # Zip reader for the OSV advisory mirror — the bulk dump at
 # `osv-vulnerabilities.storage.googleapis.com/<eco>/all.zip` is a
 # zip-of-JSONs and the dependency-free std crate ecosystem has no
