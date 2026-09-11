@@ -8,6 +8,8 @@ updates:
       default-days: 7
     exclude-paths:
       - "fixtures/**"
+    ignore:
+      - dependency-name: "yamlpath"
 
   - package-ecosystem: "npm"
     directory: "/"
