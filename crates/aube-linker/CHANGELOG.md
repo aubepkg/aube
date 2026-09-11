@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.14](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.13...aube-linker-v2.2.14) - 2026-09-11
+
+### Fixed
+
+- *(linker)* tolerate missing EOF markers on patch context ([#1515](https://github.com/aubepkg/aube/pull/1515))
+
 ## [2.2.13](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.12...aube-linker-v2.2.13) - 2026-09-09
 
 ### Other
