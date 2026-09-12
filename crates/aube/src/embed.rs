@@ -13,8 +13,8 @@ pub use crate::commands::install::node_gyp_bootstrap::bootstrap_node_gyp;
 pub use crate::commands::install::{
     DepSelection, EmbedderInstallOverrides, FrozenMode, INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT,
     InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode, InstallPhase,
-    InstallProgressSnapshot, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
-    InstallReporter,
+    InstallProgressSnapshot, InstallPrompt, InstallPromptDecision, InstallPromptDecisionFuture,
+    InstallPromptDecisionHandler, InstallPromptFuture, InstallPromptHandler, InstallReporter,
 };
 pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
 pub use aube_manifest::{Error as ManifestError, PackageJson, Workspaces};

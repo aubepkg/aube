@@ -42,7 +42,8 @@ pub(crate) use bin_linking::{
 };
 pub use control::{
     INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,
-    InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallPrompt, InstallPromptFuture,
+    InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallPrompt, InstallPromptDecision,
+    InstallPromptDecisionFuture, InstallPromptDecisionHandler, InstallPromptFuture,
     InstallPromptHandler, InstallReporter,
 };
 pub use dep_selection::DepSelection;
