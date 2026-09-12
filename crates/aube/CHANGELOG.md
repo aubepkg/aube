@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.15](https://github.com/aubepkg/aube/compare/v2.2.14...v2.2.15) - 2026-09-12
+
+### Fixed
+
+- *(add)* distinguish unavailable embedded confirmations ([#1530](https://github.com/aubepkg/aube/pull/1530))
+
 ## [2.2.14](https://github.com/aubepkg/aube/compare/v2.2.13...v2.2.14) - 2026-09-11
 
 ### Fixed
