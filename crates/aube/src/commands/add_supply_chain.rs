@@ -209,8 +209,8 @@ async fn package_age_gate(
         if !confirm_new_package(prompt, name, &created, minimum_age_minutes).await? {
             return Err(miette!(
                 code = ERR_AUBE_NEW_PACKAGE_NAME,
-                "user aborted `{} {name}`",
-                aube_util::cmd("add")
+                "{}",
+                user_declined_to_add(name)
             ));
         }
     }
@@ -828,8 +828,8 @@ async fn similar_name_gate(names: &[String], prompt: &LowDownloadPrompt) -> miet
         if !confirm_similar_package(prompt, name, &suggestion).await? {
             return Err(miette!(
                 code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
-                "user aborted `{} {name}`",
-                aube_util::cmd("add")
+                "{}",
+                user_declined_to_add(name)
             ));
         }
     }
@@ -942,7 +942,8 @@ async fn confirm_similar_package(
     let refusal = || {
         miette!(
             code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
-            "refusing to add {name}: did you mean {} (top-100,000 rank #{}, edit distance {})? Pass --allow-low-downloads after verifying the package name.",
+            help = "pass --allow-low-downloads after verifying the package name",
+            "refusing to add {name}: did you mean {} (top-100,000 rank #{}, edit distance {})?",
             suggestion.name,
             suggestion.rank,
             suggestion.distance
@@ -955,7 +956,7 @@ async fn confirm_similar_package(
             prompt_similar_package(name, suggestion)
         }
         LowDownloadPrompt::Terminal => Err(refusal()),
-        LowDownloadPrompt::Host(control) => control
+        LowDownloadPrompt::Host(control) => match control
             .confirm(
                 crate::commands::install::InstallPrompt::SimilarPackageName {
                     package: name.to_string(),
@@ -965,7 +966,12 @@ async fn confirm_similar_package(
                 },
             )
             .await
-            .unwrap_or_else(|| Err(refusal())),
+            .unwrap_or_else(|| Err(refusal()))?
+        {
+            crate::commands::install::InstallPromptDecision::Accept => Ok(true),
+            crate::commands::install::InstallPromptDecision::Decline => Ok(false),
+            crate::commands::install::InstallPromptDecision::Unavailable => Err(refusal()),
+        },
     }
 }
 
@@ -1057,8 +1063,8 @@ async fn downloads_gate(
         if !confirm_low_download(prompt, name, weekly, threshold).await? {
             return Err(miette!(
                 code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
-                "user aborted `{} {name}`",
-                aube_util::cmd("add")
+                "{}",
+                user_declined_to_add(name)
             ));
         }
     }
@@ -1074,7 +1080,8 @@ async fn confirm_low_download(
     let refusal = || {
         miette!(
             code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
-            "refusing to add {name}: only {weekly} weekly downloads (threshold: {threshold}). Pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`."
+            help = "pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`",
+            "refusing to add {name}: only {weekly} weekly downloads (threshold: {threshold})"
         )
     };
     match prompt {
@@ -1084,7 +1091,7 @@ async fn confirm_low_download(
             prompt_continue(name, weekly, threshold)
         }
         LowDownloadPrompt::Terminal => Err(refusal()),
-        LowDownloadPrompt::Host(control) => control
+        LowDownloadPrompt::Host(control) => match control
             .confirm(
                 crate::commands::install::InstallPrompt::LowDownloadPackage {
                     package: name.to_string(),
@@ -1093,8 +1100,17 @@ async fn confirm_low_download(
                 },
             )
             .await
-            .unwrap_or_else(|| Err(refusal())),
+            .unwrap_or_else(|| Err(refusal()))?
+        {
+            crate::commands::install::InstallPromptDecision::Accept => Ok(true),
+            crate::commands::install::InstallPromptDecision::Decline => Ok(false),
+            crate::commands::install::InstallPromptDecision::Unavailable => Err(refusal()),
+        },
     }
+}
+
+fn user_declined_to_add(name: &str) -> String {
+    format!("user declined to add {name}")
 }
 
 fn prompt_continue(name: &str, weekly: u64, threshold: u64) -> miette::Result<bool> {
@@ -1129,7 +1145,8 @@ async fn confirm_new_package(
     let refusal = || {
         miette!(
             code = ERR_AUBE_NEW_PACKAGE_NAME,
-            "refusing to add {name}: the package name was first published at {created}, within the configured `minimumPackageAge` of {minimum_age_minutes} minutes. Pass --allow-low-downloads to approve this new name explicitly."
+            help = "pass --allow-low-downloads to approve this new name explicitly",
+            "refusing to add {name}: the package name was first published at {created}, within the configured `minimumPackageAge` of {minimum_age_minutes} minutes"
         )
     };
     match prompt {
@@ -1139,14 +1156,19 @@ async fn confirm_new_package(
             prompt_new_package(name, created, minimum_age_minutes)
         }
         LowDownloadPrompt::Terminal => Err(refusal()),
-        LowDownloadPrompt::Host(control) => control
+        LowDownloadPrompt::Host(control) => match control
             .confirm(crate::commands::install::InstallPrompt::NewPackageName {
                 package: name.to_string(),
                 created_at: created.to_string(),
                 minimum_age_minutes,
             })
             .await
-            .unwrap_or_else(|| Err(refusal())),
+            .unwrap_or_else(|| Err(refusal()))?
+        {
+            crate::commands::install::InstallPromptDecision::Accept => Ok(true),
+            crate::commands::install::InstallPromptDecision::Decline => Ok(false),
+            crate::commands::install::InstallPromptDecision::Unavailable => Err(refusal()),
+        },
     }
 }
 
@@ -1174,7 +1196,8 @@ fn prompt_new_package(name: &str, created: &str, minimum_age_minutes: u64) -> mi
 mod tests {
     use super::*;
     use crate::commands::install::{
-        InstallControl, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
+        InstallControl, InstallPrompt, InstallPromptDecision, InstallPromptDecisionFuture,
+        InstallPromptDecisionHandler, InstallPromptFuture, InstallPromptHandler,
     };
     use std::sync::{Arc, Mutex};
 
@@ -1187,6 +1210,16 @@ mod tests {
         fn confirm(&self, prompt: InstallPrompt) -> InstallPromptFuture<'_> {
             self.prompts.lock().unwrap().push(prompt);
             Box::pin(async move { Ok(self.answer) })
+        }
+    }
+
+    struct DecisionPromptHandler {
+        decision: InstallPromptDecision,
+    }
+
+    impl InstallPromptDecisionHandler for DecisionPromptHandler {
+        fn decide(&self, _prompt: InstallPrompt) -> InstallPromptDecisionFuture<'_> {
+            Box::pin(async move { Ok(self.decision) })
         }
     }
 
@@ -1265,6 +1298,50 @@ mod tests {
             error.code().map(|code| code.to_string()).as_deref(),
             Some(ERR_AUBE_LOW_DOWNLOAD_PACKAGE)
         );
+        assert!(error.to_string().contains("only 12 weekly downloads"));
+        assert!(!error.to_string().contains("user"));
+    }
+
+    #[tokio::test]
+    async fn unavailable_embedded_confirmation_returns_the_gate_refusal() {
+        let handler = Arc::new(DecisionPromptHandler {
+            decision: InstallPromptDecision::Unavailable,
+        });
+        let prompt =
+            LowDownloadPrompt::Host(InstallControl::silent().with_prompt_decision_handler(handler));
+
+        let error = confirm_low_download(&prompt, "tiny", 12, 1000)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(ERR_AUBE_LOW_DOWNLOAD_PACKAGE)
+        );
+        assert!(error.to_string().contains("only 12 weekly downloads"));
+        assert_eq!(
+            error.help().map(|help| help.to_string()).as_deref(),
+            Some("pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`")
+        );
+        assert!(!error.to_string().contains("user"));
+    }
+
+    #[tokio::test]
+    async fn declined_embedded_confirmation_does_not_invent_a_host_command() {
+        let handler = Arc::new(DecisionPromptHandler {
+            decision: InstallPromptDecision::Decline,
+        });
+        let prompt =
+            LowDownloadPrompt::Host(InstallControl::silent().with_prompt_decision_handler(handler));
+
+        let decision = confirm_low_download(&prompt, "tiny", 12, 1000)
+            .await
+            .unwrap();
+
+        assert!(!decision);
+        let message = user_declined_to_add("tiny");
+        assert_eq!(message, "user declined to add tiny");
+        assert!(!message.contains("mise add"));
     }
 
     #[tokio::test]

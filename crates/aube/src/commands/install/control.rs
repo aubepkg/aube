@@ -89,6 +89,24 @@ pub enum InstallPrompt {
 /// Future returned by an [`InstallPromptHandler`].
 pub type InstallPromptFuture<'a> = Pin<Box<dyn Future<Output = miette::Result<bool>> + Send + 'a>>;
 
+/// The outcome of a confirmation requested from an embedding host.
+///
+/// Unlike a boolean, this preserves the distinction between a user explicitly
+/// declining and a prompt that the host could not present or answer. Aube uses
+/// [`InstallPromptDecision::Unavailable`] to return the gate's normal
+/// structured refusal instead of attributing a decision to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InstallPromptDecision {
+    Accept,
+    Decline,
+    Unavailable,
+}
+
+/// Future returned by an [`InstallPromptDecisionHandler`].
+pub type InstallPromptDecisionFuture<'a> =
+    Pin<Box<dyn Future<Output = miette::Result<InstallPromptDecision>> + Send + 'a>>;
+
 /// Host-provided destination for interactive confirmation requests.
 ///
 /// Embedded aube operations never read process stdin themselves. When no
@@ -98,11 +116,27 @@ pub trait InstallPromptHandler: Send + Sync + 'static {
     fn confirm(&self, prompt: InstallPrompt) -> InstallPromptFuture<'_>;
 }
 
+/// Host-provided destination for confirmation requests that can distinguish an
+/// explicit decline from a prompt that was unavailable or unanswered.
+///
+/// Prefer this over [`InstallPromptHandler`] for new embedders. The boolean
+/// handler remains supported for compatibility and treats `false` as an
+/// explicit decline.
+pub trait InstallPromptDecisionHandler: Send + Sync + 'static {
+    fn decide(&self, prompt: InstallPrompt) -> InstallPromptDecisionFuture<'_>;
+}
+
+#[derive(Clone)]
+enum PromptHandler {
+    Boolean(Arc<dyn InstallPromptHandler>),
+    Decision(Arc<dyn InstallPromptDecisionHandler>),
+}
+
 #[derive(Clone)]
 pub struct InstallControl {
     output: InstallOutputMode,
     reporter: Option<Arc<dyn InstallReporter>>,
-    prompt_handler: Option<Arc<dyn InstallPromptHandler>>,
+    prompt_handler: Option<PromptHandler>,
     cancellation: tokio_util::sync::CancellationToken,
 }
 
@@ -150,7 +184,15 @@ impl InstallControl {
     }
 
     pub fn with_prompt_handler(mut self, handler: Arc<dyn InstallPromptHandler>) -> Self {
-        self.prompt_handler = Some(handler);
+        self.prompt_handler = Some(PromptHandler::Boolean(handler));
+        self
+    }
+
+    pub fn with_prompt_decision_handler(
+        mut self,
+        handler: Arc<dyn InstallPromptDecisionHandler>,
+    ) -> Self {
+        self.prompt_handler = Some(PromptHandler::Decision(handler));
         self
     }
 
@@ -179,12 +221,27 @@ impl InstallControl {
         })
     }
 
-    pub(crate) async fn confirm(&self, prompt: InstallPrompt) -> Option<miette::Result<bool>> {
+    pub(crate) async fn confirm(
+        &self,
+        prompt: InstallPrompt,
+    ) -> Option<miette::Result<InstallPromptDecision>> {
         let handler = self.prompt_handler.clone()?;
         Some(tokio::select! {
             biased;
-            _ = self.cancelled() => self.check_cancelled().map(|()| false),
-            result = handler.confirm(prompt) => result,
+            _ = self.cancelled() => self.check_cancelled().map(|()| InstallPromptDecision::Unavailable),
+            result = async move {
+                match handler {
+                    PromptHandler::Boolean(handler) => handler
+                        .confirm(prompt)
+                        .await
+                        .map(|accepted| if accepted {
+                            InstallPromptDecision::Accept
+                        } else {
+                            InstallPromptDecision::Decline
+                        }),
+                    PromptHandler::Decision(handler) => handler.decide(prompt).await,
+                }
+            } => result,
         })
     }
 
