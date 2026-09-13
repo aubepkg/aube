@@ -122,6 +122,51 @@ EOF
 	assert_output --partial '"version":"3.4.5"'
 }
 
+@test "add file: tarball uses its manifest name and installs optional dependencies" {
+	mkdir -p staging/package app
+	cat >staging/package/package.json <<'EOF'
+{"name":"local-parent","version":"1.0.0","optionalDependencies":{"is-number":"7.0.0"}}
+EOF
+	(cd staging && tar -czf ../app/package.tgz package)
+	cd app
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"local-parent":"0.0.1"}}
+EOF
+
+	run aube add ./package.tgz
+	assert_success
+	assert_file_contains package.json '"local-parent": "file:./package.tgz"'
+	run jq -e '.dependencies | has("package") | not' package.json
+	assert_success
+
+	local nested
+	nested=$(echo node_modules/.aube/local-parent@file+*/node_modules/is-number)
+	[ -L "$nested" ]
+	assert_file_exists "$nested/package.json"
+}
+
+@test "file: tarball optional dependencies honor ignore and exotic policies" {
+	mkdir -p staging/package app/local-child
+	cat >staging/package/package.json <<'EOF'
+{"name":"local-parent","version":"1.0.0","optionalDependencies":{"is-number":"7.0.0","local-child":"file:./local-child"}}
+EOF
+	cat >app/local-child/package.json <<'EOF'
+{"name":"local-child","version":"1.0.0"}
+EOF
+	(cd staging && tar -czf ../app/package.tgz package)
+	cd app
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"local-parent":"file:./package.tgz"},"pnpm":{"ignoredOptionalDependencies":["is-number"]}}
+EOF
+
+	run aube install
+	assert_success
+	run bash -c "ls node_modules/.aube | grep -E '^(is-number|local-child)@' || true"
+	assert_output ""
+}
+
 @test "excludeLinksFromLockfile omits link: deps from importers on write" {
 	# With the flag on, adding a link: dep should leave the lockfile's
 	# importers section clean — only the file: entry and any registry
@@ -484,20 +529,26 @@ EOF
 }
 
 @test "aube install resolves transitive link: against the parent's source root" {
-	# A `file:`-linked parent with its own `link:./libs/...` transitive
-	# dep. The resolver must anchor `./libs/...` on the parent's source
+	# A `file:`-linked parent with its own required and optional
+	# `link:./libs/...` transitive deps. The resolver must anchor `./libs/...` on the parent's source
 	# directory, not the importer's, otherwise it bails with "transitive
 	# local specifier ... cannot be resolved without the parent package
 	# source root".
-	mkdir -p parent-pkg/libs/child-link
+	mkdir -p parent-pkg/libs/child-link parent-pkg/libs/optional-child
 	cat >parent-pkg/package.json <<'EOF'
-{"name":"parent-pkg","version":"1.0.0","dependencies":{"child-link":"link:./libs/child-link"}}
+{"name":"parent-pkg","version":"1.0.0","dependencies":{"child-link":"link:./libs/child-link"},"optionalDependencies":{"optional-child":"link:./libs/optional-child"}}
 EOF
 	cat >parent-pkg/libs/child-link/package.json <<'EOF'
 {"name":"child-link","version":"4.5.6","main":"index.js"}
 EOF
 	cat >parent-pkg/libs/child-link/index.js <<'EOF'
 module.exports = "from child-link";
+EOF
+	cat >parent-pkg/libs/optional-child/package.json <<'EOF'
+{"name":"optional-child","version":"7.8.9","main":"index.js"}
+EOF
+	cat >parent-pkg/libs/optional-child/index.js <<'EOF'
+module.exports = "from optional child";
 EOF
 
 	mkdir -p app
@@ -521,4 +572,10 @@ EOF
 	assert_file_exists "$nested/package.json"
 	run cat "$nested/package.json"
 	assert_output --partial '"version":"4.5.6"'
+	local optional_nested
+	optional_nested=$(echo node_modules/.aube/parent-pkg@file+*/node_modules/optional-child)
+	[ -L "$optional_nested" ]
+	assert_file_exists "$optional_nested/package.json"
+	run cat "$optional_nested/package.json"
+	assert_output --partial '"version":"7.8.9"'
 }
