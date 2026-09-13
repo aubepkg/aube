@@ -1760,8 +1760,20 @@ impl<'a> ResolveDriver<'a> {
                     {
                         continue;
                     }
-                    if self.resolver.dependency_policy.block_exotic_subdeps
-                        && is_non_registry_specifier(&child_range)
+                    let child_task = ResolveTask::transitive(
+                        child_name.clone(),
+                        child_range.clone(),
+                        DepType::Optional,
+                        dep_path.clone(),
+                        task.importer.clone(),
+                        child_ancestors.clone(),
+                    );
+                    if is_non_registry_specifier(&child_range)
+                        && should_block_exotic_subdep(
+                            &child_task,
+                            &self.resolved,
+                            self.resolver.dependency_policy.block_exotic_subdeps,
+                        )
                     {
                         tracing::warn!(
                             code = aube_codes::warnings::WARN_AUBE_EXOTIC_SUBDEP_SKIPPED,
@@ -1770,14 +1782,7 @@ impl<'a> ResolveDriver<'a> {
                         );
                         continue;
                     }
-                    self.queue.push_back(ResolveTask::transitive(
-                        child_name,
-                        child_range,
-                        DepType::Optional,
-                        dep_path.clone(),
-                        task.importer.clone(),
-                        child_ancestors.clone(),
-                    ));
+                    self.queue.push_back(child_task);
                 }
             }
         }
