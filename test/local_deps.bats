@@ -146,6 +146,27 @@ EOF
 	assert_file_exists "$nested/package.json"
 }
 
+@test "file: tarball optional dependencies honor ignore and exotic policies" {
+	mkdir -p staging/package app/local-child
+	cat >staging/package/package.json <<'EOF'
+{"name":"local-parent","version":"1.0.0","optionalDependencies":{"is-number":"7.0.0","local-child":"file:./local-child"}}
+EOF
+	cat >app/local-child/package.json <<'EOF'
+{"name":"local-child","version":"1.0.0"}
+EOF
+	(cd staging && tar -czf ../app/package.tgz package)
+	cd app
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"local-parent":"file:./package.tgz"},"pnpm":{"ignoredOptionalDependencies":["is-number"]}}
+EOF
+
+	run aube install
+	assert_success
+	run bash -c "ls node_modules/.aube | grep -E '^(is-number|local-child)@' || true"
+	assert_output ""
+}
+
 @test "excludeLinksFromLockfile omits link: deps from importers on write" {
 	# With the flag on, adding a link: dep should leave the lockfile's
 	# importers section clean — only the file: entry and any registry

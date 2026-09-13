@@ -1753,6 +1753,23 @@ impl<'a> ResolveDriver<'a> {
                     ));
                 }
                 for (child_name, child_range) in target_optional_deps {
+                    if self
+                        .resolver
+                        .ignored_optional_dependencies
+                        .contains(&child_name)
+                    {
+                        continue;
+                    }
+                    if self.resolver.dependency_policy.block_exotic_subdeps
+                        && is_non_registry_specifier(&child_range)
+                    {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_EXOTIC_SUBDEP_SKIPPED,
+                            "skipping optional dependency {child_name} of {linked_name} — \
+                             exotic specifier \"{child_range}\" blocked by blockExoticSubdeps"
+                        );
+                        continue;
+                    }
                     self.queue.push_back(ResolveTask::transitive(
                         child_name,
                         child_range,
