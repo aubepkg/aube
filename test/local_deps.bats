@@ -122,6 +122,30 @@ EOF
 	assert_output --partial '"version":"3.4.5"'
 }
 
+@test "add file: tarball uses its manifest name and installs optional dependencies" {
+	mkdir -p staging/package app
+	cat >staging/package/package.json <<'EOF'
+{"name":"local-parent","version":"1.0.0","optionalDependencies":{"is-number":"7.0.0"}}
+EOF
+	(cd staging && tar -czf ../app/package.tgz package)
+	cd app
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"local-parent":"0.0.1"}}
+EOF
+
+	run aube add ./package.tgz
+	assert_success
+	assert_file_contains package.json '"local-parent": "file:./package.tgz"'
+	run jq -e '.dependencies | has("package") | not' package.json
+	assert_success
+
+	local nested
+	nested=$(echo node_modules/.aube/local-parent@file+*/node_modules/is-number)
+	[ -L "$nested" ]
+	assert_file_exists "$nested/package.json"
+}
+
 @test "excludeLinksFromLockfile omits link: deps from importers on write" {
 	# With the flag on, adding a link: dep should leave the lockfile's
 	# importers section clean — only the file: entry and any registry

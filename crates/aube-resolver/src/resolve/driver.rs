@@ -1555,64 +1555,80 @@ impl<'a> ResolveDriver<'a> {
                 ),
             ));
         }
-        let (mut local, real_version, mut target_deps, integrity) = if let LocalSource::Git(ref g) =
-            raw_local
-        {
-            let shallow = aube_store::git_host_in_list(&g.url, &self.resolver.git_shallow_hosts);
-            let (resolved_local, version, deps, integrity) =
-                resolve_git_source(&task.name, g, shallow, Some(self.resolver.client.as_ref()))
-                    .await
-                    .map_err(|e| {
-                        Error::Registry(
-                            task.name.clone(),
-                            format!("git resolve {}: {e}", task.range),
-                        )
-                    })?;
-            let integrity = integrity.or_else(|| {
-                self.locked_index
-                    .find_local_source_integrity(&task.name, &version, &resolved_local)
-            });
-            (resolved_local, version, deps, integrity)
-        } else if let LocalSource::RemoteTarball(ref t) = raw_local {
-            let (resolved_local, version, deps) =
-                resolve_remote_tarball(&task.name, t, self.resolver.client.as_ref())
-                    .await
-                    .map_err(|e| {
-                        Error::Registry(
-                            task.name.clone(),
-                            format!("remote tarball {}: {e}", task.range),
-                        )
-                    })?;
-            let integrity = match &resolved_local {
-                LocalSource::RemoteTarball(tarball) if !tarball.integrity.is_empty() => {
-                    Some(tarball.integrity.clone())
-                }
-                _ => None,
-            };
-            (resolved_local, version, deps, integrity)
-        } else {
-            // Rewrite the path to be relative to the project root so
-            // every downstream consumer can resolve it with a single
-            // `project_root.join(rel)`.
-            let local = rebase_local(&raw_local, &importer_root, &self.resolver.project_root);
-            let (version, deps) = if matches!(local, LocalSource::Exec(_)) {
-                if self.resolver.ignore_scripts {
-                    return Err(Error::Registry(
-                        task.name.clone(),
-                        format!(
-                            "{} requires executing its generator, but scripts are disabled",
-                            local.specifier()
-                        ),
-                    ));
-                }
-                resolve_exec_manifest(&task.name, &local, &self.resolver.project_root).await?
+        let (mut local, real_version, mut target_deps, mut target_optional_deps, integrity) =
+            if let LocalSource::Git(ref g) = raw_local {
+                let shallow =
+                    aube_store::git_host_in_list(&g.url, &self.resolver.git_shallow_hosts);
+                let (resolved_local, version, deps, integrity) =
+                    resolve_git_source(&task.name, g, shallow, Some(self.resolver.client.as_ref()))
+                        .await
+                        .map_err(|e| {
+                            Error::Registry(
+                                task.name.clone(),
+                                format!("git resolve {}: {e}", task.range),
+                            )
+                        })?;
+                let integrity = integrity.or_else(|| {
+                    self.locked_index.find_local_source_integrity(
+                        &task.name,
+                        &version,
+                        &resolved_local,
+                    )
+                });
+                (resolved_local, version, deps, BTreeMap::new(), integrity)
+            } else if let LocalSource::RemoteTarball(ref t) = raw_local {
+                let (resolved_local, version, deps) =
+                    resolve_remote_tarball(&task.name, t, self.resolver.client.as_ref())
+                        .await
+                        .map_err(|e| {
+                            Error::Registry(
+                                task.name.clone(),
+                                format!("remote tarball {}: {e}", task.range),
+                            )
+                        })?;
+                let integrity = match &resolved_local {
+                    LocalSource::RemoteTarball(tarball) if !tarball.integrity.is_empty() => {
+                        Some(tarball.integrity.clone())
+                    }
+                    _ => None,
+                };
+                (resolved_local, version, deps, BTreeMap::new(), integrity)
             } else {
-                let (_target_name, version, deps) = read_local_manifest(&raw_local, &importer_root)
-                    .unwrap_or_else(|_| (task.name.clone(), "0.0.0".to_string(), BTreeMap::new()));
-                (version, deps)
+                // Rewrite the path to be relative to the project root so
+                // every downstream consumer can resolve it with a single
+                // `project_root.join(rel)`.
+                let local = rebase_local(&raw_local, &importer_root, &self.resolver.project_root);
+                let (version, deps, optional_deps) =
+                    if matches!(local, LocalSource::Exec(_)) {
+                        if self.resolver.ignore_scripts {
+                            return Err(Error::Registry(
+                                task.name.clone(),
+                                format!(
+                                    "{} requires executing its generator, but scripts are disabled",
+                                    local.specifier()
+                                ),
+                            ));
+                        }
+                        let (version, deps) =
+                            resolve_exec_manifest(&task.name, &local, &self.resolver.project_root)
+                                .await?;
+                        (version, deps, BTreeMap::new())
+                    } else {
+                        let manifest = read_local_manifest(&raw_local, &importer_root)
+                            .unwrap_or_else(|_| crate::local_source::LocalManifest {
+                                name: task.name.clone(),
+                                version: "0.0.0".to_string(),
+                                dependencies: BTreeMap::new(),
+                                optional_dependencies: BTreeMap::new(),
+                            });
+                        (
+                            manifest.version,
+                            manifest.dependencies,
+                            manifest.optional_dependencies,
+                        )
+                    };
+                (local, version, deps, optional_deps, None)
             };
-            (local, version, deps, None)
-        };
         attach_integrity_to_git_source(&mut local, integrity.as_deref());
         // Apply `packageExtensions` to non-registry packages too. The
         // registry path applies them to the picked VersionMetadata; git /
@@ -1627,6 +1643,7 @@ impl<'a> ResolveDriver<'a> {
             &mut target_deps,
             &self.resolver.dependency_policy.package_extensions,
         );
+        target_optional_deps.retain(|name, _| !target_deps.contains_key(name));
         let dep_path = local.dep_path(&task.name);
         let linked_name = task.name.clone();
 
@@ -1730,6 +1747,16 @@ impl<'a> ResolveDriver<'a> {
                         child_name,
                         child_range,
                         DepType::Production,
+                        dep_path.clone(),
+                        task.importer.clone(),
+                        child_ancestors.clone(),
+                    ));
+                }
+                for (child_name, child_range) in target_optional_deps {
+                    self.queue.push_back(ResolveTask::transitive(
+                        child_name,
+                        child_range,
+                        DepType::Optional,
                         dep_path.clone(),
                         task.importer.clone(),
                         child_ancestors.clone(),

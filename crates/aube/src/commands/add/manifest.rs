@@ -180,6 +180,20 @@ pub(super) async fn update_manifest_for_add(
         })
         .collect::<miette::Result<Vec<_>>>()?;
 
+    // A downloaded npm tarball is commonly named `package.tgz`, which says
+    // nothing about the package it contains. For an unaliased local add, use
+    // package.json#name so `aube add /tmp/package.tgz` replaces an existing
+    // dependency on the same package instead of adding a second `package`
+    // entry. Explicit aliases remain authoritative.
+    for spec in &mut parsed {
+        if spec.alias.is_none()
+            && let Some(local_spec) = spec.local_spec.as_deref()
+            && let Some(local) = aube_lockfile::LocalSource::parse(local_spec, cwd)
+        {
+            spec.name = aube_resolver::read_local_package_name(&local, cwd)?;
+        }
+    }
+
     // `linkWorkspacePackages=true` (or the `--save-workspace-protocol`
     // flag) makes `aube add <name>` look the package up in the local
     // workspace before falling back to the registry. Build the
