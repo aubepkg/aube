@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.16](https://github.com/aubepkg/aube/compare/v2.2.15...v2.2.16) - 2026-09-13
+
+### Fixed
+
+- *(add)* install local tarballs by manifest name ([#1532](https://github.com/aubepkg/aube/pull/1532))
+
 ## [2.2.15](https://github.com/aubepkg/aube/compare/aube-resolver-v2.2.14...aube-resolver-v2.2.15) - 2026-09-12
 
 ### Other
