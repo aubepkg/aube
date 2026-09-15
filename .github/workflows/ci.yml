@@ -12,7 +12,7 @@ jobs:
   ci:
     permissions:
       contents: read
-    uses: ./.github/workflows/ci-impl.yml
+    uses: $/.github/workflows/ci-impl.yml
 
   final:
     name: final

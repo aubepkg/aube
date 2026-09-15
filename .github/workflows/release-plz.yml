@@ -122,7 +122,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    uses: ./.github/workflows/release.yml
+    uses: $/.github/workflows/release.yml
     with:
       tag: ${{ needs.release-plz-release.outputs.tag }}
     secrets:
@@ -149,7 +149,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
-    uses: ./.github/workflows/ffi.yml
+    uses: $/.github/workflows/ffi.yml
     with:
       tag: ${{ needs.release-plz-release.outputs.tag }}
       draft_phase: true
