@@ -645,6 +645,77 @@ impl TrustExcludeRules {
     }
 }
 
+/// Package names exempt from the `blockExoticSubdeps` gate.
+///
+/// Deliberately *not* a [`PackageVersionPolicy`]: that type matches
+/// `name@<semver-range>`, and an exotic dependency is identified by a URL
+/// or a path rather than a registry version, so a range has nothing to
+/// test against. Accepting `xlsx@^0.20` here would compile to a rule that
+/// never fires, silently dropping the exemption the user asked for — the
+/// same failure mode [`TrustExcludeRules::default`] documents. So the
+/// parser rejects version selectors instead.
+#[derive(Debug, Clone, Default)]
+pub struct ExoticSubdepAllowlist {
+    matchers: Vec<NameMatcher>,
+}
+
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+pub enum ExoticSubdepAllowlistParseError {
+    #[error(
+        "invalid blockExoticSubdepsExclude entry `{pattern}`: expected a package name or `*` glob, not a version selector — an exotic dependency is identified by its URL or path, so there is no version to match"
+    )]
+    #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION))]
+    HasVersionSelector { pattern: String },
+}
+
+impl ExoticSubdepAllowlist {
+    /// An allowlist that matches nothing — the default, so the gate stays
+    /// whole until someone names a package.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.matchers.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.matchers.len()
+    }
+
+    /// Whether `name` may be resolved from a non-registry source.
+    pub fn allows(&self, name: &str) -> bool {
+        self.matchers.iter().any(|m| m.matches(name))
+    }
+
+    /// Parse a list of patterns, keeping every entry that succeeds and
+    /// returning the per-entry errors for the rest. Same reasoning as
+    /// [`TrustExcludeRules::parse_lossy`]: one typo must not drop the
+    /// entries that did parse, because here that would fail an install
+    /// the user had already approved rather than fail open.
+    pub fn parse_lossy<I, S>(patterns: I) -> (Self, Vec<ExoticSubdepAllowlistParseError>)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut matchers = Vec::new();
+        let mut errors = Vec::new();
+        for pattern in patterns {
+            let pattern = pattern.as_ref();
+            if pattern.is_empty() {
+                continue;
+            }
+            match split_name_and_versions(pattern) {
+                (_, Some(_)) => errors.push(ExoticSubdepAllowlistParseError::HasVersionSelector {
+                    pattern: pattern.to_string(),
+                }),
+                (name, None) => matchers.push(NameMatcher::compile(name)),
+            }
+        }
+        (Self { matchers }, errors)
+    }
+}
+
 /// Split `<name>[@<versions>]` on the separator that isn't a scope marker,
 /// so a scoped name's leading `@` isn't mistaken for a version selector.
 fn split_name_and_versions(pattern: &str) -> (&str, Option<&str>) {

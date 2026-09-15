@@ -26,8 +26,8 @@ pub enum Error {
     )]
     UnknownCatalogEntry(Box<CatalogDetails>),
     #[error(
-        "blocked exotic transitive dependency {}@{} from {} (blockExoticSubdeps=true; set blockExoticSubdeps=false to allow trusted git/file/tarball subdeps)",
-        .0.name, .0.spec, .0.parent
+        "blocked exotic transitive dependency {}@{} from {} (blockExoticSubdeps=true; add `blockExoticSubdepsExclude={}` to allow just this package, or set blockExoticSubdeps=false to trust every git/file/tarball subdep)",
+        .0.name, .0.spec, .0.parent, .0.name
     )]
     BlockedExoticSubdep(Box<ExoticSubdepDetails>),
     #[error(
@@ -419,9 +419,12 @@ fn format_exotic_subdep_help(d: &ExoticSubdepDetails) -> String {
     let mut s = String::new();
     push_importer(&mut s, &d.importer);
     push_chain(&mut s, &d.ancestors, &d.name);
+    // Narrowest remedy first. `blockExoticSubdeps=false` is last because it
+    // drops the gate for every package in the graph, including ones added by
+    // a later update that the user never reviewed.
     s.push_str(&format!(
-        "to allow: either pin `{}` in your root package.json (moves the exotic spec out of the transitive graph), or set `blockExoticSubdeps=false` in .npmrc / settings.toml to trust every transitive git/file/tarball dep",
-        d.name
+        "to allow: pin `{}` in your root package.json (moves the exotic spec out of the transitive graph); or, after checking where it is fetched from, add `blockExoticSubdepsExclude={}` in .npmrc / settings.toml to trust this package only; `blockExoticSubdeps=false` trusts every transitive git/file/tarball dep and is a last resort",
+        d.name, d.name
     ));
     s
 }

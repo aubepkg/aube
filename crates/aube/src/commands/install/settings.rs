@@ -530,6 +530,20 @@ pub(crate) fn resolve_dependency_policy(
         aube_resolver::TrustExcludeRules::with_defaults_and_user_rules(user_rules);
     policy.trust_policy_ignore_after = aube_settings::resolved::trust_policy_ignore_after(ctx);
     policy.block_exotic_subdeps = aube_settings::resolved::block_exotic_subdeps(ctx);
+    // Parse entry-by-entry, like the two exclude lists above: dropping the
+    // whole allowlist over one typo would fail an install the user had
+    // already reviewed and approved.
+    let (exotic_allowlist, exotic_errors) = aube_resolver::ExoticSubdepAllowlist::parse_lossy(
+        aube_settings::resolved::block_exotic_subdeps_exclude(ctx).unwrap_or_default(),
+    );
+    for err in exotic_errors {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE,
+            error = %err,
+            "ignoring malformed blockExoticSubdepsExclude entry"
+        );
+    }
+    policy.block_exotic_subdeps_exclude = exotic_allowlist;
 
     Ok(policy)
 }

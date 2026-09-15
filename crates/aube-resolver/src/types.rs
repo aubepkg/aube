@@ -65,6 +65,10 @@ pub struct DependencyPolicy {
     pub trust_policy_exclude: crate::trust::TrustExcludeRules,
     pub trust_policy_ignore_after: Option<u64>,
     pub block_exotic_subdeps: bool,
+    /// Packages the gate lets through by name, so one dependency the
+    /// registry has no usable release of doesn't force
+    /// `block_exotic_subdeps` off for the whole graph. Empty by default.
+    pub block_exotic_subdeps_exclude: crate::trust::ExoticSubdepAllowlist,
 }
 
 impl Default for DependencyPolicy {
@@ -76,7 +80,17 @@ impl Default for DependencyPolicy {
             trust_policy_exclude: crate::trust::TrustExcludeRules::default(),
             trust_policy_ignore_after: None,
             block_exotic_subdeps: true,
+            block_exotic_subdeps_exclude: crate::trust::ExoticSubdepAllowlist::empty(),
         }
+    }
+}
+
+impl DependencyPolicy {
+    /// Whether a non-registry specifier for `name` is rejected. The gate
+    /// and its allowlist are always read together — a site that checked
+    /// only `block_exotic_subdeps` would quietly ignore the exemption.
+    pub fn blocks_exotic_subdep(&self, name: &str) -> bool {
+        self.block_exotic_subdeps && !self.block_exotic_subdeps_exclude.allows(name)
     }
 }
 

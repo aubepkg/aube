@@ -39,6 +39,8 @@ pub const WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION: &str =
     "WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION";
 pub const WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE: &str =
     "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE";
+pub const WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE: &str =
+    "WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE";
 pub const WARN_AUBE_OVERRIDE_MISSING_DEP: &str = "WARN_AUBE_OVERRIDE_MISSING_DEP";
 pub const WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED: &str =
     "WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED";
@@ -304,6 +306,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE,
         category: category::SETTINGS_CONFIG,
         description: "A `minimumReleaseAgeExclude` entry was malformed and skipped.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE,
+        category: category::SETTINGS_CONFIG,
+        description: "A `blockExoticSubdepsExclude` entry was malformed and skipped.",
         exit_code: None,
     },
     CodeMeta {

@@ -1276,14 +1276,19 @@ impl<'a> ResolveDriver<'a> {
             if bundled_names.contains(dep_name) {
                 continue;
             }
-            if self.resolver.dependency_policy.block_exotic_subdeps
+            if self
+                .resolver
+                .dependency_policy
+                .blocks_exotic_subdep(dep_name)
                 && is_non_registry_specifier(dep_range)
             {
                 return Err(Error::Registry(
                     dep_name.clone(),
                     format!(
                         "uses exotic specifier \"{dep_range}\" which is blocked \
-                                 by blockExoticSubdeps (declared by {})",
+                                 by blockExoticSubdeps (declared by {}); add \
+                                 `blockExoticSubdepsExclude={dep_name}` to allow just \
+                                 this package",
                         task.name
                     ),
                 ));
@@ -1318,7 +1323,10 @@ impl<'a> ResolveDriver<'a> {
             {
                 continue;
             }
-            if self.resolver.dependency_policy.block_exotic_subdeps
+            if self
+                .resolver
+                .dependency_policy
+                .blocks_exotic_subdep(dep_name)
                 && is_non_registry_specifier(dep_range)
             {
                 tracing::warn!(
@@ -1410,7 +1418,10 @@ impl<'a> ResolveDriver<'a> {
                 {
                     continue;
                 }
-                if self.resolver.dependency_policy.block_exotic_subdeps
+                if self
+                    .resolver
+                    .dependency_policy
+                    .blocks_exotic_subdep(dep_name)
                     && is_non_registry_specifier(dep_range)
                 {
                     tracing::warn!(
@@ -1476,7 +1487,9 @@ impl<'a> ResolveDriver<'a> {
             && should_block_exotic_subdep(
                 &task,
                 &self.resolved,
-                self.resolver.dependency_policy.block_exotic_subdeps,
+                self.resolver
+                    .dependency_policy
+                    .blocks_exotic_subdep(&task.name),
             )
         {
             return Err(Error::BlockedExoticSubdep(Box::new(ExoticSubdepDetails {
@@ -1772,7 +1785,9 @@ impl<'a> ResolveDriver<'a> {
                         && should_block_exotic_subdep(
                             &child_task,
                             &self.resolved,
-                            self.resolver.dependency_policy.block_exotic_subdeps,
+                            self.resolver
+                                .dependency_policy
+                                .blocks_exotic_subdep(&child_name),
                         )
                     {
                         tracing::warn!(
