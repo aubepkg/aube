@@ -120,9 +120,22 @@ fn main() {
     write_popular_names_blob(&out_dir, &popular_names_source, &fallback_names);
 }
 
+// Watching a path that has never existed leaves cargo unable to record a
+// baseline mtime, so it reruns the build script forever. Fall back to the
+// nearest existing ancestor dir, whose own mtime changes once the path (or
+// a directory leading to it) is created, so later appearance is still seen.
 fn watch_if_exists(path: &Path) {
     if path.is_file() {
         println!("cargo:rerun-if-changed={}", path.display());
+        return;
+    }
+    let mut ancestor = path.parent();
+    while let Some(dir) = ancestor {
+        if dir.is_dir() {
+            println!("cargo:rerun-if-changed={}", dir.display());
+            return;
+        }
+        ancestor = dir.parent();
     }
 }
 
