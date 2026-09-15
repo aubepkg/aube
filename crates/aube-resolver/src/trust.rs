@@ -674,22 +674,34 @@ pub enum ExoticSubdepAllowlistParseError {
 }
 
 /// Reject entries [`NameMatcher::compile`] would turn into a matcher that
-/// cannot match any real package name. `@scope` is the one that bites:
-/// it has no version separator, so it compiles to an exact matcher for the
-/// literal `"@scope"`, and since a scoped package is always `@scope/name`
-/// the entry silently matches nothing. Warning and skipping makes the
-/// mistake visible instead of leaving a dead exemption in place.
+/// cannot match any real package name — `@scope` with no second half,
+/// `foo/bar` unscoped, `@scope/pkg/extra`. Each compiles to a matcher for a
+/// string no dependency can be called, so the entry silently exempts
+/// nothing; warning makes the mistake visible instead of leaving a dead
+/// exemption in place.
+///
+/// This checks *shape* — where slashes may appear — and deliberately stops
+/// there rather than reimplementing npm's name grammar. Over-rejecting is
+/// the worse error here: it breaks an allowlist that works, whereas an
+/// entry that merely fails to match leaves the install blocked with the
+/// original error, which is visible. Notably, uppercase is invalid for new
+/// npm packages but plenty of real ones predate that rule (`JSONStream`),
+/// so case is not policed.
 fn exotic_name_is_well_formed(name: &str) -> bool {
     if name.is_empty() || name.chars().any(char::is_whitespace) {
         return false;
     }
-    let Some(rest) = name.strip_prefix('@') else {
-        return true;
-    };
-    // Both halves must be present and non-empty; either may be a glob.
-    match rest.split_once('/') {
-        Some((scope, package)) => !scope.is_empty() && !package.is_empty(),
-        None => false,
+    match name.strip_prefix('@') {
+        // Scoped: exactly one `/`, with both halves non-empty. Either half
+        // may be a glob (`@myorg/*`, `@*/pkg`).
+        Some(rest) => match rest.split_once('/') {
+            Some((scope, package)) => {
+                !scope.is_empty() && !package.is_empty() && !package.contains('/')
+            }
+            None => false,
+        },
+        // Unscoped names cannot contain a path separator at all.
+        None => !name.contains('/'),
     }
 }
 

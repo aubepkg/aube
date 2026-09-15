@@ -391,6 +391,21 @@ fn exotic_allowlist_rejects_names_that_could_never_match() {
     assert_eq!(errors.len(), 1);
     assert!(allowlist.is_empty());
 
+    // Misplaced slashes compile to equally unmatchable literals: an
+    // unscoped name cannot contain one, and a scoped name takes exactly one.
+    for bad in ["foo/bar", "@scope/pkg/extra", "@/pkg", "@scope/"] {
+        let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy([bad]);
+        assert_eq!(errors.len(), 1, "{bad} should be rejected");
+        assert!(allowlist.is_empty(), "{bad} should compile to no matcher");
+    }
+
+    // Shape is all that is policed. Uppercase is invalid for new npm
+    // packages but real ones predate the rule, and rejecting them would
+    // break a working allowlist.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["JSONStream"]);
+    assert!(errors.is_empty());
+    assert!(allowlist.allows("JSONStream"));
+
     // Both scoped halves present is the valid form, glob in either half.
     for good in ["@scope/pkg", "@myorg/*", "@*/pkg", "xlsx", "*"] {
         let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy([good]);
