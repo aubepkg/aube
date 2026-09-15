@@ -666,6 +666,31 @@ pub enum ExoticSubdepAllowlistParseError {
     )]
     #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION))]
     HasVersionSelector { pattern: String },
+    #[error(
+        "invalid blockExoticSubdepsExclude entry `{pattern}`: not a package name — a scoped name needs both parts (`@scope/name`, or `@scope/*` to match the scope)"
+    )]
+    #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME))]
+    InvalidPackageName { pattern: String },
+}
+
+/// Reject entries [`NameMatcher::compile`] would turn into a matcher that
+/// cannot match any real package name. `@scope` is the one that bites:
+/// it has no version separator, so it compiles to an exact matcher for the
+/// literal `"@scope"`, and since a scoped package is always `@scope/name`
+/// the entry silently matches nothing. Warning and skipping makes the
+/// mistake visible instead of leaving a dead exemption in place.
+fn exotic_name_is_well_formed(name: &str) -> bool {
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some(rest) = name.strip_prefix('@') else {
+        return true;
+    };
+    // Both halves must be present and non-empty; either may be a glob.
+    match rest.split_once('/') {
+        Some((scope, package)) => !scope.is_empty() && !package.is_empty(),
+        None => false,
+    }
 }
 
 impl ExoticSubdepAllowlist {
@@ -709,6 +734,11 @@ impl ExoticSubdepAllowlist {
                 (_, Some(_)) => errors.push(ExoticSubdepAllowlistParseError::HasVersionSelector {
                     pattern: pattern.to_string(),
                 }),
+                (name, None) if !exotic_name_is_well_formed(name) => {
+                    errors.push(ExoticSubdepAllowlistParseError::InvalidPackageName {
+                        pattern: pattern.to_string(),
+                    })
+                }
                 (name, None) => matchers.push(NameMatcher::compile(name)),
             }
         }

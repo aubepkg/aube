@@ -831,7 +831,9 @@ now and after any future update.
 
 Version selectors (`xlsx@^0.20`) are rejected: an exotic dependency is
 identified by a URL or path rather than a registry version, so there is
-nothing for a semver range to match.
+nothing for a semver range to match. So is an entry that is not a package
+name, such as a bare `@scope` without its second half — it could never
+match, and warning beats leaving a dead exemption in place.
 
 ### `registries` {#setting-registries}
 

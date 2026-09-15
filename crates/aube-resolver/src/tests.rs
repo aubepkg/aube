@@ -376,6 +376,35 @@ fn exotic_allowlist_rejects_version_selectors_and_keeps_the_rest() {
 }
 
 #[test]
+fn exotic_allowlist_rejects_names_that_could_never_match() {
+    // `@scope` has no version separator, so it used to compile straight to
+    // an exact matcher for the literal "@scope". No package is named that —
+    // a scoped package is always `@scope/name` — so the entry was a silent
+    // no-op rather than the exemption the user wrote.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["@scope"]);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].to_string().contains("@scope"));
+    assert!(allowlist.is_empty());
+
+    // Whitespace is never part of a package name either.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["x lsx"]);
+    assert_eq!(errors.len(), 1);
+    assert!(allowlist.is_empty());
+
+    // Both scoped halves present is the valid form, glob in either half.
+    for good in ["@scope/pkg", "@myorg/*", "@*/pkg", "xlsx", "*"] {
+        let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy([good]);
+        assert!(errors.is_empty(), "{good} should parse");
+        assert_eq!(allowlist.len(), 1, "{good} should compile to a matcher");
+    }
+
+    // A bad entry must not take a good sibling down with it.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["@scope", "xlsx"]);
+    assert_eq!(errors.len(), 1);
+    assert!(allowlist.allows("xlsx"));
+}
+
+#[test]
 fn exotic_allowlist_is_inert_when_the_gate_is_off() {
     let (allowlist, _) = crate::ExoticSubdepAllowlist::parse_lossy(["xlsx"]);
     let policy = DependencyPolicy {
