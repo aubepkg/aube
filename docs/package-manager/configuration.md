@@ -34,7 +34,7 @@ normal resolution and cannot be weakened by a local override.
 | Linker | `nodeLinker=isolated` | Keeps transitive dependencies scoped to the packages that declared them. |
 | Package imports | `packageImportMethod=auto` | Links files from the store with the faster same-filesystem primitive per platform — reflink (clonefile) on macOS, hardlink on Linux and elsewhere — falling back to copy on cross-filesystem boundaries. Set `clone` or `clone-or-copy` to attempt reflink first, still falling back to copy when reflink is unavailable. |
 | New releases | `minimumReleaseAge=1440` | Avoids installing versions published in the last 24 hours by default. |
-| Exotic transitive deps | `blockExoticSubdeps=true` | Blocks transitive git and tarball dependencies unless you opt out. |
+| Exotic transitive deps | `blockExoticSubdeps=true` | Blocks transitive git and tarball dependencies unless you opt out. `blockExoticSubdepsExclude` exempts named packages without opening the gate. |
 | Dependency scripts | allowlist | Project approvals and built-in trusted packages may run scripts; explicit denies win. |
 | Jailed builds | `jailBuilds=false` | Opt in to running approved dependency scripts with a restricted environment, temporary `HOME`, and native macOS/Linux enforcement. Planned to default to `true` in the next major version. |
 | Auto-install before scripts | enabled | `aube run`, `aube test`, and `aube exec` repair stale installs first. |

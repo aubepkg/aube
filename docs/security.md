@@ -409,7 +409,23 @@ deps you pin yourself in `package.json` are still allowed.
 blockExoticSubdeps: true   # default
 ```
 
-Settings: [`blockExoticSubdeps`](/settings/#setting-blockexoticsubdeps).
+When one dependency genuinely has no registry release — a package the registry
+no longer carries a safe version of, say — name it instead of turning the gate
+off. Every other package in the graph stays protected:
+
+```yaml
+blockExoticSubdepsExclude:
+  - xlsx
+```
+
+Entries are bare package names or `*` name globs (`@myorg/*`). A version
+selector (`xlsx@^0.20`) is refused: an exotic dependency is identified by its
+URL or path, so a semver range has nothing to match. Check where the package is
+actually fetched from before listing it — the entry trusts whatever source the
+graph names, including after a future update changes it.
+
+Settings: [`blockExoticSubdeps`](/settings/#setting-blockexoticsubdeps),
+[`blockExoticSubdepsExclude`](/settings/#setting-blockexoticsubdepsexclude).
 
 ## Tarball integrity
 

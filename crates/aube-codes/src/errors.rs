@@ -34,6 +34,8 @@ pub const ERR_AUBE_TRUST_MISSING_TIME: &str = "ERR_AUBE_TRUST_MISSING_TIME";
 // to a `name: &str =\n    "name";` two-liner for any const past col 100.
 #[rustfmt::skip] pub const ERR_AUBE_TRUST_EXCLUDE_INVALID_VERSION_UNION: &str = "ERR_AUBE_TRUST_EXCLUDE_INVALID_VERSION_UNION";
 #[rustfmt::skip] pub const ERR_AUBE_TRUST_EXCLUDE_NAME_GLOB_WITH_VERSIONS: &str = "ERR_AUBE_TRUST_EXCLUDE_NAME_GLOB_WITH_VERSIONS";
+#[rustfmt::skip] pub const ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION: &str = "ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION";
+#[rustfmt::skip] pub const ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME: &str = "ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME";
 pub const ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED: &str = "ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED";
 
 // ── registry / network ──────────────────────────────────────────────
@@ -263,6 +265,18 @@ pub const ALL: &[CodeMeta] = &[
         name: ERR_AUBE_TRUST_EXCLUDE_NAME_GLOB_WITH_VERSIONS,
         category: category::RESOLVER,
         description: "A `trustPolicyExclude` pattern combined a name glob with versions.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION,
+        category: category::RESOLVER,
+        description: "A `blockExoticSubdepsExclude` entry carried a version selector, which cannot match an exotic dependency.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME,
+        category: category::RESOLVER,
+        description: "A `blockExoticSubdepsExclude` entry was not a package name, so it could never match.",
         exit_code: None,
     },
     // Tarball / store

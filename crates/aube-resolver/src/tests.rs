@@ -278,6 +278,7 @@ fn exotic_subdep_help_shows_chain_and_fix() {
     let help = err.help().expect("help set").to_string();
     assert!(help.contains("chain: some-pkg@1.0.0 > xlsx"));
     assert!(help.contains("pin `xlsx`"));
+    assert!(help.contains("blockExoticSubdepsExclude=xlsx"));
     assert!(help.contains("blockExoticSubdeps=false"));
 }
 
@@ -328,6 +329,117 @@ fn test_version_satisfies_empty_range_is_any() {
 #[test]
 fn dependency_policy_default_blocks_exotic_subdeps() {
     assert!(DependencyPolicy::default().block_exotic_subdeps);
+}
+
+#[test]
+fn dependency_policy_default_allowlist_is_empty() {
+    let policy = DependencyPolicy::default();
+    assert!(policy.block_exotic_subdeps_exclude.is_empty());
+    assert!(policy.blocks_exotic_subdep("xlsx"));
+}
+
+#[test]
+fn exotic_allowlist_exempts_only_the_named_package() {
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["xlsx"]);
+    assert!(errors.is_empty());
+    let policy = DependencyPolicy {
+        block_exotic_subdeps_exclude: allowlist,
+        ..Default::default()
+    };
+    assert!(!policy.blocks_exotic_subdep("xlsx"));
+    // The rest of the graph stays gated — that is the whole point of the
+    // list over flipping `blockExoticSubdeps` off.
+    assert!(policy.blocks_exotic_subdep("left-pad"));
+}
+
+#[test]
+fn exotic_allowlist_supports_scope_globs() {
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["@myorg/*"]);
+    assert!(errors.is_empty());
+    assert!(allowlist.allows("@myorg/internal-tool"));
+    assert!(!allowlist.allows("@otherorg/tool"));
+    assert!(!allowlist.allows("myorg"));
+}
+
+#[test]
+fn exotic_allowlist_rejects_version_selectors_and_keeps_the_rest() {
+    // An exotic dep is identified by a URL, so a semver range can never
+    // match. Accepting the entry would silently drop the exemption; the
+    // valid sibling must still survive so one typo doesn't fail an install
+    // the user already approved.
+    let (allowlist, errors) =
+        crate::ExoticSubdepAllowlist::parse_lossy(["xlsx@^0.20", "@myorg/pkg"]);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].to_string().contains("xlsx@^0.20"));
+    assert!(!allowlist.allows("xlsx"));
+    assert!(allowlist.allows("@myorg/pkg"));
+}
+
+#[test]
+fn exotic_allowlist_rejects_names_that_could_never_match() {
+    // `@scope` has no version separator, so it used to compile straight to
+    // an exact matcher for the literal "@scope". No package is named that —
+    // a scoped package is always `@scope/name` — so the entry was a silent
+    // no-op rather than the exemption the user wrote.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["@scope"]);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].to_string().contains("@scope"));
+    assert!(allowlist.is_empty());
+
+    // Whitespace is never part of a package name either.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["x lsx"]);
+    assert_eq!(errors.len(), 1);
+    assert!(allowlist.is_empty());
+
+    // Misplaced slashes compile to equally unmatchable literals: an
+    // unscoped name cannot contain one, and a scoped name takes exactly one.
+    for bad in ["foo/bar", "@scope/pkg/extra", "@/pkg", "@scope/"] {
+        let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy([bad]);
+        assert_eq!(errors.len(), 1, "{bad} should be rejected");
+        assert!(allowlist.is_empty(), "{bad} should compile to no matcher");
+    }
+
+    // Shape is all that is policed. Uppercase is invalid for new npm
+    // packages but real ones predate the rule, and rejecting them would
+    // break a working allowlist.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["JSONStream"]);
+    assert!(errors.is_empty());
+    assert!(allowlist.allows("JSONStream"));
+
+    // Both scoped halves present is the valid form, glob in either half.
+    for good in ["@scope/pkg", "@myorg/*", "@*/pkg", "xlsx", "*"] {
+        let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy([good]);
+        assert!(errors.is_empty(), "{good} should parse");
+        assert_eq!(allowlist.len(), 1, "{good} should compile to a matcher");
+    }
+
+    // A bad entry must not take a good sibling down with it.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["@scope", "xlsx"]);
+    assert_eq!(errors.len(), 1);
+    assert!(allowlist.allows("xlsx"));
+}
+
+#[test]
+fn exotic_allowlist_is_inert_when_the_gate_is_off() {
+    let (allowlist, _) = crate::ExoticSubdepAllowlist::parse_lossy(["xlsx"]);
+    let policy = DependencyPolicy {
+        block_exotic_subdeps: false,
+        block_exotic_subdeps_exclude: allowlist,
+        ..Default::default()
+    };
+    assert!(!policy.blocks_exotic_subdep("xlsx"));
+    assert!(!policy.blocks_exotic_subdep("left-pad"));
+}
+
+#[test]
+fn exotic_allowlist_skips_empty_entries() {
+    // An empty `.npmrc` value or a stray trailing comma must not compile
+    // into a matcher — `NameMatcher::compile("")` would otherwise decide
+    // what an empty pattern means.
+    let (allowlist, errors) = crate::ExoticSubdepAllowlist::parse_lossy(["", "xlsx"]);
+    assert!(errors.is_empty());
+    assert_eq!(allowlist.len(), 1);
+    assert!(!allowlist.allows(""));
 }
 
 #[test]

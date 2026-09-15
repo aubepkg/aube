@@ -109,6 +109,18 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION",
+      "category": "Resolver",
+      "description": "A `blockExoticSubdepsExclude` entry carried a version selector, which cannot match an exotic dependency.",
+      "exit_code": null
+    },
+    {
+      "name": "ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME",
+      "category": "Resolver",
+      "description": "A `blockExoticSubdepsExclude` entry was not a package name, so it could never match.",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_TARBALL_INTEGRITY",
       "category": "Tarball / store",
       "description": "Downloaded tarball's hash didn't match the lockfile's / packument's `dist.integrity`.",
@@ -726,6 +738,12 @@
       "name": "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE",
       "category": "Settings / config validation",
       "description": "A `minimumReleaseAgeExclude` entry was malformed and skipped.",
+      "exit_code": null
+    },
+    {
+      "name": "WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE",
+      "category": "Settings / config validation",
+      "description": "A `blockExoticSubdepsExclude` entry was malformed and skipped.",
       "exit_code": null
     },
     {

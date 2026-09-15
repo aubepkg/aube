@@ -715,6 +715,36 @@ sources.workspaceYaml = ["blockExoticSubdeps"]
 managedPolicy = "trueWins"
 examples = []
 
+[blockExoticSubdepsExclude]
+description = "Packages allowed to be pulled from a non-registry source despite `blockExoticSubdeps`."
+type = "list<string>"
+default = "undefined"
+docs = """
+Narrows `blockExoticSubdeps` instead of turning it off. Each entry is a
+bare package name (`xlsx`) or a `*` name glob (`@myorg/*`); the named
+package may then be resolved from a `git+`, `file:`, `exec:`, or tarball
+URL while every other package stays gated.
+
+Use this for the case the all-or-nothing switch handles badly: one
+dependency the registry no longer carries a usable release of, inside a
+graph you otherwise want protected. Review where that package is fetched
+from before adding it — the entry trusts whatever source the graph names,
+now and after any future update.
+
+Version selectors (`xlsx@^0.20`) are rejected: an exotic dependency is
+identified by a URL or path rather than a registry version, so there is
+nothing for a semver range to match. So is an entry that is not a package
+name, such as a bare `@scope` without its second half — it could never
+match, and warning beats leaving a dead exemption in place.
+"""
+sources.cli = []
+sources.env = ["npm_config_block_exotic_subdeps_exclude", "NPM_CONFIG_BLOCK_EXOTIC_SUBDEPS_EXCLUDE", "AUBE_BLOCK_EXOTIC_SUBDEPS_EXCLUDE"]
+sources.npmrc = ["blockExoticSubdepsExclude"]
+sources.workspaceYaml = ["blockExoticSubdepsExclude"]
+precedence = ["workspaceYaml", "npmrc"]
+managedPolicy = "managedWins"
+examples = []
+
 [registries]
 description = "Registry URLs, including scoped registry overrides."
 type = "object"

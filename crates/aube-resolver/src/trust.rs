@@ -645,6 +645,119 @@ impl TrustExcludeRules {
     }
 }
 
+/// Package names exempt from the `blockExoticSubdeps` gate.
+///
+/// Deliberately *not* a [`PackageVersionPolicy`]: that type matches
+/// `name@<semver-range>`, and an exotic dependency is identified by a URL
+/// or a path rather than a registry version, so a range has nothing to
+/// test against. Accepting `xlsx@^0.20` here would compile to a rule that
+/// never fires, silently dropping the exemption the user asked for — the
+/// same failure mode [`TrustExcludeRules::default`] documents. So the
+/// parser rejects version selectors instead.
+#[derive(Debug, Clone, Default)]
+pub struct ExoticSubdepAllowlist {
+    matchers: Vec<NameMatcher>,
+}
+
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+pub enum ExoticSubdepAllowlistParseError {
+    #[error(
+        "invalid blockExoticSubdepsExclude entry `{pattern}`: expected a package name or `*` glob, not a version selector — an exotic dependency is identified by its URL or path, so there is no version to match"
+    )]
+    #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION))]
+    HasVersionSelector { pattern: String },
+    #[error(
+        "invalid blockExoticSubdepsExclude entry `{pattern}`: not a package name — a scoped name needs both parts (`@scope/name`, or `@scope/*` to match the scope)"
+    )]
+    #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME))]
+    InvalidPackageName { pattern: String },
+}
+
+/// Reject entries [`NameMatcher::compile`] would turn into a matcher that
+/// cannot match any real package name — `@scope` with no second half,
+/// `foo/bar` unscoped, `@scope/pkg/extra`. Each compiles to a matcher for a
+/// string no dependency can be called, so the entry silently exempts
+/// nothing; warning makes the mistake visible instead of leaving a dead
+/// exemption in place.
+///
+/// This checks *shape* — where slashes may appear — and deliberately stops
+/// there rather than reimplementing npm's name grammar. Over-rejecting is
+/// the worse error here: it breaks an allowlist that works, whereas an
+/// entry that merely fails to match leaves the install blocked with the
+/// original error, which is visible. Notably, uppercase is invalid for new
+/// npm packages but plenty of real ones predate that rule (`JSONStream`),
+/// so case is not policed.
+fn exotic_name_is_well_formed(name: &str) -> bool {
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return false;
+    }
+    match name.strip_prefix('@') {
+        // Scoped: exactly one `/`, with both halves non-empty. Either half
+        // may be a glob (`@myorg/*`, `@*/pkg`).
+        Some(rest) => match rest.split_once('/') {
+            Some((scope, package)) => {
+                !scope.is_empty() && !package.is_empty() && !package.contains('/')
+            }
+            None => false,
+        },
+        // Unscoped names cannot contain a path separator at all.
+        None => !name.contains('/'),
+    }
+}
+
+impl ExoticSubdepAllowlist {
+    /// An allowlist that matches nothing — the default, so the gate stays
+    /// whole until someone names a package.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.matchers.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.matchers.len()
+    }
+
+    /// Whether `name` may be resolved from a non-registry source.
+    pub fn allows(&self, name: &str) -> bool {
+        self.matchers.iter().any(|m| m.matches(name))
+    }
+
+    /// Parse a list of patterns, keeping every entry that succeeds and
+    /// returning the per-entry errors for the rest. Same reasoning as
+    /// [`TrustExcludeRules::parse_lossy`]: one typo must not drop the
+    /// entries that did parse, because here that would fail an install
+    /// the user had already approved rather than fail open.
+    pub fn parse_lossy<I, S>(patterns: I) -> (Self, Vec<ExoticSubdepAllowlistParseError>)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut matchers = Vec::new();
+        let mut errors = Vec::new();
+        for pattern in patterns {
+            let pattern = pattern.as_ref();
+            if pattern.is_empty() {
+                continue;
+            }
+            match split_name_and_versions(pattern) {
+                (_, Some(_)) => errors.push(ExoticSubdepAllowlistParseError::HasVersionSelector {
+                    pattern: pattern.to_string(),
+                }),
+                (name, None) if !exotic_name_is_well_formed(name) => {
+                    errors.push(ExoticSubdepAllowlistParseError::InvalidPackageName {
+                        pattern: pattern.to_string(),
+                    })
+                }
+                (name, None) => matchers.push(NameMatcher::compile(name)),
+            }
+        }
+        (Self { matchers }, errors)
+    }
+}
+
 /// Split `<name>[@<versions>]` on the separator that isn't a scope marker,
 /// so a scoped name's leading `@` isn't mistaken for a version selector.
 fn split_name_and_versions(pattern: &str) -> (&str, Option<&str>) {

@@ -64,6 +64,7 @@ Use `aube config find <words>` to search from your terminal, or `aube config exp
 | [`trustPolicyExclude`](#setting-trustpolicyexclude) | `list<string>` | Packages exempt from `trustPolicy` checks. |
 | [`trustPolicyIgnoreAfter`](#setting-trustpolicyignoreafter) | `int` | Skip the trust check for versions older than this many minutes. |
 | [`blockExoticSubdeps`](#setting-blockexoticsubdeps) | `bool` | Restrict transitive dependencies to trusted sources (registries, not git/tarball URLs). |
+| [`blockExoticSubdepsExclude`](#setting-blockexoticsubdepsexclude) | `list<string>` | Packages allowed to be pulled from a non-registry source despite `blockExoticSubdeps`. |
 | [`registries`](#setting-registries) | `object` | Registry URLs, including scoped registry overrides. |
 | [`hoist`](#setting-hoist) | `bool` | Hoist all dependencies to the hidden modules directory. |
 | [`hoistWorkspacePackages`](#setting-hoistworkspacepackages) | `bool` | Symlink workspace packages into node_modules. |
@@ -805,6 +806,34 @@ Restrict transitive dependencies to trusted sources (registries, not git/tarball
 When true, transitive deps referenced via `git+`, `file:`, or direct
 tarball URLs are rejected. Helps prevent supply-chain attacks via
 unexpected download sources.
+
+### `blockExoticSubdepsExclude` {#setting-blockexoticsubdepsexclude}
+
+Packages allowed to be pulled from a non-registry source despite `blockExoticSubdeps`.
+
+- Type: `list<string>`
+- Default: `undefined`
+- Environment: `npm_config_block_exotic_subdeps_exclude`, `NPM_CONFIG_BLOCK_EXOTIC_SUBDEPS_EXCLUDE`, `AUBE_BLOCK_EXOTIC_SUBDEPS_EXCLUDE`
+- .npmrc keys: `blockExoticSubdepsExclude`, `block-exotic-subdeps-exclude`
+- Workspace YAML keys: `blockExoticSubdepsExclude`
+- Managed policy: `managedWins`
+
+Narrows `blockExoticSubdeps` instead of turning it off. Each entry is a
+bare package name (`xlsx`) or a `*` name glob (`@myorg/*`); the named
+package may then be resolved from a `git+`, `file:`, `exec:`, or tarball
+URL while every other package stays gated.
+
+Use this for the case the all-or-nothing switch handles badly: one
+dependency the registry no longer carries a usable release of, inside a
+graph you otherwise want protected. Review where that package is fetched
+from before adding it — the entry trusts whatever source the graph names,
+now and after any future update.
+
+Version selectors (`xlsx@^0.20`) are rejected: an exotic dependency is
+identified by a URL or path rather than a registry version, so there is
+nothing for a semver range to match. So is an entry that is not a package
+name, such as a bare `@scope` without its second half — it could never
+match, and warning beats leaving a dead exemption in place.
 
 ### `registries` {#setting-registries}
 

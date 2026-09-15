@@ -357,6 +357,12 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub block_exotic_subdeps: Option<bool>,
 
+    /// Package names exempt from `block_exotic_subdeps`, so one
+    /// dependency without a usable registry release doesn't force the
+    /// gate off for the whole graph.
+    #[serde(default)]
+    pub block_exotic_subdeps_exclude: Option<Vec<String>>,
+
     // -- Build Settings --
     /// Whether to ignore all lifecycle scripts (default: false).
     #[serde(default)]
