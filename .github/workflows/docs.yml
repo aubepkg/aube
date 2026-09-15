@@ -23,4 +23,4 @@ jobs:
       contents: read
       id-token: write
       pages: write
-    uses: ./.github/workflows/docs-impl.yml
+    uses: $/.github/workflows/docs-impl.yml

@@ -56,7 +56,7 @@ jobs:
     if: ${{ github.event_name != 'release' && inputs.tag == '' }}
     permissions:
       contents: read
-    uses: ./.github/workflows/node-addon-impl.yml
+    uses: $/.github/workflows/node-addon-impl.yml
     with:
       tag: ""
 
@@ -66,7 +66,7 @@ jobs:
       attestations: write
       contents: read
       id-token: write
-    uses: ./.github/workflows/node-addon-impl.yml
+    uses: $/.github/workflows/node-addon-impl.yml
     with:
       tag: ${{ inputs.tag || '' }}
     secrets:
