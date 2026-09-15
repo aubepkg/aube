@@ -56,10 +56,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=AUBE_PRIMER_TOP");
     println!("cargo:rerun-if-env-changed=AUBE_PRIMER_VERSION_CAP");
     println!("cargo:rerun-if-env-changed=AUBE_REQUIRE_PRIMER");
-    println!("cargo:rerun-if-changed={}", source.display());
-    println!("cargo:rerun-if-changed={}", popular_names_source.display());
+    watch_if_exists(&popular_names_source);
     let json = source.with_extension("json");
-    println!("cargo:rerun-if-changed={}", json.display());
 
     if !source.is_file() {
         if std::env::var_os("AUBE_PRIMER_PATH").is_some() {
@@ -101,6 +99,9 @@ fn main() {
         }
     }
 
+    watch_if_exists(&source);
+    watch_if_exists(&json);
+
     let generated_at = std::fs::metadata(&source)
         .and_then(|m| m.modified())
         .ok()
@@ -117,6 +118,12 @@ fn main() {
         .unwrap_or_else(|e| panic!("failed to read primer {}: {e}", source.display()));
     let fallback_names = write_package_blob(&out_dir, &bytes);
     write_popular_names_blob(&out_dir, &popular_names_source, &fallback_names);
+}
+
+fn watch_if_exists(path: &Path) {
+    if path.is_file() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
 }
 
 fn primer_top() -> usize {
