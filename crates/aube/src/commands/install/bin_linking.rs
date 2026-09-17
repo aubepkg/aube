@@ -279,6 +279,7 @@ pub(super) fn link_bins_for_dep(
         managed,
         preserved,
         BinConflict::Overwrite,
+        None,
     )?;
     Ok(())
 }
@@ -531,7 +532,7 @@ fn link_hoisted_dep_bins(
     // reason to win a command in this one, and with version conflicts
     // nesting packages under the member that forced them, a package can
     // be placed inside a subtree it has no relationship to.
-    let priority = importer_bin_priority(graph, project_dir, modules_dir_name);
+    let rules = importer_bin_rules(graph, project_dir, modules_dir_name);
     for prioritized_pass in [true, false] {
         for (dep_path, pkg) in &graph.packages {
             link_hoisted_pkg_bins(
@@ -545,7 +546,7 @@ fn link_hoisted_dep_bins(
                 preserved,
                 dep_path,
                 pkg,
-                &priority,
+                &rules,
                 prioritized_pass,
             )?;
         }
@@ -557,12 +558,46 @@ fn link_hoisted_dep_bins(
 /// depends on directly. Those outrank anything else placed in that same
 /// directory. A `.bin/` belonging to no importer (one nested under a
 /// package) gets no entry, and ordering there falls back to graph order.
-fn importer_bin_priority<'a>(
+/// Per-importer bin rules, both keyed by the importer's own `.bin/`.
+struct ImporterBinRules<'a> {
+    /// dep_paths the importer depends on directly. They outrank anything
+    /// else placed in that same `.bin/`.
+    direct: BTreeMap<PathBuf, BTreeSet<&'a str>>,
+    /// Command names the importer declares in its *own* `bin`. Nothing a
+    /// dependency ships may take one.
+    reserved: BTreeMap<PathBuf, BTreeSet<String>>,
+}
+
+impl ImporterBinRules<'_> {
+    fn is_direct(&self, bin_dir: &Path, dep_path: &str) -> bool {
+        self.direct
+            .get(bin_dir)
+            .is_some_and(|direct| direct.contains(dep_path))
+    }
+
+    fn reserved_in(&self, bin_dir: &Path) -> Option<&BTreeSet<String>> {
+        self.reserved.get(bin_dir)
+    }
+}
+
+/// Derive both rules from the graph and the importers' own manifests.
+///
+/// The `reserved` half is why the manifests get read here rather than
+/// taken from the caller: `install` links an importer's own `bin` before
+/// the hoisted pass runs (see `link_all_bins`), so those commands are
+/// already claimed, but `aube rebuild` never runs that step and only
+/// holds the root manifest — not a workspace member's. Reading each
+/// importer's `package.json` keeps the rule identical for both callers
+/// and for every member. Importers are few, unlike packages.
+fn importer_bin_rules<'a>(
     graph: &'a aube_lockfile::LockfileGraph,
     project_dir: &Path,
     modules_dir_name: &str,
-) -> BTreeMap<PathBuf, BTreeSet<&'a str>> {
-    let mut priority: BTreeMap<PathBuf, BTreeSet<&str>> = BTreeMap::new();
+) -> ImporterBinRules<'a> {
+    let mut rules = ImporterBinRules {
+        direct: BTreeMap::new(),
+        reserved: BTreeMap::new(),
+    };
     for (importer_path, deps) in &graph.importers {
         if !aube_linker::is_physical_importer(importer_path) {
             continue;
@@ -580,12 +615,77 @@ fn importer_bin_priority<'a>(
         // sound across a symlinked parent.
         let bin_dir =
             aube_util::path::normalize_lexical(&importer_dir.join(modules_dir_name).join(".bin"));
-        priority
-            .entry(bin_dir)
+        rules
+            .direct
+            .entry(bin_dir.clone())
             .or_default()
             .extend(deps.iter().map(|dep| dep.dep_path.as_str()));
+
+        // A missing or unparseable importer manifest reserves nothing.
+        // The caller that cares about it has already failed on it — this
+        // pass must not be the thing that turns it into an install error.
+        let manifest_path = importer_dir.join("package.json");
+        let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = aube_manifest::parse_json::<serde_json::Value>(&manifest_path, content)
+        else {
+            continue;
+        };
+        if let Some(bin) = manifest.get("bin") {
+            let own_name = manifest.get("name").and_then(serde_json::Value::as_str);
+            let names = bin_command_names(bin, own_name);
+            if !names.is_empty() {
+                rules.reserved.entry(bin_dir).or_default().extend(names);
+            }
+        }
     }
-    priority
+    rules
+}
+
+/// Command names a `bin` field exposes. Mirrors how `link_bin_entries`
+/// derives them: a string `bin` is published under the package's own
+/// (unscoped) name, a map under its keys.
+fn bin_command_names(bin: &serde_json::Value, pkg_name: Option<&str>) -> Vec<String> {
+    match bin {
+        serde_json::Value::String(_) => pkg_name
+            .map(|name| vec![name.split('/').next_back().unwrap_or(name).to_string()])
+            .unwrap_or_default(),
+        serde_json::Value::Object(bins) => bins.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Drop the entries of a `bin` field whose command name is reserved.
+/// Returns `None` when nothing is reserved, so the common path clones
+/// nothing.
+fn without_reserved_bins(
+    bin: &serde_json::Value,
+    pkg_name: &str,
+    reserved: &BTreeSet<String>,
+) -> Option<serde_json::Value> {
+    match bin {
+        serde_json::Value::String(_) => {
+            let command = pkg_name.split('/').next_back().unwrap_or(pkg_name);
+            // Nothing left to link once the only command is reserved;
+            // `link_bin_entries` ignores a non-string, non-map `bin`.
+            reserved
+                .contains(command)
+                .then_some(serde_json::Value::Null)
+        }
+        serde_json::Value::Object(bins) => {
+            if !bins.keys().any(|name| reserved.contains(name)) {
+                return None;
+            }
+            Some(serde_json::Value::Object(
+                bins.iter()
+                    .filter(|(name, _)| !reserved.contains(*name))
+                    .map(|(name, path)| (name.clone(), path.clone()))
+                    .collect(),
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// Link one package's bins into the `.bin/` beside each of its
@@ -603,7 +703,7 @@ fn link_hoisted_pkg_bins(
     preserved: Option<&PreservedBinLinks>,
     dep_path: &str,
     pkg: &aube_lockfile::LockedPackage,
-    priority: &BTreeMap<PathBuf, BTreeSet<&str>>,
+    rules: &ImporterBinRules<'_>,
     prioritized_pass: bool,
 ) -> miette::Result<()> {
     // Every copy of a package gets its own `.bin/` entry: a name
@@ -630,21 +730,25 @@ fn link_hoisted_pkg_bins(
         // Each placement is ranked against the `.bin/` it lands in, so
         // the same package can be a direct dep here and an incidental
         // nested copy there. Probe with the normalized form to match how
-        // `importer_bin_priority` keys the map.
-        let prioritized = priority
-            .get(&aube_util::path::normalize_lexical(&bin_dir))
-            .is_some_and(|direct| direct.contains(dep_path));
-        if prioritized != prioritized_pass {
+        // `importer_bin_rules` keys its maps.
+        let lookup_dir = aube_util::path::normalize_lexical(&bin_dir);
+        if rules.is_direct(&lookup_dir, dep_path) != prioritized_pass {
             continue;
         }
+        let reserved = rules.reserved_in(&lookup_dir);
         if let Some(pkg_json) = &pkg_json
             && let Some(bin) = pkg_json.get("bin")
         {
+            // An importer's own `bin` wins over anything its deps ship,
+            // the same way `link_all_bins` re-links it over them during
+            // install.
+            let filtered =
+                reserved.and_then(|reserved| without_reserved_bins(bin, &pkg.name, reserved));
             link_bin_entries(
                 &bin_dir,
                 pkg_dir,
                 Some(&pkg.name),
-                bin,
+                filtered.as_ref().unwrap_or(bin),
                 shim_opts,
                 managed,
                 preserved,
@@ -664,6 +768,7 @@ fn link_hoisted_pkg_bins(
             managed,
             preserved,
             BinConflict::YieldToClaimed,
+            reserved,
         )?;
     }
     Ok(())
@@ -950,6 +1055,7 @@ fn link_bundled_bins(
     managed: &mut ManagedBinLinks,
     preserved: Option<&PreservedBinLinks>,
     conflict: BinConflict,
+    reserved: Option<&BTreeSet<String>>,
 ) -> miette::Result<()> {
     let Some(locked) = graph.get_package(dep_path) else {
         return Ok(());
@@ -966,11 +1072,12 @@ fn link_bundled_bins(
         let Some(bin) = bundled_pkg_json.get("bin") else {
             continue;
         };
+        let filtered = reserved.and_then(|reserved| without_reserved_bins(bin, bundled, reserved));
         link_bin_entries(
             bin_dir,
             &bundled_dir,
             Some(bundled),
-            bin,
+            filtered.as_ref().unwrap_or(bin),
             shim_opts,
             managed,
             preserved,
@@ -1603,6 +1710,93 @@ mod tests {
         assert!(
             shim.contains("z-direct"),
             "the direct dep owns `tool` even though the paths carry a `..`; got:\n{shim}"
+        );
+    }
+
+    /// An importer's own `bin` outranks anything its dependencies ship.
+    /// `install` gets this from `link_all_bins`, which re-links the
+    /// importer's own `bin` over the dependency pass — but `aube rebuild`
+    /// calls the dependency pass on its own, so the rule has to come from
+    /// the importer's manifest.
+    #[test]
+    fn hoisted_dep_bins_never_take_a_command_the_importer_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"the-project","version":"1.0.0","bin":{"tool":"cli.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+        // The project's own launcher, as the install's self-bin pass left it.
+        let bin_dir = root.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("tool"), "#!/bin/sh\nexec ../../cli.js\n").unwrap();
+
+        // A dependency that also ships `tool`, plus one that ships a
+        // command nobody reserved.
+        let dep_dir = root.join("node_modules/dep");
+        std::fs::create_dir_all(&dep_dir).unwrap();
+        std::fs::write(dep_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            dep_dir.join("package.json"),
+            r#"{"name":"dep","version":"1.0.0","bin":{"tool":"cli.js","dep-only":"cli.js"}}"#,
+        )
+        .unwrap();
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "dep@1.0.0".to_string(),
+            locked("dep", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "dep".to_string(),
+                dep_path: "dep@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([(
+            "dep@1.0.0".to_string(),
+            vec![dep_dir.clone()],
+        )]));
+
+        // The `rebuild` shape: no self-bin pass ran first.
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &root.join("node_modules/.aube"),
+            project_dir: root,
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        let tool = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
+        assert!(
+            tool.contains("../../cli.js"),
+            "the project's own `tool` must survive; got:\n{tool}"
+        );
+        // Reserving one command must not drop the dep's others.
+        assert!(
+            bin_dir.join("dep-only").exists(),
+            "the dep's unreserved commands are still linked"
         );
     }
 
