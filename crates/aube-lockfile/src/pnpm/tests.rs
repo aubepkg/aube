@@ -4683,3 +4683,41 @@ snapshots:
     let pin = graph.runtimes.get("node").expect("runtime pin recorded");
     assert_eq!(pin.version, "24.1.0");
 }
+
+/// The guard applies to a regular `dependencies` declaration too, not
+/// just to the dev-over-optional pair. Without this case a regression
+/// that dropped the guard from the production block alone would still
+/// pass the other overlap tests, because neither of them emits a
+/// direct dep from `dependencies` (one has no production entry, the
+/// other's is a `runtime:` pin that never becomes a `DirectDep`).
+#[test]
+fn production_wins_over_dev_and_optional_overlap() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+    devDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+    optionalDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+packages:
+  foo@1.2.3:
+    resolution: {integrity: sha512-aaa}
+snapshots:
+  foo@1.2.3: {}
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Production);
+}
