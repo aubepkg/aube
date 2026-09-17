@@ -58,6 +58,11 @@ pub(crate) type PreservedBinLinks = BTreeMap<PathBuf, BTreeSet<String>>;
 
 pub(crate) struct LinkDepBinsInput<'a> {
     pub(crate) aube_dir: &'a Path,
+    /// Workspace root on disk. With `modules_dir_name` this locates each
+    /// importer's own `.bin/`, which is what scopes direct-dependency
+    /// precedence to the importer that declared the dependency.
+    pub(crate) project_dir: &'a Path,
+    pub(crate) modules_dir_name: &'a str,
     pub(crate) graph: &'a aube_lockfile::LockfileGraph,
     pub(crate) virtual_store_dir_max_length: usize,
     pub(crate) placements: Option<&'a aube_linker::HoistedPlacements>,
@@ -397,6 +402,8 @@ pub(super) fn link_bins_for_workspace_dep(
 pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
     let LinkDepBinsInput {
         aube_dir,
+        project_dir,
+        modules_dir_name,
         graph,
         virtual_store_dir_max_length,
         placements,
@@ -408,6 +415,8 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
     if let Some(placements) = placements {
         return link_hoisted_dep_bins(
             aube_dir,
+            project_dir,
+            modules_dir_name,
             graph,
             virtual_store_dir_max_length,
             placements,
@@ -500,6 +509,8 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn link_hoisted_dep_bins(
     aube_dir: &Path,
+    project_dir: &Path,
+    modules_dir_name: &str,
     graph: &aube_lockfile::LockfileGraph,
     virtual_store_dir_max_length: usize,
     placements: &aube_linker::HoistedPlacements,
@@ -509,22 +520,20 @@ fn link_hoisted_dep_bins(
     preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     // Precedence comes from the graph, not from what happens to be on
-    // disk: an importer's direct deps go first so a transitive package
-    // can never take a command one of them declares. `install` has
-    // already claimed those via `link_bins`, which makes this pass a
-    // no-op for them; `rebuild` doesn't relink importer bins, so here
-    // is where their claim gets established.
-    let direct: BTreeSet<&str> = graph
-        .importers
-        .values()
-        .flatten()
-        .map(|dep| dep.dep_path.as_str())
-        .collect();
-    for pass in [true, false] {
+    // disk: a package an importer depends on directly goes first, so a
+    // transitive package can never take a command that importer
+    // declares. `install` has already claimed those via `link_bins`,
+    // which makes this pass a no-op for them; `rebuild` doesn't relink
+    // importer bins, so here is where the claim gets established.
+    //
+    // Scoped per importer, not global. A workspace member's `.bin/` is
+    // its own: being a direct dependency of a *different* member is no
+    // reason to win a command in this one, and with version conflicts
+    // nesting packages under the member that forced them, a package can
+    // be placed inside a subtree it has no relationship to.
+    let priority = importer_bin_priority(graph, project_dir, modules_dir_name);
+    for prioritized_pass in [true, false] {
         for (dep_path, pkg) in &graph.packages {
-            if direct.contains(dep_path.as_str()) != pass {
-                continue;
-            }
             link_hoisted_pkg_bins(
                 aube_dir,
                 graph,
@@ -536,10 +545,40 @@ fn link_hoisted_dep_bins(
                 preserved,
                 dep_path,
                 pkg,
+                &priority,
+                prioritized_pass,
             )?;
         }
     }
     Ok(())
+}
+
+/// Map each importer's own `.bin/` to the dep_paths that importer
+/// depends on directly. Those outrank anything else placed in that same
+/// directory. A `.bin/` belonging to no importer (one nested under a
+/// package) gets no entry, and ordering there falls back to graph order.
+fn importer_bin_priority<'a>(
+    graph: &'a aube_lockfile::LockfileGraph,
+    project_dir: &Path,
+    modules_dir_name: &str,
+) -> BTreeMap<PathBuf, BTreeSet<&'a str>> {
+    let mut priority: BTreeMap<PathBuf, BTreeSet<&str>> = BTreeMap::new();
+    for (importer_path, deps) in &graph.importers {
+        if !aube_linker::is_physical_importer(importer_path) {
+            continue;
+        }
+        let importer_dir = if importer_path == "." {
+            project_dir.to_path_buf()
+        } else {
+            aube_util::path::normalize_lexical(&project_dir.join(importer_path))
+        };
+        let bin_dir = importer_dir.join(modules_dir_name).join(".bin");
+        priority
+            .entry(bin_dir)
+            .or_default()
+            .extend(deps.iter().map(|dep| dep.dep_path.as_str()));
+    }
+    priority
 }
 
 /// Link one package's bins into the `.bin/` beside each of its
@@ -557,6 +596,8 @@ fn link_hoisted_pkg_bins(
     preserved: Option<&PreservedBinLinks>,
     dep_path: &str,
     pkg: &aube_lockfile::LockedPackage,
+    priority: &BTreeMap<PathBuf, BTreeSet<&str>>,
+    prioritized_pass: bool,
 ) -> miette::Result<()> {
     // Every copy of a package gets its own `.bin/` entry: a name
     // conflict duplicates the package under the dependents that forced
@@ -579,6 +620,15 @@ fn link_hoisted_pkg_bins(
     )?;
     for pkg_dir in placed_dirs {
         let bin_dir = dep_modules_dir_for(pkg_dir, &pkg.name).join(".bin");
+        // Each placement is ranked against the `.bin/` it lands in, so
+        // the same package can be a direct dep here and an incidental
+        // nested copy there.
+        let prioritized = priority
+            .get(&bin_dir)
+            .is_some_and(|direct| direct.contains(dep_path));
+        if prioritized != prioritized_pass {
+            continue;
+        }
         if let Some(pkg_json) = &pkg_json
             && let Some(bin) = pkg_json.get("bin")
         {
@@ -750,6 +800,8 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
     if link_dependency_bins {
         link_dep_bins(LinkDepBinsInput {
             aube_dir,
+            project_dir,
+            modules_dir_name,
             graph,
             virtual_store_dir_max_length,
             placements,
@@ -1333,6 +1385,8 @@ mod tests {
         // a plain walk would hand it the command.
         link_dep_bins(LinkDepBinsInput {
             aube_dir: &dir.path().join("node_modules/.aube"),
+            project_dir: dir.path(),
+            modules_dir_name: "node_modules",
             graph: &graph,
             virtual_store_dir_max_length: 120,
             placements: Some(&placements),
@@ -1350,6 +1404,112 @@ mod tests {
         assert!(
             shim.contains("direct.js"),
             "the direct dep owns `tool`; got:\n{shim}"
+        );
+    }
+
+    /// Direct-dependency precedence is scoped to the importer whose
+    /// `.bin/` is being filled. A version conflict nests the losing copy
+    /// under the member that forced it, so a package can land inside a
+    /// workspace member it has no relationship to — being member A's
+    /// direct dependency must not win it a command in member B's
+    /// `node_modules/.bin`, which B's own lifecycle scripts resolve
+    /// against.
+    #[test]
+    fn hoisted_dep_bins_scope_direct_priority_to_the_owning_importer() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // `a-tool@1` is a direct dep of member `a` and hoists to the
+        // root; `a-tool@2` is the copy nested under member `b` because
+        // of the conflict. `b-tool` is `b`'s own direct dep, placed
+        // alongside it. Both declare the command `tool`.
+        let a_tool_root = root.join("node_modules/a-tool");
+        let a_tool_nested = root.join("packages/b/node_modules/a-tool");
+        let b_tool = root.join("packages/b/node_modules/b-tool");
+        for (pkg_dir, name) in [
+            (&a_tool_root, "a-tool"),
+            (&a_tool_nested, "a-tool"),
+            (&b_tool, "b-tool"),
+        ] {
+            std::fs::create_dir_all(pkg_dir).unwrap();
+            std::fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+            std::fs::write(
+                pkg_dir.join("package.json"),
+                format!(r#"{{"name":"{name}","version":"1.0.0","bin":{{"tool":"cli.js"}}}}"#),
+            )
+            .unwrap();
+        }
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "a-tool@1.0.0".to_string(),
+            locked("a-tool", "1.0.0", BTreeMap::new()),
+        );
+        packages.insert(
+            "b-tool@1.0.0".to_string(),
+            locked("b-tool", "1.0.0", BTreeMap::new()),
+        );
+        let direct = |name: &str, dep_path: &str| DirectDep {
+            name: name.to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".to_string()),
+        };
+        let mut importers = BTreeMap::new();
+        importers.insert(".".to_string(), vec![]);
+        importers.insert(
+            "packages/a".to_string(),
+            vec![direct("a-tool", "a-tool@1.0.0")],
+        );
+        importers.insert(
+            "packages/b".to_string(),
+            vec![direct("b-tool", "b-tool@1.0.0")],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        // `a-tool` is placed both at the root and, thanks to the
+        // conflict, inside member `b`.
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            (
+                "a-tool@1.0.0".to_string(),
+                vec![a_tool_root.clone(), a_tool_nested.clone()],
+            ),
+            ("b-tool@1.0.0".to_string(), vec![b_tool.clone()]),
+        ]));
+
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &root.join("node_modules/.aube"),
+            project_dir: root,
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        // `a-tool` sorts first, so only the importer-scoped ranking can
+        // hand `tool` to `b-tool` inside member `b`.
+        let b_shim =
+            std::fs::read_to_string(root.join("packages/b/node_modules/.bin/tool")).unwrap();
+        assert!(
+            b_shim.contains("b-tool"),
+            "member b's own dependency owns `tool` in its `.bin/`; got:\n{b_shim}"
+        );
+        // The root `.bin/` belongs to no importer that declares `tool`,
+        // so the hoisted copy still lands there.
+        let root_shim = std::fs::read_to_string(root.join("node_modules/.bin/tool")).unwrap();
+        assert!(
+            root_shim.contains("a-tool"),
+            "the hoisted copy still fills the root `.bin/`; got:\n{root_shim}"
         );
     }
 

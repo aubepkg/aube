@@ -183,6 +183,8 @@ pub async fn run(
             let mut managed_bin_links = super::install::ManagedBinLinks::capturing();
             super::install::link_dep_bins(super::install::LinkDepBinsInput {
                 aube_dir: &aube_dir,
+                project_dir: &cwd,
+                modules_dir_name: &modules_dir_name,
                 graph: &graph,
                 virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
                     &settings_ctx,
@@ -225,6 +227,8 @@ pub async fn run(
             let mut refreshed_bin_links = super::install::ManagedBinLinks::default();
             super::install::link_dep_bins(super::install::LinkDepBinsInput {
                 aube_dir: &aube_dir,
+                project_dir: &cwd,
+                modules_dir_name: &modules_dir_name,
                 graph: &graph,
                 virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
                     &settings_ctx,
