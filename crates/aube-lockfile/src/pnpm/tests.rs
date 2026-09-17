@@ -4614,7 +4614,6 @@ mod lockfile_version_properties {
 /// pnpm does not emit such a lockfile itself, but a hand-edited or
 /// third-party-written one can, and a duplicate reads as section drift
 /// under `--frozen-lockfile` and double-creates the root symlink.
-/// Completes the same guard the npm, bun and yarn readers carry.
 #[test]
 fn dev_and_optional_overlap_yields_one_direct_dep() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
