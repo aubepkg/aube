@@ -34,14 +34,6 @@ pub(crate) enum BinConflict {
     /// keep pointing at the old package forever. Overwriting it is how
     /// an incremental install reconciles the directory.
     YieldToClaimed,
-    /// As [`BinConflict::YieldToClaimed`], but also yield to a command
-    /// already on disk that still resolves. For passes that run *without*
-    /// the importer passes — `aube rebuild` re-emits dependency shims
-    /// against an already-linked tree — where this run's claims don't
-    /// include the importers' direct deps and the tree on disk is the
-    /// only record of who owns what. A command that no longer resolves
-    /// is stale either way and gets rewritten.
-    YieldToClaimedOrLive,
 }
 
 /// Exact shim files created during the pre-lifecycle linking pass, keyed by
@@ -73,12 +65,6 @@ pub(crate) struct LinkDepBinsInput<'a> {
     pub(crate) cache: &'a mut PkgJsonCache,
     pub(crate) managed: &'a mut ManagedBinLinks,
     pub(crate) preserved: Option<&'a PreservedBinLinks>,
-    /// Whether the importer passes (`link_bins` and friends) already ran
-    /// against this `ManagedBinLinks` in this run. `install` links the
-    /// importers' direct deps first, so their commands are claimed by
-    /// the time the hoisted pass runs; `rebuild` calls this pass on its
-    /// own and has to read ownership off the tree instead.
-    pub(crate) importer_bins_linked: bool,
 }
 
 pub(super) struct LinkAllBinsInput<'a> {
@@ -418,7 +404,6 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
         cache,
         managed,
         preserved,
-        importer_bins_linked,
     } = input;
     if let Some(placements) = placements {
         return link_hoisted_dep_bins(
@@ -430,11 +415,6 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
             cache,
             managed,
             preserved,
-            if importer_bins_linked {
-                BinConflict::YieldToClaimed
-            } else {
-                BinConflict::YieldToClaimedOrLive
-            },
         );
     }
     for (dep_path, pkg) in &graph.packages {
@@ -527,54 +507,106 @@ fn link_hoisted_dep_bins(
     cache: &mut PkgJsonCache,
     managed: &mut ManagedBinLinks,
     preserved: Option<&PreservedBinLinks>,
-    conflict: BinConflict,
 ) -> miette::Result<()> {
-    for (dep_path, pkg) in &graph.packages {
-        // Every copy of a package gets its own `.bin/` entry: a name
-        // conflict duplicates the package under the dependents that
-        // forced the nesting, and each copy is reachable only from its
-        // own subtree.
-        let placed_dirs = placements.all_package_dirs(dep_path);
-        if placed_dirs.is_empty() {
-            // Filtered by `--prod` / `--no-optional` / a platform guard,
-            // so nothing was materialized to link against.
-            continue;
-        }
-        // All copies share one set of bytes, so read and parse the
-        // `package.json` once per dep_path rather than once per site.
-        let pkg_json = read_materialized_pkg_json_cached(
-            cache,
-            aube_dir,
-            dep_path,
-            &pkg.name,
-            virtual_store_dir_max_length,
-            Some(placements),
-        )?;
-        for pkg_dir in placed_dirs {
-            let bin_dir = dep_modules_dir_for(pkg_dir, &pkg.name).join(".bin");
-            if let Some(pkg_json) = &pkg_json
-                && let Some(bin) = pkg_json.get("bin")
-            {
-                link_bin_entries(
-                    &bin_dir,
-                    pkg_dir,
-                    Some(&pkg.name),
-                    bin,
-                    shim_opts,
-                    managed,
-                    preserved,
-                    conflict,
-                )?;
+    // Precedence comes from the graph, not from what happens to be on
+    // disk: an importer's direct deps go first so a transitive package
+    // can never take a command one of them declares. `install` has
+    // already claimed those via `link_bins`, which makes this pass a
+    // no-op for them; `rebuild` doesn't relink importer bins, so here
+    // is where their claim gets established.
+    let direct: BTreeSet<&str> = graph
+        .importers
+        .values()
+        .flatten()
+        .map(|dep| dep.dep_path.as_str())
+        .collect();
+    for pass in [true, false] {
+        for (dep_path, pkg) in &graph.packages {
+            if direct.contains(dep_path.as_str()) != pass {
+                continue;
             }
-            // A bundled dep lives at `<pkg_dir>/node_modules/<name>`,
-            // which no `.bin/` on the lifecycle `PATH` covers. Expose it
-            // alongside its host so the host's own install script can
-            // still invoke it, matching what the isolated pass does for
-            // a bundling child.
-            link_bundled_bins(
-                &bin_dir, pkg_dir, graph, dep_path, shim_opts, managed, preserved, conflict,
+            link_hoisted_pkg_bins(
+                aube_dir,
+                graph,
+                virtual_store_dir_max_length,
+                placements,
+                shim_opts,
+                cache,
+                managed,
+                preserved,
+                dep_path,
+                pkg,
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Link one package's bins into the `.bin/` beside each of its
+/// placements. Split out of [`link_hoisted_dep_bins`] so that pass can
+/// walk `graph.packages` twice in precedence order.
+#[allow(clippy::too_many_arguments)]
+fn link_hoisted_pkg_bins(
+    aube_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    virtual_store_dir_max_length: usize,
+    placements: &aube_linker::HoistedPlacements,
+    shim_opts: aube_linker::BinShimOptions,
+    cache: &mut PkgJsonCache,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+    dep_path: &str,
+    pkg: &aube_lockfile::LockedPackage,
+) -> miette::Result<()> {
+    // Every copy of a package gets its own `.bin/` entry: a name
+    // conflict duplicates the package under the dependents that forced
+    // the nesting, and each copy is reachable only from its own subtree.
+    let placed_dirs = placements.all_package_dirs(dep_path);
+    if placed_dirs.is_empty() {
+        // Filtered by `--prod` / `--no-optional` / a platform guard, so
+        // nothing was materialized to link against.
+        return Ok(());
+    }
+    // All copies share one set of bytes, so read and parse the
+    // `package.json` once per dep_path rather than once per site.
+    let pkg_json = read_materialized_pkg_json_cached(
+        cache,
+        aube_dir,
+        dep_path,
+        &pkg.name,
+        virtual_store_dir_max_length,
+        Some(placements),
+    )?;
+    for pkg_dir in placed_dirs {
+        let bin_dir = dep_modules_dir_for(pkg_dir, &pkg.name).join(".bin");
+        if let Some(pkg_json) = &pkg_json
+            && let Some(bin) = pkg_json.get("bin")
+        {
+            link_bin_entries(
+                &bin_dir,
+                pkg_dir,
+                Some(&pkg.name),
+                bin,
+                shim_opts,
+                managed,
+                preserved,
+                BinConflict::YieldToClaimed,
+            )?;
+        }
+        // A bundled dep lives at `<pkg_dir>/node_modules/<name>`, which
+        // no `.bin/` on the lifecycle `PATH` covers. Expose it alongside
+        // its host so the host's own install script can still invoke it,
+        // matching what the isolated pass does for a bundling child.
+        link_bundled_bins(
+            &bin_dir,
+            pkg_dir,
+            graph,
+            dep_path,
+            shim_opts,
+            managed,
+            preserved,
+            BinConflict::YieldToClaimed,
+        )?;
     }
     Ok(())
 }
@@ -725,7 +757,6 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
             cache: &mut pkg_json_cache,
             managed: &mut managed,
             preserved,
-            importer_bins_linked: true,
         })?;
     }
     Ok(managed)
@@ -826,23 +857,6 @@ fn read_managed_bin_entry(path: &Path) -> miette::Result<Option<ManagedBinEntry>
             .into_diagnostic();
     }
     Ok(Some(ManagedBinEntry::Other))
-}
-
-/// Whether any launcher for `name` in `bin_dir` still *resolves*.
-///
-/// Follows symlinks on purpose: under `nodeLinker=hoisted` a `.bin/`
-/// entry defaults to a symlink into the package directory, so a package
-/// that left the tree leaves a dangling link behind. Treating that as a
-/// live command would let it block whichever package owns the name now.
-///
-/// A wrapper-script launcher (Windows, or `preferSymlinkedExecutables=false`)
-/// is an ordinary file, so this can only report that it exists — a stale
-/// one still reads as live. That is the conservative direction, and the
-/// install path doesn't rely on this check at all.
-fn bin_command_resolves(bin_dir: &Path, name: &str) -> bool {
-    bin_link_paths(bin_dir, name)
-        .iter()
-        .any(|path| std::fs::metadata(path).is_ok())
 }
 
 fn bin_link_paths(bin_dir: &Path, name: &str) -> Vec<PathBuf> {
@@ -1005,12 +1019,7 @@ fn create_bin_link(
     {
         return Ok(());
     }
-    let yield_to_existing = match conflict {
-        BinConflict::Overwrite => false,
-        BinConflict::YieldToClaimed => already_claimed,
-        BinConflict::YieldToClaimedOrLive => already_claimed || bin_command_resolves(bin_dir, name),
-    };
-    if yield_to_existing {
+    if conflict == BinConflict::YieldToClaimed && already_claimed {
         return Ok(());
     }
     // `link_dep_bins` skips eager `create_dir_all` on per-dep `.bin/`.
@@ -1151,7 +1160,7 @@ mod tests {
             opts,
             &mut managed,
             None,
-            BinConflict::YieldToClaimedOrLive,
+            BinConflict::YieldToClaimed,
         )
         .unwrap();
         assert_eq!(
@@ -1168,7 +1177,7 @@ mod tests {
             opts,
             &mut managed,
             None,
-            BinConflict::YieldToClaimedOrLive,
+            BinConflict::YieldToClaimed,
         )
         .unwrap();
         assert!(bin_dir.join("other").exists());
@@ -1238,7 +1247,7 @@ mod tests {
             opts,
             &mut relinked,
             Some(&preserved),
-            BinConflict::YieldToClaimedOrLive,
+            BinConflict::YieldToClaimed,
         )
         .unwrap();
         remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
@@ -1249,73 +1258,104 @@ mod tests {
         );
     }
 
-    /// `.bin/` is never pruned, so an incremental hoisted install can
-    /// meet a shim whose owning package has left the tree. Yielding to
-    /// it would pin the command to the removed package forever; the
-    /// transitive pass has to rewrite it to whoever owns the name now.
-    #[cfg(unix)]
+    /// `rebuild` re-emits dependency shims against an already-linked
+    /// tree without relinking the importers' `.bin/`, so it can't lean
+    /// on an earlier pass having claimed their commands. Precedence
+    /// therefore comes from the graph: the hoisted pass walks the
+    /// importers' direct deps first. Reading it off disk instead would
+    /// let a wrapper script left by a package that has since left the
+    /// tree keep the command (wrapper launchers are always used on
+    /// Windows, and on POSIX under `preferSymlinkedExecutables=false`).
     #[test]
-    fn yield_rewrites_a_command_whose_owner_left_the_tree() {
+    fn hoisted_dep_bins_give_a_direct_dep_the_command_over_a_transitive() {
         let dir = tempfile::tempdir().unwrap();
-        let bin_dir = dir.path().join("node_modules/.bin");
-        let old_owner = dir.path().join("node_modules/old-owner");
-        let new_owner = dir.path().join("node_modules/new-owner");
-        std::fs::create_dir_all(&old_owner).unwrap();
-        std::fs::create_dir_all(&new_owner).unwrap();
-        let old_target = old_owner.join("cli.js");
-        let new_target = new_owner.join("cli.js");
-        std::fs::write(&old_target, "#!/usr/bin/env node\n").unwrap();
-        std::fs::write(&new_target, "#!/usr/bin/env node\n").unwrap();
+        let modules = dir.path().join("node_modules");
+        let direct_dir = modules.join("z-direct");
+        let transitive_dir = modules.join("a-transitive");
+        for (pkg_dir, bin_name) in [
+            (&direct_dir, "direct.js"),
+            (&transitive_dir, "transitive.js"),
+        ] {
+            std::fs::create_dir_all(pkg_dir).unwrap();
+            std::fs::write(pkg_dir.join(bin_name), "#!/usr/bin/env node\n").unwrap();
+        }
+        std::fs::write(
+            direct_dir.join("package.json"),
+            r#"{"name":"z-direct","version":"1.0.0","bin":{"tool":"direct.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            transitive_dir.join("package.json"),
+            r#"{"name":"a-transitive","version":"1.0.0","bin":{"tool":"transitive.js"}}"#,
+        )
+        .unwrap();
 
-        // Symlinked launchers are the hoisted default on POSIX.
-        let opts = aube_linker::BinShimOptions {
-            prefer_symlinked_executables: Some(true),
+        // A launcher the previous tree left behind, pointing at a package
+        // that is gone. As a wrapper file it still "exists" on disk.
+        let bin_dir = modules.join(".bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("tool"), "#!/bin/sh\nexec ../gone/cli.js\n").unwrap();
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "z-direct@1.0.0".to_string(),
+            locked("z-direct", "1.0.0", BTreeMap::new()),
+        );
+        packages.insert(
+            "a-transitive@1.0.0".to_string(),
+            locked("a-transitive", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "z-direct".to_string(),
+                dep_path: "z-direct@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
             ..Default::default()
         };
-        let mut previous_install = ManagedBinLinks::default();
-        create_bin_link(
-            &bin_dir,
-            "tool",
-            &old_target,
-            opts,
-            &mut previous_install,
-            None,
-            BinConflict::Overwrite,
-        )
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            ("z-direct@1.0.0".to_string(), vec![direct_dir.clone()]),
+            (
+                "a-transitive@1.0.0".to_string(),
+                vec![transitive_dir.clone()],
+            ),
+        ]));
+
+        // No importer pass ran first — this is the `rebuild` shape.
+        // `a-transitive` sorts before `z-direct` in `graph.packages`, so
+        // a plain walk would hand it the command.
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &dir.path().join("node_modules/.aube"),
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
         .unwrap();
 
-        // The next install drops `old-owner` from the tree. Nothing
-        // prunes `.bin/`, so its launcher is left dangling.
-        std::fs::remove_dir_all(&old_owner).unwrap();
-        let shim = bin_dir.join("tool");
+        let shim = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
         assert!(
-            shim.symlink_metadata().is_ok(),
-            "the launcher is still there"
-        );
-        assert!(!shim.exists(), "but it no longer resolves");
-
-        let mut managed = ManagedBinLinks::default();
-        create_bin_link(
-            &bin_dir,
-            "tool",
-            &new_target,
-            opts,
-            &mut managed,
-            None,
-            BinConflict::YieldToClaimedOrLive,
-        )
-        .unwrap();
-        assert_eq!(
-            std::fs::read_link(&shim).unwrap(),
-            new_target,
-            "a stale launcher must not block the package that owns the command now"
+            shim.contains("direct.js"),
+            "the direct dep owns `tool`; got:\n{shim}"
         );
     }
 
-    /// The install path claims the importers' commands before the
-    /// transitive pass runs, so `YieldToClaimed` needs no help from disk
-    /// state — and must ignore it, or a leftover from the previous
-    /// install would survive as above.
+    /// A launcher left by an earlier run is not a claim. `.bin/` is
+    /// never pruned, so treating one as ownership would pin a command to
+    /// a package that may since have been removed or replaced.
     #[test]
     fn yield_to_claimed_ignores_shims_from_a_previous_run() {
         let dir = tempfile::tempdir().unwrap();
