@@ -570,9 +570,16 @@ fn importer_bin_priority<'a>(
         let importer_dir = if importer_path == "." {
             project_dir.to_path_buf()
         } else {
-            aube_util::path::normalize_lexical(&project_dir.join(importer_path))
+            project_dir.join(importer_path)
         };
-        let bin_dir = importer_dir.join(modules_dir_name).join(".bin");
+        // Normalized because the probe side is too: a placement restored
+        // from the state sidecar is a recorded *relative* path re-joined
+        // onto `project_dir`, so `..` survives into the path whenever
+        // `project_dir` has any. Lookup only — the paths this pass links
+        // against stay verbatim, since collapsing `..` lexically is not
+        // sound across a symlinked parent.
+        let bin_dir =
+            aube_util::path::normalize_lexical(&importer_dir.join(modules_dir_name).join(".bin"));
         priority
             .entry(bin_dir)
             .or_default()
@@ -622,9 +629,10 @@ fn link_hoisted_pkg_bins(
         let bin_dir = dep_modules_dir_for(pkg_dir, &pkg.name).join(".bin");
         // Each placement is ranked against the `.bin/` it lands in, so
         // the same package can be a direct dep here and an incidental
-        // nested copy there.
+        // nested copy there. Probe with the normalized form to match how
+        // `importer_bin_priority` keys the map.
         let prioritized = priority
-            .get(&bin_dir)
+            .get(&aube_util::path::normalize_lexical(&bin_dir))
             .is_some_and(|direct| direct.contains(dep_path));
         if prioritized != prioritized_pass {
             continue;
@@ -1510,6 +1518,91 @@ mod tests {
         assert!(
             root_shim.contains("a-tool"),
             "the hoisted copy still fills the root `.bin/`; got:\n{root_shim}"
+        );
+    }
+
+    /// `read_hoisted_placements` rebuilds placement paths by re-joining
+    /// the recorded *relative* path onto `project_dir`, so any `..` in
+    /// `project_dir` survives into every placement. The priority lookup
+    /// has to normalize both sides or the importer scoping silently
+    /// stops applying on a `rebuild` in such a directory.
+    #[test]
+    fn hoisted_dep_bins_scope_priority_through_an_unnormalized_project_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // Same directory reached with a `..` hop, as a placement restored
+        // from the state sidecar would express it.
+        std::fs::create_dir_all(dir.path().join("sibling")).unwrap();
+        let root = dir.path().join("workspace");
+        let unnormalized = dir.path().join("sibling/../workspace");
+
+        let direct_dir = root.join("node_modules/z-direct");
+        let transitive_dir = root.join("node_modules/a-transitive");
+        for (pkg_dir, name) in [(&direct_dir, "z-direct"), (&transitive_dir, "a-transitive")] {
+            std::fs::create_dir_all(pkg_dir).unwrap();
+            std::fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+            std::fs::write(
+                pkg_dir.join("package.json"),
+                format!(r#"{{"name":"{name}","version":"1.0.0","bin":{{"tool":"cli.js"}}}}"#),
+            )
+            .unwrap();
+        }
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "z-direct@1.0.0".to_string(),
+            locked("z-direct", "1.0.0", BTreeMap::new()),
+        );
+        packages.insert(
+            "a-transitive@1.0.0".to_string(),
+            locked("a-transitive", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "z-direct".to_string(),
+                dep_path: "z-direct@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            (
+                "z-direct@1.0.0".to_string(),
+                vec![unnormalized.join("node_modules/z-direct")],
+            ),
+            (
+                "a-transitive@1.0.0".to_string(),
+                vec![unnormalized.join("node_modules/a-transitive")],
+            ),
+        ]));
+
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &unnormalized.join("node_modules/.aube"),
+            project_dir: &unnormalized,
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        let shim = std::fs::read_to_string(root.join("node_modules/.bin/tool")).unwrap();
+        assert!(
+            shim.contains("z-direct"),
+            "the direct dep owns `tool` even though the paths carry a `..`; got:\n{shim}"
         );
     }
 
