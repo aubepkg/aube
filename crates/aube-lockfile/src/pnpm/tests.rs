@@ -4608,3 +4608,37 @@ mod lockfile_version_properties {
         }
     }
 }
+
+/// A name declared in more than one importer section must yield a
+/// single `DirectDep`, classified under the first declaring section.
+/// pnpm does not emit such a lockfile itself, but a hand-edited or
+/// third-party-written one can, and a duplicate reads as section drift
+/// under `--frozen-lockfile` and double-creates the root symlink.
+/// Completes the same guard the npm, bun and yarn readers carry.
+#[test]
+fn dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    devDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+    optionalDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+packages:
+  foo@1.2.3:
+    resolution: {integrity: sha512-aaa}
+snapshots:
+  foo@1.2.3: {}
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
