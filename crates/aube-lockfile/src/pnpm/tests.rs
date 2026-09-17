@@ -4608,3 +4608,116 @@ mod lockfile_version_properties {
         }
     }
 }
+
+/// A name declared in more than one importer section must yield a
+/// single `DirectDep`, classified under the first declaring section.
+/// pnpm does not emit such a lockfile itself, but a hand-edited or
+/// third-party-written one can, and a duplicate reads as section drift
+/// under `--frozen-lockfile` and double-creates the root symlink.
+#[test]
+fn dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    devDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+    optionalDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+packages:
+  foo@1.2.3:
+    resolution: {integrity: sha512-aaa}
+snapshots:
+  foo@1.2.3: {}
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
+
+/// A pnpm `runtime:` pin (pnpm 10.14+ `devEngines.runtime`) is recorded
+/// as a `RuntimePin`, never as a `DirectDep`, so it does not reserve
+/// the name against the overlap guard. Pinning `node` as a runtime in
+/// one section and declaring a package of the same name in two others
+/// must still yield a single `DirectDep` — the guard's invariant holds
+/// across the runtime path — while the pin itself is still recorded.
+#[test]
+fn runtime_pin_does_not_break_the_overlap_guard() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      node:
+        specifier: runtime:^24.0.0
+        version: runtime:24.1.0
+    devDependencies:
+      node:
+        specifier: ^1.0.0
+        version: 1.2.3
+    optionalDependencies:
+      node:
+        specifier: ^1.0.0
+        version: 1.2.3
+packages:
+  node@1.2.3:
+    resolution: {integrity: sha512-aaa}
+snapshots:
+  node@1.2.3: {}
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "node");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+
+    let pin = graph.runtimes.get("node").expect("runtime pin recorded");
+    assert_eq!(pin.version, "24.1.0");
+}
+
+/// The guard applies to a regular `dependencies` declaration too, not
+/// just to the dev-over-optional pair. Without this case a regression
+/// that dropped the guard from the production block alone would still
+/// pass the other overlap tests, because neither of them emits a
+/// direct dep from `dependencies` (one has no production entry, the
+/// other's is a `runtime:` pin that never becomes a `DirectDep`).
+#[test]
+fn production_wins_over_dev_and_optional_overlap() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+    devDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+    optionalDependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.2.3
+packages:
+  foo@1.2.3:
+    resolution: {integrity: sha512-aaa}
+snapshots:
+  foo@1.2.3: {}
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Production);
+}

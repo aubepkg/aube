@@ -10,7 +10,7 @@ use crate::{
     ParseOptions, PeerDepMeta, RuntimePin, RuntimeTarget, RuntimeVariant, git_commits_match,
 };
 use aube_util::path::normalize_lexical;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource {
@@ -349,10 +349,23 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         }
 
         let mut deps = Vec::new();
+        // One declaration produces one `DirectDep`. pnpm classifies a
+        // name declared in several importer sections under the first
+        // one it appears in, so the block order below is the
+        // precedence and first wins. pnpm does not itself emit such a
+        // lockfile, but a hand-edited or third-party-written one can,
+        // and a duplicate here reads as section drift under
+        // `--frozen-lockfile` and makes the linker create the root
+        // `node_modules/<name>` symlink twice. Keyed on the declared
+        // name so two aliases of the same package stay distinct.
+        let mut direct_seen: BTreeSet<String> = BTreeSet::new();
 
         if let Some(ref d) = importer.dependencies {
             for (name, info) in d {
                 if record_runtime(name, info, DepType::Production) {
+                    continue;
+                }
+                if !direct_seen.insert(name.clone()) {
                     continue;
                 }
                 push_direct(
@@ -370,6 +383,9 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 if record_runtime(name, info, DepType::Dev) {
                     continue;
                 }
+                if !direct_seen.insert(name.clone()) {
+                    continue;
+                }
                 push_direct(
                     &mut deps,
                     &mut alias_remaps,
@@ -383,6 +399,9 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         if let Some(ref d) = importer.optional_dependencies {
             for (name, info) in d {
                 if record_runtime(name, info, DepType::Optional) {
+                    continue;
+                }
+                if !direct_seen.insert(name.clone()) {
                     continue;
                 }
                 push_direct(
