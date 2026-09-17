@@ -1605,3 +1605,42 @@ fn validate_index_key_rejects_windows_drive() {
         Err(Error::UnsafeIndexKey(_))
     ));
 }
+
+/// The top-level symlink pass runs on a rayon pool, so two tasks can
+/// race on the same `node_modules/<name>` path. Losing that race is
+/// benign when the winner stored the same target, and must not abort
+/// the install with `File exists (os error 17)` — but a path holding a
+/// *different* target is a real conflict and still has to surface.
+#[test]
+fn create_dir_link_idempotent_tolerates_only_an_identical_winner() {
+    use crate::sweep::create_dir_link_idempotent;
+
+    let dir = tempfile::tempdir().unwrap();
+    let nm = dir.path().join("node_modules");
+    std::fs::create_dir_all(nm.join("real")).unwrap();
+    std::fs::create_dir_all(nm.join("other")).unwrap();
+
+    // A racing task already created exactly the link we wanted.
+    let link = nm.join("pkg");
+    crate::sys::create_dir_link(Path::new("real"), &link).unwrap();
+    create_dir_link_idempotent(Path::new("real"), &link)
+        .expect("identical concurrent link must be treated as success");
+    // Compare resolved destinations, not the stored target: Windows
+    // creates an NTFS junction here and persists a normalized absolute
+    // path, so a verbatim `read_link == "real"` check only holds on
+    // unix. Canonicalizing both sides also absorbs the macOS
+    // `/var` -> `/private/var` tempdir symlink.
+    assert_eq!(
+        std::fs::canonicalize(&link).unwrap(),
+        std::fs::canonicalize(nm.join("real")).unwrap()
+    );
+
+    // A path already occupied by a *different* target is a genuine
+    // conflict and must still fail rather than be silently accepted.
+    // `reconcile_dir_link` clears the mismatched entry on its way out
+    // so a later pass can recreate it, so only the error is asserted.
+    let conflict = nm.join("conflict");
+    crate::sys::create_dir_link(Path::new("other"), &conflict).unwrap();
+    create_dir_link_idempotent(Path::new("real"), &conflict)
+        .expect_err("conflicting existing link must surface as an error");
+}

@@ -2,7 +2,8 @@ use tracing::{debug, trace, warn};
 
 use crate::patches::apply_multi_file_patch;
 use crate::sweep::{
-    EntryState, classify_entry_state, mkdirp, reconcile_dir_link, try_remove_entry,
+    EntryState, classify_entry_state, create_dir_link_idempotent, mkdirp, reconcile_dir_link,
+    try_remove_entry,
 };
 use crate::{Error, LinkStats, LinkStrategy, Linker, sys};
 use aube_lockfile::{LockedPackage, shared_local_dep_path};
@@ -378,13 +379,7 @@ impl Linker {
             if let Some(parent) = symlink_path.parent() {
                 mkdirp(parent)?;
             }
-            if let Err(create_err) = sys::create_dir_link(&target, &symlink_path) {
-                let won_race = create_err.kind() == std::io::ErrorKind::AlreadyExists
-                    && reconcile_dir_link(&symlink_path, &target).unwrap_or(false);
-                if !won_race {
-                    return Err(Error::Io(symlink_path, create_err));
-                }
-            }
+            create_dir_link_idempotent(&target, &symlink_path)?;
         }
         Ok(())
     }
