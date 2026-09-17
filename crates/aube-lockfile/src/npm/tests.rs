@@ -2192,3 +2192,44 @@ fn distinct_aliases_of_one_package_stay_separate_direct_deps() {
     let root = graph.importers.get(".").unwrap();
     assert_eq!(root.len(), 2, "both aliases must survive, got {root:?}");
 }
+
+/// The overlap guard applies per importer, not just to the root: a
+/// workspace member declaring the same package in two sections must
+/// also yield a single `DirectDep`. The drift validator resolves one
+/// expected section per name for every importer.
+#[test]
+fn workspace_member_dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "workspace-root",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {
+                    "name": "workspace-root",
+                    "version": "1.0.0",
+                    "workspaces": ["packages/app"]
+                },
+                "node_modules/@scope/app": {
+                    "resolved": "packages/app",
+                    "link": true
+                },
+                "node_modules/chalk": {
+                    "version": "5.4.1",
+                    "integrity": "sha512-chalk"
+                },
+                "packages/app": {
+                    "name": "@scope/app",
+                    "version": "0.68.1",
+                    "devDependencies": { "chalk": "^5.4.1" },
+                    "optionalDependencies": { "chalk": "^5.4.1" }
+                }
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let member = graph.importers.get("packages/app").unwrap();
+    let chalk: Vec<_> = member.iter().filter(|d| d.name == "chalk").collect();
+    assert_eq!(chalk.len(), 1, "expected one direct dep, got {chalk:?}");
+    assert_eq!(chalk[0].dep_type, DepType::Dev);
+}

@@ -440,6 +440,12 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             continue;
         };
         let mut direct = Vec::new();
+        // Same one-declaration-one-`DirectDep` rule as the root
+        // importer above: a workspace member may also declare a name in
+        // two sections, and the drift validator resolves one expected
+        // section per name for every importer, not just the root. The
+        // chain order below is the precedence, so first wins.
+        let mut direct_seen: BTreeSet<String> = BTreeSet::new();
         for (dep_name, specifier, dep_type) in package_entry
             .dependencies
             .iter()
@@ -461,6 +467,9 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 crate::npm::layout::resolve_nested(target, dep_name, &install_path_info)
                 && let Some(info) = install_path_info.get(&target_install_path)
             {
+                if !direct_seen.insert(dep_name.clone()) {
+                    continue;
+                }
                 direct.push(DirectDep {
                     name: info.name.clone(),
                     dep_path: info.dep_path.clone(),
