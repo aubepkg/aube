@@ -6,9 +6,10 @@ use crate::patches::{
 };
 use crate::pool::with_link_pool;
 use crate::sweep::{
-    EntryState, classify_entry_state, classify_local_entry_state, is_physical_importer, mkdirp,
-    reconcile_dir_link, remove_hidden_hoist_tree, sweep_dead_hidden_hoist_entries,
-    sweep_stale_tmp_dirs, sweep_stale_top_level_entries, try_remove_entry,
+    EntryState, classify_entry_state, classify_local_entry_state, create_dir_link_idempotent,
+    is_physical_importer, mkdirp, reconcile_dir_link, remove_hidden_hoist_tree,
+    sweep_dead_hidden_hoist_entries, sweep_stale_tmp_dirs, sweep_stale_top_level_entries,
+    try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
@@ -1282,8 +1283,7 @@ impl Linker {
                         if let Some(parent) = link_path.parent() {
                             mkdirp(parent)?;
                         }
-                        sys::create_dir_link(&rel_target, &link_path)
-                            .map_err(|e| Error::Io(link_path.clone(), e))?;
+                        create_dir_link_idempotent(&rel_target, &link_path)?;
                         return Ok(true);
                     }
 
@@ -1301,8 +1301,7 @@ impl Linker {
                         if let Some(parent) = link_path.parent() {
                             mkdirp(parent)?;
                         }
-                        sys::create_dir_link(&rel_target, &link_path)
-                            .map_err(|e| Error::Io(link_path.clone(), e))?;
+                        create_dir_link_idempotent(&rel_target, &link_path)?;
                         return Ok(true);
                     }
 
@@ -1324,8 +1323,7 @@ impl Linker {
                     if let Some(parent) = link_path.parent() {
                         mkdirp(parent)?;
                     }
-                    sys::create_dir_link(&rel_target, &link_path)
-                        .map_err(|e| Error::Io(link_path.clone(), e))?;
+                    create_dir_link_idempotent(&rel_target, &link_path)?;
                     trace!("workspace top-level: {} -> {}", dep.name, importer_path);
                     Ok(true)
                 })

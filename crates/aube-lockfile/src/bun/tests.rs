@@ -1565,3 +1565,36 @@ fn test_roundtrip_workspace_peer_dependencies() {
         "workspace peerDependencies.react dropped on re-emit:\n{written}"
     );
 }
+
+/// A package declared in both `devDependencies` and
+/// `optionalDependencies` must yield exactly one root `DirectDep`,
+/// classified under the first declaring section. See discussion #1544.
+#[test]
+fn dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let sri_foo = fake_sri('a');
+    let content = r#"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test",
+      "devDependencies": {
+        "foo": "^1.0.0",
+      },
+      "optionalDependencies": {
+        "foo": "^1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "foo": ["foo@1.2.3", "", {}, "SRI_FOO"],
+  }
+}"#
+    .replace("SRI_FOO", &sri_foo);
+    std::fs::write(tmp.path(), &content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}

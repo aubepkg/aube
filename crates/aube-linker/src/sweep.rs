@@ -334,6 +334,27 @@ pub(crate) fn classify_local_entry_state(path: &Path) -> EntryState {
         Err(_) => EntryState::Stale,
     }
 }
+/// Create a directory link at `link_path`, tolerating a concurrent
+/// creator that already put the *expected* link there.
+///
+/// The top-level symlink pass runs over a rayon pool, so two tasks can
+/// target the same `node_modules/<name>` path — both see it missing,
+/// both create, and the loser gets `AlreadyExists`. That is benign
+/// when the winner stored the same target we were about to store, so
+/// re-check with `reconcile_dir_link` and only surface the error when
+/// the path holds something else. Without this a harmless race aborts
+/// the whole install with `File exists (os error 17)` partway through
+/// linking.
+pub(crate) fn create_dir_link_idempotent(target: &Path, link_path: &Path) -> Result<(), Error> {
+    if let Err(create_err) = crate::sys::create_dir_link(target, link_path) {
+        let won_race = create_err.kind() == std::io::ErrorKind::AlreadyExists
+            && reconcile_dir_link(link_path, target).unwrap_or(false);
+        if !won_race {
+            return Err(Error::Io(link_path.to_path_buf(), create_err));
+        }
+    }
+    Ok(())
+}
 
 /// Reconcile a directory link against its expected target.
 ///

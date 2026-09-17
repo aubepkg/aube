@@ -263,11 +263,20 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             .then(|| ws_raw.extra.get("name").and_then(serde_json::Value::as_str))
             .flatten();
         let mut direct: Vec<DirectDep> = Vec::new();
-        let push_dep =
+        // One declaration produces one `DirectDep`, even when the same
+        // name appears in several sections of the workspace manifest.
+        // See the equivalent guard in `npm::read` for why a duplicate
+        // is harmful. Keyed on the declared name so two aliases of the
+        // same underlying package stay distinct.
+        let mut direct_seen: BTreeSet<String> = BTreeSet::new();
+        let mut push_dep =
             |name: &str, specifier: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
                 if let Some(target_key) = resolve_workspace_dep(ws_path, ws_name, name, &key_info)
                     && let Some((dname, dver)) = key_info.get(&target_key)
                 {
+                    if !direct_seen.insert(name.to_string()) {
+                        return;
+                    }
                     direct.push(DirectDep {
                         name: dname.clone(),
                         dep_path: format!("{dname}@{dver}"),
