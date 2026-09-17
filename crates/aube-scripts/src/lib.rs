@@ -1535,6 +1535,10 @@ pub fn has_dep_lifecycle_work(package_dir: &Path, manifest: &PackageJson) -> boo
 /// driver writes shims there via `link_dep_bins`; `rebuild` mirrors
 /// the same pass.
 ///
+/// `<package_dir>/node_modules/.bin` is prepended ahead of it, for the
+/// dependencies that live inside the package itself: bundled deps, and
+/// under `nodeLinker=hoisted` any dep a version conflict nested there.
+///
 /// For the `install` hook specifically, if the manifest leaves both
 /// `install` and `preinstall` empty but the package has a top-level
 /// `binding.gyp`, this falls back to running `node-gyp rebuild` — the
@@ -1571,8 +1575,25 @@ pub async fn run_dep_hook(
             _ => return Ok(false),
         },
     };
+    // Most-local-first, the way Node resolves and `@npmcli/run-script`
+    // builds `PATH`: the package's *own* nested `node_modules/.bin`,
+    // then the `.bin` of the directory the package sits in.
+    //
+    // The nested one matters under `nodeLinker=hoisted`. A version
+    // conflict places the losing copy at
+    // `<requester>/node_modules/<dep>`, so its bin is written to
+    // `<requester>/node_modules/.bin` — one level *below* the `.bin`
+    // that holds the requester's siblings. Without this entry the
+    // requester's own install script couldn't see the dependency it
+    // forced to nest. Nested `node_modules` is always literally
+    // `node_modules` (Node looks for nothing else), so `modules_dir`
+    // doesn't apply here.
+    let nested_bin_dir = package_dir.join("node_modules").join(".bin");
     let dep_bin_dir = dep_modules_dir.join(".bin");
-    let mut bin_dirs: Vec<&Path> = Vec::with_capacity(tool_bin_dirs.len() + 1);
+    let mut bin_dirs: Vec<&Path> = Vec::with_capacity(tool_bin_dirs.len() + 2);
+    if nested_bin_dir != dep_bin_dir {
+        bin_dirs.push(&nested_bin_dir);
+    }
     bin_dirs.push(&dep_bin_dir);
     bin_dirs.extend(tool_bin_dirs.iter().copied());
     run_script(
@@ -1683,6 +1704,79 @@ mod spawn_program_tests {
             );
         })
         .await;
+    }
+
+    /// A dep's own nested `node_modules/.bin` must beat the `.bin` of the
+    /// directory the dep sits in. Under `nodeLinker=hoisted` a version
+    /// conflict places the losing copy at `<requester>/node_modules/<dep>`,
+    /// so the requester's install script has to look inside itself first
+    /// — otherwise it silently runs whichever version won the hoist.
+    /// Reproduced with `bcrypt`, whose `install` picked up
+    /// `node-pre-gyp@2` from the root instead of its own `^1.0.5`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dep_hook_prefers_the_packages_own_nested_bin() {
+        // `tempfile` is not a dep of this crate; std::env::temp_dir plus
+        // nanos is enough, matching `aborting_script_kills_grandchildren`.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aube-test-nested-bin-{nanos}"));
+        let root = root.as_path();
+        let package_dir = root.join("node_modules/requester");
+        let marker = root.join("which-ran.txt");
+
+        // Sibling `.bin` (the hoist winner) and the requester's own nested
+        // `.bin` (the copy it actually declares) both offer `tool`.
+        for (bin_dir, tag) in [
+            (root.join("node_modules/.bin"), "sibling"),
+            (package_dir.join("node_modules/.bin"), "nested"),
+        ] {
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let tool = bin_dir.join("tool");
+            std::fs::write(
+                &tool,
+                format!("#!/bin/sh\nprintf {tag} > \"{}\"\n", marker.display()),
+            )
+            .unwrap();
+            let mut perms = std::fs::metadata(&tool).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+            std::fs::set_permissions(&tool, perms).unwrap();
+        }
+
+        let mut scripts = std::collections::BTreeMap::new();
+        scripts.insert("postinstall".to_string(), "tool".to_string());
+        let manifest = PackageJson {
+            name: Some("requester".to_string()),
+            version: Some("1.0.0".to_string()),
+            scripts,
+            ..PackageJson::default()
+        };
+
+        let ran = run_dep_hook(
+            &package_dir,
+            // What `dep_modules_dir_for` yields for this package: the
+            // `node_modules/` the package itself sits in.
+            &root.join("node_modules"),
+            root,
+            "node_modules",
+            &manifest,
+            LifecycleHook::PostInstall,
+            &[],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let which_ran = std::fs::read_to_string(&marker);
+        let _ = std::fs::remove_dir_all(root);
+        assert!(ran, "postinstall is defined, so it should have run");
+        assert_eq!(
+            which_ran.unwrap(),
+            "nested",
+            "the package's own nested `.bin` must win over its siblings'"
+        );
     }
 
     #[cfg(unix)]

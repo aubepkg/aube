@@ -551,6 +551,37 @@ JSON
 	assert_file_exists aube-transitive-bin-probe.txt
 }
 
+# Same fixture under `--node-linker=hoisted`, where the per-dep `.bin/`
+# doesn't exist: the hoisted tree puts packages straight into
+# `node_modules/`, so a package's bins belong in the `.bin/` of the
+# `node_modules/` it sits in — the directory already on the lifecycle
+# PATH. Before the fix only the root's *direct* deps were linked there,
+# so `bcrypt` calling `node-pre-gyp` (from its own
+# `@mapbox/node-pre-gyp` dependency) died with `command not found`
+# (Discussion #1543).
+@test "hoisted: dep postinstall can invoke a transitive-dep bin by bare name" {
+	cat >package.json <<'JSON'
+{
+  "name": "transitive-bin-test-hoisted",
+  "version": "1.0.0",
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	run aube install --node-linker=hoisted
+	assert_success
+	assert_file_exists aube-transitive-bin-probe.txt
+	# The transitive package is hoisted to the root, so its command
+	# belongs in the root `.bin/` — matching npm's layout.
+	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
+}
+
 # -- Ported from pnpm/test/install/lifecycleScripts.ts ------------------------
 #
 # Existing aube tests above cover most of pnpm's filesystem-marker assertions
