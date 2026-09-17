@@ -2260,6 +2260,202 @@ fn apply_peer_contexts_produces_nested_peer_suffixes() {
     }
 }
 
+#[test]
+fn apply_peer_contexts_preserves_inherited_peer_provider_context() {
+    // The plugin borrows the root host, whose optional provider peer is
+    // already supplied by the root. The plugin's own provider dependency
+    // must not create a second host instance with a different peer context.
+    for reverse_order in [false, true] {
+        for auto_installed_host in [false, true] {
+            let mut host = mk_locked("host", "1.0.0", &[], &[("provider", "*")]);
+            host.peer_dependencies_meta.insert(
+                "provider".to_string(),
+                aube_lockfile::PeerDepMeta { optional: true },
+            );
+            let mut plugin = mk_locked(
+                "plugin",
+                "1.0.0",
+                &[("provider", "2.0.0")],
+                &[("host", "*")],
+            );
+            if auto_installed_host {
+                plugin
+                    .dependencies
+                    .insert("host".to_string(), "1.0.0".to_string());
+            }
+            let mut root_deps: Vec<_> = ["host", "plugin", "provider"]
+                .into_iter()
+                .map(|name| DirectDep {
+                    name: name.to_string(),
+                    dep_path: format!("{name}@1.0.0"),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                })
+                .collect();
+            if reverse_order {
+                root_deps.reverse();
+            }
+            let graph = LockfileGraph {
+                importers: BTreeMap::from([(".".to_string(), root_deps)]),
+                packages: [
+                    host,
+                    plugin,
+                    mk_locked("provider", "1.0.0", &[], &[]),
+                    mk_locked("provider", "2.0.0", &[], &[]),
+                ]
+                .into_iter()
+                .map(|pkg| (pkg.dep_path.clone(), pkg))
+                .collect(),
+                ..Default::default()
+            };
+
+            let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+                .expect("test graph should converge");
+            let root = &out.importers["."];
+            let host_path = &root.iter().find(|dep| dep.name == "host").unwrap().dep_path;
+            let plugin_path = &root
+                .iter()
+                .find(|dep| dep.name == "plugin")
+                .unwrap()
+                .dep_path;
+            let plugin = &out.packages[plugin_path];
+
+            assert_eq!(host_path, "host@1.0.0(provider@1.0.0)");
+            assert_eq!(
+                format!("host@{}", plugin.dependencies["host"]),
+                *host_path,
+                "a borrowed peer must retain its ancestor's provider context"
+            );
+            assert_eq!(plugin.dependencies["provider"], "2.0.0");
+            assert_eq!(
+                out.packages
+                    .values()
+                    .filter(|pkg| pkg.name == "host")
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn apply_peer_contexts_preserves_nested_ancestor_peer_provider_context() {
+    let mut host = mk_locked("host", "1.0.0", &[], &[("provider", "*")]);
+    host.peer_dependencies_meta.insert(
+        "provider".to_string(),
+        aube_lockfile::PeerDepMeta { optional: true },
+    );
+    let graph = LockfileGraph {
+        importers: BTreeMap::from([(
+            ".".to_string(),
+            ["app", "provider"]
+                .into_iter()
+                .map(|name| DirectDep {
+                    name: name.to_string(),
+                    dep_path: format!("{name}@1.0.0"),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                })
+                .collect(),
+        )]),
+        packages: [
+            mk_locked(
+                "app",
+                "1.0.0",
+                &[
+                    ("host", "1.0.0"),
+                    ("provider", "2.0.0"),
+                    ("wrapper", "1.0.0"),
+                ],
+                &[],
+            ),
+            mk_locked(
+                "wrapper",
+                "1.0.0",
+                &[("plugin", "1.0.0"), ("provider", "3.0.0")],
+                &[],
+            ),
+            mk_locked(
+                "plugin",
+                "1.0.0",
+                &[("provider", "4.0.0")],
+                &[("host", "*")],
+            ),
+            host,
+            mk_locked("provider", "1.0.0", &[], &[]),
+            mk_locked("provider", "2.0.0", &[], &[]),
+            mk_locked("provider", "3.0.0", &[], &[]),
+            mk_locked("provider", "4.0.0", &[], &[]),
+        ]
+        .into_iter()
+        .map(|pkg| (pkg.dep_path.clone(), pkg))
+        .collect(),
+        ..Default::default()
+    };
+
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+    let plugin = out
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "plugin")
+        .unwrap();
+    assert_eq!(plugin.dependencies["host"], "1.0.0(provider@2.0.0)");
+    assert_eq!(plugin.dependencies["provider"], "4.0.0");
+    assert_eq!(
+        out.packages
+            .values()
+            .filter(|pkg| pkg.name == "host")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn apply_peer_contexts_keeps_distinct_contexts_for_ordinary_dependencies() {
+    let graph = LockfileGraph {
+        importers: BTreeMap::from([(
+            ".".to_string(),
+            ["host", "plugin", "provider"]
+                .into_iter()
+                .map(|name| DirectDep {
+                    name: name.to_string(),
+                    dep_path: format!("{name}@1.0.0"),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                })
+                .collect(),
+        )]),
+        packages: [
+            mk_locked("host", "1.0.0", &[], &[("provider", "*")]),
+            mk_locked(
+                "plugin",
+                "1.0.0",
+                &[("host", "1.0.0"), ("provider", "2.0.0")],
+                &[],
+            ),
+            mk_locked("provider", "1.0.0", &[], &[]),
+            mk_locked("provider", "2.0.0", &[], &[]),
+        ]
+        .into_iter()
+        .map(|pkg| (pkg.dep_path.clone(), pkg))
+        .collect(),
+        ..Default::default()
+    };
+
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+    assert!(out.packages.contains_key("host@1.0.0(provider@1.0.0)"));
+    assert!(out.packages.contains_key("host@1.0.0(provider@2.0.0)"));
+    let plugin = out
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "plugin")
+        .unwrap();
+    assert_eq!(plugin.dependencies["host"], "1.0.0(provider@2.0.0)");
+    assert_eq!(plugin.dependencies["provider"], "2.0.0");
+}
+
 // Repro for the johnpyp/aube-vite-peer-variant case: a workspace
 // importer pins a peer version that DOESN'T satisfy a sibling's
 // declared peer range, while the workspace ROOT pins a satisfying

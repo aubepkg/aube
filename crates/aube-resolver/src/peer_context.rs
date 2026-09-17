@@ -702,8 +702,12 @@ fn apply_peer_contexts_once(
     let root_scope: FxHashMap<String, PeerProvider> = canonical
         .importers
         .get(".")
-        .map(|deps| scope_map_from_deps(&canonical, deps))
+        .map(|deps| scope_map_from_deps(&canonical, deps, 0))
         .unwrap_or_default();
+    // Keep provider-owning scopes on the DFS stack. Scope zero is the
+    // workspace root; inherited providers retain their original index
+    // when a descendant overlays its own dependencies.
+    let mut scopes = vec![root_scope];
 
     for (importer_path, direct_deps) in &canonical.importers {
         // An importer's own direct deps are in scope for its children's
@@ -716,7 +720,8 @@ fn apply_peer_contexts_once(
         // it's already contextualized, and passing the plain version
         // would make descendants look up keys that don't exist in the
         // (now-nested) graph.
-        let importer_scope = scope_map_from_deps(&canonical, direct_deps);
+        let importer_scope = scopes.len();
+        scopes.push(scope_map_from_deps(&canonical, direct_deps, importer_scope));
 
         let mut new_deps = Vec::with_capacity(direct_deps.len());
         for dep in direct_deps {
@@ -738,8 +743,8 @@ fn apply_peer_contexts_once(
                 &dep.dep_path,
                 &canonical,
                 &name_index,
-                &importer_scope,
-                &root_scope,
+                importer_scope,
+                &mut scopes,
                 &mut out_packages,
                 &mut visiting,
                 options,
@@ -753,6 +758,7 @@ fn apply_peer_contexts_once(
             });
         }
         new_importers.insert(importer_path.clone(), new_deps);
+        scopes.pop();
     }
 
     // Any canonical package that was never reached by the DFS (orphaned
@@ -808,6 +814,10 @@ struct PeerProvider {
     target_tail: String,
     /// Tail used for semver checks and the consumer's peer suffix.
     context_tail: String,
+    /// Scope where this provider is installed. An inherited peer must
+    /// resolve its own peers there, not under the consumer's dependencies.
+    /// None denotes a local fallback whose scope is assigned on descent.
+    scope_index: Option<usize>,
 }
 
 fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerProvider {
@@ -825,6 +835,7 @@ fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerPr
     PeerProvider {
         target_tail: target_tail.to_string(),
         context_tail,
+        scope_index: None,
     }
 }
 
@@ -835,6 +846,7 @@ fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerPr
 fn scope_map_from_deps(
     graph: &LockfileGraph,
     deps: &[DirectDep],
+    scope_index: usize,
 ) -> FxHashMap<String, PeerProvider> {
     let mut out = FxHashMap::with_capacity_and_hasher(deps.len(), Default::default());
     for d in deps {
@@ -847,7 +859,9 @@ fn scope_map_from_deps(
         } else {
             d.dep_path.clone()
         };
-        out.insert(d.name.clone(), peer_provider(graph, &d.name, &tail));
+        let mut provider = peer_provider(graph, &d.name, &tail);
+        provider.scope_index = Some(scope_index);
+        out.insert(d.name.clone(), provider);
     }
     out
 }
@@ -1620,13 +1634,15 @@ fn visit_peer_context<'g>(
     input_dep_path: &str,
     graph: &'g LockfileGraph,
     name_index: &FxHashMap<&'g str, Vec<&'g LockedPackage>>,
-    ancestor_scope: &FxHashMap<String, PeerProvider>,
-    root_scope: &FxHashMap<String, PeerProvider>,
+    scope_index: usize,
+    scopes: &mut Vec<FxHashMap<String, PeerProvider>>,
     out_packages: &mut BTreeMap<String, LockedPackage>,
     visiting: &mut FxHashSet<String>,
     options: &PeerContextOptions,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
+    let ancestor_scope = &scopes[scope_index];
+    let root_scope = &scopes[0];
 
     // The input key may already carry a peer suffix (fixed-point loop
     // Pass 2+). Drop it before we build a new one — otherwise we'd
@@ -1868,13 +1884,18 @@ fn visit_peer_context<'g>(
     // that nested tail in its own scope, and its own suffix will
     // serialize as `(react-dom@18.2.0(react@18.2.0))`. That's the
     // nested form pnpm writes.
+    let child_scope_index = scopes.len();
     let mut child_scope = ancestor_scope.clone();
     for (name, tail) in &pkg.dependencies {
-        child_scope.insert(name.clone(), peer_provider(graph, name, tail));
+        let mut provider = peer_provider(graph, name, tail);
+        provider.scope_index = Some(child_scope_index);
+        child_scope.insert(name.clone(), provider);
     }
-    for (name, provider) in &peer_context {
+    for (name, provider) in &mut peer_context {
+        provider.scope_index.get_or_insert(child_scope_index);
         child_scope.insert(name.clone(), provider.clone());
     }
+    scopes.push(child_scope);
 
     // Recurse into each child, rewriting its dependency map entry to
     // point at the contextualized dep_path's tail. A child whose visit
@@ -1901,13 +1922,17 @@ fn visit_peer_context<'g>(
             Some(provider) => provider.target_tail.clone(),
             None => child_version_tail.clone(),
         };
+        let provider_scope = peer_context_versions
+            .get(child_name)
+            .and_then(|provider| provider.scope_index)
+            .unwrap_or(child_scope_index);
         let child_canonical_dep_path = format!("{child_name}@{lookup_tail}");
         let child_new = visit_peer_context(
             &child_canonical_dep_path,
             graph,
             name_index,
-            &child_scope,
-            root_scope,
+            provider_scope,
+            scopes,
             out_packages,
             visiting,
             options,
@@ -1936,8 +1961,8 @@ fn visit_peer_context<'g>(
             &child_canonical_dep_path,
             graph,
             name_index,
-            &child_scope,
-            root_scope,
+            provider.scope_index.unwrap_or(child_scope_index),
+            scopes,
             out_packages,
             visiting,
             options,
@@ -1951,6 +1976,7 @@ fn visit_peer_context<'g>(
         }
     }
 
+    scopes.pop();
     visiting.remove(&contextualized);
     let new_optional_dependencies: BTreeMap<String, String> = pkg
         .optional_dependencies
