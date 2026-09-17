@@ -1730,6 +1730,7 @@ mod tests {
             aube_linker::BinShimOptions::default(),
             &mut ManagedBinLinks::default(),
             None,
+            BinConflict::Overwrite,
         )
         .unwrap();
 
@@ -1798,6 +1799,7 @@ mod tests {
             aube_linker::BinShimOptions::default(),
             &mut ManagedBinLinks::default(),
             None,
+            BinConflict::Overwrite,
         )
         .unwrap();
 
