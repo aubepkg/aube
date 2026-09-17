@@ -152,11 +152,18 @@ pub async fn run(
                 } else {
                     None
                 };
-            // Re-emit per-dep `.bin/` shims so a rebuild on a tree
-            // that pre-dates the transitive-bin fix still lands them
-            // on PATH for the lifecycle scripts. `link_bins_for_dep`
-            // is idempotent, so re-running on an already-wired tree
-            // is a no-op.
+            // Re-emit the whole bin surface through the same entry
+            // point `install` uses, rather than only the per-dep
+            // shims. Linking is idempotent, so on an already-wired
+            // tree this is a no-op — but sharing the entry point is
+            // what keeps `rebuild` from drifting: every rule
+            // `link_all_bins` establishes in order (an importer's
+            // direct deps, its own `bin`, each workspace member's,
+            // then the dependency pass) applies here too. Linking only
+            // the dependency pass meant `rebuild` never reconciled an
+            // importer's own `bin`, and left the dependency pass to
+            // infer precedence that the importer passes normally
+            // establish.
             let isolated = !matches!(
                 node_linker_setting,
                 aube_settings::resolved::NodeLinker::Hoisted
@@ -170,31 +177,36 @@ pub async fn run(
                     &super::global_virtual_store_dir(&cwd),
                 )
                 .unwrap_or(false);
-            let prefer_symlinked_executables =
-                aube_settings::resolved::prefer_symlinked_executables(&settings_ctx)
-                    .or(isolated.then_some(false));
-            let hidden_modules_dir = aube_dir.join("node_modules");
-            let shim_opts = aube_linker::BinShimOptions {
-                extend_node_path: aube_settings::resolved::extend_node_path(&settings_ctx),
-                prefer_symlinked_executables,
-                hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
+            let node_linker = match node_linker_setting {
+                aube_settings::resolved::NodeLinker::Hoisted => aube_linker::NodeLinker::Hoisted,
+                // `Pnp` already returned above.
+                _ => aube_linker::NodeLinker::Isolated,
             };
-            let mut pkg_json_cache = super::install::PkgJsonCache::new();
-            let mut managed_bin_links = super::install::ManagedBinLinks::capturing();
-            super::install::link_dep_bins(super::install::LinkDepBinsInput {
-                aube_dir: &aube_dir,
-                project_dir: &cwd,
-                modules_dir_name: &modules_dir_name,
-                graph: &graph,
-                virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
-                    &settings_ctx,
-                ),
-                placements: hoisted_placements.as_ref(),
-                shim_opts,
-                cache: &mut pkg_json_cache,
-                managed: &mut managed_bin_links,
-                preserved: None,
-            })?;
+            let workspace_plan =
+                super::install::discover_workspace_plan(&cwd, &manifest, &settings_ctx, &filter)?;
+            let link_bins = |preserved: Option<&super::install::PreservedBinLinks>,
+                             capture_managed: bool| {
+                super::install::link_all_bins(super::install::LinkAllBinsInput {
+                    project_dir: &cwd,
+                    settings_ctx: &settings_ctx,
+                    modules_dir_name: &modules_dir_name,
+                    aube_dir: &aube_dir,
+                    graph: &graph,
+                    virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
+                        &settings_ctx,
+                    ),
+                    placements: hoisted_placements.as_ref(),
+                    ws_dirs: &workspace_plan.ws_dirs,
+                    manifests: &workspace_plan.manifests,
+                    manifest: &manifest,
+                    node_linker,
+                    has_workspace: workspace_plan.has_workspace,
+                    link_dependency_bins: true,
+                    capture_managed,
+                    preserved,
+                })
+            };
+            let managed_bin_links = link_bins(None, true)?;
             super::install::run_dep_lifecycle_scripts(
                 &cwd,
                 &modules_dir_name,
@@ -223,22 +235,7 @@ pub async fn run(
             )
             .await?;
             let preserved = super::install::remove_managed_bin_links(&managed_bin_links)?;
-            let mut refreshed_pkg_json_cache = super::install::PkgJsonCache::new();
-            let mut refreshed_bin_links = super::install::ManagedBinLinks::default();
-            super::install::link_dep_bins(super::install::LinkDepBinsInput {
-                aube_dir: &aube_dir,
-                project_dir: &cwd,
-                modules_dir_name: &modules_dir_name,
-                graph: &graph,
-                virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
-                    &settings_ctx,
-                ),
-                placements: hoisted_placements.as_ref(),
-                shim_opts,
-                cache: &mut refreshed_pkg_json_cache,
-                managed: &mut refreshed_bin_links,
-                preserved: Some(&preserved),
-            })?;
+            let refreshed_bin_links = link_bins(Some(&preserved), false)?;
             super::install::remove_unclaimed_preserved_bin_links(
                 &managed_bin_links,
                 &preserved,

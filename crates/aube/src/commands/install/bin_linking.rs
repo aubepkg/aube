@@ -72,22 +72,22 @@ pub(crate) struct LinkDepBinsInput<'a> {
     pub(crate) preserved: Option<&'a PreservedBinLinks>,
 }
 
-pub(super) struct LinkAllBinsInput<'a> {
-    pub(super) project_dir: &'a Path,
-    pub(super) settings_ctx: &'a aube_settings::ResolveCtx<'a>,
-    pub(super) modules_dir_name: &'a str,
-    pub(super) aube_dir: &'a Path,
-    pub(super) graph: &'a aube_lockfile::LockfileGraph,
-    pub(super) virtual_store_dir_max_length: usize,
-    pub(super) placements: Option<&'a aube_linker::HoistedPlacements>,
-    pub(super) ws_dirs: &'a BTreeMap<String, PathBuf>,
-    pub(super) manifests: &'a [(String, aube_manifest::PackageJson)],
-    pub(super) manifest: &'a aube_manifest::PackageJson,
-    pub(super) node_linker: aube_linker::NodeLinker,
-    pub(super) has_workspace: bool,
-    pub(super) link_dependency_bins: bool,
-    pub(super) capture_managed: bool,
-    pub(super) preserved: Option<&'a PreservedBinLinks>,
+pub(crate) struct LinkAllBinsInput<'a> {
+    pub(crate) project_dir: &'a Path,
+    pub(crate) settings_ctx: &'a aube_settings::ResolveCtx<'a>,
+    pub(crate) modules_dir_name: &'a str,
+    pub(crate) aube_dir: &'a Path,
+    pub(crate) graph: &'a aube_lockfile::LockfileGraph,
+    pub(crate) virtual_store_dir_max_length: usize,
+    pub(crate) placements: Option<&'a aube_linker::HoistedPlacements>,
+    pub(crate) ws_dirs: &'a BTreeMap<String, PathBuf>,
+    pub(crate) manifests: &'a [(String, aube_manifest::PackageJson)],
+    pub(crate) manifest: &'a aube_manifest::PackageJson,
+    pub(crate) node_linker: aube_linker::NodeLinker,
+    pub(crate) has_workspace: bool,
+    pub(crate) link_dependency_bins: bool,
+    pub(crate) capture_managed: bool,
+    pub(crate) preserved: Option<&'a PreservedBinLinks>,
 }
 
 /// Link bin entries from packages to node_modules/.bin/
@@ -779,7 +779,7 @@ fn link_hoisted_pkg_bins(
 /// This runs before dependency lifecycle scripts so builds can invoke their
 /// dependencies, then again after approved builds. The second pass refreshes
 /// packages whose lifecycle replaces a bin target.
-pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<ManagedBinLinks> {
+pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<ManagedBinLinks> {
     let LinkAllBinsInput {
         project_dir,
         settings_ctx,

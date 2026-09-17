@@ -385,3 +385,56 @@ JSON
 	assert_output --partial "ignored build scripts"
 	assert_output --partial "@pnpm.e2e/install-script-example"
 }
+
+# `aube rebuild` used to link only the per-dependency `.bin/` shims, so an
+# importer's own `bin` was never reconciled: a `bin` added or retargeted
+# after install stayed absent or stale in `node_modules/.bin` until the
+# next `aube install`. It now goes through the same entry point `install`
+# uses, so every bin rule applies in the same order.
+@test "aube rebuild reconciles the importer's own bin" {
+	echo '#!/usr/bin/env node' >cli.js
+	echo '#!/usr/bin/env node' >cli2.js
+	cat >package.json <<'JSON'
+{
+  "name": "rebuild-self-bin-test",
+  "version": "1.0.0",
+  "bin": { "mytool": "cli.js" },
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	run aube install --node-linker=hoisted
+	assert_success
+	assert_file_exists node_modules/.bin/mytool
+
+	# Retarget the existing command and declare a new one, then rebuild
+	# without reinstalling.
+	cat >package.json <<'JSON'
+{
+  "name": "rebuild-self-bin-test",
+  "version": "1.0.0",
+  "bin": { "mytool": "cli2.js", "newtool": "cli2.js" },
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	run aube rebuild
+	assert_success
+	assert_file_exists node_modules/.bin/newtool
+	run grep -c cli2.js node_modules/.bin/mytool
+	assert_success
+	# The dependency shims rebuild already emitted are still there.
+	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
+}

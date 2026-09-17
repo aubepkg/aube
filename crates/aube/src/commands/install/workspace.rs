@@ -3,7 +3,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-pub(super) struct WorkspaceInstallPlan {
+pub(crate) struct WorkspaceInstallPlan {
     pub workspace_packages: Vec<PathBuf>,
     pub has_workspace: bool,
     pub is_workspace_project: bool,
@@ -14,7 +14,7 @@ pub(super) struct WorkspaceInstallPlan {
     pub lifecycle_manifests: Vec<(String, aube_manifest::PackageJson)>,
 }
 
-pub(super) fn discover_workspace_plan(
+pub(crate) fn discover_workspace_plan(
     cwd: &Path,
     root_manifest: &aube_manifest::PackageJson,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
