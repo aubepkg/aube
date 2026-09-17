@@ -2339,6 +2339,106 @@ fn apply_peer_contexts_preserves_inherited_peer_provider_context() {
 }
 
 #[test]
+fn apply_peer_contexts_preserves_workspace_root_peer_provider_context() {
+    // A root fallback becomes a dependency edge after the first pass.
+    // Later passes must retain its owner, while an auto-installed peer
+    // and the workspace-root-disabled fallback still resolve locally.
+    for (auto_installed_host, resolve_from_workspace_root, root_has_provider) in [
+        (false, true, true),
+        (false, true, false),
+        (true, true, true),
+        (false, false, true),
+    ] {
+        for peers_suffix_max_length in [1000, 0] {
+            let mut host = mk_locked("host", "1.0.0", &[], &[("provider", "*")]);
+            host.peer_dependencies_meta.insert(
+                "provider".to_string(),
+                aube_lockfile::PeerDepMeta { optional: true },
+            );
+            let mut plugin = mk_locked(
+                "plugin",
+                "1.0.0",
+                &[("provider", "2.0.0")],
+                &[("host", "*")],
+            );
+            if auto_installed_host {
+                plugin
+                    .dependencies
+                    .insert("host".to_string(), "1.0.0".to_string());
+            }
+            let mut root_names = vec!["host"];
+            if root_has_provider {
+                root_names.push("provider");
+            }
+            let graph = LockfileGraph {
+                importers: [(".", root_names), ("packages/app", vec!["plugin"])]
+                    .into_iter()
+                    .map(|(path, names)| {
+                        let deps = names
+                            .into_iter()
+                            .map(|name| DirectDep {
+                                name: name.to_string(),
+                                dep_path: format!("{name}@1.0.0"),
+                                dep_type: DepType::Production,
+                                specifier: Some("1.0.0".to_string()),
+                            })
+                            .collect();
+                        (path.to_string(), deps)
+                    })
+                    .collect(),
+                packages: [
+                    host,
+                    plugin,
+                    mk_locked("provider", "1.0.0", &[], &[]),
+                    mk_locked("provider", "2.0.0", &[], &[]),
+                ]
+                .into_iter()
+                .map(|pkg| (pkg.dep_path.clone(), pkg))
+                .collect(),
+                ..Default::default()
+            };
+            let options = PeerContextOptions {
+                resolve_from_workspace_root,
+                peers_suffix_max_length,
+                ..PeerContextOptions::default()
+            };
+            let out = apply_peer_contexts(graph, &options).expect("test graph should converge");
+            let host_path = &out.importers["."][0].dep_path;
+            let plugin = &out.packages[&out.importers["packages/app"][0].dep_path];
+            let plugin_host_path = format!("host@{}", plugin.dependencies["host"]);
+
+            assert_eq!(
+                out.packages[host_path]
+                    .dependencies
+                    .get("provider")
+                    .map(String::as_str),
+                root_has_provider.then_some("1.0.0")
+            );
+            if resolve_from_workspace_root && !auto_installed_host {
+                assert_eq!(
+                    plugin_host_path, *host_path,
+                    "a workspace member must retain the root's host instance"
+                );
+                assert_eq!(
+                    out.packages
+                        .values()
+                        .filter(|pkg| pkg.name == "host")
+                        .count(),
+                    1
+                );
+            } else {
+                assert_ne!(plugin_host_path, *host_path);
+                assert_eq!(
+                    out.packages[&plugin_host_path].dependencies["provider"],
+                    "2.0.0"
+                );
+            }
+            assert_eq!(plugin.dependencies["provider"], "2.0.0");
+        }
+    }
+}
+
+#[test]
 fn apply_peer_contexts_preserves_nested_ancestor_peer_provider_context() {
     let mut host = mk_locked("host", "1.0.0", &[], &[("provider", "*")]);
     host.peer_dependencies_meta.insert(

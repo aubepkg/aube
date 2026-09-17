@@ -404,15 +404,22 @@ pub fn apply_peer_contexts(
     // to `pkgs * 3 + deps * 2` tokens — ~25k entries on a 1000-pkg
     // graph). One hash per iter instead of two.
     let mut before = graph_hash(&current);
+    let mut root_peers = RootPeerBindings::default();
     for i in 0..iteration_limit {
-        let after_once = apply_peer_contexts_once(current, options);
+        let (after_once, mut next_root_peers) =
+            apply_peer_contexts_once(current, options, &root_peers);
         let next = if options.dedupe_peer_dependents {
             dedupe_peer_variants(after_once)
         } else {
             after_once
         };
+        // Dedupe retains an existing package body and key. Keep the
+        // ownership recorded for that same surviving package.
+        next_root_peers.retain(|dep_path, _| next.packages.contains_key(dep_path));
         let after = graph_hash(&next);
-        if before == after {
+        let owners_unchanged = root_peers == next_root_peers;
+        root_peers = next_root_peers;
+        if before == after && owners_unchanged {
             tracing::debug!("peer-context pass converged after {i} iteration(s)");
             current = next;
             converged = true;
@@ -675,9 +682,11 @@ pub(crate) fn dedupe_peer_variants(graph: LockfileGraph) -> LockfileGraph {
 fn apply_peer_contexts_once(
     canonical: LockfileGraph,
     options: &PeerContextOptions,
-) -> LockfileGraph {
+    root_peers: &RootPeerBindings,
+) -> (LockfileGraph, RootPeerBindings) {
     let mut out_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
     let mut new_importers: BTreeMap<String, Vec<DirectDep>> = BTreeMap::new();
+    let mut out_root_peers = RootPeerBindings::default();
 
     // Name-indexed view of the canonical graph, shared across
     // every `visit_peer_context` call in this pass. Peer-resolution
@@ -747,6 +756,8 @@ fn apply_peer_contexts_once(
                 &mut scopes,
                 &mut out_packages,
                 &mut visiting,
+                root_peers,
+                &mut out_root_peers,
                 options,
             )
             .unwrap_or_else(|| dep.dep_path.clone());
@@ -765,7 +776,7 @@ fn apply_peer_contexts_once(
     // from every importer) is dropped — that matches the filter_deps
     // semantics and avoids emitting dead entries into the lockfile.
 
-    LockfileGraph {
+    let graph = LockfileGraph {
         importers: new_importers,
         packages: out_packages,
         // The post-pass is pure — settings + overrides carry through
@@ -784,7 +795,8 @@ fn apply_peer_contexts_once(
         trusted_dependencies: canonical.trusted_dependencies,
         extra_fields: canonical.extra_fields,
         workspace_extra_fields: canonical.workspace_extra_fields,
-    }
+    };
+    (graph, out_root_peers)
 }
 
 /// DFS helper for `apply_peer_contexts`. Returns the peer-contextualized
@@ -819,6 +831,11 @@ struct PeerProvider {
     /// None denotes a local fallback whose scope is assigned on descent.
     scope_index: Option<usize>,
 }
+
+/// Peers borrowed from the workspace root, keyed by the consumer's
+/// contextualized dep path. These edges enter `dependencies` after one
+/// pass but must not become local auto-install fallbacks on later passes.
+type RootPeerBindings = FxHashMap<String, FxHashSet<String>>;
 
 fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerProvider {
     let context_tail =
@@ -1638,6 +1655,8 @@ fn visit_peer_context<'g>(
     scopes: &mut Vec<FxHashMap<String, PeerProvider>>,
     out_packages: &mut BTreeMap<String, LockedPackage>,
     visiting: &mut FxHashSet<String>,
+    root_peers: &RootPeerBindings,
+    out_root_peers: &mut RootPeerBindings,
     options: &PeerContextOptions,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
@@ -1731,15 +1750,21 @@ fn visit_peer_context<'g>(
             .cloned();
         let from_ancestor_incompatible = ancestor_scope.get(peer_name).cloned();
 
-        let from_pkg_deps = pkg
-            .dependencies
-            .get(peer_name)
-            .map(|tail| peer_provider(graph, peer_name, tail))
-            .filter(|provider| satisfies_declared(provider));
-        let from_pkg_deps_incompatible = pkg
-            .dependencies
-            .get(peer_name)
-            .map(|tail| peer_provider(graph, peer_name, tail));
+        let from_pkg_deps_incompatible = pkg.dependencies.get(peer_name).map(|tail| {
+            // Reuse the root owner recorded by the previous pass.
+            // Matching names or versions alone would also capture
+            // genuinely local auto-installed peers.
+            root_peers
+                .get(input_dep_path)
+                .filter(|names| names.contains(peer_name))
+                .and_then(|_| root_scope.get(peer_name))
+                .cloned()
+                .unwrap_or_else(|| peer_provider(graph, peer_name, tail))
+        });
+        let from_pkg_deps = from_pkg_deps_incompatible
+            .as_ref()
+            .filter(|provider| satisfies_declared(provider))
+            .cloned();
 
         // `resolve-peers-from-workspace-root`: fall back to the root
         // importer's direct deps before the graph-wide scan. Common in
@@ -1935,6 +1960,8 @@ fn visit_peer_context<'g>(
             scopes,
             out_packages,
             visiting,
+            root_peers,
+            out_root_peers,
             options,
         );
         let new_tail = match child_new {
@@ -1965,6 +1992,8 @@ fn visit_peer_context<'g>(
             scopes,
             out_packages,
             visiting,
+            root_peers,
+            out_root_peers,
             options,
         );
         if let Some(new_dep_path) = child_new {
@@ -1978,6 +2007,14 @@ fn visit_peer_context<'g>(
 
     scopes.pop();
     visiting.remove(&contextualized);
+    let borrowed_root_peers: FxHashSet<String> = peer_context
+        .iter()
+        .filter(|(_, provider)| provider.scope_index == Some(0))
+        .map(|(name, _)| name.clone())
+        .collect();
+    if !borrowed_root_peers.is_empty() {
+        out_root_peers.insert(contextualized.clone(), borrowed_root_peers);
+    }
     let new_optional_dependencies: BTreeMap<String, String> = pkg
         .optional_dependencies
         .keys()
