@@ -192,6 +192,10 @@ pub async fn run(
                 cache: &mut pkg_json_cache,
                 managed: &mut managed_bin_links,
                 preserved: None,
+                // `rebuild` doesn't relink the importers' `.bin/`, so the
+                // tree on disk is the only record of which package owns a
+                // command.
+                importer_bins_linked: false,
             })?;
             super::install::run_dep_lifecycle_scripts(
                 &cwd,
@@ -234,6 +238,10 @@ pub async fn run(
                 cache: &mut refreshed_pkg_json_cache,
                 managed: &mut refreshed_bin_links,
                 preserved: Some(&preserved),
+                // `rebuild` doesn't relink the importers' `.bin/`, so the
+                // tree on disk is the only record of which package owns a
+                // command.
+                importer_bins_linked: false,
             })?;
             super::install::remove_unclaimed_preserved_bin_links(
                 &managed_bin_links,

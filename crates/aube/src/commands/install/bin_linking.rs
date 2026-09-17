@@ -25,12 +25,23 @@ pub(crate) enum BinConflict {
     /// are authoritative for a `.bin/`: the importer's direct deps, the
     /// importer's own `bin`, and the isolated per-dep pass.
     Overwrite,
-    /// Leave whatever is already on disk alone. Mirrors npm's
-    /// `bin-links` `linkGently`, which never clobbers a command another
-    /// package already claimed. Used by the hoisted transitive pass so
-    /// a deep dependency can't shadow a command the project (or the
-    /// previous install) put there.
-    KeepExisting,
+    /// Yield to a command another package claimed earlier *in this run*,
+    /// so a deep dependency can't shadow one of the importer's own.
+    ///
+    /// A shim left behind by an earlier install is deliberately *not* a
+    /// claim. `.bin/` is never pruned, so treating on-disk state as
+    /// ownership would let a command whose owner was removed or replaced
+    /// keep pointing at the old package forever. Overwriting it is how
+    /// an incremental install reconciles the directory.
+    YieldToClaimed,
+    /// As [`BinConflict::YieldToClaimed`], but also yield to a command
+    /// already on disk that still resolves. For passes that run *without*
+    /// the importer passes — `aube rebuild` re-emits dependency shims
+    /// against an already-linked tree — where this run's claims don't
+    /// include the importers' direct deps and the tree on disk is the
+    /// only record of who owns what. A command that no longer resolves
+    /// is stale either way and gets rewritten.
+    YieldToClaimedOrLive,
 }
 
 /// Exact shim files created during the pre-lifecycle linking pass, keyed by
@@ -62,6 +73,12 @@ pub(crate) struct LinkDepBinsInput<'a> {
     pub(crate) cache: &'a mut PkgJsonCache,
     pub(crate) managed: &'a mut ManagedBinLinks,
     pub(crate) preserved: Option<&'a PreservedBinLinks>,
+    /// Whether the importer passes (`link_bins` and friends) already ran
+    /// against this `ManagedBinLinks` in this run. `install` links the
+    /// importers' direct deps first, so their commands are claimed by
+    /// the time the hoisted pass runs; `rebuild` calls this pass on its
+    /// own and has to read ownership off the tree instead.
+    pub(crate) importer_bins_linked: bool,
 }
 
 pub(super) struct LinkAllBinsInput<'a> {
@@ -401,6 +418,7 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
         cache,
         managed,
         preserved,
+        importer_bins_linked,
     } = input;
     if let Some(placements) = placements {
         return link_hoisted_dep_bins(
@@ -412,6 +430,11 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
             cache,
             managed,
             preserved,
+            if importer_bins_linked {
+                BinConflict::YieldToClaimed
+            } else {
+                BinConflict::YieldToClaimedOrLive
+            },
         );
     }
     for (dep_path, pkg) in &graph.packages {
@@ -486,12 +509,14 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
 /// `@mapbox/node-pre-gyp` is the reported case (Discussion #1543), and
 /// `prebuild-install` / `napi-postinstall` fail the same way.
 ///
-/// Collisions keep whatever is already on disk. The importer passes run
-/// first and use `BinConflict::Overwrite`, so a direct dependency's
-/// command always wins over a transitive package that happens to ship
-/// the same name; `aube rebuild` calls this pass on an already-linked
-/// tree, where the same rule preserves the shims the install wrote.
-/// npm's `bin-links` resolves conflicts the same way.
+/// On a collision the command stays with whoever claimed it first: the
+/// importer passes run before this one and use `BinConflict::Overwrite`,
+/// so a direct dependency always beats a transitive package shipping the
+/// same name, and among transitives the graph order decides. A shim left
+/// over from an earlier install is not an owner — `.bin/` is never
+/// pruned, so rewriting it is what keeps a command pointing at the
+/// package that owns it today. See [`BinConflict`] for the `rebuild`
+/// variant, which has no importer pass to defer to.
 #[allow(clippy::too_many_arguments)]
 fn link_hoisted_dep_bins(
     aube_dir: &Path,
@@ -502,6 +527,7 @@ fn link_hoisted_dep_bins(
     cache: &mut PkgJsonCache,
     managed: &mut ManagedBinLinks,
     preserved: Option<&PreservedBinLinks>,
+    conflict: BinConflict,
 ) -> miette::Result<()> {
     for (dep_path, pkg) in &graph.packages {
         // Every copy of a package gets its own `.bin/` entry: a name
@@ -537,7 +563,7 @@ fn link_hoisted_dep_bins(
                     shim_opts,
                     managed,
                     preserved,
-                    BinConflict::KeepExisting,
+                    conflict,
                 )?;
             }
             // A bundled dep lives at `<pkg_dir>/node_modules/<name>`,
@@ -546,14 +572,7 @@ fn link_hoisted_dep_bins(
             // still invoke it, matching what the isolated pass does for
             // a bundling child.
             link_bundled_bins(
-                &bin_dir,
-                pkg_dir,
-                graph,
-                dep_path,
-                shim_opts,
-                managed,
-                preserved,
-                BinConflict::KeepExisting,
+                &bin_dir, pkg_dir, graph, dep_path, shim_opts, managed, preserved, conflict,
             )?;
         }
     }
@@ -706,6 +725,7 @@ pub(super) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
             cache: &mut pkg_json_cache,
             managed: &mut managed,
             preserved,
+            importer_bins_linked: true,
         })?;
     }
     Ok(managed)
@@ -808,13 +828,21 @@ fn read_managed_bin_entry(path: &Path) -> miette::Result<Option<ManagedBinEntry>
     Ok(Some(ManagedBinEntry::Other))
 }
 
-/// Whether any launcher for `name` already sits in `bin_dir`. Uses
-/// `symlink_metadata` so a shim whose target was removed still counts
-/// as claimed, matching npm's `linkGently` check.
-fn bin_command_exists(bin_dir: &Path, name: &str) -> bool {
+/// Whether any launcher for `name` in `bin_dir` still *resolves*.
+///
+/// Follows symlinks on purpose: under `nodeLinker=hoisted` a `.bin/`
+/// entry defaults to a symlink into the package directory, so a package
+/// that left the tree leaves a dangling link behind. Treating that as a
+/// live command would let it block whichever package owns the name now.
+///
+/// A wrapper-script launcher (Windows, or `preferSymlinkedExecutables=false`)
+/// is an ordinary file, so this can only report that it exists — a stale
+/// one still reads as live. That is the conservative direction, and the
+/// install path doesn't rely on this check at all.
+fn bin_command_resolves(bin_dir: &Path, name: &str) -> bool {
     bin_link_paths(bin_dir, name)
         .iter()
-        .any(|path| path.symlink_metadata().is_ok())
+        .any(|path| std::fs::metadata(path).is_ok())
 }
 
 fn bin_link_paths(bin_dir: &Path, name: &str) -> Vec<PathBuf> {
@@ -954,24 +982,35 @@ fn create_bin_link(
     preserved: Option<&PreservedBinLinks>,
     conflict: BinConflict,
 ) -> miette::Result<()> {
+    // Whether an earlier pass in this run already put this command here.
+    // Read before the insert below, which would otherwise make every
+    // command look self-claimed.
+    let already_claimed = managed
+        .seen
+        .get(bin_dir)
+        .is_some_and(|names| names.contains(name));
     // Record the command before any early return: the relink pass uses
     // `seen` to tell "still claimed by some package" from "the package
     // that owned this went away", and a command we deliberately leave
     // alone is still claimed.
-    if let Some(preserved) = preserved {
-        managed
-            .seen
-            .entry(bin_dir.to_path_buf())
-            .or_default()
-            .insert(name.to_string());
-        if preserved
+    managed
+        .seen
+        .entry(bin_dir.to_path_buf())
+        .or_default()
+        .insert(name.to_string());
+    if let Some(preserved) = preserved
+        && preserved
             .get(bin_dir)
             .is_some_and(|names| names.contains(name))
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
-    if conflict == BinConflict::KeepExisting && bin_command_exists(bin_dir, name) {
+    let yield_to_existing = match conflict {
+        BinConflict::Overwrite => false,
+        BinConflict::YieldToClaimed => already_claimed,
+        BinConflict::YieldToClaimedOrLive => already_claimed || bin_command_resolves(bin_dir, name),
+    };
+    if yield_to_existing {
         return Ok(());
     }
     // `link_dep_bins` skips eager `create_dir_all` on per-dep `.bin/`.
@@ -1072,9 +1111,9 @@ mod tests {
     /// `.bin/` next to it, including the project root's. A transitive
     /// package that happens to ship a command an importer's direct
     /// dependency already claimed must not take it over, so that pass
-    /// asks for `KeepExisting` (Discussion #1543).
+    /// yields instead of overwriting (Discussion #1543).
     #[test]
-    fn create_bin_link_keep_existing_leaves_a_claimed_command_alone() {
+    fn create_bin_link_yield_leaves_a_claimed_command_alone() {
         let dir = tempfile::tempdir().unwrap();
         let bin_dir = dir.path().join("node_modules/.bin");
         let pkg_dir = dir.path().join("pkg");
@@ -1112,7 +1151,7 @@ mod tests {
             opts,
             &mut managed,
             None,
-            BinConflict::KeepExisting,
+            BinConflict::YieldToClaimedOrLive,
         )
         .unwrap();
         assert_eq!(
@@ -1129,7 +1168,7 @@ mod tests {
             opts,
             &mut managed,
             None,
-            BinConflict::KeepExisting,
+            BinConflict::YieldToClaimedOrLive,
         )
         .unwrap();
         assert!(bin_dir.join("other").exists());
@@ -1151,14 +1190,14 @@ mod tests {
         );
     }
 
-    /// `KeepExisting` returns early, but the command is still claimed by
+    /// A yielding pass returns early, but the command is still claimed by
     /// a package in the tree. The relink cleanup keys off `seen` to
     /// decide whether a *preserved* command (one a lifecycle script
     /// replaced) still has an owner, so the early return has to record
     /// the command first or the refresh pass would delete a shim the
     /// build deliberately produced.
     #[test]
-    fn create_bin_link_keep_existing_still_claims_a_preserved_command() {
+    fn create_bin_link_yield_still_claims_a_preserved_command() {
         let dir = tempfile::tempdir().unwrap();
         let bin_dir = dir.path().join("node_modules/.bin");
         let pkg_dir = dir.path().join("pkg");
@@ -1199,7 +1238,7 @@ mod tests {
             opts,
             &mut relinked,
             Some(&preserved),
-            BinConflict::KeepExisting,
+            BinConflict::YieldToClaimedOrLive,
         )
         .unwrap();
         remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
@@ -1207,6 +1246,140 @@ mod tests {
         assert!(
             shim.exists(),
             "the lifecycle-produced launcher must survive the refresh pass"
+        );
+    }
+
+    /// `.bin/` is never pruned, so an incremental hoisted install can
+    /// meet a shim whose owning package has left the tree. Yielding to
+    /// it would pin the command to the removed package forever; the
+    /// transitive pass has to rewrite it to whoever owns the name now.
+    #[cfg(unix)]
+    #[test]
+    fn yield_rewrites_a_command_whose_owner_left_the_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let old_owner = dir.path().join("node_modules/old-owner");
+        let new_owner = dir.path().join("node_modules/new-owner");
+        std::fs::create_dir_all(&old_owner).unwrap();
+        std::fs::create_dir_all(&new_owner).unwrap();
+        let old_target = old_owner.join("cli.js");
+        let new_target = new_owner.join("cli.js");
+        std::fs::write(&old_target, "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(&new_target, "#!/usr/bin/env node\n").unwrap();
+
+        // Symlinked launchers are the hoisted default on POSIX.
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(true),
+            ..Default::default()
+        };
+        let mut previous_install = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &old_target,
+            opts,
+            &mut previous_install,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+
+        // The next install drops `old-owner` from the tree. Nothing
+        // prunes `.bin/`, so its launcher is left dangling.
+        std::fs::remove_dir_all(&old_owner).unwrap();
+        let shim = bin_dir.join("tool");
+        assert!(
+            shim.symlink_metadata().is_ok(),
+            "the launcher is still there"
+        );
+        assert!(!shim.exists(), "but it no longer resolves");
+
+        let mut managed = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &new_target,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::YieldToClaimedOrLive,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_link(&shim).unwrap(),
+            new_target,
+            "a stale launcher must not block the package that owns the command now"
+        );
+    }
+
+    /// The install path claims the importers' commands before the
+    /// transitive pass runs, so `YieldToClaimed` needs no help from disk
+    /// state — and must ignore it, or a leftover from the previous
+    /// install would survive as above.
+    #[test]
+    fn yield_to_claimed_ignores_shims_from_a_previous_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let stale = pkg_dir.join("stale.js");
+        let current = pkg_dir.join("current.js");
+        std::fs::write(&stale, "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(&current, "#!/usr/bin/env node\n").unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        // A previous run left a launcher behind; this run has not
+        // claimed the command.
+        let mut previous_run = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &stale,
+            opts,
+            &mut previous_run,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+        let stale_shim = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
+
+        let mut this_run = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &current,
+            opts,
+            &mut this_run,
+            None,
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        assert_ne!(
+            std::fs::read_to_string(bin_dir.join("tool")).unwrap(),
+            stale_shim,
+            "an unclaimed command is reconciled to the current owner"
+        );
+
+        // Claimed this run by an importer's direct dep: the transitive
+        // pass leaves it alone.
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &stale,
+            opts,
+            &mut this_run,
+            None,
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        assert!(
+            std::fs::read_to_string(bin_dir.join("tool"))
+                .unwrap()
+                .contains("current.js"),
+            "a command claimed this run must survive the transitive pass"
         );
     }
 
