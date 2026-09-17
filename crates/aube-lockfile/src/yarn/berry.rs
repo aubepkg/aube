@@ -281,20 +281,28 @@ pub(super) fn parse_berry_str(
     // protocol prefix (`workspace:*`, `file:./pkgs/foo`, ...), it's
     // already a valid spec suffix and we try it verbatim first.
     let mut direct: Vec<DirectDep> = Vec::new();
-    let push_direct = |name: &str, range: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
-        let candidates = berry_spec_candidates(name, range);
-        for candidate in candidates {
-            if let Some(dep_path) = spec_to_dep_path.get(&candidate) {
-                direct.push(DirectDep {
-                    name: name.to_string(),
-                    dep_path: dep_path.clone(),
-                    dep_type,
-                    specifier: None,
-                });
-                return;
+    // One declaration produces one `DirectDep`, even when the same name
+    // appears in several manifest sections. See the equivalent guard in
+    // `npm::read` for why a duplicate is harmful.
+    let mut direct_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut push_direct =
+        |name: &str, range: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
+            let candidates = berry_spec_candidates(name, range);
+            for candidate in candidates {
+                if let Some(dep_path) = spec_to_dep_path.get(&candidate) {
+                    if !direct_seen.insert(name.to_string()) {
+                        return;
+                    }
+                    direct.push(DirectDep {
+                        name: name.to_string(),
+                        dep_path: dep_path.clone(),
+                        dep_type,
+                        specifier: None,
+                    });
+                    return;
+                }
             }
-        }
-    };
+        };
     for (name, range) in &manifest.dependencies {
         push_direct(name, range, DepType::Production, &mut direct);
     }

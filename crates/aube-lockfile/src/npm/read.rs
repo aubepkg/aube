@@ -333,10 +333,31 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     let root = raw.packages.get("").cloned().unwrap_or_default();
 
     let mut direct: Vec<DirectDep> = Vec::new();
-    let push_direct =
+    // A name may be declared in more than one section of the root
+    // manifest (npm allows the same package in `devDependencies` and
+    // `optionalDependencies`). npm classifies such a declaration under
+    // the first section it appears in, walking
+    // `dependencies` > `devDependencies` > `optionalDependencies`, and
+    // records a single flag on the package entry. Mirror that here so
+    // one declaration produces one `DirectDep`: emitting a second
+    // `DirectDep` for the same name makes the drift validator (which
+    // resolves one expected section per name) report the lockfile
+    // stale, and makes the linker create the root `node_modules/<name>`
+    // symlink twice. The priority matches `seed_direct_deps` in
+    // aube-resolver, so an imported lockfile classifies the same way a
+    // freshly resolved one does.
+    let mut direct_seen: BTreeSet<String> = BTreeSet::new();
+    let mut push_direct =
         |dep_name: &str, specifier: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
             let root_path = format!("node_modules/{dep_name}");
             if let Some(info) = install_path_info.get(&root_path) {
+                // Key on the declared name, not the resolved one: an npm
+                // alias (`"h3-v2": "npm:h3@2"`) keeps the alias as its
+                // folder name, so two aliases of the same package stay
+                // distinct direct deps.
+                if !direct_seen.insert(dep_name.to_string()) {
+                    return;
+                }
                 direct.push(DirectDep {
                     name: info.name.clone(),
                     dep_path: info.dep_path.clone(),
@@ -419,6 +440,12 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             continue;
         };
         let mut direct = Vec::new();
+        // Same one-declaration-one-`DirectDep` rule as the root
+        // importer above: a workspace member may also declare a name in
+        // two sections, and the drift validator resolves one expected
+        // section per name for every importer, not just the root. The
+        // chain order below is the precedence, so first wins.
+        let mut direct_seen: BTreeSet<String> = BTreeSet::new();
         for (dep_name, specifier, dep_type) in package_entry
             .dependencies
             .iter()
@@ -440,6 +467,9 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 crate::npm::layout::resolve_nested(target, dep_name, &install_path_info)
                 && let Some(info) = install_path_info.get(&target_install_path)
             {
+                if !direct_seen.insert(dep_name.clone()) {
+                    continue;
+                }
                 direct.push(DirectDep {
                     name: info.name.clone(),
                     dep_path: info.dep_path.clone(),
