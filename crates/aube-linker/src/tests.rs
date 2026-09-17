@@ -1625,7 +1625,15 @@ fn create_dir_link_idempotent_tolerates_only_an_identical_winner() {
     crate::sys::create_dir_link(Path::new("real"), &link).unwrap();
     create_dir_link_idempotent(Path::new("real"), &link)
         .expect("identical concurrent link must be treated as success");
-    assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("real"));
+    // Compare resolved destinations, not the stored target: Windows
+    // creates an NTFS junction here and persists a normalized absolute
+    // path, so a verbatim `read_link == "real"` check only holds on
+    // unix. Canonicalizing both sides also absorbs the macOS
+    // `/var` -> `/private/var` tempdir symlink.
+    assert_eq!(
+        std::fs::canonicalize(&link).unwrap(),
+        std::fs::canonicalize(nm.join("real")).unwrap()
+    );
 
     // A path already occupied by a *different* target is a genuine
     // conflict and must still fail rather than be silently accepted.
