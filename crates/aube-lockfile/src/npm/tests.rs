@@ -2120,3 +2120,75 @@ fn test_parse_license_all_shapes() {
     );
     assert!(graph.packages["no-license@1.0.0"].license.is_none());
 }
+
+/// A package declared in both `devDependencies` and
+/// `optionalDependencies` must yield exactly one root `DirectDep`.
+/// npm records such a declaration as a plain `dev: true` entry, so dev
+/// wins — matching `seed_direct_deps` in aube-resolver. Emitting a
+/// second `DirectDep` made `--frozen-lockfile` reject an untouched
+/// npm-generated lockfile as section drift, and made the linker create
+/// the root symlink twice. See discussion #1544.
+#[test]
+fn dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+        "name": "test",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "packages": {
+            "": {
+                "name": "test",
+                "version": "1.0.0",
+                "devDependencies": { "foo": "1.2.3" },
+                "optionalDependencies": { "foo": "1.2.3" }
+            },
+            "node_modules/foo": {
+                "version": "1.2.3",
+                "resolved": "https://registry.npmjs.org/foo/-/foo-1.2.3.tgz",
+                "integrity": "sha512-aaa",
+                "dev": true
+            }
+        }
+    }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
+
+/// The overlap guard keys on the *declared* name, so two npm aliases of
+/// the same underlying package remain separate direct deps.
+#[test]
+fn distinct_aliases_of_one_package_stay_separate_direct_deps() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+        "name": "test",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "packages": {
+            "": {
+                "name": "test",
+                "version": "1.0.0",
+                "dependencies": { "foo-v1": "npm:foo@1.2.3", "foo-v2": "npm:foo@2.0.0" }
+            },
+            "node_modules/foo-v1": {
+                "name": "foo",
+                "version": "1.2.3",
+                "resolved": "https://registry.npmjs.org/foo/-/foo-1.2.3.tgz",
+                "integrity": "sha512-aaa"
+            },
+            "node_modules/foo-v2": {
+                "name": "foo",
+                "version": "2.0.0",
+                "resolved": "https://registry.npmjs.org/foo/-/foo-2.0.0.tgz",
+                "integrity": "sha512-bbb"
+            }
+        }
+    }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 2, "both aliases must survive, got {root:?}");
+}

@@ -1407,3 +1407,54 @@ fn test_write_berry_escapes_resolution_and_header() {
     let _doc: yaml_serde::Value = yaml_serde::from_str(&written)
         .unwrap_or_else(|e| panic!("berry writer produced malformed YAML: {e}\n{written}"));
 }
+
+/// A package declared in both `devDependencies` and
+/// `optionalDependencies` must yield exactly one root `DirectDep`,
+/// classified under the first declaring section (dev beats optional).
+/// A second `DirectDep` for the same name reads as section drift under
+/// `--frozen-lockfile` and makes the linker create the root symlink
+/// twice. See discussion #1544.
+#[test]
+fn classic_dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), "foo@^1.0.0:\n  version \"1.0.0\"\n").unwrap();
+    let manifest = aube_manifest::PackageJson {
+        optional_dependencies: [("foo".to_string(), "^1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..make_manifest(&[], &[("foo", "^1.0.0")])
+    };
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
+
+#[test]
+fn berry_dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@npm:^1.0.0":
+  version: 1.2.3
+  resolution: "foo@npm:1.2.3"
+  checksum: 10c0/foohash
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        optional_dependencies: [("foo".to_string(), "^1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..make_manifest(&[], &[("foo", "^1.0.0")])
+    };
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
