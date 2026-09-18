@@ -465,6 +465,60 @@ JSON
 	assert_file_exists node_modules/is-odd/package.json
 }
 
+# `ignoreScripts` is a setting, not just a flag: it also resolves from the
+# env / `.npmrc` / workspace-yaml chain. The tests below pin each non-CLI
+# source, because the flag used to be the only one install read.
+
+_write_hook_project() {
+	cat >package.json <<'JSON'
+{
+  "name": "lifecycle-test",
+  "version": "1.0.0",
+  "scripts": {
+    "preinstall": "node -e 'require(\"fs\").writeFileSync(\"should-not-exist\", \"x\")'",
+    "postinstall": "node -e 'require(\"fs\").writeFileSync(\"should-not-exist\", \"x\")'"
+  },
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  }
+}
+JSON
+}
+
+@test "AUBE_IGNORE_SCRIPTS skips root lifecycle hooks" {
+	_write_hook_project
+	AUBE_IGNORE_SCRIPTS=true run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "npm_config_ignore_scripts skips root lifecycle hooks" {
+	_write_hook_project
+	npm_config_ignore_scripts=true run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "ignore-scripts in .npmrc skips root lifecycle hooks" {
+	_write_hook_project
+	echo 'ignore-scripts=true' >.npmrc
+	run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "ignoreScripts in the workspace yaml skips root lifecycle hooks" {
+	_write_hook_project
+	echo 'ignoreScripts: true' >aube-workspace.yaml
+	run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
 @test "root hooks can use binaries from node_modules/.bin via PATH" {
 	# Classic pnpm workflow: postinstall invokes a tool installed as a dep.
 	# Use is-odd's CLI? — it doesn't have one. Instead use `which` on a

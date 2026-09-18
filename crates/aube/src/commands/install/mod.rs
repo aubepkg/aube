@@ -305,7 +305,7 @@ async fn run_scoped(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Re
     .await
 }
 
-async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
+async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
     opts.control.check_cancelled()?;
     aube_scripts::set_output_reporter(opts.control.script_output_reporter());
     let mode = opts.mode;
@@ -367,6 +367,17 @@ async fn run_inner(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Res
         .into_diagnostic()
         .wrap_err("failed to load workspace config")?;
     let settings_ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    // `ignoreScripts` also resolves from the env / `.npmrc` / workspace-yaml
+    // chain, not just `--ignore-scripts`. Fold it in here, the one choke
+    // point every entry point passes through (`install`, `ci`, `add`,
+    // `remove`, `update`, `dlx`, `deploy`, and the `aube run`
+    // auto-install — that last one has no command line of its own to
+    // carry a flag). `||` rather than assignment: the flag is a clap
+    // `bool` with no negative form, so an explicit `--ignore-scripts` (or
+    // an embedder passing `ignoreScripts: true`) must not be overridden
+    // by a lower-precedence `ignore-scripts=false`.
+    opts.ignore_scripts =
+        opts.ignore_scripts || aube_settings::resolved::ignore_scripts(&settings_ctx);
 
     // Yaml-only workspace roots (`pnpm-workspace.yaml` only, no root
     // `package.json`) install with a synthesized empty manifest so
