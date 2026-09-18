@@ -207,7 +207,7 @@ async fn run_inner(
     if !args.dev_preinstall_already_run {
         install::run_dev_preinstall(
             &cwd,
-            args.ignore_scripts,
+            resolved_ignore_scripts(&cwd, args.ignore_scripts)?,
             false,
             args.lockfile_only,
             Some("update"),
@@ -1381,6 +1381,22 @@ pub(super) fn ignored_update_dependencies_from_ctx(
     ignored
 }
 
+/// `ignoreScripts` for the root `pnpm:devPreinstall` hook `update` runs
+/// before it chains into the installer.
+///
+/// Every other lifecycle decision resolves inside `install::run_inner`,
+/// but this hook fires ahead of it and so needs the settings chain
+/// (env / `.npmrc` / workspace yaml) resolved here too — otherwise
+/// `AUBE_IGNORE_SCRIPTS=true aube update` still executes project code.
+/// `||` for the same reason as the installer: `--ignore-scripts` has no
+/// negative form, so the flag can only ever turn skipping on.
+fn resolved_ignore_scripts(cwd: &std::path::Path, flag: bool) -> miette::Result<bool> {
+    if flag {
+        return Ok(true);
+    }
+    with_update_settings_ctx(cwd, aube_settings::resolved::ignore_scripts)
+}
+
 fn with_update_settings_ctx<T>(
     cwd: &std::path::Path,
     f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
@@ -1421,7 +1437,7 @@ async fn run_filtered(
     let (root, matched) = super::select_workspace_packages(&cwd, filter, "update")?;
     install::run_dev_preinstall(
         &root,
-        args.ignore_scripts,
+        resolved_ignore_scripts(&root, args.ignore_scripts)?,
         false,
         args.lockfile_only,
         Some("update"),

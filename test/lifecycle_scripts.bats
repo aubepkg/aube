@@ -809,6 +809,37 @@ JSON
 	assert [ ! -e postinstall.marker ]
 }
 
+# `update` runs `pnpm:devPreinstall` itself, before it chains into the
+# installer, so the setting has to be resolved at that call site too —
+# resolving it only inside the installer left this hook executing project
+# code under `AUBE_IGNORE_SCRIPTS=true`.
+@test "AUBE_IGNORE_SCRIPTS skips the devPreinstall hook aube update runs" {
+	cat >package.json <<'JSON'
+{
+  "name": "update-dev-preinstall",
+  "version": "1.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"should-not-exist\", \"x\")'"
+  },
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  }
+}
+JSON
+	run aube install --ignore-scripts
+	assert_success
+	rm -f should-not-exist
+
+	AUBE_IGNORE_SCRIPTS=true run aube update
+	assert_success
+	assert [ ! -e should-not-exist ]
+
+	# ... and still fires when nothing asks for it to be skipped.
+	run aube update
+	assert_success
+	assert_file_exists should-not-exist
+}
+
 # -- Dep build-policy ports from pnpm/test/install/lifecycleScripts.ts --------
 #
 # Cover aube's `allowBuilds` review machinery and `--allow-build` CLI
