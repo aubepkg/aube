@@ -2307,9 +2307,11 @@ Skip all lifecycle scripts in `package.json`.
 - Workspace YAML keys: `ignoreScripts`
 
 aube already skips dependency install scripts by default (security-first).
-The `--ignore-scripts` flag additionally skips root lifecycle hooks
-(`preinstall`, `install`, `postinstall`, `prepare`) and flows through
-install, ci, and add.
+Turning this on additionally skips root lifecycle hooks (`preinstall`,
+`install`, `postinstall`, `prepare`) and the `allowBuilds`-approved
+dependency scripts. It applies to every command that installs —
+install, ci, add, remove, update, dlx, deploy, and the auto-install
+`aube run` performs when the tree is stale.
 
 Examples:
 

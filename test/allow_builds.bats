@@ -452,3 +452,51 @@ JSON
 	assert_success
 	assert_file_not_exists aube-builds-marker.txt
 }
+
+@test "AUBE_IGNORE_SCRIPTS suppresses allowed dep scripts" {
+	cat >package.json <<'JSON'
+{
+  "name": "allow-builds-ignore-env-test",
+  "version": "1.0.0",
+  "dependencies": {
+    "aube-test-builds-marker": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-builds-marker": true
+    }
+  }
+}
+JSON
+	AUBE_IGNORE_SCRIPTS=true run aube install
+	assert_success
+	assert_file_not_exists aube-builds-marker.txt
+}
+
+# The auto-install `aube run` performs on a stale tree has no command line
+# of its own to carry `--ignore-scripts`, so the settings chain is the only
+# way to reach it.
+@test "AUBE_IGNORE_SCRIPTS suppresses dep scripts during run auto-install" {
+	cat >package.json <<'JSON'
+{
+  "name": "allow-builds-ignore-autoinstall-test",
+  "version": "1.0.0",
+  "scripts": {
+    "hello": "node -e 'console.log(\"hello\")'"
+  },
+  "dependencies": {
+    "aube-test-builds-marker": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-builds-marker": true
+    }
+  }
+}
+JSON
+	AUBE_IGNORE_SCRIPTS=true run aube run hello
+	assert_success
+	assert_output --partial "hello"
+	assert_file_exists node_modules/aube-test-builds-marker/package.json
+	assert_file_not_exists aube-builds-marker.txt
+}
