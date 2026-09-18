@@ -385,3 +385,107 @@ JSON
 	assert_output --partial "ignored build scripts"
 	assert_output --partial "@pnpm.e2e/install-script-example"
 }
+
+# `aube rebuild` used to link only the per-dependency `.bin/` shims, so an
+# importer's own `bin` was never reconciled: a `bin` added or retargeted
+# after install stayed absent or stale in `node_modules/.bin` until the
+# next `aube install`. It now goes through the same entry point `install`
+# uses, so every bin rule applies in the same order.
+@test "aube rebuild reconciles the importer's own bin" {
+	echo '#!/usr/bin/env node' >cli.js
+	echo '#!/usr/bin/env node' >cli2.js
+	cat >package.json <<'JSON'
+{
+  "name": "rebuild-self-bin-test",
+  "version": "1.0.0",
+  "bin": { "mytool": "cli.js" },
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	# `rebuild` reads `nodeLinker` from settings, so pin it rather than
+	# passing `--node-linker` to `install` alone — otherwise `rebuild`
+	# would run the isolated path against a hoisted tree.
+	cat >pnpm-workspace.yaml <<'YAML'
+nodeLinker: hoisted
+YAML
+	run aube install
+	assert_success
+	assert_file_exists node_modules/.bin/mytool
+
+	# Retarget the existing command and declare a new one, then rebuild
+	# without reinstalling.
+	cat >package.json <<'JSON'
+{
+  "name": "rebuild-self-bin-test",
+  "version": "1.0.0",
+  "bin": { "mytool": "cli2.js", "newtool": "cli2.js" },
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	run aube rebuild
+	assert_success
+	assert_file_exists node_modules/.bin/newtool
+	run grep -c cli2.js node_modules/.bin/mytool
+	assert_success
+	# The dependency shims rebuild already emitted are still there.
+	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
+}
+
+# Going through `link_all_bins` means `rebuild` now reads the workspace
+# layout, which `install` parses strictly. `rebuild` is the command
+# people reach for to fix a half-built tree, so an unreadable member
+# manifest it never needed must not abort it.
+@test "aube rebuild survives an unreadable workspace member" {
+	mkdir -p packages/good packages/broken
+	cat >package.json <<'JSON'
+{
+  "name": "rebuild-broken-member-test",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+nodeLinker: hoisted
+packages:
+  - "packages/*"
+YAML
+	cat >packages/good/package.json <<'JSON'
+{ "name": "rebuild-broken-member-good", "version": "1.0.0" }
+JSON
+	run aube install
+	assert_success
+
+	# A sibling the rebuild has no use for becomes unreadable.
+	printf '{ this is not json' >packages/broken/package.json
+	# Drop the shim `install` created, so the assertion below can only
+	# pass if the fallback path actually reconciles bins.
+	rm -f node_modules/.bin/aube-transitive-bin-probe
+	assert_file_not_exists node_modules/.bin/aube-transitive-bin-probe
+	run aube rebuild aube-test-transitive-consumer
+	assert_success
+	assert_output --partial "could not read the workspace layout"
+	# The dependency bins are still reconciled.
+	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
+}

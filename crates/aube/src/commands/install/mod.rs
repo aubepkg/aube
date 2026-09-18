@@ -37,8 +37,8 @@ pub(crate) use resolve::check_patch_drift;
 use advisory::resolve_osv_routing_settings;
 pub use args::{EmbedderInstallOverrides, InstallArgs, InstallOptions};
 pub(crate) use bin_linking::{
-    LinkDepBinsInput, ManagedBinLinks, PkgJsonCache, dep_modules_dir_for, link_dep_bins,
-    materialized_pkg_dir, remove_managed_bin_links, remove_unclaimed_preserved_bin_links,
+    LinkAllBinsInput, PreservedBinLinks, dep_modules_dir_for, link_all_bins, materialized_pkg_dir,
+    remove_managed_bin_links, remove_unclaimed_preserved_bin_links,
 };
 pub use control::{
     INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,
@@ -98,10 +98,10 @@ use startup::{
     warn_accepted_noop_install_settings,
 };
 use summary::print_already_up_to_date;
+pub(crate) use workspace::{WorkspaceInstallPlan, discover_workspace_plan};
 use workspace::{
-    discover_workspace_plan, filter_graph_to_importers, filter_graph_to_workspace_selection,
-    importer_project_dir, merge_member_lockfile_graphs, per_project_write_selection,
-    write_per_project_lockfiles,
+    filter_graph_to_importers, filter_graph_to_workspace_selection, importer_project_dir,
+    merge_member_lockfile_graphs, per_project_write_selection, write_per_project_lockfiles,
 };
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-pub(super) struct WorkspaceInstallPlan {
+pub(crate) struct WorkspaceInstallPlan {
     pub workspace_packages: Vec<PathBuf>,
     pub has_workspace: bool,
     pub is_workspace_project: bool,
@@ -14,7 +14,34 @@ pub(super) struct WorkspaceInstallPlan {
     pub lifecycle_manifests: Vec<(String, aube_manifest::PackageJson)>,
 }
 
-pub(super) fn discover_workspace_plan(
+impl WorkspaceInstallPlan {
+    /// The plan for a project considered on its own: the root importer,
+    /// no members. `rebuild` falls back to this when the workspace
+    /// layout can't be read, so a single unreadable member manifest
+    /// can't take down a repair command.
+    pub(crate) fn root_only(cwd: &Path, root_manifest: &aube_manifest::PackageJson) -> Self {
+        let mut ws_dirs = BTreeMap::new();
+        let mut ws_package_versions = HashMap::new();
+        if let Some(ref name) = root_manifest.name {
+            let version = root_manifest.version.as_deref().unwrap_or("0.0.0");
+            ws_package_versions.insert(name.clone(), version.to_string());
+            ws_dirs.insert(name.clone(), cwd.to_path_buf());
+        }
+        let manifests = vec![(".".to_string(), root_manifest.clone())];
+        Self {
+            workspace_packages: Vec::new(),
+            has_workspace: false,
+            is_workspace_project: false,
+            link_all_workspace_importers: false,
+            lifecycle_manifests: manifests.clone(),
+            manifests,
+            ws_package_versions,
+            ws_dirs,
+        }
+    }
+}
+
+pub(crate) fn discover_workspace_plan(
     cwd: &Path,
     root_manifest: &aube_manifest::PackageJson,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
