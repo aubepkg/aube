@@ -98,7 +98,7 @@ use startup::{
     warn_accepted_noop_install_settings,
 };
 use summary::print_already_up_to_date;
-pub(crate) use workspace::discover_workspace_plan;
+pub(crate) use workspace::{WorkspaceInstallPlan, discover_workspace_plan};
 use workspace::{
     filter_graph_to_importers, filter_graph_to_workspace_selection, importer_project_dir,
     merge_member_lockfile_graphs, per_project_write_selection, write_per_project_lockfiles,

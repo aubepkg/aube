@@ -182,8 +182,29 @@ pub async fn run(
                 // `Pnp` already returned above.
                 _ => aube_linker::NodeLinker::Isolated,
             };
-            let workspace_plan =
-                super::install::discover_workspace_plan(&cwd, &manifest, &settings_ctx, &filter)?;
+            // `rebuild` is a repair command, so a workspace member that
+            // can't be read must not stop it: `install` fails loudly on a
+            // malformed member manifest, but aborting here would block the
+            // very command someone reaches for to fix a half-built tree,
+            // over a member the rebuild never needed. Fall back to
+            // reconciling the root importer alone — which is still more
+            // than the pre-`link_all_bins` path did, since it linked no
+            // importer bins at all.
+            let workspace_plan = match super::install::discover_workspace_plan(
+                &cwd,
+                &manifest,
+                &settings_ctx,
+                &filter,
+            ) {
+                Ok(plan) => plan,
+                Err(e) => {
+                    eprintln!(
+                        "warn: could not read the workspace layout ({e}); \
+                             rebuilding bins for the root package only"
+                    );
+                    super::install::WorkspaceInstallPlan::root_only(&cwd, &manifest)
+                }
+            };
             let link_bins = |preserved: Option<&super::install::PreservedBinLinks>,
                              capture_managed: bool| {
                 super::install::link_all_bins(super::install::LinkAllBinsInput {

@@ -438,3 +438,43 @@ JSON
 	# The dependency shims rebuild already emitted are still there.
 	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
 }
+
+# Going through `link_all_bins` means `rebuild` now reads the workspace
+# layout, which `install` parses strictly. `rebuild` is the command
+# people reach for to fix a half-built tree, so an unreadable member
+# manifest it never needed must not abort it.
+@test "aube rebuild survives an unreadable workspace member" {
+	mkdir -p packages/good packages/broken
+	cat >package.json <<'JSON'
+{
+  "name": "rebuild-broken-member-test",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "packages/*"
+YAML
+	cat >packages/good/package.json <<'JSON'
+{ "name": "rebuild-broken-member-good", "version": "1.0.0" }
+JSON
+	run aube install --node-linker=hoisted
+	assert_success
+
+	# A sibling the rebuild has no use for becomes unreadable.
+	printf '{ this is not json' >packages/broken/package.json
+	run aube rebuild aube-test-transitive-consumer
+	assert_success
+	assert_output --partial "could not read the workspace layout"
+	# The dependency bins are still reconciled.
+	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
+}
