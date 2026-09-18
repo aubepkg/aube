@@ -409,7 +409,13 @@ JSON
   }
 }
 JSON
-	run aube install --node-linker=hoisted
+	# `rebuild` reads `nodeLinker` from settings, so pin it rather than
+	# passing `--node-linker` to `install` alone — otherwise `rebuild`
+	# would run the isolated path against a hoisted tree.
+	cat >pnpm-workspace.yaml <<'YAML'
+nodeLinker: hoisted
+YAML
+	run aube install
 	assert_success
 	assert_file_exists node_modules/.bin/mytool
 
@@ -461,17 +467,22 @@ JSON
 }
 JSON
 	cat >pnpm-workspace.yaml <<'YAML'
+nodeLinker: hoisted
 packages:
   - "packages/*"
 YAML
 	cat >packages/good/package.json <<'JSON'
 { "name": "rebuild-broken-member-good", "version": "1.0.0" }
 JSON
-	run aube install --node-linker=hoisted
+	run aube install
 	assert_success
 
 	# A sibling the rebuild has no use for becomes unreadable.
 	printf '{ this is not json' >packages/broken/package.json
+	# Drop the shim `install` created, so the assertion below can only
+	# pass if the fallback path actually reconciles bins.
+	rm -f node_modules/.bin/aube-transitive-bin-probe
+	assert_file_not_exists node_modules/.bin/aube-transitive-bin-probe
 	run aube rebuild aube-test-transitive-consumer
 	assert_success
 	assert_output --partial "could not read the workspace layout"
