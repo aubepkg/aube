@@ -1,3 +1,11 @@
+# RustSec advisories. CI runs this instead of `cargo audit --deny warnings`,
+# so these match its strictness: every vulnerability, notice, unmaintained,
+# or unsound advisory anywhere in the graph and every yanked crate is an error.
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+
 [graph]
 all-features = true
 
