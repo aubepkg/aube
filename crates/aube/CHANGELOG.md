@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.18](https://github.com/aubepkg/aube/compare/v2.2.17...v2.2.18) - 2026-09-19
+
+### Fixed
+
+- *(install)* honor ignoreScripts from env, .npmrc, and workspace yaml ([#1552](https://github.com/aubepkg/aube/pull/1552))
+- *(rebuild)* relink the full bin surface, not just dependency bins ([#1550](https://github.com/aubepkg/aube/pull/1550))
+- *(install)* link transitive dep bins in hoisted node_modules/.bin ([#1548](https://github.com/aubepkg/aube/pull/1548))
+
 ## [2.2.17](https://github.com/aubepkg/aube/compare/v2.2.16...v2.2.17) - 2026-09-15
 
 ### Other

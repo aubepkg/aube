@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.18](https://github.com/aubepkg/aube/compare/aube-settings-v2.2.17...aube-settings-v2.2.18) - 2026-09-19
+
+### Fixed
+
+- *(install)* honor ignoreScripts from env, .npmrc, and workspace yaml ([#1552](https://github.com/aubepkg/aube/pull/1552))
+
 ## [2.2.17](https://github.com/aubepkg/aube/compare/aube-settings-v2.2.16...aube-settings-v2.2.17) - 2026-09-15
 
 ### Other
