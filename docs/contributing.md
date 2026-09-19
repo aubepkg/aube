@@ -48,8 +48,9 @@ BATS tests use the project's mise-managed Node and `rush` for parallel runs.
 Use `mise run test:bats` for the full shell suite. Supply specific `.bats` files
 for a focused run. The registry helper installs Verdaccio if it is unavailable.
 
-Release validation also includes `cargo audit --deny warnings` and
-`cargo deny check bans licenses sources`.
+Release validation also includes
+`cargo deny check advisories bans licenses sources`, which covers RustSec
+advisories as well as license, ban, and source policy.
 
 ## Work on documentation
 

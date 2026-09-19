@@ -47,7 +47,7 @@ run = "hk fix --all --slow"
 # replacement for `cargo clippy --fix` that skips the full re-check compile
 # between fix rounds, so repeated runs are faster. Pinned through mise's cargo
 # backend (the repo's convention for compiled cargo tools, matching
-# cargo-audit/cargo-deny in CI), so a contributor gets it with no manual
+# cargo-deny in CI), so a contributor gets it with no manual
 # install. No `cargo clippy --fix` fallback — cargo-fixit is the only path.
 # Modeled on `cargo fix` 1.89: add `--all-targets` to also fix tests/benches,
 # and `--allow-dirty`/`--allow-staged` to run on a dirty tree.

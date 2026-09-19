@@ -260,8 +260,8 @@ deps:
   tls: rustls (no OpenSSL / native-tls)
   reqwest_features: minimal (rustls-tls + http2 + json + stream + charset + system-proxy)
   supply_chain[2]:
-    - cargo audit: CVE database scan (RustSec advisories) before every release, required in CI
-    - cargo deny: license policy, banned crates, duplicate detection, approved sources. deny.toml checked in
+    - cargo deny advisories: RustSec advisory scan (vulnerabilities, unmaintained, unsound, yanked), required in CI. ignores live in deny.toml [advisories]
+    - cargo deny bans/licenses/sources: license policy, banned crates, duplicate detection, approved sources. deny.toml checked in
 
 git:
   forbidden[2]:
