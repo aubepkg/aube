@@ -1,4 +1,4 @@
-min_version = "2026.8.16"
+min_version = "2026.9.2"
 
 [env]
 _.path = ["./bin"]
@@ -8,7 +8,7 @@ experimental = true
 cargo.binstall_native = true
 
 [tools]
-mr-boxington = "1.8.3"
+mr-boxington = "1.14.0"
 usage = "6.6.1"
 communique = "latest"
 "github:bnjbvr/cargo-machete" = "latest"
@@ -142,7 +142,7 @@ run = [
 # because the install benchmark uses --offline, and it is outside the
 # measurement on purpose — nothing tak times ever touches the registry.
 [tasks."perf:build"]
-run = "mbx build --release"
+run = "cargo build --release"
 
 [tasks.perf]
 dir = "{{config_root}}"
