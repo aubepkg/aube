@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.18](https://github.com/aubepkg/aube/compare/aube-scripts-v2.2.17...aube-scripts-v2.2.18) - 2026-09-19
+
+### Fixed
+
+- *(install)* link transitive dep bins in hoisted node_modules/.bin ([#1548](https://github.com/aubepkg/aube/pull/1548))
+
 ## [2.2.13](https://github.com/aubepkg/aube/compare/aube-scripts-v2.2.12...aube-scripts-v2.2.13) - 2026-09-09
 
 ### Other

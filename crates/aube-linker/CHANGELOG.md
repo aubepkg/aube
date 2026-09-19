@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.18](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.17...aube-linker-v2.2.18) - 2026-09-19
+
+### Fixed
+
+- *(linker)* tolerate a concurrent identical top-level symlink ([#1547](https://github.com/aubepkg/aube/pull/1547))
+
 ## [2.2.14](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.13...aube-linker-v2.2.14) - 2026-09-11
 
 ### Fixed
