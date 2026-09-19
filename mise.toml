@@ -1,4 +1,4 @@
-min_version = "2026.9.2"
+min_version = "2026.9.7"
 
 [env]
 _.path = ["./bin"]
