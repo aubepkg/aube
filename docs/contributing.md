@@ -51,19 +51,6 @@ for a focused run. The registry helper installs Verdaccio if it is unavailable.
 Release validation also includes `cargo audit --deny warnings` and
 `cargo deny check bans licenses sources`.
 
-### Cargo build cache
-
-The project uses [mbx](https://mr-boxington.jdx.dev) through mise's Cargo
-wrapper. To diagnose a wrapper failure, run the exact same Cargo check with
-`MBX_DISABLE=1`; do not omit flags or weaken the check. For example:
-
-```sh
-MBX_DISABLE=1 cargo clippy --all-targets -- -D warnings
-```
-
-If only the bypass succeeds, see the
-[build-cache reporting instructions](https://github.com/aubepkg/aube/blob/main/CONTRIBUTING.md#mbx-build-cache).
-
 ## Work on documentation
 
 ```sh
