@@ -49,7 +49,7 @@ Use `mise run test:bats` for the full shell suite. Supply specific `.bats` files
 for a focused run. The registry helper installs Verdaccio if it is unavailable.
 
 Release validation also includes
-`cargo deny check advisories bans licenses sources`, which covers RustSec
+`cargo deny --locked check advisories bans licenses sources`, which covers RustSec
 advisories as well as license, ban, and source policy.
 
 ## Work on documentation
