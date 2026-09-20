@@ -44,6 +44,7 @@ use startup::{
 #[cfg(test)]
 use startup::{PackageManagerGuardMode, PackageManagerStrictMode, package_manager_guard_mode};
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(usage_rs::Cli)]
@@ -702,9 +703,30 @@ pub fn cli_main_with_defaults(
     match result {
         Ok(code) => code,
         Err(report) => {
+            restore_terminal_after_failure();
             eprintln!("{report:?}");
             report_exit_code(&report)
         }
+    }
+}
+
+/// Retire any clx progress display still live on the way out of a failing
+/// command, so the cursor the renderer hid comes back before the diagnostic
+/// lands.
+///
+/// <https://github.com/aubepkg/aube/discussions/1557>
+///
+/// `InstallProgress` tears its own bar down when it drops, which covers the
+/// install pipeline. This is the catch-all for the standalone
+/// `ProgressJobBuilder` jobs elsewhere in the CLI — the Node runtime
+/// download bar has no completion hook on the failure path, for instance.
+/// Gated on an interactive stderr and on a job actually having been
+/// registered, so a piped or redirected stderr never gains a stray escape;
+/// `stop_clear` on an already-stopped session emits nothing but the cursor
+/// restore.
+fn restore_terminal_after_failure() {
+    if std::io::stderr().is_terminal() && clx::progress::job_count() > 0 {
+        clx::progress::stop_clear();
     }
 }
 
