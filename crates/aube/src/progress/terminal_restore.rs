@@ -72,7 +72,7 @@ mod signals {
     use super::{CLEAR_OSC_ON_SIGNAL, CLEAR_OSC_PROGRESS, SHOW_CURSOR, osc_progress_supported};
     use std::io::IsTerminal;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
     /// The signals that kill aube by default and are catchable — the same set
     /// `process_guard` forwards to a spawned child.
@@ -104,6 +104,32 @@ mod signals {
     /// populated.
     static DISPLACED: [AtomicPtr<libc::sigaction>; HANDLED.len()] =
         [const { AtomicPtr::new(std::ptr::null_mut()) }; HANDLED.len()];
+
+    /// Whether the bar still owns the terminal, readable from the handler
+    /// (an atomic load is async-signal-safe; [`SAVED`] is not). Only set
+    /// while [`SAVED`] is populated, so it tracks the armed window exactly.
+    static ARMED: AtomicBool = AtomicBool::new(false);
+
+    /// aube's own disposition. `SA_NODEFER` matters: without it the kernel
+    /// blocks the signal for the duration of the handler, the handler's
+    /// `raise` only marks it pending, and the displaced disposition wouldn't
+    /// act until after the handler returned — too late to hand control to it
+    /// and take the signal back afterwards.
+    ///
+    /// # Safety
+    ///
+    /// Async-signal-safe: `sigemptyset` is on the POSIX list and nothing here
+    /// allocates, so the handler can rebuild its own action to reinstall.
+    unsafe fn our_action() -> libc::sigaction {
+        // SAFETY: every field is written before the value is used.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = restore_and_reraise as *const () as usize;
+            action.sa_flags = libc::SA_NODEFER;
+            libc::sigemptyset(&mut action.sa_mask);
+            action
+        }
+    }
 
     /// Park `action` in the handler-reachable slot for `index`, reusing the
     /// slot's allocation when it already has one.
@@ -163,7 +189,19 @@ mod signals {
                     libc::sigaction(sig, &default_action, std::ptr::null_mut());
                 }
             }
+            // `SA_NODEFER` leaves the signal unblocked here, so this delivers
+            // to the restored disposition immediately rather than pending
+            // until the handler returns. `SIG_DFL` terminates the process
+            // inside this call and never comes back.
             libc::raise(sig);
+            // Only an embedding host's handler that chose to return gets
+            // here. The renderer is still painting, so aube takes the signal
+            // back for the rest of the progress window — otherwise the next
+            // one would kill the host with the cursor hidden again.
+            if ARMED.load(Ordering::Acquire) {
+                let action = our_action();
+                libc::sigaction(sig, &action, std::ptr::null_mut());
+            }
         }
     }
 
@@ -191,6 +229,7 @@ mod signals {
             return;
         }
         CLEAR_OSC_ON_SIGNAL.store(osc_progress_supported(), Ordering::Relaxed);
+        ARMED.store(true, Ordering::Release);
         for (index, sig) in HANDLED.into_iter().enumerate() {
             // SAFETY: `action` is fully initialized before use and the
             // handler is a plain `extern "C"` function. The displaced
@@ -214,9 +253,7 @@ mod signals {
                 // place it may run at any moment, and it reads this slot to
                 // decide who the signal belongs to.
                 publish_displaced(index, current);
-                let mut action: libc::sigaction = std::mem::zeroed();
-                action.sa_sigaction = restore_and_reraise as *const () as usize;
-                libc::sigemptyset(&mut action.sa_mask);
+                let action = our_action();
                 let mut previous: libc::sigaction = std::mem::zeroed();
                 if libc::sigaction(sig, &action, &mut previous) == 0 {
                     saved.push((sig, SavedAction(previous)));
@@ -230,11 +267,92 @@ mod signals {
         let Ok(mut saved) = SAVED.lock() else {
             return;
         };
+        // Cleared first: a handler already running must not reinstall aube's
+        // disposition behind the restore below.
+        ARMED.store(false, Ordering::Release);
         for (sig, previous) in saved.drain(..) {
             // SAFETY: `previous` came from a successful `sigaction` call on
             // this same signal.
             unsafe {
                 libc::sigaction(sig, &previous.0, std::ptr::null_mut());
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Bumped by the stand-in "embedding host" handler below.
+        static HOST_HANDLER_RUNS: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+
+        extern "C" fn host_handler(_sig: libc::c_int) {
+            HOST_HANDLER_RUNS.fetch_add(1, Ordering::Release);
+        }
+
+        /// Read a signal's current disposition.
+        fn disposition(sig: libc::c_int) -> libc::sigaction {
+            // SAFETY: a null `act` only queries; `current` is fully written
+            // by the call before it is read.
+            unsafe {
+                let mut current: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(sig, std::ptr::null(), &mut current);
+                current
+            }
+        }
+
+        /// Stands in for `cli_main` running inside a host that installed its
+        /// own handler: aube's handler must pass the signal on to it rather
+        /// than to `SIG_DFL`, and must still be in place for the next one —
+        /// otherwise the terminal is only ever restored once.
+        ///
+        /// Uses SIGHUP because the harness itself doesn't, and drives the
+        /// handler directly rather than through `arm`, which no-ops without
+        /// an interactive stderr.
+        #[test]
+        fn a_displaced_host_handler_runs_and_aube_takes_the_signal_back() {
+            let sig = libc::SIGHUP;
+            let index = HANDLED
+                .iter()
+                .position(|handled| *handled == sig)
+                .expect("SIGHUP is one of the handled signals");
+
+            // SAFETY: every call is a plain libc signal API on a signal this
+            // test owns for its duration; the disposition is restored below.
+            unsafe {
+                let mut host: libc::sigaction = std::mem::zeroed();
+                host.sa_sigaction = host_handler as *const () as usize;
+                libc::sigemptyset(&mut host.sa_mask);
+                let mut displaced: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(sig, &host, &mut displaced);
+
+                publish_displaced(index, disposition(sig));
+                ARMED.store(true, Ordering::Release);
+                let ours = our_action();
+                libc::sigaction(sig, &ours, std::ptr::null_mut());
+
+                libc::raise(sig);
+                assert_eq!(
+                    HOST_HANDLER_RUNS.load(Ordering::Acquire),
+                    1,
+                    "the displaced host handler should have run",
+                );
+                assert_eq!(
+                    disposition(sig).sa_sigaction,
+                    ours.sa_sigaction,
+                    "aube should hold the signal again once the host handler returns",
+                );
+
+                libc::raise(sig);
+                assert_eq!(
+                    HOST_HANDLER_RUNS.load(Ordering::Acquire),
+                    2,
+                    "a second signal should reach the host handler too",
+                );
+
+                ARMED.store(false, Ordering::Release);
+                libc::sigaction(sig, &displaced, std::ptr::null_mut());
             }
         }
     }
