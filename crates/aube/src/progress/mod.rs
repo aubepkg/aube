@@ -288,6 +288,15 @@ impl Clone for InstallProgress {
 /// Holds the terminal-restore duties for one TTY display and hands them back
 /// when it drops.
 ///
+/// The hold belongs to the *display*, not to a handle on it: `new_tty` takes
+/// one, and exactly one release follows it — from whichever of `finish` or the
+/// owning handle's `Drop` runs first. The shared `finished` flag is what makes
+/// those mutually exclusive, so a clone calling `finish` releases the
+/// display's own hold rather than one it never took, and the owner's later
+/// `Drop` sees the flag set and does nothing. `Drop` checks `owns_display` for
+/// an unrelated reason: clones drop routinely while the install is still
+/// running, and only the owner's drop means the display is over.
+///
 /// The hand-back has to survive an unwind, not just a normal return: the
 /// repaint and clx teardown that precede it can panic, and `aube-ffi` /
 /// `aube-node` build with `panic = "unwind"` and catch at their boundary, so
@@ -1049,11 +1058,13 @@ impl InstallProgress {
                 ..
             } => {
                 // The doc promise of idempotence has to hold here, not just
-                // for the repaint: `disarm` gives up one hold on the
-                // terminal-restore handlers, and a second `finish` would give
-                // up a hold this display never had — retiring the handlers
-                // out from under a concurrent embedded install whose bar is
-                // still painting.
+                // for the repaint: `disarm` gives up this display's hold on
+                // the terminal-restore handlers, and a second `finish` would
+                // give up one it no longer has — retiring the handlers out
+                // from under a concurrent embedded install whose bar is still
+                // painting. Whoever calls `finish` first retires the display,
+                // clone or owner alike, which is why the hold below is not
+                // gated on `owns_display` (see [`TerminalRestoreHold`]).
                 if finished.swap(true, Ordering::Relaxed) {
                     return;
                 }
