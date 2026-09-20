@@ -26,8 +26,10 @@
 
 mod ci;
 mod render;
+mod terminal_restore;
 
 pub(crate) use render::format_bytes;
+pub(crate) use terminal_restore::restore_now as restore_terminal_now;
 
 use crate::commands::install::{
     InstallEvent, InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallReporter,
@@ -283,6 +285,32 @@ impl Clone for InstallProgress {
     }
 }
 
+/// Holds the terminal-restore duties for one TTY display and hands them back
+/// when it drops.
+///
+/// The hold belongs to the *display*, not to a handle on it: `new_tty` takes
+/// one, and exactly one release follows it — from whichever of `finish` or the
+/// owning handle's `Drop` runs first. The shared `finished` flag is what makes
+/// those mutually exclusive, so a clone calling `finish` releases the
+/// display's own hold rather than one it never took, and the owner's later
+/// `Drop` sees the flag set and does nothing. `Drop` checks `owns_display` for
+/// an unrelated reason: clones drop routinely while the install is still
+/// running, and only the owner's drop means the display is over.
+///
+/// The hand-back has to survive an unwind, not just a normal return: the
+/// repaint and clx teardown that precede it can panic, and `aube-ffi` /
+/// `aube-node` build with `panic = "unwind"` and catch at their boundary, so
+/// the host keeps running. Releasing from a `Drop` means such a host doesn't
+/// keep aube's signal handlers — or a stuck holder count — for the rest of
+/// its life.
+struct TerminalRestoreHold;
+
+impl Drop for TerminalRestoreHold {
+    fn drop(&mut self) {
+        terminal_restore::disarm();
+    }
+}
+
 impl InstallProgress {
     /// Construct a new install progress UI, or `None` if progress should be
     /// disabled (clx text mode — i.e. `--silent`, `-v`, or a line-oriented
@@ -350,6 +378,18 @@ impl InstallProgress {
         // `progress_total` is held at `TTY_BAR_SCALE` to encode the
         // unified-progress fraction in the bar, which would otherwise
         // leak into the label as the scaled denominator.
+        // Ctrl-C (or a SIGTERM from a supervisor) kills aube outright, so the
+        // renderer's own teardown never runs and the terminal keeps the
+        // hidden cursor and the taskbar indicator the bar set. Armed for as
+        // long as the bar owns the terminal, disarmed by `finish` / `Drop`.
+        terminal_restore::arm();
+        // Nothing below is expected to panic — it is clx builder calls and
+        // allocations — but if it did there would be no `InstallProgress` for
+        // `finish` or `Drop` to release the hold through, and an embedding
+        // host that caught the unwind would keep aube's handlers for good.
+        // The guard covers that; `forget` defuses it once the value exists
+        // and owns the hold itself.
+        let hold = TerminalRestoreHold;
         let root = ProgressJobBuilder::new()
             .body(
                 "{{aube}}{{phase}}  {{progress_bar(flex=true)}} {{count}}{{bytes}}{{rate}}{{eta}}",
@@ -365,7 +405,7 @@ impl InstallProgress {
             .progress_total(TTY_BAR_SCALE)
             .on_done(ProgressJobDoneBehavior::Collapse)
             .start();
-        Self {
+        let display = Self {
             mode: Mode::Tty {
                 root,
                 finished: Arc::new(AtomicBool::new(false)),
@@ -386,7 +426,9 @@ impl InstallProgress {
             },
             unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
             owns_display: true,
-        }
+        };
+        std::mem::forget(hold);
+        display
     }
 
     fn new_ci() -> Self {
@@ -1015,6 +1057,20 @@ impl InstallProgress {
                 phase_num,
                 ..
             } => {
+                // The doc promise of idempotence has to hold here, not just
+                // for the repaint (`AcqRel` so a concurrent `Drop` on another
+                // thread cannot also win this): `disarm` gives up this
+                // display's hold on
+                // the terminal-restore handlers, and a second `finish` would
+                // give up one it no longer has — retiring the handlers out
+                // from under a concurrent embedded install whose bar is still
+                // painting. Whoever calls `finish` first retires the display,
+                // clone or owner alike, which is why the hold below is not
+                // gated on `owns_display` (see [`TerminalRestoreHold`]).
+                if finished.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                let _hold = TerminalRestoreHold;
                 // Promote to the "done" phase and repaint at 100%
                 // before retiring the display. The mid-work 95% cap
                 // is about not lying while linking is in flight; at
@@ -1033,7 +1089,6 @@ impl InstallProgress {
                     phase_num,
                 );
                 root.set_status(ProgressStatus::Done);
-                finished.store(true, Ordering::Relaxed);
                 match tty_behavior {
                     TtyFinishBehavior::Preserve => clx::progress::stop(),
                     TtyFinishBehavior::Clear => clx::progress::stop_clear(),
@@ -1212,7 +1267,13 @@ impl Drop for InstallProgress {
     fn drop(&mut self) {
         match &self.mode {
             Mode::Tty { root, finished, .. } => {
-                if self.owns_display && !finished.load(Ordering::Relaxed) {
+                // A swap, not a load: this and `finish` race for the right
+                // to retire the display, and only a read-modify-write on the
+                // one flag settles that. Two threads both reading `false`
+                // would each release the display's hold, taking the handlers
+                // out from under a concurrent embedded install.
+                if self.owns_display && !finished.swap(true, Ordering::AcqRel) {
+                    let _hold = TerminalRestoreHold;
                     root.set_status(ProgressStatus::Done);
                     clx::progress::stop_clear();
                 }

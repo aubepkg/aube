@@ -19,6 +19,19 @@ teardown() {
 # `script` is the portable PTY wrapper, but the two implementations order
 # their arguments differently — util-linux takes `-c <command> <typescript>`,
 # BSD/macOS takes `<typescript> <command>` — so both run a command file.
+_run_script_in_pty() {
+	local out=$1 cmd=$2
+	chmod +x "$cmd"
+	# Flush per write (`-f` / `-t 0`) so a test that reacts to what the PTY has
+	# printed so far isn't reading a stale buffer — macOS `script` otherwise
+	# flushes on a 30s timer.
+	if [ "$(uname -s)" = "Darwin" ]; then
+		script -q -t 0 "$out" "$cmd" >/dev/null 2>&1 || true
+	else
+		script -qfec "$cmd" /dev/null >"$out" 2>&1 || true
+	fi
+}
+
 _run_in_pty() {
 	local out=$1
 	shift
@@ -26,12 +39,7 @@ _run_in_pty() {
 		#!/usr/bin/env bash
 		$*
 	SH
-	chmod +x pty-cmd.sh
-	if [ "$(uname -s)" = "Darwin" ]; then
-		script -q "$out" ./pty-cmd.sh >/dev/null 2>&1 || true
-	else
-		script -qec ./pty-cmd.sh /dev/null >"$out" 2>&1 || true
-	fi
+	_run_script_in_pty "$out" ./pty-cmd.sh
 }
 
 # Fails when the last cursor escape in the captured PTY stream is a hide
@@ -119,4 +127,88 @@ _aube_in_pty() {
 	assert_dir_exist node_modules/is-odd
 	_assert_cursor_restored ok.pty
 	_assert_osc_progress_cleared ok.pty
+}
+
+@test "a termination signal during an install restores the cursor" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "cursor-probe",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "3.0.1"
+		  }
+		}
+	JSON
+
+	# Hold resolution open so the signal lands while the bar owns the terminal,
+	# instead of racing a local-registry install that finishes in milliseconds.
+	# `readPackage` runs inside resolve, and `Atomics.wait` blocks the hook host
+	# without spawning anything. The marker it drops first is the cue to signal:
+	# a plain file, where scraping the PTY capture would depend on how promptly
+	# each platform's `script` flushes its typescript.
+	cat >.pnpmfile.cjs <<-EOF
+		const fs = require("fs");
+		function readPackage(pkg) {
+		  if (!globalThis.__aubeStalled) {
+		    globalThis.__aubeStalled = true;
+		    fs.writeFileSync("$PWD/resolving.marker", "1");
+		    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000);
+		  }
+		  return pkg;
+		}
+		module.exports = { hooks: { readPackage } };
+	EOF
+
+	# Node runs the install rather than a shell, because how the install died is
+	# the thing under test and only node reports that directly: `signal` is set
+	# when the child was terminated by one, with no dependence on `script -e`
+	# (absent on macOS) or on shell exit-status conventions. It also keeps the
+	# install out of a shell job, which is what left SIGINT set to SIG_IGN — a
+	# disposition aube deliberately leaves alone — on the macOS runner.
+	cat >run-install.js <<-EOF
+		const fs = require("fs");
+		const { spawn } = require("child_process");
+		const env = { ...process.env, TERM_PROGRAM: "iTerm.app" };
+		for (const name of ["CI", "CI_NAME", "GITHUB_ACTION", "GITLAB_CI", "BUILDKITE"]) {
+		  delete env[name];
+		}
+		const child = spawn("aube", ["install"], { stdio: "inherit", env });
+		fs.writeFileSync("$PWD/aube.pid", String(child.pid));
+		child.on("exit", (code, signal) => {
+		  fs.writeFileSync("$PWD/outcome.json", JSON.stringify({ code, signal }));
+		});
+	EOF
+	cat >pty-cmd.sh <<-SH
+		#!/usr/bin/env bash
+		exec node "$PWD/run-install.js"
+	SH
+
+	# Signal once resolution is parked, from outside the PTY session.
+	(
+		for _ in $(seq 1 600); do
+			if [ -s resolving.marker ] && [ -s aube.pid ]; then
+				break
+			fi
+			sleep 0.05
+		done
+		kill -INT "$(cat aube.pid)" 2>/dev/null || true
+	) &
+	local watcher=$!
+	_run_script_in_pty interrupted.pty ./pty-cmd.sh
+	kill "$watcher" 2>/dev/null || true
+
+	# The marker proves the hook actually parked resolution, so what follows is
+	# about the signal path rather than about timing.
+	assert_file_exist resolving.marker
+
+	# `signal` is only set when the child was terminated by one: the handler
+	# restores the terminal and re-raises with the default disposition, so the
+	# install still dies of SIGINT rather than exiting. An install that
+	# completed, errored, or panicked would report a code instead — and would
+	# leave the terminal looking exactly the same.
+	run node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).signal))' outcome.json
+	assert_output "SIGINT"
+
+	_assert_cursor_restored interrupted.pty
+	_assert_osc_progress_cleared interrupted.pty
 }

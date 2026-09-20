@@ -677,12 +677,17 @@ pub fn cli_main_with_defaults(
     // against `aube_codes::exit::EXIT_TABLE` to pick a bespoke exit code.
     // Codes outside the table fall through to `EXIT_GENERIC` (1).
     //
-    // Chain a panic hook that flushes the diag buffer before the
-    // default hook prints the panic. Without this, a debug-build panic
-    // (release uses `panic = "abort"` so the hook would not run anyway)
-    // would lose the BufWriter's 64 KiB tail and any unflushed events.
+    // Chain a panic hook that puts the terminal back and flushes the diag
+    // buffer before the default hook prints the panic. Without the flush a
+    // panic would lose the BufWriter's 64 KiB tail and any unflushed events;
+    // without the restore it would print over a hidden cursor and leave it
+    // that way. The hook runs under `panic = "abort"` too — abort happens
+    // after the hook — which is the only reason a release build gets either.
+    // Destructors are what abort skips, so the renderer's own teardown can't
+    // be relied on here.
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        progress::restore_terminal_now();
         aube_util::diag::flush();
         prev_hook(info);
     }));
