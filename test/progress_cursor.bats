@@ -37,6 +37,7 @@ _run_in_pty() {
 # Fails when the last cursor escape in the captured PTY stream is a hide
 # (`ESC [ ? 25 l`) with no restore (`ESC [ ? 25 h`) after it.
 _assert_cursor_restored() {
+	# shellcheck disable=SC2016 # the JS template literal is for node, not bash
 	node -e '
 		const fs = require("fs");
 		const out = fs.readFileSync(process.argv[1], "latin1");
@@ -54,6 +55,7 @@ _assert_cursor_restored() {
 # indicator is what keeps an iTerm2/Ghostty/VS Code tab spinning after aube is
 # gone.
 _assert_osc_progress_cleared() {
+	# shellcheck disable=SC2016 # the JS template literal is for node, not bash
 	node -e '
 		const fs = require("fs");
 		const out = fs.readFileSync(process.argv[1], "latin1");
