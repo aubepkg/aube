@@ -1058,14 +1058,16 @@ impl InstallProgress {
                 ..
             } => {
                 // The doc promise of idempotence has to hold here, not just
-                // for the repaint: `disarm` gives up this display's hold on
+                // for the repaint (`AcqRel` so a concurrent `Drop` on another
+                // thread cannot also win this): `disarm` gives up this
+                // display's hold on
                 // the terminal-restore handlers, and a second `finish` would
                 // give up one it no longer has — retiring the handlers out
                 // from under a concurrent embedded install whose bar is still
                 // painting. Whoever calls `finish` first retires the display,
                 // clone or owner alike, which is why the hold below is not
                 // gated on `owns_display` (see [`TerminalRestoreHold`]).
-                if finished.swap(true, Ordering::Relaxed) {
+                if finished.swap(true, Ordering::AcqRel) {
                     return;
                 }
                 let _hold = TerminalRestoreHold;
@@ -1265,7 +1267,12 @@ impl Drop for InstallProgress {
     fn drop(&mut self) {
         match &self.mode {
             Mode::Tty { root, finished, .. } => {
-                if self.owns_display && !finished.load(Ordering::Relaxed) {
+                // A swap, not a load: this and `finish` race for the right
+                // to retire the display, and only a read-modify-write on the
+                // one flag settles that. Two threads both reading `false`
+                // would each release the display's hold, taking the handlers
+                // out from under a concurrent embedded install.
+                if self.owns_display && !finished.swap(true, Ordering::AcqRel) {
                     let _hold = TerminalRestoreHold;
                     root.set_status(ProgressStatus::Done);
                     clx::progress::stop_clear();
