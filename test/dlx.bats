@@ -208,7 +208,19 @@ teardown() {
 	SH
 	chmod +x interrupt.sh
 
-	run timeout 120 ./interrupt.sh
+	# `timeout(1)` is GNU coreutils — Linux ships it as `timeout`, macOS
+	# only as `gtimeout` after `brew install coreutils`, and not at all on
+	# a stock host. It is a backstop here rather than the mechanism:
+	# `interrupt.sh` bounds its own wait and reaps the tree either way, so
+	# running it bare when neither is on PATH still terminates.
+	local timeout_cmd=""
+	if command -v timeout >/dev/null 2>&1; then
+		timeout_cmd="timeout 120"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		timeout_cmd="gtimeout 120"
+	fi
+	# shellcheck disable=SC2086 # intentional word-split: empty -> no wrapper
+	run $timeout_cmd ./interrupt.sh
 	assert_success
 	# The child picked its own exit code inside its handler and aube reported
 	# it, which proves aube stayed bound to the tool rather than exiting out
