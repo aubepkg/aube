@@ -11,6 +11,10 @@ const SIDE_EFFECTS_CACHE_MARKER: &str = ".aube-side-effects-cache";
 /// install a package missing files and record it as built, so an entry is
 /// checked against this listing before it is used.
 const SIDE_EFFECTS_CACHE_ENTRY_MANIFEST: &str = ".aube-side-effects-entry";
+/// Holds the built package inside an entry, so nothing a package ships can
+/// collide with the listing that sits beside it.
+const SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD: &str = "payload";
+const SIDE_EFFECTS_CACHE_RESTORE_PREFIX: &str = ".tmp-side-effects-restore-";
 const SIDE_EFFECTS_CACHE_TMP_PREFIX: &str = ".tmp-side-effects-";
 const SIDE_EFFECTS_CACHE_TMP_STALE_AFTER: std::time::Duration =
     std::time::Duration::from_secs(60 * 60);
@@ -112,21 +116,38 @@ impl SideEffectsCacheEntry {
             );
             return Ok(SideEffectsCacheRestore::AlreadyApplied);
         }
-        if !self.path.is_dir() {
+        let payload = self.path.join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD);
+        if !payload.is_dir() {
             return Ok(SideEffectsCacheRestore::Miss);
         }
-        // A damaged entry is a miss, not a partial restore. It is dropped so the
-        // rebuild that follows can publish a whole one in its place; an entry
-        // written before entries carried a manifest is treated the same way.
-        if !entry_is_intact(&self.path) {
+        // An entry published before entries carried a listing, or one whose
+        // listing an outside cleaner took, cannot be vouched for.
+        let Some(published) = read_entry_manifest(&self.path) else {
+            self.discard("no listing");
+            return Ok(SideEffectsCacheRestore::Miss);
+        };
+
+        // Staged beside the package directory rather than over it: what gets
+        // checked is then exactly what gets installed, so an entry emptied
+        // while this restore runs cannot slip past the check, and a rejected
+        // entry leaves the package directory as the extraction left it.
+        let staged = restore_staging_dir(package_dir)?;
+        if let Err(err) = copy_dir(&payload, &staged, CopyMode::HardlinkOrCopy) {
+            // Whatever went wrong reading the entry, rebuilding is the answer.
             tracing::debug!(
-                "side-effects-cache: discarding incomplete entry {}",
+                "side-effects-cache: could not stage {}: {err}",
                 self.path.display()
             );
-            let _ = std::fs::remove_dir_all(&self.path);
+            let _ = std::fs::remove_dir_all(&staged);
             return Ok(SideEffectsCacheRestore::Miss);
         }
-        copy_dir(&self.path, package_dir, CopyMode::HardlinkOrCopy).wrap_err_with(|| {
+        if entry_manifest(&staged).ok().as_deref() != Some(published.as_str()) {
+            let _ = std::fs::remove_dir_all(&staged);
+            self.discard("incomplete");
+            return Ok(SideEffectsCacheRestore::Miss);
+        }
+
+        install_staged_restore(&staged, package_dir).wrap_err_with(|| {
             format!(
                 "failed to restore side effects cache from {}",
                 self.path.display()
@@ -137,13 +158,32 @@ impl SideEffectsCacheEntry {
         Ok(SideEffectsCacheRestore::Restored)
     }
 
+    /// Drops an entry that cannot be used. A failure to remove it is not fatal:
+    /// `save` republishes over an entry that does not check out.
+    fn discard(&self, why: &str) {
+        tracing::debug!(
+            "side-effects-cache: discarding {} entry {}",
+            why,
+            self.path.display()
+        );
+        if let Err(err) = std::fs::remove_dir_all(&self.path) {
+            tracing::debug!(
+                "side-effects-cache: could not remove {}: {err}",
+                self.path.display()
+            );
+        }
+    }
+
     pub(super) fn save(
         &self,
         package_dir: &std::path::Path,
         overwrite_existing: bool,
     ) -> miette::Result<()> {
         if self.path.is_dir() {
-            if overwrite_existing {
+            // An entry that no longer checks out is replaced even when
+            // overwriting is off. Keeping it would leave every later install
+            // rebuilding against an entry none of them can ever use.
+            if overwrite_existing || !entry_is_intact(&self.path) {
                 std::fs::remove_dir_all(&self.path)
                     .into_diagnostic()
                     .wrap_err_with(|| format!("failed to remove {}", self.path.display()))?;
@@ -177,7 +217,12 @@ impl SideEffectsCacheEntry {
                 .into_diagnostic()
                 .wrap_err_with(|| format!("failed to remove {}", tmp.display()))?;
         }
-        copy_dir(package_dir, &tmp, CopyMode::Copy).wrap_err_with(|| {
+        copy_dir(
+            package_dir,
+            &tmp.join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD),
+            CopyMode::Copy,
+        )
+        .wrap_err_with(|| {
             format!(
                 "failed to write side effects cache into {}",
                 self.path.display()
@@ -316,17 +361,34 @@ fn write_side_effects_marker(
     })
 }
 
-/// Lists an entry's contents: one line per path, sorted, naming what the path is
-/// and enough about it to notice a file that has been removed or truncated.
+/// Lists a payload's contents: one line per path, sorted, naming what the path
+/// is and enough about it to notice a file that has been removed or truncated.
 ///
-/// Contents are not read. This answers whether the entry is still whole, which
-/// is what an outside cleaner takes away; it is not an integrity check against
-/// deliberate tampering.
-fn entry_manifest(entry: &std::path::Path) -> miette::Result<String> {
+/// Contents are not read. This answers whether the payload is still whole,
+/// which is what an outside cleaner takes away; it is not an integrity check
+/// against deliberate tampering.
+///
+/// Every field is escaped, so no two different trees can describe themselves
+/// with the same text: a name holding a space or a newline cannot be made to
+/// read as the end of one field and the start of another.
+fn entry_manifest(payload: &std::path::Path) -> miette::Result<String> {
     let mut lines = vec!["v1".to_string()];
-    entry_manifest_inner(entry, entry, &mut lines)?;
+    entry_manifest_inner(payload, payload, &mut lines)?;
     lines.push(String::new());
     Ok(lines.join("\n"))
+}
+
+fn escape_manifest_field(field: &str) -> String {
+    let mut escaped = String::with_capacity(field.len());
+    for c in field.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            ' ' => escaped.push_str("\\s"),
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 fn entry_manifest_inner(
@@ -350,9 +412,7 @@ fn entry_manifest_inner(
             .wrap_err_with(|| format!("failed to relativize {}", path.display()))?
             .to_string_lossy()
             .replace('\\', "/");
-        if rel == SIDE_EFFECTS_CACHE_ENTRY_MANIFEST {
-            continue;
-        }
+        let rel = escape_manifest_field(&rel);
         let meta = std::fs::symlink_metadata(&path)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to stat {}", path.display()))?;
@@ -362,7 +422,7 @@ fn entry_manifest_inner(
                 .wrap_err_with(|| format!("failed to read symlink {}", path.display()))?
                 .to_string_lossy()
                 .replace('\\', "/");
-            lines.push(format!("l {target} {rel}"));
+            lines.push(format!("l {} {rel}", escape_manifest_field(&target)));
         } else if meta.is_dir() {
             lines.push(format!("d {rel}"));
             entry_manifest_inner(base, &path, lines)?;
@@ -373,21 +433,74 @@ fn entry_manifest_inner(
     Ok(())
 }
 
+/// Writes the listing beside the payload, in the staging directory the rename
+/// has not published yet. The path is aube's own, never one a package supplied.
 fn write_entry_manifest(entry: &std::path::Path) -> miette::Result<()> {
-    let manifest = entry_manifest(entry)?;
+    let manifest = entry_manifest(&entry.join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD))?;
     let path = entry.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST);
     std::fs::write(&path, manifest)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to write {}", path.display()))
 }
 
+fn read_entry_manifest(entry: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(entry.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST)).ok()
+}
+
 /// Whether the entry still holds everything it was published with.
 fn entry_is_intact(entry: &std::path::Path) -> bool {
-    let Ok(published) = std::fs::read_to_string(entry.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST))
-    else {
+    let Some(published) = read_entry_manifest(entry) else {
         return false;
     };
-    entry_manifest(entry).is_ok_and(|current| current == published)
+    entry_manifest(&entry.join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD))
+        .is_ok_and(|current| current == published)
+}
+
+/// A private directory beside the package directory, on the same filesystem so
+/// the restored tree can be renamed into place and so hardlinks survive.
+fn restore_staging_dir(package_dir: &std::path::Path) -> miette::Result<std::path::PathBuf> {
+    let parent = package_dir
+        .parent()
+        .ok_or_else(|| miette!("package directory has no parent: {}", package_dir.display()))?;
+    std::fs::create_dir_all(parent)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
+    Ok(parent.join(format!(
+        "{SIDE_EFFECTS_CACHE_RESTORE_PREFIX}{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    )))
+}
+
+/// Swaps the checked tree in for the package directory, keeping the old one
+/// until the swap has gone through.
+fn install_staged_restore(
+    staged: &std::path::Path,
+    package_dir: &std::path::Path,
+) -> miette::Result<()> {
+    let replaced = restore_staging_dir(package_dir)?;
+    let had_package = package_dir.symlink_metadata().is_ok();
+    if had_package {
+        std::fs::rename(package_dir, &replaced)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to move aside {}", package_dir.display()))?;
+    }
+    if let Err(err) = std::fs::rename(staged, package_dir) {
+        if had_package {
+            let _ = std::fs::rename(&replaced, package_dir);
+        }
+        let _ = std::fs::remove_dir_all(staged);
+        return Err(err)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to move into {}", package_dir.display()));
+    }
+    if had_package {
+        let _ = std::fs::remove_dir_all(&replaced);
+    }
+    Ok(())
 }
 
 fn hash_dir_for_side_effects_cache(package_dir: &std::path::Path) -> miette::Result<String> {
@@ -486,11 +599,6 @@ fn copy_dir_inner(
             .strip_prefix(base)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to relativize {}", path.display()))?;
-        // aube's own bookkeeping, which belongs to the entry and not to the
-        // package the entry is restored into.
-        if rel == std::path::Path::new(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST) {
-            continue;
-        }
         let dst = dst_root.join(rel);
         let meta = std::fs::symlink_metadata(&path)
             .into_diagnostic()
@@ -696,7 +804,13 @@ mod tests {
         let entry = published_entry(&cache, &pkg);
 
         // What a cache pruner does: unlink a file, leave the tree standing.
-        std::fs::remove_file(entry.path.join("build/built.node")).unwrap();
+        std::fs::remove_file(
+            entry
+                .path
+                .join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD)
+                .join("build/built.node"),
+        )
+        .unwrap();
 
         assert!(matches!(
             entry.restore_if_available(&pkg).unwrap(),
@@ -755,9 +869,107 @@ mod tests {
         std::os::unix::fs::symlink(pkg.join("packages/inner"), pkg.join("linked")).unwrap();
         entry.save(&pkg, false).unwrap();
 
-        std::fs::remove_file(entry.path.join("linked")).unwrap();
+        std::fs::remove_file(
+            entry
+                .path
+                .join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD)
+                .join("linked"),
+        )
+        .unwrap();
 
         assert!(!entry_is_intact(&entry.path));
+    }
+
+    /// The listing sits beside the payload, so a package is free to ship a file
+    /// of the same name.
+    #[test]
+    fn a_package_file_named_like_the_listing_survives_the_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
+        std::fs::write(pkg.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST), "package owned").unwrap();
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+
+        std::fs::write(pkg.join("built.node"), "built").unwrap();
+        entry.save(&pkg, false).unwrap();
+
+        std::fs::remove_file(pkg.join("built.node")).unwrap();
+        std::fs::remove_file(side_effects_marker_path(&pkg, "p").unwrap()).unwrap();
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Restored
+        ));
+
+        assert_eq!(
+            std::fs::read_to_string(pkg.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST)).unwrap(),
+            "package owned"
+        );
+    }
+
+    #[test]
+    fn a_damaged_entry_is_republished_by_the_next_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        let entry = published_entry(&cache, &pkg);
+        let built = entry
+            .path
+            .join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD)
+            .join("build/built.node");
+        std::fs::remove_file(&built).unwrap();
+
+        // The rebuild that follows the miss, saving without overwrite asked for.
+        std::fs::create_dir_all(pkg.join("build")).unwrap();
+        std::fs::write(pkg.join("build/built.node"), "built").unwrap();
+        entry.save(&pkg, false).unwrap();
+
+        assert!(built.exists(), "a damaged entry blocked its own repair");
+        assert!(entry_is_intact(&entry.path));
+    }
+
+    /// Two different trees must not describe themselves the same way. Without
+    /// escaping, a file named "a\nl x" and a symlink "b" -> "y" produce the same
+    /// text as a file named "a" and a symlink "b" -> "x\nl y".
+    #[cfg(unix)]
+    #[test]
+    fn the_listing_cannot_be_forged_with_a_crafted_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::write(first.join("a"), "").unwrap();
+        std::os::unix::fs::symlink("x\nl y", first.join("b")).unwrap();
+
+        let second = dir.path().join("second");
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(second.join("a\nl x"), "").unwrap();
+        std::os::unix::fs::symlink("y", second.join("b")).unwrap();
+
+        assert_ne!(
+            entry_manifest(&first).unwrap(),
+            entry_manifest(&second).unwrap()
+        );
+    }
+
+    /// The same, with a space: a link "c" -> "a b" against a link "b c" -> "a".
+    #[cfg(unix)]
+    #[test]
+    fn the_listing_cannot_be_forged_with_a_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        std::fs::create_dir_all(&first).unwrap();
+        std::os::unix::fs::symlink("a b", first.join("c")).unwrap();
+
+        let second = dir.path().join("second");
+        std::fs::create_dir_all(&second).unwrap();
+        std::os::unix::fs::symlink("a", second.join("b c")).unwrap();
+
+        assert_ne!(
+            entry_manifest(&first).unwrap(),
+            entry_manifest(&second).unwrap()
+        );
     }
 
     #[test]
