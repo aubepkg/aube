@@ -172,6 +172,8 @@ mod signals {
                 if libc::sigaction(sig, std::ptr::null(), &mut current) != 0 {
                     continue;
                 }
+                // Cheap rejection, so the common `nohup` / host-handler case
+                // never sees aube's handler installed even for an instant.
                 if !may_take_over(&current) {
                     continue;
                 }
@@ -179,9 +181,19 @@ mod signals {
                 action.sa_sigaction = restore_and_reraise as *const () as usize;
                 libc::sigemptyset(&mut action.sa_mask);
                 let mut previous: libc::sigaction = std::mem::zeroed();
-                if libc::sigaction(sig, &action, &mut previous) == 0 {
-                    saved.push((sig, SavedAction(previous)));
+                if libc::sigaction(sig, &action, &mut previous) != 0 {
+                    continue;
                 }
+                // The query and this install are two syscalls, so an owner
+                // that appeared in between would have been missed. `sigaction`
+                // swaps atomically, which makes what it hands back the
+                // authoritative answer: if that isn't the `SIG_DFL` the query
+                // promised, put it straight back and leave the signal alone.
+                if !may_take_over(&previous) {
+                    libc::sigaction(sig, &previous, std::ptr::null_mut());
+                    continue;
+                }
+                saved.push((sig, SavedAction(previous)));
             }
         }
     }
