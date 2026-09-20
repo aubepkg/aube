@@ -198,16 +198,31 @@ mod signals {
         }
     }
 
-    /// Put back whatever dispositions [`arm`] displaced.
+    /// Put back whatever dispositions [`arm`] displaced — unless someone
+    /// else has taken the signal over in the meantime.
+    ///
+    /// An embedding host can install its own handler while aube holds the
+    /// signal, and writing the saved `SIG_DFL` over that would hand the host
+    /// a process that dies on the next Ctrl-C. The restoring `sigaction`
+    /// swaps atomically, so what it returns says who actually held the signal:
+    /// aube's own handler means the restore was right, anything else means the
+    /// signal changed owner and that owner's disposition goes back.
     pub(crate) fn disarm() {
         let Ok(mut saved) = SAVED.lock() else {
             return;
         };
         for (sig, previous) in saved.drain(..) {
             // SAFETY: `previous` came from a successful `sigaction` call on
-            // this same signal.
+            // this same signal, and `replaced` is written by the call before
+            // it is read.
             unsafe {
-                libc::sigaction(sig, &previous.0, std::ptr::null_mut());
+                let mut replaced: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(sig, &previous.0, &mut replaced) != 0 {
+                    continue;
+                }
+                if replaced.sa_sigaction != restore_and_reraise as *const () as usize {
+                    libc::sigaction(sig, &replaced, std::ptr::null_mut());
+                }
             }
         }
     }
