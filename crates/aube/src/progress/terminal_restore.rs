@@ -72,7 +72,7 @@ mod signals {
     use super::{CLEAR_OSC_ON_SIGNAL, CLEAR_OSC_PROGRESS, SHOW_CURSOR, osc_progress_supported};
     use std::io::IsTerminal;
     use std::sync::Mutex;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicPtr, Ordering};
 
     /// The signals that kill aube by default and are catchable — the same set
     /// `process_guard` forwards to a spawned child.
@@ -91,16 +91,50 @@ mod signals {
     /// disarmed, which is also how double-arming is detected.
     static SAVED: Mutex<Vec<(libc::c_int, SavedAction)>> = Mutex::new(Vec::new());
 
-    /// Write the terminal back to a usable state, then die from `sig` as if
-    /// aube had never installed a handler.
+    /// The same dispositions again, reachable from the handler, one slot per
+    /// entry in [`HANDLED`]. [`SAVED`] can't serve that purpose: locking a
+    /// mutex in a signal handler is not async-signal-safe, and the handler has
+    /// to know what it displaced so it can hand the signal back to an
+    /// embedding host's handler rather than to `SIG_DFL`.
+    ///
+    /// Each slot is allocated at most once per process and rewritten in place
+    /// by later arms, which only run while disarmed — so no handler can be
+    /// reading the value as it changes. Publication happens before aube's
+    /// handler is installed, so a slot the handler can reach is always
+    /// populated.
+    static DISPLACED: [AtomicPtr<libc::sigaction>; HANDLED.len()] =
+        [const { AtomicPtr::new(std::ptr::null_mut()) }; HANDLED.len()];
+
+    /// Park `action` in the handler-reachable slot for `index`, reusing the
+    /// slot's allocation when it already has one.
+    fn publish_displaced(index: usize, action: libc::sigaction) {
+        let slot = &DISPLACED[index];
+        let parked = slot.load(Ordering::Acquire);
+        if parked.is_null() {
+            slot.store(Box::into_raw(Box::new(action)), Ordering::Release);
+        } else {
+            // SAFETY: the pointer came from `Box::into_raw` here and is only
+            // written while disarmed, so aube's handler — the only reader —
+            // cannot be running.
+            unsafe { *parked = action };
+        }
+    }
+
+    /// Write the terminal back to a usable state, then hand `sig` on to
+    /// whatever disposition aube displaced — as if the handler had never been
+    /// installed.
     ///
     /// Everything here is async-signal-safe: `write`, `sigaction`, and
-    /// `raise`. Resetting the disposition to `SIG_DFL` before re-raising is
-    /// what makes the parent shell see a signal death (`$? == 130` for
-    /// Ctrl-C) instead of a plain exit code.
+    /// `raise`. Putting the displaced disposition back before re-raising is
+    /// what keeps the outcome unchanged: `SIG_DFL` for a normal run, so the
+    /// parent shell still sees a signal death (`$? == 130` for Ctrl-C), and an
+    /// embedding host's own handler when there was one, so aube shadows it
+    /// only for the redraw and not for the decision about what the signal
+    /// means.
     extern "C" fn restore_and_reraise(sig: libc::c_int) {
-        // SAFETY: async-signal-safe calls only, on a const slice that
-        // outlives the process.
+        // SAFETY: async-signal-safe calls only. The escape sequences are
+        // consts that outlive the process, and the displaced disposition was
+        // published before this handler could be reached.
         unsafe {
             libc::write(
                 libc::STDERR_FILENO,
@@ -114,9 +148,21 @@ mod signals {
                     CLEAR_OSC_PROGRESS.len(),
                 );
             }
-            let mut default_action: libc::sigaction = std::mem::zeroed();
-            default_action.sa_sigaction = libc::SIG_DFL;
-            libc::sigaction(sig, &default_action, std::ptr::null_mut());
+            let displaced = HANDLED
+                .iter()
+                .position(|handled| *handled == sig)
+                .map(|index| DISPLACED[index].load(Ordering::Acquire))
+                .filter(|parked| !parked.is_null());
+            match displaced {
+                Some(parked) => {
+                    libc::sigaction(sig, parked, std::ptr::null_mut());
+                }
+                None => {
+                    let mut default_action: libc::sigaction = std::mem::zeroed();
+                    default_action.sa_sigaction = libc::SIG_DFL;
+                    libc::sigaction(sig, &default_action, std::ptr::null_mut());
+                }
+            }
             libc::raise(sig);
         }
     }
@@ -128,8 +174,12 @@ mod signals {
     /// Scoped to the window where the renderer owns the terminal rather than
     /// installed for the whole process, so it can't displace the handlers
     /// `process_guard` relies on to forward signals to a `dlx` / `exec` child,
-    /// and so an embedder's own handlers are only shadowed while aube is
-    /// actually painting.
+    /// and so an embedding host's own handlers are shadowed only while aube
+    /// is actually painting — and even then only for the redraw, since
+    /// [`restore_and_reraise`] hands the signal straight back to whatever it
+    /// displaced. For the standalone binary that is always `SIG_DFL`: handler
+    /// dispositions don't survive `exec`, so only an in-process embedder can
+    /// have one here.
     pub(crate) fn arm() {
         if !std::io::stderr().is_terminal() {
             return;
@@ -141,7 +191,7 @@ mod signals {
             return;
         }
         CLEAR_OSC_ON_SIGNAL.store(osc_progress_supported(), Ordering::Relaxed);
-        for sig in HANDLED {
+        for (index, sig) in HANDLED.into_iter().enumerate() {
             // SAFETY: `action` is fully initialized before use and the
             // handler is a plain `extern "C"` function. The displaced
             // disposition is kept for `disarm`.
@@ -160,6 +210,10 @@ mod signals {
                 if current.sa_sigaction == libc::SIG_IGN {
                     continue;
                 }
+                // Publish before installing: once aube's handler is in
+                // place it may run at any moment, and it reads this slot to
+                // decide who the signal belongs to.
+                publish_displaced(index, current);
                 let mut action: libc::sigaction = std::mem::zeroed();
                 action.sa_sigaction = restore_and_reraise as *const () as usize;
                 libc::sigemptyset(&mut action.sa_mask);
