@@ -19,19 +19,16 @@ teardown() {
 # `script` is the portable PTY wrapper, but the two implementations order
 # their arguments differently — util-linux takes `-c <command> <typescript>`,
 # BSD/macOS takes `<typescript> <command>` — so both run a command file.
-# Leaves the session's exit status in `PTY_STATUS`, which `-e` makes the
-# child's own — 128 + signal number when the child died of one.
 _run_script_in_pty() {
 	local out=$1 cmd=$2
 	chmod +x "$cmd"
-	PTY_STATUS=0
 	# Flush per write (`-f` / `-t 0`) so a test that reacts to what the PTY has
 	# printed so far isn't reading a stale buffer — macOS `script` otherwise
 	# flushes on a 30s timer.
 	if [ "$(uname -s)" = "Darwin" ]; then
-		script -q -t 0 -e "$out" "$cmd" >/dev/null 2>&1 || PTY_STATUS=$?
+		script -q -t 0 "$out" "$cmd" >/dev/null 2>&1 || true
 	else
-		script -qfec "$cmd" /dev/null >"$out" 2>&1 || PTY_STATUS=$?
+		script -qfec "$cmd" /dev/null >"$out" 2>&1 || true
 	fi
 }
 
@@ -162,17 +159,28 @@ _aube_in_pty() {
 		module.exports = { hooks: { readPackage } };
 	EOF
 
-	# `exec` hands the wrapper's pid to aube itself, so the recorded pid is the
-	# install's and the signal can't land on a shell instead. Running it in the
-	# foreground also keeps its SIGINT disposition the one a Ctrl-C at a prompt
-	# finds: a shell backgrounding a job without job control sets SIGINT to
-	# SIG_IGN in the child, which aube deliberately leaves alone, and which
-	# shells differ on.
+	# Node runs the install rather than a shell, because how the install died is
+	# the thing under test and only node reports that directly: `signal` is set
+	# when the child was terminated by one, with no dependence on `script -e`
+	# (absent on macOS) or on shell exit-status conventions. It also keeps the
+	# install out of a shell job, which is what left SIGINT set to SIG_IGN — a
+	# disposition aube deliberately leaves alone — on the macOS runner.
+	cat >run-install.js <<-EOF
+		const fs = require("fs");
+		const { spawn } = require("child_process");
+		const env = { ...process.env, TERM_PROGRAM: "iTerm.app" };
+		for (const name of ["CI", "CI_NAME", "GITHUB_ACTION", "GITLAB_CI", "BUILDKITE"]) {
+		  delete env[name];
+		}
+		const child = spawn("aube", ["install"], { stdio: "inherit", env });
+		fs.writeFileSync("$PWD/aube.pid", String(child.pid));
+		child.on("exit", (code, signal) => {
+		  fs.writeFileSync("$PWD/outcome.json", JSON.stringify({ code, signal }));
+		});
+	EOF
 	cat >pty-cmd.sh <<-SH
 		#!/usr/bin/env bash
-		echo \$\$ >"$PWD/aube.pid"
-		exec env -u CI -u CI_NAME -u GITHUB_ACTION -u GITLAB_CI -u BUILDKITE \\
-			TERM_PROGRAM=iTerm.app aube install
+		exec node "$PWD/run-install.js"
 	SH
 
 	# Signal once resolution is parked, from outside the PTY session.
@@ -189,17 +197,17 @@ _aube_in_pty() {
 	_run_script_in_pty interrupted.pty ./pty-cmd.sh
 	kill "$watcher" 2>/dev/null || true
 
-	# The marker proves the hook actually parked resolution, so the assertions
-	# below are about the signal path rather than about timing.
+	# The marker proves the hook actually parked resolution, so what follows is
+	# about the signal path rather than about timing.
 	assert_file_exist resolving.marker
 
-	# 130 is SIGINT death (128 + 2), which `script -e` reports as the session's
-	# own status: the handler restores the terminal and then re-raises with the
-	# default disposition, so the install still dies of the signal rather than
-	# exiting. This is what separates a killed install from one that completed
-	# (0), errored out, or panicked — all of which would leave the terminal
-	# looking the same.
-	assert_equal "$PTY_STATUS" 130
+	# `signal` is only set when the child was terminated by one: the handler
+	# restores the terminal and re-raises with the default disposition, so the
+	# install still dies of SIGINT rather than exiting. An install that
+	# completed, errored, or panicked would report a code instead — and would
+	# leave the terminal looking exactly the same.
+	run node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).signal))' outcome.json
+	assert_output "SIGINT"
 
 	_assert_cursor_restored interrupted.pty
 	_assert_osc_progress_cleared interrupted.pty
