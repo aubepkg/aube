@@ -13,12 +13,23 @@ _common_setup() {
 	# uploads `target/debug/aube` as an artifact; the bats shards then
 	# download just that one file. Materialize the shims as hardlinks to
 	# the shared `aube` inode so the argv[0] dispatch in `main.rs` resolves
-	# correctly. `ln -f` is idempotent — it refreshes if `aube` was rebuilt
-	# and is a no-op if the hardlinks already point at the same inode.
+	# correctly. Refreshed on every setup so a rebuilt `aube` is picked up.
+	#
+	# Link to a unique name and rename over the shim rather than `ln -f`:
+	# `ln -f` unlinks its target before linking, and every test in a parallel
+	# run does this to the same two paths, so a test invoking `aubr` during
+	# another's window saw "No such file or directory". Rename is atomic, so
+	# the path is always either the old link or the new one.
 	local _aube_bin="$PROJECT_ROOT/target/debug/aube"
 	if [ -x "$_aube_bin" ]; then
-		ln -f "$_aube_bin" "$PROJECT_ROOT/target/debug/aubr" 2>/dev/null || true
-		ln -f "$_aube_bin" "$PROJECT_ROOT/target/debug/aubx" 2>/dev/null || true
+		local _shim _staged
+		for _shim in aubr aubx; do
+			_staged="$PROJECT_ROOT/target/debug/.$_shim.$$.$RANDOM"
+			if ln "$_aube_bin" "$_staged" 2>/dev/null; then
+				mv -f "$_staged" "$PROJECT_ROOT/target/debug/$_shim" 2>/dev/null ||
+					rm -f "$_staged"
+			fi
+		done
 	fi
 
 	TEST_TEMP_DIR="$(temp_make)"
