@@ -1599,11 +1599,24 @@ mod tests {
         assert_eq!(downloaded.load(Ordering::Relaxed), 110);
     }
 
+    /// Restores clx's process-global output mode when the test that
+    /// changed it ends, including on an assertion panic, so a test binary
+    /// running these in one process can't leak a render mode into whatever
+    /// runs next.
+    struct OutputModeGuard(ProgressOutput);
+
+    impl Drop for OutputModeGuard {
+        fn drop(&mut self) {
+            clx::progress::set_output(self.0);
+        }
+    }
+
     #[test]
     fn only_the_original_tty_handle_owns_the_display() {
         // Quiet keeps the job under test from painting into the test
         // harness's captured stderr. The ownership bookkeeping asserted
         // here doesn't depend on the render mode.
+        let _output_mode = OutputModeGuard(clx::progress::output());
         clx::progress::set_output(ProgressOutput::Quiet);
         let prog = InstallProgress::new_tty();
         let clone = prog.clone();
