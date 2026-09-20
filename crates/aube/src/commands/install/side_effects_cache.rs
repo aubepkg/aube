@@ -3,6 +3,14 @@ use sha2::Digest;
 
 #[cfg(test)]
 const SIDE_EFFECTS_CACHE_MARKER: &str = ".aube-side-effects-cache";
+/// Names the listing every published entry carries of its own contents.
+///
+/// An entry is published atomically, but nothing stops an external cleaner from
+/// emptying one afterwards — mise's cache prune walked into one through a
+/// symlink and unlinked files by age. Restoring from a half-emptied entry would
+/// install a package missing files and record it as built, so an entry is
+/// checked against this listing before it is used.
+const SIDE_EFFECTS_CACHE_ENTRY_MANIFEST: &str = ".aube-side-effects-entry";
 const SIDE_EFFECTS_CACHE_TMP_PREFIX: &str = ".tmp-side-effects-";
 const SIDE_EFFECTS_CACHE_TMP_STALE_AFTER: std::time::Duration =
     std::time::Duration::from_secs(60 * 60);
@@ -107,6 +115,17 @@ impl SideEffectsCacheEntry {
         if !self.path.is_dir() {
             return Ok(SideEffectsCacheRestore::Miss);
         }
+        // A damaged entry is a miss, not a partial restore. It is dropped so the
+        // rebuild that follows can publish a whole one in its place; an entry
+        // written before entries carried a manifest is treated the same way.
+        if !entry_is_intact(&self.path) {
+            tracing::debug!(
+                "side-effects-cache: discarding incomplete entry {}",
+                self.path.display()
+            );
+            let _ = std::fs::remove_dir_all(&self.path);
+            return Ok(SideEffectsCacheRestore::Miss);
+        }
         copy_dir(&self.path, package_dir, CopyMode::HardlinkOrCopy).wrap_err_with(|| {
             format!(
                 "failed to restore side effects cache from {}",
@@ -164,6 +183,9 @@ impl SideEffectsCacheEntry {
                 self.path.display()
             )
         })?;
+        // Written before the rename publishes `tmp`, so an entry never exists
+        // without the listing it is checked against.
+        write_entry_manifest(&tmp)?;
         match aube_util::fs_atomic::rename_with_retry(&tmp, &self.path) {
             Ok(()) => {
                 tracing::debug!("side-effects-cache: saved {}", self.path.display());
@@ -294,6 +316,80 @@ fn write_side_effects_marker(
     })
 }
 
+/// Lists an entry's contents: one line per path, sorted, naming what the path is
+/// and enough about it to notice a file that has been removed or truncated.
+///
+/// Contents are not read. This answers whether the entry is still whole, which
+/// is what an outside cleaner takes away; it is not an integrity check against
+/// deliberate tampering.
+fn entry_manifest(entry: &std::path::Path) -> miette::Result<String> {
+    let mut lines = vec!["v1".to_string()];
+    entry_manifest_inner(entry, entry, &mut lines)?;
+    lines.push(String::new());
+    Ok(lines.join("\n"))
+}
+
+fn entry_manifest_inner(
+    base: &std::path::Path,
+    current: &std::path::Path,
+    lines: &mut Vec<String>,
+) -> miette::Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(current)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", current.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", current.display()))?;
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(base)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to relativize {}", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel == SIDE_EFFECTS_CACHE_ENTRY_MANIFEST {
+            continue;
+        }
+        let meta = std::fs::symlink_metadata(&path)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to stat {}", path.display()))?;
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&path)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("failed to read symlink {}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            lines.push(format!("l {target} {rel}"));
+        } else if meta.is_dir() {
+            lines.push(format!("d {rel}"));
+            entry_manifest_inner(base, &path, lines)?;
+        } else if meta.is_file() {
+            lines.push(format!("f {} {rel}", meta.len()));
+        }
+    }
+    Ok(())
+}
+
+fn write_entry_manifest(entry: &std::path::Path) -> miette::Result<()> {
+    let manifest = entry_manifest(entry)?;
+    let path = entry.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST);
+    std::fs::write(&path, manifest)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to write {}", path.display()))
+}
+
+/// Whether the entry still holds everything it was published with.
+fn entry_is_intact(entry: &std::path::Path) -> bool {
+    let Ok(published) = std::fs::read_to_string(entry.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST))
+    else {
+        return false;
+    };
+    entry_manifest(entry).is_ok_and(|current| current == published)
+}
+
 fn hash_dir_for_side_effects_cache(package_dir: &std::path::Path) -> miette::Result<String> {
     let mut hasher = sha2::Sha512::new();
     hash_dir_inner(package_dir, package_dir, &mut hasher)?;
@@ -390,6 +486,11 @@ fn copy_dir_inner(
             .strip_prefix(base)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to relativize {}", path.display()))?;
+        // aube's own bookkeeping, which belongs to the entry and not to the
+        // package the entry is restored into.
+        if rel == std::path::Path::new(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST) {
+            continue;
+        }
         let dst = dst_root.join(rel);
         let meta = std::fs::symlink_metadata(&path)
             .into_diagnostic()
@@ -552,6 +653,111 @@ mod tests {
             entry.restore_if_available(&pkg).unwrap(),
             SideEffectsCacheRestore::AlreadyApplied
         ));
+    }
+
+    /// Builds a package, publishes the result, then returns `pkg` to the state a
+    /// fresh extraction leaves it in and hands back the entry the next install
+    /// would look up.
+    fn published_entry(cache: &std::path::Path, pkg: &std::path::Path) -> SideEffectsCacheEntry {
+        std::fs::create_dir_all(pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
+        let entry = SideEffectsCacheEntry::new(cache, "p", "1.0.0", pkg).unwrap();
+
+        std::fs::create_dir_all(pkg.join("build")).unwrap();
+        std::fs::write(pkg.join("build/built.node"), "built").unwrap();
+        entry.save(pkg, false).unwrap();
+
+        std::fs::remove_dir_all(pkg.join("build")).unwrap();
+        std::fs::remove_file(side_effects_marker_path(pkg, "p").unwrap()).unwrap();
+        let next = SideEffectsCacheEntry::new(cache, "p", "1.0.0", pkg).unwrap();
+        assert_eq!(next.path, entry.path, "the next install looks elsewhere");
+        next
+    }
+
+    #[test]
+    fn a_published_entry_restores() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        let entry = published_entry(&cache, &pkg);
+
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Restored
+        ));
+        assert!(pkg.join("build/built.node").exists());
+    }
+
+    #[test]
+    fn an_entry_emptied_by_an_outside_cleaner_is_a_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        let entry = published_entry(&cache, &pkg);
+
+        // What a cache pruner does: unlink a file, leave the tree standing.
+        std::fs::remove_file(entry.path.join("build/built.node")).unwrap();
+
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Miss
+        ));
+        assert!(
+            !entry.path.exists(),
+            "an incomplete entry was left for the next install to hit"
+        );
+        assert!(
+            !pkg.join("build/built.node").exists(),
+            "the package was restored from an incomplete entry"
+        );
+    }
+
+    #[test]
+    fn an_entry_without_a_manifest_is_a_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        let entry = published_entry(&cache, &pkg);
+
+        // Stands in for an entry published before entries carried a manifest.
+        std::fs::remove_file(entry.path.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST)).unwrap();
+
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Miss
+        ));
+        assert!(!entry.path.exists());
+    }
+
+    #[test]
+    fn the_manifest_stays_out_of_the_restored_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        let entry = published_entry(&cache, &pkg);
+
+        assert!(entry.path.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST).exists());
+        entry.restore_if_available(&pkg).unwrap();
+
+        assert!(!pkg.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_removed_symlink_is_noticed() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(pkg.join("packages/inner")).unwrap();
+        std::fs::write(pkg.join("package.json"), "{\"name\":\"p\"}\n").unwrap();
+        let entry = SideEffectsCacheEntry::new(&cache, "p", "1.0.0", &pkg).unwrap();
+        // What a postinstall does: link a workspace directory by absolute path.
+        std::os::unix::fs::symlink(pkg.join("packages/inner"), pkg.join("linked")).unwrap();
+        entry.save(&pkg, false).unwrap();
+
+        std::fs::remove_file(entry.path.join("linked")).unwrap();
+
+        assert!(!entry_is_intact(&entry.path));
     }
 
     #[test]
