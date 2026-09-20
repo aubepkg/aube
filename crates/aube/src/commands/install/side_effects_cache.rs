@@ -131,6 +131,9 @@ impl SideEffectsCacheEntry {
         // checked is then exactly what gets installed, so an entry emptied
         // while this restore runs cannot slip past the check, and a rejected
         // entry leaves the package directory as the extraction left it.
+        if let Some(parent) = package_dir.parent() {
+            sweep_stale_tmp_dirs(parent, SIDE_EFFECTS_CACHE_RESTORE_PREFIX);
+        }
         let staged = restore_staging_dir(package_dir)?;
         if let Err(err) = copy_dir(&payload, &staged, CopyMode::HardlinkOrCopy) {
             // Whatever went wrong reading the entry, rebuilding is the answer.
@@ -201,7 +204,7 @@ impl SideEffectsCacheEntry {
         std::fs::create_dir_all(parent)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
-        sweep_stale_side_effects_tmp_dirs(parent);
+        sweep_stale_tmp_dirs(parent, SIDE_EFFECTS_CACHE_TMP_PREFIX);
         self.write_marker(package_dir)?;
 
         let tmp = parent.join(format!(
@@ -259,23 +262,23 @@ impl SideEffectsCacheEntry {
     }
 }
 
-fn sweep_stale_side_effects_tmp_dirs(parent: &std::path::Path) {
+/// Clears working directories an earlier run left behind. Both the staging a
+/// save publishes from and the staging a restore swaps in are whole package
+/// trees, so a run cut short — or a filesystem that refused a cleanup — must
+/// not leave them to pile up.
+fn sweep_stale_tmp_dirs(parent: &std::path::Path, prefix: &str) {
     let Ok(entries) = std::fs::read_dir(parent) else {
         return;
     };
     for entry in entries.flatten() {
-        if should_remove_side_effects_tmp_dir(&entry) {
+        if should_remove_stale_tmp_dir(&entry, prefix) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
 }
 
-fn should_remove_side_effects_tmp_dir(entry: &std::fs::DirEntry) -> bool {
-    if !entry
-        .file_name()
-        .to_string_lossy()
-        .starts_with(SIDE_EFFECTS_CACHE_TMP_PREFIX)
-    {
+fn should_remove_stale_tmp_dir(entry: &std::fs::DirEntry, prefix: &str) -> bool {
+    if !entry.file_name().to_string_lossy().starts_with(prefix) {
         return false;
     }
     entry
@@ -483,10 +486,11 @@ fn install_staged_restore(
 ) -> miette::Result<()> {
     let replaced = restore_staging_dir(package_dir)?;
     let had_package = package_dir.symlink_metadata().is_ok();
-    if had_package {
-        std::fs::rename(package_dir, &replaced)
+    if had_package && let Err(err) = std::fs::rename(package_dir, &replaced) {
+        let _ = std::fs::remove_dir_all(staged);
+        return Err(err)
             .into_diagnostic()
-            .wrap_err_with(|| format!("failed to move aside {}", package_dir.display()))?;
+            .wrap_err_with(|| format!("failed to move aside {}", package_dir.display()));
     }
     if let Err(err) = std::fs::rename(staged, package_dir) {
         if had_package {
@@ -497,8 +501,12 @@ fn install_staged_restore(
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to move into {}", package_dir.display()));
     }
-    if had_package {
-        let _ = std::fs::remove_dir_all(&replaced);
+    if had_package && let Err(err) = std::fs::remove_dir_all(&replaced) {
+        // Left for the sweep at the start of the next restore.
+        tracing::debug!(
+            "side-effects-cache: could not remove {}: {err}",
+            replaced.display()
+        );
     }
     Ok(())
 }
@@ -969,6 +977,47 @@ mod tests {
         assert_ne!(
             entry_manifest(&first).unwrap(),
             entry_manifest(&second).unwrap()
+        );
+    }
+
+    /// A restore stages a whole package tree beside the package, so anything a
+    /// cut-short run leaves behind has to be cleared rather than accumulate.
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_directory_left_behind_is_swept() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("node_modules");
+        std::fs::create_dir_all(&parent).unwrap();
+        let left_behind = parent.join(format!("{SIDE_EFFECTS_CACHE_RESTORE_PREFIX}1-1"));
+        std::fs::create_dir_all(left_behind.join("build")).unwrap();
+        std::fs::write(left_behind.join("build/built.node"), "built").unwrap();
+        let in_flight = parent.join(format!("{SIDE_EFFECTS_CACHE_RESTORE_PREFIX}2-2"));
+        std::fs::create_dir_all(&in_flight).unwrap();
+        let package = parent.join("p");
+        let entry = published_entry(&dir.path().join("cache"), &package);
+
+        let stale = std::time::SystemTime::now()
+            - SIDE_EFFECTS_CACHE_TMP_STALE_AFTER
+            - std::time::Duration::from_secs(60);
+        std::fs::File::open(&left_behind)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_accessed(stale)
+                    .set_modified(stale),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            entry.restore_if_available(&package).unwrap(),
+            SideEffectsCacheRestore::Restored
+        ));
+
+        assert!(!left_behind.exists(), "a stale restore tree was kept");
+        assert!(in_flight.exists(), "another install's restore was removed");
+        assert!(
+            package.join("build/built.node").exists(),
+            "the restore did not land"
         );
     }
 
