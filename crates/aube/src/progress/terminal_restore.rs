@@ -113,6 +113,12 @@ mod signals {
         current.sa_sigaction == libc::SIG_DFL
     }
 
+    /// Whether `current` is the disposition aube installs, i.e. whether aube
+    /// still owns the signal.
+    fn ours(current: &libc::sigaction) -> bool {
+        current.sa_sigaction == restore_and_reraise as *const () as usize
+    }
+
     /// Write the terminal back to a usable state, then die from `sig` as if
     /// aube had never installed a handler.
     ///
@@ -202,25 +208,41 @@ mod signals {
     /// else has taken the signal over in the meantime.
     ///
     /// An embedding host can install its own handler while aube holds the
-    /// signal, and writing the saved `SIG_DFL` over that would hand the host
-    /// a process that dies on the next Ctrl-C. The restoring `sigaction`
-    /// swaps atomically, so what it returns says who actually held the signal:
-    /// aube's own handler means the restore was right, anything else means the
-    /// signal changed owner and that owner's disposition goes back.
+    /// signal, and writing the saved `SIG_DFL` over that would hand the host a
+    /// process that dies on the next Ctrl-C. So the disposition is read first
+    /// and left completely untouched when it is no longer aube's: not even
+    /// swapped out and back, which would leave a moment where a signal killed
+    /// the process instead of reaching the host.
+    ///
+    /// The write that follows is still checked, because the read and the write
+    /// are two syscalls and POSIX has no compare-and-set for dispositions — a
+    /// handler installed in between comes back from the swap and goes
+    /// straight back in. That last interleaving is the one window this can't
+    /// close: it needs a host to install a handler within the few instructions
+    /// between the two calls *and* a signal to arrive before the revert. Every
+    /// wider version of the race — the host installing at any other point
+    /// while aube is armed — is handled above.
     pub(crate) fn disarm() {
         let Ok(mut saved) = SAVED.lock() else {
             return;
         };
         for (sig, previous) in saved.drain(..) {
             // SAFETY: `previous` came from a successful `sigaction` call on
-            // this same signal, and `replaced` is written by the call before
-            // it is read.
+            // this same signal; `current` and `replaced` are each written by
+            // the call above them before being read.
             unsafe {
+                let mut current: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(sig, std::ptr::null(), &mut current) != 0 {
+                    continue;
+                }
+                if !ours(&current) {
+                    continue;
+                }
                 let mut replaced: libc::sigaction = std::mem::zeroed();
                 if libc::sigaction(sig, &previous.0, &mut replaced) != 0 {
                     continue;
                 }
-                if replaced.sa_sigaction != restore_and_reraise as *const () as usize {
+                if !ours(&replaced) {
                     libc::sigaction(sig, &replaced, std::ptr::null_mut());
                 }
             }
