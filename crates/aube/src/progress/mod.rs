@@ -144,6 +144,11 @@ pub struct InstallProgress {
     /// is fine: the streaming pass is the only writer and the
     /// reconcile reads once at the phase boundary.
     unpacked_sizes: Arc<Mutex<HashMap<String, u64>>>,
+    /// Whether this handle is the one `try_new` built, as opposed to a
+    /// clone handed to a spawned task. Only the original tears the TTY
+    /// display down in `Drop` (see the `Drop` impl for why a refcount
+    /// can't decide that here).
+    owns_display: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -263,6 +268,9 @@ impl Clone for InstallProgress {
     /// `Arc::strong_count`, because the heartbeat thread owns an `Arc<CiState>`
     /// for the entire run and would otherwise pin `strong_count ≥ 2` — defeating
     /// the `== 1` shutdown check in `Drop`.
+    ///
+    /// TTY mode doesn't count at all: a clone is never the display owner, so
+    /// tearing the renderer down stays the original handle's job.
     fn clone(&self) -> Self {
         if let Mode::Ci(s) = &self.mode {
             s.alive.fetch_add(1, Ordering::Relaxed);
@@ -270,6 +278,7 @@ impl Clone for InstallProgress {
         Self {
             mode: self.mode.clone(),
             unpacked_sizes: self.unpacked_sizes.clone(),
+            owns_display: false,
         }
     }
 }
@@ -295,6 +304,7 @@ impl InstallProgress {
                         estimated_bytes: AtomicU64::new(0),
                     })),
                     unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
+                    owns_display: true,
                 });
             }
             InstallOutputMode::Silent => return None,
@@ -375,6 +385,7 @@ impl InstallProgress {
                 })),
             },
             unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
+            owns_display: true,
         }
     }
 
@@ -389,6 +400,7 @@ impl InstallProgress {
         Self {
             mode: Mode::Ci(state),
             unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
+            owns_display: true,
         }
     }
 
@@ -1166,22 +1178,34 @@ fn refresh_tty_bar_from_atomics(
 
 impl Drop for InstallProgress {
     /// Safety net: if `install::run` bails through `?` without reaching
-    /// `finish()` (flaky network, lockfile parse error, linker failure, …)
-    /// the renderer would otherwise be left running. We only tear down
-    /// when *this* instance is the last live clone, not when an earlier
-    /// clone (e.g. the one handed to the fresh-resolve fetch coordinator)
-    /// drops while the install is still in flight.
+    /// `finish()` (flaky network, lockfile parse error, trust-policy
+    /// rejection, linker failure, …) the renderer would otherwise be left
+    /// running — and since every TTY frame ends with the cursor hidden,
+    /// the shell prompt comes back invisible
+    /// (<https://github.com/aubepkg/aube/discussions/1557>).
     ///
-    /// CI mode can't use `Arc::strong_count` for this check because the
-    /// heartbeat thread holds its own clone of `Arc<CiState>` for the
-    /// entire run. Instead, it tracks the live-clone count in a separate
-    /// `CiState::alive` atomic, incremented in `Clone` and decremented
-    /// here. Error paths drop without printing the `Done in Xs` summary
-    /// — the heartbeat still gets joined so no stray tick escapes.
+    /// TTY mode keys the teardown on `owns_display` rather than a
+    /// refcount. `Arc::strong_count(root) == 1` looks like the natural
+    /// check but can never hold: `ProgressJobBuilder::start` pushes a
+    /// clone of the root job into clx's process-global `JOBS` registry
+    /// and nothing ever drains it, so the count is pinned at ≥ 2 for the
+    /// life of the process. The owner is the handle `install::run` holds,
+    /// which drops on the main task as the error propagates — before the
+    /// diagnostic is rendered — so the bar is cleared exactly once and a
+    /// clone abandoned in an aborted task (the fresh-resolve fetch
+    /// coordinator) can't repaint over the error report later.
+    ///
+    /// CI mode has the same refcount problem — the heartbeat thread holds
+    /// its own clone of `Arc<CiState>` for the entire run — and solves it
+    /// with the `CiState::alive` counter, incremented in `Clone` and
+    /// decremented here, because its heartbeat has to be joined by
+    /// whichever clone goes last. Error paths drop without printing the
+    /// `Done in Xs` summary — the heartbeat still gets joined so no stray
+    /// tick escapes.
     fn drop(&mut self) {
         match &self.mode {
             Mode::Tty { root, finished, .. } => {
-                if Arc::strong_count(root) == 1 && !finished.load(Ordering::Relaxed) {
+                if self.owns_display && !finished.load(Ordering::Relaxed) {
                     root.set_status(ProgressStatus::Done);
                     clx::progress::stop_clear();
                 }
@@ -1573,5 +1597,32 @@ mod tests {
         clamp_reused_to(&reused, &downloaded, 100);
         assert_eq!(reused.load(Ordering::Relaxed), 0);
         assert_eq!(downloaded.load(Ordering::Relaxed), 110);
+    }
+
+    #[test]
+    fn only_the_original_tty_handle_owns_the_display() {
+        // Quiet keeps the job under test from painting into the test
+        // harness's captured stderr. The ownership bookkeeping asserted
+        // here doesn't depend on the render mode.
+        clx::progress::set_output(ProgressOutput::Quiet);
+        let prog = InstallProgress::new_tty();
+        let clone = prog.clone();
+        assert!(prog.owns_display, "try_new's handle owns the display");
+        assert!(!clone.owns_display, "a clone never tears the display down");
+        drop(clone);
+
+        // Why `owns_display` exists: `Arc::strong_count(root) == 1` was the
+        // original Drop guard and could never fire, because
+        // `ProgressJobBuilder::start` parks a clone of the root job in
+        // clx's process-global registry for the life of the process. With
+        // the clone above gone, this is the original handle plus that
+        // registry entry.
+        let Mode::Tty { root, .. } = &prog.mode else {
+            panic!("new_tty built a non-TTY mode");
+        };
+        assert!(
+            Arc::strong_count(root) > 1,
+            "clx pins a strong ref to every started job",
+        );
     }
 }
