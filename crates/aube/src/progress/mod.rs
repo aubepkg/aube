@@ -356,7 +356,7 @@ impl InstallProgress {
         // renderer's own teardown never runs and the terminal keeps the
         // hidden cursor and the taskbar indicator the bar set. Armed for as
         // long as the bar owns the terminal, disarmed by `finish` / `Drop`.
-        terminal_restore::arm_signal_handlers();
+        terminal_restore::arm();
         let root = ProgressJobBuilder::new()
             .body(
                 "{{aube}}{{phase}}  {{progress_bar(flex=true)}} {{count}}{{bytes}}{{rate}}{{eta}}",
@@ -1045,7 +1045,7 @@ impl InstallProgress {
                     TtyFinishBehavior::Preserve => clx::progress::stop(),
                     TtyFinishBehavior::Clear => clx::progress::stop_clear(),
                 }
-                terminal_restore::disarm_signal_handlers();
+                terminal_restore::disarm();
             }
             Mode::Ci(s) => s.stop(print_ci_summary),
             Mode::Events(s) => {
@@ -1223,7 +1223,7 @@ impl Drop for InstallProgress {
                 if self.owns_display && !finished.load(Ordering::Relaxed) {
                     root.set_status(ProgressStatus::Done);
                     clx::progress::stop_clear();
-                    terminal_restore::disarm_signal_handlers();
+                    terminal_restore::disarm();
                 }
             }
             Mode::Ci(s) => {

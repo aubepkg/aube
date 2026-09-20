@@ -32,10 +32,12 @@ const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 /// byte what clx emits when it retires a job, ST terminator included.
 const CLEAR_OSC_PROGRESS: &[u8] = b"\x1b]9;4;0;0\x1b\\";
 
-/// Whether the armed signal handlers should also clear the taskbar indicator.
-/// Resolved while arming, because a signal handler can't call
-/// [`osc_progress_supported`] — `getenv` is not async-signal-safe.
-static CLEAR_OSC_ON_SIGNAL: AtomicBool = AtomicBool::new(false);
+/// Whether a restore should also clear the taskbar indicator. Resolved once,
+/// when the bar starts, because neither caller can afford to look it up:
+/// `getenv` is not async-signal-safe, and `std::env` takes a lock that a panic
+/// hook must not wait on. `false` until then, which is also the right answer
+/// for a panic with no bar on screen — there is no indicator to clear.
+static CLEAR_OSC_INDICATOR: AtomicBool = AtomicBool::new(false);
 
 /// Whether the terminal understands OSC 9;4, mirroring clx's own detection
 /// (`clx::osc::terminal_supports_osc_9_4`, which is private). aube only emits
@@ -52,29 +54,66 @@ fn osc_progress_supported() -> bool {
     std::env::var_os("WT_SESSION").is_some() || std::env::var_os("VTE_VERSION").is_some()
 }
 
+/// Write `bytes` to stderr without taking a lock.
+///
+/// A panic hook can be entered while another thread holds the lock behind
+/// `std::io::stderr()`, and under `panic = "abort"` waiting on it would hang
+/// the process instead of aborting it. A signal handler has the stricter
+/// version of the same problem: it may only call async-signal-safe functions.
+/// `write(2)` answers both.
+#[cfg(unix)]
+fn write_stderr(bytes: &[u8]) {
+    // SAFETY: `bytes` is a const slice that outlives the process, and `write`
+    // is async-signal-safe.
+    unsafe {
+        libc::write(libc::STDERR_FILENO, bytes.as_ptr().cast(), bytes.len());
+    }
+}
+
+/// Windows has no `write(2)`; the panic hook is the only caller there — the
+/// signal half is Unix-only — so the locking handle is acceptable.
+#[cfg(not(unix))]
+fn write_stderr(bytes: &[u8]) {
+    use std::io::Write;
+
+    let _ = std::io::stderr().write_all(bytes);
+}
+
 /// Restore the terminal from ordinary (non-signal) context: the panic hook.
 ///
 /// Gated on an interactive stderr so a piped or redirected stream never gains
-/// an escape sequence. Unlike the renderer's teardown this takes no locks, so
-/// it stays safe even when the panic came from inside clx with its terminal
-/// lock held.
+/// an escape sequence. Takes no locks and reads no environment, so it stays
+/// safe when the panic came from inside clx holding its terminal lock, or
+/// from a thread holding stderr's.
 pub(crate) fn restore_now() {
-    use std::io::Write;
-
     if !std::io::stderr().is_terminal() {
         return;
     }
-    let mut stderr = std::io::stderr().lock();
-    let _ = stderr.write_all(SHOW_CURSOR);
-    if osc_progress_supported() {
-        let _ = stderr.write_all(CLEAR_OSC_PROGRESS);
+    write_stderr(SHOW_CURSOR);
+    if CLEAR_OSC_INDICATOR.load(std::sync::atomic::Ordering::Relaxed) {
+        write_stderr(CLEAR_OSC_PROGRESS);
     }
-    let _ = stderr.flush();
+}
+
+/// Take over the terminal-restoring duties for the life of a progress
+/// display: resolve whether the taskbar indicator is in play, and install the
+/// signal handlers that cover a death the renderer's own teardown can't.
+pub(crate) fn arm() {
+    CLEAR_OSC_INDICATOR.store(
+        osc_progress_supported(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    arm_signal_handlers();
+}
+
+/// Hand them back once the display is retired.
+pub(crate) fn disarm() {
+    disarm_signal_handlers();
 }
 
 #[cfg(unix)]
 mod signals {
-    use super::{CLEAR_OSC_ON_SIGNAL, CLEAR_OSC_PROGRESS, SHOW_CURSOR, osc_progress_supported};
+    use super::{CLEAR_OSC_INDICATOR, CLEAR_OSC_PROGRESS, SHOW_CURSOR, write_stderr};
     use std::io::IsTerminal;
     use std::sync::Mutex;
     use std::sync::atomic::Ordering;
@@ -92,9 +131,24 @@ mod signals {
     // threads is meaningless rather than unsound.
     unsafe impl Send for SavedAction {}
 
-    /// Dispositions displaced by [`arm`], restored by [`disarm`]. Empty while
-    /// disarmed, which is also how double-arming is detected.
-    static SAVED: Mutex<Vec<(libc::c_int, SavedAction)>> = Mutex::new(Vec::new());
+    /// What [`arm`] displaced, and how many progress displays are relying on
+    /// it. The count matters because `embed::install` may be driven
+    /// concurrently against one terminal: without it the first install to
+    /// finish would hand the signals back while the second one's bar was
+    /// still painting, and a Ctrl-C after that would leave the cursor hidden
+    /// — the very bug this restores from.
+    struct ArmState {
+        /// Progress displays currently armed. Only the transition through 1
+        /// touches dispositions.
+        holders: usize,
+        /// Dispositions displaced on the way in, restored on the way out.
+        displaced: Vec<(libc::c_int, SavedAction)>,
+    }
+
+    static STATE: Mutex<ArmState> = Mutex::new(ArmState {
+        holders: 0,
+        displaced: Vec::new(),
+    });
 
     /// Whether aube may take `current` over for the duration of the progress
     /// display.
@@ -130,18 +184,12 @@ mod signals {
     extern "C" fn restore_and_reraise(sig: libc::c_int) {
         // SAFETY: async-signal-safe calls only, on consts that outlive the
         // process.
+        write_stderr(SHOW_CURSOR);
+        // SAFETY: async-signal-safe calls only, on consts that outlive the
+        // process.
         unsafe {
-            libc::write(
-                libc::STDERR_FILENO,
-                SHOW_CURSOR.as_ptr().cast(),
-                SHOW_CURSOR.len(),
-            );
-            if CLEAR_OSC_ON_SIGNAL.load(Ordering::Relaxed) {
-                libc::write(
-                    libc::STDERR_FILENO,
-                    CLEAR_OSC_PROGRESS.as_ptr().cast(),
-                    CLEAR_OSC_PROGRESS.len(),
-                );
+            if CLEAR_OSC_INDICATOR.load(Ordering::Relaxed) {
+                write_stderr(CLEAR_OSC_PROGRESS);
             }
             let mut default_action: libc::sigaction = std::mem::zeroed();
             default_action.sa_sigaction = libc::SIG_DFL;
@@ -159,16 +207,15 @@ mod signals {
     /// installed for the whole process, so it can't displace the handlers
     /// `process_guard` relies on to forward signals to a `dlx` / `exec` child.
     pub(crate) fn arm() {
-        if !std::io::stderr().is_terminal() {
-            return;
-        }
-        let Ok(mut saved) = SAVED.lock() else {
+        let Ok(mut state) = STATE.lock() else {
             return;
         };
-        if !saved.is_empty() {
+        // Counted before the terminal check so every `arm` has a matching
+        // `disarm`, whether or not there was anything to install.
+        state.holders += 1;
+        if state.holders > 1 || !std::io::stderr().is_terminal() {
             return;
         }
-        CLEAR_OSC_ON_SIGNAL.store(osc_progress_supported(), Ordering::Relaxed);
         for sig in HANDLED {
             // SAFETY: `action` is fully initialized before use and the
             // handler is a plain `extern "C"` function. The displaced
@@ -199,7 +246,7 @@ mod signals {
                     libc::sigaction(sig, &previous, std::ptr::null_mut());
                     continue;
                 }
-                saved.push((sig, SavedAction(previous)));
+                state.displaced.push((sig, SavedAction(previous)));
             }
         }
     }
@@ -223,10 +270,15 @@ mod signals {
     /// wider version of the race — the host installing at any other point
     /// while aube is armed — is handled above.
     pub(crate) fn disarm() {
-        let Ok(mut saved) = SAVED.lock() else {
+        let Ok(mut state) = STATE.lock() else {
             return;
         };
-        for (sig, previous) in saved.drain(..) {
+        state.holders = state.holders.saturating_sub(1);
+        if state.holders > 0 {
+            return;
+        }
+        let displaced = std::mem::take(&mut state.displaced);
+        for (sig, previous) in displaced {
             // SAFETY: `previous` came from a successful `sigaction` call on
             // this same signal; `current` and `replaced` are each written by
             // the call above them before being read.
@@ -281,17 +333,17 @@ mod signals {
 }
 
 #[cfg(unix)]
-pub(crate) use signals::{arm as arm_signal_handlers, disarm as disarm_signal_handlers};
+use signals::{arm as arm_signal_handlers, disarm as disarm_signal_handlers};
 
 /// Windows has no `sigaction`; console control handlers are a different
 /// mechanism and aube's progress display is the only thing that would want
 /// one, so the signal half is Unix-only. [`restore_now`] still covers panics
 /// everywhere.
 #[cfg(not(unix))]
-pub(crate) fn arm_signal_handlers() {}
+fn arm_signal_handlers() {}
 
 #[cfg(not(unix))]
-pub(crate) fn disarm_signal_handlers() {}
+fn disarm_signal_handlers() {}
 
 #[cfg(test)]
 mod tests {
