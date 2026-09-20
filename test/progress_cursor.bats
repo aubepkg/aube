@@ -143,11 +143,16 @@ _aube_in_pty() {
 	# Hold resolution open so the signal lands while the bar owns the
 	# terminal, instead of racing a local-registry install that finishes in
 	# milliseconds. `readPackage` runs inside resolve, and `Atomics.wait`
-	# blocks the hook host without spawning anything.
-	cat >.pnpmfile.cjs <<-'EOF'
+	# blocks the hook host without spawning anything. The marker it drops
+	# first is what the signal is timed off: reading it back is a plain file
+	# check, where scraping the PTY capture would depend on how promptly each
+	# platform's `script` flushes.
+	cat >.pnpmfile.cjs <<-EOF
+		const fs = require("fs");
 		function readPackage(pkg) {
 		  if (!globalThis.__aubeStalled) {
 		    globalThis.__aubeStalled = true;
+		    fs.writeFileSync("$PWD/resolving.marker", "1");
 		    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000);
 		  }
 		  return pkg;
@@ -167,7 +172,7 @@ _aube_in_pty() {
 		pid=\$!
 		(
 			for _ in \$(seq 1 600); do
-				grep -aq resolving "$PWD/interrupted.pty" 2>/dev/null && break
+				[ -f "$PWD/resolving.marker" ] && break
 				sleep 0.05
 			done
 			kill -INT "\$pid"
@@ -176,6 +181,10 @@ _aube_in_pty() {
 		echo "AUBE_EXIT=\$?"
 	SH
 	_run_script_in_pty interrupted.pty ./pty-cmd.sh
+
+	# The marker proves the hook actually held resolution open, so a missing
+	# 130 below means the signal path failed rather than the timing.
+	assert_file_exist resolving.marker
 
 	# 130 is SIGINT death (128 + 2): the handler restores the terminal and then
 	# re-raises with the default disposition, so the shell still sees a signal
