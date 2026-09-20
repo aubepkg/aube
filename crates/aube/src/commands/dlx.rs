@@ -23,15 +23,17 @@ pub struct DlxArgs {
     /// verbatim to the binary. Without `--package`, a local
     /// `node_modules/.bin/<command>` wins when present; otherwise dlx
     /// installs into a throwaway project. Under `--shell-mode`/`-c` the
-    /// positionals are joined and evaluated by `sh -c` instead of
-    /// looked up directly.
+    /// positionals are joined into a single command line instead of
+    /// being looked up directly.
     #[usage(arg, double_dash = "automatic")]
     pub params: Vec<String>,
-    /// Run the assembled command line through `sh -c`.
+    /// Evaluate the assembled command line as a shell line.
     ///
     /// `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this
     /// for pipelines, redirects, or env expansion (`aube dlx -p cowsay
-    /// -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
+    /// -c 'cowsay hello | tr a-z A-Z'`). A line needing none of those
+    /// runs without a shell, so signals sent to aube reach the tool.
+    /// Mirrors `pnpm dlx --shell-mode`.
     #[usage(short = 'c', long)]
     pub shell_mode: bool,
     /// Install a specific package (repeatable).
