@@ -1191,9 +1191,16 @@ impl Drop for InstallProgress {
     /// and nothing ever drains it, so the count is pinned at ≥ 2 for the
     /// life of the process. The owner is the handle `install::run` holds,
     /// which drops on the main task as the error propagates — before the
-    /// diagnostic is rendered — so the bar is cleared exactly once and a
-    /// clone abandoned in an aborted task (the fresh-resolve fetch
-    /// coordinator) can't repaint over the error report later.
+    /// diagnostic is rendered — so the bar is cleared exactly once.
+    ///
+    /// A clone abandoned in an aborted task (the fresh-resolve fetch
+    /// coordinator) can outlive that drop: `JoinSet::abort` only takes
+    /// effect at the task's next await point, so it may still open a fetch
+    /// row afterwards. That can't repaint over the error report, because
+    /// `stop_clear` latches clx's `STOPPING` flag — past that point
+    /// `ProgressJob::update` and `notify` return without rendering and the
+    /// refresh thread exits. `clear_jobs` is the only thing that unlatches
+    /// it, and aube never calls it.
     ///
     /// CI mode has the same refcount problem — the heartbeat thread holds
     /// its own clone of `Arc<CiState>` for the entire run — and solves it
