@@ -20,6 +20,23 @@ const SIDE_EFFECTS_CACHE_ENTRY_MANIFEST: &str = ".aube-side-effects-entry";
 /// collide with the listing that sits beside it.
 const SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD: &str = "payload";
 const SIDE_EFFECTS_CACHE_RESTORE_PREFIX: &str = ".tmp-side-effects-restore-";
+/// Distinguishes working directories a single process asks for. The clock alone
+/// does not: its granularity is coarse on some platforms, and two names taken
+/// within one tick would collide — a restore would then stage into, and delete,
+/// the directory it was about to move the package into.
+static WORKING_DIR_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn working_dir_name(prefix: &str) -> String {
+    format!(
+        "{prefix}{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+        WORKING_DIR_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
 const SIDE_EFFECTS_CACHE_TMP_PREFIX: &str = ".tmp-side-effects-";
 const SIDE_EFFECTS_CACHE_TMP_STALE_AFTER: std::time::Duration =
     std::time::Duration::from_secs(60 * 60);
@@ -216,14 +233,7 @@ impl SideEffectsCacheEntry {
         sweep_stale_tmp_dirs(parent, SIDE_EFFECTS_CACHE_TMP_PREFIX);
         self.write_marker(package_dir)?;
 
-        let tmp = parent.join(format!(
-            "{SIDE_EFFECTS_CACHE_TMP_PREFIX}{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
+        let tmp = parent.join(working_dir_name(SIDE_EFFECTS_CACHE_TMP_PREFIX));
         if tmp.exists() {
             std::fs::remove_dir_all(&tmp)
                 .into_diagnostic()
@@ -477,14 +487,7 @@ fn restore_staging_dir(package_dir: &std::path::Path) -> miette::Result<std::pat
     std::fs::create_dir_all(parent)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
-    Ok(parent.join(format!(
-        "{SIDE_EFFECTS_CACHE_RESTORE_PREFIX}{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    )))
+    Ok(parent.join(working_dir_name(SIDE_EFFECTS_CACHE_RESTORE_PREFIX)))
 }
 
 /// Swaps the checked tree in for the package directory, keeping the old one
@@ -958,6 +961,21 @@ mod tests {
             SideEffectsCacheRestore::Miss
         ));
         assert!(!entry.path.exists(), "an unusable entry was left behind");
+    }
+
+    /// Two working directories asked for in the same clock tick must still be
+    /// two directories: a restore stages into one and moves the package aside
+    /// into the other.
+    #[test]
+    fn working_directories_do_not_collide_within_a_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = dir.path().join("node_modules").join("p");
+        std::fs::create_dir_all(&package).unwrap();
+
+        let first = restore_staging_dir(&package).unwrap();
+        let second = restore_staging_dir(&package).unwrap();
+
+        assert_ne!(first, second);
     }
 
     #[test]
