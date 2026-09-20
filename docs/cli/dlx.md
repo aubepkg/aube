@@ -28,11 +28,11 @@ Read the [workflow guide](/package-manager/scripts) for context.
 
 - **`[PARAMS]…`** — Command (binary) to run, followed by arguments to pass through to it.
 
-  The first positional is the command; the rest are forwarded verbatim to the binary. Without `--package`, a local `node_modules/.bin/<command>` wins when present; otherwise dlx installs into a throwaway project. Under `--shell-mode`/`-c` the positionals are joined and evaluated by `sh -c` instead of looked up directly.
+  The first positional is the command; the rest are forwarded verbatim to the binary. Without `--package`, a local `node_modules/.bin/<command>` wins when present; otherwise dlx installs into a throwaway project. Under `--shell-mode`/`-c` the positionals are joined into a single command line instead of being looked up directly.
 
 ## Flags
 
-- **`-c --shell-mode`** — Run the assembled command line through `sh -c`.
+- **`-c --shell-mode`** — Evaluate the assembled command line as a shell line.
 
   `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
 - **`-p --package <PACKAGE>`** — Install a specific package (repeatable).

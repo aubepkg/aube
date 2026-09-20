@@ -1008,9 +1008,9 @@ Defaults to the current project's `package.json` `name` field.
     }
 }
 cmd dlx help="Fetch a package into a throwaway environment and run its binary" {
-    flag "-c --shell-mode" help="Run the assembled command line through `sh -c`." {
+    flag "-c --shell-mode" help="Evaluate the assembled command line as a shell line." {
         long_help #"""
-Run the assembled command line through `sh -c`.
+Evaluate the assembled command line as a shell line.
 
 `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
 """#
@@ -1039,7 +1039,7 @@ Repeatable — pass once per package. The named package's `preinstall` / `instal
         long_help #"""
 Command (binary) to run, followed by arguments to pass through to it.
 
-The first positional is the command; the rest are forwarded verbatim to the binary. Without `--package`, a local `node_modules/.bin/<command>` wins when present; otherwise dlx installs into a throwaway project. Under `--shell-mode`/`-c` the positionals are joined and evaluated by `sh -c` instead of looked up directly.
+The first positional is the command; the rest are forwarded verbatim to the binary. Without `--package`, a local `node_modules/.bin/<command>` wins when present; otherwise dlx installs into a throwaway project. Under `--shell-mode`/`-c` the positionals are joined into a single command line instead of being looked up directly.
 """#
     }
 }

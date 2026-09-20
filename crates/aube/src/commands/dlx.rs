@@ -23,11 +23,11 @@ pub struct DlxArgs {
     /// verbatim to the binary. Without `--package`, a local
     /// `node_modules/.bin/<command>` wins when present; otherwise dlx
     /// installs into a throwaway project. Under `--shell-mode`/`-c` the
-    /// positionals are joined and evaluated by `sh -c` instead of
-    /// looked up directly.
+    /// positionals are joined into a single command line instead of
+    /// being looked up directly.
     #[usage(arg, double_dash = "automatic")]
     pub params: Vec<String>,
-    /// Run the assembled command line through `sh -c`.
+    /// Evaluate the assembled command line as a shell line.
     ///
     /// `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this
     /// for pipelines, redirects, or env expansion (`aube dlx -p cowsay
@@ -151,8 +151,8 @@ pub async fn run_in(
     };
 
     // Bin name is only used in the non-shell path. Under shell-mode the
-    // user assembles their own line and we run it through `sh -c`, so any
-    // bin lookup is the shell's job.
+    // user assembles their own line, so aube never looks a bin name up for
+    // it.
     // Resolve the runtime from the *user's* project up front — before the
     // local-bin fast path and before switching into the scratch dir. A dlx
     // scratch project has no version config, and the OnceCell context is
@@ -227,9 +227,9 @@ pub async fn run_in(
     // Run from the user's original cwd so the invoked tool sees their
     // project, not the scratch dir — this matches pnpm dlx.
     //
-    // Under `--shell-mode` we evaluate the joined positionals via `sh -c`
-    // with the scratch project's `node_modules/.bin` prepended to PATH,
-    // so pipelines/redirects work and the freshly installed bin
+    // Under `--shell-mode` we evaluate the joined positionals as a shell
+    // line with the scratch project's `node_modules/.bin` prepended to
+    // PATH, so pipelines/redirects work and the freshly installed bin
     // resolves first. Otherwise we exec the bin directly so its argv
     // round-trips bit-for-bit.
     let status = if shell_mode {
@@ -249,7 +249,22 @@ pub async fn run_in(
         let bin_dir = super::project_modules_dir(&project_dir).join(".bin");
         let path_dirs = crate::runtime::path_entries_with_project_bins(vec![bin_dir]);
         let new_path = aube_scripts::prepend_paths(&path_dirs);
-        let mut cmd = aube_scripts::spawn_shell(&line);
+        // A line that is one plain command runs without a shell at all.
+        // `sh -c <cmd>` does not exec in place — dash stays resident as the
+        // command's parent — and a non-interactive `sh` waiting on a
+        // foreground child does not relay signals to it, so
+        // `process_guard`'s forward-to-the-child hop would stop at that
+        // shell and never reach the tool (discussion #1059). Dropping the
+        // shell makes the tool the direct child, which is what the
+        // forwarding was written against. `direct_argv` resolves against
+        // `new_path` (not the process PATH, which is what `execvp` would
+        // search) and declines for anything a shell might actually be
+        // interpreting — pipes, redirects, expansions — so the
+        // `--shell-mode` contract is unchanged.
+        let mut cmd = match aube_scripts::direct::direct_argv(&line, &new_path) {
+            Some((program, arg0, argv)) => aube_scripts::spawn_program(&program, arg0, argv),
+            None => aube_scripts::spawn_shell(&line),
+        };
         crate::runtime::apply_child_env(&mut cmd);
         cmd.env("PATH", &new_path)
             .current_dir(&prev_cwd)
