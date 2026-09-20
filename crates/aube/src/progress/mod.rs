@@ -374,6 +374,13 @@ impl InstallProgress {
         // hidden cursor and the taskbar indicator the bar set. Armed for as
         // long as the bar owns the terminal, disarmed by `finish` / `Drop`.
         terminal_restore::arm();
+        // Nothing below is expected to panic — it is clx builder calls and
+        // allocations — but if it did there would be no `InstallProgress` for
+        // `finish` or `Drop` to release the hold through, and an embedding
+        // host that caught the unwind would keep aube's handlers for good.
+        // The guard covers that; `forget` defuses it once the value exists
+        // and owns the hold itself.
+        let hold = TerminalRestoreHold;
         let root = ProgressJobBuilder::new()
             .body(
                 "{{aube}}{{phase}}  {{progress_bar(flex=true)}} {{count}}{{bytes}}{{rate}}{{eta}}",
@@ -389,7 +396,7 @@ impl InstallProgress {
             .progress_total(TTY_BAR_SCALE)
             .on_done(ProgressJobDoneBehavior::Collapse)
             .start();
-        Self {
+        let display = Self {
             mode: Mode::Tty {
                 root,
                 finished: Arc::new(AtomicBool::new(false)),
@@ -410,7 +417,9 @@ impl InstallProgress {
             },
             unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
             owns_display: true,
-        }
+        };
+        std::mem::forget(hold);
+        display
     }
 
     fn new_ci() -> Self {
