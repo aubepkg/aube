@@ -19,16 +19,19 @@ teardown() {
 # `script` is the portable PTY wrapper, but the two implementations order
 # their arguments differently — util-linux takes `-c <command> <typescript>`,
 # BSD/macOS takes `<typescript> <command>` — so both run a command file.
+# Leaves the session's exit status in `PTY_STATUS`, which `-e` makes the
+# child's own — 128 + signal number when the child died of one.
 _run_script_in_pty() {
 	local out=$1 cmd=$2
 	chmod +x "$cmd"
+	PTY_STATUS=0
 	# Flush per write (`-f` / `-t 0`) so a test that reacts to what the PTY has
 	# printed so far isn't reading a stale buffer — macOS `script` otherwise
 	# flushes on a 30s timer.
 	if [ "$(uname -s)" = "Darwin" ]; then
-		script -q -t 0 "$out" "$cmd" >/dev/null 2>&1 || true
+		script -q -t 0 -e "$out" "$cmd" >/dev/null 2>&1 || PTY_STATUS=$?
 	else
-		script -qfec "$cmd" /dev/null >"$out" 2>&1 || true
+		script -qfec "$cmd" /dev/null >"$out" 2>&1 || PTY_STATUS=$?
 	fi
 }
 
@@ -190,15 +193,13 @@ _aube_in_pty() {
 	# below are about the signal path rather than about timing.
 	assert_file_exist resolving.marker
 
-	# The install must have died where the signal found it: had it survived and
-	# run to completion after the stall, it would have printed its summary.
-	run grep -q "installed" interrupted.pty
-	assert_failure
-
-	# ...and died *from the signal*, not from an error whose own reporting
-	# path would have restored the terminal on the way out.
-	run grep -q "ERR_AUBE" interrupted.pty
-	assert_failure
+	# 130 is SIGINT death (128 + 2), which `script -e` reports as the session's
+	# own status: the handler restores the terminal and then re-raises with the
+	# default disposition, so the install still dies of the signal rather than
+	# exiting. This is what separates a killed install from one that completed
+	# (0), errored out, or panicked — all of which would leave the terminal
+	# looking the same.
+	assert_equal "$PTY_STATUS" 130
 
 	_assert_cursor_restored interrupted.pty
 	_assert_osc_progress_cleared interrupted.pty
