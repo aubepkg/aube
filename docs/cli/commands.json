@@ -5468,7 +5468,7 @@
             "name": "shell-mode",
             "usage": "-c --shell-mode",
             "help": "Evaluate the assembled command line as a shell line.",
-            "help_long": "Evaluate the assembled command line as a shell line.\n\n`<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). A line needing none of those runs without a shell, so signals sent to aube reach the tool. Mirrors `pnpm dlx --shell-mode`.",
+            "help_long": "Evaluate the assembled command line as a shell line.\n\n`<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.",
             "help_first_line": "Evaluate the assembled command line as a shell line.",
             "short": [
               "c"

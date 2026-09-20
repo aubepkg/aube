@@ -34,7 +34,7 @@ Read the [workflow guide](/package-manager/scripts) for context.
 
 - **`-c --shell-mode`** — Evaluate the assembled command line as a shell line.
 
-  `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). A line needing none of those runs without a shell, so signals sent to aube reach the tool. Mirrors `pnpm dlx --shell-mode`.
+  `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this for pipelines, redirects, or env expansion (`aube dlx -p cowsay -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
 - **`-p --package <PACKAGE>`** — Install a specific package (repeatable).
 
   Overrides inferring from the command.
