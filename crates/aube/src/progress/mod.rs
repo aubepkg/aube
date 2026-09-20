@@ -285,6 +285,23 @@ impl Clone for InstallProgress {
     }
 }
 
+/// Holds the terminal-restore duties for one TTY display and hands them back
+/// when it drops.
+///
+/// The hand-back has to survive an unwind, not just a normal return: the
+/// repaint and clx teardown that precede it can panic, and `aube-ffi` /
+/// `aube-node` build with `panic = "unwind"` and catch at their boundary, so
+/// the host keeps running. Releasing from a `Drop` means such a host doesn't
+/// keep aube's signal handlers — or a stuck holder count — for the rest of
+/// its life.
+struct TerminalRestoreHold;
+
+impl Drop for TerminalRestoreHold {
+    fn drop(&mut self) {
+        terminal_restore::disarm();
+    }
+}
+
 impl InstallProgress {
     /// Construct a new install progress UI, or `None` if progress should be
     /// disabled (clx text mode — i.e. `--silent`, `-v`, or a line-oriented
@@ -1031,6 +1048,7 @@ impl InstallProgress {
                 if finished.swap(true, Ordering::Relaxed) {
                     return;
                 }
+                let _hold = TerminalRestoreHold;
                 // Promote to the "done" phase and repaint at 100%
                 // before retiring the display. The mid-work 95% cap
                 // is about not lying while linking is in flight; at
@@ -1053,7 +1071,6 @@ impl InstallProgress {
                     TtyFinishBehavior::Preserve => clx::progress::stop(),
                     TtyFinishBehavior::Clear => clx::progress::stop_clear(),
                 }
-                terminal_restore::disarm();
             }
             Mode::Ci(s) => s.stop(print_ci_summary),
             Mode::Events(s) => {
@@ -1229,9 +1246,9 @@ impl Drop for InstallProgress {
         match &self.mode {
             Mode::Tty { root, finished, .. } => {
                 if self.owns_display && !finished.load(Ordering::Relaxed) {
+                    let _hold = TerminalRestoreHold;
                     root.set_status(ProgressStatus::Done);
                     clx::progress::stop_clear();
-                    terminal_restore::disarm();
                 }
             }
             Mode::Ci(s) => {
