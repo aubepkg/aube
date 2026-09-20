@@ -19,6 +19,19 @@ teardown() {
 # `script` is the portable PTY wrapper, but the two implementations order
 # their arguments differently — util-linux takes `-c <command> <typescript>`,
 # BSD/macOS takes `<typescript> <command>` — so both run a command file.
+_run_script_in_pty() {
+	local out=$1 cmd=$2
+	chmod +x "$cmd"
+	# Flush per write (`-f` / `-t 0`) so a test that reacts to what the PTY has
+	# printed so far isn't reading a stale buffer — macOS `script` otherwise
+	# flushes on a 30s timer.
+	if [ "$(uname -s)" = "Darwin" ]; then
+		script -q -t 0 "$out" "$cmd" >/dev/null 2>&1 || true
+	else
+		script -qfec "$cmd" /dev/null >"$out" 2>&1 || true
+	fi
+}
+
 _run_in_pty() {
 	local out=$1
 	shift
@@ -26,12 +39,7 @@ _run_in_pty() {
 		#!/usr/bin/env bash
 		$*
 	SH
-	chmod +x pty-cmd.sh
-	if [ "$(uname -s)" = "Darwin" ]; then
-		script -q "$out" ./pty-cmd.sh >/dev/null 2>&1 || true
-	else
-		script -qec ./pty-cmd.sh /dev/null >"$out" 2>&1 || true
-	fi
+	_run_script_in_pty "$out" ./pty-cmd.sh
 }
 
 # Fails when the last cursor escape in the captured PTY stream is a hide
@@ -119,4 +127,61 @@ _aube_in_pty() {
 	assert_dir_exist node_modules/is-odd
 	_assert_cursor_restored ok.pty
 	_assert_osc_progress_cleared ok.pty
+}
+
+@test "a termination signal during an install restores the cursor" {
+	cat >package.json <<-'JSON'
+		{
+		  "name": "cursor-probe",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "3.0.1"
+		  }
+		}
+	JSON
+
+	# Hold resolution open so the signal lands while the bar owns the
+	# terminal, instead of racing a local-registry install that finishes in
+	# milliseconds. `readPackage` runs inside resolve, and `Atomics.wait`
+	# blocks the hook host without spawning anything.
+	cat >.pnpmfile.cjs <<-'EOF'
+		function readPackage(pkg) {
+		  if (!globalThis.__aubeStalled) {
+		    globalThis.__aubeStalled = true;
+		    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000);
+		  }
+		  return pkg;
+		}
+		module.exports = { hooks: { readPackage } };
+	EOF
+
+	# `set -m` puts the backgrounded install in its own process group, so the
+	# shell doesn't hand it SIGINT already ignored — that reproduces the
+	# disposition a Ctrl-C at an interactive prompt arrives with, rather than
+	# the `nohup`-style one aube deliberately leaves alone.
+	cat >pty-cmd.sh <<-SH
+		#!/usr/bin/env bash
+		set -m
+		env -u CI -u CI_NAME -u GITHUB_ACTION -u GITLAB_CI -u BUILDKITE \\
+			TERM_PROGRAM=iTerm.app aube install &
+		pid=\$!
+		(
+			for _ in \$(seq 1 600); do
+				grep -aq resolving "$PWD/interrupted.pty" 2>/dev/null && break
+				sleep 0.05
+			done
+			kill -INT "\$pid"
+		) &
+		wait "\$pid"
+		echo "AUBE_EXIT=\$?"
+	SH
+	_run_script_in_pty interrupted.pty ./pty-cmd.sh
+
+	# 130 is SIGINT death (128 + 2): the handler restores the terminal and then
+	# re-raises with the default disposition, so the shell still sees a signal
+	# death rather than a plain exit. A 0 here would mean the install outran
+	# the signal and the test proved nothing.
+	assert grep -q "AUBE_EXIT=130" interrupted.pty
+	_assert_cursor_restored interrupted.pty
+	_assert_osc_progress_cleared interrupted.pty
 }
