@@ -10,6 +10,11 @@ const SIDE_EFFECTS_CACHE_MARKER: &str = ".aube-side-effects-cache";
 /// symlink and unlinked files by age. Restoring from a half-emptied entry would
 /// install a package missing files and record it as built, so an entry is
 /// checked against this listing before it is used.
+/// Names the cache root. Entries carry their payload and listing in a shape
+/// `v1` entries do not have, and an older aube keeps reading `v1`, so the two
+/// live side by side rather than one misreading the other. A cache pre-warmed
+/// by an older aube is not read after an upgrade and has to be filled again.
+const SIDE_EFFECTS_CACHE_DIR: &str = "side-effects-v2";
 const SIDE_EFFECTS_CACHE_ENTRY_MANIFEST: &str = ".aube-side-effects-entry";
 /// Holds the built package inside an entry, so nothing a package ships can
 /// collide with the listing that sits beside it.
@@ -116,8 +121,12 @@ impl SideEffectsCacheEntry {
             );
             return Ok(SideEffectsCacheRestore::AlreadyApplied);
         }
+        if !self.path.is_dir() {
+            return Ok(SideEffectsCacheRestore::Miss);
+        }
         let payload = self.path.join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD);
         if !payload.is_dir() {
+            self.discard("no payload");
             return Ok(SideEffectsCacheRestore::Miss);
         }
         // An entry published before entries carried a listing, or one whose
@@ -303,7 +312,7 @@ pub(crate) fn side_effects_cache_root(store: &aube_store::Store) -> std::path::P
     virtual_store_root
         .parent()
         .unwrap_or_else(|| store.root())
-        .join("side-effects-v1")
+        .join(SIDE_EFFECTS_CACHE_DIR)
 }
 
 fn side_effects_marker_path(
@@ -713,7 +722,7 @@ mod tests {
 
         assert_eq!(
             side_effects_cache_root(&store),
-            cache_dir.join("side-effects-v1")
+            cache_dir.join(SIDE_EFFECTS_CACHE_DIR)
         );
     }
 
@@ -915,6 +924,40 @@ mod tests {
             std::fs::read_to_string(pkg.join(SIDE_EFFECTS_CACHE_ENTRY_MANIFEST)).unwrap(),
             "package owned"
         );
+    }
+
+    /// An entry an older aube wrote lives under the previous cache root, so it
+    /// is never read as a v2 entry rather than misread as a damaged one.
+    #[test]
+    fn an_older_cache_root_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache");
+        let store = aube_store::Store::with_dirs(dir.path().join("store/files"), cache_dir.clone())
+            .with_virtual_store_dir(cache_dir.join("virtual-store/v1"));
+        let previous = cache_dir.join("side-effects-v1");
+        std::fs::create_dir_all(previous.join("p@1.0.0")).unwrap();
+
+        let root = side_effects_cache_root(&store);
+
+        assert_ne!(root, previous);
+        assert!(previous.join("p@1.0.0").exists());
+    }
+
+    /// Within this layout, an entry with no payload is damaged: a cleaner took
+    /// it. It is dropped like any other entry that does not check out.
+    #[test]
+    fn an_entry_without_a_payload_is_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("pkg");
+        let cache = dir.path().join("cache");
+        let entry = published_entry(&cache, &pkg);
+        std::fs::remove_dir_all(entry.path.join(SIDE_EFFECTS_CACHE_ENTRY_PAYLOAD)).unwrap();
+
+        assert!(matches!(
+            entry.restore_if_available(&pkg).unwrap(),
+            SideEffectsCacheRestore::Miss
+        ));
+        assert!(!entry.path.exists(), "an unusable entry was left behind");
     }
 
     #[test]

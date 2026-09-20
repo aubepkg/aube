@@ -158,9 +158,9 @@ JSON
 	# Force the normal resolve/finalize path while retaining the built
 	# package. The installer-owned marker verifies that build output remains
 	# intact even though the reusable snapshot was swept.
-	test -d "$XDG_CACHE_HOME/aube/side-effects-v1"
-	rm -rf "$XDG_CACHE_HOME/aube/side-effects-v1"
-	test ! -e "$XDG_CACHE_HOME/aube/side-effects-v1"
+	test -d "$XDG_CACHE_HOME/aube/side-effects-v2"
+	rm -rf "$XDG_CACHE_HOME/aube/side-effects-v2"
+	test ! -e "$XDG_CACHE_HOME/aube/side-effects-v2"
 	rm aube-lock.yaml
 	run aube install
 	assert_success

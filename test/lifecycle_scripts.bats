@@ -371,7 +371,7 @@ JSON
 	run aube install --dangerously-allow-all-builds
 	assert_success
 	assert_file_exists node_modules/dep-with-build/built.marker
-	[ ! -e node_modules/side-effects-v1 ]
+	[ ! -e node_modules/side-effects-v2 ]
 }
 
 @test "aube install: failed dep build retries on next install (rollback contract)" {
