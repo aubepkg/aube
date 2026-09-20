@@ -49,11 +49,35 @@ _assert_cursor_restored() {
 	' "$1"
 }
 
+# Fails when the stream ends with the OSC 9;4 taskbar indicator still set to a
+# live state, i.e. the last sequence isn't `ESC ] 9 ; 4 ; 0 ; 0` (clear). The
+# indicator is what keeps an iTerm2/Ghostty/VS Code tab spinning after aube is
+# gone.
+_assert_osc_progress_cleared() {
+	node -e '
+		const fs = require("fs");
+		const out = fs.readFileSync(process.argv[1], "latin1");
+		const seqs = out.match(/\x1b\]9;4;\d+;\d+/g);
+		if (!seqs) {
+			console.error("no OSC 9;4 sequences: the indicator was never driven");
+			process.exit(1);
+		}
+		const last = seqs[seqs.length - 1];
+		if (!last.endsWith(";0;0")) {
+			console.error(`terminal progress left active: last sequence ${JSON.stringify(last)}`);
+			process.exit(1);
+		}
+	' "$1"
+}
+
 # aube renders the append-only reporter instead of the animated bar when it
 # detects CI, and GitHub Actions / Buildkite set these even though the bats
 # shard runs on a PTY here. `CI` itself is already unset by _common_setup.
+# `TERM_PROGRAM` opts the run into the OSC 9;4 taskbar indicator, which clx
+# only drives for terminals known to support it.
 _aube_in_pty() {
-	_run_in_pty "$1" env -u CI -u CI_NAME -u GITHUB_ACTION -u GITLAB_CI -u BUILDKITE aube "${@:2}"
+	_run_in_pty "$1" env -u CI -u CI_NAME -u GITHUB_ACTION -u GITLAB_CI -u BUILDKITE \
+		TERM_PROGRAM=iTerm.app aube "${@:2}"
 }
 
 @test "an install that fails during resolution restores the cursor" {
@@ -74,6 +98,7 @@ _aube_in_pty() {
 	# report would erase part of it.
 	assert grep -q "aube-no-such-package-1557" failed.pty
 	_assert_cursor_restored failed.pty
+	_assert_osc_progress_cleared failed.pty
 }
 
 @test "a successful install restores the cursor" {
@@ -91,4 +116,5 @@ _aube_in_pty() {
 
 	assert_dir_exist node_modules/is-odd
 	_assert_cursor_restored ok.pty
+	_assert_osc_progress_cleared ok.pty
 }
