@@ -140,13 +140,12 @@ _aube_in_pty() {
 		}
 	JSON
 
-	# Hold resolution open so the signal lands while the bar owns the
-	# terminal, instead of racing a local-registry install that finishes in
-	# milliseconds. `readPackage` runs inside resolve, and `Atomics.wait`
-	# blocks the hook host without spawning anything. The marker it drops
-	# first is what the signal is timed off: reading it back is a plain file
-	# check, where scraping the PTY capture would depend on how promptly each
-	# platform's `script` flushes.
+	# Hold resolution open so the signal lands while the bar owns the terminal,
+	# instead of racing a local-registry install that finishes in milliseconds.
+	# `readPackage` runs inside resolve, and `Atomics.wait` blocks the hook host
+	# without spawning anything. The marker it drops first is the cue to signal:
+	# a plain file, where scraping the PTY capture would depend on how promptly
+	# each platform's `script` flushes its typescript.
 	cat >.pnpmfile.cjs <<-EOF
 		const fs = require("fs");
 		function readPackage(pkg) {
@@ -160,37 +159,47 @@ _aube_in_pty() {
 		module.exports = { hooks: { readPackage } };
 	EOF
 
-	# `set -m` puts the backgrounded install in its own process group, so the
-	# shell doesn't hand it SIGINT already ignored — that reproduces the
-	# disposition a Ctrl-C at an interactive prompt arrives with, rather than
-	# the `nohup`-style one aube deliberately leaves alone.
+	# `exec` hands the wrapper's pid to aube itself, so the recorded pid is the
+	# install's and the signal can't land on a shell instead. Running it in the
+	# foreground also keeps its SIGINT disposition the one a Ctrl-C at a prompt
+	# finds: a shell backgrounding a job without job control sets SIGINT to
+	# SIG_IGN in the child, which aube deliberately leaves alone, and which
+	# shells differ on.
 	cat >pty-cmd.sh <<-SH
 		#!/usr/bin/env bash
-		set -m
-		env -u CI -u CI_NAME -u GITHUB_ACTION -u GITLAB_CI -u BUILDKITE \\
-			TERM_PROGRAM=iTerm.app aube install &
-		pid=\$!
-		(
-			for _ in \$(seq 1 600); do
-				[ -f "$PWD/resolving.marker" ] && break
-				sleep 0.05
-			done
-			kill -INT "\$pid"
-		) &
-		wait "\$pid"
-		echo "AUBE_EXIT=\$?"
+		echo \$\$ >"$PWD/aube.pid"
+		exec env -u CI -u CI_NAME -u GITHUB_ACTION -u GITLAB_CI -u BUILDKITE \\
+			TERM_PROGRAM=iTerm.app aube install
 	SH
-	_run_script_in_pty interrupted.pty ./pty-cmd.sh
 
-	# The marker proves the hook actually held resolution open, so a missing
-	# 130 below means the signal path failed rather than the timing.
+	# Signal once resolution is parked, from outside the PTY session.
+	(
+		for _ in $(seq 1 600); do
+			if [ -s resolving.marker ] && [ -s aube.pid ]; then
+				break
+			fi
+			sleep 0.05
+		done
+		kill -INT "$(cat aube.pid)" 2>/dev/null || true
+	) &
+	local watcher=$!
+	_run_script_in_pty interrupted.pty ./pty-cmd.sh
+	kill "$watcher" 2>/dev/null || true
+
+	# The marker proves the hook actually parked resolution, so the assertions
+	# below are about the signal path rather than about timing.
 	assert_file_exist resolving.marker
 
-	# 130 is SIGINT death (128 + 2): the handler restores the terminal and then
-	# re-raises with the default disposition, so the shell still sees a signal
-	# death rather than a plain exit. A 0 here would mean the install outran
-	# the signal and the test proved nothing.
-	assert grep -q "AUBE_EXIT=130" interrupted.pty
+	# The install must have died where the signal found it: had it survived and
+	# run to completion after the stall, it would have printed its summary.
+	run grep -q "installed" interrupted.pty
+	assert_failure
+
+	# ...and died *from the signal*, not from an error whose own reporting
+	# path would have restored the terminal on the way out.
+	run grep -q "ERR_AUBE" interrupted.pty
+	assert_failure
+
 	_assert_cursor_restored interrupted.pty
 	_assert_osc_progress_cleared interrupted.pty
 }
