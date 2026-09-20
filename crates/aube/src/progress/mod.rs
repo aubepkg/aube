@@ -1022,6 +1022,15 @@ impl InstallProgress {
                 phase_num,
                 ..
             } => {
+                // The doc promise of idempotence has to hold here, not just
+                // for the repaint: `disarm` gives up one hold on the
+                // terminal-restore handlers, and a second `finish` would give
+                // up a hold this display never had — retiring the handlers
+                // out from under a concurrent embedded install whose bar is
+                // still painting.
+                if finished.swap(true, Ordering::Relaxed) {
+                    return;
+                }
                 // Promote to the "done" phase and repaint at 100%
                 // before retiring the display. The mid-work 95% cap
                 // is about not lying while linking is in flight; at
@@ -1040,7 +1049,6 @@ impl InstallProgress {
                     phase_num,
                 );
                 root.set_status(ProgressStatus::Done);
-                finished.store(true, Ordering::Relaxed);
                 match tty_behavior {
                     TtyFinishBehavior::Preserve => clx::progress::stop(),
                     TtyFinishBehavior::Clear => clx::progress::stop_clear(),
