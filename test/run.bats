@@ -454,6 +454,9 @@ JSON
 	assert_output --partial "npm_command=run-script"
 	# npm_execpath points back at the aube binary that drove the script.
 	assert_output --regexp "npm_execpath=[^[:space:]]*aube"
+	# Specifically the binary, never the shim an embedding host gets — the
+	# shim is also named `aube`, so the regex above alone would not notice.
+	refute_output --partial "pm-exec"
 	# npm_node_execpath / NODE resolve to a node binary (non-empty).
 	assert_output --regexp "npm_node_execpath=[^[:space:]]+"
 	# Absolute path to the package.json being run.

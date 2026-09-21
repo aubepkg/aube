@@ -227,12 +227,15 @@ pub fn embedder() -> &'static Embedder {
 /// binary (`mise`, …), whose CLI is its own — so naming it as "the package
 /// manager running here" sends callers into the wrong command surface.
 ///
-/// A host that registers [`AUBE`] itself is treated as standalone, which is the
-/// honest reading: it asked for aube's identity in full.
+/// Identity is compared by [`Embedder::name`], not by address: [`AUBE`] is a
+/// `const`, so `&AUBE` in the binary crate that registers it and `&AUBE` here
+/// are separate values that a non-LTO build places at different addresses —
+/// a pointer comparison would report standalone aube as a guest. A host that
+/// registers a profile calling itself `aube` is likewise treated as
+/// standalone, which is the honest reading: it asked for aube's identity in
+/// full.
 pub fn is_embedded() -> bool {
-    ACTIVE
-        .get()
-        .is_some_and(|active| !std::ptr::eq(*active, &AUBE))
+    ACTIVE.get().is_some_and(|active| active.name != AUBE.name)
 }
 
 /// The active tool's program name for *user-facing* output — the proper noun a
