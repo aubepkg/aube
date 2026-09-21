@@ -38,6 +38,8 @@
 use miette::{IntoDiagnostic, WrapErr, miette};
 use std::path::{Path, PathBuf};
 
+use crate::commands::shim_file::write_if_stale;
+
 /// Major-version pin. Bumping the bucket invalidates the cache and
 /// triggers a re-bootstrap on the next install.
 const BUCKET: &str = "v12";
@@ -260,80 +262,18 @@ if not defined AUBE_REAL_NODE_GYP exit /b 1
 "%AUBE_REAL_NODE_GYP%" %*
 "#;
 
-/// Write one shim, skipping the write when the file on disk already
-/// matches — see [`write_lazy_shims`] for why that matters.
-///
-/// The comparison reads through a single open handle and takes the mode
-/// from that same handle's `fstat`, so a hit costs open + fstat + read +
-/// close and touches nothing. A miss (absent, stale content, or an exec
-/// bit that got stripped) falls through to the original
-/// atomic-write-then-chmod, which is also what repairs the file.
-fn write_shim_if_stale(path: &Path, contents: &str) -> miette::Result<()> {
-    if shim_is_current(path, contents) {
-        return Ok(());
-    }
-    // `atomic_write` creates the parent dir, so the fast path above can
-    // skip `create_dir_all` entirely: a matching file proves the dir.
-    aube_util::fs_atomic::atomic_write(path, contents.as_bytes()).into_diagnostic()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(SHIM_MODE))
-            .into_diagnostic()?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-const SHIM_MODE: u32 = 0o755;
-
-/// True when `path` already holds exactly `contents` and (on unix) is
-/// still executable. Any error — missing file, permission trouble,
-/// unreadable — reports "not current" so the caller rewrites it.
-fn shim_is_current(path: &Path, contents: &str) -> bool {
-    use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(meta) = f.metadata() else {
-        return false;
-    };
-    if !meta.is_file() || meta.len() != contents.len() as u64 {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // Compare only the permission bits; `st_mode` also carries the
-        // file type, which `is_file` above has already vetted.
-        if meta.permissions().mode() & 0o777 != SHIM_MODE {
-            return false;
-        }
-    }
-    let mut on_disk = Vec::with_capacity(contents.len());
-    f.read_to_end(&mut on_disk).is_ok() && on_disk == contents.as_bytes()
-}
-
 /// Materialize the lazy shims into `shim_dir`.
 ///
 /// Called on *every* `aube run` (twice — once for `PATH`, once for
 /// `npm_config_node_gyp`) and once per dependency during install
-/// lifecycle scripts, so the steady state has to be cheap. Each shim is
-/// only rewritten when its on-disk copy differs, which keeps the common
-/// case to a couple of small reads instead of a
-/// create-dir + write-temp + rename + chmod per file per invocation.
-/// Content-addressed rather than pinned, so a shipped shim fix still
-/// self-heals on the first run of the new binary — the bytes change, the
-/// comparison misses, and the file is rewritten.
-///
-/// Not writing unless the content changed also stops concurrent
-/// lifecycle jobs from renaming over each other's shims, and stops the
-/// interrupted-write temp files from accumulating in the cache dir.
+/// lifecycle scripts, so the steady state has to be cheap.
+/// [`write_if_stale`] keeps the common case to a couple of small reads —
+/// see its module for why that beats an unconditional rewrite.
 fn write_lazy_shims(shim_dir: &Path) -> miette::Result<()> {
-    write_shim_if_stale(&shim_dir.join("node-gyp"), SH_SHIM)?;
-    write_shim_if_stale(&shim_dir.join("node-gyp.js"), JS_SHIM)?;
+    write_if_stale(&shim_dir.join("node-gyp"), SH_SHIM)?;
+    write_if_stale(&shim_dir.join("node-gyp.js"), JS_SHIM)?;
     #[cfg(windows)]
-    write_shim_if_stale(&shim_dir.join("node-gyp.cmd"), CMD_SHIM)?;
+    write_if_stale(&shim_dir.join("node-gyp.cmd"), CMD_SHIM)?;
     Ok(())
 }
 
@@ -392,6 +332,7 @@ fn write_bootstrap_project(tool_dir: &Path, project_npmrc: &Path) -> miette::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::shim_file;
 
     fn tempdir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -433,8 +374,8 @@ mod tests {
             std::fs::metadata(&sh).unwrap().modified().unwrap(),
             std::fs::metadata(&js).unwrap().modified().unwrap(),
         );
-        assert!(shim_is_current(&sh, SH_SHIM));
-        assert!(shim_is_current(&js, JS_SHIM));
+        assert!(shim_file::is_current(&sh, SH_SHIM));
+        assert!(shim_file::is_current(&js, JS_SHIM));
 
         write_lazy_shims(&dir).unwrap();
 
@@ -461,7 +402,7 @@ mod tests {
         write_lazy_shims(&dir).unwrap();
         let sh = dir.join("node-gyp");
         std::fs::write(&sh, "#!/usr/bin/env sh\necho from an older aube\n").unwrap();
-        assert!(!shim_is_current(&sh, SH_SHIM));
+        assert!(!shim_file::is_current(&sh, SH_SHIM));
 
         write_lazy_shims(&dir).unwrap();
 
@@ -480,7 +421,7 @@ mod tests {
         *drifted.last_mut().unwrap() = b' ';
         std::fs::write(&sh, &drifted).unwrap();
         assert_eq!(drifted.len(), SH_SHIM.len());
-        assert!(!shim_is_current(&sh, SH_SHIM));
+        assert!(!shim_file::is_current(&sh, SH_SHIM));
 
         write_lazy_shims(&dir).unwrap();
 
@@ -491,7 +432,7 @@ mod tests {
     #[test]
     fn missing_file_is_not_current() {
         let dir = tempdir();
-        assert!(!shim_is_current(&dir.join("nope"), SH_SHIM));
+        assert!(!shim_file::is_current(&dir.join("nope"), SH_SHIM));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -506,16 +447,16 @@ mod tests {
         let sh = dir.join("node-gyp");
         assert_eq!(
             std::fs::metadata(&sh).unwrap().permissions().mode() & 0o777,
-            SHIM_MODE
+            shim_file::SHIM_MODE
         );
         std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(!shim_is_current(&sh, SH_SHIM));
+        assert!(!shim_file::is_current(&sh, SH_SHIM));
 
         write_lazy_shims(&dir).unwrap();
 
         assert_eq!(
             std::fs::metadata(&sh).unwrap().permissions().mode() & 0o777,
-            SHIM_MODE
+            shim_file::SHIM_MODE
         );
         assert_eq!(std::fs::read_to_string(&sh).unwrap(), SH_SHIM);
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
@@ -528,7 +469,7 @@ mod tests {
         let dir = tempdir();
         let path = dir.join("node-gyp");
         std::fs::create_dir_all(&path).unwrap();
-        assert!(!shim_is_current(&path, SH_SHIM));
+        assert!(!shim_file::is_current(&path, SH_SHIM));
         let _ = std::fs::remove_dir_all(dir);
     }
 

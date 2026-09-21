@@ -83,9 +83,11 @@ mod dep_filter;
 mod fs_helpers;
 mod manifest_io;
 mod package_spec;
+pub(crate) mod pm_execpath;
 mod project_lock;
 mod script_settings;
 mod settings_context;
+pub(crate) mod shim_file;
 mod workspace_helpers;
 
 pub(crate) use auto_install::{

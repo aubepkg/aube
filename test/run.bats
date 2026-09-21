@@ -21,6 +21,27 @@ teardown() {
 	assert_output --partial "hello from aube!"
 }
 
+@test "the embedding-host trampoline runs a package script" {
+	# A package script that re-invokes its package manager
+	# (`${npm_execpath} run …`) reaches an embedding host's executable,
+	# which forwards the argv here behind this private token. Dropping the
+	# token is what makes the forwarded command an ordinary aube command.
+	_setup_basic_fixture
+	aube install
+	run aube __aube-cli run hello
+	assert_success
+	assert_output --partial "hello from aube!"
+}
+
+@test "the trampoline token is only consumed as the first argument" {
+	# Anywhere else it is just a word — a script named after it is still
+	# looked up rather than silently stripped.
+	_setup_basic_fixture
+	aube install
+	run aube run __aube-cli
+	assert_failure
+}
+
 @test "aube run test executes node script" {
 	_setup_basic_fixture
 	aube install

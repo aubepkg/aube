@@ -43,6 +43,13 @@ pub trait ScriptOutputReporter: Send + Sync + 'static {
     fn report(&self, stream: ScriptOutputStream, line: String);
 }
 
+/// Env var naming the executable that can dispatch aube's CLI — the running
+/// program, whether that is aube itself or a host that embedded it. Aube's
+/// `npm_execpath` shim reads it rather than baking a path into the cached
+/// file, so a host that moves or upgrades keeps working. Set on every
+/// lifecycle script, exactly like `AUBE_NODE_GYP_EXE`.
+pub const CLI_EXE_ENV: &str = "AUBE_CLI_EXE";
+
 /// Settings that affect every package-script shell aube spawns.
 #[derive(Debug, Clone, Default)]
 pub struct ScriptSettings {
@@ -161,6 +168,9 @@ struct ScriptSettingsState {
     settings: ScriptSettings,
     node_bin_dir_precedes_project_bins: bool,
     output_reporter: Option<std::sync::Arc<dyn ScriptOutputReporter>>,
+    /// The npm-compatible executable exported as `npm_execpath`. See
+    /// [`set_pm_execpath`].
+    pm_execpath: Option<PathBuf>,
 }
 
 static SCRIPT_SETTINGS: std::sync::OnceLock<std::sync::RwLock<ScriptSettingsState>> =
@@ -257,6 +267,30 @@ pub fn set_output_reporter(reporter: Option<std::sync::Arc<dyn ScriptOutputRepor
     match script_settings_lock().write() {
         Ok(mut guard) => guard.output_reporter = reporter,
         Err(poisoned) => poisoned.into_inner().output_reporter = reporter,
+    }
+}
+
+/// Register the npm-compatible executable exported as `npm_execpath` — what
+/// a lifecycle script re-invokes to reach *this* package manager
+/// (`${npm_execpath} run build`).
+///
+/// Unset (the default) names aube's own binary when aube is the running
+/// program, and leaves `npm_execpath` unset under an embedder: the running
+/// executable is then the host's, and its CLI is not aube's. Pass a shim that
+/// re-enters aube to restore the variable there.
+pub fn set_pm_execpath(path: Option<PathBuf>) {
+    if INSTALL_SCRIPT_SETTINGS
+        .try_with(|slot| match slot.write() {
+            Ok(mut guard) => guard.pm_execpath = path.clone(),
+            Err(poisoned) => poisoned.into_inner().pm_execpath = path.clone(),
+        })
+        .is_ok()
+    {
+        return;
+    }
+    match script_settings_lock().write() {
+        Ok(mut guard) => guard.pm_execpath = path,
+        Err(poisoned) => poisoned.into_inner().pm_execpath = path,
     }
 }
 
@@ -772,12 +806,30 @@ fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &Scrip
     cmd.env("npm_config_user_agent", aube_user_agent());
     // `npm_execpath`: the package-manager binary that drove the script.
     // Tools (and pnpm's own `$npm_execpath run …` postinstalls) read it
-    // to re-invoke the *same* PM. `current_exe()` is the aube binary;
-    // ignore the rare resolution failure rather than abort the script.
-    // Reused below for `AUBE_NODE_GYP_EXE` (same binary), so resolve once.
+    // to re-invoke the *same* PM. Standalone, that is `current_exe()` —
+    // the aube binary; ignore the rare resolution failure rather than
+    // abort the script. Embedded, `current_exe()` is the *host* binary,
+    // whose CLI is its own, so a `${npm_execpath} run …` would land in
+    // the host's command surface: the caller supplies a shim that
+    // re-enters aube instead, and `None` leaves the variable unset (no
+    // reachable aube CLI) rather than naming a program that would
+    // misparse the command. `current_exe()` is still resolved here for
+    // `AUBE_CLI_EXE` / `AUBE_NODE_GYP_EXE`, so resolve it once.
     let aube_exe = std::env::current_exe().ok();
+    let pm_execpath = script_settings_state().pm_execpath.or_else(|| {
+        (!aube_util::is_embedded())
+            .then(|| aube_exe.clone())
+            .flatten()
+    });
+    if let Some(execpath) = pm_execpath.as_deref() {
+        cmd.env("npm_execpath", execpath);
+    }
+    // `AUBE_CLI_EXE`: the executable that dispatches aube's CLI behind the
+    // private `__aube-cli` argv token — the running program, whether that
+    // is aube itself or an embedding host. The `npm_execpath` shim above
+    // reads it instead of baking a path into the cached file.
     if let Some(exe) = aube_exe.as_deref() {
-        cmd.env("npm_execpath", exe);
+        cmd.env(CLI_EXE_ENV, exe);
     }
     // `npm_node_execpath` / `NODE`: the node binaries scripts should use
     // — the switched runtime's node, or the ambient `node` on PATH. `NODE`
@@ -1967,6 +2019,46 @@ mod jail_tests {
         // Node ignores the proxy vars unless this flag is set (Node 24+);
         // it must be the plain env var, not `--use-env-proxy`.
         assert_eq!(env("NODE_USE_ENV_PROXY").as_deref(), Some("1"));
+    }
+
+    /// Standalone: the running binary *is* the package manager, so a
+    /// script's `${npm_execpath} run …` reaches aube's own CLI.
+    #[test]
+    fn npm_execpath_defaults_to_the_running_binary() {
+        let env = proxy_env(ScriptSettings::default());
+        assert!(!aube_util::is_embedded());
+        assert_eq!(
+            env("npm_execpath").map(PathBuf::from),
+            std::env::current_exe().ok()
+        );
+    }
+
+    /// Embedded, the caller hands over a shim that re-enters aube through
+    /// the host — the host's own binary would parse `run verify-build` as
+    /// one of *its* commands. Set inside an install scope, which is also
+    /// what keeps it out of the sibling tests above.
+    #[tokio::test]
+    async fn pm_execpath_overrides_the_running_binary() {
+        scope(async {
+            set_pm_execpath(Some(PathBuf::from("/cache/aube/tools/pm-exec/aube")));
+            let env = proxy_env(ScriptSettings::default());
+            assert_eq!(
+                env("npm_execpath").as_deref(),
+                Some("/cache/aube/tools/pm-exec/aube")
+            );
+        })
+        .await;
+    }
+
+    /// The shim resolves the dispatching executable from the environment
+    /// rather than baking it in, so every script has to carry it.
+    #[test]
+    fn cli_exe_is_stamped_for_the_shim() {
+        let env = proxy_env(ScriptSettings::default());
+        assert_eq!(
+            env(CLI_EXE_ENV).map(PathBuf::from),
+            std::env::current_exe().ok()
+        );
     }
 
     #[test]
