@@ -791,6 +791,21 @@ fn node_arch() -> &'static str {
     }
 }
 
+/// Resolve `npm_execpath` from the three inputs that decide it: the
+/// registered override ([`set_pm_execpath`]), whether a host embeds aube, and
+/// this process's own executable.
+///
+/// A host's override always wins. Failing that, only a standalone aube can
+/// name itself — embedded, the running executable answers to the host's CLI,
+/// so there is nothing to name and the variable stays unset.
+fn pm_execpath_for(
+    registered: Option<PathBuf>,
+    embedded: bool,
+    aube_exe: Option<PathBuf>,
+) -> Option<PathBuf> {
+    registered.or_else(|| (!embedded).then_some(aube_exe).flatten())
+}
+
 fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &ScriptSettings) {
     // Strip credentials that aube itself owns before we spawn any
     // lifecycle script. AUBE_AUTH_TOKEN is aube's own registry login
@@ -815,12 +830,19 @@ fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &Scrip
     // reachable aube CLI) rather than naming a program that would
     // misparse the command. `current_exe()` is still resolved here for
     // `AUBE_CLI_EXE` / `AUBE_NODE_GYP_EXE`, so resolve it once.
+    //
+    // The removal is unconditional and comes first: a non-jailed spawn
+    // inherits this process's environment, so an aube running inside
+    // someone else's npm lifecycle would otherwise pass that outer
+    // manager's `npm_execpath` straight through to its own scripts — a
+    // stale path aube never chose, exactly where "unset" is the answer.
     let aube_exe = std::env::current_exe().ok();
-    let pm_execpath = script_settings_state().pm_execpath.or_else(|| {
-        (!aube_util::is_embedded())
-            .then(|| aube_exe.clone())
-            .flatten()
-    });
+    let pm_execpath = pm_execpath_for(
+        script_settings_state().pm_execpath,
+        aube_util::is_embedded(),
+        aube_exe.clone(),
+    );
+    cmd.env_remove("npm_execpath");
     if let Some(execpath) = pm_execpath.as_deref() {
         cmd.env("npm_execpath", execpath);
     }
@@ -2048,6 +2070,21 @@ mod jail_tests {
             );
         })
         .await;
+    }
+
+    /// The decision table `apply_script_settings_env` stamps from. The
+    /// embedded-with-no-override row is the one that cannot be reached from
+    /// a test process (registering a host profile is once-per-process), and
+    /// it is the row that matters: nothing to name means nothing stamped.
+    #[test]
+    fn pm_execpath_resolution_table() {
+        let exe = Some(PathBuf::from("/usr/bin/aube"));
+        let shim = Some(PathBuf::from("/cache/aube/tools/pm-exec/aube"));
+        assert_eq!(pm_execpath_for(None, false, exe.clone()), exe);
+        assert_eq!(pm_execpath_for(None, true, exe.clone()), None);
+        assert_eq!(pm_execpath_for(shim.clone(), true, exe.clone()), shim);
+        assert_eq!(pm_execpath_for(shim.clone(), false, exe), shim);
+        assert_eq!(pm_execpath_for(None, false, None), None);
     }
 
     /// The shim resolves the dispatching executable from the environment
