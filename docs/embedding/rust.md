@@ -281,27 +281,28 @@ messages and rendered diagnostics may evolve.
 `#[non_exhaustive]`. Downstream matches need a wildcard arm so future
 resolution modes can be added without another source-breaking enum change.
 
-
 ## Binding installed commands to Node
 
 An embedding tool manager can make installed Node CLIs independent of the
-caller's selected Node by setting `EmbedderInstallOverrides::node_executable`:
+caller's selected Node with `EmbedderRuntime::bind_bins_to`:
 
 ```rust
 use aube::embed::{EmbedderInstallOverrides, EmbedderRuntime, InstallOptions};
 
 let mut options = InstallOptions::new("/tools/my-cli");
 // Use the same runtime for approved install scripts and native-addon builds.
-options.runtime = Some(EmbedderRuntime::selector("/runtimes/node/25/bin"));
+options.runtime = Some(
+    EmbedderRuntime::selector("/runtimes/node/25/bin")
+        .bind_bins_to("/runtimes/node/25/bin/node"),
+);
 let overrides = EmbedderInstallOverrides {
-    node_executable: Some("/runtimes/node/25/bin/node".into()),
     use_global_virtual_store: Some(false),
     ..Default::default()
 };
 aube::embed::install_with_overrides(options, overrides).await?;
 ```
 
-The same override works with `add_with_overrides`. Node-backed commands invoke
+The same runtime builder works with `AddToProjectOptions::runtime`. Node-backed commands invoke
 that executable directly; their inherited `PATH` is unchanged. Commands they
 spawn through `PATH` can therefore use the project's Node, while internal
 workers using `process.execPath` use the application's Node. Native executables
@@ -310,7 +311,7 @@ and scripts using other interpreters keep their existing launch behavior.
 The executable path must be absolute UTF-8 without NUL or newlines. Aube keeps
 it as written rather than resolving symlinks: `/runtimes/node/25/bin/node` can
 follow a host-managed major-version symlink. A missing executable fails instead
-of silently falling back to Node on `PATH`. Changing or removing the override
+of silently falling back to Node on `PATH`. Changing or removing the binding
 regenerates launchers on the next install, including frozen installs.
 
 Runtime-bound installs disable the global virtual store, even if enabled in

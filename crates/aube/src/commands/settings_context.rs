@@ -55,13 +55,6 @@ pub(crate) async fn scope_embedder_install_overrides<F: std::future::Future>(
     EMBEDDER_INSTALL_OVERRIDES.scope(overrides, future).await
 }
 
-pub(crate) fn embedder_node_executable() -> Option<std::path::PathBuf> {
-    EMBEDDER_INSTALL_OVERRIDES
-        .try_with(|overrides| overrides.node_executable.clone())
-        .ok()
-        .flatten()
-}
-
 pub(crate) fn has_embedder_store_override() -> bool {
     EMBEDDER_INSTALL_OVERRIDES
         .try_with(|overrides| overrides.store_dir.is_some())

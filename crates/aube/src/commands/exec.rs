@@ -549,14 +549,14 @@ fn resolve_bin_target(bin_path: &Path) -> BinTarget {
             node_path: None,
         };
     }
-    if let Ok(Some(shim)) = aube_linker::sys::resolve_bin_shim(&path) {
+    if let Ok(Some(shim)) = aube_linker::sys::resolve_bin_shim_with_node(&path) {
         return BinTarget {
-            path: shim.target,
+            path: shim.shim.target,
             node: shim
                 .node
                 .or_else(|| path.parent().and_then(local_node_program)),
             node_args: shim.node_args,
-            node_path: shim.node_path,
+            node_path: shim.shim.node_path,
         };
     }
     BinTarget {
@@ -716,14 +716,12 @@ mod tests {
         let target = tmp.path().join("cli.js");
         std::fs::write(&target, "#!/usr/bin/env -S node --no-warnings\n").unwrap();
         let bin_dir = tmp.path().join("bin");
-        aube_linker::create_bin_shim(
+        aube_linker::sys::create_bin_shim_with_node(
             &bin_dir,
             "cli",
             &target,
-            aube_linker::BinShimOptions {
-                node_executable: Some(&node),
-                ..Default::default()
-            },
+            aube_linker::BinShimOptions::default(),
+            &node,
         )
         .unwrap();
         let mut command = super::resolved_bin_command(
@@ -1042,7 +1040,6 @@ mod tests {
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: Some(&hidden_modules),
-                node_executable: None,
             },
         )
         .unwrap();

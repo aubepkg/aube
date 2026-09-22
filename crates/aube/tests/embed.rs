@@ -205,7 +205,6 @@ async fn facade_install_accepts_host_storage_overrides() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache.clone()),
             store_dir: Some(host_store.clone()),
-            node_executable: None,
         },
     )
     .await
@@ -226,7 +225,6 @@ async fn facade_install_accepts_host_storage_overrides() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache),
             store_dir: Some(replacement_store),
-            node_executable: None,
         },
     )
     .await
@@ -252,7 +250,6 @@ async fn facade_warm_install_registers_the_host_virtual_store() {
         use_global_virtual_store: Some(true),
         cache_dir: Some(host_cache.clone()),
         store_dir: Some(host_store),
-        node_executable: None,
     };
 
     let mut options = InstallOptions::new(project.path());
@@ -309,7 +306,6 @@ async fn facade_install_preserves_non_utf8_storage_paths() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache.clone()),
             store_dir: Some(host_store.clone()),
-            node_executable: None,
         },
     )
     .await
@@ -367,7 +363,6 @@ async fn facade_add_honors_host_storage_and_materialization_overrides() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache.clone()),
             store_dir: Some(host_store.clone()),
-            node_executable: None,
         },
     )
     .await
@@ -553,13 +548,13 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
         std::fs::write(node, format!("#!/bin/sh\nprintf '{label}\\n'\n")).unwrap();
         std::fs::set_permissions(node, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let mut overrides = aube::embed::EmbedderInstallOverrides {
-        node_executable: Some(first.clone()),
+    let overrides = aube::embed::EmbedderInstallOverrides {
         cache_dir: Some(cache),
         store_dir: Some(store),
         use_global_virtual_store: Some(true),
     };
     let mut options = InstallOptions::new(project.path());
+    options.runtime = Some(aube::embed::EmbedderRuntime::default().bind_bins_to(&first));
     options.ignore_scripts = true;
     options.network_mode = aube::embed::NetworkMode::Offline;
     options.control = InstallControl::silent();
@@ -582,7 +577,7 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
         b"first\n"
     );
     // A changed binding invalidates install freshness even with a frozen graph.
-    overrides.node_executable = Some(second.clone());
+    options.runtime = Some(aube::embed::EmbedderRuntime::default().bind_bins_to(&second));
     aube::embed::install_with_overrides(options.clone(), overrides.clone())
         .await
         .unwrap();
@@ -590,12 +585,12 @@ async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
         std::process::Command::new(&bin).output().unwrap().stdout,
         b"second\n"
     );
-    overrides.node_executable = None;
+    options.runtime = None;
     aube::embed::install_with_overrides(options, overrides)
         .await
         .unwrap();
     assert_eq!(
-        aube_linker::sys::resolve_bin_shim(&bin)
+        aube_linker::sys::resolve_bin_shim_with_node(&bin)
             .unwrap()
             .unwrap()
             .node,
@@ -609,15 +604,11 @@ async fn facade_rejects_relative_bin_runtime_before_mutating_project() {
     let project = tempfile::tempdir().unwrap();
     let manifest = r#"{"private":true}"#;
     std::fs::write(project.path().join("package.json"), manifest).unwrap();
-    let error = aube::embed::install_with_overrides(
-        InstallOptions::new(project.path()),
-        aube::embed::EmbedderInstallOverrides {
-            node_executable: Some(PathBuf::from("relative/node")),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap_err();
+    let mut options = InstallOptions::new(project.path());
+    options.runtime = Some(aube::embed::EmbedderRuntime::default().bind_bins_to("relative/node"));
+    let error = aube::embed::install_with_overrides(options, Default::default())
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("must be absolute"));
     assert!(!project.path().join("node_modules").exists());
     assert_eq!(
@@ -646,13 +637,13 @@ async fn facade_concurrent_adds_keep_runtime_bindings_separate() {
             &project,
             &["cached-only@1.0.0".into()],
             aube::embed::AddToProjectOptions {
+                runtime: Some(aube::embed::EmbedderRuntime::default().bind_bins_to(node)),
                 ignore_scripts: true,
                 offline: true,
                 control: InstallControl::silent(),
                 ..Default::default()
             },
             aube::embed::EmbedderInstallOverrides {
-                node_executable: Some(node),
                 cache_dir: Some(cache.clone()),
                 store_dir: Some(store.clone()),
                 ..Default::default()

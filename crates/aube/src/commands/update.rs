@@ -963,7 +963,6 @@ async fn run_global(args: UpdateArgs) -> miette::Result<Option<i32>> {
                     prefer_symlinked_executables:
                         aube_settings::resolved::prefer_symlinked_executables(ctx),
                     hidden_modules_dir: None,
-                    node_executable: None,
                 }
             });
             let linked = super::global::link_bins(

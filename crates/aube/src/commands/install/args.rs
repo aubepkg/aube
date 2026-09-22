@@ -333,12 +333,6 @@ impl InstallArgs {
 /// empty.
 #[derive(Debug, Clone, Default)]
 pub struct EmbedderInstallOverrides {
-    /// Bind installed Node-backed commands to this absolute executable without
-    /// changing their inherited PATH. Runtime symlinks are preserved. The host
-    /// owns installation, compatibility, upgrades, and retention of this runtime.
-    /// Independent of `InstallOptions::runtime`, which controls install scripts.
-    /// Requires project-local materialization; the global virtual store is disabled.
-    pub node_executable: Option<std::path::PathBuf>,
     /// Use aube's shared global virtual store. `Some(false)` materializes
     /// packages inside the project so the host owns their complete lifecycle.
     pub use_global_virtual_store: Option<bool>,
@@ -350,12 +344,7 @@ pub struct EmbedderInstallOverrides {
 
 impl EmbedderInstallOverrides {
     pub(crate) fn append_to(&self, settings: &mut Vec<(String, String)>) {
-        if let Some(enabled) = self
-            .node_executable
-            .as_ref()
-            .map(|_| false)
-            .or(self.use_global_virtual_store)
-        {
+        if let Some(enabled) = self.use_global_virtual_store {
             settings.push(("enableGlobalVirtualStore".to_string(), enabled.to_string()));
         }
     }
@@ -579,7 +568,6 @@ mod embedder_override_tests {
             use_global_virtual_store: Some(false),
             cache_dir: Some(cache_dir.clone()),
             store_dir: Some(store_dir.clone()),
-            node_executable: None,
         };
         let mut cli = Vec::new();
         overrides.append_to(&mut cli);

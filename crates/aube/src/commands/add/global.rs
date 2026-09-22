@@ -302,7 +302,6 @@ async fn run_global_inner(
                 ctx,
             ),
             hidden_modules_dir: None,
-            node_executable: None,
         });
     let linked = global::link_bins(install_dir, &layout.bin_dir, &aliases, shim_opts)?;
 

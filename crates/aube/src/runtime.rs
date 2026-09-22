@@ -68,6 +68,7 @@ pub struct RuntimeContext {
     /// Directory to prepend to PATH for child processes. `None` means
     /// no switching (ambient node already satisfies, or no config).
     pub bin_dir: Option<PathBuf>,
+    pub bin_node_executable: Option<PathBuf>,
     /// Whether `bin_dir` must precede project-local `.bin` directories.
     /// Wrappers require this so a dependency-provided `node` cannot bypass
     /// the shim; selectors deliberately keep project-local binaries first.
@@ -116,6 +117,7 @@ impl RuntimeContext {
     fn path_fallback() -> RuntimeContext {
         RuntimeContext {
             bin_dir: None,
+            bin_node_executable: None,
             bin_dir_precedes_project_bins: false,
             node_program: None,
             node_execpath: None,
@@ -232,6 +234,7 @@ pub struct EmbedderEnv {
 #[derive(Debug, Clone, Default)]
 pub struct EmbedderRuntime {
     bin_dir: Option<PathBuf>,
+    bin_node_executable: Option<PathBuf>,
     path_unchanged: bool,
     bin_dir_precedes_project_bins: bool,
     node_program: Option<PathBuf>,
@@ -242,6 +245,20 @@ pub struct EmbedderRuntime {
 }
 
 impl EmbedderRuntime {
+    /// Bind installed Node-backed commands to an absolute executable without
+    /// changing their inherited PATH. The lexical path preserves runtime symlinks.
+    /// The host owns runtime installation, compatibility, upgrades, and retention.
+    /// Binding requires project-local materialization and disables the global
+    /// virtual store. It does not change the runtime used for install scripts.
+    pub fn bind_bins_to(mut self, node: impl Into<PathBuf>) -> Self {
+        self.bin_node_executable = Some(node.into());
+        self
+    }
+
+    pub(crate) fn bin_node_executable(&self) -> Option<&Path> {
+        self.bin_node_executable.as_deref()
+    }
+
     /// A version-manager-style runtime: `bin_dir` holds `node` (plus
     /// `npm`/`npx`) and is prepended to PATH; that `node` is both `NODE`
     /// and `npm_node_execpath`. This is the degenerate case that
@@ -367,6 +384,7 @@ impl EmbedderRuntime {
         let internal_node = self.internal_node.clone().map(|p| abs(&p));
         RuntimeContext {
             bin_dir,
+            bin_node_executable: self.bin_node_executable.clone(),
             bin_dir_precedes_project_bins: self.bin_dir_precedes_project_bins,
             node_program,
             node_execpath,
@@ -941,6 +959,7 @@ async fn resolve_context(
         }
         Some(res) => RuntimeContext {
             bin_dir: res.bin_dir.clone(),
+            bin_node_executable: None,
             bin_dir_precedes_project_bins: false,
             // A resolved runtime is a selector: `NODE` and
             // `npm_node_execpath` are the same binary.
@@ -1656,4 +1675,9 @@ mod tests {
         let back = pinned_from_lockfile(&lf).unwrap();
         assert_eq!(back, pin);
     }
+}
+
+/// The current host-owned executable for installed Node command launchers.
+pub(crate) fn bin_node_executable() -> Option<PathBuf> {
+    current().and_then(|runtime| runtime.bin_node_executable.clone())
 }

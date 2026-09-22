@@ -156,7 +156,11 @@ pub async fn install_with_overrides(
     // env-driven AUBE_DIAG_* surface here so embedded installs can produce a
     // low-overhead trace without requiring host-specific plumbing.
     aube_util::diag::init();
-    if let Some(node) = &overrides.node_executable {
+    if let Some(node) = options
+        .runtime
+        .as_ref()
+        .and_then(EmbedderRuntime::bin_node_executable)
+    {
         aube_linker::sys::validate_node_executable(node).into_diagnostic()?;
     }
     let mut command_options =
@@ -218,7 +222,11 @@ pub async fn add_with_overrides(
 ) -> Result<()> {
     // See install_with_overrides: embedded adds bypass CLI diagnostic init.
     aube_util::diag::init();
-    if let Some(node) = &overrides.node_executable {
+    if let Some(node) = options
+        .runtime
+        .as_ref()
+        .and_then(EmbedderRuntime::bin_node_executable)
+    {
         aube_linker::sys::validate_node_executable(node).into_diagnostic()?;
     }
     let result = crate::commands::scope_embedder_install_overrides(

@@ -144,10 +144,6 @@ pub struct BinShimOptions<'a> {
     /// shims (whose `bin_dir` is nowhere near `.aube/`) get the same
     /// resolution shape as the root importer's `.bin/`.
     pub hidden_modules_dir: Option<&'a Path>,
-    /// Absolute Node executable used by Node-backed bins, without changing PATH.
-    /// Kept lexical: a host-owned runtime symlink may intentionally move.
-    /// Forces a wrapper for Node scripts even when symlinks are preferred.
-    pub node_executable: Option<&'a Path>,
 }
 
 /// Target and environment recovered from an aube-generated bin wrapper.
@@ -158,10 +154,37 @@ pub struct BinShimOptions<'a> {
 pub struct ResolvedBinShim {
     pub target: PathBuf,
     pub node_path: Option<OsString>,
+}
+
+/// An installed wrapper together with its optional host-owned Node binding.
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ResolvedBinShimWithNode {
+    pub shim: ResolvedBinShim,
     /// Runtime bound by the installer, if any.
     pub node: Option<PathBuf>,
     /// Arguments from the bound script's Node shebang.
     pub node_args: Vec<String>,
+}
+
+/// Create bin shims, binding Node scripts to the supplied absolute executable.
+/// Other interpreters and native binaries retain the ordinary launcher behavior.
+/// The runtime path remains lexical and the generated launcher leaves PATH alone.
+pub fn create_bin_shim_with_node(
+    bin_dir: &Path,
+    name: &str,
+    target: &Path,
+    opts: BinShimOptions<'_>,
+    node: &Path,
+) -> io::Result<()> {
+    validate_bin_name(name)?;
+    validate_node_executable(node)?;
+    if matches!(detect_bin_launch(target), BinLaunch::Interpreter(ref prog) if matches!(prog.as_str(), "node" | "node.exe" | "nodejs" | "nodejs.exe"))
+    {
+        create_bound_node_shim(bin_dir, name, target, node, opts)
+    } else {
+        create_bin_shim(bin_dir, name, target, opts)
+    }
 }
 
 /// Create bin shims for a package binary.
@@ -190,13 +213,6 @@ pub fn create_bin_shim(
     opts: BinShimOptions<'_>,
 ) -> io::Result<()> {
     validate_bin_name(name)?;
-    if let Some(node) = opts.node_executable {
-        validate_node_executable(node)?;
-        if matches!(detect_bin_launch(target), BinLaunch::Interpreter(ref prog) if matches!(prog.as_str(), "node" | "node.exe" | "nodejs" | "nodejs.exe"))
-        {
-            return create_bound_node_shim(bin_dir, name, target, node, opts);
-        }
-    }
     #[cfg(unix)]
     {
         let write_shim = matches!(opts.prefer_symlinked_executables, Some(false));
@@ -1131,6 +1147,12 @@ enum BinShimStyle {
 /// and local-interpreter branch shape. Symlinks and unrecognized wrappers
 /// return `Ok(None)`.
 pub fn resolve_bin_shim(path: &Path) -> io::Result<Option<ResolvedBinShim>> {
+    resolve_bin_shim_with_node(path).map(|shim| shim.map(|shim| shim.shim))
+}
+
+/// Decode an aube wrapper including its host-owned Node binding, if present.
+/// Uses the same file and size restrictions as [`resolve_bin_shim`].
+pub fn resolve_bin_shim_with_node(path: &Path) -> io::Result<Option<ResolvedBinShimWithNode>> {
     let metadata = std::fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_BIN_SHIM_BYTES {
         return Ok(None);
@@ -1214,9 +1236,8 @@ pub fn resolve_bin_shim(path: &Path) -> io::Result<Option<ResolvedBinShim>> {
     let (node, node_args) = binding.map_or((None, Vec::new()), |binding| {
         (Some(binding.node), binding.args)
     });
-    Ok(Some(ResolvedBinShim {
-        target,
-        node_path,
+    Ok(Some(ResolvedBinShimWithNode {
+        shim: ResolvedBinShim { target, node_path },
         node,
         node_args,
     }))
@@ -1370,16 +1391,8 @@ mod tests {
         let target = root.join("cli.js");
         let source = "#!/usr/bin/env -S node --no-warnings\nconsole.log('hello');\n";
         std::fs::write(&target, source).unwrap();
-        create_bin_shim(
-            &bin,
-            "cli",
-            &target,
-            BinShimOptions {
-                node_executable: Some(&runtime),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        create_bin_shim_with_node(&bin, "cli", &target, BinShimOptions::default(), &runtime)
+            .unwrap();
         assert!(
             !std::fs::symlink_metadata(bin.join("cli"))
                 .unwrap()
@@ -1387,7 +1400,9 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(std::fs::read_to_string(&target).unwrap(), source);
-        let resolved = resolve_bin_shim(&bin.join("cli")).unwrap().unwrap();
+        let resolved = resolve_bin_shim_with_node(&bin.join("cli"))
+            .unwrap()
+            .unwrap();
         assert_eq!(resolved.node.as_deref(), Some(runtime.as_path()));
         assert_eq!(resolved.node_args, ["--no-warnings"]);
         let path = std::env::join_paths([
@@ -1459,16 +1474,8 @@ console.log(JSON.stringify({node:process.execPath, child:child.stdout.trim(), pa
 process.exit(17);
 "#).unwrap();
         let bin = tmp.path().join("bin");
-        create_bin_shim(
-            &bin,
-            "cli",
-            &target,
-            BinShimOptions {
-                node_executable: Some(&runtime),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        create_bin_shim_with_node(&bin, "cli", &target, BinShimOptions::default(), &runtime)
+            .unwrap();
         let path = std::env::join_paths(
             std::iter::once(project_dir)
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
@@ -1505,7 +1512,9 @@ process.exit(17);
             assert_eq!(result["args"], serde_json::json!(["two words"]));
             assert_eq!(result["flags"], serde_json::json!(["--no-warnings"]));
         }
-        let resolved = resolve_bin_shim(&bin.join("cli.cmd")).unwrap().unwrap();
+        let resolved = resolve_bin_shim_with_node(&bin.join("cli.cmd"))
+            .unwrap()
+            .unwrap();
         assert_eq!(resolved.node, Some(runtime));
         assert_eq!(resolved.node_args, ["--no-warnings"]);
     }
@@ -1519,14 +1528,12 @@ process.exit(17);
         std::fs::create_dir(&bin).unwrap();
         std::fs::write(bin.join("cli"), "existing").unwrap();
         assert!(
-            create_bin_shim(
+            create_bin_shim_with_node(
                 &bin,
                 "cli",
                 &target,
-                BinShimOptions {
-                    node_executable: Some(Path::new("node")),
-                    ..Default::default()
-                }
+                BinShimOptions::default(),
+                Path::new("node")
             )
             .is_err()
         );
@@ -1544,29 +1551,19 @@ process.exit(17);
         let runtime = tmp.path().join("missing-node");
         let target = tmp.path().join("shell");
         std::fs::write(&target, "#!/bin/sh\nprintf 'shell works'\n").unwrap();
-        create_bin_shim(
-            &bin,
-            "shell",
-            &target,
-            BinShimOptions {
-                node_executable: Some(&runtime),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        create_bin_shim_with_node(&bin, "shell", &target, BinShimOptions::default(), &runtime)
+            .unwrap();
         let output = std::process::Command::new(bin.join("shell"))
             .output()
             .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, b"shell works");
-        create_bin_shim(
+        create_bin_shim_with_node(
             &bin,
             "native",
             Path::new("/bin/echo"),
-            BinShimOptions {
-                node_executable: Some(&runtime),
-                ..Default::default()
-            },
+            BinShimOptions::default(),
+            &runtime,
         )
         .unwrap();
         let output = std::process::Command::new(bin.join("native"))
@@ -1981,7 +1978,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2016,7 +2012,6 @@ process.exit(17);
                 extend_node_path: false,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2046,7 +2041,6 @@ process.exit(17);
                 extend_node_path: false,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2090,7 +2084,6 @@ process.exit(17);
                 extend_node_path: false,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2130,7 +2123,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2177,7 +2169,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2305,7 +2296,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2341,7 +2331,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: Some(hidden.as_path()),
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2382,7 +2371,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: None,
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2410,7 +2398,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: None,
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2449,7 +2436,6 @@ process.exit(17);
                 extend_node_path: true,
                 prefer_symlinked_executables: None,
                 hidden_modules_dir: Some(hidden.as_path()),
-                node_executable: None,
             },
         )
         .unwrap();
@@ -2490,7 +2476,6 @@ process.exit(17);
                 extend_node_path: false,
                 prefer_symlinked_executables: None,
                 hidden_modules_dir: None,
-                node_executable: None,
             },
         )
         .unwrap();
