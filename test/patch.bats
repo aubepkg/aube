@@ -578,3 +578,37 @@ EOF
 	run node -e 'if (require("is-odd").patched !== "v1") process.exit(1)'
 	assert_success
 }
+
+# Per-project lockfiles live in member dirs, but patch paths stay
+# relative to the workspace root that declares them.
+@test "per-project lockfiles hash root-declared patches" {
+	cat >package.json <<'EOF'
+{ "name": "root", "private": true }
+EOF
+	mkdir server patches
+	cat >server/package.json <<'EOF'
+{ "name": "server", "version": "1.0.0", "dependencies": { "is-odd": "3.0.1" } }
+EOF
+	cat >aube-workspace.yaml <<'EOF'
+packages: [server]
+sharedWorkspaceLockfile: false
+patchedDependencies:
+  is-odd@3.0.1: patches/is-odd@3.0.1.patch
+EOF
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	run aube install --ignore-scripts
+	assert_success
+	run grep -q "is-odd@3.0.1(patch_hash=" server/aube-lock.yaml
+	assert_success
+	cd server
+	run node -e 'if (require("is-odd").patched !== "v1") process.exit(1)'
+	assert_success
+}
