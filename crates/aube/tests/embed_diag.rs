@@ -54,6 +54,7 @@ fn embedded_install_honors_env_driven_diagnostics() {
                 use_global_virtual_store: Some(false),
                 cache_dir: Some(sandbox.path().join("cache")),
                 store_dir: Some(sandbox.path().join("store")),
+                node_executable: None,
             },
         )
         .await

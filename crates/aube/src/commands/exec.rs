@@ -516,13 +516,17 @@ fn resolved_bin_command(
     if let Some(node_path) = target.node_path {
         cmd.env("NODE_PATH", node_path);
     }
-    cmd.args(node_args).arg(target.path).args(args);
+    cmd.args(target.node_args)
+        .args(node_args)
+        .arg(target.path)
+        .args(args);
     Some(cmd)
 }
 
 struct BinTarget {
     path: std::path::PathBuf,
     node: Option<std::path::PathBuf>,
+    node_args: Vec<String>,
     node_path: Option<std::ffi::OsString>,
 }
 
@@ -541,19 +545,24 @@ fn resolve_bin_target(bin_path: &Path) -> BinTarget {
         return BinTarget {
             path: target,
             node: None,
+            node_args: Vec::new(),
             node_path: None,
         };
     }
     if let Ok(Some(shim)) = aube_linker::sys::resolve_bin_shim(&path) {
         return BinTarget {
             path: shim.target,
-            node: path.parent().and_then(local_node_program),
+            node: shim
+                .node
+                .or_else(|| path.parent().and_then(local_node_program)),
+            node_args: shim.node_args,
             node_path: shim.node_path,
         };
     }
     BinTarget {
         path,
         node: None,
+        node_args: Vec::new(),
         node_path: None,
     }
 }
@@ -695,6 +704,44 @@ mod tests {
         build_bin_command, is_native_executable, is_native_magic, is_node_backed_bin,
         resolve_exec_shim, resolved_bin_command,
     };
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn node_args_keep_the_installed_bin_runtime() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join("bound-node");
+        std::fs::write(&node, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let target = tmp.path().join("cli.js");
+        std::fs::write(&target, "#!/usr/bin/env -S node --no-warnings\n").unwrap();
+        let bin_dir = tmp.path().join("bin");
+        aube_linker::create_bin_shim(
+            &bin_dir,
+            "cli",
+            &target,
+            aube_linker::BinShimOptions {
+                node_executable: Some(&node),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut command = super::resolved_bin_command(
+            &bin_dir.join("cli"),
+            &["argument".into()],
+            &["--expose-gc".into()],
+        )
+        .unwrap();
+        assert_eq!(command.as_std().get_program(), node);
+        let output = command.output().await.unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.starts_with("--no-warnings\n--expose-gc\n"),
+            "{stdout}"
+        );
+        assert!(stdout.ends_with("argument\n"), "{stdout}");
+    }
 
     #[test]
     fn resolve_exec_shim_returns_bare_path_when_no_sibling() {
@@ -995,6 +1042,7 @@ mod tests {
                 extend_node_path: true,
                 prefer_symlinked_executables: Some(false),
                 hidden_modules_dir: Some(&hidden_modules),
+                node_executable: None,
             },
         )
         .unwrap();

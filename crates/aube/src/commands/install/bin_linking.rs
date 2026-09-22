@@ -804,7 +804,9 @@ pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
         aube_settings::resolved::prefer_symlinked_executables(settings_ctx)
             .or(isolated.then_some(false));
     let hidden_modules_dir = aube_dir.join("node_modules");
+    let node_executable = crate::commands::embedder_node_executable();
     let shim_opts = aube_linker::BinShimOptions {
+        node_executable: node_executable.as_deref(),
         extend_node_path,
         prefer_symlinked_executables,
         hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),

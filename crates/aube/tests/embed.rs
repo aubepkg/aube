@@ -73,8 +73,14 @@ fn seed_cached_registry_package(cache_dir: &std::path::Path, store_dir: &std::pa
     let package = tempfile::tempdir().unwrap();
     std::fs::write(
         package.path().join("package.json"),
-        r#"{"name":"cached-only","version":"1.0.0"}
+        r#"{"name":"cached-only","version":"1.0.0","bin":{"cached-only":"cli.js"}}
 "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        package.path().join("cli.js"),
+        "#!/usr/bin/env node\nconsole.log(process.execPath);\n",
     )
     .unwrap();
 
@@ -91,6 +97,7 @@ fn seed_cached_registry_package(cache_dir: &std::path::Path, store_dir: &std::pa
             "1.0.0": {
                 "name": "cached-only",
                 "version": "1.0.0",
+                "bin": {"cached-only": "cli.js"},
                 "dist": {
                     "tarball": "https://registry.npmjs.org/cached-only/-/cached-only-1.0.0.tgz"
                 }
@@ -198,6 +205,7 @@ async fn facade_install_accepts_host_storage_overrides() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache.clone()),
             store_dir: Some(host_store.clone()),
+            node_executable: None,
         },
     )
     .await
@@ -218,6 +226,7 @@ async fn facade_install_accepts_host_storage_overrides() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache),
             store_dir: Some(replacement_store),
+            node_executable: None,
         },
     )
     .await
@@ -243,6 +252,7 @@ async fn facade_warm_install_registers_the_host_virtual_store() {
         use_global_virtual_store: Some(true),
         cache_dir: Some(host_cache.clone()),
         store_dir: Some(host_store),
+        node_executable: None,
     };
 
     let mut options = InstallOptions::new(project.path());
@@ -299,6 +309,7 @@ async fn facade_install_preserves_non_utf8_storage_paths() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache.clone()),
             store_dir: Some(host_store.clone()),
+            node_executable: None,
         },
     )
     .await
@@ -356,6 +367,7 @@ async fn facade_add_honors_host_storage_and_materialization_overrides() {
             use_global_virtual_store: Some(false),
             cache_dir: Some(host_cache.clone()),
             store_dir: Some(host_store.clone()),
+            node_executable: None,
         },
     )
     .await
@@ -519,4 +531,142 @@ fn facade_discovers_confined_workspace_packages() {
                 .unwrap(),
         ]
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn facade_binds_node_bins_and_refreshes_warm_install_bindings() {
+    use std::os::unix::fs::PermissionsExt;
+    initialize_test_host();
+    let project = tempfile::tempdir().unwrap();
+    let cache = project.path().join("cache");
+    let store = project.path().join("store");
+    seed_cached_registry_package(&cache, &store);
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"dependencies":{"cached-only":"1.0.0"}}"#,
+    )
+    .unwrap();
+    let first = project.path().join("first-node");
+    let second = project.path().join("second-node");
+    for (node, label) in [(&first, "first"), (&second, "second")] {
+        std::fs::write(node, format!("#!/bin/sh\nprintf '{label}\\n'\n")).unwrap();
+        std::fs::set_permissions(node, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut overrides = aube::embed::EmbedderInstallOverrides {
+        node_executable: Some(first.clone()),
+        cache_dir: Some(cache),
+        store_dir: Some(store),
+        use_global_virtual_store: Some(true),
+    };
+    let mut options = InstallOptions::new(project.path());
+    options.ignore_scripts = true;
+    options.network_mode = aube::embed::NetworkMode::Offline;
+    options.control = InstallControl::silent();
+    aube::embed::install_with_overrides(options.clone(), overrides.clone())
+        .await
+        .unwrap();
+    assert_cached_package_is_project_local(project.path(), project.path());
+    let bin = project.path().join("node_modules/.bin/cached-only");
+    assert_eq!(
+        std::process::Command::new(&bin).output().unwrap().stdout,
+        b"first\n"
+    );
+    options.frozen_mode = aube::embed::FrozenMode::Frozen;
+    // No-op replay retains the binding.
+    aube::embed::install_with_overrides(options.clone(), overrides.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::process::Command::new(&bin).output().unwrap().stdout,
+        b"first\n"
+    );
+    // A changed binding invalidates install freshness even with a frozen graph.
+    overrides.node_executable = Some(second.clone());
+    aube::embed::install_with_overrides(options.clone(), overrides.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::process::Command::new(&bin).output().unwrap().stdout,
+        b"second\n"
+    );
+    overrides.node_executable = None;
+    aube::embed::install_with_overrides(options, overrides)
+        .await
+        .unwrap();
+    assert_eq!(
+        aube_linker::sys::resolve_bin_shim(&bin)
+            .unwrap()
+            .unwrap()
+            .node,
+        None
+    );
+}
+
+#[tokio::test]
+async fn facade_rejects_relative_bin_runtime_before_mutating_project() {
+    initialize_test_host();
+    let project = tempfile::tempdir().unwrap();
+    let manifest = r#"{"private":true}"#;
+    std::fs::write(project.path().join("package.json"), manifest).unwrap();
+    let error = aube::embed::install_with_overrides(
+        InstallOptions::new(project.path()),
+        aube::embed::EmbedderInstallOverrides {
+            node_executable: Some(PathBuf::from("relative/node")),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("must be absolute"));
+    assert!(!project.path().join("node_modules").exists());
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("package.json")).unwrap(),
+        manifest
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn facade_concurrent_adds_keep_runtime_bindings_separate() {
+    use std::os::unix::fs::PermissionsExt;
+    initialize_test_host();
+    let root = tempfile::tempdir().unwrap();
+    let cache = root.path().join("cache");
+    let store = root.path().join("store");
+    seed_cached_registry_package(&cache, &store);
+    let install = async |label: &str| {
+        let project = root.path().join(label);
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(project.join("package.json"), "{}").unwrap();
+        let node = project.join("node");
+        std::fs::write(&node, format!("#!/bin/sh\nprintf '{label}\\n'\n")).unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        aube::embed::add_with_overrides(
+            &project,
+            &["cached-only@1.0.0".into()],
+            aube::embed::AddToProjectOptions {
+                ignore_scripts: true,
+                offline: true,
+                control: InstallControl::silent(),
+                ..Default::default()
+            },
+            aube::embed::EmbedderInstallOverrides {
+                node_executable: Some(node),
+                cache_dir: Some(cache.clone()),
+                store_dir: Some(store.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let bin = project.join("node_modules/.bin/cached-only");
+        (bin, format!("{label}\n"))
+    };
+    let (first, second) = tokio::join!(install("first"), install("second"));
+    for (bin, expected) in [first, second] {
+        let output = std::process::Command::new(bin).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+    }
 }
