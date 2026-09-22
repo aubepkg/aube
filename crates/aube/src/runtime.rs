@@ -1320,6 +1320,11 @@ impl aube_runtime::DownloadProgress for CliProgress {
     }
 }
 
+/// The current host-owned executable for installed Node command launchers.
+pub(crate) fn bin_node_executable() -> Option<PathBuf> {
+    current().and_then(|runtime| runtime.bin_node_executable.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1675,9 +1680,4 @@ mod tests {
         let back = pinned_from_lockfile(&lf).unwrap();
         assert_eq!(back, pin);
     }
-}
-
-/// The current host-owned executable for installed Node command launchers.
-pub(crate) fn bin_node_executable() -> Option<PathBuf> {
-    current().and_then(|runtime| runtime.bin_node_executable.clone())
 }
