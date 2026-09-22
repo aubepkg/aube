@@ -487,10 +487,8 @@ EOF
 	run grep -Fq "version: 3.0.1(patch_hash=$patch_hash)" aube-lock.yaml
 	assert_success
 
-	cd web
-	run aube add is-positive@3.1.0 --ignore-scripts
+	run bash -c 'cd web && aube add is-positive@3.1.0 --ignore-scripts'
 	assert_success
-	cd ..
 	run grep -Fq "version: 3.0.1(patch_hash=$patch_hash)" aube-lock.yaml
 	assert_success
 	run grep -Fq "is-odd@3.0.1(patch_hash=$patch_hash):" aube-lock.yaml
