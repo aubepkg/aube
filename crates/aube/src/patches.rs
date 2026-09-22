@@ -351,6 +351,41 @@ pub fn read_patched_dependencies(cwd: &Path) -> Result<BTreeMap<String, String>>
     Ok(out)
 }
 
+/// Declared `patchedDependencies` as the selector -> patch-content
+/// SHA-256 map pnpm-format lockfiles record. Hashing here, against the
+/// project root, keeps a relocated `lockfile-dir` from making the
+/// lockfile writer resolve patch paths relative to the wrong directory.
+pub fn read_patched_dependency_hashes(cwd: &Path) -> Result<BTreeMap<String, String>> {
+    read_patched_dependencies(cwd)?
+        .into_iter()
+        .map(|(selector, rel)| {
+            let hash = pnpm_patch_hash(cwd, &selector, &rel)?;
+            Ok((selector, hash))
+        })
+        .collect()
+}
+
+/// pnpm's patch identity: SHA-256 of the patch file with CRLF
+/// normalized to LF.
+fn pnpm_patch_hash(cwd: &Path, selector: &str, rel: &str) -> Result<String> {
+    if !is_safe_patch_rel(rel) {
+        return Err(miette!(
+            "refusing unsafe patch path for {selector}: {rel:?} (absolute, UNC, or contains `..`)"
+        ));
+    }
+    let path = cwd.join(rel);
+    let content = std::fs::read_to_string(&path)
+        .into_diagnostic()
+        .map_err(|e| {
+            miette!(
+                "failed to read patch file {} for {selector}: {e}",
+                path.display()
+            )
+        })?;
+    let normalized = content.replace("\r\n", "\n");
+    Ok(hex::encode(Sha256::digest(normalized.as_bytes())))
+}
+
 /// Compare pnpm's recorded patch-content hashes with the currently
 /// declared patch files. A pnpm lockfile keeps the content hash in its
 /// `patchedDependencies` values, while the manifest/workspace config
@@ -372,24 +407,7 @@ pub fn pnpm_patch_hash_drift(
         if expected == rel {
             continue;
         }
-        if !is_safe_patch_rel(rel) {
-            return Err(miette!(
-                "refusing unsafe patch path for {selector}: {rel:?} (absolute, UNC, or contains `..`)"
-            ));
-        }
-        let path = cwd.join(rel);
-        let content = std::fs::read_to_string(&path)
-            .into_diagnostic()
-            .map_err(|e| {
-                miette!(
-                    "failed to read patch file {} for {selector}: {e}",
-                    path.display()
-                )
-            })?;
-        let normalized = content.replace("\r\n", "\n");
-        let mut hasher = Sha256::new();
-        hasher.update(normalized.as_bytes());
-        let actual = hex::encode(hasher.finalize());
+        let actual = pnpm_patch_hash(cwd, selector, rel)?;
         if !expected.eq_ignore_ascii_case(&actual) {
             return Ok(Some(format!(
                 "patched dependency {selector} has changed content"

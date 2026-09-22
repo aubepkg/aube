@@ -298,7 +298,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     }
     let lo_write_kind = write_kind;
     if matches!(lo_write_kind, LockfileKind::Pnpm | LockfileKind::Aube) {
-        graph.patched_dependencies = crate::patches::read_patched_dependencies(cwd)?;
+        graph.patched_dependencies = crate::patches::read_patched_dependency_hashes(cwd)?;
     }
     // Same runtime-pin recording as the main install path.
     crate::runtime::refresh_lockfile_pin(

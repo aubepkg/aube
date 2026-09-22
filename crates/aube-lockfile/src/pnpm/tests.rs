@@ -3070,7 +3070,11 @@ snapshots:
     assert_eq!(
         reparsed
             .packages
-            .get("odd-alias@3.0.1")
+            // The writer records the patch identity on every pnpm-format
+            // lockfile, including the aliased package keyed by registry name.
+            .get(
+                "odd-alias@3.0.1(patch_hash=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef)"
+            )
             .unwrap_or_else(|| panic!("alias package lost after reparse:\n{written}"))
             .alias_of
             .as_deref(),
