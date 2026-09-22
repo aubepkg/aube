@@ -156,6 +156,37 @@ pub struct ResolvedBinShim {
     pub node_path: Option<OsString>,
 }
 
+/// An installed wrapper together with its optional host-owned Node binding.
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ResolvedBinShimWithNode {
+    pub shim: ResolvedBinShim,
+    /// Runtime bound by the installer, if any.
+    pub node: Option<PathBuf>,
+    /// Arguments from the bound script's Node shebang.
+    pub node_args: Vec<String>,
+}
+
+/// Create bin shims, binding Node scripts to the supplied absolute executable.
+/// Other interpreters and native binaries retain the ordinary launcher behavior.
+/// The runtime path remains lexical and the generated launcher leaves PATH alone.
+pub fn create_bin_shim_with_node(
+    bin_dir: &Path,
+    name: &str,
+    target: &Path,
+    opts: BinShimOptions<'_>,
+    node: &Path,
+) -> io::Result<()> {
+    validate_bin_name(name)?;
+    validate_node_executable(node)?;
+    if matches!(detect_bin_launch(target), BinLaunch::Interpreter(ref prog) if matches!(prog.as_str(), "node" | "node.exe" | "nodejs" | "nodejs.exe"))
+    {
+        create_bound_node_shim(bin_dir, name, target, node, opts)
+    } else {
+        create_bin_shim(bin_dir, name, target, opts)
+    }
+}
+
 /// Create bin shims for a package binary.
 ///
 /// - Unix (default / `prefer_symlinked_executables != Some(false)`):
@@ -828,6 +859,200 @@ fn generate_sh_shim(
     )
 }
 
+/// The metadata also lets `aube exec --node-arg` unwrap a bound launcher
+/// without silently switching it back to the caller's Node.
+const NODE_SHIM_MARKER: &str = "# aube-node-shim v1 ";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NodeShimBinding {
+    target: String,
+    node: PathBuf,
+    args: Vec<String>,
+}
+
+/// Validate before removing any existing launcher. In particular, a relative
+/// runtime would change meaning with the caller's working directory.
+pub fn validate_node_executable(node: &Path) -> io::Result<()> {
+    if !node.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Node executable must be absolute",
+        ));
+    }
+    let text = shim_path_text(node)?;
+    if cfg!(windows) && text.contains('"') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Windows Node executable paths cannot contain quotes",
+        ));
+    }
+    Ok(())
+}
+
+fn shim_path_text(path: &Path) -> io::Result<&str> {
+    path.to_str()
+        .filter(|s| !s.contains(['\0', '\n', '\r']))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bin launcher paths must be UTF-8 without NUL or newlines",
+            )
+        })
+}
+
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn bound_node_args(target: &Path) -> io::Result<Vec<String>> {
+    let mut bytes = Vec::new();
+    match std::fs::File::open(target) {
+        Ok(file) => {
+            file.take(4096).read_to_end(&mut bytes)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    }
+    if !bytes.starts_with(b"#!") {
+        return Ok(Vec::new());
+    }
+    let line = bytes.split(|b| *b == b'\n').next().unwrap_or_default();
+    let line = std::str::from_utf8(line).map_err(io::Error::other)?;
+    let mut words = line[2..].split_whitespace();
+    // The interpreter has already been classified as Node. Preserve its
+    // simple flags; reject ambiguous quoting instead of silently dropping it.
+    while let Some(word) = words.next() {
+        if word.contains('=') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "environment assignments in Node shebangs are not supported for bound launchers",
+            ));
+        }
+        if matches!(
+            word.rsplit('/').next(),
+            Some("node" | "node.exe" | "nodejs" | "nodejs.exe")
+        ) {
+            return words
+                .map(|arg| {
+                    if arg.contains(['\'', '"', '\\']) {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "quoted Node shebang arguments are not supported for bound launchers",
+                        ))
+                    } else {
+                        Ok(arg.to_owned())
+                    }
+                })
+                .collect();
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn create_bound_node_shim(
+    bin_dir: &Path,
+    name: &str,
+    target: &Path,
+    node: &Path,
+    opts: BinShimOptions<'_>,
+) -> io::Result<()> {
+    let link = bin_dir.join(name);
+    let parent = link.parent().unwrap_or(bin_dir);
+    let rel = relative_bin_target(parent, target);
+    shim_path_text(Path::new(&rel))?;
+    let binding = NodeShimBinding {
+        target: rel.clone(),
+        node: node.to_path_buf(),
+        args: bound_node_args(target)?,
+    };
+    let metadata = hex::encode(serde_json::to_vec(&binding).map_err(io::Error::other)?);
+    let node_text = shim_path_text(node)?;
+    let args = binding
+        .args
+        .iter()
+        .map(|arg| format!(" {}", sh_quote(arg)))
+        .collect::<String>();
+    let node_path = opts.extend_node_path.then(|| {
+        shim_node_path(
+            parent,
+            bin_dir,
+            opts.hidden_modules_dir,
+            "/",
+            if cfg!(windows) { ";" } else { ":" },
+        )
+    });
+    let node_path = node_path.map_or(String::new(), |value| {
+        format!("export NODE_PATH=\"{value}\"\n")
+    });
+    #[cfg(windows)]
+    let node_text = &node_text.replace('\\', "/");
+    let shell = format!(
+        "#!/bin/sh\n{POSIX_SHIM_MARKER_PREFIX}{rel}\n{NODE_SHIM_MARKER}{metadata}\n{POSIX_SHIM_BASEDIR}{node_path}exec {}{args} \"$basedir/\"{} \"$@\"\n",
+        sh_quote(node_text),
+        sh_quote(&rel),
+    );
+    std::fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    {
+        // Unlink first: package scripts may be hardlinked into the CAS.
+        if let Err(error) = std::fs::remove_file(&link)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Err(error);
+        }
+        std::fs::write(&link, shell)?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&link, std::fs::Permissions::from_mode(0o755))?;
+    }
+    #[cfg(windows)]
+    {
+        let cmd_quote = |value: &str| format!("\"{}\"", value.replace('%', "%%"));
+        let ps_quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
+        let cmd_args = binding
+            .args
+            .iter()
+            .map(|arg| format!(" {}", cmd_quote(arg)))
+            .collect::<String>();
+        let ps_args = binding
+            .args
+            .iter()
+            .map(|arg| format!(" {}", ps_quote(arg)))
+            .collect::<String>();
+        let cmd_node_path = opts
+            .extend_node_path
+            .then(|| shim_node_path(parent, bin_dir, opts.hidden_modules_dir, "\\", ";"))
+            .map_or(String::new(), |value| format!("@SET NODE_PATH={value}\r\n"));
+        let ps_node_path = opts
+            .extend_node_path
+            .then(|| shim_node_path(parent, bin_dir, opts.hidden_modules_dir, "/", ";"))
+            .map_or(String::new(), |value| {
+                format!("$env:NODE_PATH=\"{value}\"\n")
+            });
+        let cmd = format!(
+            "@SETLOCAL DisableDelayedExpansion\r\n@REM {NODE_SHIM_MARKER}{metadata}\r\n{cmd_node_path}@{}{cmd_args} \"%~dp0\\{}\" %*\r\n",
+            cmd_quote(node_text),
+            rel.replace('/', "\\").replace('%', "%%")
+        );
+        let ps = format!(
+            "#!/usr/bin/env pwsh\n{NODE_SHIM_MARKER}{metadata}\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n{ps_node_path}$target=Join-Path $basedir {}\nif ($MyInvocation.ExpectingInput) {{\n  $input | & {}{ps_args} $target $args\n}} else {{\n  & {}{ps_args} $target $args\n}}\nexit $LASTEXITCODE\n",
+            ps_quote(&rel),
+            ps_quote(node_text),
+            ps_quote(node_text)
+        );
+        // Old installs can leave junctions, including dangling ones, at any
+        // launcher path. Match ordinary shim cleanup without removing contents.
+        for path in win_shim_paths(bin_dir, name) {
+            if std::fs::remove_file(&path).is_err() {
+                let _ = std::fs::remove_dir(&path);
+            }
+        }
+        write_shim_file(&link, shell.as_bytes())?;
+        write_shim_file(&bin_dir.join(format!("{name}.cmd")), cmd.as_bytes())?;
+        write_shim_file(&bin_dir.join(format!("{name}.ps1")), ps.as_bytes())?;
+    }
+    Ok(())
+}
+
 /// Marker the POSIX shim writer stamps into every generated file so
 /// [`parse_posix_shim_target`] can unambiguously identify our shims and
 /// recover the `$basedir`-relative target path on uninstall. Any format
@@ -924,6 +1149,12 @@ enum BinShimStyle {
 /// and local-interpreter branch shape. Symlinks and unrecognized wrappers
 /// return `Ok(None)`.
 pub fn resolve_bin_shim(path: &Path) -> io::Result<Option<ResolvedBinShim>> {
+    resolve_bin_shim_with_node(path).map(|shim| shim.map(|shim| shim.shim))
+}
+
+/// Decode an aube wrapper including its host-owned Node binding, if present.
+/// Uses the same file and size restrictions as [`resolve_bin_shim`].
+pub fn resolve_bin_shim_with_node(path: &Path) -> io::Result<Option<ResolvedBinShimWithNode>> {
     let metadata = std::fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_BIN_SHIM_BYTES {
         return Ok(None);
@@ -964,6 +1195,29 @@ pub fn resolve_bin_shim(path: &Path) -> io::Result<Option<ResolvedBinShim>> {
             )
         })
     };
+    let binding = content
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("@REM ")
+                .unwrap_or(line)
+                .strip_prefix(NODE_SHIM_MARKER)
+        })
+        .map(|value| {
+            let bytes = hex::decode(value.trim()).map_err(io::Error::other)?;
+            serde_json::from_slice::<NodeShimBinding>(&bytes).map_err(io::Error::other)
+        })
+        .transpose()?;
+    let parsed = parsed.or_else(|| {
+        binding.as_ref().map(|binding| {
+            (
+                BinShimStyle::Cmd,
+                binding.target.as_str(),
+                content
+                    .lines()
+                    .find_map(|line| line.strip_prefix("@SET NODE_PATH=")),
+            )
+        })
+    });
     let Some((style, target, raw_node_path)) = parsed else {
         return Ok(None);
     };
@@ -981,7 +1235,14 @@ pub fn resolve_bin_shim(path: &Path) -> io::Result<Option<ResolvedBinShim>> {
         None => None,
     };
 
-    Ok(Some(ResolvedBinShim { target, node_path }))
+    let (node, node_args) = binding.map_or((None, Vec::new()), |binding| {
+        (Some(binding.node), binding.args)
+    });
+    Ok(Some(ResolvedBinShimWithNode {
+        shim: ResolvedBinShim { target, node_path },
+        node,
+        node_args,
+    }))
 }
 
 fn parse_cmd_shim_target(content: &str) -> Option<&str> {
@@ -1099,6 +1360,260 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn bound_node_preserves_path_arguments_and_runtime_symlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("space ' dollar $ and ` quotes");
+        let bin = root.join("bin");
+        let project_bin = root.join("project-bin");
+        std::fs::create_dir_all(&project_bin).unwrap();
+        let write_exe = |path: &Path, text: &str| {
+            std::fs::write(path, text).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        write_exe(
+            &project_bin.join("node"),
+            "#!/bin/sh\nprintf 'project node\\n'\n",
+        );
+        let first = root.join("node-one");
+        let second = root.join("node-two");
+        for (path, label) in [(&first, "one"), (&second, "two")] {
+            write_exe(
+                path,
+                &format!(
+                    "#!/bin/sh\nprintf 'runtime {label}\\n'\nprintf '%s\\n' \"$@\"\nnode\nexit 23\n"
+                ),
+            );
+        }
+        let runtime = root.join("25");
+        symlink(&first, &runtime).unwrap();
+        let target = root.join("cli.js");
+        let source = "#!/usr/bin/env -S node --no-warnings\nconsole.log('hello');\n";
+        std::fs::write(&target, source).unwrap();
+        create_bin_shim_with_node(&bin, "cli", &target, BinShimOptions::default(), &runtime)
+            .unwrap();
+        assert!(
+            !std::fs::symlink_metadata(bin.join("cli"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), source);
+        let resolved = resolve_bin_shim_with_node(&bin.join("cli"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.node.as_deref(), Some(runtime.as_path()));
+        assert_eq!(resolved.node_args, ["--no-warnings"]);
+        let path = std::env::join_paths([
+            project_bin.as_path(),
+            Path::new("/usr/bin"),
+            Path::new("/bin"),
+        ])
+        .unwrap();
+        let run = || {
+            std::process::Command::new(bin.join("cli"))
+                .env("PATH", &path)
+                .arg("two words")
+                .arg("$(false) ' literal")
+                .output()
+                .unwrap()
+        };
+        let output = run();
+        assert_eq!(output.status.code(), Some(23));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.starts_with("runtime one\n--no-warnings\n"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.ends_with("two words\n$(false) ' literal\nproject node\n"),
+            "{stdout}"
+        );
+        std::fs::remove_file(&runtime).unwrap();
+        symlink(&second, &runtime).unwrap();
+        assert!(
+            String::from_utf8(run().stdout)
+                .unwrap()
+                .starts_with("runtime two\n")
+        );
+        std::fs::remove_file(&runtime).unwrap();
+        let output = run();
+        assert!(!output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "must not fall back to PATH's node"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_node_windows_launchers_keep_native_child_path() {
+        let installed_node = std::process::Command::new("node")
+            .args(["-p", "process.execPath"])
+            .output()
+            .expect("Node is available on the Windows CI runner");
+        assert!(installed_node.status.success());
+        let installed_node =
+            PathBuf::from(String::from_utf8(installed_node.stdout).unwrap().trim());
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime_dir = tmp.path().join("runtime space & 100% !");
+        let project_dir = tmp.path().join("project node");
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let runtime = runtime_dir.join("node.exe");
+        let project_node = project_dir.join("node.exe");
+        std::fs::copy(&installed_node, &runtime).unwrap();
+        std::fs::copy(&installed_node, &project_node).unwrap();
+        let target = tmp.path().join("cli.js");
+        std::fs::write(&target, r#"#!/usr/bin/env -S node --no-warnings
+const cp = require('node:child_process');
+const child = cp.spawnSync('node', ['-p', 'process.execPath'], {encoding:'utf8'});
+if (child.status !== 0) throw new Error(child.stderr || String(child.error));
+console.log(JSON.stringify({node:process.execPath, child:child.stdout.trim(), path:process.env.PATH, args:process.argv.slice(2), flags:process.execArgv}));
+process.exit(17);
+"#).unwrap();
+        let bin = tmp.path().join("bin");
+        create_bin_shim_with_node(&bin, "cli", &target, BinShimOptions::default(), &runtime)
+            .unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(project_dir)
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let mut cmd = std::process::Command::new("cmd.exe");
+        cmd.args(["/d", "/c"]).arg(bin.join("cli.cmd"));
+        let mut powershell = std::process::Command::new("powershell.exe");
+        powershell
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(bin.join("cli.ps1"));
+        for mut command in [cmd, powershell] {
+            let output = command
+                .env("PATH", &path)
+                .arg("two words")
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(17),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                std::fs::canonicalize(result["node"].as_str().unwrap()).unwrap(),
+                std::fs::canonicalize(&runtime).unwrap()
+            );
+            assert_eq!(
+                std::fs::canonicalize(result["child"].as_str().unwrap()).unwrap(),
+                std::fs::canonicalize(&project_node).unwrap()
+            );
+            assert_eq!(result["path"].as_str().unwrap(), path.to_str().unwrap());
+            assert_eq!(result["args"], serde_json::json!(["two words"]));
+            assert_eq!(result["flags"], serde_json::json!(["--no-warnings"]));
+        }
+        let resolved = resolve_bin_shim_with_node(&bin.join("cli.cmd"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.node, Some(runtime));
+        assert_eq!(resolved.node_args, ["--no-warnings"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_node_replaces_legacy_junctions_without_touching_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let legacy = tmp.path().join("legacy");
+        let dangling = tmp.path().join("dangling");
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::create_dir(&dangling).unwrap();
+        std::fs::write(legacy.join("keep"), "untouched").unwrap();
+        for (i, path) in win_shim_paths(&bin, "cli").iter().enumerate() {
+            junction::create(if i == 1 { &dangling } else { &legacy }, path).unwrap();
+        }
+        std::fs::remove_dir(&dangling).unwrap();
+        let target = tmp.path().join("cli.js");
+        std::fs::write(&target, "#!/usr/bin/env node\n").unwrap();
+        create_bin_shim_with_node(
+            &bin,
+            "cli",
+            &target,
+            BinShimOptions::default(),
+            &tmp.path().join("node.exe"),
+        )
+        .unwrap();
+        for path in win_shim_paths(&bin, "cli") {
+            assert!(std::fs::symlink_metadata(&path).unwrap().is_file());
+            assert!(
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .contains(NODE_SHIM_MARKER)
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("keep")).unwrap(),
+            "untouched"
+        );
+    }
+
+    #[test]
+    fn bound_node_rejects_relative_runtime_before_replacing_existing_bin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("cli.js");
+        std::fs::write(&target, "#!/usr/bin/env node\n").unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::write(bin.join("cli"), "existing").unwrap();
+        assert!(
+            create_bin_shim_with_node(
+                &bin,
+                "cli",
+                &target,
+                BinShimOptions::default(),
+                Path::new("node")
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(bin.join("cli")).unwrap(),
+            "existing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bound_node_leaves_other_interpreters_and_native_bins_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        let runtime = tmp.path().join("missing-node");
+        let target = tmp.path().join("shell");
+        std::fs::write(&target, "#!/bin/sh\nprintf 'shell works'\n").unwrap();
+        create_bin_shim_with_node(&bin, "shell", &target, BinShimOptions::default(), &runtime)
+            .unwrap();
+        let output = std::process::Command::new(bin.join("shell"))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"shell works");
+        create_bin_shim_with_node(
+            &bin,
+            "native",
+            Path::new("/bin/echo"),
+            BinShimOptions::default(),
+            &runtime,
+        )
+        .unwrap();
+        let output = std::process::Command::new(bin.join("native"))
+            .arg("native works")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"native works\n");
+    }
 
     #[test]
     fn validate_bin_name_accepts_bare_and_scope() {

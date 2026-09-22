@@ -1538,6 +1538,11 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     let env = aube_settings::values::capture_env();
     let ctx = files.ctx(&raw_workspace, &env, cli_flags);
     let mut hasher = blake3::Hasher::new();
+    if let Some(node) = crate::runtime::bin_node_executable() {
+        hasher.update(b"node_executable=");
+        hasher.update(node.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+    }
     // node_linker, hoist family, modules_dir, import method. these shape
     // the tree on disk. flip any of them, linker needs to rebuild.
     let node_linker = aube_settings::resolved::node_linker(&ctx);

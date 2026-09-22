@@ -1242,15 +1242,20 @@ fn create_bin_link(
                 .wrap_err_with(|| format!("failed to create bin directory {}", bin_dir.display()));
         }
     }
-    aube_linker::create_bin_shim(bin_dir, name, target, shim_opts)
-        .into_diagnostic()
-        .wrap_err_with(|| {
-            format!(
-                "failed to link bin `{name}` at {} -> {}",
-                bin_dir.join(name).display(),
-                target.display()
-            )
-        })?;
+    match crate::runtime::bin_node_executable() {
+        Some(node) => {
+            aube_linker::sys::create_bin_shim_with_node(bin_dir, name, target, shim_opts, &node)
+        }
+        None => aube_linker::create_bin_shim(bin_dir, name, target, shim_opts),
+    }
+    .into_diagnostic()
+    .wrap_err_with(|| {
+        format!(
+            "failed to link bin `{name}` at {} -> {}",
+            bin_dir.join(name).display(),
+            target.display()
+        )
+    })?;
     if !managed.capture {
         return Ok(());
     }

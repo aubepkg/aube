@@ -306,6 +306,19 @@ async fn run_scoped(opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Re
 }
 
 async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette::Result<()> {
+    // An embedding host (mise, or a wrapper) can describe how Node is
+    // invoked for lifecycle scripts. Seed it into the scoped runtime slot
+    // before `ensure` runs — `ensure` returns early when the slot is set,
+    // so aube skips its own runtime resolution and scripts invoke the
+    // host's Node. A per-call runtime wins over the process-wide one.
+    crate::runtime::seed_install_embedder_runtime(opts.embedder_runtime.as_ref());
+    if let Some(node) = crate::runtime::bin_node_executable() {
+        aube_linker::sys::validate_node_executable(&node).into_diagnostic()?;
+        // Launchers are runtime-specific and must not mutate another project's
+        // dependency bins in the shared global virtual store.
+        opts.cli_flags
+            .push(("enableGlobalVirtualStore".into(), "false".into()));
+    }
     opts.control.check_cancelled()?;
     aube_scripts::set_output_reporter(opts.control.script_output_reporter());
     let mode = opts.mode;
@@ -413,12 +426,6 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     let lockfile_parse_options = aube_lockfile::ParseOptions {
         strict_store_integrity: strict_store_integrity_setting,
     };
-    // An embedding host (mise, or a wrapper) can describe how Node is
-    // invoked for lifecycle scripts. Seed it into the scoped runtime slot
-    // before `ensure` runs — `ensure` returns early when the slot is set,
-    // so aube skips its own runtime resolution and scripts invoke the
-    // host's Node. A per-call runtime wins over the process-wide one.
-    crate::runtime::seed_install_embedder_runtime(opts.embedder_runtime.as_ref());
     if !opts.dry_run {
         crate::runtime::ensure(
             &cwd,
