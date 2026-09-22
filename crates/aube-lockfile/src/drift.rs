@@ -192,7 +192,7 @@ impl LockfileGraph {
             if check_resolution_metadata
                 && is_workspace_install
                 && !self.importers.contains_key(importer_path)
-                && manifest_declares_deps(manifest)
+                && manifest_declares_deps(manifest, self.settings.auto_install_peers)
             {
                 return DriftStatus::Stale {
                     reason: format!(
@@ -785,10 +785,15 @@ pub enum DriftStatus {
     Stale { reason: String },
 }
 
-fn manifest_declares_deps(manifest: &aube_manifest::PackageJson) -> bool {
+fn manifest_declares_deps(manifest: &aube_manifest::PackageJson, auto_install_peers: bool) -> bool {
     !manifest.dependencies.is_empty()
         || !manifest.dev_dependencies.is_empty()
         || !manifest.optional_dependencies.is_empty()
+        || (auto_install_peers
+            && manifest
+                .peer_dependencies
+                .keys()
+                .any(|name| !manifest.peer_dependency_is_optional(name)))
 }
 
 fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {
@@ -2231,6 +2236,38 @@ mod drift_tests {
             ),
             DriftStatus::Fresh => panic!("missing member importer should be stale"),
         }
+
+        // A required peer counts when peers are auto-installed.
+        let mut peer_only = make_manifest(&[]);
+        peer_only
+            .peer_dependencies
+            .insert("react".into(), "^18.0.0".into());
+        let peer_manifests = vec![
+            (".".to_string(), make_manifest(&[("lodash", "^4.17.0")])),
+            ("packages/peer".to_string(), peer_only),
+        ];
+        assert!(matches!(
+            graph.check_drift_workspace(
+                &peer_manifests,
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new(),
+                true,
+            ),
+            DriftStatus::Stale { .. }
+        ));
+        let mut no_auto_peers = graph.clone();
+        no_auto_peers.settings.auto_install_peers = false;
+        assert_eq!(
+            no_auto_peers.check_drift_workspace(
+                &peer_manifests,
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new(),
+                true,
+            ),
+            DriftStatus::Fresh
+        );
 
         // A member without deps has nothing to lock.
         assert_eq!(

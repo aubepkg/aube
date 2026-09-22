@@ -829,3 +829,39 @@ EOF2
 	assert_success
 	assert_file_exists packages/app/node_modules/is-even/package.json
 }
+
+@test "aube update at the workspace root re-resolves members sharing a changed catalog entry" {
+	cat >package.json <<'EOF2'
+{"name":"root","private":true,"dependencies":{"is-odd":"catalog:"}}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+catalog:
+  is-odd: ^0.1.2
+EOF2
+	mkdir -p packages/app
+	cat >packages/app/package.json <<'EOF2'
+{"name":"app","version":"1.0.0","dependencies":{"is-odd":"catalog:"}}
+EOF2
+	run aube install
+	assert_success
+	run grep "is-odd@0.1.2:" aube-lock.yaml
+	assert_success
+
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+catalog:
+  is-odd: ^3.0.1
+EOF2
+	run aube update
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@0.1.2" aube-lock.yaml
+	assert_failure
+}

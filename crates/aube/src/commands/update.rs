@@ -1778,8 +1778,8 @@ async fn write_update_lockfile(
 
 /// Copy every non-root importer (and the packages, times, and catalog
 /// entries it references) from `on_disk` into the freshly resolved
-/// root graph. Fresh root data wins on conflicts; packages no importer
-/// reaches anymore are pruned.
+/// root graph. Fresh root data wins on other conflicts; packages no
+/// importer reaches anymore are pruned.
 fn carry_member_importers(
     mut fresh: aube_lockfile::LockfileGraph,
     on_disk: aube_lockfile::LockfileGraph,
@@ -1808,8 +1808,17 @@ fn carry_member_importers(
     for (spec, time) in on_disk.times {
         fresh.times.entry(spec).or_insert(time);
     }
-    // Only keep catalog entries a member importer still references, so
-    // an entry the root dropped doesn't linger in the lockfile.
+    // `update` doesn't record patch hashes, so the fresh graph's map is
+    // empty; the on-disk hashes still describe the workspace config.
+    for (selector, hash) in on_disk.patched_dependencies {
+        fresh.patched_dependencies.entry(selector).or_insert(hash);
+    }
+    // Keep the on-disk snapshot for catalog entries a member importer
+    // references: the member's packages were resolved against it. If the
+    // workspace catalog has since changed, the chained install's catalog
+    // drift check then re-resolves the member instead of trusting a stale
+    // lock. Entries only the root used come from the fresh graph, so one
+    // the root dropped doesn't linger.
     let member_catalog_refs: BTreeSet<(String, String)> = fresh
         .importers
         .iter()
@@ -1827,8 +1836,7 @@ fn carry_member_importers(
                     .catalogs
                     .entry(catalog.clone())
                     .or_default()
-                    .entry(name)
-                    .or_insert(entry);
+                    .insert(name, entry);
             }
         }
     }
@@ -2266,7 +2274,7 @@ mod tests {
     }
 
     #[test]
-    fn carry_member_importers_keeps_members_and_prunes_stale_root_packages() {
+    fn carry_member_importers_keeps_member_state_and_prunes_stale_root_packages() {
         let mut on_disk = aube_lockfile::LockfileGraph::default();
         on_disk
             .importers
@@ -2292,8 +2300,15 @@ mod tests {
                 ("root-only".to_string(), catalog_entry("1.0.0")),
             ]),
         );
+        on_disk
+            .patched_dependencies
+            .insert("shared@1.0.0".to_string(), "abc".to_string());
 
         let mut fresh = aube_lockfile::LockfileGraph::default();
+        fresh.catalogs.insert(
+            "default".to_string(),
+            BTreeMap::from([("cat-dep".to_string(), catalog_entry("2.0.0"))]),
+        );
         fresh
             .importers
             .insert(".".to_string(), vec![direct("root-dep", "2.0.0", "^2.0.0")]);
@@ -2317,6 +2332,15 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec!["cat-dep"]
+        );
+        // The member was locked against the on-disk catalog entry.
+        assert_eq!(merged.catalogs["default"]["cat-dep"].version, "1.0.0");
+        assert_eq!(
+            merged
+                .patched_dependencies
+                .get("shared@1.0.0")
+                .map(String::as_str),
+            Some("abc")
         );
     }
 
