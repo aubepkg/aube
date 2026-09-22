@@ -1039,9 +1039,11 @@ fn create_bound_node_shim(
             ps_quote(node_text),
             ps_quote(node_text)
         );
+        // Old installs can leave junctions, including dangling ones, at any
+        // launcher path. Match ordinary shim cleanup without removing contents.
         for path in win_shim_paths(bin_dir, name) {
-            if path.exists() {
-                std::fs::remove_file(path)?;
+            if std::fs::remove_file(&path).is_err() {
+                let _ = std::fs::remove_dir(&path);
             }
         }
         write_shim_file(&link, shell.as_bytes())?;
@@ -1517,6 +1519,45 @@ process.exit(17);
             .unwrap();
         assert_eq!(resolved.node, Some(runtime));
         assert_eq!(resolved.node_args, ["--no-warnings"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_node_replaces_legacy_junctions_without_touching_targets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let legacy = tmp.path().join("legacy");
+        let dangling = tmp.path().join("dangling");
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::create_dir(&dangling).unwrap();
+        std::fs::write(legacy.join("keep"), "untouched").unwrap();
+        for (i, path) in win_shim_paths(&bin, "cli").iter().enumerate() {
+            junction::create(if i == 1 { &dangling } else { &legacy }, path).unwrap();
+        }
+        std::fs::remove_dir(&dangling).unwrap();
+        let target = tmp.path().join("cli.js");
+        std::fs::write(&target, "#!/usr/bin/env node\n").unwrap();
+        create_bin_shim_with_node(
+            &bin,
+            "cli",
+            &target,
+            BinShimOptions::default(),
+            &tmp.path().join("node.exe"),
+        )
+        .unwrap();
+        for path in win_shim_paths(&bin, "cli") {
+            assert!(std::fs::symlink_metadata(&path).unwrap().is_file());
+            assert!(
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .contains(NODE_SHIM_MARKER)
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("keep")).unwrap(),
+            "untouched"
+        );
     }
 
     #[test]
