@@ -813,7 +813,7 @@ jobs:
       # The jobs that built these archives already attested them as they went,
       # which is the stronger claim; attesting again here would only add a
       # second statement about the same digests.
-      - uses: jdx/packslip@a0d434ad57571c62dbd0ab5095b4eff607a71fd3 # v1.1.1
+      - uses: jdx/packslip@74c75db7d611b36dd5a157999ec16cf823ccf80c # v1.2.0
         with:
           tag: ${{ inputs.tag }}
           artifacts: dist/aube-v*.tar.gz dist/aube-v*.zip
