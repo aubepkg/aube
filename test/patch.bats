@@ -450,3 +450,163 @@ EOF
 	run grep -Fq "is-odd@3.0.1(patch_hash=$patch_hash):" pnpm-lock.yaml
 	assert_success
 }
+
+# aube-lock.yaml must record patch identities the same way on every
+# write. Before, `aube add` in another workspace member re-resolved
+# and dropped the `(patch_hash=...)` suffixes that install had kept.
+@test "aube-lock.yaml keeps patch hashes across add in another workspace member" {
+	cat >package.json <<'EOF'
+{ "name": "root", "private": true }
+EOF
+	mkdir server web patches
+	cat >server/package.json <<'EOF'
+{ "name": "server", "version": "1.0.0", "dependencies": { "is-odd": "3.0.1" } }
+EOF
+	cat >web/package.json <<'EOF'
+{ "name": "web", "version": "1.0.0" }
+EOF
+	cat >aube-workspace.yaml <<'EOF'
+packages: [server, web]
+patchedDependencies:
+  is-odd@3.0.1: patches/is-odd@3.0.1.patch
+EOF
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+
+	run aube install --ignore-scripts
+	assert_success
+	patch_hash="$(awk '$1 == "is-odd@3.0.1:" && NF == 2 { print $2; exit }' aube-lock.yaml)"
+	assert_equal "${#patch_hash}" 64
+	run grep -Fq "version: 3.0.1(patch_hash=$patch_hash)" aube-lock.yaml
+	assert_success
+
+	run bash -c 'cd web && aube add is-positive@3.1.0 --ignore-scripts'
+	assert_success
+	run grep -Fq "version: 3.0.1(patch_hash=$patch_hash)" aube-lock.yaml
+	assert_success
+	run grep -Fq "is-odd@3.0.1(patch_hash=$patch_hash):" aube-lock.yaml
+	assert_success
+
+	rm -rf node_modules server/node_modules web/node_modules
+	run aube install --frozen-lockfile --ignore-scripts
+	assert_success
+	cd server
+	run node -e 'if (require("is-odd").patched !== "v1") process.exit(1)'
+	assert_success
+}
+
+@test "frozen install accepts aube-lock.yaml written without patch hashes" {
+	cat >package.json <<'EOF'
+{
+  "name": "legacy-patch-lock",
+  "private": true,
+  "dependencies": { "is-odd": "3.0.1" },
+  "aube": { "patchedDependencies": { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" } }
+}
+EOF
+	mkdir patches
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	run aube install --ignore-scripts
+	assert_success
+	# Rewrite into the hashless shape older aube releases produced.
+	node -e '
+const fs = require("fs");
+let s = fs.readFileSync("aube-lock.yaml", "utf8");
+s = s.replace(/\(patch_hash=[0-9a-f]+\)/g, "").replace(/patchedDependencies:\n.*\n\n/, "");
+fs.writeFileSync("aube-lock.yaml", s);
+'
+	run grep -q patch aube-lock.yaml
+	assert_failure
+
+	rm -rf node_modules
+	run aube install --frozen-lockfile --ignore-scripts
+	assert_success
+	run node -e 'if (require("is-odd").patched !== "v1") process.exit(1)'
+	assert_success
+	run grep -q patch_hash aube-lock.yaml
+	assert_failure
+
+	rm -rf node_modules
+	run aube install --ignore-scripts
+	assert_success
+	run grep -q "is-odd@3.0.1(patch_hash=" aube-lock.yaml
+	assert_success
+}
+
+# Patch paths are relative to the project, not the lockfile directory.
+@test "patch hashes resolve against the project root with --lockfile-dir" {
+	mkdir -p project/patches
+	cat >project/package.json <<'EOF'
+{
+  "name": "lfd-patch",
+  "version": "1.0.0",
+  "dependencies": { "is-odd": "3.0.1" },
+  "aube": { "patchedDependencies": { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" } }
+}
+EOF
+	cat >project/patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	cd project
+	run aube install --lockfile-dir .. --no-frozen-lockfile --ignore-scripts
+	assert_success
+	run grep -q "is-odd@3.0.1(patch_hash=" ../aube-lock.yaml
+	assert_success
+	run node -e 'if (require("is-odd").patched !== "v1") process.exit(1)'
+	assert_success
+}
+
+# Per-project lockfiles live in member dirs, but patch paths stay
+# relative to the workspace root that declares them.
+@test "per-project lockfiles hash root-declared patches" {
+	cat >package.json <<'EOF'
+{ "name": "root", "private": true }
+EOF
+	mkdir server patches
+	cat >server/package.json <<'EOF'
+{ "name": "server", "version": "1.0.0", "dependencies": { "is-odd": "3.0.1" } }
+EOF
+	cat >aube-workspace.yaml <<'EOF'
+packages: [server]
+sharedWorkspaceLockfile: false
+patchedDependencies:
+  is-odd@3.0.1: patches/is-odd@3.0.1.patch
+EOF
+	cat >patches/is-odd@3.0.1.patch <<'EOF'
+diff --git a/index.js b/index.js
+index 79d1f22a8e7a27efb8841bb83cb682ea1ff3a59c..1e33b4cf949b73bde8861ad65de71b4e46360259 100644
+--- a/index.js
++++ b/index.js
+@@ -24,1 +24,2 @@ module.exports = function isOdd(value) {
+ };
++module.exports.patched = 'v1';
+EOF
+	run aube install --ignore-scripts
+	assert_success
+	run grep -q "is-odd@3.0.1(patch_hash=" server/aube-lock.yaml
+	assert_success
+	cd server
+	run node -e 'if (require("is-odd").patched !== "v1") process.exit(1)'
+	assert_success
+}

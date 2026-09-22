@@ -297,8 +297,8 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         }
     }
     let lo_write_kind = write_kind;
-    if matches!(lo_write_kind, LockfileKind::Pnpm) {
-        graph.patched_dependencies = crate::patches::read_patched_dependencies(cwd)?;
+    if matches!(lo_write_kind, LockfileKind::Pnpm | LockfileKind::Aube) {
+        graph.patched_dependencies = crate::patches::read_patched_dependency_hashes(cwd)?;
     }
     // Same runtime-pin recording as the main install path.
     crate::runtime::refresh_lockfile_pin(
@@ -448,7 +448,15 @@ pub(super) fn select_lockfile_result(
                          help: run without --frozen-lockfile to update the lockfile"
                     ));
                 }
-                if let DriftStatus::Stale { reason } = check_patch_drift(cwd, graph, kind)? {
+                // aube-lock.yaml files written before aube recorded patch
+                // hashes have no patchedDependencies block. Accept them
+                // here so upgrading doesn't fail frozen CI installs; the
+                // next non-frozen install records the hashes.
+                let legacy_aube_lock =
+                    kind == LockfileKind::Aube && graph.patched_dependencies.is_empty();
+                if !legacy_aube_lock
+                    && let DriftStatus::Stale { reason } = check_patch_drift(cwd, graph, kind)?
+                {
                     return Err(miette!(
                         code = aube_codes::errors::ERR_AUBE_LOCKFILE_CONFIG_MISMATCH,
                         "lockfile is out of date with patchedDependencies: {reason}\n\
@@ -524,7 +532,7 @@ pub(crate) fn check_patch_drift(
     graph: &LockfileGraph,
     kind: LockfileKind,
 ) -> miette::Result<DriftStatus> {
-    if !matches!(kind, LockfileKind::Pnpm) {
+    if !matches!(kind, LockfileKind::Pnpm | LockfileKind::Aube) {
         return Ok(DriftStatus::Fresh);
     }
     Ok(

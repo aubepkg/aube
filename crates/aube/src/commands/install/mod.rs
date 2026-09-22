@@ -1698,15 +1698,19 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             ) {
                 graph.overlay_metadata_from(&prior);
             }
-            // A pnpm lockfile's patchedDependencies block describes the
+            // A pnpm-format lockfile's patchedDependencies block describes the
             // resolution that produced that lockfile; it is not authoritative
             // after manifest/workspace drift forced a fresh resolve. Replace
             // the metadata overlaid above with the current declarations so a
             // deleted patch from the stale lockfile is neither read during
-            // materialization nor written back. This also prevents pnpm 11's
-            // hash-only scalar entries from being mistaken for file paths.
-            if matches!(write_kind, aube_lockfile::LockfileKind::Pnpm) {
-                graph.patched_dependencies = crate::patches::read_patched_dependencies(&cwd)?;
+            // materialization nor written back. Values are content hashes
+            // computed against the project root; the linker never reads them
+            // as paths because every key is also a current declaration.
+            if matches!(
+                write_kind,
+                aube_lockfile::LockfileKind::Pnpm | aube_lockfile::LockfileKind::Aube
+            ) {
+                graph.patched_dependencies = crate::patches::read_patched_dependency_hashes(&cwd)?;
             }
             tracing::debug!("Resolved {} packages", graph.packages.len());
             // Seed the chain index for diagnostic enrichment. Any
