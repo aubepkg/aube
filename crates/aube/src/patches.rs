@@ -364,7 +364,7 @@ pub fn pnpm_patch_hash_drift(
     for (selector, rel) in &declared {
         let Some(expected) = recorded.get(selector) else {
             return Ok(Some(format!(
-                "patched dependency {selector} is missing from pnpm-lock.yaml"
+                "patched dependency {selector} is missing from the lockfile"
             )));
         };
         // Legacy path-only pnpm entries carry no hash to validate. Leave

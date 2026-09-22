@@ -109,11 +109,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "pnpm-lock.yaml");
-    let patch_hashes = if native_pnpm_aliases {
-        pnpm_patch_hashes(path, &graph.patched_dependencies)?
-    } else {
-        BTreeMap::new()
-    };
+    // Patch identities are part of the pnpm v9 format itself, so
+    // aube-lock.yaml records them too; otherwise the same patched
+    // package serializes differently depending on whether the graph
+    // came from a parse or a fresh resolve.
+    let patch_hashes = pnpm_patch_hashes(path, &graph.patched_dependencies)?;
     let patch_hash_for = |pkg: &crate::LockedPackage| -> Option<&str> {
         patch_hashes
             .get(&pkg.spec_key())
@@ -125,12 +125,8 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
             .map(String::as_str)
     };
     let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
-        if native_pnpm_aliases {
-            pkg.map(|pkg| with_patch_hash(value, patch_hash_for(pkg)))
-                .unwrap_or_else(|| value.to_string())
-        } else {
-            value.to_string()
-        }
+        pkg.map(|pkg| with_patch_hash(value, patch_hash_for(pkg)))
+            .unwrap_or_else(|| value.to_string())
     };
     // Translate a *flat* peer reference from aube's internal FS-safe
     // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
@@ -805,13 +801,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         },
         // pnpm v11 stores selector -> normalized patch-content SHA-256.
         // Skipped when empty to keep parity with no-patch installs.
-        patched_dependencies: if graph.patched_dependencies.is_empty() {
-            None
-        } else if native_pnpm_aliases {
-            Some(patch_hashes)
-        } else {
-            Some(graph.patched_dependencies.clone())
-        },
+        patched_dependencies: (!patch_hashes.is_empty()).then_some(patch_hashes),
         time,
         importers,
         packages,
