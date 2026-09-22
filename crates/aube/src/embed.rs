@@ -16,6 +16,7 @@ pub use crate::commands::install::{
     InstallProgressSnapshot, InstallPrompt, InstallPromptDecision, InstallPromptDecisionFuture,
     InstallPromptDecisionHandler, InstallPromptFuture, InstallPromptHandler, InstallReporter,
 };
+pub use crate::commands::pm_execpath::CLI_TRAMPOLINE_ARG;
 pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
 pub use aube_manifest::{Error as ManifestError, PackageJson, Workspaces};
 pub use aube_registry::NetworkMode;

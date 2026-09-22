@@ -365,7 +365,7 @@ pub(crate) async fn exec_bin_terminal(
     shell_mode: bool,
 ) -> miette::Result<Option<i32>> {
     #[cfg(unix)]
-    if aube_util::embedder().name == aube_util::AUBE.name {
+    if !aube_util::is_embedded() {
         use std::os::unix::process::CommandExt;
         if !shell_mode && !bin_path.exists() {
             return Err(bin_not_found_error(bin));

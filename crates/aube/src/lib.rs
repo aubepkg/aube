@@ -750,6 +750,17 @@ fn report_exit_code(report: &miette::Report) -> i32 {
 
 fn inner_main() -> miette::Result<i32> {
     let mut argv: Vec<OsString> = std::env::args_os().collect();
+    // An embedding host's executable is what lifecycle scripts see as
+    // `npm_execpath` (through aube's shim) — and its own CLI is not aube's.
+    // The shim marks the invocation with a private token the host forwards
+    // here verbatim; drop it so everything below parses the aube command
+    // line the script actually wrote. Standalone aube accepts it too: one
+    // code path, and a shim pointed at a real aube binary still works.
+    if argv.get(1).and_then(|arg| arg.to_str())
+        == Some(crate::commands::pm_execpath::CLI_TRAMPOLINE_ARG)
+    {
+        argv.remove(1);
+    }
     let invoked_as_aubr = argv
         .first()
         .is_some_and(|arg| crate::tool_shims::stem_of_argv0(arg) == "aubr");

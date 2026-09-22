@@ -60,6 +60,43 @@ the lowest precedence, so users can still override them through normal aube
 configuration sources. `Host` fields, by contrast, are decisions of the
 embedding application and are not user-configurable.
 
+## Forward aube's private argv
+
+Lifecycle scripts reach back for the tools that ran them, and both paths land
+on `std::env::current_exe()` — your binary, not aube's. Aube writes shims that
+re-enter itself through it, marked with a private first argument. Intercept
+those two before your own argument parser sees them:
+
+```rust
+fn main() -> std::process::ExitCode {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        // `node-gyp` shims: bootstrap aube's cached node-gyp and print its path.
+        Some("__node-gyp-bootstrap") => {
+            let dir = args.get(2).map_or_else(|| ".".into(), std::path::PathBuf::from);
+            match runtime.block_on(embed::bootstrap_node_gyp(&dir)) {
+                Ok(path) => println!("{}", path.display()),
+                Err(err) => { eprintln!("{err:?}"); return 1.into(); }
+            }
+            return 0.into();
+        }
+        // `npm_execpath`: a package script re-invoking its package manager.
+        Some(embed::CLI_TRAMPOLINE_ARG) => return (aube::cli_main(&HOST) as u8).into(),
+        _ => {}
+    }
+    // ... your own CLI
+}
+```
+
+`cli_main` strips the `__aube-cli` token itself, so forward the argv unchanged.
+
+Dispatch both. The shims fall back to a `node-gyp` on `PATH` only when
+`AUBE_NODE_GYP_EXE` is *absent*, and aube always sets it — so a host that
+exports the shims without answering `__node-gyp-bootstrap` turns a native-addon
+build into a hard failure rather than a fallback. Skipping `__aube-cli` is
+milder but the same shape: a package that runs `${npm_execpath} run verify`
+lands in your CLI, which is the misrouting the token exists to prevent.
+
 ## Install a project
 
 Always select the project directory explicitly. `InstallControl::silent()` is

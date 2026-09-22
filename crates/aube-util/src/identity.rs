@@ -218,6 +218,26 @@ pub fn embedder() -> &'static Embedder {
     ACTIVE.get().copied().unwrap_or(&AUBE)
 }
 
+/// Whether a *foreign* host drives this process — i.e. the running executable
+/// is not aube's own CLI.
+///
+/// The distinction matters wherever aube hands out its own program path:
+/// `std::env::current_exe()` is an aube binary that understands `aube <verb>`
+/// only under the default [`AUBE`] profile. Under an embedder it is the host's
+/// binary (`mise`, …), whose CLI is its own — so naming it as "the package
+/// manager running here" sends callers into the wrong command surface.
+///
+/// Identity is compared by [`Embedder::name`], not by address: [`AUBE`] is a
+/// `const`, so `&AUBE` in the binary crate that registers it and `&AUBE` here
+/// are separate values that a non-LTO build places at different addresses —
+/// a pointer comparison would report standalone aube as a guest. A host that
+/// registers a profile calling itself `aube` is likewise treated as
+/// standalone, which is the honest reading: it asked for aube's identity in
+/// full.
+pub fn is_embedded() -> bool {
+    ACTIVE.get().is_some_and(|active| active.name != AUBE.name)
+}
+
 /// The active tool's program name for *user-facing* output — the proper noun a
 /// user types and reads (e.g. `"aube"` under the default profile, the host's
 /// brand under an embedder).
@@ -274,6 +294,9 @@ mod tests {
     /// Keep profile registration out of this crate's unit tests.
     #[test]
     fn embedder_unset_is_aube() {
+        // Nothing registered means aube is running as itself, so callers
+        // that branch on the guest/host distinction take the aube path.
+        assert!(!is_embedded());
         let id = embedder();
         assert_eq!(id.name, "aube");
         assert_eq!(id.display_name, "aube");

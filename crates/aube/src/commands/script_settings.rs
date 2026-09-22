@@ -68,6 +68,11 @@ pub(crate) fn configure_script_settings(
             .as_ref()
             .is_some_and(|r| r.bin_dir_precedes_project_bins),
     );
+    // `npm_execpath` parity: the package manager a script re-invokes.
+    // Aube's own binary standalone; a shim that re-enters aube through the
+    // host when embedded. Registered alongside the snapshot above so both
+    // land in the same install scope.
+    aube_scripts::set_pm_execpath(super::pm_execpath::pm_execpath());
 }
 
 /// Load `.npmrc` + workspace settings for `cwd` and push them into the
