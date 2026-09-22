@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.2.17...aube-lockfile-v2.3.0) - 2026-09-22
+
+### Fixed
+
+- *(lockfile)* keep patch hashes in aube-lock.yaml on re-resolve ([#1577](https://github.com/aubepkg/aube/pull/1577))
+- *(lockfile)* dedupe pnpm importer direct deps across sections ([#1549](https://github.com/aubepkg/aube/pull/1549))
+- *(lockfile)* import packages declared in both dev and optional deps once ([#1546](https://github.com/aubepkg/aube/pull/1546))
+
 ## [2.2.13](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.2.12...aube-lockfile-v2.2.13) - 2026-09-09
 
 ### Other
