@@ -89,10 +89,13 @@ fn main() -> std::process::ExitCode {
 ```
 
 `cli_main` strips the `__aube-cli` token itself, so forward the argv unchanged.
-A host that skips this keeps working: `npm_config_node_gyp` falls back to a
-`node-gyp` on `PATH`, and a package that runs `${npm_execpath} run verify` ends
-up in your CLI — which is exactly the misrouting the token exists to prevent,
-so it is worth the dozen lines.
+
+Dispatch both. The shims fall back to a `node-gyp` on `PATH` only when
+`AUBE_NODE_GYP_EXE` is *absent*, and aube always sets it — so a host that
+exports the shims without answering `__node-gyp-bootstrap` turns a native-addon
+build into a hard failure rather than a fallback. Skipping `__aube-cli` is
+milder but the same shape: a package that runs `${npm_execpath} run verify`
+lands in your CLI, which is the misrouting the token exists to prevent.
 
 ## Install a project
 

@@ -849,7 +849,11 @@ fn apply_script_settings_env(cmd: &mut tokio::process::Command, settings: &Scrip
     // `AUBE_CLI_EXE`: the executable that dispatches aube's CLI behind the
     // private `__aube-cli` argv token — the running program, whether that
     // is aube itself or an embedding host. The `npm_execpath` shim above
-    // reads it instead of baking a path into the cached file.
+    // reads it instead of baking a path into the cached file. Cleared
+    // first for the same reason as `npm_execpath`: should `current_exe()`
+    // fail, an inherited value would point the shim at whatever binary
+    // ran somewhere further up, not at this process.
+    cmd.env_remove(CLI_EXE_ENV);
     if let Some(exe) = aube_exe.as_deref() {
         cmd.env(CLI_EXE_ENV, exe);
     }

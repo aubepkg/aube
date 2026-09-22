@@ -130,7 +130,7 @@ fn write_transitive_count_line(count: usize) {
     let msg = append_command_hint(
         format!("{pkgs} {verb} deprecation warnings."),
         "aube deprecations --transitive",
-        is_standalone_aube(),
+        !aube_util::is_embedded(),
     );
     write_summary_line(msg);
 }
@@ -146,13 +146,9 @@ fn write_count_line(count: usize, has_transitive: bool) {
     let msg = append_command_hint(
         format!("{pkgs} {verb} deprecation warnings."),
         cmd,
-        is_standalone_aube(),
+        !aube_util::is_embedded(),
     );
     write_summary_line(msg);
-}
-
-fn is_standalone_aube() -> bool {
-    aube_util::embedder().name == aube_util::AUBE.name
 }
 
 fn append_command_hint(message: String, command: &str, show_hint: bool) -> String {
