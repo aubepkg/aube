@@ -1749,8 +1749,16 @@ async fn write_update_lockfile(
         super::write_and_log_lockfile(cwd, graph, manifest)?;
         return Ok(());
     };
-    if workspace_root == cwd || !resolve_shared_workspace_lockfile(&workspace_root)? {
+    if !resolve_shared_workspace_lockfile(&workspace_root)? {
         super::write_and_log_lockfile(cwd, graph, manifest)?;
+        return Ok(());
+    }
+    if workspace_root == cwd {
+        // `graph` only resolved the root manifest, so writing it as-is
+        // would drop every member importer from the shared lockfile.
+        let on_disk = read_workspace_lockfile(cwd, manifest)?;
+        let graph = carry_member_importers(graph.clone(), on_disk);
+        super::write_and_log_lockfile(cwd, &graph, manifest)?;
         return Ok(());
     }
 
@@ -1766,6 +1774,67 @@ async fn write_update_lockfile(
         cli_pnpmfile,
     )
     .await
+}
+
+/// Copy every non-root importer (and the packages, times, and catalog
+/// entries it references) from `on_disk` into the freshly resolved
+/// root graph. Fresh root data wins on conflicts; packages no importer
+/// reaches anymore are pruned.
+fn carry_member_importers(
+    mut fresh: aube_lockfile::LockfileGraph,
+    on_disk: aube_lockfile::LockfileGraph,
+) -> aube_lockfile::LockfileGraph {
+    for (path, deps) in on_disk.importers {
+        if path != "." {
+            fresh.importers.entry(path).or_insert(deps);
+        }
+    }
+    for (path, skipped) in on_disk.skipped_optional_dependencies {
+        if path != "." {
+            fresh
+                .skipped_optional_dependencies
+                .entry(path)
+                .or_insert(skipped);
+        }
+    }
+    for (path, extra) in on_disk.workspace_extra_fields {
+        if path != "." {
+            fresh.workspace_extra_fields.entry(path).or_insert(extra);
+        }
+    }
+    for (dep_path, pkg) in on_disk.packages {
+        fresh.packages.entry(dep_path).or_insert(pkg);
+    }
+    for (spec, time) in on_disk.times {
+        fresh.times.entry(spec).or_insert(time);
+    }
+    // Only keep catalog entries a member importer still references, so
+    // an entry the root dropped doesn't linger in the lockfile.
+    let member_catalog_refs: BTreeSet<(String, String)> = fresh
+        .importers
+        .iter()
+        .filter(|(path, _)| path.as_str() != ".")
+        .flat_map(|(_, deps)| deps)
+        .filter_map(|dep| {
+            let catalog = catalog_name_from_spec(dep.specifier.as_deref()?)?;
+            Some((catalog.to_string(), dep.name.clone()))
+        })
+        .collect();
+    for (catalog, entries) in on_disk.catalogs {
+        for (name, entry) in entries {
+            if member_catalog_refs.contains(&(catalog.clone(), name.clone())) {
+                fresh
+                    .catalogs
+                    .entry(catalog.clone())
+                    .or_default()
+                    .entry(name)
+                    .or_insert(entry);
+            }
+        }
+    }
+    let mut merged = fresh.filter_deps(|_| true);
+    retain_package_times(&mut merged);
+    merged
 }
 
 async fn merge_update_graph_into_workspace_lockfile(
@@ -2178,6 +2247,77 @@ mod tests {
         retain_package_times(&mut graph);
 
         assert!(graph.times.contains_key("foo@1.0.0"));
+    }
+
+    fn direct(name: &str, version: &str, specifier: &str) -> aube_lockfile::DirectDep {
+        aube_lockfile::DirectDep {
+            name: name.to_string(),
+            dep_path: format!("{name}@{version}"),
+            dep_type: aube_lockfile::DepType::Production,
+            specifier: Some(specifier.to_string()),
+        }
+    }
+
+    fn catalog_entry(version: &str) -> aube_lockfile::CatalogEntry {
+        aube_lockfile::CatalogEntry {
+            specifier: format!("^{version}"),
+            version: version.to_string(),
+        }
+    }
+
+    #[test]
+    fn carry_member_importers_keeps_members_and_prunes_stale_root_packages() {
+        let mut on_disk = aube_lockfile::LockfileGraph::default();
+        on_disk
+            .importers
+            .insert(".".to_string(), vec![direct("root-dep", "1.0.0", "^1.0.0")]);
+        on_disk.importers.insert(
+            "packages/app".to_string(),
+            vec![
+                direct("shared", "1.0.0", "^1.0.0"),
+                direct("cat-dep", "1.0.0", "catalog:"),
+            ],
+        );
+        for pkg in [
+            locked("root-dep", "1.0.0"),
+            locked("shared", "1.0.0"),
+            locked("cat-dep", "1.0.0"),
+        ] {
+            on_disk.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+        on_disk.catalogs.insert(
+            "default".to_string(),
+            BTreeMap::from([
+                ("cat-dep".to_string(), catalog_entry("1.0.0")),
+                ("root-only".to_string(), catalog_entry("1.0.0")),
+            ]),
+        );
+
+        let mut fresh = aube_lockfile::LockfileGraph::default();
+        fresh
+            .importers
+            .insert(".".to_string(), vec![direct("root-dep", "2.0.0", "^2.0.0")]);
+        let pkg = locked("root-dep", "2.0.0");
+        fresh.packages.insert(pkg.dep_path.clone(), pkg);
+
+        let merged = carry_member_importers(fresh, on_disk);
+
+        assert_eq!(
+            merged.importers.keys().cloned().collect::<Vec<_>>(),
+            vec![".", "packages/app"]
+        );
+        assert_eq!(merged.importers["."][0].dep_path, "root-dep@2.0.0");
+        assert_eq!(
+            merged.packages.keys().cloned().collect::<Vec<_>>(),
+            vec!["cat-dep@1.0.0", "root-dep@2.0.0", "shared@1.0.0"]
+        );
+        assert_eq!(
+            merged.catalogs["default"]
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["cat-dep"]
+        );
     }
 
     #[test]

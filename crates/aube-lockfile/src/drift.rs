@@ -185,6 +185,21 @@ impl LockfileGraph {
             .filter_map(|(_, manifest)| manifest.name.as_deref())
             .collect();
         for (importer_path, manifest) in manifests {
+            // pnpm-format lockfiles record every workspace project that
+            // declares deps. A missing importer means the lockfile was
+            // written without that project (the per-importer check below
+            // treats an absent entry as "no specifiers" and says fresh).
+            if check_resolution_metadata
+                && is_workspace_install
+                && !self.importers.contains_key(importer_path)
+                && manifest_declares_deps(manifest)
+            {
+                return DriftStatus::Stale {
+                    reason: format!(
+                        "workspace importer {importer_path} is missing from the lockfile"
+                    ),
+                };
+            }
             match self.check_drift_for_importer_with_workspace_links(
                 importer_path,
                 manifest,
@@ -768,6 +783,12 @@ pub enum DriftStatus {
     Fresh,
     /// The lockfile is out of date. The reason describes the first mismatch found.
     Stale { reason: String },
+}
+
+fn manifest_declares_deps(manifest: &aube_manifest::PackageJson) -> bool {
+    !manifest.dependencies.is_empty()
+        || !manifest.dev_dependencies.is_empty()
+        || !manifest.optional_dependencies.is_empty()
 }
 
 fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {
@@ -2164,6 +2185,61 @@ mod drift_tests {
         assert_eq!(
             graph.check_drift_workspace(
                 &workspace_manifests,
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new(),
+                true,
+            ),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn workspace_drift_stale_when_member_importer_is_missing() {
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "lodash".into(),
+                dep_path: "lodash@4.17.21".into(),
+                dep_type: DepType::Production,
+                specifier: Some("^4.17.0".into()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            ..Default::default()
+        };
+        let workspace_manifests = vec![
+            (".".to_string(), make_manifest(&[("lodash", "^4.17.0")])),
+            (
+                "packages/app".to_string(),
+                make_manifest(&[("express", "^4.18.0")]),
+            ),
+            ("packages/empty".to_string(), make_manifest(&[])),
+        ];
+        match graph.check_drift_workspace(
+            &workspace_manifests,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+        ) {
+            DriftStatus::Stale { reason } => assert!(
+                reason.contains("packages/app is missing"),
+                "unexpected reason: {reason}"
+            ),
+            DriftStatus::Fresh => panic!("missing member importer should be stale"),
+        }
+
+        // A member without deps has nothing to lock.
+        assert_eq!(
+            graph.check_drift_workspace(
+                &workspace_manifests[..1]
+                    .iter()
+                    .chain(&workspace_manifests[2..])
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 &BTreeMap::new(),
                 &[],
                 &BTreeMap::new(),
