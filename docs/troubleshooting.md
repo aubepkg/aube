@@ -242,8 +242,8 @@ aube -F 'api...' run build
 Keep the existing lockfile while evaluating aube. Since aube writes supported
 lockfiles in place, the original package manager can keep using the same file
 during rollout. If aube hits a bug in a project, fall back for that job,
-keep the failing command and lockfile handy, and open a thread in
-[GitHub Discussions](https://github.com/aubepkg/aube/discussions) with the
+keep the failing command and lockfile handy, and open an issue in
+[GitHub Issues](https://github.com/aubepkg/aube/issues) with the
 exact command, first substantive error, stable error code, package-manager
 versions, OS, and a minimal reproduction. Redact tokens and private registry
 details before sharing logs.
