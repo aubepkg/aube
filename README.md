@@ -142,7 +142,7 @@ See [workspaces](https://aube.sh/package-manager/workspaces) and
 - [Embedding](https://aube.sh/embedding/): use aube from Rust, Node-API, or a C ABI host.
 - [Contributing](CONTRIBUTING.md): build, test, and improve aube.
 
-Questions and bug reports belong in [GitHub Discussions](https://github.com/jdx/aube/discussions).
+Report bugs in [GitHub Issues](https://github.com/aubepkg/aube/issues). Ask questions in [GitHub Discussions](https://github.com/aubepkg/aube/discussions).
 Report vulnerabilities through the [security policy](SECURITY.md).
 
 *aube* means dawn in French, pronounced `/ob/` ("ohb"). Built by [jdx](https://jdx.dev).
