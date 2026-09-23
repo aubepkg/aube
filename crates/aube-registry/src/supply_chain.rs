@@ -136,6 +136,38 @@ struct OsvAffected {
     package: OsvAffectedPackage,
     #[serde(default)]
     versions: Vec<String>,
+    #[serde(default)]
+    ranges: Vec<OsvRange>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct OsvRange {
+    #[serde(default)]
+    events: Vec<OsvRangeEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct OsvRangeEvent {
+    #[serde(default)]
+    introduced: Option<String>,
+    #[serde(default)]
+    fixed: Option<String>,
+    #[serde(default)]
+    last_affected: Option<String>,
+    #[serde(default)]
+    limit: Option<String>,
+}
+
+impl OsvRange {
+    /// `introduced` with no closing event: every release from that
+    /// point on, including ones published after the advisory.
+    fn is_open_ended(&self) -> bool {
+        self.events.iter().any(|e| e.introduced.is_some())
+            && !self
+                .events
+                .iter()
+                .any(|e| e.fixed.is_some() || e.last_affected.is_some() || e.limit.is_some())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -181,6 +213,12 @@ pub fn build_probe_client() -> Result<reqwest::Client, SupplyChainError> {
 /// shai-hulud worm that affected `ansi-regex@6.2.1` only) would
 /// collapse into a name-level block of every published release.
 ///
+/// Advisories that only enumerate specific compromised releases
+/// (e.g. `axios` `MAL-2026-2307`: `0.30.4` and `1.14.1`) are dropped
+/// here — a range like `axios@^1.20.0` must not be refused over them.
+/// The post-resolve versioned gate still blocks if the resolver picks
+/// one of those releases. See [`name_hit_covers_every_version`].
+///
 /// Returns the subset of input names that hit a `MAL-*` advisory.
 /// An `Err` is a fetch / decode / truncated-response failure — the
 /// caller decides whether to surface it (`advisoryCheck=required`)
@@ -201,7 +239,7 @@ pub async fn fetch_malicious_advisories(
     for chunk in names.chunks(OSV_BATCH_LIMIT) {
         hits.extend(fetch_malicious_advisories_chunk(client, chunk).await?);
     }
-    Ok(hits)
+    filter_malicious_hits(client, hits).await
 }
 
 /// Version-aware sibling of [`fetch_malicious_advisories`] for the
@@ -227,7 +265,7 @@ pub async fn fetch_malicious_advisories_versioned(
     for chunk in pairs.chunks(OSV_BATCH_LIMIT) {
         hits.extend(fetch_malicious_advisories_versioned_chunk(client, chunk).await?);
     }
-    filter_malicious_versioned_hits(client, hits).await
+    filter_malicious_hits(client, hits).await
 }
 
 async fn fetch_malicious_advisories_chunk(
@@ -336,14 +374,16 @@ fn extract_malicious_versioned(
     hits
 }
 
-async fn filter_malicious_versioned_hits(
+/// Confirm each querybatch hit against the advisory detail. A detail
+/// fetch failure keeps the hit so the gate stays fail-closed.
+async fn filter_malicious_hits(
     client: &reqwest::Client,
     hits: Vec<MaliciousAdvisory>,
 ) -> Result<Vec<MaliciousAdvisory>, SupplyChainError> {
     let mut details = HashMap::new();
     let mut tasks = tokio::task::JoinSet::new();
     for hit in &hits {
-        if hit.version.is_none() || details.contains_key(&hit.advisory_id) {
+        if details.contains_key(&hit.advisory_id) {
             continue;
         }
         details.insert(hit.advisory_id.clone(), None);
@@ -365,11 +405,9 @@ async fn filter_malicious_versioned_hits(
         let affects = details
             .get(&hit.advisory_id)
             .and_then(Option::as_ref)
-            .is_none_or(|d| {
-                let Some(version) = hit.version.as_deref() else {
-                    return true;
-                };
-                versioned_hit_affects_resolved_version(d, &hit.package, version)
+            .is_none_or(|d| match hit.version.as_deref() {
+                Some(version) => versioned_hit_affects_resolved_version(d, &hit.package, version),
+                None => name_hit_covers_every_version(d, &hit.package),
             });
         if affects {
             filtered.push(hit);
@@ -405,6 +443,29 @@ fn versioned_hit_affects_resolved_version(
         }
         matched_package = true;
         if affected.versions.is_empty() || affected.versions.iter().any(|v| v == version) {
+            return true;
+        }
+    }
+    !matched_package
+}
+
+/// Whether a name-only hit should block before resolution: the
+/// advisory lists no specific versions, or has an open-ended range
+/// that also covers future releases (typical for typosquats).
+/// Advisories naming only specific compromised releases defer to the
+/// post-resolve versioned gate. An advisory with no npm entry for
+/// `package` keeps blocking, matching
+/// [`versioned_hit_affects_resolved_version`].
+fn name_hit_covers_every_version(details: &OsvVulnDetails, package: &str) -> bool {
+    let mut matched_package = false;
+    for affected in &details.affected {
+        if !affected.package.ecosystem.eq_ignore_ascii_case("npm")
+            || affected.package.name != package
+        {
+            continue;
+        }
+        matched_package = true;
+        if affected.versions.is_empty() || affected.ranges.iter().any(OsvRange::is_open_ended) {
             return true;
         }
     }
@@ -539,6 +600,7 @@ mod tests {
                     "2.2.3".to_string(),
                     "2.2.2".to_string(),
                 ],
+                ..Default::default()
             }],
         };
 
@@ -563,6 +625,7 @@ mod tests {
                     ecosystem: "npm".to_string(),
                 },
                 versions: Vec::new(),
+                ..Default::default()
             }],
         };
 
@@ -580,12 +643,64 @@ mod tests {
                     ecosystem: "PyPI".to_string(),
                 },
                 versions: vec!["1.0.0".to_string()],
+                ..Default::default()
             }],
         };
 
         assert!(versioned_hit_affects_resolved_version(
             &details, "evil-pkg", "1.0.0",
         ));
+    }
+
+    #[test]
+    fn name_hit_defers_advisory_listing_only_specific_versions() {
+        let details: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"axios","ecosystem":"npm"},
+                "versions":["0.30.4","1.14.1"]}]}"#,
+        )
+        .unwrap();
+
+        assert!(!name_hit_covers_every_version(&details, "axios"));
+    }
+
+    #[test]
+    fn name_hit_blocks_open_ended_range() {
+        let details: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"029testnpm","ecosystem":"npm"},
+                "versions":["1.0.0"],
+                "ranges":[{"type":"SEMVER","events":[{"introduced":"0"}]}]}]}"#,
+        )
+        .unwrap();
+
+        assert!(name_hit_covers_every_version(&details, "029testnpm"));
+    }
+
+    #[test]
+    fn name_hit_defers_closed_range_with_listed_versions() {
+        let details: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"pkg","ecosystem":"npm"},
+                "versions":["1.0.1"],
+                "ranges":[{"type":"SEMVER","events":[{"introduced":"1.0.1"},{"fixed":"1.0.2"}]}]}]}"#,
+        )
+        .unwrap();
+
+        assert!(!name_hit_covers_every_version(&details, "pkg"));
+    }
+
+    #[test]
+    fn name_hit_blocks_without_listed_versions_or_matching_package() {
+        let no_versions: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"evil-pkg","ecosystem":"npm"}}]}"#,
+        )
+        .unwrap();
+        let other_ecosystem: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"evil-pkg","ecosystem":"PyPI"},
+                "versions":["1.0.0"]}]}"#,
+        )
+        .unwrap();
+
+        assert!(name_hit_covers_every_version(&no_versions, "evil-pkg"));
+        assert!(name_hit_covers_every_version(&other_ecosystem, "evil-pkg"));
     }
 
     #[test]
