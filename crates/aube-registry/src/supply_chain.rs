@@ -482,8 +482,8 @@ fn versioned_hit_affects_resolved_version(
 }
 
 /// Whether a name-only hit should block before resolution: the
-/// advisory lists no specific versions, or has an open-ended range
-/// that also covers future releases (typical for typosquats).
+/// advisory has an open-ended range that also covers future releases
+/// (typical for typosquats), or lists neither versions nor ranges.
 /// Advisories naming only specific compromised releases defer to the
 /// post-resolve versioned gate. An advisory with no npm entry for
 /// `package` keeps blocking, matching
@@ -497,7 +497,13 @@ fn name_hit_covers_every_version(details: &OsvVulnDetails, package: &str) -> boo
             continue;
         }
         matched_package = true;
-        if affected.versions.is_empty() || affected.ranges.iter().any(OsvRange::is_open_ended) {
+        // Without enumerated versions, closed ranges still bound the
+        // advisory: OSV's versioned querybatch evaluates them after
+        // resolution, so only a record with neither signal covers
+        // every release.
+        if affected.ranges.iter().any(OsvRange::is_open_ended)
+            || (affected.versions.is_empty() && affected.ranges.is_empty())
+        {
             return true;
         }
     }
@@ -713,6 +719,18 @@ mod tests {
             r#"{"affected":[{"package":{"name":"pkg","ecosystem":"npm"},
                 "versions":["1.0.1"],
                 "ranges":[{"type":"SEMVER","events":[{"introduced":"1.0.1"},{"fixed":"1.0.2"}]}]}]}"#,
+        )
+        .unwrap();
+
+        assert!(!name_hit_covers_every_version(&details, "pkg"));
+    }
+
+    #[test]
+    fn name_hit_defers_closed_range_without_listed_versions() {
+        let details: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"pkg","ecosystem":"npm"},
+                "versions":[],
+                "ranges":[{"type":"SEMVER","events":[{"introduced":"1.0.0"},{"fixed":"2.0.0"}]}]}]}"#,
         )
         .unwrap();
 
