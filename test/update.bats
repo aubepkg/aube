@@ -750,3 +750,118 @@ EOF
 	run grep -E '^time:' aube-lock.yaml
 	assert_failure
 }
+
+_setup_root_and_member_workspace() {
+	cat >package.json <<'EOF2'
+{"name":"root","private":true,"dependencies":{"is-odd":"^3.0.1"}}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+EOF2
+	mkdir -p packages/app
+	cat >packages/app/package.json <<'EOF2'
+{"name":"app","version":"1.0.0","dependencies":{"is-even":"^1.0.0"}}
+EOF2
+}
+
+@test "aube update at the workspace root keeps member importers in the shared lockfile" {
+	_setup_root_and_member_workspace
+	run aube install
+	assert_success
+
+	# The root range is already current, so package.json stays untouched
+	# and the chained install can't paper over a root-only lockfile.
+	run aube update
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-even@1.0.0:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	assert_file_exists packages/app/node_modules/is-even/package.json
+}
+
+@test "aube install restores a member importer missing from the shared lockfile" {
+	_setup_root_and_member_workspace
+	cat >aube-lock.yaml <<'EOF2'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      is-odd:
+        specifier: ^3.0.1
+        version: 3.0.1
+
+packages:
+
+  is-number@6.0.0:
+    resolution: {integrity: sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==}
+    engines: {node: '>=0.10.0'}
+
+  is-odd@3.0.1:
+    resolution: {integrity: sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==}
+    engines: {node: '>=4'}
+
+snapshots:
+
+  is-number@6.0.0: {}
+
+  is-odd@3.0.1:
+    dependencies:
+      is-number: 6.0.0
+EOF2
+
+	run aube install
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-even@1.0.0:" aube-lock.yaml
+	assert_success
+	assert_file_exists packages/app/node_modules/is-even/package.json
+}
+
+@test "aube update at the workspace root re-resolves members sharing a changed catalog entry" {
+	cat >package.json <<'EOF2'
+{"name":"root","private":true,"dependencies":{"is-odd":"catalog:"}}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+catalog:
+  is-odd: ^0.1.2
+EOF2
+	mkdir -p packages/app
+	cat >packages/app/package.json <<'EOF2'
+{"name":"app","version":"1.0.0","dependencies":{"is-odd":"catalog:"}}
+EOF2
+	run aube install
+	assert_success
+	run grep "is-odd@0.1.2:" aube-lock.yaml
+	assert_success
+
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+catalog:
+  is-odd: ^3.0.1
+EOF2
+	run aube update
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@0.1.2" aube-lock.yaml
+	assert_failure
+}
