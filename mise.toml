@@ -8,22 +8,15 @@ experimental = true
 cargo.binstall_native = true
 
 [tools]
-mr-boxington = "1.14.0"
-usage = "6.6.1"
-communique = "latest"
+mr-boxington = { version = "latest", minimum_release_age = "0s" }
+usage = { version = "latest", minimum_release_age = "0s" }
+communique = { version = "latest", minimum_release_age = "0s" }
 "github:bnjbvr/cargo-machete" = "latest"
-"github:foresterre/cargo-msrv" = "latest"
-# Pinned rather than "latest" because tak is the measuring instrument: an
-# upgrade that changes how it samples would land in the series as a step
-# change in aube's numbers, indistinguishable from a real regression. Bump
-# deliberately, on a commit that does nothing else.
-# TODO: switch to plain `tak = "0.0.4"` once a mise release ships the registry
-# entry from jdx/mise#11307 — the shorthand exists on main but the registry is
-# compiled in, so it is not usable until then.
-"github:jdx/tak" = "v0.0.9"
-hk = "latest"
+cargo-msrv = "latest"
+tak = { version = "latest", minimum_release_age = "0s" }
+hk = "1.44.3" # hk.pkl targets hk 1.x; move to latest after migrating it to hk 2
 node = "24"
-pitchfork = "latest"
+pitchfork = { version = "latest", minimum_release_age = "0s" }
 pkl = "latest"
 # Parallel-job driver for `mise run test:bats`. bats-core natively
 # supports shenwei356/rush as a GNU-parallel alternative, and unlike GNU
