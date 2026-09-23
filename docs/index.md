@@ -1,7 +1,7 @@
 ---
 layout: home
-title: A Node.js package manager for your everyday workflow
-description: Run scripts with automatic installs, share dependencies across projects, and keep your existing lockfile. aube is a Node.js package manager written in Rust.
+title: A Node.js package manager
+description: Run project scripts with automatic dependency checks, share packages across projects, and use supported npm, pnpm, Yarn, and Bun lockfiles.
 ---
 
 <HomeLanding />

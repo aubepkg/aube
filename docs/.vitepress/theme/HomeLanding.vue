@@ -53,12 +53,11 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
           v{{ aubeVersion }} <span aria-hidden="true">·</span> Release notes
           <span aria-hidden="true">↗</span>
         </a>
-        <p class="aube-eyebrow">A package manager for Node.js</p>
-        <h1 id="aube-hero-title">Skip the install step.</h1>
+        <h1 id="aube-hero-title">A Node.js package manager</h1>
         <p class="aube-lede">
-          aube installs missing or stale dependencies before running your
-          scripts, shares packages across projects, and keeps your existing
-          lockfile.
+          aube works with supported npm, pnpm, Yarn, and Bun lockfiles and shares
+          installed packages across projects. Run scripts with <code>aubr</code>
+          to install missing or stale dependencies before the script starts.
         </p>
         <div class="aube-actions">
           <a class="aube-button" href="/getting-started"
@@ -110,13 +109,13 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
           </div>
         </div>
         <p class="aube-terminal-caption">
-          Illustrative output. Same command, one less step to remember.
+          Illustrative output showing the install check before each script run.
         </p>
       </div>
     </section>
 
     <section class="aube-migration" aria-label="Migration guides">
-      <p>Your project. Your lockfile.</p>
+      <p>Migration guides</p>
       <div>
         <a href="/pnpm-users">pnpm <span aria-hidden="true">↗</span></a>
         <a href="/npm-users">npm <span aria-hidden="true">↗</span></a>
@@ -127,8 +126,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
 
     <section class="aube-workflow" aria-labelledby="aube-workflow-title">
       <div class="aube-section-heading">
-        <p class="aube-eyebrow">Less setup, more doing</p>
-        <h2 id="aube-workflow-title">Start with the command you need.</h2>
+        <h2 id="aube-workflow-title">Run scripts and tools</h2>
       </div>
       <div class="aube-command-grid">
         <a href="/package-manager/scripts#scripts"
@@ -148,8 +146,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
 
     <section class="aube-principles" aria-label="How aube manages dependencies">
       <article>
-        <span class="aube-eyebrow">Familiar files</span>
-        <h2>Keep the lockfile.<br />Try a different workflow.</h2>
+        <h2>Lockfile compatibility</h2>
         <p>
           aube reads and writes supported pnpm, npm, Yarn, and Bun lockfiles in
           place. Try it locally, review the diff, and run your tests before
@@ -160,8 +157,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
         >
       </article>
       <article>
-        <span class="aube-eyebrow">Shared storage</span>
-        <h2>Same dependencies.<br />Less duplicated work.</h2>
+        <h2>Shared package storage</h2>
         <p>
           Package files live in a content-addressable store. The global virtual
           store also shares package directory trees across local projects and
@@ -172,8 +168,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
         >
       </article>
       <article>
-        <span class="aube-eyebrow">Explicit build policy</span>
-        <h2>Know what runs<br />during an install.</h2>
+        <h2>Dependency build permissions</h2>
         <p>
           Dependency scripts need project approval or built-in trust. Explicit
           denies win. Optional build jails restrict approved scripts, with
@@ -184,8 +179,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
         >
       </article>
       <article>
-        <span class="aube-eyebrow">Checks during resolution</span>
-        <h2>Look beyond<br />the version number.</h2>
+        <h2>Package security checks</h2>
         <p>
           aube checks publishing evidence, release age, and known malicious
           packages when selecting versions. Each check has documented defaults
@@ -199,9 +193,8 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
 
     <section class="aube-benchmark" aria-labelledby="aube-benchmark-title">
       <div>
-        <p class="aube-eyebrow">Measured, with context</p>
         <h2 id="aube-benchmark-title">
-          A shorter wait<br />for a fresh install.
+          Install benchmarks
         </h2>
         <p>
           Warm cache, committed lockfile, no <code>node_modules</code>. These
