@@ -14,7 +14,7 @@ communique = { version = "latest", minimum_release_age = "0s" }
 "github:bnjbvr/cargo-machete" = "latest"
 cargo-msrv = "latest"
 tak = { version = "latest", minimum_release_age = "0s" }
-hk = "1.44.3" # hk.pkl targets hk 1.x; move to latest after migrating it to hk 2
+hk = { version = "latest", minimum_release_age = "0s" }
 node = "24"
 pitchfork = { version = "latest", minimum_release_age = "0s" }
 pkl = "latest"
