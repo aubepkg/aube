@@ -1,5 +1,5 @@
-amends "package://github.com/jdx/hk/releases/download/v1.44.3/hk@1.44.3#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.44.3/hk@1.44.3#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v2.1.0/hk@2.1.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.1.0/hk@2.1.0#/Builtins.pkl"
 
 local vendoredBats = List(
     "test/bats/**",
@@ -13,17 +13,26 @@ exclude = vendoredBats
 local linters = new Mapping<String, Step> {
     ["cargo-fmt"] = Builtins.cargo_fmt
     ["cargo-clippy"] = (Builtins.cargo_clippy) {
-        check = "cargo clippy --manifest-path {{workspace_indicator}} --quiet -- -D warnings"
+        check = new CommandSpec {
+            command = "cargo clippy --manifest-path {{workspace_indicator}} --quiet -- -D warnings"
+            effect = "write"
+        }
     }
-    ["shfmt"] = (Builtins.shfmt) {
-        glob = List("**/*.bats", "**/*.sh", "**/*.bash")
-    }
+    // the builtin already covers *.bats
+    ["shfmt"] = Builtins.shfmt
+    // the builtin covers *.sh, *.bash, and shell shebangs; add the bats tests
     ["shellcheck"] = (Builtins.shellcheck) {
-        glob = List("**/*.bats", "**/*.sh", "**/*.bash")
+        match_any = List(
+            new FileSelector { glob = List("**/*.bats", "**/*.sh", "**/*.bash") },
+            new FileSelector { types = List("sh", "bash") },
+        )
     }
     ["pkl"] {
         glob = "*.pkl"
-        check = "pkl eval {{files}} >/dev/null"
+        check = new CommandSpec {
+            command = "pkl eval {{files}} >/dev/null"
+            effect = "read"
+        }
     }
 }
 
