@@ -159,14 +159,41 @@ struct OsvRangeEvent {
 }
 
 impl OsvRange {
-    /// `introduced` with no closing event: every release from that
-    /// point on, including ones published after the advisory.
+    /// Whether the last interval never closes, so every release from
+    /// some point on is affected, including ones published after the
+    /// advisory. Events are ordered by version rather than trusted in
+    /// file order, so `introduced A, fixed B, introduced C` counts as
+    /// open. A `limit` caps the whole range. Unparseable versions are
+    /// treated as open so the gate stays fail-closed.
     fn is_open_ended(&self) -> bool {
-        self.events.iter().any(|e| e.introduced.is_some())
-            && !self
-                .events
-                .iter()
-                .any(|e| e.fixed.is_some() || e.last_affected.is_some() || e.limit.is_some())
+        if self.events.iter().any(|e| e.limit.is_some()) {
+            return false;
+        }
+        let mut last: Option<(node_semver::Version, bool)> = None;
+        for event in &self.events {
+            let (raw, introduces) = match (&event.introduced, &event.fixed, &event.last_affected) {
+                (Some(v), _, _) => (v, true),
+                (None, Some(v), _) | (None, None, Some(v)) => (v, false),
+                (None, None, None) => continue,
+            };
+            let version = if raw == "0" {
+                node_semver::Version::from((0, 0, 0))
+            } else {
+                match node_semver::Version::parse(raw) {
+                    Ok(version) => version,
+                    Err(_) => return true,
+                }
+            };
+            // At equal versions a closing event wins: `introduced X,
+            // fixed X` is an empty interval, not an open one.
+            let later = last.as_ref().is_none_or(|(prev, prev_introduces)| {
+                version > *prev || (version == *prev && *prev_introduces && !introduces)
+            });
+            if later {
+                last = Some((version, introduces));
+            }
+        }
+        last.is_some_and(|(_, introduces)| introduces)
     }
 }
 
@@ -685,6 +712,35 @@ mod tests {
         .unwrap();
 
         assert!(!name_hit_covers_every_version(&details, "pkg"));
+    }
+
+    #[test]
+    fn name_hit_blocks_range_reopened_after_fix() {
+        let details: OsvVulnDetails = serde_json::from_str(
+            r#"{"affected":[{"package":{"name":"pkg","ecosystem":"npm"},
+                "versions":["1.0.1","2.0.0"],
+                "ranges":[{"type":"SEMVER","events":[
+                    {"introduced":"1.0.1"},{"fixed":"1.0.2"},{"introduced":"2.0.0"}]}]}]}"#,
+        )
+        .unwrap();
+
+        assert!(name_hit_covers_every_version(&details, "pkg"));
+    }
+
+    #[test]
+    fn range_openness_ignores_event_order() {
+        let reopened: OsvRange = serde_json::from_str(
+            r#"{"events":[{"introduced":"2.0.0"},{"fixed":"1.0.2"},{"introduced":"1.0.1"}]}"#,
+        )
+        .unwrap();
+        let closed: OsvRange =
+            serde_json::from_str(r#"{"events":[{"fixed":"1.0.2"},{"introduced":"0"}]}"#).unwrap();
+        let limited: OsvRange =
+            serde_json::from_str(r#"{"events":[{"introduced":"0"},{"limit":"3.0.0"}]}"#).unwrap();
+
+        assert!(reopened.is_open_ended());
+        assert!(!closed.is_open_ended());
+        assert!(!limited.is_open_ended());
     }
 
     #[test]
