@@ -163,10 +163,15 @@ impl OsvRange {
     /// some point on is affected, including ones published after the
     /// advisory. Events are ordered by version rather than trusted in
     /// file order, so `introduced A, fixed B, introduced C` counts as
-    /// open. A `limit` caps the whole range. Unparseable versions are
-    /// treated as open so the gate stays fail-closed.
+    /// open. A finite `limit` caps the whole range; OSV defines
+    /// `limit: "*"` as infinity, so that one caps nothing. Unparseable
+    /// versions are treated as open so the gate stays fail-closed.
     fn is_open_ended(&self) -> bool {
-        if self.events.iter().any(|e| e.limit.is_some()) {
+        if self
+            .events
+            .iter()
+            .any(|e| e.limit.as_deref().is_some_and(|limit| limit != "*"))
+        {
             return false;
         }
         let mut last: Option<(node_semver::Version, bool)> = None;
@@ -738,7 +743,11 @@ mod tests {
         let limited: OsvRange =
             serde_json::from_str(r#"{"events":[{"introduced":"0"},{"limit":"3.0.0"}]}"#).unwrap();
 
+        let unlimited: OsvRange =
+            serde_json::from_str(r#"{"events":[{"introduced":"0"},{"limit":"*"}]}"#).unwrap();
+
         assert!(reopened.is_open_ended());
+        assert!(unlimited.is_open_ended());
         assert!(!closed.is_open_ended());
         assert!(!limited.is_open_ended());
     }
