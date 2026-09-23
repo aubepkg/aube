@@ -3,7 +3,7 @@
   "bin": "aube",
   "cmd": {
     "full_cmd": [],
-    "usage": "[FLAGS] <SUBCOMMAND>",
+    "usage": "[FLAGS] [SUBCOMMAND]",
     "subcommands": {
       "__node-gyp-bootstrap": {
         "full_cmd": [
@@ -2932,7 +2932,7 @@
         "full_cmd": [
           "config"
         ],
-        "usage": "config [FLAGS] <SUBCOMMAND>",
+        "usage": "config [FLAGS] [SUBCOMMAND]",
         "subcommands": {
           "delete": {
             "full_cmd": [
