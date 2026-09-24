@@ -200,6 +200,7 @@ impl Store {
             .fast_path_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lock);
+        cas::FAST_PATH_UMASK.store(cas::UMASK_UNKNOWN, Ordering::Relaxed);
         self.fast_path.store(true, Ordering::Release);
     }
 

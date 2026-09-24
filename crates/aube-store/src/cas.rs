@@ -309,12 +309,9 @@ impl Store {
                         // process umask, so a non-default umask (e.g.
                         // 0o077) would give CAS files 0o600. The
                         // tempfile path uses `fchmod`, which ignores
-                        // umask. Match it with an explicit
-                        // `set_permissions` so the same store can't end
-                        // up with mixed-mode files depending on which
-                        // path wrote each entry.
-                        use std::os::unix::fs::PermissionsExt;
-                        let force_mode = std::fs::Permissions::from_mode(0o644);
+                        // umask. `force_cas_file_mode` corrects it so the
+                        // same store can't end up with mixed-mode files
+                        // depending on which path wrote each entry.
                         let open_result = std::fs::OpenOptions::new()
                             .mode(0o644)
                             .create_new(true)
@@ -322,7 +319,7 @@ impl Store {
                             .open(path);
                         match open_result {
                             Ok(mut f) => {
-                                f.set_permissions(force_mode.clone())
+                                force_cas_file_mode(&f)
                                     .map_err(|e| Error::Io(path.to_path_buf(), e))?;
                                 f.write_all(bytes)
                                     .map_err(|e| Error::Io(path.to_path_buf(), e))?;
@@ -345,7 +342,7 @@ impl Store {
                                     .open(path)
                                 {
                                     Ok(mut f) => {
-                                        f.set_permissions(force_mode)
+                                        force_cas_file_mode(&f)
                                             .map_err(|e| Error::Io(path.to_path_buf(), e))?;
                                         f.write_all(bytes)
                                             .map_err(|e| Error::Io(path.to_path_buf(), e))?;
@@ -871,6 +868,50 @@ impl Store {
             size: Some(len as u64),
         })
     }
+}
+
+/// Whether the process umask strips bits from `mode(0o644)`, learned from
+/// the first fast-path CAS file. Reset by [`Store::enable_fast_path`] so each
+/// install re-learns it; an embedding host may change its umask between
+/// installs.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) static FAST_PATH_UMASK: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(UMASK_UNKNOWN);
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) const UMASK_UNKNOWN: u8 = 0;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const UMASK_UNMASKED: u8 = 1;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const UMASK_MASKED: u8 = 2;
+
+/// Give a fast-path CAS file mode 0o644 despite the process umask.
+///
+/// Files are created with `mode(0o644)`, which only needs correcting when the
+/// umask masks some of those bits. Rather than `fchmod` every file (one
+/// syscall per CAS entry, ~33k on a 1.2k-package cold install), the first
+/// file's mode records whether the umask interferes. `umask()` itself can't
+/// be read without setting it, which would race file creation on other
+/// threads.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn force_cas_file_mode(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let state = match FAST_PATH_UMASK.load(Ordering::Relaxed) {
+        UMASK_UNKNOWN => {
+            let state = if file.metadata()?.permissions().mode() & 0o777 == 0o644 {
+                UMASK_UNMASKED
+            } else {
+                UMASK_MASKED
+            };
+            FAST_PATH_UMASK.store(state, Ordering::Relaxed);
+            state
+        }
+        state => state,
+    };
+    if state == UMASK_UNMASKED {
+        return Ok(());
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o644))
 }
 
 // Thin wrapper over posix_fallocate(3) which returns the error code
