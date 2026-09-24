@@ -2,6 +2,49 @@
 
 lockfile_version = 2
 
+[[tools.cargo-binstall]]
+version = "1.17.9"
+backend = "aqua:cargo-bins/cargo-binstall"
+specifiers = ["1.17.9"]
+
+[tools.cargo-binstall.options]
+"vars.bin" = "cargo-binstall"
+
+[tools.cargo-binstall."platforms.linux-arm64"]
+checksum = "sha256:a096f09c5e83b40e4a630da47a6ba333f6749fc3023c044a6e08da648c70d218"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-aarch64-unknown-linux-gnu.tgz"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893779"
+
+[tools.cargo-binstall."platforms.linux-arm64-musl"]
+checksum = "sha256:89df253cc00a307209daee7648272bba4d8a342fce084d5922f6b3f4e4db0e25"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-aarch64-unknown-linux-musl.tgz"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893760"
+
+[tools.cargo-binstall."platforms.linux-x64"]
+checksum = "sha256:8e34e7beb3ba3bdcd13df5988f552e959a0ea865dcceca31edcab171d9db6a0d"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-x86_64-unknown-linux-gnu.tgz"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893687"
+
+[tools.cargo-binstall."platforms.linux-x64-musl"]
+checksum = "sha256:bdea3fd820b118576316bf69c8240f454857287717809e6ecef010faace901ff"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-x86_64-unknown-linux-musl.tgz"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893672"
+
+[tools.cargo-binstall."platforms.macos-arm64"]
+checksum = "sha256:021d537caa2071bbcd8ec50b210ea45af68a6983cca7780918b3603ef68d2585"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-aarch64-apple-darwin.zip"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893799"
+
+[tools.cargo-binstall."platforms.macos-x64"]
+checksum = "sha256:1d4fbd74c15274a029dd92e19a0ead8e1831b6e6b60f0f5c3690ef517022c41c"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-x86_64-apple-darwin.zip"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893710"
+
+[tools.cargo-binstall."platforms.windows-x64"]
+checksum = "sha256:d17b413a19592af2cf57f9f742d49bef8837099e1407d73e79de5bc7834c4fd6"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.17.9/cargo-binstall-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/383893700"
+
 [[tools.cargo-msrv]]
 version = "0.19.3"
 backend = "aqua:foresterre/cargo-msrv"
@@ -31,6 +74,22 @@ url_api = "https://api.github.com/repos/foresterre/cargo-msrv/releases/assets/38
 checksum = "sha256:e437443331865218763d44089680f4d36547353e8c3c8b394c24859203e6cd05"
 url = "https://github.com/foresterre/cargo-msrv/releases/download/v0.19.3/cargo-msrv-x86_64-pc-windows-msvc-v0.19.3.zip"
 url_api = "https://api.github.com/repos/foresterre/cargo-msrv/releases/assets/380851496"
+
+[[tools."cargo:cargo-machete"]]
+version = "0.9.1"
+backend = "cargo:cargo-machete"
+specifiers = ["0.9.1"]
+
+[tools."cargo:cargo-machete".options]
+bin = "cargo-machete"
+
+[[tools."cargo:cargo-msrv"]]
+version = "0.19.3"
+backend = "cargo:cargo-msrv"
+specifiers = ["0.19.3"]
+
+[tools."cargo:cargo-msrv".options]
+bin = "cargo-msrv"
 
 [[tools.communique]]
 version = "1.4.2"
@@ -396,44 +455,44 @@ url = "https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_windo
 url_api = "https://api.github.com/repos/mvdan/sh/releases/assets/390322844"
 
 [[tools.tak]]
-version = "0.0.10"
+version = "0.0.13"
 backend = "github:jdx/tak"
 specifiers = ["latest"]
 
 [tools.tak."platforms.linux-arm64"]
-checksum = "sha256:525a4796db332f9f865063820095306efc5ed698ec3e7714e2185f26344335bd"
-url = "https://github.com/jdx/tak/releases/download/v0.0.10/tak-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/jdx/tak/releases/assets/545781784"
+checksum = "sha256:514c890ad2f34d5fbfa7e9327537a3d96a20ba863c9e45e74e210de13fa4b2aa"
+url = "https://github.com/jdx/tak/releases/download/v0.0.13/tak-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/586862992"
 provenance = "github-attestations"
 
 [tools.tak."platforms.linux-arm64-musl"]
-checksum = "sha256:ca8a988a994a9053084c5461be1d450bf164081608a6fea5e1ecfcc566470816"
-url = "https://github.com/jdx/tak/releases/download/v0.0.10/tak-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/jdx/tak/releases/assets/545781786"
+checksum = "sha256:9cef94c166572cf501f6b92e729892c34727f1b24d94007a6e0eb1f3f685fbe2"
+url = "https://github.com/jdx/tak/releases/download/v0.0.13/tak-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/586862988"
 provenance = "github-attestations"
 
 [tools.tak."platforms.linux-x64"]
-checksum = "sha256:56fe41af8906be449806e4fb199b46ab653e75540265631ba25c633259df5460"
-url = "https://github.com/jdx/tak/releases/download/v0.0.10/tak-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/jdx/tak/releases/assets/545781794"
+checksum = "sha256:98c156f4ded5b1be51b756efc50d33e90b1f22186754e7e96dfabca1e478e26a"
+url = "https://github.com/jdx/tak/releases/download/v0.0.13/tak-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/586863028"
 provenance = "github-attestations"
 
 [tools.tak."platforms.linux-x64-musl"]
-checksum = "sha256:3128ec683a75b1848ac74dc7e0f4673cbd24be10981bb9e6a04f2778ee4f0b7b"
-url = "https://github.com/jdx/tak/releases/download/v0.0.10/tak-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/jdx/tak/releases/assets/545781793"
+checksum = "sha256:516c32450243cc443fbf8059d91a5972abe6188d3fa1ca930bcf68241e7f3881"
+url = "https://github.com/jdx/tak/releases/download/v0.0.13/tak-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/586863029"
 provenance = "github-attestations"
 
 [tools.tak."platforms.macos-arm64"]
-checksum = "sha256:2d0dcb013e5c364b6bcc233a19398dd09450552995547060dd9cc10ebc04a731"
-url = "https://github.com/jdx/tak/releases/download/v0.0.10/tak-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/jdx/tak/releases/assets/545781785"
+checksum = "sha256:8e4669ee3e122fefe465dfbf550a42fd7d92baa7d9f487d646162832efe1af3e"
+url = "https://github.com/jdx/tak/releases/download/v0.0.13/tak-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/586862991"
 provenance = "github-attestations"
 
 [tools.tak."platforms.windows-x64"]
-checksum = "sha256:02e352f1ac7285785857afc882cfddf98035da7fe2f0c2769acbd1f1f3e1624b"
-url = "https://github.com/jdx/tak/releases/download/v0.0.10/tak-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/jdx/tak/releases/assets/545781790"
+checksum = "sha256:9686180b604bf0507aceb860d357779ad3be462399b2eb4ee08d65d596a5c3af"
+url = "https://github.com/jdx/tak/releases/download/v0.0.13/tak-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/jdx/tak/releases/assets/586863027"
 provenance = "github-attestations"
 
 [[tools.usage]]

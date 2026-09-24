@@ -16,14 +16,9 @@ set -euo pipefail
 #
 # Environment variables:
 #   WARMUP       — warmup runs before timing (default: 1)
-#   RUNS         — timed runs per benchmark (default: 10). Applies to
-#                  the fast tools (aube, bun, deno). Slower tools
-#                  default to fewer runs so the matrix doesn't take
-#                  forever: pnpm = vlt = ceil(RUNS/2),
-#                  npm = yarn = ceil(RUNS/3).
-#   RUNS_PNPM, RUNS_NPM, RUNS_YARN, RUNS_BUN, RUNS_AUBE, RUNS_DENO,
-#   RUNS_VLT     — override the per-tool run count individually. Falls
-#                  back to the defaults above when unset.
+#   RUNS         — fixed timed runs for every tool. Unset (the default),
+#                  tak picks each tool's count from how long its samples
+#                  take: see `runs = "auto"` in benchmarks/tak.toml.
 #   RESULTS_JSON — override the structured JSON output path
 #   BENCH_TOOLS  — comma-separated tools to include
 #                  (default: aube,bun,pnpm,npm,yarn,deno; vlt is
@@ -32,6 +27,9 @@ set -euo pipefail
 #   BENCH_SCENARIOS — comma-separated scenario keys to run
 #                     (default: all)
 #   BENCH_PHASES — set to 0 to skip aube phase timing samples
+#   BENCH_SEED   — tak seed for the order samples are taken in. Each
+#                  scenario prints the seed it used; pass it back to
+#                  repeat that order.
 #   AUBE_BIN     — override the aube executable to benchmark
 #
 #   BENCH_HERMETIC=1 — route all registry traffic through a local
@@ -60,24 +58,24 @@ VLT_BIN="$(command -v vlt || true)"
 
 BENCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aube-bench.XXXXXX")"
 WARMUP="${WARMUP:-1}"
-RUNS="${RUNS:-10}"
-# Slower tools take a real chunk of wall time per iteration; default
-# pnpm to half the run count and npm/yarn to a third. Each is overridable.
-RUNS_AUBE="${RUNS_AUBE:-$RUNS}"
-RUNS_BUN="${RUNS_BUN:-$RUNS}"
-RUNS_DENO="${RUNS_DENO:-$RUNS}"
-RUNS_PNPM="${RUNS_PNPM:-$(((RUNS + 1) / 2))}"
-RUNS_VLT="${RUNS_VLT:-$(((RUNS + 1) / 2))}"
-RUNS_NPM="${RUNS_NPM:-$(((RUNS + 2) / 3))}"
-RUNS_YARN="${RUNS_YARN:-$(((RUNS + 2) / 3))}"
+# Unset means benchmarks/tak.toml's `runs = "auto"`: tak sizes each tool's
+# run count from how long its samples take, within `min_runs`.
+RUNS="${RUNS:-}"
 BENCH_TOOLS="${BENCH_TOOLS:-aube,bun,pnpm,npm,yarn,deno}"
 BENCH_SCENARIOS="${BENCH_SCENARIOS:-gvs-warm,gvs-cold,install-test}"
 BENCH_PHASES="${BENCH_PHASES:-1}"
 
 # ── Validation ──────────────────────────────────────────────────────────────
 
-if ! command -v hyperfine &>/dev/null; then
-	echo "error: hyperfine is required. Run via: mise run bench" >&2
+if ! command -v tak &>/dev/null; then
+	echo "error: tak is required. Run via: mise run bench" >&2
+	exit 1
+fi
+# benchmarks/tak.toml uses shared subjects, templates, `check` and
+# `version_cmd`, all from tak 0.0.13, which also added --config; an older tak
+# would reject the file.
+if ! tak run --help 2>/dev/null | grep -q -- '--config'; then
+	echo "error: tak $(tak --version 2>/dev/null) is too old; 0.0.13 or newer is required" >&2
 	exit 1
 fi
 
@@ -136,7 +134,10 @@ register_tool() {
 
 run_scenario() {
 	local name=$1
-	scenario_selected "$name" || return
+	# `return 0`, not a bare `return`: that would pass on scenario_selected's
+	# failure status, and `set -e` would end the whole run at the first
+	# scenario left out of BENCH_SCENARIOS.
+	scenario_selected "$name" || return 0
 
 	shift
 	"$@"
@@ -166,9 +167,10 @@ register_tool "vlt" "$VLT_BIN"
 PROGRESS_COMPLETED=0
 PROGRESS_STARTED=0
 PROGRESS_TOTAL=${#TOOLS[@]}
+# Each scenario is one tak run over every tool, so it is one unit.
 for scenario in gvs-warm gvs-cold install-test; do
 	if scenario_selected "$scenario"; then
-		PROGRESS_TOTAL=$((PROGRESS_TOTAL + ${#TOOLS[@]}))
+		PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
 	fi
 done
 if [ "$BENCH_PHASES" != "0" ]; then
@@ -212,42 +214,13 @@ if [ "$PROGRESS_TOTAL" -gt 0 ]; then
 fi
 
 echo "workdir: $BENCH_DIR"
-# Capture each tool's reported --version string so generate-results.js
-# can fold it into results.json. Some tools print extra text around
-# the semver (e.g. `aube 1.0.0-beta.3 (...)`, `bun 1.3.12+...`); the
-# sed pulls out the first token that looks like a semver so the JSON
-# stays clean without the consumers having to re-parse it.
-versions_file="$BENCH_DIR/versions.tsv"
-: >"$versions_file"
+# Each tool's version is recorded by tak itself (`version_cmd` in
+# benchmarks/tak.toml) into every scenario's export, and generate-results.js
+# reads it from there.
 for i in "${!TOOLS[@]}"; do
-	tool="${TOOLS[$i]}"
-	bin="${TOOL_BINS[$i]}"
-	raw="$($bin --version 2>/dev/null || echo 'unknown')"
-	version="$(printf '%s\n' "$raw" | head -n1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?' | head -n1)"
-	[ -z "$version" ] && version="$raw"
-	printf "%s\t%s\n" "$tool" "$version" >>"$versions_file"
-	printf "%-5s %s  (%s)\n" "$tool:" "$bin" "$version"
+	printf "%-5s %s\n" "${TOOLS[$i]}:" "${TOOL_BINS[$i]}"
 done
-node_version="$(node --version 2>/dev/null | sed 's/^v//')"
-if [ -n "$node_version" ]; then
-	printf "%s\t%s\n" "node" "$node_version" >>"$versions_file"
-	printf "%-5s %s\n" "node:" "$node_version"
-fi
-export BENCH_VERSIONS_FILE="$versions_file"
 echo ""
-
-runs_for_tool() {
-	case "$1" in
-	aube) echo "$RUNS_AUBE" ;;
-	bun) echo "$RUNS_BUN" ;;
-	deno) echo "$RUNS_DENO" ;;
-	pnpm) echo "$RUNS_PNPM" ;;
-	npm) echo "$RUNS_NPM" ;;
-	yarn) echo "$RUNS_YARN" ;;
-	vlt) echo "$RUNS_VLT" ;;
-	*) echo "$RUNS" ;;
-	esac
-}
 
 # Per-tool lockfile filename (the name the pm writes into the project
 # directory after `install`). Used to decide what to save after the
@@ -346,7 +319,6 @@ for i in "${!TOOLS[@]}"; do
 	dir="${TOOL_PROJECTS[$i]}"
 	bin="${TOOL_BINS[$i]}"
 	home="${TOOL_HOMES[$i]}"
-	store="${TOOL_STORES[$i]}"
 	cache="${TOOL_CACHES[$i]}"
 	lockfile_name=$(lockfile_name_for "$tool")
 	progress_start "populate/$tool"
@@ -424,36 +396,11 @@ if [ "${BENCH_HERMETIC:-0}" = "1" ]; then
 	hermetic_use_no_uplink
 fi
 
-# ── Helper ─────────────────────────────────────────────────────────────────
+# ── Scenarios ──────────────────────────────────────────────────────────────
 #
-# Each bench scenario is driven by:
-#
-#   - one shared `prepare_tpl` that sets the on-disk state for the
-#     tool's project dir (wiping `node_modules`, dropping back the
-#     saved lockfile, etc.)
-#   - a per-tool command template looked up by `cmd_template`
-#
-# Template placeholders:
-#   {project}       — project directory
-#   {bin}           — tool binary
-#   {home}          — isolated HOME directory
-#   {store}         — store directory (pnpm/aube)
-#   {cache}         — cache directory
-#   {lockfile}      — saved lockfile path (source of the copy)
-#   {lockfile_dest} — per-tool lockfile destination in the project
-#                     directory (matches the pm's native filename)
-
-expand_template() {
-	local tpl=$1 project=$2 bin=$3 home=$4 store=$5 cache=$6 lockfile=$7 lockfile_dest=$8
-	tpl="${tpl//\{project\}/$project}"
-	tpl="${tpl//\{bin\}/$bin}"
-	tpl="${tpl//\{home\}/$home}"
-	tpl="${tpl//\{store\}/$store}"
-	tpl="${tpl//\{cache\}/$cache}"
-	tpl="${tpl//\{lockfile\}/$lockfile}"
-	tpl="${tpl//\{lockfile_dest\}/$lockfile_dest}"
-	echo "$tpl"
-}
+# The scenario commands live in benchmarks/tak.toml, one benchmark per
+# scenario and one subject per tool. They run under `sh -c` and read the
+# per-tool paths and settings exported below.
 
 # Minimum publish-age gate, in minutes. aube defaults to 1440 (24h)
 # as a supply-chain mitigation — the resolver skips versions newer
@@ -484,282 +431,68 @@ MIN_RELEASE_AGE_SECONDS=$((MIN_RELEASE_AGE_MINUTES * 60))
 # strict as aube's, never weaker. (60*24 = 1440 → 1 day exactly.)
 MIN_RELEASE_AGE_DAYS=$(((MIN_RELEASE_AGE_MINUTES + 60 * 24 - 1) / (60 * 24)))
 
-# Per-tool boilerplate factored out of the `CMDS` declarations below.
-# Every bun invocation threads the same hermetic environment
-# (isolated `HOME`, `BUN_INSTALL`, `--cache-dir`, `--ignore-scripts`,
-# `--no-summary`) so the scenarios only have to spell out the
-# install-mode flags that actually vary per scenario.
-#
-# `--minimum-release-age` is bun's name for the same supply-chain
-# gate aube defaults on; matching the value here keeps the bench
-# from advantaging bun by silently skipping work aube does.
-BUN_BASE="HOME={home} BUN_INSTALL={home}/.bun {bin} install --cache-dir {cache} --ignore-scripts --no-summary --minimum-release-age=${MIN_RELEASE_AGE_SECONDS}"
+export BENCH_DIR MIN_RELEASE_AGE_MINUTES MIN_RELEASE_AGE_SECONDS MIN_RELEASE_AGE_DAYS
+export AUBE_BIN BUN_BIN DENO_BIN PNPM_BIN NPM_BIN YARN_BIN VLT_BIN
 
-# aube reads the global store root from `$XDG_DATA_HOME/aube/store`
-# (falling back to `$HOME/.local/share/aube/store`). We must pin
-# `XDG_DATA_HOME` alongside `HOME` and `XDG_CACHE_HOME` — otherwise
-# a host that already has `XDG_DATA_HOME` set in its environment
-# would leak the benchmark's store out of the isolated `{home}`,
-# and `COLD_WIPE` wouldn't find it to clean up between iterations.
-# `npm_config_minimum_release_age` propagates the bench's
-# minimum-release-age value into aube (aube reads this env var via
-# its npm-compatible settings layer). Without it, aube uses its
-# compiled-in default (1440) regardless of
-# `BENCH_MIN_RELEASE_AGE_MINUTES`, silently breaking the
-# apples-to-apples guarantee for any non-default override.
-AUBE_ENV="HOME={home} XDG_CACHE_HOME={cache} XDG_DATA_HOME={home}/.local/share npm_config_minimum_release_age=${MIN_RELEASE_AGE_MINUTES}"
+# The tools this run measures, as tak `--subject` flags: those selected by
+# BENCH_TOOLS that are also installed.
+SUBJECT_ARGS=()
+for tool in "${TOOLS[@]}"; do
+	SUBJECT_ARGS+=(--subject "$tool")
+done
 
-# Per-scenario AUBE_ENV variant that pins aube's global virtual store on
-# via the `enableGlobalVirtualStore` setting's auto-synthesized env-var
-# alias (`npm_config_<snake_case>` — see `aube-settings/build.rs`).
-# Using an env var rather than `--enable-gvs` means scenarios that go
-# through `aube test` (which triggers auto-install internally) get the
-# same forcing as direct `aube install` calls. The setting wins over
-# `Linker::new`'s `CI` heuristic, so GitHub Actions' inherited `CI=true`
-# cannot silently flip the mode.
-AUBE_ENV_GVS_ON="$AUBE_ENV npm_config_enable_global_virtual_store=true"
+TAK_ARGS=(--no-counters --warmup "$WARMUP")
+if [ -n "$RUNS" ]; then
+	TAK_ARGS+=(--runs "$RUNS")
+fi
+if [ -n "${BENCH_SEED:-}" ]; then
+	TAK_ARGS+=(--seed "$BENCH_SEED")
+fi
 
-# Scenario keys describe what's on disk before the run. Every install
-# scenario assumes a committed lockfile is present; the axes are
-# cache/store warmth. The "install-test" scenario measures install +
-# script dispatch end-to-end.
-
-cmd_template() {
-	case "$1:$2" in
-	gvs-warm:aube | gvs-cold:aube)
-		echo "cd {project} && $AUBE_ENV_GVS_ON {bin} install --frozen-lockfile --ignore-scripts >/dev/null 2>&1"
-		;;
-	gvs-warm:bun | gvs-cold:bun)
-		echo "cd {project} && $BUN_BASE --frozen-lockfile >/dev/null 2>&1"
-		;;
-	gvs-warm:npm)
-		echo "cd {project} && HOME={home} npm_config_cache={cache} {bin} ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps --prefer-offline --min-release-age=${MIN_RELEASE_AGE_DAYS} >/dev/null 2>&1"
-		;;
-	gvs-warm:pnpm | gvs-cold:pnpm)
-		echo "cd {project} && HOME={home} {bin} install --frozen-lockfile --ignore-scripts --config.minimum-release-age=${MIN_RELEASE_AGE_MINUTES} >/dev/null 2>&1"
-		;;
-	gvs-warm:yarn | gvs-cold:yarn)
-		# Yarn 4: --immutable replaces --frozen-lockfile and aborts
-		# if the lockfile or cache would change. Scripts/cache/linker
-		# settings are already pinned in .yarnrc.yml.
-		echo "cd {project} && HOME={home} {bin} install --immutable >/dev/null 2>&1"
-		;;
-	gvs-warm:deno | gvs-cold:deno)
-		# Deno 2: --frozen errors out if the lockfile would change,
-		# the equivalent of --frozen-lockfile elsewhere. Lifecycle
-		# scripts are off unless --allow-scripts is passed.
-		# `--minimum-dependency-age` is flagged "Unstable" in deno's
-		# help but the flag itself parses fine; takes minutes.
-		echo "cd {project} && HOME={home} DENO_DIR={cache} {bin} install --frozen --quiet --minimum-dependency-age=${MIN_RELEASE_AGE_MINUTES} >/dev/null 2>&1"
-		;;
-	gvs-warm:vlt | gvs-cold:vlt)
-		# vlt's --frozen-lockfile mirrors pnpm/npm/aube semantics: refuse
-		# to re-resolve and error out if vlt-lock.json would change.
-		# Without it vlt would silently treat the install as a fresh
-		# resolve, which is not what the other tools measure here.
-		echo "cd {project} && HOME={home} npm_config_cache={cache} {bin} install --frozen-lockfile >/dev/null 2>&1"
-		;;
-	gvs-cold:npm)
-		echo "cd {project} && HOME={home} npm_config_cache={cache} {bin} ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps --min-release-age=${MIN_RELEASE_AGE_DAYS} >/dev/null 2>&1"
-		;;
-	install-test:aube)
-		echo "cd {project} && $AUBE_ENV_GVS_ON {bin} test >/dev/null 2>&1"
-		;;
-	install-test:bun)
-		echo "cd {project} && $BUN_BASE --frozen-lockfile >/dev/null 2>&1 && HOME={home} BUN_INSTALL={home}/.bun {bin} run test >/dev/null 2>&1"
-		;;
-	install-test:npm)
-		echo "cd {project} && HOME={home} npm_config_cache={cache} {bin} install-test --ignore-scripts --no-audit --no-fund --legacy-peer-deps --prefer-offline --min-release-age=${MIN_RELEASE_AGE_DAYS} >/dev/null 2>&1"
-		;;
-	install-test:pnpm)
-		echo "cd {project} && HOME={home} {bin} install-test --frozen-lockfile --ignore-scripts --config.minimum-release-age=${MIN_RELEASE_AGE_MINUTES} >/dev/null 2>&1"
-		;;
-	install-test:yarn)
-		echo "cd {project} && HOME={home} {bin} install --immutable >/dev/null 2>&1 && HOME={home} {bin} test >/dev/null 2>&1"
-		;;
-	install-test:deno)
-		echo "cd {project} && HOME={home} DENO_DIR={cache} {bin} install --frozen --quiet --minimum-dependency-age=${MIN_RELEASE_AGE_MINUTES} >/dev/null 2>&1 && HOME={home} DENO_DIR={cache} {bin} task --quiet test >/dev/null 2>&1"
-		;;
-	install-test:vlt)
-		echo "cd {project} && HOME={home} npm_config_cache={cache} {bin} install --frozen-lockfile >/dev/null 2>&1 && HOME={home} npm_config_cache={cache} {bin} run test >/dev/null 2>&1"
-		;;
-	esac
-}
-
+# Measure one scenario across every tool: `tak run --bench <scenario>` against
+# benchmarks/tak.toml, named with --config so tak does not pick up the
+# repository's instruction-count tak.toml.
 run_bench() {
 	local bench_name=$1
-	local prepare_tpl=$2
-
-	for i in "${!TOOLS[@]}"; do
-		local tool="${TOOLS[$i]}"
-		local project="${TOOL_PROJECTS[$i]}"
-		local bin="${TOOL_BINS[$i]}"
-		local home="${TOOL_HOMES[$i]}"
-		local store="${TOOL_STORES[$i]}"
-		local cache="${TOOL_CACHES[$i]}"
-		local lockfile="$BENCH_DIR/saved-lockfile-$tool"
-		local lockfile_dest
-		lockfile_dest="$project/$(lockfile_name_for "$tool")"
-
-		local cmd_tpl
-		cmd_tpl=$(cmd_template "$bench_name" "$tool")
-		if [ -z "$cmd_tpl" ]; then
-			progress_start "$bench_name/$tool"
-			echo "warning: no $bench_name command for $tool — skipping" >&2
-			progress_finish "$bench_name/$tool" "skipped"
-			continue
-		fi
-
-		local prepare
-		prepare=$(expand_template "$prepare_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local cmd
-		cmd=$(expand_template "$cmd_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local tool_runs
-		tool_runs=$(runs_for_tool "$tool")
-		progress_start "$bench_name/$tool"
-		echo ""
-		echo "  $tool:"
-		hyperfine \
-			--warmup "$WARMUP" \
-			--runs "$tool_runs" \
-			--ignore-failure \
-			--prepare "$prepare" \
-			--command-name "$tool" \
-			"$cmd" \
-			--export-json "$BENCH_DIR/${bench_name}-${tool}.json" ||
-			true
-		progress_finish "$bench_name/$tool"
-	done
-}
-
-# Like `run_bench`, but times the *second* invocation of the tool's
-# command — the prepare step wipes node_modules, restores the saved
-# lockfile, and runs the same command once so the timed iteration
-# starts from a "node_modules is already valid" state.
-#
-# Used by the install-test scenario to measure the "I've installed,
-# now I just want to re-run my tests" developer loop rather than the
-# "fresh checkout + install" loop (which `gvs-warm` already covers).
-run_bench_preinstall() {
-	local bench_name=$1
-
-	for i in "${!TOOLS[@]}"; do
-		local tool="${TOOLS[$i]}"
-		local project="${TOOL_PROJECTS[$i]}"
-		local bin="${TOOL_BINS[$i]}"
-		local home="${TOOL_HOMES[$i]}"
-		local store="${TOOL_STORES[$i]}"
-		local cache="${TOOL_CACHES[$i]}"
-		local lockfile="$BENCH_DIR/saved-lockfile-$tool"
-		local lockfile_dest
-		lockfile_dest="$project/$(lockfile_name_for "$tool")"
-
-		local cmd_tpl
-		cmd_tpl=$(cmd_template "$bench_name" "$tool")
-		if [ -z "$cmd_tpl" ]; then
-			progress_start "$bench_name/$tool"
-			echo "warning: no $bench_name command for $tool — skipping" >&2
-			progress_finish "$bench_name/$tool" "skipped"
-			continue
-		fi
-
-		local cmd
-		cmd=$(expand_template "$cmd_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local warm_prep
-		warm_prep=$(expand_template "$WARM_PREP" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		# Prepare: wipe + restore lockfile, then run the same command
-		# once untimed so the tool's install phase populates
-		# node_modules (and `.aube-state` for aube). The timed
-		# iteration then re-runs the command against the settled
-		# state — the developer-loop "run my tests again" case.
-		local prepare="$warm_prep && $cmd"
-
-		local tool_runs
-		tool_runs=$(runs_for_tool "$tool")
-		progress_start "$bench_name/$tool"
-		echo ""
-		echo "  $tool:"
-		hyperfine \
-			--warmup "$WARMUP" \
-			--runs "$tool_runs" \
-			--ignore-failure \
-			--prepare "$prepare" \
-			--command-name "$tool" \
-			"$cmd" \
-			--export-json "$BENCH_DIR/${bench_name}-${tool}.json" ||
-			true
-		progress_finish "$bench_name/$tool"
-	done
+	# With no --subject at all tak would run every subject; there is nothing
+	# to measure instead.
+	[ "${#TOOLS[@]}" -gt 0 ] || return 0
+	progress_start "$bench_name"
+	echo ""
+	# A tool that fails is dropped from the rest of the run and left out of
+	# the export; generate-results.js reports it as n/a. tak exits non-zero
+	# for that, which must not abort the other scenarios.
+	if ! tak run --config "$SCRIPT_DIR/tak.toml" --bench "$bench_name" "${TAK_ARGS[@]}" \
+		"${SUBJECT_ARGS[@]}" --export-json "$BENCH_DIR/${bench_name}.json"; then
+		echo "warning: one or more tools failed in $bench_name; they are missing from the results" >&2
+	fi
+	progress_finish "$bench_name"
 }
 
 PHASES_FILE="$BENCH_DIR/aube-install-phases.jsonl"
 : >"$PHASES_FILE"
 
+# One aube install per scenario with phase timing on, for attribution: the
+# binary writes resolve/fetch/link/script/state timings as JSONL. It runs the
+# scenario's own aube subject from benchmarks/tak.toml, once, with the phase
+# variables in its environment, so the command cannot drift from the timed one.
 run_aube_phase_bench() {
 	local bench_name=$1
-	local prepare_tpl=$2
-
-	for i in "${!TOOLS[@]}"; do
-		local tool="${TOOLS[$i]}"
-		[ "$tool" = "aube" ] || continue
-
-		local project="${TOOL_PROJECTS[$i]}"
-		local bin="${TOOL_BINS[$i]}"
-		local home="${TOOL_HOMES[$i]}"
-		local store="${TOOL_STORES[$i]}"
-		local cache="${TOOL_CACHES[$i]}"
-		local lockfile="$BENCH_DIR/saved-lockfile-$tool"
-		local lockfile_dest
-		lockfile_dest="$project/$(lockfile_name_for "$tool")"
-
-		local prepare
-		prepare=$(expand_template "$prepare_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local cmd_tpl
-		cmd_tpl=$(cmd_template "$bench_name" "$tool")
-		local cmd
-		cmd=$(expand_template "$cmd_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-		# Inject phase-timing env vars after the `cd {project} && `
-		# prefix. We can't use `${cmd/&& /&& ...}` here: bash 5.2+
-		# treats `&` in the replacement of `${var/pat/repl}` as a
-		# backreference to the matched pattern (sed-like), so each
-		# unescaped `&` expands to the matched `&& ` and the result
-		# becomes `cd <p> && && ...` which fails at eval time.
-		# Escaping with `\&` works on 5.2+ but emits literal backslashes
-		# on bash 3.2 (macOS dev shell). Splitting around `&& ` avoids
-		# both traps and works the same on every bash we care about.
-		cmd="${cmd%%&& *}&& AUBE_BENCH_PHASES_FILE=$PHASES_FILE AUBE_BENCH_SCENARIO=$bench_name ${cmd#*&& }"
-
-		progress_start "phases/$bench_name"
-		echo "  $bench_name"
-		if ! eval "$prepare"; then
-			echo "warning: phase timing prepare failed for $bench_name - skipping sample" >&2
-			progress_finish "phases/$bench_name" "skipped"
-			continue
-		fi
-		if ! eval "$cmd"; then
-			echo "warning: phase timing run failed for $bench_name - skipping sample" >&2
-			progress_finish "phases/$bench_name" "skipped"
-			continue
-		fi
-		progress_finish "phases/$bench_name"
-	done
+	case " ${TOOLS[*]} " in
+	*" aube "*) ;;
+	*) return 0 ;;
+	esac
+	progress_start "phases/$bench_name"
+	echo "  $bench_name"
+	if ! AUBE_BENCH_PHASES_FILE="$PHASES_FILE" AUBE_BENCH_SCENARIO="$bench_name" \
+		tak run --config "$SCRIPT_DIR/tak.toml" --bench "$bench_name" --subject aube \
+		--runs 1 --warmup 0 --no-counters --no-progress >/dev/null; then
+		echo "warning: phase timing failed for $bench_name - skipping sample" >&2
+		progress_finish "phases/$bench_name" "skipped"
+		return 0
+	fi
+	progress_finish "phases/$bench_name"
 }
-
-# Directories to wipe in cold scenarios. Each pm has its own cache /
-# store layout, so we reset everything we know about to guarantee
-# a fresh download on every iteration.
-COLD_WIPE='{store} {cache} {home}/.pnpm-store {home}/.local/share/aube {home}/.npm {home}/.yarn {home}/.bun {home}/.cache/aube {home}/.cache/yarn {home}/.cache/bun {home}/.cache/deno {home}/.cache/vlt {home}/.config/vlt {home}/Library/Caches/deno'
-
-# Warm-cache lockfile restore: wipe the project-local state (lockfile
-# + node_modules) and drop the saved lockfile back. Uses the per-tool
-# `lockfile_dest` placeholder so each pm gets its native filename.
-WARM_PREP="rm -rf {project}/node_modules {project}/pnpm-lock.yaml {project}/aube-lock.yaml {project}/package-lock.json {project}/yarn.lock {project}/bun.lock {project}/bun.lockb {project}/deno.lock {project}/vlt-lock.json && cp {lockfile} {lockfile_dest}"
-COLD_PREP="rm -rf {project}/node_modules {project}/pnpm-lock.yaml {project}/aube-lock.yaml {project}/package-lock.json {project}/yarn.lock {project}/bun.lock {project}/bun.lockb {project}/deno.lock {project}/vlt-lock.json $COLD_WIPE && mkdir -p {home} && cp {lockfile} {lockfile_dest}"
 
 # ── Benchmark 1: Fresh install, warm cache ─────────────────────────────────
 # Lockfile present, node_modules deleted, store and cache warm.
@@ -769,7 +502,7 @@ COLD_PREP="rm -rf {project}/node_modules {project}/pnpm-lock.yaml {project}/aube
 
 echo ""
 echo "━━━ Benchmark 1: Fresh install (warm cache) ━━━"
-run_scenario "gvs-warm" run_bench "gvs-warm" "$WARM_PREP"
+run_scenario "gvs-warm" run_bench "gvs-warm"
 
 # ── Benchmark 2: Fresh install, cold cache ─────────────────────────────────
 # Lockfile present, but store and cache are empty.
@@ -777,10 +510,10 @@ run_scenario "gvs-warm" run_bench "gvs-warm" "$WARM_PREP"
 
 echo ""
 echo "━━━ Benchmark 2: Fresh install (cold cache) ━━━"
-run_scenario "gvs-cold" run_bench "gvs-cold" "$COLD_PREP"
+run_scenario "gvs-cold" run_bench "gvs-cold"
 
 # ── Aube phase timing sample ───────────────────────────────────────────────
-# Hyperfine owns stdout/stderr and times whole commands. For attribution,
+# tak discards stdout/stderr and times whole commands. For attribution,
 # run aube once per install-shaped scenario with AUBE_BENCH_PHASES_FILE
 # enabled so the binary writes structured resolve/fetch/link/script/state
 # timings to JSONL, then summarize it at the end.
@@ -788,8 +521,8 @@ run_scenario "gvs-cold" run_bench "gvs-cold" "$COLD_PREP"
 echo ""
 echo "━━━ Aube install phase timings ━━━"
 if [ "$BENCH_PHASES" != "0" ]; then
-	run_scenario "gvs-warm" run_aube_phase_bench "gvs-warm" "$WARM_PREP"
-	run_scenario "gvs-cold" run_aube_phase_bench "gvs-cold" "$COLD_PREP"
+	run_scenario "gvs-warm" run_aube_phase_bench "gvs-warm"
+	run_scenario "gvs-cold" run_aube_phase_bench "gvs-cold"
 fi
 
 # ── Benchmark 3: install + run test (developer loop) ───────────────────────
@@ -803,7 +536,7 @@ fi
 
 echo ""
 echo "━━━ Benchmark 3: install + run test (already installed) ━━━"
-run_scenario "install-test" run_bench_preinstall "install-test"
+run_scenario "install-test" run_bench "install-test"
 
 # ── Summary ────────────────────────────────────────────────────────────────
 

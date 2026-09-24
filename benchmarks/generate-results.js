@@ -1,4 +1,4 @@
-// Reads the per-scenario hyperfine JSON output from `bench.sh` and
+// Reads the per-scenario tak JSON output from `bench.sh` and
 // emits two artifacts:
 //
 //   1. A human-readable markdown summary at `outputFile` (same format
@@ -40,11 +40,15 @@ const TOOLS = (process.env.BENCH_TOOLS || 'aube,pnpm')
   .map((s) => s.trim())
   .filter(Boolean)
 
+// One `tak run --export-json` file per scenario, with an entry per tool
+// (hyperfine's result shape plus `subject`). A tool that failed is absent
+// from it and reported as n/a.
 function readResult (benchDir, name, tool) {
   try {
-    const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}-${tool}.json`, 'utf8'))
-    const r = data.results[0]
-    if (!r || !Number.isFinite(r.mean)) {
+    const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
+    const r = data.results.find((result) => result.subject === tool)
+    if (!r) return missing()
+    if (!Number.isFinite(r.mean)) {
       throw new Error('missing benchmark mean')
     }
     const stddev = Number.isFinite(r.stddev) ? r.stddev : 0
@@ -57,10 +61,14 @@ function readResult (benchDir, name, tool) {
     }
   } catch (err) {
     if (err && err.code !== 'ENOENT') {
-      console.error(`Warning: failed to read ${name}-${tool}: ${err.message}`)
+      console.error(`Warning: failed to read ${name}/${tool}: ${err.message}`)
     }
-    return { text: 'n/a', mean: null, stddev: null, min: null, max: null }
+    return missing()
   }
+}
+
+function missing () {
+  return { text: 'n/a', mean: null, stddev: null, min: null, max: null }
 }
 
 function fmtSpeedup (baseMean, aubeMean) {
@@ -94,23 +102,34 @@ const lines = [
 ]
 
 // -- Structured JSON --------------------------------------------------------
-// bench.sh writes BENCH_VERSIONS_FILE as a "<tool>\t<semver>" TSV so
-// the docs chart can render the actual version each manager was
-// running rather than just the bare name.
+// tak records each tool's `--version` output (`version_cmd` in
+// benchmarks/tak.toml) and the machine it ran on in every scenario's export.
+// Versions are trimmed to the first semver-looking token so the docs chart
+// shows `1.4.2` rather than `bun 1.4.2+abc (…)`.
 const versions = {}
-const versionsFile = process.env.BENCH_VERSIONS_FILE
-if (versionsFile && fs.existsSync(versionsFile)) {
-  for (const line of fs.readFileSync(versionsFile, 'utf8').split('\n')) {
-    const [name, version] = line.split('\t')
-    if (name && version) versions[name] = version.trim()
+let machine = null
+for (const [name] of benchmarks) {
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
+  } catch {
+    continue
+  }
+  machine ??= data.machine ?? null
+  for (const r of data.results ?? []) {
+    if (versions[r.subject] || typeof r.version !== 'string') continue
+    const semver = r.version.match(/[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?/)
+    versions[r.subject] = semver ? semver[0] : r.version.trim()
   }
 }
+versions.node = process.versions.node
 
 const json = {
   updated: new Date().toISOString(),
   unit: 'ms',
   managers: TOOLS,
   versions,
+  machine,
   rows: [],
 }
 

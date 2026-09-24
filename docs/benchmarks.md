@@ -10,8 +10,12 @@ import { data } from './benchmarks.data.ts'
 
 The numbers below are measured end-to-end against the same
 [medium-sized real-world fixture](https://github.com/aubepkg/aube/blob/main/benchmarks/fixture.package.json)
-— ~1400 packages — using [`hyperfine`](https://github.com/sharkdp/hyperfine)
-to time each scenario under identical conditions.
+— ~1400 packages — using [`tak`](https://github.com/jdx/tak) to time each
+scenario under identical conditions. Samples are interleaved: each round
+times every package manager that still has runs left, in a freshly shuffled
+order, so drift on the benchmark machine is spread across all of them rather
+than landing on whichever one happened to be running. Slower managers get
+fewer runs, spread evenly across the rounds.
 
 ::: tip Methodology
 Every scenario assumes a committed lockfile is present. The main axis is
@@ -21,7 +25,7 @@ each tool's default install model, which means aube's
 and pnpm's comparable feature is left at pnpm's default of off. *Warm*
 clears `node_modules` but keeps each tool's store/cache populated;
 *cold* wipes the store and cache too. The fixture, scripts, and raw
-hyperfine output live at
+results live at
 [`benchmarks/`](https://github.com/aubepkg/aube/tree/main/benchmarks).
 Reproduce locally with `mise run bench`.
 :::
