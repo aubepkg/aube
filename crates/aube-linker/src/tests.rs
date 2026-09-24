@@ -1052,6 +1052,19 @@ fn test_hidden_hoist_is_rebuilt_on_relink() {
         std::fs::read_to_string(hidden.join("@scope/baz/index.js")).unwrap(),
         "module.exports = '@scope/baz';"
     );
+    // `Bar@1.0.0` sorts before `bar@2.0.0`, so `bar` is linked last: it
+    // wins the shared path on a case-insensitive filesystem, and each name
+    // keeps its own package where case is significant.
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("bar/index.js")).unwrap(),
+        "module.exports = 'bar';"
+    );
+    if !hidden.join("BAR").exists() {
+        assert_eq!(
+            std::fs::read_to_string(hidden.join("Bar/index.js")).unwrap(),
+            "module.exports = 'Bar';"
+        );
+    }
     assert!(!hidden.join("gone").exists());
 }
 
