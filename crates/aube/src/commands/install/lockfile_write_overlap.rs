@@ -45,6 +45,9 @@ pub(super) struct LockfileWriteInputs {
     pub shared_workspace_lockfile: bool,
     pub has_workspace: bool,
     pub per_project_write_selection: Option<BTreeSet<String>>,
+    /// Hidden lockfile to mirror the graph into after the project
+    /// lockfile is written (see `hidden_lockfile`). `None` skips it.
+    pub hidden_lockfile: Option<PathBuf>,
 }
 
 pub(super) type LockfileWriteHandle = tokio::task::JoinHandle<miette::Result<()>>;
@@ -75,6 +78,7 @@ pub(super) fn write_one(
     shared_workspace_lockfile: bool,
     has_workspace: bool,
     per_project_write_selection: Option<&BTreeSet<String>>,
+    hidden_lockfile: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     if shared_workspace_lockfile || !has_workspace {
         let written_path = write_lockfile_dir_remapped(
@@ -104,6 +108,9 @@ pub(super) fn write_one(
             per_project_write_selection,
         )?;
     }
+    if let Some(path) = hidden_lockfile {
+        super::hidden_lockfile::write(path, graph, manifest);
+    }
     Ok(())
 }
 
@@ -128,6 +135,7 @@ pub(super) fn spawn(inputs: LockfileWriteInputs) -> LockfileWriteHandle {
             inputs.shared_workspace_lockfile,
             inputs.has_workspace,
             inputs.per_project_write_selection.as_ref(),
+            inputs.hidden_lockfile.as_deref(),
         )
     })
 }
