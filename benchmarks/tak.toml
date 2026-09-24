@@ -33,12 +33,14 @@ env = { HOME = "{{ env.BENCH_DIR }}/home-{{ subject }}" }
 # Recorded as each result's `version`; generate-results.js reads it from there.
 version_cmd = ["{{ vars.bin }}", "--version"]
 # Restore the saved lockfile over a project with no node_modules: the state
-# every install scenario starts from.
+# every install scenario starts from. The script reads `$BENCH_DIR` from its
+# environment and takes the tool and lockfile as arguments, so no path is ever
+# spliced into shell code — a TMPDIR containing a quote cannot break it.
 prepare = ["sh", "-c", '''
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json &&
-cp '{{ env.BENCH_DIR }}/saved-lockfile-{{ subject }}' '{{ vars.lockfile }}'
-''']
+cp "$BENCH_DIR/saved-lockfile-$1" "$2"
+''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 # An install that silently did nothing would be the fastest sample of all.
 # The fixture depends on typescript, so every install has to leave it behind.
 check = ["test", "-f", "node_modules/typescript/package.json"]
@@ -94,16 +96,16 @@ subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 [bench.gvs-cold]
 subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 prepare = ["sh", "-c", '''
-H='{{ env.BENCH_DIR }}/home-{{ subject }}'
+H="$BENCH_DIR/home-$1"
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json \
-  '{{ env.BENCH_DIR }}/store-{{ subject }}' '{{ env.BENCH_DIR }}/cache-{{ subject }}' \
+  "$BENCH_DIR/store-$1" "$BENCH_DIR/cache-$1" \
   "$H/.pnpm-store" "$H/.local/share/aube" "$H/.npm" "$H/.yarn" "$H/.bun" \
   "$H/.cache/aube" "$H/.cache/yarn" "$H/.cache/bun" "$H/.cache/deno" "$H/.cache/vlt" \
   "$H/.config/vlt" "$H/Library/Caches/deno" &&
 mkdir -p "$H" &&
-cp '{{ env.BENCH_DIR }}/saved-lockfile-{{ subject }}' '{{ vars.lockfile }}'
-''']
+cp "$BENCH_DIR/saved-lockfile-$1" "$2"
+''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 
 # No --prefer-offline here: the cache is empty, so it would change nothing.
 [bench.gvs-cold.subject.npm]
@@ -121,12 +123,15 @@ cmd = ["{{ env.NPM_BIN }}", "ci", "--ignore-scripts", "--no-audit", "--no-fund",
 
 [bench.install-test]
 subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
+# `vars.run` is fixed text from this file, referring only to variables, so it
+# is safe to place in the script; paths still come in as arguments.
 prepare = ["sh", "-c", '''
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json &&
-cp '{{ env.BENCH_DIR }}/saved-lockfile-{{ subject }}' '{{ vars.lockfile }}' &&
+cp "$BENCH_DIR/saved-lockfile-$1" "$2" &&
 {{ vars.run }}
-''']
+''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
+
 [bench.install-test.subject.aube]
 vars = { run = '"$AUBE_BIN" test >/dev/null 2>&1' }
 cmd = ["sh", "-c", "{{ vars.run }}"]
