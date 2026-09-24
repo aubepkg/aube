@@ -26,6 +26,36 @@ fn materialize_tmp_name() -> String {
     format!(".tmp-{}-{id}", std::process::id())
 }
 
+/// Create every directory in `dirs` (each under `base_dir`) with one `mkdir`
+/// per directory, parents first. `create_dir_all` starts at the deepest path
+/// and walks up on `ENOENT`, so a fresh staging tree paid about three failed
+/// `mkdir` calls per package before creating anything.
+fn create_dirs_under(base_dir: &Path, dirs: &[PathBuf]) -> Result<(), Error> {
+    std::fs::create_dir_all(base_dir).map_err(|e| Error::Io(base_dir.to_path_buf(), e))?;
+    let mut made: std::collections::HashSet<PathBuf> =
+        std::collections::HashSet::with_capacity(dirs.len() * 2);
+    for dir in dirs {
+        let Ok(rel) = dir.strip_prefix(base_dir) else {
+            std::fs::create_dir_all(dir).map_err(|e| Error::Io(dir.clone(), e))?;
+            continue;
+        };
+        let mut current = base_dir.to_path_buf();
+        for component in rel.components() {
+            current.push(component);
+            if made.contains(&current) {
+                continue;
+            }
+            match std::fs::create_dir(&current) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && current.is_dir() => {}
+                Err(e) => return Err(Error::Io(current, e)),
+            }
+            made.insert(current.clone());
+        }
+    }
+    Ok(())
+}
+
 fn place_materialized_entry(src: &Path, dst: &Path) -> io::Result<MaterializePlacement> {
     const MAX_ATTEMPTS: u32 = 5;
     let mut backoff_ms = 20u64;
@@ -607,9 +637,7 @@ impl Linker {
         }
         parents.sort_unstable();
         parents.dedup();
-        for parent in &parents {
-            std::fs::create_dir_all(parent).map_err(|e| Error::Io(parent.clone(), e))?;
-        }
+        create_dirs_under(base_dir, &parents)?;
 
         // Linux can resolve every destination relative to one open package
         // directory instead of walking the long GVS staging path per file.
@@ -1153,5 +1181,47 @@ mod package_name_tests {
                 "{name:?} should be rejected"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod create_dirs_under_tests {
+    use super::*;
+
+    #[test]
+    fn creates_nested_dirs_under_a_missing_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join(".tmp-1-0");
+        let dirs = vec![
+            base.join("pkg@1.0.0/node_modules/@scope/pkg"),
+            base.join("pkg@1.0.0/node_modules/@scope/pkg/lib/deep"),
+            base.join("pkg@1.0.0/node_modules/@other"),
+        ];
+        create_dirs_under(&base, &dirs).unwrap();
+        for dir in &dirs {
+            assert!(dir.is_dir(), "{} missing", dir.display());
+        }
+    }
+
+    #[test]
+    fn accepts_dirs_that_already_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = tmp.path().join("pkg/node_modules/pkg/lib");
+        std::fs::create_dir_all(&existing).unwrap();
+        let dirs = vec![
+            existing.clone(),
+            tmp.path().join("pkg/node_modules/pkg/bin"),
+        ];
+        create_dirs_under(tmp.path(), &dirs).unwrap();
+        assert!(dirs.iter().all(|dir| dir.is_dir()));
+    }
+
+    #[test]
+    fn rejects_a_file_in_the_way() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("pkg")).unwrap();
+        std::fs::write(tmp.path().join("pkg/lib"), "").unwrap();
+        let err = create_dirs_under(tmp.path(), &[tmp.path().join("pkg/lib/x")]).unwrap_err();
+        assert!(matches!(err, Error::Io(ref path, _) if path.ends_with("pkg/lib")));
     }
 }
