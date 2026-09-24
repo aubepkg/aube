@@ -1644,3 +1644,38 @@ fn create_dir_link_idempotent_tolerates_only_an_identical_winner() {
     create_dir_link_idempotent(Path::new("real"), &conflict)
         .expect_err("conflicting existing link must surface as an error");
 }
+
+#[test]
+fn test_large_package_links_every_file_in_parallel() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, mut indices) = setup_store_with_files(dir.path());
+    let foo = indices.get_mut("foo@1.0.0").unwrap();
+    for i in 0..300 {
+        let content = format!("module.exports = {i};");
+        let stored = store.import_bytes(content.as_bytes(), i % 7 == 0).unwrap();
+        foo.insert(format!("lib/{}/f{i}.js", i % 10), stored);
+    }
+
+    let linker = Linker::new(&store, LinkStrategy::Hardlink);
+    let stats = linker
+        .link_all(&project_dir, &make_graph(), &indices)
+        .unwrap();
+    assert_eq!(stats.files_linked, 303);
+
+    let pkg = project_dir.join("node_modules/.aube/foo@1.0.0/node_modules/foo");
+    for i in 0..300 {
+        let file = pkg.join(format!("lib/{}/f{i}.js", i % 10));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("module.exports = {i};")
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o111 != 0, i % 7 == 0, "exec bit of f{i}.js");
+        }
+    }
+}
