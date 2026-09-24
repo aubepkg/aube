@@ -16,6 +16,7 @@ mod finalize;
 mod frozen;
 mod git_prepare;
 mod gvs;
+mod hidden_lockfile;
 mod layout;
 mod lifecycle;
 mod link;
@@ -651,7 +652,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     // full re-resolve without surfacing the actionable diagnostic.
     // `NotFound` is the one error we treat as expected — it just means
     // the lockfile is absent, which the downstream arms already handle.
-    let lockfile_pre_parse = resolve::pre_parse_lockfile(
+    let mut lockfile_pre_parse = resolve::pre_parse_lockfile(
         lockfile_enabled,
         mode,
         &lockfile_dir,
@@ -742,6 +743,54 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         .await?;
         return Ok(());
     }
+
+    // pnpm's hidden lockfile: with no project lockfile on disk, seed
+    // the install from the copy the previous install left in the
+    // modules dir. It takes the same path an on-disk lockfile would
+    // (fresh → reused as-is, drifted → handed to the resolver as
+    // `existing`), and the project lockfile is written afterwards.
+    // Per-project lockfiles (`sharedWorkspaceLockfile=false`) have no
+    // single graph to mirror, so they neither read nor write it.
+    let hidden_lockfile_path = {
+        let path = hidden_lockfile::path(&cwd, &modules_dir_name);
+        if lockfile_enabled && (shared_workspace_lockfile || !has_workspace) {
+            Some(path)
+        } else {
+            hidden_lockfile::remove(&path);
+            None
+        }
+    };
+    let seeded_from_hidden_lockfile = match &hidden_lockfile_path {
+        Some(path)
+            if source_kind_before.is_none()
+                && hidden_lockfile::seed_allowed(mode, opts.strict_no_lockfile) =>
+        {
+            lockfile_pre_parse = hidden_lockfile::read(path, lockfile_parse_options)
+                .map(|graph| (graph, aube_lockfile::LockfileKind::Aube));
+            lockfile_pre_parse.is_some()
+        }
+        _ => false,
+    };
+    // The auto-CI frozen default only freezes an existing lockfile
+    // (pnpm's `frozenLockfileIfExists`); a hidden-lockfile seed is
+    // treated like a prefer-frozen install.
+    let mode = if seeded_from_hidden_lockfile {
+        tracing::debug!(
+            "no lockfile found; seeding install from hidden lockfile {}",
+            hidden_lockfile_path
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+        match mode {
+            FrozenMode::Frozen => FrozenMode::Prefer,
+            other => other,
+        }
+    } else {
+        mode
+    };
+    let existing_for_resolver: Option<&aube_lockfile::LockfileGraph> =
+        lockfile_pre_parse.as_ref().map(|(g, _)| g);
 
     let planned_gvs =
         gvs::planned_global_virtual_store(use_global_virtual_store_override, &opts.env_snapshot);
@@ -871,6 +920,9 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     // (lockfile-matched fast path, killswitch disabled, `lockfile=false`,
     // or after the rare catch-up integrity rewrite joined it early).
     let mut lockfile_write_handle: Option<lockfile_write_overlap::LockfileWriteHandle> = None;
+    // Hidden-lockfile refresh on the lockfile-reuse path, overlapped with
+    // fetch + link the same way and joined alongside the lockfile write.
+    let mut hidden_lockfile_write_handle: Option<tokio::task::JoinHandle<()>> = None;
     let (graph, package_indices, cached_count, fetch_count) = match lockfile_result {
         Ok((mut graph, kind)) => {
             // Under `sharedWorkspaceLockfile=false` the project's own
@@ -884,6 +936,61 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // produces every importer).
             if !shared_workspace_lockfile && has_workspace {
                 merge_member_lockfile_graphs(&cwd, &mut graph, &manifests);
+            }
+            // Both writes below take the full graph, before the
+            // host-only platform filter trims it for the linker.
+            if seeded_from_hidden_lockfile {
+                // The graph came from the hidden lockfile and nothing is
+                // on disk yet: write the project lockfile the way a
+                // resolve would. The hidden copy is already current.
+                let local_pnpmfile = if opts.ignore_pnpmfile {
+                    None
+                } else {
+                    crate::pnpmfile::detect(
+                        &cwd,
+                        opts.pnpmfile.as_deref(),
+                        ws_config_shared.pnpmfile_path.as_deref(),
+                    )
+                };
+                settings::stamp_pnpm_config_checksums(
+                    &mut graph,
+                    write_kind,
+                    &manifest,
+                    &settings_ctx,
+                    local_pnpmfile.as_deref(),
+                )
+                .await;
+                let write_inputs = lockfile_write_overlap::LockfileWriteInputs {
+                    graph: graph.clone(),
+                    manifest: manifest.clone(),
+                    manifests: manifests.clone(),
+                    lockfile_dir: lockfile_dir.clone(),
+                    lockfile_importer_key: lockfile_importer_key.clone(),
+                    cwd: cwd.clone(),
+                    write_kind,
+                    shared_workspace_lockfile,
+                    has_workspace,
+                    per_project_write_selection: per_project_write_selection.clone(),
+                    hidden_lockfile: None,
+                };
+                lockfile_write_handle = Some(lockfile_write_overlap::spawn(write_inputs));
+            } else if let Some(path) = hidden_lockfile_path.clone() {
+                // npm / yarn / bun graphs only get their peer contexts
+                // in the platform pass below, after the host filter, so
+                // there's no full peer-correct graph to mirror. Drop
+                // any older copy instead of letting it go stale.
+                if matches!(
+                    kind,
+                    aube_lockfile::LockfileKind::Aube | aube_lockfile::LockfileKind::Pnpm
+                ) {
+                    let hidden_graph = graph.clone();
+                    let hidden_manifest = manifest.clone();
+                    hidden_lockfile_write_handle = Some(tokio::task::spawn_blocking(move || {
+                        hidden_lockfile::write(&path, &hidden_graph, &hidden_manifest);
+                    }));
+                } else {
+                    hidden_lockfile::remove(&path);
+                }
             }
             let graph = resolve::apply_lockfile_graph_platform_rules(
                 graph,
@@ -1965,6 +2072,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                         shared_workspace_lockfile,
                         has_workspace,
                         per_project_write_selection: per_project_write_selection.clone(),
+                        hidden_lockfile: hidden_lockfile_path.clone(),
                     };
                     lockfile_write_handle = Some(lockfile_write_overlap::spawn(write_inputs));
                 } else {
@@ -1982,6 +2090,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                         shared_workspace_lockfile,
                         has_workspace,
                         per_project_write_selection.as_ref(),
+                        hidden_lockfile_path.as_deref(),
                     )?;
                 }
             } else {
@@ -2126,6 +2235,9 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                             )
                             .into_diagnostic()
                             .wrap_err("failed to write lockfile with computed integrity")?;
+                            if let Some(path) = &hidden_lockfile_path {
+                                hidden_lockfile::write(path, lock_graph, &manifest);
+                            }
                         } else {
                             write_per_project_lockfiles(
                                 &cwd,
@@ -2296,6 +2408,11 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     // path, so this is a no-op there.
     if let Some(handle) = lockfile_write_handle.take() {
         lockfile_write_overlap::join(handle).await?;
+    }
+    if let Some(handle) = hidden_lockfile_write_handle.take()
+        && let Err(e) = handle.await
+    {
+        tracing::debug!("hidden lockfile write task failed: {e}");
     }
     finalize::run_finalize_phase(finalize::FinalizePhaseInput {
         cwd: &cwd,

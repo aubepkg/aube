@@ -104,6 +104,7 @@ pub const WARN_AUBE_YARN_BERRY_UNSUPPORTED: &str = "WARN_AUBE_YARN_BERRY_UNSUPPO
 pub const WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX: &str =
     "WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX";
 pub const WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE: &str = "WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE";
+pub const WARN_AUBE_HIDDEN_LOCKFILE_BROKEN: &str = "WARN_AUBE_HIDDEN_LOCKFILE_BROKEN";
 
 // ── global installs ─────────────────────────────────────────────────
 pub const WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION: &str = "WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION";
@@ -578,6 +579,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE,
         category: category::LOCKFILE,
         description: "`aube outdated -g` found a global install without a lockfile and skipped that install.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_HIDDEN_LOCKFILE_BROKEN,
+        category: category::LOCKFILE,
+        description: "The hidden lockfile in `node_modules/.aube-lock.yaml` could not be parsed, so install ignored it and resolved dependencies without it.",
         exit_code: None,
     },
     // Global installs
