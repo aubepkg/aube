@@ -1013,9 +1013,29 @@ fn test_hidden_hoist_is_rebuilt_on_relink() {
     let project_dir = dir.path().join("project");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let (store, indices) = setup_store_with_files(dir.path());
+    let (store, mut indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    // A scoped package exercises the `@scope/` directories created ahead
+    // of the parallel pass; `Bar` collides with `bar` by case and takes
+    // the serial pass.
+    for (dep_path, name) in [("@scope/baz@1.0.0", "@scope/baz"), ("Bar@1.0.0", "Bar")] {
+        let stored = store
+            .import_bytes(format!("module.exports = '{name}';").as_bytes(), false)
+            .unwrap();
+        let mut index = PackageIndex::default();
+        index.insert("index.js".to_string(), stored);
+        indices.insert(dep_path.to_string(), index);
+        graph.packages.insert(
+            dep_path.to_string(),
+            LockedPackage {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                dep_path: dep_path.to_string(),
+                ..Default::default()
+            },
+        );
+    }
     let linker = Linker::new(&store, LinkStrategy::Copy);
-    let graph = make_graph();
     let hidden = project_dir.join("node_modules/.aube/node_modules");
 
     linker.link_all(&project_dir, &graph, &indices).unwrap();
@@ -1023,11 +1043,15 @@ fn test_hidden_hoist_is_rebuilt_on_relink() {
     std::fs::write(hidden.join("gone"), "").unwrap();
     linker.link_all(&project_dir, &graph, &indices).unwrap();
 
-    for name in ["foo", "bar"] {
+    for name in ["foo", "bar", "@scope/baz", "Bar"] {
         let link = hidden.join(name);
         assert!(link.symlink_metadata().unwrap().is_symlink(), "{name}");
         assert!(link.join("index.js").exists(), "{name} resolves");
     }
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("@scope/baz/index.js")).unwrap(),
+        "module.exports = '@scope/baz';"
+    );
     assert!(!hidden.join("gone").exists());
 }
 

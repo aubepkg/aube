@@ -1484,50 +1484,63 @@ impl Linker {
                 mkdirp(&hidden.join(scope))?;
             }
         }
-        // Each entry is an independent name (clashes were settled above),
-        // so the links go out on the linker pool. Serially this was ~80 ms
-        // of a 120 ms link phase on a 1.2k-package install.
+        // Names differing only by case (`JSONStream` / `jsonstream`) share
+        // one path on a case-insensitive filesystem. Those are linked
+        // serially afterwards, in graph order, so the later one replaces
+        // the earlier exactly as a fully serial pass would; every other
+        // entry is its own name, so the links go out on the linker pool.
+        // Serially this was ~80 ms of a 120 ms link phase on a 1.2k-package
+        // install.
+        let mut folded: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
+        for (_, pkg) in &packages {
+            *folded.entry(pkg.name.to_lowercase()).or_default() += 1;
+        }
+        let (case_colliding, independent): (Vec<_>, Vec<_>) = packages
+            .iter()
+            .partition(|(_, pkg)| folded[&pkg.name.to_lowercase()] > 1);
         use rayon::prelude::*;
-        with_link_pool(self.link_parallelism(), || {
-            packages.par_iter().try_for_each(|(dep_path, pkg)| {
-                let source_subdir = if use_hashed_subdirs {
-                    self.virtual_store_subdir(dep_path)
-                } else {
-                    self.aube_dir_entry_name(dep_path)
-                };
-                let source_dir = source_root
-                    .join(source_subdir)
-                    .join("node_modules")
-                    .join(&pkg.name);
-                if !source_dir.exists() {
-                    return Ok(());
-                }
-                let target_dir = hidden.join(&pkg.name);
-                let link_parent = target_dir.parent().unwrap_or(&hidden);
-                let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
-                    .unwrap_or_else(|| source_dir.clone());
-                // After a wipe the tree is empty, so skip the link check that
-                // every entry would miss. Something that survived the wipe
-                // falls through to the reconcile below.
-                if sweep_stale_entries && sys::create_dir_link(&rel_target, &target_dir).is_ok() {
-                    trace!("hidden-hoist: {}", pkg.name);
-                    return Ok(());
-                }
-                if reconcile_dir_link(&target_dir, &rel_target)? {
-                    return Ok(());
-                }
-                sys::create_dir_link(&rel_target, &target_dir)
-                    .map_err(|e| Error::Io(target_dir.clone(), e))?;
+        let link_one = |(dep_path, pkg): &&(&String, &LockedPackage)| -> Result<(), Error> {
+            let source_subdir = if use_hashed_subdirs {
+                self.virtual_store_subdir(dep_path)
+            } else {
+                self.aube_dir_entry_name(dep_path)
+            };
+            let source_dir = source_root
+                .join(source_subdir)
+                .join("node_modules")
+                .join(&pkg.name);
+            if !source_dir.exists() {
+                return Ok(());
+            }
+            let target_dir = hidden.join(&pkg.name);
+            let link_parent = target_dir.parent().unwrap_or(&hidden);
+            let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
+                .unwrap_or_else(|| source_dir.clone());
+            // After a wipe the tree is empty, so skip the link check that
+            // every entry would miss. Something that survived the wipe
+            // falls through to the reconcile below.
+            if sweep_stale_entries && sys::create_dir_link(&rel_target, &target_dir).is_ok() {
                 trace!("hidden-hoist: {}", pkg.name);
-                // Intentionally not counted in `stats.top_level_linked`.
-                // That counter reflects the user-visible root
-                // `node_modules/<name>` entries; hidden-hoist symlinks
-                // live under `.aube/node_modules/` and are only reached
-                // via Node's parent-directory walk from inside the
-                // virtual store, not from the user's own code.
-                Ok(())
-            })
-        })
+                return Ok(());
+            }
+            if reconcile_dir_link(&target_dir, &rel_target)? {
+                return Ok(());
+            }
+            sys::create_dir_link(&rel_target, &target_dir)
+                .map_err(|e| Error::Io(target_dir.clone(), e))?;
+            trace!("hidden-hoist: {}", pkg.name);
+            // Intentionally not counted in `stats.top_level_linked`.
+            // That counter reflects the user-visible root
+            // `node_modules/<name>` entries; hidden-hoist symlinks
+            // live under `.aube/node_modules/` and are only reached
+            // via Node's parent-directory walk from inside the
+            // virtual store, not from the user's own code.
+            Ok(())
+        };
+        with_link_pool(self.link_parallelism(), || {
+            independent.par_iter().try_for_each(link_one)
+        })?;
+        case_colliding.iter().try_for_each(link_one)
     }
 
     /// Shared `shamefully_hoist` implementation. For every non-local
