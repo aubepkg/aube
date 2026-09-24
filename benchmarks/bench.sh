@@ -599,9 +599,17 @@ cmd_template() {
 	esac
 }
 
-# TOML basic string: escape backslashes and double quotes, the only two
-# characters a basic string cannot hold as-is.
+# TOML basic string: escape backslashes and double quotes. Control
+# characters (a newline in TMPDIR, say) cannot appear in a basic string at
+# all; refuse them so the run fails here with the reason, rather than tak
+# rejecting the generated file and the scenario silently losing its results.
 toml_str() {
+	case $1 in
+	*[[:cntrl:]]*)
+		echo "error: cannot write a control character into tak.toml: $1" >&2
+		return 1
+		;;
+	esac
 	local s=${1//\\/\\\\}
 	s=${s//\"/\\\"}
 	printf '"%s"' "$s"
@@ -660,10 +668,15 @@ run_bench() {
 			prepare="$prepare && $cmd"
 		fi
 
+		# Separate assignments so a refused string stops the run under
+		# `set -e`; a failing substitution inside printf's arguments would not.
+		local cmd_toml prepare_toml
+		cmd_toml=$(toml_str "$cmd")
+		prepare_toml=$(toml_str "$prepare")
 		{
 			printf '\n[bench.%s.subject.%s]\n' "$bench_name" "$tool"
-			printf 'cmd = ["sh", "-c", %s]\n' "$(toml_str "$cmd")"
-			printf 'prepare = ["sh", "-c", %s]\n' "$(toml_str "$prepare")"
+			printf 'cmd = ["sh", "-c", %s]\n' "$cmd_toml"
+			printf 'prepare = ["sh", "-c", %s]\n' "$prepare_toml"
 			printf 'runs = %s\n' "$(runs_for_tool "$tool")"
 		} >>"$toml"
 		subjects=$((subjects + 1))

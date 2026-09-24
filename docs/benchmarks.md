@@ -12,9 +12,13 @@ The numbers below are measured end-to-end against the same
 [medium-sized real-world fixture](https://github.com/aubepkg/aube/blob/main/benchmarks/fixture.package.json)
 — ~1400 packages — using [`tak`](https://github.com/jdx/tak) to time each
 scenario under identical conditions. Samples are interleaved: each round
-times every package manager once, in a freshly shuffled order, so drift on
-the benchmark machine is spread across all of them rather than landing on
-whichever one happened to be running.
+times every package manager that still has runs left, in a freshly shuffled
+order, so drift on the benchmark machine is spread across all of them rather
+than landing on whichever one happened to be running. Slower managers get
+fewer runs, spread evenly across the rounds. Results published before tak
+was adopted in September 2026 were timed with
+[`hyperfine`](https://github.com/sharkdp/hyperfine), one package manager
+after another.
 
 ::: tip Methodology
 Every scenario assumes a committed lockfile is present. The main axis is
