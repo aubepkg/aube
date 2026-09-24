@@ -1658,7 +1658,9 @@ fn test_large_package_links_every_file_in_parallel() {
         foo.insert(format!("lib/{}/f{i}.js", i % 10), stored);
     }
 
-    let linker = Linker::new(&store, LinkStrategy::Hardlink);
+    // Pin several workers so the files really link concurrently even on a
+    // single-CPU runner, where the default pool would have one.
+    let linker = Linker::new(&store, LinkStrategy::Hardlink).with_link_concurrency(Some(4));
     let stats = linker
         .link_all(&project_dir, &make_graph(), &indices)
         .unwrap();
