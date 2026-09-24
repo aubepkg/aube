@@ -298,8 +298,9 @@ impl Linker {
             let link_parallelism = self.link_parallelism();
             let step1_timer = std::time::Instant::now();
             // Each GVS entry also reports the dependency links it now holds
-            // (created or just verified), so the install state can record
-            // them without reading every link back from disk.
+            // (created or verified by this install), so the install state
+            // can record them without reading every link back from disk.
+            // Windows reads its junction targets from disk and skips this.
             type Step1Result<'g> =
                 Result<(LinkStats, Option<(&'g String, Vec<(String, PathBuf)>)>), Error>;
             let step1_results: Vec<Step1Result<'_>> = with_link_pool(link_parallelism, || {
@@ -336,12 +337,19 @@ impl Linker {
                                 pkg,
                                 nested_link_targets.as_ref(),
                             )?;
-                            let targets = self.virtual_store_dep_link_targets(
-                                dep_path,
-                                pkg,
-                                nested_link_targets.as_ref(),
-                            )?;
-                            return Ok((local_stats, Some((key, targets))));
+                            let targets = if cfg!(windows) {
+                                None
+                            } else {
+                                Some((
+                                    key,
+                                    self.virtual_store_dep_link_targets(
+                                        dep_path,
+                                        pkg,
+                                        nested_link_targets.as_ref(),
+                                    )?,
+                                ))
+                            };
+                            return Ok((local_stats, targets));
                         }
 
                         // Symlink is stale or missing — need the package
@@ -411,12 +419,19 @@ impl Linker {
                         // par_iter; no per-package `mkdirp` here.
                         sys::create_dir_link(&global_entry, &local_aube_entry)
                             .map_err(|e| Error::Io(local_aube_entry.clone(), e))?;
-                        let targets = self.virtual_store_dep_link_targets(
-                            dep_path,
-                            pkg,
-                            nested_link_targets.as_ref(),
-                        )?;
-                        Ok((local_stats, Some((key, targets))))
+                        let targets = if cfg!(windows) {
+                            None
+                        } else {
+                            Some((
+                                key,
+                                self.virtual_store_dep_link_targets(
+                                    dep_path,
+                                    pkg,
+                                    nested_link_targets.as_ref(),
+                                )?,
+                            ))
+                        };
+                        Ok((local_stats, targets))
                     })
                     .collect()
             });
