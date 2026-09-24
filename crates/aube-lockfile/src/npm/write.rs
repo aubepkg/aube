@@ -205,14 +205,16 @@ pub fn write(
         // Required importer peers become production direct deps (both on
         // resolve under autoInstallPeers and on npm read), but npm keeps
         // a peer-only declaration in `peerDependencies` alone. A matching
-        // spec is how the peer-derived entry is told apart from an owned
-        // `dependencies` declaration of the same name.
+        // peer spec marks the peer-derived entry, unless the workspace's
+        // recorded `declared_dependencies` show it also owns that name.
+        let declared = &workspace_pkg.declared_dependencies;
         dependencies.retain(|name, spec| {
-            workspace_pkg
-                .peer_dependencies
-                .get(*name)
-                .map(String::as_str)
-                != Some(*spec)
+            declared.get(*name).map(String::as_str) == Some(*spec)
+                || workspace_pkg
+                    .peer_dependencies
+                    .get(*name)
+                    .map(String::as_str)
+                    != Some(*spec)
         });
         packages.insert(
             importer_path.clone(),

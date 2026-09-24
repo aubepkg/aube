@@ -2262,6 +2262,10 @@ fn workspace_member_required_peers_are_direct_deps() {
                     "version": "3.0.1",
                     "integrity": "sha512-isodd"
                 },
+                "node_modules/is-even": {
+                    "version": "1.0.0",
+                    "integrity": "sha512-iseven"
+                },
                 "node_modules/kind-of": {
                     "version": "6.0.3",
                     "integrity": "sha512-kindof"
@@ -2273,8 +2277,9 @@ fn workspace_member_required_peers_are_direct_deps() {
                 "packages/consumer": {
                     "name": "peer-consumer",
                     "version": "1.0.0",
-                    "dependencies": { "is-odd": "3.0.1" },
+                    "dependencies": { "is-even": "1.0.0", "is-odd": "3.0.1" },
                     "peerDependencies": {
+                        "is-even": "1.0.0",
                         "is-number": "7.0.0",
                         "is-odd": "^3.0.0",
                         "kind-of": "^6.0.0"
@@ -2314,8 +2319,9 @@ fn workspace_member_required_peers_are_direct_deps() {
         r#"{
             "name": "peer-consumer",
             "version": "1.0.0",
-            "dependencies": { "is-odd": "3.0.1" },
+            "dependencies": { "is-even": "1.0.0", "is-odd": "3.0.1" },
             "peerDependencies": {
+                "is-even": "1.0.0",
                 "is-number": "7.0.0",
                 "is-odd": "^3.0.0",
                 "kind-of": "^6.0.0"
@@ -2340,7 +2346,7 @@ fn workspace_member_required_peers_are_direct_deps() {
     );
 
     // Write-back keeps the peer-only declaration out of `dependencies`
-    // while an owned dep of the same name keeps its own spec.
+    // while owned deps stay, including one whose spec equals its peer's.
     let out = tempfile::NamedTempFile::new().unwrap();
     write(out.path(), &graph, &root_manifest).unwrap();
     let written: serde_json::Value =
@@ -2348,9 +2354,10 @@ fn workspace_member_required_peers_are_direct_deps() {
     let consumer = &written["packages"]["packages/consumer"];
     assert_eq!(
         consumer["dependencies"],
-        serde_json::json!({ "is-odd": "3.0.1" })
+        serde_json::json!({ "is-even": "1.0.0", "is-odd": "3.0.1" })
     );
     assert_eq!(consumer["peerDependencies"]["is-number"], "7.0.0");
+    assert_eq!(consumer["peerDependencies"]["is-even"], "1.0.0");
     assert_eq!(
         written["packages"][""]["peerDependencies"],
         serde_json::json!({ "kind-of": "^6.0.0" })
