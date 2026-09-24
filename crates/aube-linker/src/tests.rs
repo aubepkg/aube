@@ -1008,6 +1008,30 @@ fn cached_entry_repair_rejects_dependency_path_escape() {
 }
 
 #[test]
+fn test_hidden_hoist_is_rebuilt_on_relink() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let linker = Linker::new(&store, LinkStrategy::Copy);
+    let graph = make_graph();
+    let hidden = project_dir.join("node_modules/.aube/node_modules");
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+    // A stray entry from an earlier graph must not survive the rebuild.
+    std::fs::write(hidden.join("gone"), "").unwrap();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    for name in ["foo", "bar"] {
+        let link = hidden.join(name);
+        assert!(link.symlink_metadata().unwrap().is_symlink(), "{name}");
+        assert!(link.join("index.js").exists(), "{name} resolves");
+    }
+    assert!(!hidden.join("gone").exists());
+}
+
+#[test]
 fn test_global_virtual_store_gets_hidden_hoist() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
