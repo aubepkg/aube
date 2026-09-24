@@ -144,8 +144,10 @@ mod tests {
 
         let lock = take_project_lock(project.path()).unwrap();
 
+        // `\\?\UNC\` share paths have no plain form and stay verbatim.
+        let dir = lock.project_dir().to_string_lossy();
         assert!(
-            !lock.project_dir().to_string_lossy().starts_with(r"\\?\"),
+            !dir.starts_with(r"\\?\") || dir.starts_with(r"\\?\UNC\"),
             "verbatim project dir leaks into lifecycle script paths: {}",
             lock.project_dir().display()
         );
