@@ -455,6 +455,11 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     // attestation after the trusted 2.0.10 release (2026-07-15). Trusted
     // publishing resumed with 1.19.17, so keep the exception version-scoped.
     "@hono/node-server@1.19.15",
+    // webpack-dev-middleware@7.4.6 (2026-09-03) is a hand-published backport
+    // on the 7.x maintenance line, released after the trusted 8.0.0 by the
+    // same maintainer who published every earlier 7.x release. It is what
+    // webpack-dev-server@5's `^7.4.2` range selects, so keep it version-scoped.
+    "webpack-dev-middleware@7.4.6",
     "chokidar",
     "eslint-config-prettier",
     "eslint-import-resolver-typescript",
@@ -1613,6 +1618,25 @@ mod tests {
             &node_semver::Version::parse("2.0.10").unwrap()
         ));
         assert!(!r.matches("hono", &node_semver::Version::parse("1.19.15").unwrap()));
+    }
+
+    #[test]
+    fn default_excludes_webpack_dev_middleware_backport() {
+        // Regression: 7.4.6 was hand-published on the 7.x line after the
+        // attested 8.0.0 release; later releases stay protected.
+        let r = TrustExcludeRules::default();
+        assert!(r.matches(
+            "webpack-dev-middleware",
+            &node_semver::Version::parse("7.4.6").unwrap()
+        ));
+        assert!(!r.matches(
+            "webpack-dev-middleware",
+            &node_semver::Version::parse("7.4.7").unwrap()
+        ));
+        assert!(!r.matches(
+            "webpack-dev-middleware",
+            &node_semver::Version::parse("8.3.0").unwrap()
+        ));
     }
 
     #[test]
