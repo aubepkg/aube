@@ -432,7 +432,14 @@ MIN_RELEASE_AGE_SECONDS=$((MIN_RELEASE_AGE_MINUTES * 60))
 MIN_RELEASE_AGE_DAYS=$(((MIN_RELEASE_AGE_MINUTES + 60 * 24 - 1) / (60 * 24)))
 
 export BENCH_DIR MIN_RELEASE_AGE_MINUTES MIN_RELEASE_AGE_SECONDS MIN_RELEASE_AGE_DAYS
-export AUBE_BIN BUN_BIN DENO_BIN PNPM_BIN NPM_BIN YARN_BIN VLT_BIN
+# Each tool's path goes to benchmarks/tak.toml under a BENCH_ prefix, never
+# as AUBE_BIN, YARN_BIN and so on: package managers read environment variables
+# with their own prefix as settings. Yarn 4 rejects YARN_BIN outright
+# ("Unrecognized or legacy configuration settings found: bin") and exits 1
+# before installing anything.
+export BENCH_AUBE_BIN="$AUBE_BIN" BENCH_BUN_BIN="$BUN_BIN" BENCH_DENO_BIN="$DENO_BIN" \
+	BENCH_PNPM_BIN="$PNPM_BIN" BENCH_NPM_BIN="$NPM_BIN" BENCH_YARN_BIN="$YARN_BIN" \
+	BENCH_VLT_BIN="$VLT_BIN"
 
 # The tools this run measures, as tak `--subject` flags: those selected by
 # BENCH_TOOLS that are also installed.
