@@ -2327,7 +2327,7 @@ fn workspace_member_required_peers_are_direct_deps() {
     assert_eq!(
         graph.check_drift_workspace_for_kind(
             &[
-                (".".to_string(), root_manifest),
+                (".".to_string(), root_manifest.clone()),
                 ("packages/consumer".to_string(), member_manifest),
             ],
             &BTreeMap::new(),
@@ -2338,4 +2338,22 @@ fn workspace_member_required_peers_are_direct_deps() {
         ),
         DriftStatus::Fresh
     );
+
+    // Write-back keeps the peer-only declaration out of `dependencies`
+    // while an owned dep of the same name keeps its own spec.
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &root_manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    let consumer = &written["packages"]["packages/consumer"];
+    assert_eq!(
+        consumer["dependencies"],
+        serde_json::json!({ "is-odd": "3.0.1" })
+    );
+    assert_eq!(consumer["peerDependencies"]["is-number"], "7.0.0");
+    assert_eq!(
+        written["packages"][""]["peerDependencies"],
+        serde_json::json!({ "kind-of": "^6.0.0" })
+    );
+    assert!(written["packages"][""].get("dependencies").is_none());
 }
