@@ -71,10 +71,11 @@ if ! command -v tak &>/dev/null; then
 	echo "error: tak is required. Run via: mise run bench" >&2
 	exit 1
 fi
-# benchmarks/tak.toml uses `runs = "auto"`, which arrived in tak 0.0.12
-# alongside --no-progress; an older tak would reject the file.
-if ! tak run --help 2>/dev/null | grep -q -- '--no-progress'; then
-	echo "error: tak $(tak --version 2>/dev/null) is too old; 0.0.12 or newer is required" >&2
+# benchmarks/tak.toml uses shared subjects, templates, `check` and
+# `version_cmd`, all from tak 0.0.13, which also added --config; an older tak
+# would reject the file.
+if ! tak run --help 2>/dev/null | grep -q -- '--config'; then
+	echo "error: tak $(tak --version 2>/dev/null) is too old; 0.0.13 or newer is required" >&2
 	exit 1
 fi
 
@@ -213,28 +214,12 @@ if [ "$PROGRESS_TOTAL" -gt 0 ]; then
 fi
 
 echo "workdir: $BENCH_DIR"
-# Capture each tool's reported --version string so generate-results.js
-# can fold it into results.json. Some tools print extra text around
-# the semver (e.g. `aube 1.0.0-beta.3 (...)`, `bun 1.3.12+...`); the
-# sed pulls out the first token that looks like a semver so the JSON
-# stays clean without the consumers having to re-parse it.
-versions_file="$BENCH_DIR/versions.tsv"
-: >"$versions_file"
+# Each tool's version is recorded by tak itself (`version_cmd` in
+# benchmarks/tak.toml) into every scenario's export, and generate-results.js
+# reads it from there.
 for i in "${!TOOLS[@]}"; do
-	tool="${TOOLS[$i]}"
-	bin="${TOOL_BINS[$i]}"
-	raw="$($bin --version 2>/dev/null || echo 'unknown')"
-	version="$(printf '%s\n' "$raw" | head -n1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?' | head -n1)"
-	[ -z "$version" ] && version="$raw"
-	printf "%s\t%s\n" "$tool" "$version" >>"$versions_file"
-	printf "%-5s %s  (%s)\n" "$tool:" "$bin" "$version"
+	printf "%-5s %s\n" "${TOOLS[$i]}:" "${TOOL_BINS[$i]}"
 done
-node_version="$(node --version 2>/dev/null | sed 's/^v//')"
-if [ -n "$node_version" ]; then
-	printf "%s\t%s\n" "node" "$node_version" >>"$versions_file"
-	printf "%-5s %s\n" "node:" "$node_version"
-fi
-export BENCH_VERSIONS_FILE="$versions_file"
 echo ""
 
 # Per-tool lockfile filename (the name the pm writes into the project
@@ -464,9 +449,9 @@ if [ -n "${BENCH_SEED:-}" ]; then
 	TAK_ARGS+=(--seed "$BENCH_SEED")
 fi
 
-# Measure one scenario across every tool: `tak run --bench <scenario>` from
-# this directory, so tak finds benchmarks/tak.toml rather than the
-# repository's instruction-count one.
+# Measure one scenario across every tool: `tak run --bench <scenario>` against
+# benchmarks/tak.toml, named with --config so tak does not pick up the
+# repository's instruction-count tak.toml.
 run_bench() {
 	local bench_name=$1
 	# With no --subject at all tak would run every subject; there is nothing
@@ -477,8 +462,8 @@ run_bench() {
 	# A tool that fails is dropped from the rest of the run and left out of
 	# the export; generate-results.js reports it as n/a. tak exits non-zero
 	# for that, which must not abort the other scenarios.
-	if ! (cd "$SCRIPT_DIR" && tak run --bench "$bench_name" "${TAK_ARGS[@]}" \
-		"${SUBJECT_ARGS[@]}" --export-json "$BENCH_DIR/${bench_name}.json"); then
+	if ! tak run --config "$SCRIPT_DIR/tak.toml" --bench "$bench_name" "${TAK_ARGS[@]}" \
+		"${SUBJECT_ARGS[@]}" --export-json "$BENCH_DIR/${bench_name}.json"; then
 		echo "warning: one or more tools failed in $bench_name; they are missing from the results" >&2
 	fi
 	progress_finish "$bench_name"
@@ -499,9 +484,9 @@ run_aube_phase_bench() {
 	esac
 	progress_start "phases/$bench_name"
 	echo "  $bench_name"
-	if ! (cd "$SCRIPT_DIR" && AUBE_BENCH_PHASES_FILE="$PHASES_FILE" AUBE_BENCH_SCENARIO="$bench_name" \
-		tak run --bench "$bench_name" --subject aube --runs 1 --warmup 0 --no-counters --no-progress \
-		>/dev/null); then
+	if ! AUBE_BENCH_PHASES_FILE="$PHASES_FILE" AUBE_BENCH_SCENARIO="$bench_name" \
+		tak run --config "$SCRIPT_DIR/tak.toml" --bench "$bench_name" --subject aube \
+		--runs 1 --warmup 0 --no-counters --no-progress >/dev/null; then
 		echo "warning: phase timing failed for $bench_name - skipping sample" >&2
 		progress_finish "phases/$bench_name" "skipped"
 		return 0

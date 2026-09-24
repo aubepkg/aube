@@ -102,23 +102,34 @@ const lines = [
 ]
 
 // -- Structured JSON --------------------------------------------------------
-// bench.sh writes BENCH_VERSIONS_FILE as a "<tool>\t<semver>" TSV so
-// the docs chart can render the actual version each manager was
-// running rather than just the bare name.
+// tak records each tool's `--version` output (`version_cmd` in
+// benchmarks/tak.toml) and the machine it ran on in every scenario's export.
+// Versions are trimmed to the first semver-looking token so the docs chart
+// shows `1.4.2` rather than `bun 1.4.2+abc (…)`.
 const versions = {}
-const versionsFile = process.env.BENCH_VERSIONS_FILE
-if (versionsFile && fs.existsSync(versionsFile)) {
-  for (const line of fs.readFileSync(versionsFile, 'utf8').split('\n')) {
-    const [name, version] = line.split('\t')
-    if (name && version) versions[name] = version.trim()
+let machine = null
+for (const [name] of benchmarks) {
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
+  } catch {
+    continue
+  }
+  machine ??= data.machine ?? null
+  for (const r of data.results ?? []) {
+    if (versions[r.subject] || typeof r.version !== 'string') continue
+    const semver = r.version.match(/[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?/)
+    versions[r.subject] = semver ? semver[0] : r.version.trim()
   }
 }
+versions.node = process.versions.node
 
 const json = {
   updated: new Date().toISOString(),
   unit: 'ms',
   managers: TOOLS,
   versions,
+  machine,
   rows: [],
 }
 

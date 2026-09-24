@@ -1,184 +1,113 @@
+#:schema https://tak.jdx.dev/schema/tak.json
+#
 # Install benchmarks for `benchmarks/bench.sh`, measured by tak
-# (https://github.com/jdx/tak). Run them with `mise run bench`: bench.sh
-# builds the per-tool projects, stores and hermetic registry these commands
-# use, then runs tak from this directory, one scenario at a time.
+# (https://github.com/jdx/tak). Run them with `mise run bench`: bench.sh builds
+# the per-tool projects, stores and hermetic registry these commands use, then
+# runs `tak run --config benchmarks/tak.toml`, one scenario at a time.
 #
 # This is not the repository's tak.toml. That one holds the instruction-counted
 # CPU benchmarks run by `mise run perf`; these are network and filesystem work,
 # wall clock only.
 #
-# Every package manager is a subject of each scenario, so tak interleaves them:
-# each round takes one sample of every tool still due, in a freshly shuffled
-# order, and drift on the machine is spread across all of them instead of
-# landing on whichever tool ran while it happened. `runs = "auto"` gives each
-# tool as many runs as fit in tak's time budget, and never fewer than
-# `min_runs`, so a 20-second cold install is not run as often as a 300ms one.
+# Every package manager is a shared [subject.NAME] measured by each scenario, so
+# tak interleaves them: each round takes one sample of every tool still due, in
+# a freshly shuffled order, and drift on the machine is spread across all of
+# them instead of landing on whichever tool ran while it happened.
 #
-# Commands run under `sh -c` and read what bench.sh exports: `BENCH_DIR`, the
-# `*_BIN` paths, and `MIN_RELEASE_AGE_{MINUTES,SECONDS,DAYS}`. Each subject's
-# `TOOL` names its isolated directories under `$BENCH_DIR` — `project-`,
-# `home-`, `cache-` and `store-$TOOL` — and `LOCKFILE` is the lockfile that tool
-# writes. Output goes to /dev/null; tak discards it anyway, and the redirect
-# keeps a tool from blocking on a full pipe.
+# Values are tera templates. bench.sh exports `BENCH_DIR`, the `*_BIN` paths
+# and `MIN_RELEASE_AGE_{MINUTES,SECONDS,DAYS}`; `{{ subject }}` names the tool,
+# so each one gets its isolated `project-`, `home-`, `cache-` and `store-`
+# directory under `$BENCH_DIR`. Commands are plain argument lists — no shell —
+# except where a scenario chains two steps. tak discards their output.
 #
 # Every tool is held to the same minimum release age (aube's 24h supply-chain
 # default), each in its own unit, so none of them skips work the others do.
 # aube's global virtual store is pinned on through its env alias, so GitHub
 # Actions' inherited CI=true cannot switch it to per-project mode.
 
+[defaults]
+runs = "auto"
+min_runs = 5
+dir = "{{ env.BENCH_DIR }}/project-{{ subject }}"
+env = { HOME = "{{ env.BENCH_DIR }}/home-{{ subject }}" }
+# Recorded as each result's `version`; generate-results.js reads it from there.
+version_cmd = ["{{ vars.bin }}", "--version"]
+# Restore the saved lockfile over a project with no node_modules: the state
+# every install scenario starts from.
+prepare = ["sh", "-c", '''
+rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
+  bun.lock bun.lockb deno.lock vlt-lock.json &&
+cp '{{ env.BENCH_DIR }}/saved-lockfile-{{ subject }}' '{{ vars.lockfile }}'
+''']
+# An install that silently did nothing would be the fastest sample of all.
+# The fixture depends on typescript, so every install has to leave it behind.
+check = ["test", "-f", "node_modules/typescript/package.json"]
+
+[subject.aube]
+vars = { bin = "{{ env.AUBE_BIN }}", lockfile = "aube-lock.yaml" }
+env = { XDG_CACHE_HOME = "{{ env.BENCH_DIR }}/cache-aube", XDG_DATA_HOME = "{{ env.BENCH_DIR }}/home-aube/.local/share", npm_config_minimum_release_age = "{{ env.MIN_RELEASE_AGE_MINUTES }}", npm_config_enable_global_virtual_store = "true" }
+cmd = ["{{ env.AUBE_BIN }}", "install", "--frozen-lockfile", "--ignore-scripts"]
+
+[subject.bun]
+vars = { bin = "{{ env.BUN_BIN }}", lockfile = "bun.lock" }
+env = { BUN_INSTALL = "{{ env.BENCH_DIR }}/home-bun/.bun" }
+cmd = ["{{ env.BUN_BIN }}", "install", "--cache-dir", "{{ env.BENCH_DIR }}/cache-bun", "--ignore-scripts", "--no-summary", "--minimum-release-age={{ env.MIN_RELEASE_AGE_SECONDS }}", "--frozen-lockfile"]
+
+[subject.deno]
+vars = { bin = "{{ env.DENO_BIN }}", lockfile = "deno.lock" }
+env = { DENO_DIR = "{{ env.BENCH_DIR }}/cache-deno" }
+cmd = ["{{ env.DENO_BIN }}", "install", "--frozen", "--quiet", "--minimum-dependency-age={{ env.MIN_RELEASE_AGE_MINUTES }}"]
+
+[subject.pnpm]
+vars = { bin = "{{ env.PNPM_BIN }}", lockfile = "pnpm-lock.yaml" }
+cmd = ["{{ env.PNPM_BIN }}", "install", "--frozen-lockfile", "--ignore-scripts", "--config.minimum-release-age={{ env.MIN_RELEASE_AGE_MINUTES }}"]
+
+# `--legacy-peer-deps` is the only way npm tolerates the fixture's mixed peer
+# ranges; pnpm and aube handle them with autoInstallPeers by default.
+[subject.npm]
+vars = { bin = "{{ env.NPM_BIN }}", lockfile = "package-lock.json" }
+env = { npm_config_cache = "{{ env.BENCH_DIR }}/cache-npm" }
+cmd = ["{{ env.NPM_BIN }}", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--legacy-peer-deps", "--prefer-offline", "--min-release-age={{ env.MIN_RELEASE_AGE_DAYS }}"]
+
+# Yarn 4: --immutable replaces --frozen-lockfile. Scripts, cache and linker are
+# pinned in the .yarnrc.yml bench.sh writes.
+[subject.yarn]
+vars = { bin = "{{ env.YARN_BIN }}", lockfile = "yarn.lock" }
+cmd = ["{{ env.YARN_BIN }}", "install", "--immutable"]
+
+[subject.vlt]
+vars = { bin = "{{ env.VLT_BIN }}", lockfile = "vlt-lock.json" }
+env = { npm_config_cache = "{{ env.BENCH_DIR }}/cache-vlt" }
+cmd = ["{{ env.VLT_BIN }}", "install", "--frozen-lockfile"]
+
 # ── Fresh install, warm cache ──────────────────────────────────────────────
 # Lockfile present, node_modules deleted, store and cache warm.
 
 [bench.gvs-warm]
-runs = "auto"
-min_runs = 5
-prepare = ["sh", "-c", '''
-P="$BENCH_DIR/project-$TOOL"
-rm -rf "$P/node_modules" "$P/pnpm-lock.yaml" "$P/aube-lock.yaml" "$P/package-lock.json" \
-  "$P/yarn.lock" "$P/bun.lock" "$P/bun.lockb" "$P/deno.lock" "$P/vlt-lock.json" &&
-cp "$BENCH_DIR/saved-lockfile-$TOOL" "$P/$LOCKFILE"
-''']
-
-[bench.gvs-warm.subject.aube]
-env = { TOOL = "aube", LOCKFILE = "aube-lock.yaml" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-aube" &&
-HOME="$BENCH_DIR/home-aube" XDG_CACHE_HOME="$BENCH_DIR/cache-aube" XDG_DATA_HOME="$BENCH_DIR/home-aube/.local/share" \
-  npm_config_minimum_release_age="$MIN_RELEASE_AGE_MINUTES" npm_config_enable_global_virtual_store=true \
-  "$AUBE_BIN" install --frozen-lockfile --ignore-scripts >/dev/null 2>&1
-''']
-
-[bench.gvs-warm.subject.bun]
-env = { TOOL = "bun", LOCKFILE = "bun.lock" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-bun" &&
-HOME="$BENCH_DIR/home-bun" BUN_INSTALL="$BENCH_DIR/home-bun/.bun" \
-  "$BUN_BIN" install --cache-dir "$BENCH_DIR/cache-bun" --ignore-scripts --no-summary \
-  --minimum-release-age="$MIN_RELEASE_AGE_SECONDS" --frozen-lockfile >/dev/null 2>&1
-''']
-
-[bench.gvs-warm.subject.deno]
-env = { TOOL = "deno", LOCKFILE = "deno.lock" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-deno" &&
-HOME="$BENCH_DIR/home-deno" DENO_DIR="$BENCH_DIR/cache-deno" \
-  "$DENO_BIN" install --frozen --quiet --minimum-dependency-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1
-''']
-
-[bench.gvs-warm.subject.pnpm]
-env = { TOOL = "pnpm", LOCKFILE = "pnpm-lock.yaml" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-pnpm" &&
-HOME="$BENCH_DIR/home-pnpm" \
-  "$PNPM_BIN" install --frozen-lockfile --ignore-scripts --config.minimum-release-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1
-''']
-
-# `--legacy-peer-deps` is the only way npm tolerates the fixture's mixed peer
-# ranges; pnpm and aube handle them with autoInstallPeers by default.
-[bench.gvs-warm.subject.npm]
-env = { TOOL = "npm", LOCKFILE = "package-lock.json" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-npm" &&
-HOME="$BENCH_DIR/home-npm" npm_config_cache="$BENCH_DIR/cache-npm" \
-  "$NPM_BIN" ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps --prefer-offline \
-  --min-release-age="$MIN_RELEASE_AGE_DAYS" >/dev/null 2>&1
-''']
-
-# Yarn 4: --immutable replaces --frozen-lockfile. Scripts, cache and linker are
-# pinned in the .yarnrc.yml bench.sh writes.
-[bench.gvs-warm.subject.yarn]
-env = { TOOL = "yarn", LOCKFILE = "yarn.lock" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-yarn" &&
-HOME="$BENCH_DIR/home-yarn" "$YARN_BIN" install --immutable >/dev/null 2>&1
-''']
-
-[bench.gvs-warm.subject.vlt]
-env = { TOOL = "vlt", LOCKFILE = "vlt-lock.json" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-vlt" &&
-HOME="$BENCH_DIR/home-vlt" npm_config_cache="$BENCH_DIR/cache-vlt" \
-  "$VLT_BIN" install --frozen-lockfile >/dev/null 2>&1
-''']
+subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 
 # ── Fresh install, cold cache ──────────────────────────────────────────────
 # Lockfile present, store and cache empty: fetch from the registry, import,
-# link. The prepare step wipes every store and cache location each tool is
-# known to use, so every sample downloads everything again.
+# link. The prepare step also wipes every store and cache location each tool
+# is known to use, so every sample downloads everything again.
 
 [bench.gvs-cold]
-runs = "auto"
-min_runs = 5
+subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 prepare = ["sh", "-c", '''
-P="$BENCH_DIR/project-$TOOL" H="$BENCH_DIR/home-$TOOL"
-rm -rf "$P/node_modules" "$P/pnpm-lock.yaml" "$P/aube-lock.yaml" "$P/package-lock.json" \
-  "$P/yarn.lock" "$P/bun.lock" "$P/bun.lockb" "$P/deno.lock" "$P/vlt-lock.json" \
-  "$BENCH_DIR/store-$TOOL" "$BENCH_DIR/cache-$TOOL" \
+H='{{ env.BENCH_DIR }}/home-{{ subject }}'
+rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
+  bun.lock bun.lockb deno.lock vlt-lock.json \
+  '{{ env.BENCH_DIR }}/store-{{ subject }}' '{{ env.BENCH_DIR }}/cache-{{ subject }}' \
   "$H/.pnpm-store" "$H/.local/share/aube" "$H/.npm" "$H/.yarn" "$H/.bun" \
   "$H/.cache/aube" "$H/.cache/yarn" "$H/.cache/bun" "$H/.cache/deno" "$H/.cache/vlt" \
   "$H/.config/vlt" "$H/Library/Caches/deno" &&
 mkdir -p "$H" &&
-cp "$BENCH_DIR/saved-lockfile-$TOOL" "$P/$LOCKFILE"
-''']
-
-[bench.gvs-cold.subject.aube]
-env = { TOOL = "aube", LOCKFILE = "aube-lock.yaml" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-aube" &&
-HOME="$BENCH_DIR/home-aube" XDG_CACHE_HOME="$BENCH_DIR/cache-aube" XDG_DATA_HOME="$BENCH_DIR/home-aube/.local/share" \
-  npm_config_minimum_release_age="$MIN_RELEASE_AGE_MINUTES" npm_config_enable_global_virtual_store=true \
-  "$AUBE_BIN" install --frozen-lockfile --ignore-scripts >/dev/null 2>&1
-''']
-
-[bench.gvs-cold.subject.bun]
-env = { TOOL = "bun", LOCKFILE = "bun.lock" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-bun" &&
-HOME="$BENCH_DIR/home-bun" BUN_INSTALL="$BENCH_DIR/home-bun/.bun" \
-  "$BUN_BIN" install --cache-dir "$BENCH_DIR/cache-bun" --ignore-scripts --no-summary \
-  --minimum-release-age="$MIN_RELEASE_AGE_SECONDS" --frozen-lockfile >/dev/null 2>&1
-''']
-
-[bench.gvs-cold.subject.deno]
-env = { TOOL = "deno", LOCKFILE = "deno.lock" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-deno" &&
-HOME="$BENCH_DIR/home-deno" DENO_DIR="$BENCH_DIR/cache-deno" \
-  "$DENO_BIN" install --frozen --quiet --minimum-dependency-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1
-''']
-
-[bench.gvs-cold.subject.pnpm]
-env = { TOOL = "pnpm", LOCKFILE = "pnpm-lock.yaml" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-pnpm" &&
-HOME="$BENCH_DIR/home-pnpm" \
-  "$PNPM_BIN" install --frozen-lockfile --ignore-scripts --config.minimum-release-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1
+cp '{{ env.BENCH_DIR }}/saved-lockfile-{{ subject }}' '{{ vars.lockfile }}'
 ''']
 
 # No --prefer-offline here: the cache is empty, so it would change nothing.
 [bench.gvs-cold.subject.npm]
-env = { TOOL = "npm", LOCKFILE = "package-lock.json" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-npm" &&
-HOME="$BENCH_DIR/home-npm" npm_config_cache="$BENCH_DIR/cache-npm" \
-  "$NPM_BIN" ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps \
-  --min-release-age="$MIN_RELEASE_AGE_DAYS" >/dev/null 2>&1
-''']
-
-[bench.gvs-cold.subject.yarn]
-env = { TOOL = "yarn", LOCKFILE = "yarn.lock" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-yarn" &&
-HOME="$BENCH_DIR/home-yarn" "$YARN_BIN" install --immutable >/dev/null 2>&1
-''']
-
-[bench.gvs-cold.subject.vlt]
-env = { TOOL = "vlt", LOCKFILE = "vlt-lock.json" }
-cmd = ["sh", "-c", '''
-cd "$BENCH_DIR/project-vlt" &&
-HOME="$BENCH_DIR/home-vlt" npm_config_cache="$BENCH_DIR/cache-vlt" \
-  "$VLT_BIN" install --frozen-lockfile >/dev/null 2>&1
-''']
+cmd = ["{{ env.NPM_BIN }}", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--legacy-peer-deps", "--min-release-age={{ env.MIN_RELEASE_AGE_DAYS }}"]
 
 # ── Install + run test, already installed ──────────────────────────────────
 # The developer loop: "I've installed, now I keep re-running my tests." Each
@@ -187,99 +116,41 @@ HOME="$BENCH_DIR/home-vlt" npm_config_cache="$BENCH_DIR/cache-vlt" \
 # Tools with a state-based short-circuit (aube's .aube-state) skip the install
 # entirely; the rest still revalidate the lockfile.
 #
-# The command lives in each subject's `RUN`, so prepare and the timed sample
-# run exactly the same thing.
+# Each tool's command is its `vars.run`, so prepare and the timed sample run
+# exactly the same thing. These chain an install and a test, so they need sh.
 
 [bench.install-test]
-runs = "auto"
-min_runs = 5
+subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 prepare = ["sh", "-c", '''
-P="$BENCH_DIR/project-$TOOL"
-rm -rf "$P/node_modules" "$P/pnpm-lock.yaml" "$P/aube-lock.yaml" "$P/package-lock.json" \
-  "$P/yarn.lock" "$P/bun.lock" "$P/bun.lockb" "$P/deno.lock" "$P/vlt-lock.json" &&
-cp "$BENCH_DIR/saved-lockfile-$TOOL" "$P/$LOCKFILE" &&
-eval "$RUN"
+rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
+  bun.lock bun.lockb deno.lock vlt-lock.json &&
+cp '{{ env.BENCH_DIR }}/saved-lockfile-{{ subject }}' '{{ vars.lockfile }}' &&
+{{ vars.run }}
 ''']
-
 [bench.install-test.subject.aube]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.aube.env]
-TOOL = "aube"
-LOCKFILE = "aube-lock.yaml"
-RUN = '''
-cd "$BENCH_DIR/project-aube" &&
-HOME="$BENCH_DIR/home-aube" XDG_CACHE_HOME="$BENCH_DIR/cache-aube" XDG_DATA_HOME="$BENCH_DIR/home-aube/.local/share" \
-  npm_config_minimum_release_age="$MIN_RELEASE_AGE_MINUTES" npm_config_enable_global_virtual_store=true \
-  "$AUBE_BIN" test >/dev/null 2>&1
-'''
+vars = { run = '"$AUBE_BIN" test >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
 
 [bench.install-test.subject.bun]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.bun.env]
-TOOL = "bun"
-LOCKFILE = "bun.lock"
-RUN = '''
-cd "$BENCH_DIR/project-bun" &&
-HOME="$BENCH_DIR/home-bun" BUN_INSTALL="$BENCH_DIR/home-bun/.bun" \
-  "$BUN_BIN" install --cache-dir "$BENCH_DIR/cache-bun" --ignore-scripts --no-summary \
-  --minimum-release-age="$MIN_RELEASE_AGE_SECONDS" --frozen-lockfile >/dev/null 2>&1 &&
-HOME="$BENCH_DIR/home-bun" BUN_INSTALL="$BENCH_DIR/home-bun/.bun" "$BUN_BIN" run test >/dev/null 2>&1
-'''
+vars = { run = '"$BUN_BIN" install --cache-dir "$BENCH_DIR/cache-bun" --ignore-scripts --no-summary --minimum-release-age="$MIN_RELEASE_AGE_SECONDS" --frozen-lockfile >/dev/null 2>&1 && "$BUN_BIN" run test >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
 
 [bench.install-test.subject.deno]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.deno.env]
-TOOL = "deno"
-LOCKFILE = "deno.lock"
-RUN = '''
-cd "$BENCH_DIR/project-deno" &&
-HOME="$BENCH_DIR/home-deno" DENO_DIR="$BENCH_DIR/cache-deno" \
-  "$DENO_BIN" install --frozen --quiet --minimum-dependency-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1 &&
-HOME="$BENCH_DIR/home-deno" DENO_DIR="$BENCH_DIR/cache-deno" "$DENO_BIN" task --quiet test >/dev/null 2>&1
-'''
+vars = { run = '"$DENO_BIN" install --frozen --quiet --minimum-dependency-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1 && "$DENO_BIN" task --quiet test >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
 
 [bench.install-test.subject.pnpm]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.pnpm.env]
-TOOL = "pnpm"
-LOCKFILE = "pnpm-lock.yaml"
-RUN = '''
-cd "$BENCH_DIR/project-pnpm" &&
-HOME="$BENCH_DIR/home-pnpm" \
-  "$PNPM_BIN" install-test --frozen-lockfile --ignore-scripts --config.minimum-release-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1
-'''
+vars = { run = '"$PNPM_BIN" install-test --frozen-lockfile --ignore-scripts --config.minimum-release-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
 
 [bench.install-test.subject.npm]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.npm.env]
-TOOL = "npm"
-LOCKFILE = "package-lock.json"
-RUN = '''
-cd "$BENCH_DIR/project-npm" &&
-HOME="$BENCH_DIR/home-npm" npm_config_cache="$BENCH_DIR/cache-npm" \
-  "$NPM_BIN" install-test --ignore-scripts --no-audit --no-fund --legacy-peer-deps --prefer-offline \
-  --min-release-age="$MIN_RELEASE_AGE_DAYS" >/dev/null 2>&1
-'''
+vars = { run = '"$NPM_BIN" install-test --ignore-scripts --no-audit --no-fund --legacy-peer-deps --prefer-offline --min-release-age="$MIN_RELEASE_AGE_DAYS" >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
 
 [bench.install-test.subject.yarn]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.yarn.env]
-TOOL = "yarn"
-LOCKFILE = "yarn.lock"
-RUN = '''
-cd "$BENCH_DIR/project-yarn" &&
-HOME="$BENCH_DIR/home-yarn" "$YARN_BIN" install --immutable >/dev/null 2>&1 &&
-HOME="$BENCH_DIR/home-yarn" "$YARN_BIN" test >/dev/null 2>&1
-'''
+vars = { run = '"$YARN_BIN" install --immutable >/dev/null 2>&1 && "$YARN_BIN" test >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
 
 [bench.install-test.subject.vlt]
-cmd = ["sh", "-c", 'eval "$RUN"']
-[bench.install-test.subject.vlt.env]
-TOOL = "vlt"
-LOCKFILE = "vlt-lock.json"
-RUN = '''
-cd "$BENCH_DIR/project-vlt" &&
-HOME="$BENCH_DIR/home-vlt" npm_config_cache="$BENCH_DIR/cache-vlt" \
-  "$VLT_BIN" install --frozen-lockfile >/dev/null 2>&1 &&
-HOME="$BENCH_DIR/home-vlt" npm_config_cache="$BENCH_DIR/cache-vlt" "$VLT_BIN" run test >/dev/null 2>&1
-'''
+vars = { run = '"$VLT_BIN" install --frozen-lockfile >/dev/null 2>&1 && "$VLT_BIN" run test >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
