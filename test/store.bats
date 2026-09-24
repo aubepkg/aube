@@ -80,6 +80,21 @@ EOF
 	assert_output --partial "consistent"
 }
 
+@test "store files stay world-readable under a restrictive umask" {
+	_setup_basic_fixture
+	umask 077
+	run aube install
+	assert_success
+
+	files="$(aube store path)/files"
+	run bash -c "find '$files' -type f | head -1"
+	assert_success
+	[ -n "$output" ]
+	run find "$files" -type f ! -perm -0444
+	assert_success
+	assert_output ""
+}
+
 @test "aube store add rejects unknown packages" {
 	run aube store add this-package-does-not-exist-xyz
 	assert_failure

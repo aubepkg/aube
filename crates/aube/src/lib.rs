@@ -920,13 +920,15 @@ fn inner_main() -> miette::Result<i32> {
      * max_blocking_threads = 512 are both wasteful. Cap workers at
      * 8 (install semaphore already gates network).
      *
-     * Blocking pool sits at 128, raised from 64 after diag traces
-     * showed AdaptiveLimit running 100+ concurrent tarball imports
-     * (each holding a blocking slot for gzip + tar + CAS write)
-     * while the linker is also fanning out hardlinks on the same
-     * pool. 64 was saturating, queueing late tarballs behind
-     * earlier finishers. 128 covers worst case fat tarball
-     * pipeline plus linker plus side effects.
+     * The blocking pool bounds how many tarball imports and package
+     * materializations write to the filesystem at once. On Linux, 8
+     * beat 128 on a 1225-package cold install on both 8 and 32 CPUs:
+     * less kernel time contending on the same store and virtual-store
+     * directories, and ~1.2 GB less memory retained by idle threads'
+     * allocator heaps. Waiting imports don't hold up most downloads:
+     * a typical tarball fits in its import channel while it waits.
+     * Other platforms keep the earlier 128 (raised from 64 when diag
+     * traces showed late tarballs queueing) until they are measured.
      *
      * AUBE_TOKIO_WORKERS / AUBE_TOKIO_BLOCKING for benchmarking.
      */
@@ -941,7 +943,10 @@ fn inner_main() -> miette::Result<i32> {
         .map(|n| n.get())
         .unwrap_or(4);
     let workers = parse_env("AUBE_TOKIO_WORKERS", cpu_count.min(8));
-    let blocking = parse_env("AUBE_TOKIO_BLOCKING", 128);
+    let blocking = parse_env(
+        "AUBE_TOKIO_BLOCKING",
+        if cfg!(target_os = "linux") { 8 } else { 128 },
+    );
     // Every aubr invocation starts on the lightweight runtime. If its
     // synchronous freshness probe finds that dependencies need installing,
     // auto_install lazily creates a multi-thread runtime for that work only.

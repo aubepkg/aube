@@ -309,12 +309,9 @@ impl Store {
                         // process umask, so a non-default umask (e.g.
                         // 0o077) would give CAS files 0o600. The
                         // tempfile path uses `fchmod`, which ignores
-                        // umask. Match it with an explicit
-                        // `set_permissions` so the same store can't end
-                        // up with mixed-mode files depending on which
-                        // path wrote each entry.
-                        use std::os::unix::fs::PermissionsExt;
-                        let force_mode = std::fs::Permissions::from_mode(0o644);
+                        // umask. `force_cas_file_mode` corrects it so the
+                        // same store can't end up with mixed-mode files
+                        // depending on which path wrote each entry.
                         let open_result = std::fs::OpenOptions::new()
                             .mode(0o644)
                             .create_new(true)
@@ -322,7 +319,7 @@ impl Store {
                             .open(path);
                         match open_result {
                             Ok(mut f) => {
-                                f.set_permissions(force_mode.clone())
+                                force_cas_file_mode(&f)
                                     .map_err(|e| Error::Io(path.to_path_buf(), e))?;
                                 f.write_all(bytes)
                                     .map_err(|e| Error::Io(path.to_path_buf(), e))?;
@@ -345,7 +342,7 @@ impl Store {
                                     .open(path)
                                 {
                                     Ok(mut f) => {
-                                        f.set_permissions(force_mode)
+                                        force_cas_file_mode(&f)
                                             .map_err(|e| Error::Io(path.to_path_buf(), e))?;
                                         f.write_all(bytes)
                                             .map_err(|e| Error::Io(path.to_path_buf(), e))?;
@@ -871,6 +868,25 @@ impl Store {
             size: Some(len as u64),
         })
     }
+}
+
+/// Give a fast-path CAS file mode 0o644 despite the process umask.
+///
+/// Files are created with `mode(0o644)`, which only needs correcting when the
+/// umask or a default ACL on the shard directory strips some of those bits.
+/// Checking the new file's mode is a read, while an unconditional `fchmod` is
+/// an inode write per CAS entry (~33k on a 1.2k-package cold install) that
+/// contends with the other metadata writes of a parallel import. Each file is
+/// checked on its own because the umask can change mid-install in an
+/// embedding host and ACLs can differ per shard.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn force_cas_file_mode(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if file.metadata()?.permissions().mode() & 0o777 == 0o644 {
+        return Ok(());
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o644))
 }
 
 // Thin wrapper over posix_fallocate(3) which returns the error code
