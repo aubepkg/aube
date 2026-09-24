@@ -2,7 +2,7 @@ use crate::{DepType, DirectDep, Error, LocalSource, LockedPackage, LockfileGraph
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::raw::{InstallPathInfo, RawNpmLockfile};
+use super::raw::{InstallPathInfo, RawNpmLockfile, RawNpmPackage};
 /// Parse a package-lock.json or npm-shrinkwrap.json file into a LockfileGraph.
 pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     let content = crate::read_lockfile(path)?;
@@ -375,6 +375,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     for (dep_name, specifier) in &root.optional_dependencies {
         push_direct(dep_name, specifier, DepType::Optional, &mut direct);
     }
+    // npm installs an importer's required peers, and aube's resolver
+    // seeds them as production deps under autoInstallPeers. Recording
+    // them keeps the drift validator from reading a peer-only
+    // declaration as "manifest adds" on a fresh npm lockfile.
+    for (dep_name, specifier) in required_peers(&root) {
+        push_direct(dep_name, specifier, DepType::Production, &mut direct);
+    }
 
     // npm symlinks every workspace member (and any other top-level
     // `npm install ../local-pkg` link) into the root `node_modules/`
@@ -462,6 +469,9 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                     .iter()
                     .map(|(name, spec)| (name, spec, DepType::Optional)),
             )
+            .chain(
+                required_peers(package_entry).map(|(name, spec)| (name, spec, DepType::Production)),
+            )
         {
             if let Some(target_install_path) =
                 crate::npm::layout::resolve_nested(target, dep_name, &install_path_info)
@@ -481,4 +491,16 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         graph.importers.insert(target.clone(), direct);
     }
     Ok(graph)
+}
+
+/// Required (non-optional) peers an importer entry declares, in the
+/// order `seed_direct_deps` enqueues them. Callers dedupe against the
+/// owned sections, which win when a name appears in both.
+fn required_peers(entry: &RawNpmPackage) -> impl Iterator<Item = (&String, &String)> {
+    entry.peer_dependencies.iter().filter(|(name, _)| {
+        !entry
+            .peer_dependencies_meta
+            .get(*name)
+            .is_some_and(|m| m.optional)
+    })
 }
