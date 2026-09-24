@@ -2233,3 +2233,134 @@ fn workspace_member_dev_and_optional_overlap_yields_one_direct_dep() {
     assert_eq!(chalk.len(), 1, "expected one direct dep, got {chalk:?}");
     assert_eq!(chalk[0].dep_type, DepType::Dev);
 }
+
+/// npm installs an importer's required peers and records them only in
+/// the importer's `peerDependencies`. The reader must surface them as
+/// direct deps so a frozen install doesn't read the peer-only
+/// declaration as "manifest adds". Optional peers stay out, and an
+/// owned section wins over a peer declaration of the same name.
+#[test]
+fn workspace_member_required_peers_are_direct_deps() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "workspace-root",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {
+                    "name": "workspace-root",
+                    "version": "1.0.0",
+                    "workspaces": ["packages/*"],
+                    "devDependencies": { "is-number": "7.0.0" },
+                    "peerDependencies": { "kind-of": "^6.0.0" }
+                },
+                "node_modules/is-number": {
+                    "version": "7.0.0",
+                    "integrity": "sha512-isnumber"
+                },
+                "node_modules/is-odd": {
+                    "version": "3.0.1",
+                    "integrity": "sha512-isodd"
+                },
+                "node_modules/is-even": {
+                    "version": "1.0.0",
+                    "integrity": "sha512-iseven"
+                },
+                "node_modules/kind-of": {
+                    "version": "6.0.3",
+                    "integrity": "sha512-kindof"
+                },
+                "node_modules/peer-consumer": {
+                    "resolved": "packages/consumer",
+                    "link": true
+                },
+                "packages/consumer": {
+                    "name": "peer-consumer",
+                    "version": "1.0.0",
+                    "dependencies": { "is-even": "1.0.0", "is-odd": "3.0.1" },
+                    "peerDependencies": {
+                        "is-even": "1.0.0",
+                        "is-number": "7.0.0",
+                        "is-odd": "^3.0.0",
+                        "kind-of": "^6.0.0"
+                    },
+                    "peerDependenciesMeta": { "kind-of": { "optional": true } }
+                }
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+
+    let root = &graph.importers["."];
+    let kind_of = root.iter().find(|d| d.name == "kind-of").unwrap();
+    assert_eq!(kind_of.dep_type, DepType::Production);
+    assert_eq!(kind_of.specifier.as_deref(), Some("^6.0.0"));
+
+    let member = &graph.importers["packages/consumer"];
+    let is_number = member.iter().find(|d| d.name == "is-number").unwrap();
+    assert_eq!(is_number.dep_type, DepType::Production);
+    assert_eq!(is_number.specifier.as_deref(), Some("7.0.0"));
+    let is_odd: Vec<_> = member.iter().filter(|d| d.name == "is-odd").collect();
+    assert_eq!(is_odd.len(), 1);
+    assert_eq!(is_odd[0].specifier.as_deref(), Some("3.0.1"));
+    assert!(!member.iter().any(|d| d.name == "kind-of"));
+
+    let root_manifest: aube_manifest::PackageJson = serde_json::from_str(
+        r#"{
+            "name": "workspace-root",
+            "version": "1.0.0",
+            "workspaces": ["packages/*"],
+            "devDependencies": { "is-number": "7.0.0" },
+            "peerDependencies": { "kind-of": "^6.0.0" }
+        }"#,
+    )
+    .unwrap();
+    let member_manifest: aube_manifest::PackageJson = serde_json::from_str(
+        r#"{
+            "name": "peer-consumer",
+            "version": "1.0.0",
+            "dependencies": { "is-even": "1.0.0", "is-odd": "3.0.1" },
+            "peerDependencies": {
+                "is-even": "1.0.0",
+                "is-number": "7.0.0",
+                "is-odd": "^3.0.0",
+                "kind-of": "^6.0.0"
+            },
+            "peerDependenciesMeta": { "kind-of": { "optional": true } }
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root_manifest.clone()),
+                ("packages/consumer".to_string(), member_manifest),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        ),
+        DriftStatus::Fresh
+    );
+
+    // Write-back keeps the peer-only declaration out of `dependencies`
+    // while owned deps stay, including one whose spec equals its peer's.
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &root_manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    let consumer = &written["packages"]["packages/consumer"];
+    assert_eq!(
+        consumer["dependencies"],
+        serde_json::json!({ "is-even": "1.0.0", "is-odd": "3.0.1" })
+    );
+    assert_eq!(consumer["peerDependencies"]["is-number"], "7.0.0");
+    assert_eq!(consumer["peerDependencies"]["is-even"], "1.0.0");
+    assert_eq!(
+        written["packages"][""]["peerDependencies"],
+        serde_json::json!({ "kind-of": "^6.0.0" })
+    );
+    assert!(written["packages"][""].get("dependencies").is_none());
+}

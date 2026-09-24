@@ -200,8 +200,22 @@ pub fn write(
         let Some(workspace_pkg) = workspace_package_for_importer(graph, importer_path) else {
             continue;
         };
-        let (dependencies, dev_dependencies, optional_dependencies) =
+        let (mut dependencies, dev_dependencies, optional_dependencies) =
             dep_sections_from_direct_deps(importer_roots);
+        // Required importer peers become production direct deps (both on
+        // resolve under autoInstallPeers and on npm read), but npm keeps
+        // a peer-only declaration in `peerDependencies` alone. A matching
+        // peer spec marks the peer-derived entry, unless the workspace's
+        // recorded `declared_dependencies` show it also owns that name.
+        let declared = &workspace_pkg.declared_dependencies;
+        dependencies.retain(|name, spec| {
+            declared.get(*name).map(String::as_str) == Some(*spec)
+                || workspace_pkg
+                    .peer_dependencies
+                    .get(*name)
+                    .map(String::as_str)
+                    != Some(*spec)
+        });
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
