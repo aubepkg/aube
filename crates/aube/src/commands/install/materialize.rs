@@ -205,12 +205,18 @@ pub(super) type MaterializeChannel = (
     tokio::sync::mpsc::Receiver<(String, aube_store::PackageIndex)>,
 );
 
-pub(super) type MaterializeJoinHandle = tokio::task::JoinHandle<
-    miette::Result<(
-        aube_linker::LinkStats,
-        Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
-    )>,
->;
+/// What the fetch-time materializer hands the link phase.
+pub(super) struct PrewarmOutcome {
+    pub stats: aube_linker::LinkStats,
+    /// Graph hashes the global virtual-store prewarm named entries with;
+    /// `None` for the per-project materializer.
+    pub graph_hashes: Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
+    /// Dep paths whose global virtual-store entry the prewarm placed itself
+    /// under `graph_hashes`, rather than finding one already there.
+    pub placed: Vec<String>,
+}
+
+pub(super) type MaterializeJoinHandle = tokio::task::JoinHandle<miette::Result<PrewarmOutcome>>;
 
 pub(super) fn materialize_channel() -> MaterializeChannel {
     let (tx, rx) = tokio::sync::mpsc::channel(MATERIALIZE_CHANNEL_CAPACITY);
@@ -261,10 +267,7 @@ pub(super) async fn combine_install_pipeline_errors(
 pub(super) async fn run_gvs_prewarm_materializer(
     inputs: GvsPrewarmInputs,
     materialize_rx: tokio::sync::mpsc::Receiver<(String, aube_store::PackageIndex)>,
-) -> miette::Result<(
-    aube_linker::LinkStats,
-    Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
-)> {
+) -> miette::Result<PrewarmOutcome> {
     let GvsPrewarmInputs {
         graph,
         store,
@@ -371,8 +374,9 @@ pub(super) async fn run_gvs_prewarm_materializer(
     sem.disable_cusum_shrink();
     let linker_sem_for_persist = std::sync::Arc::clone(&sem);
     let linker_persistent_for_save = linker_persistent.clone();
-    let mut in_flight: Vec<tokio::task::JoinHandle<miette::Result<aube_linker::LinkStats>>> =
-        Vec::new();
+    let mut in_flight: Vec<
+        tokio::task::JoinHandle<miette::Result<(String, aube_linker::LinkStats)>>,
+    > = Vec::new();
     let mut rx = materialize_rx;
     while let Some((key, index)) = rx.recv().await {
         // canonical_to_contextualized only stores entries where
@@ -437,7 +441,7 @@ pub(super) async fn run_gvs_prewarm_materializer(
                             nested_link_targets.as_deref(),
                         )
                         .map_err(|e| miette!("prewarm GVS for {dep_path_for_err}: {e}"))?;
-                    Ok(stats)
+                    Ok((dep_path, stats))
                 })
                 .await
                 .into_diagnostic()?;
@@ -450,8 +454,15 @@ pub(super) async fn run_gvs_prewarm_materializer(
         }
     }
     let mut total = aube_linker::LinkStats::default();
+    let mut placed = Vec::new();
     for handle in in_flight {
-        let s = handle.await.into_diagnostic()??;
+        let (dep_path, s) = handle.await.into_diagnostic()??;
+        // `packages_linked` stays 1 only when this call materialized the
+        // entry and won the rename; a lost race or an existing entry
+        // leaves it at 0.
+        if s.packages_linked > 0 {
+            placed.push(dep_path);
+        }
         total.packages_linked += s.packages_linked;
         total.packages_cached += s.packages_cached;
         total.files_linked += s.files_linked;
@@ -459,7 +470,11 @@ pub(super) async fn run_gvs_prewarm_materializer(
     if let Some(state) = linker_persistent_for_save.as_ref() {
         linker_sem_for_persist.persist(state, "linker_prewarm:default");
     }
-    Ok((total, Some(graph_hashes_arc)))
+    Ok(PrewarmOutcome {
+        stats: total,
+        graph_hashes: Some(graph_hashes_arc),
+        placed,
+    })
 }
 
 /// Per-project materializer: pipelines the link work into the fetch
@@ -474,10 +489,7 @@ async fn run_aube_dir_materializer(
     cwd: std::path::PathBuf,
     link_concurrency: Option<usize>,
     materialize_rx: tokio::sync::mpsc::Receiver<(String, aube_store::PackageIndex)>,
-) -> miette::Result<(
-    aube_linker::LinkStats,
-    Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
-)> {
+) -> miette::Result<PrewarmOutcome> {
     let aube_dir = std::sync::Arc::new(linker.aube_dir_for(&cwd));
     aube_linker::mkdirp(&aube_dir).map_err(|e| miette!("create {}: {e}", aube_dir.display()))?;
     let nested_link_targets =
@@ -608,12 +620,16 @@ async fn run_aube_dir_materializer(
     if let Some(state) = perproj_persistent_for_save.as_ref() {
         perproj_sem_for_persist.persist(state, "linker_per_project:default");
     }
-    Ok((total, None))
+    Ok(PrewarmOutcome {
+        stats: total,
+        graph_hashes: None,
+        placed: Vec::new(),
+    })
 }
 
 #[cfg(test)]
 mod combine_pipeline_errors_tests {
-    use super::combine_install_pipeline_errors;
+    use super::{PrewarmOutcome, combine_install_pipeline_errors};
     use miette::miette;
 
     fn fmt_chain(report: &miette::Report) -> String {
@@ -630,10 +646,11 @@ mod combine_pipeline_errors_tests {
     #[tokio::test]
     async fn returns_fetch_err_when_materializer_succeeded() {
         let handle = tokio::spawn(async {
-            Ok((
-                aube_linker::LinkStats::default(),
-                None::<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
-            ))
+            Ok(PrewarmOutcome {
+                stats: aube_linker::LinkStats::default(),
+                graph_hashes: None,
+                placed: Vec::new(),
+            })
         });
         let fetch_err = miette!("network down: timed out fetching foo@1.0");
         let combined = combine_install_pipeline_errors(handle, fetch_err).await;
@@ -647,13 +664,7 @@ mod combine_pipeline_errors_tests {
     #[tokio::test]
     async fn nests_both_errors_when_materializer_failed() {
         let handle = tokio::spawn(async {
-            Err::<
-                (
-                    aube_linker::LinkStats,
-                    Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
-                ),
-                _,
-            >(miette!("materialize foo@1.0: permission denied"))
+            Err::<PrewarmOutcome, _>(miette!("materialize foo@1.0: permission denied"))
         });
         // The fetch task surfaces the channel-closed symptom.
         let fetch_err = miette!("materializer task exited before fetch finished");

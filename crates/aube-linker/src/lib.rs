@@ -1,11 +1,10 @@
 use aube_lockfile::graph_hash::GraphHashes;
 use aube_store::Store;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[cfg(test)]
 use aube_store::PackageIndex;
-#[cfg(test)]
-use std::collections::BTreeMap;
 #[cfg(test)]
 use std::path::Path;
 
@@ -101,6 +100,11 @@ pub struct Linker {
     /// virtual store. This is reserved for compatibility transforms
     /// that need to mutate one package without touching shared bytes.
     project_local_dep_paths: rustc_hash::FxHashSet<String>,
+    /// Dep paths whose global virtual-store entry this install placed
+    /// itself moments earlier (the fetch-time prewarm), under the same
+    /// graph hashes. Their dependency links were just written from the
+    /// graph, so the link phase doesn't read them back to verify.
+    fresh_virtual_store_entries: rustc_hash::FxHashSet<String>,
     strategy: LinkStrategy,
     /// Per-`name@version` patch contents applied at materialize
     /// time. Empty when the project has no `pnpm.patchedDependencies`.
@@ -277,4 +281,10 @@ pub struct LinkStats {
     /// `None` means "isolated layout — use the `.aube/<dep_path>`
     /// convention".
     pub hoisted_placements: Option<HoistedPlacements>,
+    /// The dependency links of every global virtual-store entry the link
+    /// phase created or verified, as `dep_path -> [(dep_name, target)]`,
+    /// so the install state can record them without reading each one back.
+    /// `None` when not collected (workspace linking, per-project layout,
+    /// Windows); callers then read the links from disk.
+    pub gvs_dep_link_targets: Option<BTreeMap<String, Vec<(String, PathBuf)>>>,
 }

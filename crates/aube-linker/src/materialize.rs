@@ -271,7 +271,9 @@ impl Linker {
             .join(&pkg.name);
 
         if pkg_nm_dir.exists() {
-            self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
+            if !self.fresh_virtual_store_entries.contains(dep_path) {
+                self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
+            }
             trace!("virtual store hit: {dep_path}");
             stats.packages_cached += 1;
             return Ok(());
@@ -370,6 +372,39 @@ impl Linker {
             .virtual_store
             .join(self.virtual_store_subdir(dep_path))
             .join("node_modules");
+        for (dep_name, target) in
+            self.virtual_store_dep_link_targets(dep_path, pkg, nested_link_targets)?
+        {
+            let symlink_path = pkg_nm_parent.join(&dep_name);
+            if reconcile_dir_link(&symlink_path, &target)? {
+                continue;
+            }
+            if let Some(parent) = symlink_path.parent() {
+                mkdirp(parent)?;
+            }
+            create_dir_link_idempotent(&target, &symlink_path)?;
+        }
+        Ok(())
+    }
+
+    /// The dependency links a global virtual-store entry holds, as
+    /// `(dep_name, target)` in the form they're written: relative sibling
+    /// paths (absolute on Windows, where junctions store one) and the
+    /// absolute on-disk path for `link:` transitives. Pure computation,
+    /// shared by [`Self::reconcile_virtual_store_entry`] and the link
+    /// phase's record of what it left on disk.
+    pub(crate) fn virtual_store_dep_link_targets(
+        &self,
+        dep_path: &str,
+        pkg: &LockedPackage,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<Vec<(String, PathBuf)>, Error> {
+        #[cfg(not(windows))]
+        let pkg_nm_parent = self
+            .virtual_store
+            .join(self.virtual_store_subdir(dep_path))
+            .join("node_modules");
+        let mut targets = Vec::with_capacity(pkg.dependencies.len());
         for (dep_name, dep_version) in &pkg.dependencies {
             if dep_name == &pkg.name {
                 continue;
@@ -377,7 +412,6 @@ impl Linker {
             validate_package_link_name(dep_name)?;
             let dep_dep_path = shared_local_dep_path(dep_name, dep_version)
                 .unwrap_or_else(|| format!("{dep_name}@{dep_version}"));
-            let symlink_path = pkg_nm_parent.join(dep_name);
             let target = if let Some(abs_target) =
                 nested_link_targets.and_then(|targets| targets.get(&dep_dep_path))
             {
@@ -391,6 +425,7 @@ impl Linker {
                         .join(sibling_subdir)
                         .join("node_modules")
                         .join(dep_name);
+                    let symlink_path = pkg_nm_parent.join(dep_name);
                     let link_parent = symlink_path.parent().unwrap_or(&pkg_nm_parent);
                     pathdiff::diff_paths(&sibling_abs, link_parent)
                         .unwrap_or_else(|| sibling_abs.clone())
@@ -403,15 +438,9 @@ impl Linker {
                         .join(dep_name)
                 }
             };
-            if reconcile_dir_link(&symlink_path, &target)? {
-                continue;
-            }
-            if let Some(parent) = symlink_path.parent() {
-                mkdirp(parent)?;
-            }
-            create_dir_link_idempotent(&target, &symlink_path)?;
+            targets.push((dep_name.clone(), target));
         }
-        Ok(())
+        Ok(targets)
     }
 
     /// Materialize a globally-reproducible local source (a `git`

@@ -20,6 +20,10 @@ pub(super) struct LinkPhaseInput<'a> {
     pub(super) node_version: Option<&'a str>,
     pub(super) prewarm_graph_hashes:
         Option<&'a std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
+    pub(super) prewarm_placed: Option<&'a (
+        std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
+        Vec<String>,
+    )>,
     pub(super) aube_dir: &'a std::path::Path,
     pub(super) modules_dir_name: &'a str,
     pub(super) virtual_store_dir_max_length: usize,
@@ -57,6 +61,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         build_policy,
         node_version,
         prewarm_graph_hashes,
+        prewarm_placed,
         aube_dir,
         modules_dir_name,
         virtual_store_dir_max_length,
@@ -282,6 +287,20 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
                 &content_hash_fn,
             )
         };
+        // Trust the prewarm's links only where both sets of hashes name
+        // the entry the same way, i.e. it is the very entry this link
+        // phase would verify.
+        if let Some((placed_hashes, placed)) = prewarm_placed {
+            linker = linker.with_fresh_virtual_store_entries(
+                placed
+                    .iter()
+                    .filter(|dep_path| {
+                        placed_hashes.hashed_dep_path(dep_path)
+                            == graph_hashes.hashed_dep_path(dep_path)
+                    })
+                    .cloned(),
+            );
+        }
         linker = linker.with_graph_hashes(graph_hashes);
     }
     if !patches_for_linker.is_empty() {

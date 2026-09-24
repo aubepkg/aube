@@ -297,120 +297,144 @@ impl Linker {
 
             let link_parallelism = self.link_parallelism();
             let step1_timer = std::time::Instant::now();
-            let step1_results: Vec<Result<LinkStats, Error>> =
-                with_link_pool(link_parallelism, || {
-                    step1_prep
-                        .par_iter()
-                        .map(|&(dep_path, pkg, ref entry_name, ref subdir)| {
-                            let dep_path = dep_path.as_str();
-                            let mut local_stats = LinkStats::default();
-                            let local_aube_entry = aube_dir.join(entry_name);
-                            let global_entry = self.virtual_store.join(subdir);
-                            let project_local = self.project_local_dep_paths.contains(dep_path);
+            // Each GVS entry also reports the dependency links it now holds
+            // (created or just verified), so the install state can record
+            // them without reading every link back from disk.
+            type Step1Result<'g> =
+                Result<(LinkStats, Option<(&'g String, Vec<(String, PathBuf)>)>), Error>;
+            let step1_results: Vec<Step1Result<'_>> = with_link_pool(link_parallelism, || {
+                step1_prep
+                    .par_iter()
+                    .map(|&(key, pkg, ref entry_name, ref subdir)| {
+                        let dep_path = key.as_str();
+                        let mut local_stats = LinkStats::default();
+                        let local_aube_entry = aube_dir.join(entry_name);
+                        let global_entry = self.virtual_store.join(subdir);
+                        let project_local = self.project_local_dep_paths.contains(dep_path);
 
-                            // Single readlink classifies the entry into one of
-                            // three states and drives the whole per-package
-                            // decision tree below. Avoids the double-check
-                            // (`read_link` then `exists`) the previous version
-                            // did and eliminates the unconditional
-                            // `remove_dir`/`remove_file` pair on cold installs,
-                            // which strace showed as ~1.4k ENOENT syscalls per
-                            // install on the medium fixture.
-                            let state = if project_local {
-                                classify_local_entry_state(&local_aube_entry)
-                            } else {
-                                classify_entry_state(&local_aube_entry, &global_entry)
-                            };
+                        // Single readlink classifies the entry into one of
+                        // three states and drives the whole per-package
+                        // decision tree below. Avoids the double-check
+                        // (`read_link` then `exists`) the previous version
+                        // did and eliminates the unconditional
+                        // `remove_dir`/`remove_file` pair on cold installs,
+                        // which strace showed as ~1.4k ENOENT syscalls per
+                        // install on the medium fixture.
+                        let state = if project_local {
+                            classify_local_entry_state(&local_aube_entry)
+                        } else {
+                            classify_entry_state(&local_aube_entry, &global_entry)
+                        };
 
-                            if matches!(state, EntryState::Fresh) {
-                                if !project_local {
-                                    self.reconcile_virtual_store_entry(
-                                        dep_path,
-                                        pkg,
-                                        nested_link_targets.as_ref(),
-                                    )?;
-                                }
-                                local_stats.packages_cached += 1;
-                                return Ok(local_stats);
-                            }
-
-                            // Symlink is stale or missing — need the package
-                            // index to (re)materialize. The install driver
-                            // omits `package_indices` entries for packages on
-                            // the fast path; load from the store on demand if
-                            // this one slipped through. This keeps the
-                            // fast-path safe against graph-hash changes that
-                            // invalidate the symlink target (patches, engine
-                            // bumps, `allowBuilds` flips).
-                            let owned_index;
-                            let index = match package_indices.get(dep_path) {
-                                Some(idx) => idx,
-                                None => {
-                                    owned_index = self
-                                        .store
-                                        .load_index(
-                                            pkg.registry_name(),
-                                            &pkg.version,
-                                            pkg.integrity.as_deref(),
-                                        )
-                                        .ok_or_else(|| {
-                                            Error::MissingPackageIndex(dep_path.to_string())
-                                        })?;
-                                    &owned_index
-                                }
-                            };
+                        if matches!(state, EntryState::Fresh) {
+                            local_stats.packages_cached += 1;
                             if project_local {
-                                if !matches!(state, EntryState::Missing) {
-                                    try_remove_entry(&local_aube_entry);
-                                }
-                                self.materialize_into(
-                                    &aube_dir,
-                                    &aube_dir,
-                                    dep_path,
-                                    pkg,
-                                    index,
-                                    &mut local_stats,
-                                    false,
-                                    nested_link_targets.as_ref(),
-                                )?;
-                                return Ok(local_stats);
+                                return Ok((local_stats, None));
                             }
-
-                            self.ensure_in_virtual_store_with_subdir(
+                            self.reconcile_virtual_store_entry(
                                 dep_path,
-                                subdir,
+                                pkg,
+                                nested_link_targets.as_ref(),
+                            )?;
+                            let targets = self.virtual_store_dep_link_targets(
+                                dep_path,
+                                pkg,
+                                nested_link_targets.as_ref(),
+                            )?;
+                            return Ok((local_stats, Some((key, targets))));
+                        }
+
+                        // Symlink is stale or missing — need the package
+                        // index to (re)materialize. The install driver
+                        // omits `package_indices` entries for packages on
+                        // the fast path; load from the store on demand if
+                        // this one slipped through. This keeps the
+                        // fast-path safe against graph-hash changes that
+                        // invalidate the symlink target (patches, engine
+                        // bumps, `allowBuilds` flips).
+                        let owned_index;
+                        let index = match package_indices.get(dep_path) {
+                            Some(idx) => idx,
+                            None => {
+                                owned_index = self
+                                    .store
+                                    .load_index(
+                                        pkg.registry_name(),
+                                        &pkg.version,
+                                        pkg.integrity.as_deref(),
+                                    )
+                                    .ok_or_else(|| {
+                                        Error::MissingPackageIndex(dep_path.to_string())
+                                    })?;
+                                &owned_index
+                            }
+                        };
+                        if project_local {
+                            if !matches!(state, EntryState::Missing) {
+                                try_remove_entry(&local_aube_entry);
+                            }
+                            self.materialize_into(
+                                &aube_dir,
+                                &aube_dir,
+                                dep_path,
                                 pkg,
                                 index,
                                 &mut local_stats,
+                                false,
                                 nested_link_targets.as_ref(),
                             )?;
+                            return Ok((local_stats, None));
+                        }
 
-                            // Only pay the `remove_dir`/`remove_file` syscalls
-                            // when we actually have something to remove.
-                            // On Windows, `.aube/<dep_path>` is an NTFS
-                            // junction (created via `sys::create_dir_link`);
-                            // `remove_file` can't unlink those, so try
-                            // `remove_dir` first and fall back to
-                            // `remove_file` for the unix case (where
-                            // `symlink` produces a file-style link).
-                            if matches!(state, EntryState::Stale) {
-                                let _ = std::fs::remove_dir(&local_aube_entry)
-                                    .or_else(|_| std::fs::remove_file(&local_aube_entry));
-                            }
-                            // Parent dirs were pre-created above the
-                            // par_iter; no per-package `mkdirp` here.
-                            sys::create_dir_link(&global_entry, &local_aube_entry)
-                                .map_err(|e| Error::Io(local_aube_entry.clone(), e))?;
-                            Ok(local_stats)
-                        })
-                        .collect()
-                });
+                        self.ensure_in_virtual_store_with_subdir(
+                            dep_path,
+                            subdir,
+                            pkg,
+                            index,
+                            &mut local_stats,
+                            nested_link_targets.as_ref(),
+                        )?;
 
+                        // Only pay the `remove_dir`/`remove_file` syscalls
+                        // when we actually have something to remove.
+                        // On Windows, `.aube/<dep_path>` is an NTFS
+                        // junction (created via `sys::create_dir_link`);
+                        // `remove_file` can't unlink those, so try
+                        // `remove_dir` first and fall back to
+                        // `remove_file` for the unix case (where
+                        // `symlink` produces a file-style link).
+                        if matches!(state, EntryState::Stale) {
+                            let _ = std::fs::remove_dir(&local_aube_entry)
+                                .or_else(|_| std::fs::remove_file(&local_aube_entry));
+                        }
+                        // Parent dirs were pre-created above the
+                        // par_iter; no per-package `mkdirp` here.
+                        sys::create_dir_link(&global_entry, &local_aube_entry)
+                            .map_err(|e| Error::Io(local_aube_entry.clone(), e))?;
+                        let targets = self.virtual_store_dep_link_targets(
+                            dep_path,
+                            pkg,
+                            nested_link_targets.as_ref(),
+                        )?;
+                        Ok((local_stats, Some((key, targets))))
+                    })
+                    .collect()
+            });
+
+            let mut dep_link_targets = BTreeMap::new();
             for result in step1_results {
-                let local_stats = result?;
+                let (local_stats, targets) = result?;
                 stats.packages_linked += local_stats.packages_linked;
                 stats.packages_cached += local_stats.packages_cached;
                 stats.files_linked += local_stats.files_linked;
+                if let Some((dep_path, targets)) = targets {
+                    dep_link_targets.insert(dep_path.clone(), targets);
+                }
+            }
+            // Windows junctions store normalized absolute targets that
+            // don't compare equal to the computed ones; read them from disk.
+            if cfg!(not(windows)) {
+                stats.gvs_dep_link_targets = Some(dep_link_targets);
             }
             tracing::debug!("link:step1 (gvs populate) {:.1?}", step1_timer.elapsed());
         } else {
