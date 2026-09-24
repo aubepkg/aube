@@ -420,6 +420,9 @@ async fn prepare_project_dir(project_dir: &Path) -> Result<PathBuf, InstallFailu
         .map_err(|error| {
             invalid_project_error(project_dir, format!("failed to resolve directory: {error}"))
         })?;
+    // Node cannot load an entry point from a Windows `\\?\` verbatim path,
+    // so lifecycle scripts under a verbatim install root would fail.
+    let project_dir = aube_util::path::strip_verbatim_prefix(&project_dir);
     let manifest = project_dir.join("package.json");
     if !tokio::fs::try_exists(&manifest).await.map_err(|error| {
         invalid_project_error(
