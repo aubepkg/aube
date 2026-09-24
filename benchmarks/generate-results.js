@@ -1,4 +1,4 @@
-// Reads the per-scenario hyperfine JSON output from `bench.sh` and
+// Reads the per-scenario tak JSON output from `bench.sh` and
 // emits two artifacts:
 //
 //   1. A human-readable markdown summary at `outputFile` (same format
@@ -40,11 +40,15 @@ const TOOLS = (process.env.BENCH_TOOLS || 'aube,pnpm')
   .map((s) => s.trim())
   .filter(Boolean)
 
+// One `tak run --export-json` file per scenario, with an entry per tool
+// (hyperfine's result shape plus `subject`). A tool that failed is absent
+// from it and reported as n/a.
 function readResult (benchDir, name, tool) {
   try {
-    const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}-${tool}.json`, 'utf8'))
-    const r = data.results[0]
-    if (!r || !Number.isFinite(r.mean)) {
+    const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
+    const r = data.results.find((result) => result.subject === tool)
+    if (!r) return missing()
+    if (!Number.isFinite(r.mean)) {
       throw new Error('missing benchmark mean')
     }
     const stddev = Number.isFinite(r.stddev) ? r.stddev : 0
@@ -57,10 +61,14 @@ function readResult (benchDir, name, tool) {
     }
   } catch (err) {
     if (err && err.code !== 'ENOENT') {
-      console.error(`Warning: failed to read ${name}-${tool}: ${err.message}`)
+      console.error(`Warning: failed to read ${name}/${tool}: ${err.message}`)
     }
-    return { text: 'n/a', mean: null, stddev: null, min: null, max: null }
+    return missing()
   }
+}
+
+function missing () {
+  return { text: 'n/a', mean: null, stddev: null, min: null, max: null }
 }
 
 function fmtSpeedup (baseMean, aubeMean) {

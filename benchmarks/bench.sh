@@ -32,6 +32,9 @@ set -euo pipefail
 #   BENCH_SCENARIOS — comma-separated scenario keys to run
 #                     (default: all)
 #   BENCH_PHASES — set to 0 to skip aube phase timing samples
+#   BENCH_SEED   — tak seed for the order samples are taken in. Each
+#                  scenario prints the seed it used; pass it back to
+#                  repeat that order.
 #   AUBE_BIN     — override the aube executable to benchmark
 #
 #   BENCH_HERMETIC=1 — route all registry traffic through a local
@@ -76,8 +79,14 @@ BENCH_PHASES="${BENCH_PHASES:-1}"
 
 # ── Validation ──────────────────────────────────────────────────────────────
 
-if ! command -v hyperfine &>/dev/null; then
-	echo "error: hyperfine is required. Run via: mise run bench" >&2
+if ! command -v tak &>/dev/null; then
+	echo "error: tak is required. Run via: mise run bench" >&2
+	exit 1
+fi
+# Interleaved multi-subject benchmarks and --export-json arrived in tak
+# 0.0.11; an older tak would reject the generated tak.toml.
+if ! tak run --help 2>/dev/null | grep -q -- '--export-json'; then
+	echo "error: tak $(tak --version 2>/dev/null) is too old; 0.0.11 or newer is required" >&2
 	exit 1
 fi
 
@@ -136,7 +145,10 @@ register_tool() {
 
 run_scenario() {
 	local name=$1
-	scenario_selected "$name" || return
+	# `return 0`, not a bare `return`: that would pass on scenario_selected's
+	# failure status, and `set -e` would end the whole run at the first
+	# scenario left out of BENCH_SCENARIOS.
+	scenario_selected "$name" || return 0
 
 	shift
 	"$@"
@@ -166,9 +178,10 @@ register_tool "vlt" "$VLT_BIN"
 PROGRESS_COMPLETED=0
 PROGRESS_STARTED=0
 PROGRESS_TOTAL=${#TOOLS[@]}
+# Each scenario is one tak run over every tool, so it is one unit.
 for scenario in gvs-warm gvs-cold install-test; do
 	if scenario_selected "$scenario"; then
-		PROGRESS_TOTAL=$((PROGRESS_TOTAL + ${#TOOLS[@]}))
+		PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
 	fi
 done
 if [ "$BENCH_PHASES" != "0" ]; then
@@ -586,10 +599,42 @@ cmd_template() {
 	esac
 }
 
+# TOML basic string: escape backslashes and double quotes, the only two
+# characters a basic string cannot hold as-is.
+toml_str() {
+	local s=${1//\\/\\\\}
+	s=${s//\"/\\\"}
+	printf '"%s"' "$s"
+}
+
+# Measure one scenario across every tool with tak.
+#
+# Every tool becomes a subject of one tak benchmark, so tak interleaves the
+# samples: each round takes one sample per tool, in a freshly shuffled
+# order. Running each tool's samples back to back (as this script did with
+# hyperfine) put any drift over the run — host contention, thermal, disk
+# state — entirely on whichever tool was running at the time, where it read
+# as a difference between tools.
+#
+# `prepare` runs untimed before every sample, warmups included, exactly as
+# hyperfine's --prepare did. Commands still go through `sh -c` because the
+# templates are shell (env prefixes, `cd`, redirects, `&&`).
+#
+# With `preinstall`, each sample's prepare also runs the command once so the
+# timed run starts from a "node_modules is already valid" state: the
+# developer-loop "run my tests again" case rather than the fresh-checkout
+# case `gvs-warm` already covers.
 run_bench() {
 	local bench_name=$1
 	local prepare_tpl=$2
+	local mode=${3:-fresh}
 
+	local dir="$BENCH_DIR/tak-$bench_name"
+	local toml="$dir/tak.toml"
+	mkdir -p "$dir"
+	printf '[bench.%s]\nwarmup = %s\n' "$bench_name" "$WARMUP" >"$toml"
+
+	local subjects=0
 	for i in "${!TOOLS[@]}"; do
 		local tool="${TOOLS[$i]}"
 		local project="${TOOL_PROJECTS[$i]}"
@@ -604,96 +649,42 @@ run_bench() {
 		local cmd_tpl
 		cmd_tpl=$(cmd_template "$bench_name" "$tool")
 		if [ -z "$cmd_tpl" ]; then
-			progress_start "$bench_name/$tool"
 			echo "warning: no $bench_name command for $tool — skipping" >&2
-			progress_finish "$bench_name/$tool" "skipped"
 			continue
 		fi
 
-		local prepare
+		local cmd prepare
+		cmd=$(expand_template "$cmd_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
 		prepare=$(expand_template "$prepare_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local cmd
-		cmd=$(expand_template "$cmd_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local tool_runs
-		tool_runs=$(runs_for_tool "$tool")
-		progress_start "$bench_name/$tool"
-		echo ""
-		echo "  $tool:"
-		hyperfine \
-			--warmup "$WARMUP" \
-			--runs "$tool_runs" \
-			--ignore-failure \
-			--prepare "$prepare" \
-			--command-name "$tool" \
-			"$cmd" \
-			--export-json "$BENCH_DIR/${bench_name}-${tool}.json" ||
-			true
-		progress_finish "$bench_name/$tool"
-	done
-}
-
-# Like `run_bench`, but times the *second* invocation of the tool's
-# command — the prepare step wipes node_modules, restores the saved
-# lockfile, and runs the same command once so the timed iteration
-# starts from a "node_modules is already valid" state.
-#
-# Used by the install-test scenario to measure the "I've installed,
-# now I just want to re-run my tests" developer loop rather than the
-# "fresh checkout + install" loop (which `gvs-warm` already covers).
-run_bench_preinstall() {
-	local bench_name=$1
-
-	for i in "${!TOOLS[@]}"; do
-		local tool="${TOOLS[$i]}"
-		local project="${TOOL_PROJECTS[$i]}"
-		local bin="${TOOL_BINS[$i]}"
-		local home="${TOOL_HOMES[$i]}"
-		local store="${TOOL_STORES[$i]}"
-		local cache="${TOOL_CACHES[$i]}"
-		local lockfile="$BENCH_DIR/saved-lockfile-$tool"
-		local lockfile_dest
-		lockfile_dest="$project/$(lockfile_name_for "$tool")"
-
-		local cmd_tpl
-		cmd_tpl=$(cmd_template "$bench_name" "$tool")
-		if [ -z "$cmd_tpl" ]; then
-			progress_start "$bench_name/$tool"
-			echo "warning: no $bench_name command for $tool — skipping" >&2
-			progress_finish "$bench_name/$tool" "skipped"
-			continue
+		if [ "$mode" = "preinstall" ]; then
+			prepare="$prepare && $cmd"
 		fi
 
-		local cmd
-		cmd=$(expand_template "$cmd_tpl" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		local warm_prep
-		warm_prep=$(expand_template "$WARM_PREP" "$project" "$bin" "$home" "$store" "$cache" "$lockfile" "$lockfile_dest")
-
-		# Prepare: wipe + restore lockfile, then run the same command
-		# once untimed so the tool's install phase populates
-		# node_modules (and `.aube-state` for aube). The timed
-		# iteration then re-runs the command against the settled
-		# state — the developer-loop "run my tests again" case.
-		local prepare="$warm_prep && $cmd"
-
-		local tool_runs
-		tool_runs=$(runs_for_tool "$tool")
-		progress_start "$bench_name/$tool"
-		echo ""
-		echo "  $tool:"
-		hyperfine \
-			--warmup "$WARMUP" \
-			--runs "$tool_runs" \
-			--ignore-failure \
-			--prepare "$prepare" \
-			--command-name "$tool" \
-			"$cmd" \
-			--export-json "$BENCH_DIR/${bench_name}-${tool}.json" ||
-			true
-		progress_finish "$bench_name/$tool"
+		{
+			printf '\n[bench.%s.subject.%s]\n' "$bench_name" "$tool"
+			printf 'cmd = ["sh", "-c", %s]\n' "$(toml_str "$cmd")"
+			printf 'prepare = ["sh", "-c", %s]\n' "$(toml_str "$prepare")"
+			printf 'runs = %s\n' "$(runs_for_tool "$tool")"
+		} >>"$toml"
+		subjects=$((subjects + 1))
 	done
+
+	[ "$subjects" -gt 0 ] || return 0
+
+	local seed_args=()
+	if [ -n "${BENCH_SEED:-}" ]; then
+		seed_args=(--seed "$BENCH_SEED")
+	fi
+	progress_start "$bench_name"
+	echo ""
+	# A tool that fails is dropped from the rest of the run and left out of
+	# the export; generate-results.js reports it as n/a. tak exits non-zero
+	# for that, which must not abort the other scenarios.
+	if ! (cd "$dir" && tak run --no-counters ${seed_args[@]+"${seed_args[@]}"} \
+		--export-json "$BENCH_DIR/${bench_name}.json"); then
+		echo "warning: one or more tools failed in $bench_name; they are missing from the results" >&2
+	fi
+	progress_finish "$bench_name"
 }
 
 PHASES_FILE="$BENCH_DIR/aube-install-phases.jsonl"
@@ -780,7 +771,7 @@ echo "━━━ Benchmark 2: Fresh install (cold cache) ━━━"
 run_scenario "gvs-cold" run_bench "gvs-cold" "$COLD_PREP"
 
 # ── Aube phase timing sample ───────────────────────────────────────────────
-# Hyperfine owns stdout/stderr and times whole commands. For attribution,
+# tak discards stdout/stderr and times whole commands. For attribution,
 # run aube once per install-shaped scenario with AUBE_BENCH_PHASES_FILE
 # enabled so the binary writes structured resolve/fetch/link/script/state
 # timings to JSONL, then summarize it at the end.
@@ -803,7 +794,7 @@ fi
 
 echo ""
 echo "━━━ Benchmark 3: install + run test (already installed) ━━━"
-run_scenario "install-test" run_bench_preinstall "install-test"
+run_scenario "install-test" run_bench "install-test" "$WARM_PREP" preinstall
 
 # ── Summary ────────────────────────────────────────────────────────────────
 
