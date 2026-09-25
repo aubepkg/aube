@@ -403,15 +403,40 @@ async fn fetch_exact_optional_packument(
     inputs: FetchInputs,
     version: String,
 ) -> Result<FetchResult, Error> {
-    let permit = inputs.sem.acquire().await;
     let name = inputs.name.clone();
-    let fetched = inputs
-        .client
-        .fetch_exact_version_packument(&name, &version)
-        .await;
+    let cached = match inputs.full_cache_dir.as_ref() {
+        Some(dir) => inputs
+            .client
+            .cached_exact_version_packument(&name, &version, dir)
+            .await
+            .map_err(|err| Error::Registry(name.clone(), err.to_string()))?,
+        None => None,
+    };
+    let (fetched, permit) = if let Some(exact) = cached {
+        (Ok(exact), None)
+    } else {
+        let permit = inputs.sem.acquire().await;
+        let fetched = match inputs.full_cache_dir.as_ref() {
+            Some(dir) => {
+                inputs
+                    .client
+                    .fetch_exact_version_packument_cached_after_lookup(&name, &version, dir)
+                    .await
+            }
+            None => {
+                inputs
+                    .client
+                    .fetch_exact_version_packument(&name, &version)
+                    .await
+            }
+        };
+        (fetched, Some(permit))
+    };
     match fetched {
         Ok(exact) => {
-            permit.record_success();
+            if let Some(permit) = permit {
+                permit.record_success();
+            }
             let mut versions = std::collections::BTreeMap::new();
             versions.insert(version, exact.metadata);
             Ok((
@@ -431,7 +456,9 @@ async fn fetch_exact_optional_packument(
             tracing::debug!(
                 "compact exact metadata fetch failed for optional dep {name}@{version}; falling back to full packument: {err}"
             );
-            permit.record_cancelled();
+            if let Some(permit) = permit {
+                permit.record_cancelled();
+            }
             let fallback_inputs = inputs.clone();
             let fallback = fetch_one_packument(inputs).await?;
             if fallback.1.versions.contains_key(&version) {
@@ -580,6 +607,36 @@ mod tests {
         };
         assert_eq!(source, FetchSource::Disk);
         drop(held_network_permit);
+    }
+
+    #[tokio::test]
+    async fn exact_disk_metadata_does_not_wait_for_a_network_permit() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "name": "shared",
+            "versions": { "1.0.0": { "name": "shared", "version": "1.0.0" } },
+            "time": { "1.0.0": "2024-01-01T00:00:00.000Z" }
+        }))
+        .unwrap();
+        let (registry, requests, server) = serve_registry(body).await;
+        let client = Arc::new(RegistryClient::new(&registry));
+        let cache = tempfile::tempdir().unwrap();
+        client
+            .fetch_exact_version_packument_cached("shared", "1.0.0", cache.path())
+            .await
+            .unwrap();
+        let limiter = AdaptiveLimit::new(1, 1, 1);
+        let held_network_permit = limiter.acquire().await;
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, limiter, true);
+        scheduler.ensure_exact_optional_fetch("shared", "1.0.0", None);
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_secs(1), scheduler.join_next())
+                .await
+                .expect("exact disk lookup queued behind the network permit");
+        assert!(matches!(outcome, Some(Ok((FetchKey::Exact(_, _), Ok(_))))));
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        drop(held_network_permit);
+        server.abort();
     }
 
     #[tokio::test]

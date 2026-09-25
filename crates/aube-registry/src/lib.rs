@@ -228,7 +228,7 @@ pub struct PackumentTrustHistory {
 /// policy checks. The full registry document is decoded in a single pass:
 /// the selected release uses [`VersionMetadata`], while every other release
 /// uses [`VersionTrustMetadata`].
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ExactVersionPackument {
     pub metadata: VersionMetadata,
     pub history: PackumentTrustHistory,

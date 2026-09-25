@@ -8,7 +8,10 @@
 //! - `~/.cache/aube/packuments-full-v1/` — full packuments used by
 //!   `aube view`
 //!
-//! Files are named `<safe_name>.json` where `/` in scoped names is
+//! Registry partitions use `origin-<hash>/` directories. Compact exact entries
+//! live under `exact-v1/origin-<hash>/<safe_name>/<version_hash>.json`.
+//!
+//! Full and abbreviated files are named `<safe_name>.json` where `/` in scoped names is
 //! replaced by `__`. The on-disk shape is `{ etag, last_modified,
 //! fetched_at, packument }` where `packument` is either a parsed
 //! `Packument` (corgi cache) or raw JSON (full cache).
@@ -18,7 +21,7 @@
 
 use glob::Pattern;
 use miette::{IntoDiagnostic, miette};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, usage_rs::Args)]
@@ -41,10 +44,8 @@ pub enum CacheCommand {
     List(ListArgs),
     /// List configured registries from the project + user `.npmrc`.
     ///
-    /// aube stores all packuments in a single flat directory (unlike
-    /// pnpm's per-host layout), so this prints the registries you're
-    /// currently configured to talk to rather than the registries that
-    /// happen to be in the cache.
+    /// Prints the registries currently configured for this project,
+    /// rather than the registry partitions present in the cache.
     ListRegistries,
     /// Print the directory used for metadata and policy caches.
     Path,
@@ -133,37 +134,132 @@ fn decode_safe_name(stem: &str) -> String {
     stem.to_string()
 }
 
-/// Forward of the same encoding — used by `view` to find a specific
-/// package's cache file by name.
-fn encode_safe_name(name: &str) -> String {
-    name.replace('/', "__")
-}
-
-/// Walk the cache dir and collect every cached package name, after
-/// decoding the on-disk filename. Missing dirs are silently treated as
-/// empty so an unprimed cache doesn't error.
-fn collect_names(dir: &Path) -> miette::Result<BTreeSet<String>> {
-    let mut names = BTreeSet::new();
-    if !dir.exists() {
-        return Ok(names);
-    }
-    let entries = std::fs::read_dir(dir)
-        .into_diagnostic()
-        .map_err(|e| miette!("failed to read {}: {e}", dir.display()))?;
-    for entry in entries {
-        let entry = entry
-            .into_diagnostic()
-            .map_err(|e| miette!("failed to read directory entry: {e}"))?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
+/// Collect legacy, registry-partitioned, and compact exact-version entries.
+/// Keep the actual paths: a package can have entries in several registries.
+/// Only known directory layouts are traversed, and symlinks are never followed.
+fn collect_entries(
+    dir: &Path,
+    wanted: impl Fn(&str) -> bool,
+) -> miette::Result<BTreeMap<String, Vec<PathBuf>>> {
+    let mut entries = BTreeMap::<String, Vec<PathBuf>>::new();
+    let mut pending = vec![(dir.to_path_buf(), Vec::<String>::new())];
+    while let Some((directory, components)) = pending.pop() {
+        let children = match std::fs::read_dir(&directory) {
+            Ok(children) => children,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).into_diagnostic(),
         };
-        names.insert(decode_safe_name(stem));
+        for child in children {
+            let child = child.into_diagnostic()?;
+            let file_type = child.file_type().into_diagnostic()?;
+            let Some(filename) = child.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if file_type.is_dir() {
+                let descend = match components.as_slice() {
+                    [] => filename.starts_with("origin-") || filename == "exact-v1",
+                    [exact] if exact == "exact-v1" => filename.starts_with("origin-"),
+                    [exact, origin] if exact == "exact-v1" && origin.starts_with("origin-") => {
+                        aube_store::validate_and_encode_name(&filename.replace("%2F", "/"))
+                            .is_some()
+                            || aube_store::validate_and_encode_name(&decode_safe_name(&filename))
+                                .is_some_and(|encoded| encoded == filename)
+                    }
+                    _ => false,
+                };
+                if descend {
+                    let mut next = components.clone();
+                    next.push(filename);
+                    pending.push((child.path(), next));
+                }
+            } else if file_type.is_file() && filename.ends_with(".json") {
+                let encoded = match components.as_slice() {
+                    [] => filename.strip_suffix(".json").unwrap_or(&filename),
+                    [origin] if origin.starts_with("origin-") => {
+                        filename.strip_suffix(".json").unwrap_or(&filename)
+                    }
+                    [exact, origin, package]
+                        if exact == "exact-v1" && origin.starts_with("origin-") =>
+                    {
+                        package
+                    }
+                    _ => continue,
+                };
+                let name = if components.len() == 3 && encoded.contains("%2F") {
+                    encoded.replace("%2F", "/")
+                } else if encoded.starts_with('@')
+                    && encoded
+                        .as_bytes()
+                        .windows(2)
+                        .filter(|pair| *pair == b"__")
+                        .count()
+                        > 1
+                {
+                    // Old slash encoding is ambiguous when scopes contain __.
+                    // Read the stored identity instead of guessing which slash
+                    // belongs to the scope. Unreadable ambiguous entries have
+                    // no name: wildcard deletion can still clean them up.
+                    // Only inspect an ambiguous file if one possible identity
+                    // matches the request (or wildcard cleanup includes unknown names).
+                    let possible_match = wanted("")
+                        || encoded
+                            .as_bytes()
+                            .windows(2)
+                            .enumerate()
+                            .any(|(offset, pair)| {
+                                if pair != b"__" {
+                                    return false;
+                                }
+                                let mut candidate = encoded.to_owned();
+                                candidate.replace_range(offset..offset + 2, "/");
+                                wanted(&candidate)
+                            });
+                    if !possible_match {
+                        continue;
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Identity {
+                        name: String,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Exact {
+                        metadata: Identity,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Entry {
+                        packument: Option<Identity>,
+                        exact: Option<Exact>,
+                    }
+                    // Deserialize only the identity and stream past all other
+                    // fields, without allocating the complete packument tree.
+                    std::fs::File::open(child.path())
+                        .ok()
+                        .and_then(|file| {
+                            serde_json::from_reader::<_, Entry>(std::io::BufReader::new(file)).ok()
+                        })
+                        .and_then(|entry| {
+                            entry
+                                .packument
+                                .or_else(|| entry.exact.map(|exact| exact.metadata))
+                        })
+                        .map(|identity| identity.name)
+                        .unwrap_or_default()
+                } else {
+                    decode_safe_name(encoded)
+                };
+                if name.is_empty()
+                    || aube_store::validate_and_encode_name(&name)
+                        .is_some_and(|safe| safe == encoded || name.replace('/', "%2F") == encoded)
+                {
+                    entries.entry(name).or_default().push(child.path());
+                }
+            }
+        }
     }
-    Ok(names)
+    for paths in entries.values_mut() {
+        paths.sort();
+    }
+    Ok(entries)
 }
 
 fn compile_patterns(raw: &[String]) -> miette::Result<Vec<Pattern>> {
@@ -184,7 +280,11 @@ fn list(args: ListArgs) -> miette::Result<()> {
     let patterns = compile_patterns(&args.patterns)?;
     let mut all = BTreeSet::new();
     for (_, dir) in cache_dirs() {
-        all.extend(collect_names(&dir)?);
+        all.extend(
+            collect_entries(&dir, |name| matches_any(name, &patterns))?
+                .into_keys()
+                .filter(|name| !name.is_empty()),
+        );
     }
     for name in all.iter().filter(|n| matches_any(n, &patterns)) {
         println!("{name}");
@@ -199,19 +299,20 @@ fn delete(args: DeleteArgs) -> miette::Result<()> {
         if !dir.exists() {
             continue;
         }
-        for name in collect_names(&dir)? {
+        for (name, paths) in collect_entries(&dir, |name| matches_any(name, &patterns))? {
             if !matches_any(&name, &patterns) {
                 continue;
             }
-            let path = dir.join(format!("{}.json", encode_safe_name(&name)));
-            match std::fs::remove_file(&path) {
-                Ok(()) => {
-                    println!("removed {}", path.display());
-                    deleted += 1;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    return Err(miette!("failed to remove {}: {e}", path.display()));
+            for path in paths {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        println!("removed {}", path.display());
+                        deleted += 1;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        return Err(miette!("failed to remove {}: {e}", path.display()));
+                    }
                 }
             }
         }
@@ -241,40 +342,44 @@ fn prune(args: PruneArgs) -> miette::Result<()> {
 
 fn view(args: ViewArgs) -> miette::Result<()> {
     // Validate the user-supplied name against the npm grammar before
-    // it becomes a path component. `encode_safe_name` alone would let
+    // it is used to select entries. Slash replacement alone would let
     // `aube cache view ../../evil` escape the cache directory.
-    let safe = aube_store::validate_and_encode_name(&args.name)
+    aube_store::validate_and_encode_name(&args.name)
         .ok_or_else(|| miette!("invalid package name: {:?}", args.name))?;
-    let filename = format!("{safe}.json");
 
     // Probe both directories. The corgi cache has a richer schema we can
     // pretty-print; the full cache is opaque JSON we just dump.
     let mut found = false;
     for (kind, dir) in cache_dirs() {
-        let path = dir.join(&filename);
-        if !path.exists() {
-            continue;
-        }
-        found = true;
-        let bytes = std::fs::read(&path)
-            .into_diagnostic()
-            .map_err(|e| miette!("failed to read {}: {e}", path.display()))?;
+        for path in collect_entries(&dir, |name| name == args.name)?
+            .remove(&args.name)
+            .unwrap_or_default()
+        {
+            let bytes = std::fs::read(&path)
+                .into_diagnostic()
+                .map_err(|e| miette!("failed to read {}: {e}", path.display()))?;
 
-        if args.json {
-            // Dump verbatim. We've already read the bytes; printing them
-            // as a string keeps formatting whatever the cache writer chose.
-            let s = String::from_utf8_lossy(&bytes);
-            println!("# {} ({kind})", path.display());
-            println!("{s}");
-            continue;
-        }
+            if args.json {
+                found = true;
+                // Dump verbatim. We've already read the bytes; printing them
+                // as a string keeps formatting whatever the cache writer chose.
+                let s = String::from_utf8_lossy(&bytes);
+                println!("# {} ({kind})", path.display());
+                println!("{s}");
+                continue;
+            }
 
-        let value: serde_json::Value = serde_json::from_slice(&bytes)
-            .into_diagnostic()
-            .map_err(|e| miette!("failed to parse {}: {e}", path.display()))?;
-        print_summary(&args.name, kind, &path, &value);
+            let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::debug!(%error, path = %path.display(), "skipping corrupt metadata cache entry");
+                    continue;
+                }
+            };
+            found = true;
+            print_summary(&args.name, kind, &path, &value);
+        }
     }
-
     if !found {
         return Err(miette!(
             "no cached metadata for `{}`\nhelp: run `{} {}` or `{}` first to populate the cache",
@@ -302,6 +407,12 @@ fn print_summary(name: &str, kind: &str, path: &Path, value: &serde_json::Value)
     }
     if let Some(ts) = value.get("fetched_at").and_then(|v| v.as_u64()) {
         println!("  fetched-at:    {ts} (unix seconds)");
+    }
+    if let Some(version) = value
+        .pointer("/exact/metadata/version")
+        .and_then(|v| v.as_str())
+    {
+        println!("  version:       {version}");
     }
     let pack = value.get("packument");
     if let Some(versions) = pack
@@ -359,13 +470,19 @@ mod tests {
     #[test]
     fn safe_name_round_trip_unscoped() {
         assert_eq!(decode_safe_name("lodash"), "lodash");
-        assert_eq!(encode_safe_name("lodash"), "lodash");
+        assert_eq!(
+            aube_store::validate_and_encode_name("lodash").as_deref(),
+            Some("lodash")
+        );
     }
 
     #[test]
     fn safe_name_round_trip_scoped() {
         assert_eq!(decode_safe_name("@babel__core"), "@babel/core");
-        assert_eq!(encode_safe_name("@babel/core"), "@babel__core");
+        assert_eq!(
+            aube_store::validate_and_encode_name("@babel/core").as_deref(),
+            Some("@babel__core")
+        );
     }
 
     #[test]
@@ -377,22 +494,46 @@ mod tests {
     }
 
     #[test]
-    fn collect_names_handles_missing_dir() {
+    fn collect_entries_handles_missing_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let names = collect_names(&tmp.path().join("does-not-exist")).unwrap();
+        let names = collect_entries(&tmp.path().join("does-not-exist"), |_| true).unwrap();
         assert!(names.is_empty());
     }
 
     #[test]
-    fn collect_names_decodes_filenames() {
+    fn collect_entries_decodes_filenames() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("lodash.json"), "{}").unwrap();
         std::fs::write(tmp.path().join("@babel__core.json"), "{}").unwrap();
         std::fs::write(tmp.path().join("README"), "ignored").unwrap();
-        let names = collect_names(tmp.path()).unwrap();
-        assert!(names.contains("lodash"));
-        assert!(names.contains("@babel/core"));
+        let names = collect_entries(tmp.path(), |_| true).unwrap();
+        assert!(names.contains_key("lodash"));
+        assert!(names.contains_key("@babel/core"));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn collect_entries_skips_unrelated_ambiguous_documents() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("@other__scope__pkg.json"), "invalid JSON").unwrap();
+        let entries = collect_entries(tmp.path(), |name| name == "target").unwrap();
+        assert!(entries.is_empty());
+        // Wildcard cleanup still includes unidentifiable entries.
+        assert_eq!(collect_entries(tmp.path(), |_| true).unwrap()[""].len(), 1);
+    }
+
+    #[test]
+    fn collect_entries_reads_identity_after_large_ignored_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("@foo___bar.json");
+        // The slash can overlap adjacent underscore pairs.
+        let body = format!(
+            r#"{{"packument":{{"versions":{{"1.0.0":{{"readme":"{}"}}}},"name":"@foo_/bar"}}}}"#,
+            "x".repeat(1024 * 1024)
+        );
+        std::fs::write(&file, body).unwrap();
+        let entries = collect_entries(tmp.path(), |name| name == "@foo_/bar").unwrap();
+        assert_eq!(entries["@foo_/bar"], vec![file]);
     }
 
     #[test]

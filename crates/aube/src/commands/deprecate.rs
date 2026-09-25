@@ -148,9 +148,14 @@ pub async fn apply(
         .await
         .map_err(|e| miette!("failed to update {name}: {e}"))?;
 
-    // Drop the full-packument cache entry so a subsequent `aube view` in
-    // the 5-minute TTL window doesn't serve the pre-deprecation document.
-    client.invalidate_full_packument_cache(name, &crate::commands::packument_full_cache_dir());
+    // Invalidate full and exact metadata without blocking the async executor.
+    let cache_dir = crate::commands::packument_full_cache_dir();
+    let package_name = name.to_owned();
+    tokio::task::spawn_blocking(move || {
+        client.invalidate_full_packument_cache(&package_name, &cache_dir);
+    })
+    .await
+    .into_diagnostic()?;
 
     let verb = if message.is_empty() {
         "Undeprecated"
