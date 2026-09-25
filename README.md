@@ -39,7 +39,7 @@ To pin aube for a project with mise, run `mise use aube` inside that project.
 ## Why aube
 
 <!-- BENCH_RATIOS:START -->
-**[Fast installs](https://aube.sh/benchmarks).** Warm installs are about 3x faster than pnpm and about 2x faster than Bun in the current benchmarks. Repeat test commands run up to 7x faster than pnpm and up to 5x faster than Bun.
+**[Fast installs](https://aube.sh/benchmarks).** Warm installs are about 5x faster than pnpm and ~1.9x faster than Bun in the current benchmarks. Repeat test commands run up to 24x faster than pnpm and up to 2x faster than Bun.
 <!-- BENCH_RATIOS:END -->
 
 Those results describe the recorded fixtures and cache conditions. See the
