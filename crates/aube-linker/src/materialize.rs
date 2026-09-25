@@ -326,10 +326,6 @@ impl Linker {
                 // Lost-race path: our `subdir` is still inside
                 // `tmp_base`, so a full recursive delete is needed.
                 let _ = std::fs::remove_dir_all(&tmp_base);
-                // The winner's entry gets the same link check as any entry
-                // that was already there, so a caller can rely on its links
-                // matching this graph once this returns.
-                self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
                 return Ok(());
             }
             Err(e) => {

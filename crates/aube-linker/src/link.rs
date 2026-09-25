@@ -297,10 +297,10 @@ impl Linker {
 
             let link_parallelism = self.link_parallelism();
             let step1_timer = std::time::Instant::now();
-            // Each GVS entry also reports the dependency links it now holds
-            // (created or verified by this install), so the install state
-            // can record them without reading every link back from disk.
-            // Windows reads its junction targets from disk and skips this.
+            // Each GVS entry also reports the dependency links it now holds,
+            // so the install state can record them without reading every
+            // link back from disk. Windows reads its junction targets from
+            // disk and skips this.
             type Step1Result<'g> =
                 Result<(LinkStats, Option<(&'g String, Vec<(String, PathBuf)>)>), Error>;
             let step1_results: Vec<Step1Result<'_>> = with_link_pool(link_parallelism, || {
@@ -340,14 +340,12 @@ impl Linker {
                             let targets = if cfg!(windows) {
                                 None
                             } else {
-                                Some((
-                                    key,
-                                    self.virtual_store_dep_link_targets(
-                                        dep_path,
-                                        pkg,
-                                        nested_link_targets.as_ref(),
-                                    )?,
-                                ))
+                                recordable_dep_link_targets(self.virtual_store_dep_link_targets(
+                                    dep_path,
+                                    pkg,
+                                    nested_link_targets.as_ref(),
+                                )?)
+                                .map(|targets| (key, targets))
                             };
                             return Ok((local_stats, targets));
                         }
@@ -422,14 +420,12 @@ impl Linker {
                         let targets = if cfg!(windows) {
                             None
                         } else {
-                            Some((
-                                key,
-                                self.virtual_store_dep_link_targets(
-                                    dep_path,
-                                    pkg,
-                                    nested_link_targets.as_ref(),
-                                )?,
-                            ))
+                            recordable_dep_link_targets(self.virtual_store_dep_link_targets(
+                                dep_path,
+                                pkg,
+                                nested_link_targets.as_ref(),
+                            )?)
+                            .map(|targets| (key, targets))
                         };
                         Ok((local_stats, targets))
                     })
@@ -1662,4 +1658,46 @@ pub fn build_nested_link_targets(
         })
         .collect();
     if map.is_empty() { None } else { Some(map) }
+}
+
+/// The dependency links of a global virtual-store entry that are safe to
+/// record without reading them back. Sibling links are relative paths fixed
+/// by the entry's hashed name, so whichever install placed the entry wrote
+/// the same ones. A `link:` transitive's absolute target is specific to the
+/// project that wrote it, and an entry placed by another install (a lost
+/// rename race) may hold that project's path, so such entries are read from
+/// disk instead.
+fn recordable_dep_link_targets(targets: Vec<(String, PathBuf)>) -> Option<Vec<(String, PathBuf)>> {
+    targets
+        .iter()
+        .all(|(_, target)| target.is_relative())
+        .then_some(targets)
+}
+
+#[cfg(test)]
+mod recordable_dep_link_targets_tests {
+    use super::recordable_dep_link_targets;
+    use std::path::PathBuf;
+
+    #[test]
+    fn keeps_relative_sibling_links() {
+        let targets = vec![(
+            "bar".to_string(),
+            PathBuf::from("../../bar@2.0.0/node_modules/bar"),
+        )];
+        assert_eq!(recordable_dep_link_targets(targets.clone()), Some(targets));
+    }
+
+    #[test]
+    fn leaves_project_specific_link_targets_to_disk() {
+        let absolute = std::env::temp_dir().join("project/libs/local");
+        let targets = vec![
+            (
+                "bar".to_string(),
+                PathBuf::from("../../bar@2.0.0/node_modules/bar"),
+            ),
+            ("local".to_string(), absolute),
+        ];
+        assert_eq!(recordable_dep_link_targets(targets), None);
+    }
 }
