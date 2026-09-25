@@ -2209,11 +2209,11 @@ Update globally installed packages.
 Parsed for pnpm compatibility.
 """#
     }
-    flag "-i --interactive" help="Interactive update picker." {
+    flag "-i --interactive" help="Pick which dependencies to update, and how far." {
         long_help #"""
-Interactive update picker.
+Pick which dependencies to update, and how far.
 
-Parsed for pnpm compatibility.
+Lists every dependency with a newer version as a row showing its current version, the newest version its range allows, and the registry's `latest`. Use ↑/↓ to move between rows and ←/→ to choose a version; leaving a row on its current version skips it. An exact pin is offered the newest version its caret range would allow and stays an exact pin after the bump. With `--latest`, rows start on the latest version. `--no-save` leaves the manifest alone, so it offers only in-range updates and no pin bumps.
 """#
     }
     flag "-L --latest" help="Update past the manifest range unless paired with `--no-save`." {
