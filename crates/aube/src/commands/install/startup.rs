@@ -37,6 +37,32 @@ pub(super) fn try_install_fast_path(
     let files = super::super::FileSources::load(cwd);
     let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
     let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    if aube_settings::resolved::advisory_check_every_install(&ctx)
+        && (aube_settings::resolved::paranoid(&ctx)
+            || !matches!(
+                aube_settings::resolved::advisory_check(&ctx),
+                aube_settings::resolved::AdvisoryCheck::Off
+            ))
+    {
+        return Ok(None);
+    }
+    // Local sources can include archives that freshness state does not track,
+    // including archives reached through a local directory dependency.
+    if opts.strict_no_lockfile {
+        let manifest = super::super::load_manifest_or_default(cwd)?;
+        if manifest
+            .all_dependencies()
+            .chain(
+                manifest
+                    .optional_dependencies
+                    .iter()
+                    .map(|(name, spec)| (name.as_str(), spec.as_str())),
+            )
+            .any(|(_, spec)| aube_lockfile::LocalSource::parse(spec, cwd).is_some())
+        {
+            return Ok(None);
+        }
+    }
     // Strict frozen installs can reuse current state when their root lockfile
     // exists and lifecycle scripts are disabled. Workspaces and declared
     // patches retain the full pipeline until

@@ -135,3 +135,24 @@ EOF
 	assert_file_exists hooks.log
 	assert_equal "$(cat hooks.log)" "$(printf 'preinstall\ninstall\npostinstall\nprepare')"
 }
+
+@test "explicit frozen install preserves per-install advisory routing" {
+	export AUBE_ADVISORY_CHECK=on
+	export AUBE_ADVISORY_CHECK_EVERY_INSTALL=true
+	aube install --ignore-scripts
+	run env AUBE_DIAG_FILE="$TEST_TEMP_DIR/advisory.jsonl" aube install --frozen-lockfile --ignore-scripts
+	assert_success
+	run grep -F '"cat":"install_phase","name":"resolve"' "$TEST_TEMP_DIR/advisory.jsonl"
+	assert_success
+}
+
+@test "explicit frozen install validates a removed local tarball" {
+	mkdir -p archive/package
+	echo '{"name":"local-archive","version":"1.0.0"}' >archive/package/package.json
+	tar -czf archive.tgz -C archive package
+	echo '{"name":"tarball-root","dependencies":{"local-archive":"file:./archive.tgz"}}' >package.json
+	aube install --no-frozen-lockfile --ignore-scripts
+	rm archive.tgz
+	run aube install --frozen-lockfile --offline --ignore-scripts
+	assert_failure
+}
