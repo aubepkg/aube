@@ -57,7 +57,7 @@ usage-rs = { workspace = true }
 strum = { workspace = true }
 clx = { workspace = true }
 console = "0.16"
-demand = "2"
+demand = "2.3"
 reqwest = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
