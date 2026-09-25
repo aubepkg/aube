@@ -6,6 +6,7 @@
 /// pool. Each `Err` chunk surfaces as `Read::read` Err so the
 /// downstream parser aborts cleanly.
 pub struct ChunkReader {
+    buffered: std::vec::IntoIter<bytes::Bytes>,
     rx: tokio::sync::mpsc::Receiver<Result<bytes::Bytes, std::io::Error>>,
     current: bytes::Bytes,
     pos: usize,
@@ -13,7 +14,16 @@ pub struct ChunkReader {
 
 impl ChunkReader {
     pub fn new(rx: tokio::sync::mpsc::Receiver<Result<bytes::Bytes, std::io::Error>>) -> Self {
+        Self::with_buffered(Vec::new(), rx)
+    }
+
+    /// Read `buffered` first, then continue with whatever arrives on `rx`.
+    pub fn with_buffered(
+        buffered: Vec<bytes::Bytes>,
+        rx: tokio::sync::mpsc::Receiver<Result<bytes::Bytes, std::io::Error>>,
+    ) -> Self {
         Self {
+            buffered: buffered.into_iter(),
             rx,
             current: bytes::Bytes::new(),
             pos: 0,
@@ -29,6 +39,11 @@ impl std::io::Read for ChunkReader {
                 buf[..n].copy_from_slice(&self.current[self.pos..self.pos + n]);
                 self.pos += n;
                 return Ok(n);
+            }
+            if let Some(chunk) = self.buffered.next() {
+                self.current = chunk;
+                self.pos = 0;
+                continue;
             }
             match self.rx.blocking_recv() {
                 Some(Ok(chunk)) => {

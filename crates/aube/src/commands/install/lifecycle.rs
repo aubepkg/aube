@@ -1003,16 +1003,28 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     let display_for_import = display_name.to_string();
     let version_for_import = version.to_string();
     let registry_for_import = registry_name.to_string();
-    let import_handle: tokio::task::JoinHandle<miette::Result<aube_store::PackageIndex>> =
+    let mut start_import = Some(move |buffered: Vec<bytes::Bytes>| {
         tokio::task::spawn_blocking(move || {
-            let reader = aube_util::io::ChunkReader::new(chunk_rx);
+            let reader = aube_util::io::ChunkReader::with_buffered(buffered, chunk_rx);
             store_for_import.import_tarball_reader(reader).map_err(|e| {
                 miette!(
                     "failed to import {display_for_import}@{version_for_import}: {e}{}",
                     crate::dep_chain::format_chain_for(&registry_for_import, &version_for_import)
                 )
             })
-        });
+        })
+    });
+    // The import runs on the blocking pool, which Linux caps at 8 threads
+    // shared with package materialization. Started at the first chunk, an
+    // import held its thread for the whole download, mostly idle on the
+    // network, and materialization fell behind until downloads ended. So
+    // the body is buffered here until it ends or passes this size; most
+    // tarballs are tens of KB, and only large ones still stream.
+    const STREAM_AFTER_BYTES: u64 = 1 << 20;
+    let mut buffered: Vec<bytes::Bytes> = Vec::new();
+    let mut import_handle: Option<
+        tokio::task::JoinHandle<miette::Result<aube_store::PackageIndex>>,
+    > = None;
 
     // Hash every byte the server sent, regardless of whether the
     // import task consumed them. tar end-of-archive can fire before
@@ -1026,7 +1038,9 @@ pub(super) async fn fetch_and_import_tarball_streaming(
         match resp.chunk().await {
             Ok(Some(chunk)) => {
                 if cap > 0 && total.saturating_add(chunk.len() as u64) > cap {
-                    if let Some(tx) = chunk_tx.as_ref() {
+                    if import_handle.is_some()
+                        && let Some(tx) = chunk_tx.as_ref()
+                    {
                         let _ = tx
                             .send(Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
@@ -1041,7 +1055,14 @@ pub(super) async fn fetch_and_import_tarball_streaming(
                 }
                 total += chunk.len() as u64;
                 hasher.update(&chunk);
-                if let Some(tx) = chunk_tx.as_ref()
+                if import_handle.is_none() {
+                    buffered.push(chunk);
+                    if total >= STREAM_AFTER_BYTES {
+                        import_handle = start_import
+                            .take()
+                            .map(|start| start(std::mem::take(&mut buffered)));
+                    }
+                } else if let Some(tx) = chunk_tx.as_ref()
                     && tx.send(Ok(chunk)).await.is_err()
                 {
                     // Import task closed the channel (tar EOF hit).
@@ -1052,7 +1073,9 @@ pub(super) async fn fetch_and_import_tarball_streaming(
             }
             Ok(None) => break None,
             Err(e) => {
-                if let Some(tx) = chunk_tx.as_ref() {
+                if import_handle.is_some()
+                    && let Some(tx) = chunk_tx.as_ref()
+                {
                     let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
                 }
                 break Some(aube_registry::Error::from(e));
@@ -1061,7 +1084,18 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     };
     drop(chunk_tx);
 
-    let import_result = import_handle.await.into_diagnostic().map_err(local)?;
+    // A body that ended below the streaming threshold is imported whole;
+    // a failed stream that never reached it is not imported at all.
+    if import_handle.is_none()
+        && stream_err.is_none()
+        && let Some(start) = start_import.take()
+    {
+        import_handle = Some(start(buffered));
+    }
+    let import_result = match import_handle {
+        Some(handle) => Some(handle.await.into_diagnostic().map_err(local)?),
+        None => None,
+    };
     if let Some(e) = stream_err {
         // Stash the Display rendering before `net` consumes `e`
         // for `is_throttle()` — the user-facing diagnostic must
@@ -1077,6 +1111,12 @@ pub(super) async fn fetch_and_import_tarball_streaming(
             ),
         ));
     }
+    // A clean stream always starts the import above.
+    let Some(import_result) = import_result else {
+        return Err(local(miette!(
+            "{display_name}@{version}: tarball import never started"
+        )));
+    };
     let index = import_result.map_err(local)?;
 
     let mut sha512 = [0u8; 64];
