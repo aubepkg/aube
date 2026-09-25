@@ -301,13 +301,14 @@ pub(crate) fn pick_version_key<'a, V: VersionCandidate>(
     let mut fallback_lowest: Option<(node_semver::Version, (&'a str, bool))> = None;
 
     for (ver_str, meta) in packument.versions {
-        let candidate = (ver_str.as_str(), meta.is_deprecated());
         let Ok(v) = node_semver::Version::parse(ver_str) else {
             continue;
         };
         if !v.satisfies(&range) {
             continue;
         }
+
+        let candidate = (ver_str.as_str(), meta.is_deprecated());
 
         // The lenient fallback drops the minimumReleaseAge gate but never
         // the time-based hard wall, so only versions that clear
@@ -404,6 +405,8 @@ pub(crate) fn outranks(
     )
 }
 
+/// Compare release status first, then semver in the requested direction.
+#[inline]
 fn outranks_status(
     v: &node_semver::Version,
     deprecated: bool,
@@ -706,9 +709,17 @@ mod selection_tests {
 
     #[test]
     fn metadata_lookup_uses_registry_key_when_embedded_version_differs() {
-        let full: Packument=serde_json::from_value(serde_json::json!({
-            "name":"sample", "versions":{"1.0.0":{"name":"sample","version":"different","dependencies":{"kept":"^2"}}}
-        })).unwrap();
+        let full: Packument = serde_json::from_value(serde_json::json!({
+            "name": "sample",
+            "versions": {
+                "1.0.0": {
+                    "name": "sample",
+                    "version": "different",
+                    "dependencies": { "kept": "^2" }
+                }
+            }
+        }))
+        .unwrap();
         let PickResult::Found(metadata) =
             pick_version(&full, "1.0.0", None, false, None, None, true, |_, _| false)
         else {
