@@ -320,3 +320,23 @@ _assert_installed_is_odd_root() {
 	assert_success
 	refute_output --partial "Auto-installing"
 }
+
+@test "per-project install recovers after deleting cache and root lockfile" {
+	_setup_single_fixture
+	echo 'enable-global-virtual-store=false' >>.npmrc
+
+	run aube install --ignore-scripts
+	assert_success
+	_assert_installed_is_odd_root
+
+	store_v1="$(aube store path)"
+	rm -rf "${store_v1:?}" "${XDG_CACHE_HOME:?}/aube"
+	rm aube-lock.yaml
+	assert_file_exists node_modules/.aube-lock.yaml
+
+	run aube install --ignore-scripts
+	assert_success
+	_assert_installed_is_odd_root
+	run node -e 'if (!require("is-odd")(3)) process.exit(1)'
+	assert_success
+}

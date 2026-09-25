@@ -41,9 +41,11 @@ pub(super) enum VirtualStorePlan {
         hashes: std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
     },
     /// `.aube/<dep_path>` entries are per-project directories keyed by
-    /// dep_path alone, so their existence *is* the linker's freshness
-    /// test and there is no shared target to compare against.
-    PerProject,
+    /// dep_path alone. Only unchanged subtrees survive the link phase's
+    /// invalidation pass and can safely skip loading their store index.
+    PerProject {
+        reusable: std::sync::Arc<std::collections::BTreeSet<String>>,
+    },
 }
 
 impl VirtualStorePlan {
@@ -52,7 +54,7 @@ impl VirtualStorePlan {
     /// freshness tests: `classify_entry_state` under the global virtual
     /// store (the stored target must be the subdir this graph expects
     /// *and* still exist) and the plain existence check the per-project
-    /// materializer uses.
+    /// materializer uses, provided subtree invalidation will preserve it.
     pub(super) fn entry_is_current(
         &self,
         entry: &std::path::Path,
@@ -75,7 +77,7 @@ impl VirtualStorePlan {
                 matches!(std::fs::read_link(entry), Ok(target) if target == expected)
                     && entry.exists()
             }
-            Self::PerProject => entry.exists(),
+            Self::PerProject { reusable } => reusable.contains(dep_path) && entry.exists(),
         }
     }
 
@@ -84,7 +86,7 @@ impl VirtualStorePlan {
     fn hashes(&self) -> Option<&std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>> {
         match self {
             Self::Global { hashes, .. } => Some(hashes),
-            Self::PerProject => None,
+            Self::PerProject { .. } => None,
         }
     }
 }
@@ -96,6 +98,8 @@ impl VirtualStorePlan {
 /// yet, so a source-backed dep and its ancestors simply miss the
 /// already-linked shortcut and take the verified path instead.
 pub(super) struct VirtualStorePlanInputs<'a> {
+    pub cwd: &'a std::path::Path,
+    pub reuse_existing_entries: bool,
     pub graph: &'a std::sync::Arc<aube_lockfile::LockfileGraph>,
     pub store: &'a aube_store::Store,
     pub link_strategy: aube_linker::LinkStrategy,
@@ -112,18 +116,16 @@ pub(super) struct VirtualStorePlanInputs<'a> {
 /// This runs before the fetch phase rather than inside the prewarm
 /// task that overlaps it, because the already-linked shortcut needs the
 /// hashes to classify an entry correctly (see [`VirtualStorePlan`]).
-/// The prewarm and link phases then reuse the same `Arc` instead of
-/// repeating the walk, so the only cost is that on the lockfile-reuse
-/// path the walk no longer hides behind the fetch tail. Measured on a
-/// warm install of the 1.4k-package medium fixture (debug build): the
-/// fetch phase goes 5.1 ms -> 7.7 ms, the prewarm loses the matching
-/// 1.7 ms `hash_await`, and total install time is unchanged inside
-/// run-to-run noise. The cold-resolve path pays nothing at all — its
-/// tarball fetch is already in flight by the time this is called.
+/// Global-store hashes are reused by prewarm and link. Per-project
+/// entries also need to match the prior install's subtree fingerprint:
+/// the link phase deletes changed subtrees, so mere existence cannot
+/// guarantee that it will reuse an entry without a package index.
 pub(super) async fn plan_virtual_store(
     inputs: VirtualStorePlanInputs<'_>,
 ) -> miette::Result<VirtualStorePlan> {
     let VirtualStorePlanInputs {
+        cwd,
+        reuse_existing_entries,
         graph,
         store,
         link_strategy,
@@ -143,7 +145,32 @@ pub(super) async fn plan_virtual_store(
         probe = probe.with_use_global_virtual_store(enabled);
     }
     if !probe.uses_global_virtual_store() {
-        return Ok(VirtualStorePlan::PerProject);
+        if !reuse_existing_entries {
+            return Ok(VirtualStorePlan::PerProject {
+                reusable: Default::default(),
+            });
+        }
+        let cwd = cwd.to_path_buf();
+        let graph = graph.clone();
+        let reusable = tokio::task::spawn_blocking(move || {
+            let Some(prior) = crate::state::read_state_subtree_hashes(&cwd) else {
+                return std::collections::BTreeSet::new();
+            };
+            let (_, current) =
+                super::delta::compute_leaf_and_subtree_hashes(&graph, &patch_hashes, &cwd);
+            current
+                .into_iter()
+                .filter_map(|(dep_path, hash)| {
+                    (prior.get(&dep_path) == Some(&hash)).then_some(dep_path)
+                })
+                .collect()
+        })
+        .await
+        .into_diagnostic()
+        .wrap_err("per-project virtual store planning failed")?;
+        return Ok(VirtualStorePlan::PerProject {
+            reusable: std::sync::Arc::new(reusable),
+        });
     }
     let virtual_store = store.virtual_store_dir();
 
