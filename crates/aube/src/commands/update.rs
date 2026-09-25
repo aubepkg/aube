@@ -60,7 +60,9 @@ pub struct UpdateArgs {
     /// choose a version; leaving a row on its current version skips it.
     /// An exact pin is offered the newest version its caret range would
     /// allow and stays an exact pin after the bump. With `--latest`,
-    /// rows start on the latest version.
+    /// rows start on the latest version. `--no-save` leaves the
+    /// manifest alone, so it offers only in-range updates and no pin
+    /// bumps.
     #[usage(short = 'i', long)]
     pub interactive: bool,
     /// Update past the manifest range unless paired with `--no-save`.

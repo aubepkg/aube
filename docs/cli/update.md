@@ -43,7 +43,7 @@ Read the [workflow guide](/package-manager/dependencies) for context.
   Parsed for pnpm compatibility.
 - **`-i --interactive`** — Pick which dependencies to update, and how far.
 
-  Lists every dependency with a newer version as a row showing its current version, the newest version its range allows, and the registry's `latest`. Use ↑/↓ to move between rows and ←/→ to choose a version; leaving a row on its current version skips it. An exact pin is offered the newest version its caret range would allow and stays an exact pin after the bump. With `--latest`, rows start on the latest version.
+  Lists every dependency with a newer version as a row showing its current version, the newest version its range allows, and the registry's `latest`. Use ↑/↓ to move between rows and ←/→ to choose a version; leaving a row on its current version skips it. An exact pin is offered the newest version its caret range would allow and stays an exact pin after the bump. With `--latest`, rows start on the latest version. `--no-save` leaves the manifest alone, so it offers only in-range updates and no pin bumps.
 - **`-L --latest`** — Update past the manifest range unless paired with `--no-save`.
 
   Rewrites `package.json` specifiers to match the newly resolved versions (the registry's `latest` dist-tag, clamped by `minimumReleaseAge` / `resolution-mode` as usual). With `--no-save`, leaves the manifest range unchanged and resolves only to the newest version that range allows.
