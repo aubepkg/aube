@@ -405,10 +405,20 @@ async fn fetch_exact_optional_packument(
 ) -> Result<FetchResult, Error> {
     let permit = inputs.sem.acquire().await;
     let name = inputs.name.clone();
-    let fetched = inputs
-        .client
-        .fetch_exact_version_packument(&name, &version)
-        .await;
+    let fetched = match inputs.full_cache_dir.as_ref() {
+        Some(dir) => {
+            inputs
+                .client
+                .fetch_exact_version_packument_cached(&name, &version, dir)
+                .await
+        }
+        None => {
+            inputs
+                .client
+                .fetch_exact_version_packument(&name, &version)
+                .await
+        }
+    };
     match fetched {
         Ok(exact) => {
             permit.record_success();

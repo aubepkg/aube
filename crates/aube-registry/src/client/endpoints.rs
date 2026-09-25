@@ -1,5 +1,5 @@
 use super::body::{check_body_cap, read_body_capped};
-use super::cache::packument_full_cache_path;
+use super::cache::{now_secs, packument_full_cache_path, parse_cache_control_max_age};
 use super::{
     AUDIT_BODY_CAP, PACKUMENT_FULL_ACCEPT, RegistryClient, check_dist_tag_status,
     dist_tag_root_url, dist_tag_url, parse_full_response, parse_full_response_seed,
@@ -171,6 +171,80 @@ impl RegistryClient {
         name: &str,
         version: &str,
     ) -> Result<crate::ExactVersionPackument, Error> {
+        self.fetch_exact_version_packument_response(name, version)
+            .await
+            .map(|(exact, _)| exact)
+    }
+
+    /// Cache an exact release and its complete publish-time/trust history.
+    /// Entries are isolated from full packuments and keyed by registry, package,
+    /// and version so a compact response cannot hide other releases.
+    pub async fn fetch_exact_version_packument_cached(
+        &self,
+        name: &str,
+        version: &str,
+        cache_dir: &Path,
+    ) -> Result<crate::ExactVersionPackument, Error> {
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct CachedExact {
+            fetched_at: u64,
+            max_age_secs: Option<u64>,
+            exact: crate::ExactVersionPackument,
+        }
+        let cache_path = packument_full_cache_path(
+            &cache_dir.join("exact-v1"),
+            name,
+            self.config.registry_for(name),
+        )
+        .ok_or_else(|| Error::InvalidName(name.to_string()))?
+        .with_extension("")
+        .join(format!(
+            "{}.json",
+            blake3::hash(version.as_bytes()).to_hex()
+        ));
+        let read_path = cache_path.clone();
+        let cached = tokio::task::spawn_blocking(move || {
+            std::fs::read(read_path)
+                .ok()
+                .and_then(|bytes| sonic_rs::from_slice::<CachedExact>(&bytes).ok())
+        })
+        .await
+        .map_err(|error| Error::Io(std::io::Error::other(error)))?;
+        if let Some(cached) = cached
+            && self.trust_cached_packument(cached.fetched_at, cached.max_age_secs)
+        {
+            return Ok(cached.exact);
+        }
+        let (exact, max_age_secs) = self
+            .fetch_exact_version_packument_response(name, version)
+            .await?;
+        let cached = CachedExact {
+            fetched_at: now_secs(),
+            max_age_secs,
+            exact,
+        };
+        tokio::task::spawn_blocking(move || {
+            let written = sonic_rs::to_vec(&cached)
+                .map_err(std::io::Error::other)
+                .and_then(|bytes| aube_util::fs_atomic::atomic_write(&cache_path, &bytes));
+            if let Err(error) = written {
+                tracing::warn!(
+                    code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                    %error,
+                    "failed to cache exact package metadata"
+                );
+            }
+            cached.exact
+        })
+        .await
+        .map_err(|error| Error::Io(std::io::Error::other(error)))
+    }
+
+    async fn fetch_exact_version_packument_response(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Result<(crate::ExactVersionPackument, Option<u64>), Error> {
         if self.network_mode == NetworkMode::Offline {
             return Err(Error::Offline(format!("trust history for {name}")));
         }
@@ -190,7 +264,10 @@ impl RegistryClient {
             self.fetch_policy.packument_max_bytes,
             "packument-trust-history",
         )?;
-        parse_full_response_seed(resp, crate::ExactVersionPackumentSeed { version }).await
+        let max_age_secs = parse_cache_control_max_age(&resp);
+        let exact =
+            parse_full_response_seed(resp, crate::ExactVersionPackumentSeed { version }).await?;
+        Ok((exact, max_age_secs))
     }
 
     /// Fetch the *full* (non-corgi) packument as raw JSON, bypassing the
@@ -485,5 +562,159 @@ mod search_tests {
             .await
             .unwrap();
         assert_eq!(results[0].name, "@acme/tool");
+    }
+}
+
+#[cfg(test)]
+mod exact_cache_tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn document() -> serde_json::Value {
+        serde_json::json!({
+            "name": "demo",
+            "versions": {
+                "1.0.0": { "name": "demo", "version": "1.0.0", "dependencies": { "child": "^1" } },
+                "2.0.0": { "name": "demo", "version": "2.0.0", "_npmUser": { "name": "publisher" } }
+            },
+            "time": { "1.0.0": "2024-01-01T00:00:00Z", "2.0.0": "2024-02-01T00:00:00Z" }
+        })
+    }
+
+    #[tokio::test]
+    async fn exact_cache_preserves_selected_metadata_and_complete_trust_history() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(document()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new(&server.uri());
+        let first = client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+            .await
+            .unwrap();
+        assert_eq!(first.metadata.dependencies["child"], "^1");
+        assert_eq!(first.history.versions.len(), 1);
+        assert!(first.history.versions["2.0.0"].npm_user.is_some());
+        assert_eq!(first.history.time.len(), 2);
+        let second = client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(first).unwrap(),
+            serde_json::to_value(second).unwrap()
+        );
+        assert!(
+            client
+                .cached_full_packument_lookup("demo", dir.path())
+                .packument
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_cache_is_partitioned_by_registry_and_version() {
+        let first = MockServer::start().await;
+        let second = MockServer::start().await;
+        for server in [&first, &second] {
+            Mock::given(method("GET"))
+                .and(path("/demo"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(document()))
+                .expect(2)
+                .mount(server)
+                .await;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        for server in [&first, &second] {
+            let client = RegistryClient::new(&server.uri());
+            for version in ["1.0.0", "2.0.0"] {
+                for _ in 0..2 {
+                    let exact = client
+                        .fetch_exact_version_packument_cached("demo", version, dir.path())
+                        .await
+                        .unwrap();
+                    assert_eq!(exact.metadata.version, version);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_cache_respects_revalidation_headers_and_offline_mode() {
+        for header in ["max-age=0", "no-cache", "no-store"] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/demo"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("cache-control", header)
+                        .set_body_json(document()),
+                )
+                .expect(2)
+                .mount(&server)
+                .await;
+            let dir = tempfile::tempdir().unwrap();
+            let mut client = RegistryClient::new(&server.uri());
+            for _ in 0..2 {
+                client
+                    .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+                    .await
+                    .unwrap();
+            }
+            client.network_mode = NetworkMode::Offline;
+            client
+                .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+                .await
+                .unwrap();
+            assert!(matches!(
+                client
+                    .fetch_exact_version_packument_cached("demo", "2.0.0", dir.path())
+                    .await,
+                Err(Error::Offline(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_cache_recovers_corruption_and_expired_entries() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(document()))
+            .expect(3)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new(&server.uri());
+        let file = packument_full_cache_path(
+            &dir.path().join("exact-v1"),
+            "demo",
+            client.config.registry_for("demo"),
+        )
+        .unwrap()
+        .with_extension("")
+        .join(format!("{}.json", blake3::hash(b"1.0.0").to_hex()));
+        client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+            .await
+            .unwrap();
+        let mut expired: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        expired["fetched_at"] = 0.into();
+        std::fs::write(&file, serde_json::to_vec(&expired).unwrap()).unwrap();
+        client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+            .await
+            .unwrap();
+        std::fs::write(&file, b"corrupt").unwrap();
+        client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+            .await
+            .unwrap();
     }
 }
