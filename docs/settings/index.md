@@ -628,11 +628,12 @@ Force the live-API OSV `MAL-*` check on every install (including frozen reinstal
 - Workspace YAML keys: `advisoryCheckEveryInstall`
 - Managed policy: `trueWins`
 
-By default, the live-API OSV check (`advisoryCheck`) fires on
-*fresh-resolution* installs only — `aube add`, `aube update`,
-missing-lockfile installs, and installs where the resolver picks a
-version the lockfile didn't pin. Plain reinstalls fall through to the
-local mirror (`advisoryCheckOnInstall`) when that's enabled.
+By default, `advisoryCheck` covers fresh resolutions. Explicit
+`aube add`, `aube update`, and `aube dlx` operations and small graphs
+query live OSV. Large ordinary fresh resolutions use the Bloom
+prefilter under the default policy; only probable hits are checked
+live. Plain reinstalls can use the optional local mirror
+(`advisoryCheckOnInstall`) or Bloom check (`advisoryBloomCheck`).
 
 Setting `advisoryCheckEveryInstall = true` forces the live API on
 every install entry point, including strict frozen reinstalls and
@@ -646,7 +647,8 @@ is per-install latency — for a large transitive graph, batch queries
 chunk at 500 names per request, so an `aube install` against a graph
 of 2000 packages incurs four sequential OSV requests.
 
-- `false` (default): live-API check on fresh-resolution installs only.
+- `false` (default): use the ordinary `advisoryCheck` routing for fresh
+  resolutions, including Bloom prefiltering for large ordinary installs.
 - `true`: live-API check on every install. Honors `advisoryCheck`'s
   fail-open / fail-closed policy on fetch errors.
 
