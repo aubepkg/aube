@@ -517,7 +517,7 @@ async fn run_inner(
                 &existing_importers,
                 &preserve_pin,
                 &cwd,
-                latest,
+                &latest_keys,
                 no_save,
                 args.exact,
             )
@@ -554,7 +554,7 @@ async fn run_inner(
                 }
                 UpdateChoice::Range => {
                     let spec = all_specifiers.get(&key).map(String::as_str).unwrap_or("");
-                    if exact_pin_version(spec).is_some() {
+                    if exact_semver_pin(spec).is_some() {
                         pinned_range_keys.insert(key);
                     }
                 }
@@ -1145,7 +1145,7 @@ async fn pick_update_interactively(
     existing_importers: &[&str],
     preserve_pin: &BTreeSet<String>,
     cwd: &std::path::Path,
-    latest: bool,
+    latest_keys: &BTreeSet<String>,
     no_save: bool,
     exact: bool,
 ) -> miette::Result<Option<InteractiveSelection>> {
@@ -1257,7 +1257,7 @@ async fn pick_update_interactively(
         // range the pin would have: newer compatible releases are still
         // worth offering. Bumping a pin rewrites the manifest, which
         // `--no-save` rules out.
-        let pin = exact_pin_version(spec);
+        let pin = exact_semver_pin(spec);
         let range_spec = match pin {
             Some(_) if no_save => None,
             Some(pin) => Some(format!("^{pin}")),
@@ -1291,6 +1291,8 @@ async fn pick_update_interactively(
             .as_ref()
             .and_then(|info| info.selected.clone())
             .filter(|v| v != current && Some(v) != range_target.as_ref());
+        // `--latest` and `<pkg>@latest` both ask for the latest version.
+        let latest = latest_keys.contains(key.as_str());
         let blocked = if latest {
             latest_info.and_then(|info| info.blocked)
         } else {
@@ -2172,9 +2174,26 @@ fn exact_pin_version(spec: &str) -> Option<&str> {
     looks_like_exact_version(trimmed).then_some(trimmed)
 }
 
+/// Like `exact_pin_version`, but only for a full semver version: a
+/// floating range such as `1.x` passes the looser shape check yet
+/// matches more than one version, so it isn't a pin to bump.
+fn exact_semver_pin(spec: &str) -> Option<&str> {
+    exact_pin_version(spec).filter(|v| node_semver::Version::parse(v).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_semver_pin_rejects_floating_ranges() {
+        assert_eq!(exact_semver_pin("1.2.3"), Some("1.2.3"));
+        assert_eq!(exact_semver_pin("=1.2.3-rc.1"), Some("1.2.3-rc.1"));
+        assert_eq!(exact_semver_pin("npm:real@1.2.3"), Some("1.2.3"));
+        assert_eq!(exact_semver_pin("1.x"), None);
+        assert_eq!(exact_semver_pin("1"), None);
+        assert_eq!(exact_semver_pin("^1.2.3"), None);
+    }
 
     #[test]
     fn recursive_catalog_choice_is_reused_without_reprompting() {
