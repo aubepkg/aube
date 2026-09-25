@@ -872,8 +872,6 @@ impl Linker {
         dst: &Path,
         dst_dir: Option<&std::fs::File>,
     ) -> Result<(), Error> {
-        #[cfg(target_os = "macos")]
-        const SMALL_FILE_COPY_MAX: u64 = 16 * 1024;
         let map_io = |e: std::io::Error| classify_link_error(stored, rel_path, dst, e);
         let missing_source = || Error::MissingStoreFile {
             store_path: stored.store_path.clone(),
@@ -884,13 +882,13 @@ impl Linker {
         // attribution. Diag emits a `linker.link_<strategy>` event with
         // the per-file duration so the analyzer can break down link cost
         // by realized path: reflink (zero-copy CoW), hardlink (zero-cost
-        // metadata link), copy (full byte transfer), or the
-        // small-file-copy short circuit on macOS.
+        // metadata link), or copy (full byte transfer).
         let diag_t0 = aube_util::diag::enabled().then(std::time::Instant::now);
         let realized: &'static str;
         match self.strategy {
-            // Two reflink strategies share the clonefile attempt and the
-            // macOS small-file copy shortcut, but differ in fallback:
+            // Both reflink strategies use clonefile directly, including for
+            // small files. On macOS std::fs::copy also attempts a clone,
+            // but opens and inspects the source first. They differ in fallback:
             //   * `Reflink` (explicit `clone` / `clone-or-copy`) — the
             //     documented contract is reflink with a plain copy
             //     fallback, so a clonefile failure degrades straight to
@@ -902,19 +900,6 @@ impl Linker {
             //     hardlink before copy.
             LinkStrategy::Reflink | LinkStrategy::ReflinkAuto => {
                 let auto = matches!(self.strategy, LinkStrategy::ReflinkAuto);
-                #[cfg(target_os = "macos")]
-                if matches!(stored.size, Some(size) if size <= SMALL_FILE_COPY_MAX) {
-                    std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
-                    if let Some(t0) = diag_t0 {
-                        aube_util::diag::event(
-                            aube_util::diag::Category::Linker,
-                            "link_macos_small_copy",
-                            t0.elapsed(),
-                            None,
-                        );
-                    }
-                    return Ok(());
-                }
                 let reflink_result = {
                     #[cfg(test)]
                     {
@@ -1047,7 +1032,7 @@ impl Linker {
         }
 
         if let Some(t0) = diag_t0 {
-            // `realized` is one of seven static strings; matching is
+            // `realized` is one of six static strings; matching is
             // O(1) and the static `&str` keeps the JSONL category compact.
             let name = match realized {
                 "reflink" => "link_reflink",
@@ -1056,7 +1041,6 @@ impl Linker {
                 "hardlink" => "link_hardlink",
                 "hardlink_fallback_copy" => "link_hardlink_fallback",
                 "copy" => "link_copy",
-                "macos_small_copy" => "link_macos_small_copy",
                 _ => "link_unknown",
             };
             aube_util::diag::event(aube_util::diag::Category::Linker, name, t0.elapsed(), None);

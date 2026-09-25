@@ -785,14 +785,12 @@ impl Drop for ForcedReflinkFailure {
 /// fallback so the split between `ReflinkAuto` and explicit `Reflink` is
 /// observable on any filesystem, including reflink-capable APFS/btrfs CI.
 #[cfg(unix)]
-fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy) -> bool {
+fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy, size: usize) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     let dir = tempfile::tempdir().unwrap();
     let store = Store::at(dir.path().join("store/files"));
-    // >16 KiB so the macOS small-file copy shortcut does not pre-empt the
-    // reflink path under test.
-    let content = vec![b'x'; 32 * 1024];
+    let content = vec![b'x'; size];
     let stored = store.import_bytes(&content, false).unwrap();
     let store_path = stored.store_path.clone();
 
@@ -822,10 +820,12 @@ fn test_reflink_auto_falls_back_to_hardlink_not_copy() {
     // probe already proved the target shares a mount, so a clonefile
     // failure (non-APFS same-FS volume, e.g. HFS+) must degrade to a
     // zero-cost hardlink before a per-file copy.
-    assert!(
-        realized_inode_matches_source_on_reflink_failure(LinkStrategy::ReflinkAuto),
-        "ReflinkAuto must fall back to a hardlink (same inode), not a copy, on reflink failure"
-    );
+    for size in [64, 32 * 1024] {
+        assert!(
+            realized_inode_matches_source_on_reflink_failure(LinkStrategy::ReflinkAuto, size),
+            "ReflinkAuto must fall back to a hardlink (same inode), not a copy, on reflink failure"
+        );
+    }
 }
 
 #[test]
@@ -835,10 +835,42 @@ fn test_explicit_reflink_falls_back_to_copy_not_hardlink() {
     // documented contract is reflink with a plain *copy* fallback. They
     // must NOT take the auto-only hardlink step on a clonefile failure —
     // the result is a distinct inode (copy), never the source's inode.
-    assert!(
-        !realized_inode_matches_source_on_reflink_failure(LinkStrategy::Reflink),
-        "explicit Reflink must fall back to a copy (distinct inode), not a hardlink"
-    );
+    for size in [64, 32 * 1024] {
+        assert!(
+            !realized_inode_matches_source_on_reflink_failure(LinkStrategy::Reflink, size),
+            "explicit Reflink must fall back to a copy (distinct inode), not a hardlink"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn small_reflink_preserves_permissions_and_isolates_writes() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    for executable in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("store/files"));
+        let content = b"original small package file";
+        let stored = store.import_bytes(content, executable).unwrap();
+        let dst = dir.path().join("installed.js");
+        let linker = Linker::new_with_gvs(&store, LinkStrategy::Reflink, true);
+        linker
+            .link_file_fresh(&stored, "installed.js", &dst, None)
+            .unwrap();
+
+        let source_metadata = std::fs::metadata(&stored.store_path).unwrap();
+        let target_metadata = std::fs::metadata(&dst).unwrap();
+        assert_ne!(source_metadata.ino(), target_metadata.ino());
+        assert_eq!(
+            source_metadata.mode() & 0o777,
+            target_metadata.mode() & 0o777
+        );
+        assert_eq!(std::fs::read(&dst).unwrap(), content);
+        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&dst, b"edited installed file").unwrap();
+        assert_eq!(std::fs::read(&stored.store_path).unwrap(), content);
+    }
 }
 
 #[test]
