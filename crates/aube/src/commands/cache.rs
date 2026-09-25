@@ -137,7 +137,10 @@ fn decode_safe_name(stem: &str) -> String {
 /// Collect legacy, registry-partitioned, and compact exact-version entries.
 /// Keep the actual paths: a package can have entries in several registries.
 /// Only known directory layouts are traversed, and symlinks are never followed.
-fn collect_entries(dir: &Path) -> miette::Result<BTreeMap<String, Vec<PathBuf>>> {
+fn collect_entries(
+    dir: &Path,
+    wanted: impl Fn(&str) -> bool,
+) -> miette::Result<BTreeMap<String, Vec<PathBuf>>> {
     let mut entries = BTreeMap::<String, Vec<PathBuf>>::new();
     let mut pending = vec![(dir.to_path_buf(), Vec::<String>::new())];
     while let Some((directory, components)) = pending.pop() {
@@ -184,21 +187,62 @@ fn collect_entries(dir: &Path) -> miette::Result<BTreeMap<String, Vec<PathBuf>>>
                 };
                 let name = if components.len() == 3 && encoded.contains("%2F") {
                     encoded.replace("%2F", "/")
-                } else if encoded.starts_with('@') && encoded.matches("__").count() > 1 {
+                } else if encoded.starts_with('@')
+                    && encoded
+                        .as_bytes()
+                        .windows(2)
+                        .filter(|pair| *pair == b"__")
+                        .count()
+                        > 1
+                {
                     // Old slash encoding is ambiguous when scopes contain __.
                     // Read the stored identity instead of guessing which slash
                     // belongs to the scope. Unreadable ambiguous entries have
                     // no name: wildcard deletion can still clean them up.
-                    std::fs::read(child.path())
+                    // Only inspect an ambiguous file if one possible identity
+                    // matches the request (or wildcard cleanup includes unknown names).
+                    let possible_match = wanted("")
+                        || encoded
+                            .as_bytes()
+                            .windows(2)
+                            .enumerate()
+                            .any(|(offset, pair)| {
+                                if pair != b"__" {
+                                    return false;
+                                }
+                                let mut candidate = encoded.to_owned();
+                                candidate.replace_range(offset..offset + 2, "/");
+                                wanted(&candidate)
+                            });
+                    if !possible_match {
+                        continue;
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Identity {
+                        name: String,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Exact {
+                        metadata: Identity,
+                    }
+                    #[derive(serde::Deserialize)]
+                    struct Entry {
+                        packument: Option<Identity>,
+                        exact: Option<Exact>,
+                    }
+                    // Deserialize only the identity and stream past all other
+                    // fields, without allocating the complete packument tree.
+                    std::fs::File::open(child.path())
                         .ok()
-                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                        .and_then(|value| {
-                            value
-                                .pointer("/packument/name")
-                                .or_else(|| value.pointer("/exact/metadata/name"))
-                                .and_then(|name| name.as_str())
-                                .map(str::to_owned)
+                        .and_then(|file| {
+                            serde_json::from_reader::<_, Entry>(std::io::BufReader::new(file)).ok()
                         })
+                        .and_then(|entry| {
+                            entry
+                                .packument
+                                .or_else(|| entry.exact.map(|exact| exact.metadata))
+                        })
+                        .map(|identity| identity.name)
                         .unwrap_or_default()
                 } else {
                     decode_safe_name(encoded)
@@ -237,7 +281,7 @@ fn list(args: ListArgs) -> miette::Result<()> {
     let mut all = BTreeSet::new();
     for (_, dir) in cache_dirs() {
         all.extend(
-            collect_entries(&dir)?
+            collect_entries(&dir, |name| matches_any(name, &patterns))?
                 .into_keys()
                 .filter(|name| !name.is_empty()),
         );
@@ -255,7 +299,7 @@ fn delete(args: DeleteArgs) -> miette::Result<()> {
         if !dir.exists() {
             continue;
         }
-        for (name, paths) in collect_entries(&dir)? {
+        for (name, paths) in collect_entries(&dir, |name| matches_any(name, &patterns))? {
             if !matches_any(&name, &patterns) {
                 continue;
             }
@@ -307,7 +351,7 @@ fn view(args: ViewArgs) -> miette::Result<()> {
     // pretty-print; the full cache is opaque JSON we just dump.
     let mut found = false;
     for (kind, dir) in cache_dirs() {
-        for path in collect_entries(&dir)?
+        for path in collect_entries(&dir, |name| name == args.name)?
             .remove(&args.name)
             .unwrap_or_default()
         {
@@ -452,7 +496,7 @@ mod tests {
     #[test]
     fn collect_entries_handles_missing_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let names = collect_entries(&tmp.path().join("does-not-exist")).unwrap();
+        let names = collect_entries(&tmp.path().join("does-not-exist"), |_| true).unwrap();
         assert!(names.is_empty());
     }
 
@@ -462,10 +506,34 @@ mod tests {
         std::fs::write(tmp.path().join("lodash.json"), "{}").unwrap();
         std::fs::write(tmp.path().join("@babel__core.json"), "{}").unwrap();
         std::fs::write(tmp.path().join("README"), "ignored").unwrap();
-        let names = collect_entries(tmp.path()).unwrap();
+        let names = collect_entries(tmp.path(), |_| true).unwrap();
         assert!(names.contains_key("lodash"));
         assert!(names.contains_key("@babel/core"));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn collect_entries_skips_unrelated_ambiguous_documents() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("@other__scope__pkg.json"), "invalid JSON").unwrap();
+        let entries = collect_entries(tmp.path(), |name| name == "target").unwrap();
+        assert!(entries.is_empty());
+        // Wildcard cleanup still includes unidentifiable entries.
+        assert_eq!(collect_entries(tmp.path(), |_| true).unwrap()[""].len(), 1);
+    }
+
+    #[test]
+    fn collect_entries_reads_identity_after_large_ignored_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("@foo___bar.json");
+        // The slash can overlap adjacent underscore pairs.
+        let body = format!(
+            r#"{{"packument":{{"versions":{{"1.0.0":{{"readme":"{}"}}}},"name":"@foo_/bar"}}}}"#,
+            "x".repeat(1024 * 1024)
+        );
+        std::fs::write(&file, body).unwrap();
+        let entries = collect_entries(tmp.path(), |name| name == "@foo_/bar").unwrap();
+        assert_eq!(entries["@foo_/bar"], vec![file]);
     }
 
     #[test]
