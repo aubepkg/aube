@@ -14,22 +14,51 @@ impl RegistryClient {
         &self,
         name: &str,
         cache_dir: &Path,
-    ) -> Option<crate::ResolutionPackument> {
+    ) -> CachedResolutionPackumentLookup {
         #[derive(serde::Deserialize)]
         struct Cached<'a> {
+            etag: Option<String>,
+            last_modified: Option<String>,
             fetched_at: u64,
             #[serde(default)]
             max_age_secs: Option<u64>,
             #[serde(borrow)]
             packument: crate::resolution::RawResolutionPackument<'a>,
         }
-        let path = packument_full_cache_path(cache_dir, name, self.config.registry_for(name))?;
-        let content = bytes::Bytes::from(std::fs::read(path).ok()?);
-        let cached: Cached = sonic_rs::from_slice(&content).ok()?;
-        if !self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
-            return None;
+        let Some(path) = packument_full_cache_path(cache_dir, name, self.config.registry_for(name))
+        else {
+            return Default::default();
+        };
+        let Ok(content) = std::fs::read(path) else {
+            return Default::default();
+        };
+        let content = bytes::Bytes::from(content);
+        let Ok(cached) = sonic_rs::from_slice::<Cached>(&content) else {
+            return Default::default();
+        };
+        if self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
+            return CachedResolutionPackumentLookup {
+                packument: cached.packument.into_resolution(&content),
+                revalidation: Default::default(),
+            };
         }
-        cached.packument.into_resolution(&content)
+        let Some(packument) = cached.packument.into_packument() else {
+            return Default::default();
+        };
+        CachedResolutionPackumentLookup {
+            packument: None,
+            revalidation: CachedPackumentLookup {
+                packument: None,
+                stale: true,
+                cached: Some(CachedPackumentLookupEntry::Full(CachedFullPackumentTyped {
+                    etag: cached.etag,
+                    last_modified: cached.last_modified,
+                    fetched_at: cached.fetched_at,
+                    max_age_secs: cached.max_age_secs,
+                    packument,
+                })),
+            },
+        }
     }
 
     pub fn cached_packument_lookup(&self, name: &str, cache_dir: &Path) -> CachedPackumentLookup {

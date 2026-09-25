@@ -1057,23 +1057,27 @@ fn selective_cache_obeys_expiry_origin_and_invalidation() {
     assert!(
         client
             .cached_resolution_packument("demo", cache.path())
+            .packument
             .is_some()
     );
     assert!(
         RegistryClient::new("https://other.example")
             .cached_resolution_packument("demo", cache.path())
+            .packument
             .is_none()
     );
     client.invalidate_full_packument_cache("demo", cache.path());
     assert!(
         client
             .cached_resolution_packument("demo", cache.path())
+            .packument
             .is_none()
     );
     client.seed_full_packument_cache("demo", cache.path(), &full, None, None, false);
     assert!(
         client
             .cached_resolution_packument("demo", cache.path())
+            .packument
             .is_none()
     );
     for mode in [
@@ -1084,6 +1088,7 @@ fn selective_cache_obeys_expiry_origin_and_invalidation() {
             RegistryClient::new("https://registry.example")
                 .with_network_mode(mode)
                 .cached_resolution_packument("demo", cache.path())
+                .packument
                 .is_some()
         );
     }
@@ -1114,6 +1119,7 @@ async fn selective_read_keeps_raw_view_fields_and_owns_its_snapshot() {
     let before = std::fs::read(&path).unwrap();
     let projected = client
         .cached_resolution_packument("demo", cache.path())
+        .packument
         .unwrap();
     assert_eq!(
         client
@@ -1129,4 +1135,37 @@ async fn selective_read_keeps_raw_view_fields_and_owns_its_snapshot() {
         "^2"
     );
     assert!(!path.exists()); // Reading the snapshot never republishes an invalidated entry.
+}
+
+#[tokio::test]
+async fn selective_stale_lookup_carries_metadata_and_validators_into_revalidation() {
+    let cache = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let client = client_with(&server, FetchPolicy::default());
+    let full: Packument = serde_json::from_value(serde_json::json!({
+        "name":"demo", "versions":{"1.0.0":{"name":"demo","version":"1.0.0","dependencies":{"child":"^1"}}},
+        "time":{"1.0.0":"2024-01-01"}
+    })).unwrap();
+    client.seed_full_packument_cache("demo", cache.path(), &full, Some("old-tag"), None, false);
+    let lookup = client.cached_resolution_packument("demo", cache.path());
+    assert!(lookup.packument.is_none());
+    assert!(lookup.revalidation.stale);
+    // The retained entry is sufficient even if the file disappears before
+    // revalidation, proving the selective lookup carries its first read on.
+    client.invalidate_full_packument_cache("demo", cache.path());
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .and(header("if-none-match", "old-tag"))
+        .respond_with(ResponseTemplate::new(304))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let fetched = client
+        .fetch_packument_with_time_cached_after_lookup("demo", cache.path(), lookup.revalidation)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(fetched).unwrap(),
+        serde_json::to_value(full).unwrap()
+    );
 }

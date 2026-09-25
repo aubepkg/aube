@@ -44,6 +44,25 @@ pub(crate) struct RawResolutionPackument<'a> {
 }
 
 impl RawResolutionPackument<'_> {
+    /// Reuse the same read for stale-cache revalidation, decoding each release
+    /// directly without building the compact projection first.
+    pub(crate) fn into_packument(self) -> Option<Packument> {
+        Some(Packument {
+            name: self.name,
+            modified: self.modified,
+            versions: self
+                .versions
+                .into_iter()
+                .map(|(key, raw)| {
+                    sonic_rs::from_str(raw.as_raw_str()).map(|metadata| (key, metadata))
+                })
+                .collect::<Result<_, _>>()
+                .ok()?,
+            dist_tags: self.dist_tags,
+            time: self.time,
+        })
+    }
+
     pub(crate) fn into_resolution(self, content: &bytes::Bytes) -> Option<ResolutionPackument> {
         let mut versions = BTreeMap::new();
         for (key, value) in self.versions {
