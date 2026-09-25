@@ -815,15 +815,13 @@ fn realized_inode_matches_source_on_reflink_failure(strategy: LinkStrategy, size
 
 #[test]
 #[cfg(unix)]
-fn test_reflink_auto_falls_back_to_hardlink_not_copy() {
-    // `auto` on a same-FS macOS target resolves to `ReflinkAuto`; the
-    // probe already proved the target shares a mount, so a clonefile
-    // failure (non-APFS same-FS volume, e.g. HFS+) must degrade to a
-    // zero-cost hardlink before a per-file copy.
-    for size in [64, 32 * 1024] {
-        assert!(
+fn test_reflink_auto_preserves_platform_and_size_fallback() {
+    for size in [64, 16 * 1024, 16 * 1024 + 1, 32 * 1024] {
+        let expect_hardlink = !(cfg!(target_os = "macos") && size <= 16 * 1024);
+        assert_eq!(
             realized_inode_matches_source_on_reflink_failure(LinkStrategy::ReflinkAuto, size),
-            "ReflinkAuto must fall back to a hardlink (same inode), not a copy, on reflink failure"
+            expect_hardlink,
+            "unexpected ReflinkAuto fallback for {size} bytes"
         );
     }
 }
@@ -848,28 +846,50 @@ fn test_explicit_reflink_falls_back_to_copy_not_hardlink() {
 fn small_reflink_preserves_permissions_and_isolates_writes() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    for executable in [false, true] {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::at(dir.path().join("store/files"));
-        let content = b"original small package file";
-        let stored = store.import_bytes(content, executable).unwrap();
-        let dst = dir.path().join("installed.js");
-        let linker = Linker::new_with_gvs(&store, LinkStrategy::Reflink, true);
-        linker
-            .link_file_fresh(&stored, "installed.js", &dst, None)
-            .unwrap();
-
-        let source_metadata = std::fs::metadata(&stored.store_path).unwrap();
-        let target_metadata = std::fs::metadata(&dst).unwrap();
-        assert_ne!(source_metadata.ino(), target_metadata.ino());
-        assert_eq!(
-            source_metadata.mode() & 0o777,
-            target_metadata.mode() & 0o777
-        );
-        assert_eq!(std::fs::read(&dst).unwrap(), content);
-        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o644)).unwrap();
-        std::fs::write(&dst, b"edited installed file").unwrap();
-        assert_eq!(std::fs::read(&stored.store_path).unwrap(), content);
+    let mut strategies = vec![LinkStrategy::Reflink];
+    if cfg!(target_os = "macos") {
+        strategies.push(LinkStrategy::ReflinkAuto);
+    }
+    for strategy in strategies {
+        for force_failure in [false, true] {
+            for executable in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let store = Store::at(dir.path().join("store/files"));
+                let content = b"original small package file";
+                let stored = store.import_bytes(content, executable).unwrap();
+                let source_path = stored.store_path.clone();
+                let source_mode = std::fs::metadata(&source_path).unwrap().mode();
+                let mut index = PackageIndex::default();
+                index.insert("installed.js".into(), stored);
+                let mut pkg = make_graph().packages.remove("foo@1.0.0").unwrap();
+                pkg.dependencies.clear();
+                let base = dir.path().join("virtual");
+                let linker = Linker::new_with_gvs(&store, strategy, false);
+                let _forced = force_failure.then(ForcedReflinkFailure::engage);
+                linker
+                    .materialize_into(
+                        &base,
+                        &base,
+                        "foo@1.0.0",
+                        &pkg,
+                        &index,
+                        &mut LinkStats::default(),
+                        false,
+                        None,
+                    )
+                    .unwrap();
+                let dst = base.join("foo@1.0.0/node_modules/foo/installed.js");
+                let source_metadata = std::fs::metadata(&source_path).unwrap();
+                let target_metadata = std::fs::metadata(&dst).unwrap();
+                assert_ne!(source_metadata.ino(), target_metadata.ino());
+                assert_eq!(target_metadata.mode() & 0o111 != 0, executable);
+                assert_eq!(source_metadata.mode(), source_mode);
+                assert_eq!(std::fs::read(&dst).unwrap(), content);
+                std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o644)).unwrap();
+                std::fs::write(&dst, vec![b'y'; content.len()]).unwrap();
+                assert_eq!(std::fs::read(&source_path).unwrap(), content);
+            }
+        }
     }
 }
 

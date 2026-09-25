@@ -897,9 +897,9 @@ impl Linker {
             //     probe already proved the target shares a mount, so on a
             //     non-APFS same-FS volume (HFS+, where `clonefile` is
             //     unsupported but hardlinks are not) it tries a zero-cost
-            //     hardlink before copy.
+            //     hardlink before copy, except for small macOS files whose
+            //     independent-copy fallback is preserved.
             LinkStrategy::Reflink | LinkStrategy::ReflinkAuto => {
-                let auto = matches!(self.strategy, LinkStrategy::ReflinkAuto);
                 let reflink_result = {
                     #[cfg(test)]
                     {
@@ -942,7 +942,14 @@ impl Linker {
                     // — not the original reflink error — is the proximate
                     // cause of the copy, so reporting only `e` would point at
                     // the wrong failure.
-                    let hardlinked = if auto {
+                    // Small macOS files previously used an independent copy.
+                    // Preserve that isolation when clonefile is unavailable:
+                    // edits to installed files must not modify the shared CAS.
+                    let allow_hardlink_fallback =
+                        matches!(self.strategy, LinkStrategy::ReflinkAuto)
+                            && !(cfg!(target_os = "macos")
+                                && matches!(stored.size, Some(size) if size <= 16 * 1024));
+                    let hardlinked = if allow_hardlink_fallback {
                         match std::fs::hard_link(&stored.store_path, dst) {
                             Ok(()) => {
                                 trace!("reflink failed, fell back to hardlink: {e}");
@@ -961,7 +968,7 @@ impl Linker {
                     if hardlinked {
                         realized = "reflink_fallback_hardlink";
                     } else {
-                        if !auto {
+                        if !allow_hardlink_fallback {
                             trace!("reflink failed, falling back to copy: {e}");
                         }
                         std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
