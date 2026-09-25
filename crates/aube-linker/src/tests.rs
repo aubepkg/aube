@@ -1008,6 +1008,67 @@ fn cached_entry_repair_rejects_dependency_path_escape() {
 }
 
 #[test]
+fn test_hidden_hoist_is_rebuilt_on_relink() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let (store, mut indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    // A scoped package exercises the `@scope/` directories created ahead
+    // of the parallel pass; `Bar` collides with `bar` by case and takes
+    // the serial pass.
+    for (dep_path, name) in [("@scope/baz@1.0.0", "@scope/baz"), ("Bar@1.0.0", "Bar")] {
+        let stored = store
+            .import_bytes(format!("module.exports = '{name}';").as_bytes(), false)
+            .unwrap();
+        let mut index = PackageIndex::default();
+        index.insert("index.js".to_string(), stored);
+        indices.insert(dep_path.to_string(), index);
+        graph.packages.insert(
+            dep_path.to_string(),
+            LockedPackage {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                dep_path: dep_path.to_string(),
+                ..Default::default()
+            },
+        );
+    }
+    let linker = Linker::new(&store, LinkStrategy::Copy);
+    let hidden = project_dir.join("node_modules/.aube/node_modules");
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+    // A stray entry from an earlier graph must not survive the rebuild.
+    std::fs::write(hidden.join("gone"), "").unwrap();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    for name in ["foo", "bar", "@scope/baz", "Bar"] {
+        let link = hidden.join(name);
+        assert!(link.symlink_metadata().unwrap().is_symlink(), "{name}");
+        assert!(link.join("index.js").exists(), "{name} resolves");
+    }
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("@scope/baz/index.js")).unwrap(),
+        "module.exports = '@scope/baz';"
+    );
+    // `Bar@1.0.0` sorts before `bar@2.0.0`, so `bar` is linked last: it
+    // wins the shared path on a case-insensitive filesystem, and each name
+    // keeps its own package where case is significant.
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("bar/index.js")).unwrap(),
+        "module.exports = 'bar';"
+    );
+    if !hidden.join("BAR").exists() {
+        assert_eq!(
+            std::fs::read_to_string(hidden.join("Bar/index.js")).unwrap(),
+            "module.exports = 'Bar';"
+        );
+    }
+    assert!(!hidden.join("gone").exists());
+}
+
+#[test]
 fn test_global_virtual_store_gets_hidden_hoist() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");

@@ -623,7 +623,9 @@ impl Linker {
         // (packages inside the virtual store walking up for
         // undeclared deps) and wouldn't interact with the
         // root-level symlinks even on name clashes.
+        let step4_timer = std::time::Instant::now();
         self.link_hidden_hoist(&aube_dir, graph)?;
+        tracing::debug!("link:step4 (hidden hoist) {:.1?}", step4_timer.elapsed());
 
         if let Err(e) = write_applied_patches(&nm, &curr_applied) {
             let sidecar = applied_patches_sidecar_name();
@@ -1467,7 +1469,37 @@ impl Linker {
         } else {
             sweep_dead_hidden_hoist_entries(&hidden);
         }
-        for (dep_path, pkg) in packages {
+        if packages.is_empty() {
+            return Ok(());
+        }
+        // Create the tree's directories once, before the parallel pass, so
+        // no entry needs its own parent `mkdirp` and no two threads race to
+        // create the same `@scope/`.
+        mkdirp(&hidden)?;
+        let mut scopes: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
+        for (_, pkg) in &packages {
+            if let Some((scope, _)) = pkg.name.split_once('/')
+                && scopes.insert(scope)
+            {
+                mkdirp(&hidden.join(scope))?;
+            }
+        }
+        // Names differing only by case (`JSONStream` / `jsonstream`) share
+        // one path on a case-insensitive filesystem. Those are linked
+        // serially afterwards, in graph order, so the later one replaces
+        // the earlier exactly as a fully serial pass would; every other
+        // entry is its own name, so the links go out on the linker pool.
+        // Serially this was ~80 ms of a 120 ms link phase on a 1.2k-package
+        // install.
+        let mut folded: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
+        for (_, pkg) in &packages {
+            *folded.entry(pkg.name.to_lowercase()).or_default() += 1;
+        }
+        let (case_colliding, independent): (Vec<_>, Vec<_>) = packages
+            .iter()
+            .partition(|(_, pkg)| folded[&pkg.name.to_lowercase()] > 1);
+        use rayon::prelude::*;
+        let link_one = |(dep_path, pkg): &&(&String, &LockedPackage)| -> Result<(), Error> {
             let source_subdir = if use_hashed_subdirs {
                 self.virtual_store_subdir(dep_path)
             } else {
@@ -1478,17 +1510,21 @@ impl Linker {
                 .join("node_modules")
                 .join(&pkg.name);
             if !source_dir.exists() {
-                continue;
+                return Ok(());
             }
             let target_dir = hidden.join(&pkg.name);
-            if let Some(parent) = target_dir.parent() {
-                mkdirp(parent)?;
-            }
             let link_parent = target_dir.parent().unwrap_or(&hidden);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());
+            // After a wipe the tree is empty, so skip the link check that
+            // every entry would miss. Something that survived the wipe
+            // falls through to the reconcile below.
+            if sweep_stale_entries && sys::create_dir_link(&rel_target, &target_dir).is_ok() {
+                trace!("hidden-hoist: {}", pkg.name);
+                return Ok(());
+            }
             if reconcile_dir_link(&target_dir, &rel_target)? {
-                continue;
+                return Ok(());
             }
             sys::create_dir_link(&rel_target, &target_dir)
                 .map_err(|e| Error::Io(target_dir.clone(), e))?;
@@ -1499,8 +1535,12 @@ impl Linker {
             // live under `.aube/node_modules/` and are only reached
             // via Node's parent-directory walk from inside the
             // virtual store, not from the user's own code.
-        }
-        Ok(())
+            Ok(())
+        };
+        with_link_pool(self.link_parallelism(), || {
+            independent.par_iter().try_for_each(link_one)
+        })?;
+        case_colliding.iter().try_for_each(link_one)
     }
 
     /// Shared `shamefully_hoist` implementation. For every non-local
