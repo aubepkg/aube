@@ -146,32 +146,69 @@ impl miette::Diagnostic for Error {
 }
 
 fn format_trust_downgrade_help(d: &TrustDowngradeDetails) -> String {
+    let name = &d.name;
+    let ver = &d.picked_version;
+    let prior = &d.prior_version;
+    let spec = format!("{name}@{ver}");
+    // A higher release line published *earlier* than the picked stable
+    // version means the picked release is a maintenance backport, the most
+    // common benign cause (e.g. webpack-dev-middleware@7.4.6 after 8.x).
+    // Prereleases are excluded: `8.0.0-beta.1` after `8.0.0` is not a
+    // backport.
+    let backport = match (
+        node_semver::Version::parse(prior),
+        node_semver::Version::parse(ver),
+    ) {
+        (Ok(p), Ok(v)) if v.pre_release.is_empty() && (p.major, p.minor) > (v.major, v.minor) => {
+            format!(
+                "{prior} is a newer release line published before {ver}, so {spec} looks like a \
+             backport published outside the trusted release workflow.\n\n"
+            )
+        }
+        _ => String::new(),
+    };
     format!(
         "this is a supply-chain trust failure, not an ordinary version-resolution error. \
-         An earlier release carried {prior_evidence}, but {name}@{ver} carries {current_evidence}.\n\
+         An earlier release ({prior}) carried {prior_evidence}, but {spec} carries \
+         {current_evidence}.\n\
          \n\
+         {backport}\
          This can signal a compromised publisher or tampered release. It can also be benign \
          release-process drift: a maintainer manually published, backported outside the trusted \
          workflow, skipped provenance for convenience, or used a registry that stripped metadata.\n\
          \n\
          Before bypassing:\n\
-         1. Inspect the package's npm release, source tag/commit, publisher identity, and tarball; \
-         compare the metadata with npmjs.org, and confirm the change is expected and nothing \
-         appears tampered with.\n\
+         1. Inspect the release; this shows its publish time and evidence next to the last \
+         trusted release:\n\
+         \n\
+         \x20   {trust_check} {spec}\n\
+         \n\
+         Compare the source tag/commit, publisher identity, and tarball with npmjs.org, and \
+         confirm the change is expected and nothing appears tampered with.\n\
          2. Report inconsistent evidence to the relevant upstream owner. Package-release drift \
          belongs with the maintainer; metadata present on npmjs.org but missing from a proxy or \
          mirror belongs with that registry operator.\n\
-         3. Only after review, pin a version that retains evidence or add the narrow \
-         `{name}@{ver}` exception to `trustPolicyExclude`. A bare `{name}` exempts every version; \
-         `trustPolicy = off` disables this protection for the entire install.\n\
+         3. Only after review, pin a version that retains evidence or exempt just this version \
+         in aube-workspace.yaml (or pnpm-workspace.yaml):\n\
          \n\
-         Details and known built-in exceptions: https://aube.jdx.dev/trust-policy-exceptions",
+         \x20   trustPolicyExclude:\n\
+         \x20     - \"{spec}\"\n\
+         \n\
+         For a single command such as dlx, prefix that command instead:\n\
+         \n\
+         \x20   npm_config_trust_policy_exclude={spec} {dlx} <package>\n\
+         \n\
+         A bare `{name}` exempts every version; `trustPolicy = off` disables this protection \
+         for the entire install.\n\
+         \n\
+         Details and known built-in exceptions:\n\
+         \x20   https://aube.sh/trust-policy-exceptions",
         prior_evidence = d.prior_evidence.label(),
         current_evidence = d
             .current_evidence
             .map_or("no trust evidence", |e| e.label()),
-        name = d.name,
-        ver = d.picked_version,
+        trust_check = aube_util::cmd("trust check"),
+        dlx = aube_util::cmd("dlx"),
     )
 }
 
@@ -537,12 +574,53 @@ mod tests {
         });
 
         assert!(help.contains("not an ordinary version-resolution error"));
+        assert!(help.contains("An earlier release (1.9.0) carried"));
         assert!(help.contains("carries no trust evidence"));
-        assert!(help.contains("confirm the change is expected and nothing appears tampered with"));
+        assert!(help.contains("    aube trust check @scope/pkg@2.0.0\n"));
+        assert!(help.contains("confirm the change is expected and nothing appears tampered"));
         assert!(help.contains("Report inconsistent evidence to the relevant upstream owner"));
         assert!(help.contains("belongs with that registry operator"));
-        assert!(help.contains("`@scope/pkg@2.0.0` exception"));
+        assert!(help.contains("    trustPolicyExclude:\n      - \"@scope/pkg@2.0.0\"\n"));
+        assert!(
+            help.contains(
+                "    npm_config_trust_policy_exclude=@scope/pkg@2.0.0 aube dlx <package>\n"
+            )
+        );
         assert!(help.contains("A bare `@scope/pkg` exempts every version"));
-        assert!(help.contains("https://aube.jdx.dev/trust-policy-exceptions"));
+        assert!(help.contains("https://aube.sh/trust-policy-exceptions"));
+        assert!(!help.contains("backport published outside"));
+    }
+
+    #[test]
+    fn trust_downgrade_help_flags_backport_to_older_release_line() {
+        let help = format_trust_downgrade_help(&TrustDowngradeDetails {
+            name: "webpack-dev-middleware".into(),
+            picked_version: "7.4.6".into(),
+            current_evidence: None,
+            prior_evidence: TrustEvidence::TrustedPublisher,
+            prior_version: "8.0.0".into(),
+        });
+
+        assert!(help.contains(
+            "8.0.0 is a newer release line published before 7.4.6, so \
+             webpack-dev-middleware@7.4.6 looks like a backport"
+        ));
+    }
+
+    #[test]
+    fn trust_downgrade_help_skips_backport_hint_for_prerelease_or_same_line() {
+        for (picked, prior) in [("8.0.0-beta.1", "8.0.0"), ("8.0.1", "8.0.2")] {
+            let help = format_trust_downgrade_help(&TrustDowngradeDetails {
+                name: "pkg".into(),
+                picked_version: picked.into(),
+                current_evidence: None,
+                prior_evidence: TrustEvidence::TrustedPublisher,
+                prior_version: prior.into(),
+            });
+            assert!(
+                !help.contains("looks like a backport"),
+                "{picked} after {prior}"
+            );
+        }
     }
 }
