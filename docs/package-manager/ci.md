@@ -94,7 +94,10 @@ and aube does not reinstall a restored `node_modules` when only the Node.js
 version changes. Don't add a `restore-keys` fallback for this cache: a partial
 match would be treated as the installed state. In a workspace, add each
 package's `node_modules` directory to `path`; the `**/aube-lock.yaml` pattern
-already covers member lockfiles when workspace packages keep their own.
+already covers member lockfiles when workspace packages keep their own. If the
+repository also contains unrelated lockfiles, such as test fixtures, list only
+the project's lockfiles in `hashFiles` so changes to them don't invalidate the
+cache.
 
 Restore the cache at the same checkout path it was saved from. Windows
 junctions and transitive `link:` dependencies store absolute paths, so a tree
