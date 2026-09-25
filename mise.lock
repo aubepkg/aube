@@ -91,6 +91,14 @@ specifiers = ["0.19.3"]
 [tools."cargo:cargo-msrv".options]
 bin = "cargo-msrv"
 
+[[tools."cargo:cargo-semver-checks"]]
+version = "0.49.0"
+backend = "cargo:cargo-semver-checks"
+specifiers = ["0.49.0"]
+
+[tools."cargo:cargo-semver-checks".options]
+bin = "cargo-semver-checks"
+
 [[tools.communique]]
 version = "1.4.2"
 backend = "packslip:github.com/jdx/communique"

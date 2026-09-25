@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.3.0...aube-resolver-v2.4.0) - 2026-09-25
+
+### Fixed
+
+- *(resolver)* exclude webpack-dev-middleware@7.4.6 from no-downgrade by default ([#1592](https://github.com/aubepkg/aube/pull/1592))
+
+### Other
+
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
 ## [2.2.16](https://github.com/aubepkg/aube/compare/v2.2.15...v2.2.16) - 2026-09-13
 
 ### Fixed
