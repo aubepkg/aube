@@ -1,3 +1,5 @@
+mod resolution;
+pub use resolution::{ResolutionPackument, ResolutionVersion};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;

@@ -1526,7 +1526,9 @@ async fn compact_fetch_augments_stale_full_cache_with_exact_optional_version() {
         minutes: 60,
         ..Default::default()
     }));
-    resolver.cache.insert("fresh-optional".to_string(), stale);
+    resolver
+        .cache
+        .insert("fresh-optional".to_string(), stale.into());
     let mut manifest = PackageJson::default();
     manifest
         .optional_dependencies
@@ -3682,8 +3684,8 @@ async fn resolve_terminates_on_dependency_cycle() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("cycle-a".to_string(), a);
-    resolver.cache.insert("cycle-b".to_string(), b);
+    resolver.cache.insert("cycle-a".to_string(), a.into());
+    resolver.cache.insert("cycle-b".to_string(), b.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -3740,8 +3742,8 @@ async fn resolve_terminates_on_npm_alias_peer_cycle() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("real-a".to_string(), real_a);
-    resolver.cache.insert("b".to_string(), b);
+    resolver.cache.insert("real-a".to_string(), real_a.into());
+    resolver.cache.insert("b".to_string(), b.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -3801,8 +3803,10 @@ async fn auto_install_peers_installs_missing_required_peer() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("consumer".to_string(), consumer);
-    resolver.cache.insert("react".to_string(), react);
+    resolver
+        .cache
+        .insert("consumer".to_string(), consumer.into());
+    resolver.cache.insert("react".to_string(), react.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -3838,7 +3842,7 @@ async fn auto_install_peers_installs_importers_own_required_peer() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("react".to_string(), react);
+    resolver.cache.insert("react".to_string(), react.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -3866,7 +3870,7 @@ async fn auto_install_peers_skips_importers_own_optional_peer() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("react".to_string(), react);
+    resolver.cache.insert("react".to_string(), react.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -3901,8 +3905,8 @@ async fn auto_install_peers_uses_importer_declared_peer_name_without_extra_versi
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("plugin".to_string(), plugin);
-    resolver.cache.insert("eslint".to_string(), eslint);
+    resolver.cache.insert("plugin".to_string(), plugin.into());
+    resolver.cache.insert("eslint".to_string(), eslint.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -3967,11 +3971,15 @@ async fn auto_install_peers_skips_unrequested_optional_peer_alternatives() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("loader".to_string(), loader);
-    resolver.cache.insert("sass".to_string(), sass);
-    resolver.cache.insert("webpack".to_string(), webpack);
-    resolver.cache.insert("@rspack/core".to_string(), rspack);
-    resolver.cache.insert("node-sass".to_string(), node_sass);
+    resolver.cache.insert("loader".to_string(), loader.into());
+    resolver.cache.insert("sass".to_string(), sass.into());
+    resolver.cache.insert("webpack".to_string(), webpack.into());
+    resolver
+        .cache
+        .insert("@rspack/core".to_string(), rspack.into());
+    resolver
+        .cache
+        .insert("node-sass".to_string(), node_sass.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4058,8 +4066,8 @@ async fn resolve_handles_lockfile_reused_name_with_incompatible_transitive_range
     let mut resolver = Resolver::new(client);
     // Pre-seed the in-memory packument cache so the resolver
     // never needs to touch the fake registry URL.
-    resolver.cache.insert("dep-a".to_string(), dep_a);
-    resolver.cache.insert("other-a".to_string(), other_a);
+    resolver.cache.insert("dep-a".to_string(), dep_a.into());
+    resolver.cache.insert("other-a".to_string(), other_a.into());
 
     // Existing lockfile: has `dep-a@1.0.0` (the lockfile-reuse
     // hit) but nothing else. `other-a@^2` is a fresh dep that
@@ -4210,8 +4218,10 @@ async fn lockfile_reuse_handles_name_at_version_dep_form() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("is-number".to_string(), is_number);
-    resolver.cache.insert("is-odd".to_string(), is_odd);
+    resolver
+        .cache
+        .insert("is-number".to_string(), is_number.into());
+    resolver.cache.insert("is-odd".to_string(), is_odd.into());
 
     // Mimic the bun/yarn parser: `dependencies` value is the full
     // dep_path, not a bare version.
@@ -4270,7 +4280,7 @@ async fn fresh_resolve_records_deprecated_reason_on_extra_meta() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("foo".to_string(), foo);
+    resolver.cache.insert("foo".to_string(), foo.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4309,7 +4319,7 @@ async fn deprecated_reason_recorded_even_when_warning_suppressed() {
         allowed_deprecated_versions: [("foo".to_string(), "*".to_string())].into_iter().collect(),
         ..Default::default()
     });
-    resolver.cache.insert("foo".to_string(), foo);
+    resolver.cache.insert("foo".to_string(), foo.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4504,7 +4514,7 @@ async fn fresh_resolve_preserves_npm_alias_as_folder_name() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("is-odd".to_string(), is_odd);
+    resolver.cache.insert("is-odd".to_string(), is_odd.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4555,7 +4565,9 @@ async fn fresh_resolve_handles_versionless_scoped_npm_alias_from_catalog() {
         .or_default()
         .insert("popper2".to_string(), "npm:@popperjs/core".to_string());
     let mut resolver = Resolver::new(client).with_catalogs(catalogs);
-    resolver.cache.insert("@popperjs/core".to_string(), popper);
+    resolver
+        .cache
+        .insert("@popperjs/core".to_string(), popper.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4612,7 +4624,9 @@ async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
     let mut resolver = Resolver::new(client)
         .with_catalogs(catalogs)
         .with_overrides(overrides);
-    resolver.cache.insert("is-number".to_string(), is_number);
+    resolver
+        .cache
+        .insert("is-number".to_string(), is_number.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4647,7 +4661,9 @@ async fn skipped_optional_override_keeps_raw_manifest_specifier() {
     ));
     let overrides = BTreeMap::from([("platform-only".to_string(), "7.0.0".to_string())]);
     let mut resolver = Resolver::new(client).with_overrides(overrides);
-    resolver.cache.insert("platform-only".to_string(), optional);
+    resolver
+        .cache
+        .insert("platform-only".to_string(), optional.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4693,10 +4709,12 @@ async fn override_with_bare_range_undoes_prior_catalog_alias() {
     let mut resolver = Resolver::new(client)
         .with_catalogs(catalogs)
         .with_overrides(overrides);
-    resolver.cache.insert("js-yaml".to_string(), real_js_yaml);
     resolver
         .cache
-        .insert("@zkochan/js-yaml".to_string(), aliased);
+        .insert("js-yaml".to_string(), real_js_yaml.into());
+    resolver
+        .cache
+        .insert("@zkochan/js-yaml".to_string(), aliased.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4738,7 +4756,7 @@ async fn fresh_resolve_preserves_jsr_name_as_folder_name() {
     let mut resolver = Resolver::new(client);
     resolver
         .cache
-        .insert("@jsr/std__collections".to_string(), jsr_collections);
+        .insert("@jsr/std__collections".to_string(), jsr_collections.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4786,7 +4804,7 @@ async fn same_dep_in_dependencies_and_dev_dependencies_dedupes() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("p-map".to_string(), pmap);
+    resolver.cache.insert("p-map".to_string(), pmap.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4821,7 +4839,7 @@ async fn same_dep_in_dependencies_and_optional_dependencies_dedupes() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("p-map".to_string(), pmap);
+    resolver.cache.insert("p-map".to_string(), pmap.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -4856,7 +4874,7 @@ async fn same_dep_in_dev_and_optional_dependencies_dedupes() {
         "http://127.0.0.1:0",
     ));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("p-map".to_string(), pmap);
+    resolver.cache.insert("p-map".to_string(), pmap.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -5415,7 +5433,7 @@ fn direct_dep_info_flags_deprecated_resolved_version() {
     packument.versions.get_mut("1.0.0").unwrap().deprecated = Some("use 1.0.1 instead".to_string());
 
     let mut resolver = direct_dep_info_resolver();
-    resolver.cache.insert("foo".to_string(), packument);
+    resolver.cache.insert("foo".to_string(), packument.into());
 
     let pkg = mk_locked("foo", "1.0.0", &[], &[]);
     let graph = direct_dep_info_graph(&[("foo", "foo@1.0.0", "^1")], &[pkg]);
@@ -5430,7 +5448,7 @@ fn direct_dep_info_flags_deprecated_resolved_version() {
 fn direct_dep_info_omits_latest_when_already_on_latest() {
     let packument = make_packument("bar", &["2.0.0"], "2.0.0");
     let mut resolver = direct_dep_info_resolver();
-    resolver.cache.insert("bar".to_string(), packument);
+    resolver.cache.insert("bar".to_string(), packument.into());
 
     let pkg = mk_locked("bar", "2.0.0", &[], &[]);
     let graph = direct_dep_info_graph(&[("bar", "bar@2.0.0", "^2")], &[pkg]);
@@ -5451,7 +5469,7 @@ fn direct_dep_info_skips_local_source_deps() {
     // get no badge.
     let packument = make_packument("baz", &["9.9.9"], "9.9.9");
     let mut resolver = direct_dep_info_resolver();
-    resolver.cache.insert("baz".to_string(), packument);
+    resolver.cache.insert("baz".to_string(), packument.into());
 
     let mut pkg = mk_locked("baz", "0.0.0", &[], &[]);
     pkg.local_source = Some(LocalSource::Directory(std::path::PathBuf::from(
@@ -5476,7 +5494,7 @@ fn direct_dep_info_uses_registry_name_for_aliased_dep() {
     let mut packument = make_packument("h3", &["2.0.0", "2.0.1"], "2.0.1");
     packument.versions.get_mut("2.0.0").unwrap().deprecated = Some("rc only".to_string());
     let mut resolver = direct_dep_info_resolver();
-    resolver.cache.insert("h3".to_string(), packument);
+    resolver.cache.insert("h3".to_string(), packument.into());
 
     let mut pkg = mk_locked("h3-v2", "2.0.0", &[], &[]);
     pkg.alias_of = Some("h3".to_string());
@@ -5518,7 +5536,7 @@ fn age_gated_updates_reports_hidden_aliased_direct_release() {
             minutes: 1440,
             ..Default::default()
         }));
-    resolver.cache.insert("foo".to_string(), packument);
+    resolver.cache.insert("foo".to_string(), packument.into());
 
     let mut pkg = mk_locked("foo-alias", "1.0.0", &[], &[]);
     pkg.alias_of = Some("foo".to_string());
@@ -5561,7 +5579,7 @@ async fn optional_dep_is_skipped_while_required_dep_resolves() {
     let pmap = make_packument("p-map", &["7.0.4"], "7.0.4");
     let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
     let mut resolver = Resolver::new(client);
-    resolver.cache.insert("p-map".to_string(), pmap);
+    resolver.cache.insert("p-map".to_string(), pmap.into());
 
     let mut manifest = PackageJson::default();
     manifest
@@ -5697,4 +5715,85 @@ async fn optional_dep_with_both_fetches_in_flight() {
     );
 
     server.abort();
+}
+
+#[tokio::test]
+async fn deferred_history_preserves_vulnerability_repicks_and_trust_failures() {
+    let mut full = make_packument("demo", &["1.0.0", "2.0.0", "3.0.0"], "3.0.0");
+    for v in ["1.0.0", "2.0.0", "3.0.0"] {
+        full.time
+            .insert(v.into(), format!("2024-0{}-01T00:00:00.000Z", &v[..1]));
+    }
+    full.versions
+        .get_mut("2.0.0")
+        .unwrap()
+        .dist
+        .as_mut()
+        .unwrap()
+        .attestations = Some(aube_registry::Attestations {
+        provenance: Some(serde_json::json!({"predicateType":"https://slsa.dev/provenance/v1"})),
+    });
+    let mut manifest = PackageJson::default();
+    manifest.dependencies.insert("demo".into(), "*".into());
+    for deferred in [false, true] {
+        let metadata = if deferred {
+            sonic_rs::from_slice(&serde_json::to_vec(&full).unwrap()).unwrap()
+        } else {
+            full.clone().into()
+        };
+        let mut resolver = direct_dep_info_resolver()
+            .with_vulnerable_ranges(BTreeMap::from([("demo".into(), vec![">=3".into()])]));
+        resolver.cache.insert("demo".into(), metadata);
+        let graph = resolver.resolve(&manifest, None).await.unwrap();
+        assert!(graph_has_package(&graph, "demo", "2.0.0"));
+
+        let metadata = if deferred {
+            sonic_rs::from_slice(&serde_json::to_vec(&full).unwrap()).unwrap()
+        } else {
+            full.clone().into()
+        };
+        let mut resolver =
+            direct_dep_info_resolver().with_dependency_policy(crate::DependencyPolicy {
+                trust_policy: crate::TrustPolicy::NoDowngrade,
+                ..Default::default()
+            });
+        resolver.cache.insert("demo".into(), metadata);
+        let error = resolver.resolve(&manifest, None).await.unwrap_err();
+        let Error::TrustDowngrade(details) = error else {
+            panic!("unexpected error {error:?}");
+        };
+        assert_eq!(details.picked_version, "3.0.0");
+        assert_eq!(details.prior_version, "2.0.0");
+    }
+}
+
+#[test]
+fn deferred_age_report_matches_complete_packument() {
+    let mut full = make_packument("demo", &["1.0.0", "2.0.0"], "2.0.0");
+    full.time
+        .insert("1.0.0".into(), "2000-01-01T00:00:00.000Z".into());
+    full.time
+        .insert("2.0.0".into(), "2999-01-01T00:00:00.000Z".into());
+    let pkg = mk_locked("demo", "1.0.0", &[], &[]);
+    let graph = direct_dep_info_graph(&[("demo", "demo@1.0.0", "latest")], &[pkg]);
+    for deferred in [false, true] {
+        let metadata = if deferred {
+            sonic_rs::from_slice(&serde_json::to_vec(&full).unwrap()).unwrap()
+        } else {
+            full.clone().into()
+        };
+        let mut resolver =
+            direct_dep_info_resolver().with_minimum_release_age(Some(MinimumReleaseAge {
+                minutes: 1440,
+                ..Default::default()
+            }));
+        resolver.cache.insert("demo".into(), metadata);
+        assert_eq!(
+            resolver.age_gated_updates(&graph),
+            vec![AgeGatedUpdate {
+                name: "demo".into(),
+                version: "2.0.0".into()
+            }]
+        );
+    }
 }

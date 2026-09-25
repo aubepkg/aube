@@ -298,7 +298,8 @@ pub fn check_no_downgrade(
 /// Trust-policy check using the compact history fetched for an exact
 /// dependency. The selected release remains full [`VersionMetadata`]; only
 /// historical releases use the evidence-only representation.
-pub fn check_no_downgrade_compact(
+#[cfg(test)]
+fn check_no_downgrade_compact(
     packument: &Packument,
     picked_version: &str,
     picked_meta: &VersionMetadata,
@@ -341,16 +342,49 @@ pub fn check_no_downgrade_history(
     )
 }
 
+/// Enforce the same policy over deferred metadata or a newer exact history.
+pub(crate) fn check_no_downgrade_resolution(
+    packument: &aube_registry::ResolutionPackument,
+    picked: &VersionMetadata,
+    exact_history: Option<&std::collections::BTreeMap<String, aube_registry::VersionTrustMetadata>>,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    if let Some(history) = exact_history {
+        return check_no_downgrade_over_history(
+            &packument.name,
+            &packument.time,
+            &picked.version,
+            evidence_for(picked),
+            history,
+            exclude,
+            ignore_after_minutes,
+        );
+    }
+    check_no_downgrade_over_history(
+        &packument.name,
+        &packument.time,
+        &picked.version,
+        evidence_for(picked),
+        packument
+            .versions
+            .iter()
+            .map(|(version, metadata)| (version, metadata.trust_metadata())),
+        exclude,
+        ignore_after_minutes,
+    )
+}
+
 /// Shared core for the compact-history trust checks: rank the strongest
 /// prior evidence in `history` and reject a picked version that weakens
 /// it. `history` may or may not contain `picked_version` itself — the
 /// ranking loop always skips it.
-fn check_no_downgrade_over_history(
+fn check_no_downgrade_over_history<'a>(
     name: &str,
     time: &std::collections::BTreeMap<String, String>,
     picked_version: &str,
     picked_evidence: Option<TrustEvidence>,
-    history: &std::collections::BTreeMap<String, aube_registry::VersionTrustMetadata>,
+    history: impl IntoIterator<Item = (&'a String, &'a aube_registry::VersionTrustMetadata)>,
     exclude: &TrustExcludeRules,
     ignore_after_minutes: Option<u64>,
 ) -> Result<(), TrustCheckError> {

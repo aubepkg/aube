@@ -27,7 +27,7 @@ use crate::locked_index::LockedIndex;
 use crate::package_ext::{
     apply_package_extensions, apply_package_extensions_to_deps, pick_override_spec,
 };
-use crate::semver_util::{PickResult, pick_version, version_satisfies};
+use crate::semver_util::{PickResult, version_satisfies};
 use crate::{
     Error, ExoticSubdepDetails, FxHashMap, FxHashSet, ResolutionMode, ResolveTask, ResolvedPackage,
     Resolver, error, is_deprecation_allowed, is_supported,
@@ -408,7 +408,7 @@ impl<'a> ResolveDriver<'a> {
     fn record_fetch_result(
         &mut self,
         name: String,
-        packument: aube_registry::Packument,
+        packument: aube_registry::ResolutionPackument,
         trust_history: Option<TrustHistory>,
     ) {
         merge_fetch_result(
@@ -727,7 +727,7 @@ impl<'a> ResolveDriver<'a> {
             let packument = self.resolver.cache.get(&registry_name).ok_or_else(|| {
                 Error::Registry(registry_name.clone(), "packument not in cache".to_string())
             })?;
-            let pick = pick_version(
+            let pick = crate::semver_util::pick_resolution_version(
                 packument,
                 version_range,
                 locked_version,
@@ -736,7 +736,7 @@ impl<'a> ResolveDriver<'a> {
                 exempt_cutoff,
                 strict,
                 is_age_exempt,
-            );
+            )?;
             match pick {
                 PickResult::Found(meta) => break meta.clone(),
                 PickResult::AgeGated | PickResult::NoMatch
@@ -771,7 +771,9 @@ impl<'a> ResolveDriver<'a> {
                     .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?;
                     self.packument_fetch_time += fetch_start.elapsed();
                     self.packument_fetch_count += 1;
-                    self.resolver.cache.insert(registry_name.clone(), live);
+                    self.resolver
+                        .cache
+                        .insert(registry_name.clone(), live.into());
                     self.trust_histories.remove(&registry_name);
                 }
                 // Only surface `AgeGate` when the cutoff actually
@@ -784,19 +786,27 @@ impl<'a> ResolveDriver<'a> {
                     Some(mra) => {
                         return Err(Error::AgeGate(Box::new(error::build_age_gate(
                             &task,
-                            packument,
+                            &packument.materialize().map_err(|e| {
+                                Error::Registry(registry_name.clone(), e.to_string())
+                            })?,
                             mra.minutes,
                         ))));
                     }
                     None => {
                         return Err(Error::NoMatch(Box::new(error::build_no_match(
-                            &task, packument,
+                            &task,
+                            &packument.materialize().map_err(|e| {
+                                Error::Registry(registry_name.clone(), e.to_string())
+                            })?,
                         ))));
                     }
                 },
                 PickResult::NoMatch => {
                     return Err(Error::NoMatch(Box::new(error::build_no_match(
-                        &task, packument,
+                        &task,
+                        &packument
+                            .materialize()
+                            .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?,
                     ))));
                 }
             }
@@ -804,42 +814,46 @@ impl<'a> ResolveDriver<'a> {
         let packument = self.resolver.cache.get(&registry_name).ok_or_else(|| {
             Error::Registry(registry_name.clone(), "packument not in cache".to_string())
         })?;
-        let picked_ref = prefer_non_vulnerable_pick(
+        // Vulnerability repicking still uses the full metadata scanner. Trust
+        // policy uses the complete compact evidence collected at cache read.
+        let full = if is_vulnerable(
             task.registry_name(),
-            packument,
-            version_range,
-            &selected_pick,
-            pick_lowest,
-            cutoff_for_pkg,
-            exempt_cutoff,
+            &selected_pick.version,
             &self.resolver.vulnerable_ranges,
-            is_age_exempt,
-        );
-        // Trust-policy enforcement runs *before* any other
-        // post-pick processing (mirrors pnpm's placement
-        // immediately after `pickPackage`). Skip when policy is
-        // off so the off-by-default case is a single enum
-        // compare. The check needs the live packument's `time`
-        // map and all version metadata, both of which are still
-        // in scope here from L1191.
+        ) {
+            Some(
+                packument
+                    .materialize()
+                    .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let picked_ref = if let Some(packument) = full.as_ref() {
+            prefer_non_vulnerable_pick(
+                task.registry_name(),
+                packument,
+                version_range,
+                &selected_pick,
+                pick_lowest,
+                cutoff_for_pkg,
+                exempt_cutoff,
+                &self.resolver.vulnerable_ranges,
+                is_age_exempt,
+            )
+        } else {
+            &selected_pick
+        };
+        // Trust checks retain every historical release's publishing evidence,
+        // without decoding those releases' dependency maps.
         if self.resolver.dependency_policy.trust_policy == crate::TrustPolicy::NoDowngrade {
-            let result = match self.trust_histories.get(&registry_name) {
-                Some(history) => crate::trust::check_no_downgrade_compact(
-                    packument,
-                    &picked_ref.version,
-                    picked_ref,
-                    history,
-                    &self.resolver.dependency_policy.trust_policy_exclude,
-                    self.resolver.dependency_policy.trust_policy_ignore_after,
-                ),
-                None => crate::trust::check_no_downgrade(
-                    packument,
-                    &picked_ref.version,
-                    picked_ref,
-                    &self.resolver.dependency_policy.trust_policy_exclude,
-                    self.resolver.dependency_policy.trust_policy_ignore_after,
-                ),
-            };
+            let result = crate::trust::check_no_downgrade_resolution(
+                packument,
+                picked_ref,
+                self.trust_histories.get(&registry_name),
+                &self.resolver.dependency_policy.trust_policy_exclude,
+                self.resolver.dependency_policy.trust_policy_ignore_after,
+            );
             result.map_err(|e| match e {
                 crate::trust::TrustCheckError::Downgrade(d) => Error::TrustDowngrade(Box::new(d)),
                 crate::trust::TrustCheckError::MissingTime(d) => {
@@ -2308,10 +2322,10 @@ impl<'a> ResolveDriver<'a> {
 }
 
 fn merge_fetch_result(
-    cache: &mut FxHashMap<String, aube_registry::Packument>,
+    cache: &mut FxHashMap<String, aube_registry::ResolutionPackument>,
     trust_histories: &mut FxHashMap<String, TrustHistory>,
     name: String,
-    mut packument: aube_registry::Packument,
+    mut packument: aube_registry::ResolutionPackument,
     trust_history: Option<TrustHistory>,
 ) {
     let Some(history) = trust_history else {
@@ -2388,7 +2402,7 @@ mod tests {
     use super::*;
     use aube_lockfile::GitSource;
 
-    fn test_packument(versions: &[&str]) -> aube_registry::Packument {
+    fn test_packument(versions: &[&str]) -> aube_registry::ResolutionPackument {
         aube_registry::Packument {
             name: "shared".to_string(),
             modified: None,
@@ -2416,6 +2430,7 @@ mod tests {
                 })
                 .collect(),
         }
+        .into()
     }
 
     fn test_history() -> TrustHistory {

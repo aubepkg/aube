@@ -1044,3 +1044,89 @@ async fn scoped_packument_request_is_url_encoded() {
         "corgi Accept header must include JSON and */* fallbacks",
     );
 }
+
+#[test]
+fn selective_cache_obeys_expiry_origin_and_invalidation() {
+    let cache = tempfile::tempdir().unwrap();
+    let client = RegistryClient::new("https://registry.example");
+    let full: Packument = serde_json::from_value(
+        serde_json::json!({"name":"demo","versions":{"1.0.0":{"name":"demo","version":"1.0.0"}}}),
+    )
+    .unwrap();
+    client.seed_full_packument_cache("demo", cache.path(), &full, None, None, true);
+    assert!(
+        client
+            .cached_resolution_packument("demo", cache.path())
+            .is_some()
+    );
+    assert!(
+        RegistryClient::new("https://other.example")
+            .cached_resolution_packument("demo", cache.path())
+            .is_none()
+    );
+    client.invalidate_full_packument_cache("demo", cache.path());
+    assert!(
+        client
+            .cached_resolution_packument("demo", cache.path())
+            .is_none()
+    );
+    client.seed_full_packument_cache("demo", cache.path(), &full, None, None, false);
+    assert!(
+        client
+            .cached_resolution_packument("demo", cache.path())
+            .is_none()
+    );
+    for mode in [
+        crate::NetworkMode::Offline,
+        crate::NetworkMode::PreferOffline,
+    ] {
+        assert!(
+            RegistryClient::new("https://registry.example")
+                .with_network_mode(mode)
+                .cached_resolution_packument("demo", cache.path())
+                .is_some()
+        );
+    }
+}
+
+#[tokio::test]
+async fn selective_read_keeps_raw_view_fields_and_owns_its_snapshot() {
+    let cache = tempfile::tempdir().unwrap();
+    let client = RegistryClient::new("https://registry.example");
+    let raw = serde_json::json!({"name":"demo", "description":"keep this", "versions":{
+        "1.0.0":{"name":"demo","version":"1.0.0","dependencies":{"child":"^2"},"custom":{"future":"field"}}
+    }});
+    let path = super::cache::packument_full_cache_path(
+        cache.path(),
+        "demo",
+        client.config.registry_for("demo"),
+    )
+    .unwrap();
+    super::cache::write_cached_full_packument(
+        &path,
+        Some("tag"),
+        None,
+        super::cache::now_secs(),
+        Some(1800),
+        &raw,
+    )
+    .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let projected = client
+        .cached_resolution_packument("demo", cache.path())
+        .unwrap();
+    assert_eq!(
+        client
+            .fetch_packument_full_cached("demo", cache.path())
+            .await
+            .unwrap(),
+        raw
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    client.invalidate_full_packument_cache("demo", cache.path());
+    assert_eq!(
+        projected.versions["1.0.0"].metadata().unwrap().dependencies["child"],
+        "^2"
+    );
+    assert!(!path.exists()); // Reading the snapshot never republishes an invalidated entry.
+}

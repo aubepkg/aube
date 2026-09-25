@@ -8,6 +8,30 @@ use crate::{Error, NetworkMode, Packument};
 use std::path::{Path, PathBuf};
 
 impl RegistryClient {
+    /// Read fresh metadata without decoding every release's dependency maps.
+    /// Uses the existing registry-partitioned cache and freshness policy.
+    pub fn cached_resolution_packument(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+    ) -> Option<crate::ResolutionPackument> {
+        #[derive(serde::Deserialize)]
+        struct Cached<'a> {
+            fetched_at: u64,
+            #[serde(default)]
+            max_age_secs: Option<u64>,
+            #[serde(borrow)]
+            packument: crate::resolution::RawResolutionPackument<'a>,
+        }
+        let path = packument_full_cache_path(cache_dir, name, self.config.registry_for(name))?;
+        let content = bytes::Bytes::from(std::fs::read(path).ok()?);
+        let cached: Cached = sonic_rs::from_slice(&content).ok()?;
+        if !self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
+            return None;
+        }
+        cached.packument.into_resolution(&content)
+    }
+
     pub fn cached_packument_lookup(&self, name: &str, cache_dir: &Path) -> CachedPackumentLookup {
         let registry_url = self.config.registry_for(name).to_string();
         let Some(cache_path) = packument_cache_path(cache_dir, name, &registry_url) else {

@@ -90,7 +90,6 @@ use semver_util::{pick_version, strip_alias_prefix};
 use types::format_iso8601_utc;
 
 use aube_lockfile::DepType;
-use aube_registry::Packument;
 use aube_registry::client::RegistryClient;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -105,7 +104,7 @@ pub(crate) use aube_util::collections::FxSet as FxHashSet;
 /// BFS dependency resolver.
 pub struct Resolver {
     client: Arc<RegistryClient>,
-    cache: FxHashMap<String, Packument>,
+    cache: FxHashMap<String, aube_registry::ResolutionPackument>,
     /// Optional channel to stream resolved packages as they're discovered.
     resolved_tx: Option<mpsc::Sender<ResolvedPackage>>,
     /// Optional disk cache directory for packuments (with ETag revalidation).
