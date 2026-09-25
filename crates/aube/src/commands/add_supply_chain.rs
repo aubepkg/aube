@@ -252,7 +252,10 @@ fn is_new_package_name(created: &str, cutoff: &str) -> bool {
 ///
 /// Decision table:
 /// - `fresh_resolution || osv_transitive_check || advisory_check_every_install`
-///   → live OSV API (`run_transitive_osv_gate`)
+///   → default fresh installs use a bloom prefilter for more than 10 pairs;
+///   explicit add/update/dlx, required policy, and every-install checks stay live
+/// - otherwise, when `advisory_bloom_check != Off`
+///   → optional bloom gate (`run_transitive_osv_gate_via_bloom`)
 /// - otherwise, when `advisory_check_on_install != Off`
 ///   → local mirror (`run_transitive_osv_gate_via_mirror`)
 /// - otherwise → no OSV check
@@ -274,7 +277,13 @@ pub async fn run_post_resolve_osv_routing(
 ) -> miette::Result<()> {
     let needs_live_api = osv_transitive_check || advisory_check_every_install || fresh_resolution;
     if needs_live_api {
-        if !matches!(advisory_check, AdvisoryCheck::Off) {
+        if matches!(advisory_check, AdvisoryCheck::On)
+            && fresh_resolution
+            && !osv_transitive_check
+            && !advisory_check_every_install
+        {
+            run_fresh_resolution_osv_gate(cwd, graph).await?;
+        } else if !matches!(advisory_check, AdvisoryCheck::Off) {
             run_transitive_osv_gate(cwd, graph, advisory_check).await?;
         }
     } else if !matches!(advisory_bloom_check, AdvisoryBloomCheck::Off) {
@@ -320,6 +329,62 @@ pub async fn run_transitive_osv_gate(
     if pairs.is_empty() {
         return Ok(());
     }
+    run_versioned_osv_gate(&pairs, policy).await
+}
+
+/// Explicit add/update/dlx checks keep the live gate; bulk ordinary fresh installs
+/// can use a recent, validated bloom to avoid querying unaffected packages.
+async fn run_fresh_resolution_osv_gate(
+    cwd: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+) -> miette::Result<()> {
+    let pairs = transitive_registry_pairs(cwd, graph);
+    let probe = async {
+        let cache_dir = aube_store::dirs::cache_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "OSV bloom cache directory unavailable",
+            )
+        })?;
+        let bloom = OsvBloomClient::open(&cache_dir);
+        let http = OsvBloomClient::build_client()?;
+        bloom.refresh_if_stale_default(&http).await?;
+        bloom.probe_lockfile(&pairs)
+    };
+    let queries = fresh_osv_queries(&pairs, probe).await;
+    run_versioned_osv_gate(&queries, AdvisoryCheck::On).await
+}
+
+async fn fresh_osv_queries(
+    pairs: &[(String, String)],
+    probe: impl std::future::Future<
+        Output = Result<Vec<(String, String)>, aube_registry::osv_bloom_client::BloomError>,
+    >,
+) -> Vec<(String, String)> {
+    // For a handful of packages, prefer the freshest answer without depending
+    // on a locally cached filter. The probe future is lazy and never polled.
+    if pairs.len() <= 10 {
+        return pairs.to_vec();
+    }
+    let _diag =
+        aube_util::diag::Span::new(aube_util::diag::Category::Registry, "osv_bloom_prefilter");
+    match probe.await {
+        Ok(hits) => hits,
+        Err(error) => {
+            tracing::debug!(%error, "OSV bloom unavailable; checking the full graph live");
+            pairs.to_vec()
+        }
+    }
+}
+
+async fn run_versioned_osv_gate(
+    pairs: &[(String, String)],
+    policy: AdvisoryCheck,
+) -> miette::Result<()> {
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    let _diag = aube_util::diag::Span::new(aube_util::diag::Category::Registry, "osv_live_check");
     let client = match aube_registry::supply_chain::build_probe_client() {
         Ok(c) => c,
         Err(e) => {
@@ -338,7 +403,7 @@ pub async fn run_transitive_osv_gate(
     };
     osv_gate_versioned(
         &client,
-        &pairs,
+        pairs,
         policy,
         "refusing to install malicious package(s):",
     )
@@ -599,8 +664,8 @@ pub async fn run_transitive_osv_gate_via_bloom(
 /// True when the resolved graph contains at least one
 /// `(registry_name, version)` pair the pre-existing lockfile
 /// didn't already pin — meaning the resolver did fresh work and
-/// the result deserves a live-API OSV pass rather than the
-/// mirror-backed fallback. A missing pre-existing lockfile
+/// the result deserves the fresh-resolution OSV gate rather than the
+/// lockfile-driven fallback. A missing pre-existing lockfile
 /// (`None`) is treated as drift by definition: nothing on disk
 /// vouched for what just got resolved.
 ///
@@ -1911,5 +1976,55 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_small_sets_do_not_load_the_bloom() {
+        for count in [0, 1, 10] {
+            let pairs: Vec<_> = (0..count)
+                .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
+                .collect();
+            let queries = fresh_osv_queries(&pairs, async {
+                panic!("small checks must go directly to the live API")
+            })
+            .await;
+            assert_eq!(queries, pairs);
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_large_sets_only_query_exact_bloom_hits() {
+        let pairs: Vec<_> = (0..11)
+            .map(|i| (format!("package-{i}"), format!("1.0.{i}")))
+            .collect();
+        let hits = vec![pairs[2].clone(), pairs[7].clone()];
+        let queries = fresh_osv_queries(&pairs, async { Ok(hits.clone()) }).await;
+        assert_eq!(queries, hits);
+        let queries = fresh_osv_queries(&pairs, async { Ok(Vec::new()) }).await;
+        assert!(
+            queries.is_empty(),
+            "a clean validated filter needs no live queries"
+        );
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_failed_bloom_keeps_every_package_for_live_validation() {
+        use aube_registry::osv_bloom_client::BloomError;
+        let pairs: Vec<_> = (0..11)
+            .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
+            .collect();
+        for error in [
+            BloomError::NotInitialized,
+            BloomError::BadFormat("corrupt cache"),
+            BloomError::Integrity {
+                expected: "a".into(),
+                actual: "b".into(),
+                origin: "on-disk cache",
+            },
+            BloomError::Io(std::io::Error::other("refresh failed")),
+        ] {
+            let queries = fresh_osv_queries(&pairs, async { Err(error) }).await;
+            assert_eq!(queries, pairs);
+        }
     }
 }
