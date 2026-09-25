@@ -190,9 +190,9 @@ fn format_trust_downgrade_help(d: &TrustDowngradeDetails) -> String {
          \x20   trustPolicyExclude:\n\
          \x20     - \"{spec}\"\n\
          \n\
-         For a single command such as dlx, set it in the environment instead:\n\
+         For a single command such as dlx, prefix that command instead:\n\
          \n\
-         \x20   npm_config_trust_policy_exclude={spec}\n\
+         \x20   npm_config_trust_policy_exclude={spec} {dlx} <package>\n\
          \n\
          A bare `{name}` exempts every version; `trustPolicy = off` disables this protection \
          for the entire install.\n\
@@ -204,6 +204,7 @@ fn format_trust_downgrade_help(d: &TrustDowngradeDetails) -> String {
             .current_evidence
             .map_or("no trust evidence", |e| e.label()),
         trust_check = aube_util::cmd("trust check"),
+        dlx = aube_util::cmd("dlx"),
     )
 }
 
@@ -576,7 +577,11 @@ mod tests {
         assert!(help.contains("Report inconsistent evidence to the relevant upstream owner"));
         assert!(help.contains("belongs with that registry operator"));
         assert!(help.contains("    trustPolicyExclude:\n      - \"@scope/pkg@2.0.0\"\n"));
-        assert!(help.contains("    npm_config_trust_policy_exclude=@scope/pkg@2.0.0\n"));
+        assert!(
+            help.contains(
+                "    npm_config_trust_policy_exclude=@scope/pkg@2.0.0 aube dlx <package>\n"
+            )
+        );
         assert!(help.contains("A bare `@scope/pkg` exempts every version"));
         assert!(help.contains("https://aube.sh/trust-policy-exceptions"));
         assert!(!help.contains("backport published outside"));
