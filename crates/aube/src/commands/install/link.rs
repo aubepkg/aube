@@ -20,6 +20,10 @@ pub(super) struct LinkPhaseInput<'a> {
     pub(super) node_version: Option<&'a str>,
     pub(super) prewarm_graph_hashes:
         Option<&'a std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>>,
+    pub(super) prewarm_placed: Option<&'a (
+        std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
+        Vec<String>,
+    )>,
     pub(super) aube_dir: &'a std::path::Path,
     pub(super) modules_dir_name: &'a str,
     pub(super) virtual_store_dir_max_length: usize,
@@ -42,6 +46,7 @@ pub(super) struct LinkPhaseOutput {
     pub(super) current_subtree_hashes: Option<BTreeMap<String, String>>,
     pub(super) patch_hashes: BTreeMap<String, String>,
     pub(super) managed_bin_links: ManagedBinLinks,
+    pub(super) gvs_dep_link_targets: Option<aube_linker::GvsDepLinkTargets>,
 }
 
 pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPhaseOutput> {
@@ -57,6 +62,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         build_policy,
         node_version,
         prewarm_graph_hashes,
+        prewarm_placed,
         aube_dir,
         modules_dir_name,
         virtual_store_dir_max_length,
@@ -282,6 +288,20 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
                 &content_hash_fn,
             )
         };
+        // Trust the prewarm's links only where both sets of hashes name
+        // the entry the same way, i.e. it is the very entry this link
+        // phase would verify.
+        if let Some((placed_hashes, placed)) = prewarm_placed {
+            linker = linker.with_fresh_virtual_store_entries(
+                placed
+                    .iter()
+                    .filter(|dep_path| {
+                        placed_hashes.hashed_dep_path(dep_path)
+                            == graph_hashes.hashed_dep_path(dep_path)
+                    })
+                    .cloned(),
+            );
+        }
         linker = linker.with_graph_hashes(graph_hashes);
     }
     if !patches_for_linker.is_empty() {
@@ -300,6 +320,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             .link_all(cwd, graph_for_link, package_indices)
             .map_err(|error| (error, "failed to link node_modules"))
     };
+    let gvs_dep_link_targets = linker.take_gvs_dep_link_targets();
     let stats = match stats {
         Ok(stats) => stats,
         Err((error, context)) => {
@@ -404,5 +425,6 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         current_subtree_hashes,
         patch_hashes,
         managed_bin_links,
+        gvs_dep_link_targets,
     })
 }

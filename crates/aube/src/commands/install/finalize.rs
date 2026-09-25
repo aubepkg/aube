@@ -32,6 +32,10 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
     pub(super) managed_bin_links: &'a ManagedBinLinks,
+    /// The linker's record of global virtual-store dependency links, used by
+    /// the state writer unless a lifecycle script ran and could have
+    /// changed them.
+    pub(super) gvs_dep_link_targets: Option<aube_linker::GvsDepLinkTargets>,
     pub(super) node_linker: aube_linker::NodeLinker,
     pub(super) has_workspace: bool,
     pub(super) planned_gvs: bool,
@@ -75,6 +79,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         jail_policy,
         stats,
         managed_bin_links,
+        mut gvs_dep_link_targets,
         node_linker,
         has_workspace,
         planned_gvs,
@@ -205,6 +210,11 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             None,
         )
         .await?;
+        if lifecycle_outcome.scripts_run > 0 || lifecycle_outcome.package_contents_changed {
+            // A build may have rewritten links the linker recorded, so the
+            // state reads them back from disk.
+            gvs_dep_link_targets = None;
+        }
         if lifecycle_outcome.scripts_run > 0 {
             tracing::debug!(
                 "allowBuilds: ran {} dep lifecycle script(s)",
@@ -260,6 +270,9 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 aube_scripts::LifecycleHook::PostInstall,
                 aube_scripts::LifecycleHook::Prepare,
             ] {
+                if importer_manifest.scripts.contains_key(hook.script_name()) {
+                    gvs_dep_link_targets = None;
+                }
                 run_root_lifecycle(&project_dir, modules_dir_name, importer_manifest, hook).await?;
             }
         }
@@ -458,6 +471,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                     virtual_store_dir_max_length,
                     placements: placements_ref,
                     use_global_virtual_store: planned_gvs,
+                    gvs_dep_link_targets: gvs_dep_link_targets.as_ref(),
                 },
                 unreviewed_builds: unreviewed_builds_for_state,
             },

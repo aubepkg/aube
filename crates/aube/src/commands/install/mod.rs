@@ -912,6 +912,13 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     // frozen-lockfile path or when the prewarm short-circuits.
     let mut prewarm_graph_hashes: Option<std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>> =
         None;
+    // Global virtual-store entries the prewarm placed itself, with the
+    // hashes it named them under. The link phase trusts their dependency
+    // links wherever its own hashes give the same name.
+    let prewarm_placed: Option<(
+        std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
+        Vec<String>,
+    )>;
     // The cold-install lockfile write runs on a `spawn_blocking` task so it
     // overlaps `filter_graph` + the link phase (see
     // `lockfile_write_overlap`). The handle escapes the resolve match arm
@@ -1155,7 +1162,8 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             };
             // Materializer stats roll into link via GVS-already-linked
             // fast path. Errors abort install.
-            let _ = lock_materialize_handle.await.into_diagnostic()??;
+            let prewarm = lock_materialize_handle.await.into_diagnostic()??;
+            prewarm_placed = prewarm.graph_hashes.map(|hashes| (hashes, prewarm.placed));
             tracing::debug!(
                 "phase:fetch {:.1?} ({fetched} packages)",
                 phase_start.elapsed()
@@ -1957,8 +1965,14 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 aube_util::diag::Category::Install,
                 "phase_materialize_await",
             );
-            let (prewarm_stats, prewarm_hashes_from_task) =
-                materialize_handle.await.into_diagnostic()??;
+            let materialize::PrewarmOutcome {
+                stats: prewarm_stats,
+                graph_hashes: prewarm_hashes_from_task,
+                placed,
+            } = materialize_handle.await.into_diagnostic()??;
+            prewarm_placed = prewarm_hashes_from_task
+                .clone()
+                .map(|hashes| (hashes, placed));
             drop(_diag_mat_wait);
             aube_util::diag::instant(
                 aube_util::diag::Category::Install,
@@ -2377,6 +2391,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         current_subtree_hashes,
         patch_hashes,
         managed_bin_links,
+        gvs_dep_link_targets,
     } = link::run_link_phase(link::LinkPhaseInput {
         cwd: &cwd,
         settings_ctx: &settings_ctx,
@@ -2389,6 +2404,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         build_policy: &build_policy,
         node_version: node_version.as_deref(),
         prewarm_graph_hashes: prewarm_graph_hashes.as_ref(),
+        prewarm_placed: prewarm_placed.as_ref(),
         aube_dir: &aube_dir,
         modules_dir_name: &modules_dir_name,
         virtual_store_dir_max_length,
@@ -2430,6 +2446,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         jail_policy: &jail_policy,
         stats: &stats,
         managed_bin_links: &managed_bin_links,
+        gvs_dep_link_targets,
         node_linker,
         has_workspace,
         planned_gvs,

@@ -1742,3 +1742,35 @@ fn test_large_package_links_every_file_in_parallel() {
         }
     }
 }
+
+#[cfg(not(windows))]
+#[test]
+fn test_recorded_gvs_dep_link_targets_match_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let virtual_store = store.virtual_store_dir();
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    let graph = make_graph();
+
+    // Once materializing and once reusing the existing entries.
+    for _ in 0..2 {
+        linker.link_all(&project_dir, &graph, &indices).unwrap();
+        let recorded = linker
+            .take_gvs_dep_link_targets()
+            .expect("recorded under GVS");
+        assert_eq!(recorded.len(), graph.packages.len());
+        let foo = &recorded["foo@1.0.0"];
+        assert_eq!(foo.len(), 1);
+        let (dep_name, target) = &foo[0];
+        assert_eq!(dep_name, "bar");
+        let link = virtual_store
+            .join(linker.virtual_store_subdir("foo@1.0.0"))
+            .join("node_modules")
+            .join(dep_name);
+        assert_eq!(&std::fs::read_link(link).unwrap(), target);
+        assert!(recorded["bar@2.0.0"].is_empty());
+        std::fs::remove_dir_all(project_dir.join("node_modules")).unwrap();
+    }
+}

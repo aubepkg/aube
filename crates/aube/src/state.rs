@@ -704,6 +704,11 @@ pub struct WriteStateLayout<'a> {
     pub virtual_store_dir_max_length: usize,
     pub placements: Option<&'a aube_linker::HoistedPlacements>,
     pub use_global_virtual_store: bool,
+    /// The linker's record of each global virtual-store entry's dependency
+    /// links (`LinkStats::gvs_dep_link_targets`). Entries found here are
+    /// recorded without reading their links back; anything missing, or
+    /// `None` overall, is read from disk.
+    pub gvs_dep_link_targets: Option<&'a BTreeMap<String, Vec<(String, PathBuf)>>>,
 }
 
 fn collect_gvs_nested_links(
@@ -726,6 +731,30 @@ fn collect_gvs_nested_links(
             if !globally_shareable {
                 return Some(Vec::new());
             }
+            let package_dir = || {
+                crate::commands::install::materialized_pkg_dir(
+                    layout.aube_dir,
+                    dep_path,
+                    &pkg.name,
+                    layout.virtual_store_dir_max_length,
+                    layout.placements,
+                )
+            };
+            if let Some(targets) = layout
+                .gvs_dep_link_targets
+                .and_then(|recorded| recorded.get(dep_path))
+            {
+                let node_modules_dir =
+                    crate::commands::install::dep_modules_dir_for(&package_dir(), &pkg.name);
+                let mut links = Vec::with_capacity(targets.len());
+                for (dep_name, target) in targets {
+                    links.push((
+                        relative_path_or_original(&node_modules_dir.join(dep_name), project_dir),
+                        target.to_str()?.to_string(),
+                    ));
+                }
+                return Some(links);
+            }
             let aube_entry =
                 layout
                     .aube_dir
@@ -740,15 +769,8 @@ fn collect_gvs_nested_links(
                 // handles them separately.
                 return Some(Vec::new());
             }
-            let package_dir = crate::commands::install::materialized_pkg_dir(
-                layout.aube_dir,
-                dep_path,
-                &pkg.name,
-                layout.virtual_store_dir_max_length,
-                layout.placements,
-            );
             let node_modules_dir =
-                crate::commands::install::dep_modules_dir_for(&package_dir, &pkg.name);
+                crate::commands::install::dep_modules_dir_for(&package_dir(), &pkg.name);
             let mut links = Vec::with_capacity(pkg.dependencies.len());
             for dep_name in pkg.dependencies.keys().filter(|name| *name != &pkg.name) {
                 let link_path = node_modules_dir.join(dep_name);
@@ -1998,6 +2020,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: None,
                 use_global_virtual_store: false,
+                gvs_dep_link_targets: None,
             },
         )
         .expect("layout should build");
@@ -2064,6 +2087,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: None,
                 use_global_virtual_store: true,
+                gvs_dep_link_targets: None,
             },
         )
         .expect("scoped GVS layout should build");
@@ -2117,6 +2141,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: None,
                 use_global_virtual_store: true,
+                gvs_dep_link_targets: None,
             },
         )
         .expect("unreadable topology should not fail state recording");
@@ -2157,6 +2182,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: Some(&placements),
                 use_global_virtual_store: false,
+                gvs_dep_link_targets: None,
             },
         )
         .expect("hoisted layout should build");
