@@ -227,3 +227,38 @@ EOF
 	[ -L "$cache/origin-one/linked.json" ]
 	[ -f "$cache/unrelated/keep.json" ]
 }
+
+@test "cache commands preserve scoped names containing double underscores" {
+	_fake_cache_entry "@foo__bar/baz"
+	exact="$HOME/.cache/aube/packuments-full-v1/exact-v1/origin-one/@foo%2Fbar__baz"
+	mkdir -p "$exact"
+	echo '{"exact":{"metadata":{"name":"@foo/bar__baz","version":"1.0.0"}}}' >"$exact/one.json"
+	run aube cache list
+	assert_success
+	assert_line '@foo__bar/baz'
+	assert_line '@foo/bar__baz'
+	run aube cache delete '@foo/*'
+	assert_success
+	[ ! -e "$exact/one.json" ]
+	run aube cache list
+	assert_success
+	assert_output '@foo__bar/baz'
+	run aube cache delete '*'
+	assert_success
+}
+
+@test "cache view skips corrupt exact entries and wildcard deletion clears them" {
+	_fake_cache_entry "demo"
+	exact="$HOME/.cache/aube/packuments-full-v1/exact-v1/origin-one/demo"
+	ambiguous="$HOME/.cache/aube/packuments-full-v1/exact-v1/origin-one/@foo__bar__baz"
+	mkdir -p "$exact" "$ambiguous"
+	echo 'corrupt' >"$exact/one.json"
+	echo 'corrupt' >"$ambiguous/one.json"
+	run aube cache view demo
+	assert_success
+	assert_output --partial 'highest:       10.0.0'
+	run aube cache delete '*'
+	assert_success
+	[ ! -e "$exact/one.json" ]
+	[ ! -e "$ambiguous/one.json" ]
+}

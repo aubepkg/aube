@@ -197,7 +197,7 @@ impl RegistryClient {
             self.config.registry_for(name),
         )
         .ok_or_else(|| Error::InvalidName(name.to_string()))?
-        .with_extension("")
+        .with_file_name(name.replace('/', "%2F"))
         .join(format!(
             "{}.json",
             blake3::hash(version.as_bytes()).to_hex()
@@ -211,6 +211,8 @@ impl RegistryClient {
         .await
         .map_err(|error| Error::Io(std::io::Error::other(error)))?;
         if let Some(cached) = cached
+            && cached.exact.metadata.name == name
+            && cached.exact.metadata.version == version
             && self.trust_cached_packument(cached.fetched_at, cached.max_age_secs)
         {
             return Ok(cached.exact);
@@ -677,6 +679,74 @@ mod exact_cache_tests {
                     .await,
                 Err(Error::Offline(_))
             ));
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_cache_keeps_ambiguous_scoped_names_separate() {
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new(&server.uri());
+        for name in ["@scope__x/y", "@scope/x__y"] {
+            let mut body = document();
+            body["name"] = name.into();
+            body["versions"]["1.0.0"]["name"] = name.into();
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let exact = client
+                .fetch_exact_version_packument_cached(name, "1.0.0", dir.path())
+                .await
+                .unwrap();
+            assert_eq!(exact.metadata.name, name);
+            server.verify().await;
+            server.reset().await;
+        }
+        for name in ["@scope__x/y", "@scope/x__y"] {
+            let exact = client
+                .fetch_exact_version_packument_cached(name, "1.0.0", dir.path())
+                .await
+                .unwrap();
+            assert_eq!(exact.metadata.name, name);
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_cache_rejects_mismatched_identity() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(document()))
+            .expect(3)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new(&server.uri());
+        let file = packument_full_cache_path(
+            &dir.path().join("exact-v1"),
+            "demo",
+            client.config.registry_for("demo"),
+        )
+        .unwrap()
+        .with_file_name("demo")
+        .join(format!("{}.json", blake3::hash(b"1.0.0").to_hex()));
+        client
+            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+            .await
+            .unwrap();
+        for (key, wrong) in [("name", "other"), ("version", "2.0.0")] {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+            value["exact"]["metadata"][key] = wrong.into();
+            std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
+            let exact = client
+                .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+                .await
+                .unwrap();
+            assert_eq!(exact.metadata.name, "demo");
+            assert_eq!(exact.metadata.version, "1.0.0");
         }
     }
 

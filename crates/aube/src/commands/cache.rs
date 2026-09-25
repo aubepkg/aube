@@ -157,8 +157,10 @@ fn collect_entries(dir: &Path) -> miette::Result<BTreeMap<String, Vec<PathBuf>>>
                     [] => filename.starts_with("origin-") || filename == "exact-v1",
                     [exact] if exact == "exact-v1" => filename.starts_with("origin-"),
                     [exact, origin] if exact == "exact-v1" && origin.starts_with("origin-") => {
-                        aube_store::validate_and_encode_name(&decode_safe_name(&filename))
-                            .is_some_and(|encoded| encoded == filename)
+                        aube_store::validate_and_encode_name(&filename.replace("%2F", "/"))
+                            .is_some()
+                            || aube_store::validate_and_encode_name(&decode_safe_name(&filename))
+                                .is_some_and(|encoded| encoded == filename)
                     }
                     _ => false,
                 };
@@ -180,8 +182,31 @@ fn collect_entries(dir: &Path) -> miette::Result<BTreeMap<String, Vec<PathBuf>>>
                     }
                     _ => continue,
                 };
-                let name = decode_safe_name(encoded);
-                if aube_store::validate_and_encode_name(&name).is_some_and(|safe| safe == encoded) {
+                let name = if components.len() == 3 && encoded.contains("%2F") {
+                    encoded.replace("%2F", "/")
+                } else if encoded.starts_with('@') && encoded.matches("__").count() > 1 {
+                    // Old slash encoding is ambiguous when scopes contain __.
+                    // Read the stored identity instead of guessing which slash
+                    // belongs to the scope. Unreadable ambiguous entries have
+                    // no name: wildcard deletion can still clean them up.
+                    std::fs::read(child.path())
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                        .and_then(|value| {
+                            value
+                                .pointer("/packument/name")
+                                .or_else(|| value.pointer("/exact/metadata/name"))
+                                .and_then(|name| name.as_str())
+                                .map(str::to_owned)
+                        })
+                        .unwrap_or_default()
+                } else {
+                    decode_safe_name(encoded)
+                };
+                if name.is_empty()
+                    || aube_store::validate_and_encode_name(&name)
+                        .is_some_and(|safe| safe == encoded || name.replace('/', "%2F") == encoded)
+                {
                     entries.entry(name).or_default().push(child.path());
                 }
             }
@@ -211,7 +236,11 @@ fn list(args: ListArgs) -> miette::Result<()> {
     let patterns = compile_patterns(&args.patterns)?;
     let mut all = BTreeSet::new();
     for (_, dir) in cache_dirs() {
-        all.extend(collect_entries(&dir)?.into_keys());
+        all.extend(
+            collect_entries(&dir)?
+                .into_keys()
+                .filter(|name| !name.is_empty()),
+        );
     }
     for name in all.iter().filter(|n| matches_any(n, &patterns)) {
         println!("{name}");
@@ -282,12 +311,12 @@ fn view(args: ViewArgs) -> miette::Result<()> {
             .remove(&args.name)
             .unwrap_or_default()
         {
-            found = true;
             let bytes = std::fs::read(&path)
                 .into_diagnostic()
                 .map_err(|e| miette!("failed to read {}: {e}", path.display()))?;
 
             if args.json {
+                found = true;
                 // Dump verbatim. We've already read the bytes; printing them
                 // as a string keeps formatting whatever the cache writer chose.
                 let s = String::from_utf8_lossy(&bytes);
@@ -296,9 +325,14 @@ fn view(args: ViewArgs) -> miette::Result<()> {
                 continue;
             }
 
-            let value: serde_json::Value = serde_json::from_slice(&bytes)
-                .into_diagnostic()
-                .map_err(|e| miette!("failed to parse {}: {e}", path.display()))?;
+            let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::debug!(%error, path = %path.display(), "skipping corrupt metadata cache entry");
+                    continue;
+                }
+            };
+            found = true;
             print_summary(&args.name, kind, &path, &value);
         }
     }
