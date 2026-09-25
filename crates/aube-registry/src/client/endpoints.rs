@@ -290,7 +290,7 @@ impl RegistryClient {
         let (exact, max_age_secs, public_cacheable) = self
             .fetch_exact_version_packument_response(name, version)
             .await?;
-        if !public_cacheable || !self.exact_cache_allows_anonymous_reuse(name) {
+        if !public_cacheable {
             // Remove any previous anonymous entry when a response stops being reusable.
             tokio::task::spawn_blocking(move || {
                 if let Err(error) = std::fs::remove_file(cache_path)
@@ -301,6 +301,9 @@ impl RegistryClient {
             })
             .await
             .map_err(|error| Error::Io(std::io::Error::other(error)))?;
+            return Ok(exact);
+        }
+        if !self.exact_cache_allows_anonymous_reuse(name) {
             return Ok(exact);
         }
         let cached = CachedExact {
@@ -856,7 +859,7 @@ mod exact_cache_tests {
                 .cached_exact_version_packument("demo", "1.0.0", dir.path())
                 .await
                 .unwrap()
-                .is_none()
+                .is_some()
         );
     }
 
