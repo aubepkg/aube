@@ -508,31 +508,34 @@ OSV `MAL-*` advisory check during `aube add` and other fresh-resolution installs
 - Workspace YAML keys: `advisoryCheck`
 - Managed policy: `ranked:off<on<required`
 
-Live-API OSV `MAL-*` advisory check. aube batch-queries
-[OSV](https://osv.dev) at three points, all against `api.osv.dev`:
+OSV `MAL-*` malicious-package checks. Explicit `aube add`, `aube update`,
+and transient `aube dlx` installs query the live OSV API, including the
+resolved transitive graph. Running an existing local binary through `dlx`
+does not install packages or perform an advisory check. Ordinary fresh-resolution installs (missing lockfile or new
+resolved versions) use a bloom prefilter when the graph contains more
+than 10 distinct public-npm package/version pairs. Smaller graphs are
+checked live.
 
-1. `aube add` CLI names, before they land in `package.json`.
-2. The full post-resolve transitive graph during any
-   *fresh-resolution* install — `aube add`, `aube update`, an
-   install with no lockfile, or an install where the resolver
-   picked a `(name, version)` the lockfile didn't already pin.
-3. Every install (including frozen reinstalls), if
-   `advisoryCheckEveryInstall` is `true`.
+The prefilter uses the existing OSV bloom cache, refreshed after 15
+minutes. Only probable hits are sent to the live API for exact-version
+confirmation. If refreshing or validating the filter fails, aube checks
+the full graph live instead. A negative filter result reflects the
+upstream snapshot, so newly published advisories may not be detected
+until the filter refreshes. This default fresh-resolution behavior does
+not require `advisoryBloomCheck`, which controls lockfile-driven reinstalls.
 
-A hit at any step fails the install with `ERR_AUBE_MALICIOUS_PACKAGE`
-and a link to the advisory.
+`required` and `advisoryCheckEveryInstall = true` bypass the prefilter
+and query the full graph live. A confirmed hit fails installation with
+`ERR_AUBE_MALICIOUS_PACKAGE` and a link to the advisory.
 
-Plain reinstalls where the lockfile was authoritative don't hit the
-network here — they fall through to the local mirror (see
-`advisoryCheckOnInstall`) when that's enabled, or no OSV check at all
-when it isn't.
+Plain reinstalls where the lockfile was authoritative use the optional
+`advisoryBloomCheck` or `advisoryCheckOnInstall` backend instead.
 
-- `on` (default): fail closed on a malicious-package hit; fail open
-  (continue with a `WARN_AUBE_ADVISORY_CHECK_FAILED`) when the API can't
-  be reached, so offline workflows aren't blocked.
-- `required`: same fail-closed behavior on hits, plus fail closed on
-  fetch errors. Use in hardened CI. Included in the `paranoid` bundle.
-- `off`: skip the check entirely.
+- `on` (default): block confirmed malicious packages; warn with
+  `WARN_AUBE_ADVISORY_CHECK_FAILED` and continue if live OSV is unreachable.
+- `required`: use the full live API for these checks and fail on API errors. Included
+  in the `paranoid` bundle.
+- `off`: skip this gate.
 
 ### `advisoryCheckOnInstall` {#setting-advisorycheckoninstall}
 
@@ -545,18 +548,18 @@ Local-mirror OSV `MAL-*` advisory check for plain reinstalls.
 - Workspace YAML keys: `advisoryCheckOnInstall`
 - Managed policy: `ranked:off<on<required`
 
-Fallback OSV `MAL-*` check for installs the live-API gate
-(`advisoryCheck`) didn't fire for — i.e. plain reinstalls where the
+Fallback OSV `MAL-*` check for installs the fresh-resolution gate
+(`advisoryCheck`) did not cover — i.e. plain reinstalls where the
 lockfile was authoritative (no `aube add` / `aube update`, no
 `advisoryCheckEveryInstall`, no lockfile drift). Backed by a local
 mirror of OSV's npm advisory dump so there's no per-install
 `api.osv.dev` round-trip.
 
 A hit fails the install with `ERR_AUBE_MALICIOUS_PACKAGE` — same
-exit as `advisoryCheck`. Fresh-resolution installs (`aube add`,
-`aube update`, missing-lockfile, new picked version) always go
-through the live API regardless of this setting, so the freshest
-signal lands at the moment a human is changing what's installed.
+exit as `advisoryCheck`. Fresh-resolution installs use the separate
+`advisoryCheck` gate regardless of this setting: explicit add/update/dlx
+install-time checks stay live, while large ordinary fresh resolutions use a bloom
+prefilter under the default policy.
 
 The mirror lives at `$XDG_CACHE_HOME/aube/osv/npm/` and lazily
 refreshes from
@@ -566,8 +569,8 @@ between refreshes won't catch an advisory published in the last
 ~day; for live signals on every install, use
 `advisoryCheckEveryInstall = true` instead.
 
-- `off` (default): plain reinstalls skip OSV entirely. Fresh-resolution
-  installs still hit the live API via `advisoryCheck`.
+- `off` (default): skip the local mirror. Fresh resolutions still use
+  `advisoryCheck`; plain reinstalls may use `advisoryBloomCheck`.
 - `on`: plain reinstalls check the resolved graph against the mirror.
   Fail open (continue with `WARN_AUBE_OSV_MIRROR_REFRESH_FAILED`) when
   the mirror can't be refreshed.
@@ -599,14 +602,13 @@ escalation at all or one extra live-API round trip per install — much
 cheaper than `advisoryCheckEveryInstall` which round-trips the full
 graph.
 
-Designed to coexist with `advisoryCheck` and `advisoryCheckOnInstall`
-rather than replace them. The bloom check fires on every install path
-the live-API gate didn't already cover for that install: if
-`advisoryCheckEveryInstall = true` or the install is a fresh-resolution
-path that already hits the live API, the bloom is skipped (the live API
-strictly dominates a bloom probe).
+Controls the optional bloom check on lockfile-driven reinstalls, alongside
+`advisoryCheckOnInstall`. Ordinary large fresh-resolution installs already
+use a bloom prefilter under the default `advisoryCheck: on`, independently
+of this setting. Explicit add/update/dlx checks, `advisoryCheck: required`, and
+`advisoryCheckEveryInstall: true` use the full live API instead.
 
-- `off` (default): bloom prefilter disabled.
+- `off` (default): skip the bloom check on lockfile-driven reinstalls.
 - `on`: probe the lockfile against the bloom, escalate hits to the
   live API, fail closed on a confirmed `MAL-*` hit with
   `ERR_AUBE_MALICIOUS_PACKAGE`. Fail open (continue with
@@ -627,11 +629,13 @@ Force the live-API OSV `MAL-*` check on every install (including frozen reinstal
 - Workspace YAML keys: `advisoryCheckEveryInstall`
 - Managed policy: `trueWins`
 
-By default, the live-API OSV check (`advisoryCheck`) fires on
-*fresh-resolution* installs only — `aube add`, `aube update`,
-missing-lockfile installs, and installs where the resolver picks a
-version the lockfile didn't pin. Plain reinstalls fall through to the
-local mirror (`advisoryCheckOnInstall`) when that's enabled.
+By default, `advisoryCheck` covers fresh resolutions. Explicit
+`aube add`, `aube update`, transient `aube dlx` installs, and small fresh
+graphs query live OSV. The `dlx` shortcut for an existing local binary
+does not perform an install or advisory check. Large ordinary fresh resolutions use the Bloom
+prefilter under the default policy; only probable hits are checked
+live. Plain reinstalls can use the optional local mirror
+(`advisoryCheckOnInstall`) or Bloom check (`advisoryBloomCheck`).
 
 Setting `advisoryCheckEveryInstall = true` forces the live API on
 every install entry point, including strict frozen reinstalls and
@@ -645,7 +649,8 @@ is per-install latency — for a large transitive graph, batch queries
 chunk at 500 names per request, so an `aube install` against a graph
 of 2000 packages incurs four sequential OSV requests.
 
-- `false` (default): live-API check on fresh-resolution installs only.
+- `false` (default): use the ordinary `advisoryCheck` routing for fresh
+  resolutions, including Bloom prefiltering for large ordinary installs.
 - `true`: live-API check on every install. Honors `advisoryCheck`'s
   fail-open / fail-closed policy on fetch errors.
 

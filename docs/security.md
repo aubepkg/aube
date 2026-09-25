@@ -327,29 +327,41 @@ Settings: [`advisoryCheck`](/settings/#setting-advisorycheck),
 
 ## Install-time OSV check
 
-After resolution, every install picks exactly one OSV `MAL-*` backend, so
-the freshest signal lands when it matters most without paying a per-install
-network round-trip when it doesn't:
+After resolution, aube chooses an OSV `MAL-*` check based on the operation
+and configured policy:
 
-| Install path                                   | Backend         | Setting                                   |
-| ---------------------------------------------- | --------------- | ----------------------------------------- |
-| `aube add`, `aube update`                      | Live API        | `advisoryCheck` (default `on`)            |
-| Missing lockfile / resolver picked new version | Live API        | `advisoryCheck` (default `on`)            |
-| `advisoryCheckEveryInstall = true`             | Live API        | `advisoryCheck` (default `on`)            |
-| Plain reinstall (lockfile authoritative)       | Bloom prefilter | `advisoryBloomCheck` (default `off`)      |
-| Plain reinstall, bloom disabled                | Local mirror    | `advisoryCheckOnInstall` (default `off`)  |
-| Plain reinstall, both disabled                 | No check        | —                                         |
+| Install path | Backend | Setting |
+| --- | --- | --- |
+| Explicit `aube add` / `aube update` checks and transient `aube dlx` installs | Full live API | `advisoryCheck` (default `on`) |
+| Ordinary fresh resolution, more than 10 public-npm package/version pairs | Bloom, then live confirmation of hits | `advisoryCheck: on` |
+| Ordinary fresh resolution, 10 pairs or fewer | Full live API | `advisoryCheck: on` |
+| Fresh resolution with `advisoryCheck: required` | Full live API | `advisoryCheck` |
+| `advisoryCheckEveryInstall: true` | Full live API | `advisoryCheck` |
+| Plain reinstall (lockfile authoritative) | Optional bloom prefilter | `advisoryBloomCheck` (default `off`) |
+| Plain reinstall, bloom disabled | Optional local mirror | `advisoryCheckOnInstall` (default `off`) |
+| Plain reinstall, both disabled | No check | — |
 
-The two local backends cover plain reinstalls without a live round-trip:
+**Bloom prefilter** downloads a compact filter built from OSV's
+malicious-package archive. The local cache is refreshed after 15 minutes;
+upstream normally rebuilds it every 10 minutes. Aube verifies the filter's
+SHA-256 against its manifest before using it. Probable hits are checked
+against the live API for exact `(name, version)` confirmation; a negative
+result avoids that API query. False positives only cause extra queries.
 
-**Bloom prefilter** (`advisoryBloomCheck`) downloads a ~380 KB bloom filter
-built from OSV's malicious-package archive (regenerated upstream every 10
-minutes), probes the resolved graph against it, and escalates only the hits
-(~0.1% false-positive rate) to the live API for exact `(name, version)`
-confirmation. A typical lockfile costs zero or one extra live-API round
-trip per install. When both local backends are enabled, the bloom wins —
-it's far cheaper on the wire and its confirmed hits go through the same
-live-API oracle.
+Large ordinary fresh-resolution installs use this prefilter by default,
+including installs without a lockfile. If the filter cannot be refreshed
+or validated, aube falls back to a live check of the full graph. Small
+checks and explicit add/update checks or transient dlx installs remain live.
+The dlx shortcut for an existing local binary does not install packages or
+perform an advisory check. `advisoryBloomCheck`
+continues to control the separate, optional check on lockfile-driven
+reinstalls; its default remains `off`.
+
+A bloom negative is only as current as the upstream snapshot plus the
+local cache. A newly published advisory may not appear until a refresh.
+Use `advisoryCheck: required` for full live checks that also fail on API
+errors, or `advisoryCheckEveryInstall: true` to query every install live
+under your chosen `advisoryCheck` failure policy.
 
 **Local mirror** (`advisoryCheckOnInstall`) keeps the bulk zip from
 `osv-vulnerabilities.storage.googleapis.com/npm/all.zip` (roughly tens of
@@ -357,14 +369,14 @@ MB) at `$XDG_CACHE_HOME/aube/osv/npm/`, lazily refreshed with an
 ETag-conditional GET every 24 hours. Lookups are sub-millisecond, but the
 index lags reality by up to ~24h — an advisory published in the last day
 won't be in it unless a refresh happens to fall after it. Fresh-resolution
-installs always go through the live API, so that lag never affects new
-picks.
+installs use the separate gate described above, so this 24-hour mirror
+cache does not affect new picks.
 
 Confirmed hits from any backend fail the install with the same
 `ERR_AUBE_MALICIOUS_PACKAGE` exit.
 
 ```yaml
-# Default: live API on aube add / update / fresh-resolution.
+# Default: live API on add/update and dlx installs; bloom first for large fresh installs.
 # Plain reinstalls skip OSV entirely.
 advisoryCheck: on
 advisoryBloomCheck: off

@@ -363,6 +363,9 @@ fn dlx_manifest(install_specs: &[String], allow_build: &[String]) -> serde_json:
 
 fn dlx_install_options(allow_build: &[String]) -> InstallOptions {
     let mut opts = InstallOptions::with_mode(FrozenMode::No);
+    // Explicitly selected executables retain live checks even with a large
+    // transitive graph; the bloom optimization is for bulk project installs.
+    opts.osv_transitive_check = true;
     // `dlx` executes bins from a throwaway project and deletes that project
     // immediately. Keeping package materialization inside the scratch tree is
     // what lets Node walk through `node_modules/.aube/node_modules`, the
@@ -626,6 +629,7 @@ mod tests {
     #[test]
     fn dlx_install_disables_global_virtual_store() {
         let opts = dlx_install_options(&[]);
+        assert!(opts.osv_transitive_check);
         let empty_workspace = std::collections::BTreeMap::new();
         let empty_env = Vec::new();
         let ctx = aube_settings::ResolveCtx {
