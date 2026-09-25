@@ -922,15 +922,16 @@ pub(super) fn import_verified_tarball_streamed(
     )
 }
 
-/// Upper bound on tarball body bytes buffered, across every in-flight
-/// download, before their imports start. Without it, the fetch limiter's
+/// Upper bound on tarball body bytes buffered across every in-flight
+/// download, from arrival until their import has read them. Without it, the fetch limiter's
 /// 256 concurrent downloads could each hold up to the 1 MiB streaming
 /// threshold.
 const BUFFERED_BODY_BUDGET: u64 = 64 << 20;
 static BUFFERED_BODY_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// One download's share of [`BUFFERED_BODY_BUDGET`], returned on `release`
-/// or when the download ends for any reason.
+/// One download's share of [`BUFFERED_BODY_BUDGET`]. It moves into the
+/// import with the buffered chunks and is returned when the import finishes,
+/// or when a download ends without one.
 #[derive(Default)]
 struct BufferedBodyBytes(u64);
 
@@ -1049,17 +1050,26 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     let display_for_import = display_name.to_string();
     let version_for_import = version.to_string();
     let registry_for_import = registry_name.to_string();
-    let mut start_import = Some(move |buffered: Vec<bytes::Bytes>| {
-        tokio::task::spawn_blocking(move || {
-            let reader = aube_util::io::ChunkReader::with_buffered(buffered, chunk_rx);
-            store_for_import.import_tarball_reader(reader).map_err(|e| {
-                miette!(
-                    "failed to import {display_for_import}@{version_for_import}: {e}{}",
-                    crate::dep_chain::format_chain_for(&registry_for_import, &version_for_import)
-                )
+    // The reservation travels with the buffered chunks into the import, so
+    // bytes still queued for a blocking thread keep counting against the
+    // budget until the import has read them or is dropped.
+    let mut start_import = Some(
+        move |buffered: Vec<bytes::Bytes>, reservation: BufferedBodyBytes| {
+            tokio::task::spawn_blocking(move || {
+                let _reservation = reservation;
+                let reader = aube_util::io::ChunkReader::with_buffered(buffered, chunk_rx);
+                store_for_import.import_tarball_reader(reader).map_err(|e| {
+                    miette!(
+                        "failed to import {display_for_import}@{version_for_import}: {e}{}",
+                        crate::dep_chain::format_chain_for(
+                            &registry_for_import,
+                            &version_for_import
+                        )
+                    )
+                })
             })
-        })
-    });
+        },
+    );
     // The import runs on the blocking pool, which Linux caps at 8 threads
     // shared with package materialization. Started at the first chunk, an
     // import held its thread for the whole download, mostly idle on the
@@ -1108,10 +1118,12 @@ pub(super) async fn fetch_and_import_tarball_streaming(
                     let fits = reservation.try_add(chunk.len() as u64);
                     buffered.push(chunk);
                     if !fits || total >= STREAM_AFTER_BYTES {
-                        reservation.release();
-                        import_handle = start_import
-                            .take()
-                            .map(|start| start(std::mem::take(&mut buffered)));
+                        import_handle = start_import.take().map(|start| {
+                            start(
+                                std::mem::take(&mut buffered),
+                                std::mem::take(&mut reservation),
+                            )
+                        });
                     }
                 } else if let Some(tx) = chunk_tx.as_ref()
                     && tx.send(Ok(chunk)).await.is_err()
@@ -1141,9 +1153,10 @@ pub(super) async fn fetch_and_import_tarball_streaming(
         && stream_err.is_none()
         && let Some(start) = start_import.take()
     {
-        import_handle = Some(start(buffered));
+        import_handle = Some(start(buffered, std::mem::take(&mut reservation)));
     }
-    reservation.release();
+    // A stream that failed before its import started returns its bytes here.
+    drop(reservation);
     let import_result = match import_handle {
         Some(handle) => Some(handle.await.into_diagnostic().map_err(local)?),
         None => None,
