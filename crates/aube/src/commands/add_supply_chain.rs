@@ -275,16 +275,16 @@ pub async fn run_post_resolve_osv_routing(
     advisory_bloom_check: AdvisoryBloomCheck,
     advisory_check_every_install: bool,
 ) -> miette::Result<()> {
-    let needs_live_api = osv_transitive_check || advisory_check_every_install || fresh_resolution;
-    if needs_live_api {
-        if matches!(advisory_check, AdvisoryCheck::On)
-            && fresh_resolution
-            && !osv_transitive_check
-            && !advisory_check_every_install
-        {
-            run_fresh_resolution_osv_gate(cwd, graph).await?;
-        } else if !matches!(advisory_check, AdvisoryCheck::Off) {
-            run_transitive_osv_gate(cwd, graph, advisory_check).await?;
+    if let Some(route) = fresh_osv_route(
+        fresh_resolution,
+        osv_transitive_check,
+        advisory_check,
+        advisory_check_every_install,
+    ) {
+        match route {
+            FreshOsvRoute::Bloom => run_fresh_resolution_osv_gate(cwd, graph).await?,
+            FreshOsvRoute::Live => run_transitive_osv_gate(cwd, graph, advisory_check).await?,
+            FreshOsvRoute::Off => return Ok(()),
         }
     } else if !matches!(advisory_bloom_check, AdvisoryBloomCheck::Off) {
         // Bloom preferred over the local-mirror fallback when both
@@ -298,6 +298,31 @@ pub async fn run_post_resolve_osv_routing(
         run_transitive_osv_gate_via_mirror(cwd, graph, advisory_check_on_install).await?;
     }
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FreshOsvRoute {
+    Bloom,
+    Live,
+    Off,
+}
+
+fn fresh_osv_route(
+    fresh_resolution: bool,
+    explicit: bool,
+    policy: AdvisoryCheck,
+    every_install: bool,
+) -> Option<FreshOsvRoute> {
+    if !fresh_resolution && !explicit && !every_install {
+        return None;
+    }
+    Some(match policy {
+        AdvisoryCheck::Off => FreshOsvRoute::Off,
+        AdvisoryCheck::On if fresh_resolution && !explicit && !every_install => {
+            FreshOsvRoute::Bloom
+        }
+        _ => FreshOsvRoute::Live,
+    })
 }
 
 /// Live-API transitive OSV `MAL-*` check.
@@ -1976,6 +2001,56 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn fresh_osv_routing_preserves_explicit_and_required_live_checks() {
+        for fresh in [false, true] {
+            for policy in [AdvisoryCheck::On, AdvisoryCheck::Required] {
+                assert_eq!(
+                    fresh_osv_route(fresh, true, policy, false),
+                    Some(FreshOsvRoute::Live)
+                );
+                assert_eq!(
+                    fresh_osv_route(fresh, false, policy, true),
+                    Some(FreshOsvRoute::Live)
+                );
+                assert_eq!(
+                    fresh_osv_route(fresh, true, policy, true),
+                    Some(FreshOsvRoute::Live)
+                );
+            }
+        }
+        assert_eq!(
+            fresh_osv_route(true, false, AdvisoryCheck::On, false),
+            Some(FreshOsvRoute::Bloom)
+        );
+        assert_eq!(
+            fresh_osv_route(true, false, AdvisoryCheck::Required, false),
+            Some(FreshOsvRoute::Live)
+        );
+        for fresh in [false, true] {
+            for explicit in [false, true] {
+                for every in [false, true] {
+                    let expected = if fresh || explicit || every {
+                        Some(FreshOsvRoute::Off)
+                    } else {
+                        None
+                    };
+                    assert_eq!(
+                        fresh_osv_route(fresh, explicit, AdvisoryCheck::Off, every),
+                        expected
+                    );
+                }
+            }
+        }
+        for policy in [
+            AdvisoryCheck::Off,
+            AdvisoryCheck::On,
+            AdvisoryCheck::Required,
+        ] {
+            assert_eq!(fresh_osv_route(false, false, policy, false), None);
+        }
     }
 
     #[tokio::test]

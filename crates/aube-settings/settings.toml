@@ -434,18 +434,18 @@ description = "Local-mirror OSV `MAL-*` advisory check for plain reinstalls."
 type = '"on" | "required" | "off"'
 default = "\"off\""
 docs = """
-Fallback OSV `MAL-*` check for installs the live-API gate
-(`advisoryCheck`) didn't fire for — i.e. plain reinstalls where the
+Fallback OSV `MAL-*` check for installs the fresh-resolution gate
+(`advisoryCheck`) did not cover — i.e. plain reinstalls where the
 lockfile was authoritative (no `aube add` / `aube update`, no
 `advisoryCheckEveryInstall`, no lockfile drift). Backed by a local
 mirror of OSV's npm advisory dump so there's no per-install
 `api.osv.dev` round-trip.
 
 A hit fails the install with `ERR_AUBE_MALICIOUS_PACKAGE` — same
-exit as `advisoryCheck`. Fresh-resolution installs (`aube add`,
-`aube update`, missing-lockfile, new picked version) always go
-through the live API regardless of this setting, so the freshest
-signal lands at the moment a human is changing what's installed.
+exit as `advisoryCheck`. Fresh-resolution installs use the separate
+`advisoryCheck` gate regardless of this setting: explicit add/update/dlx
+checks stay live, while large ordinary fresh resolutions use a bloom
+prefilter under the default policy.
 
 The mirror lives at `$XDG_CACHE_HOME/aube/osv/npm/` and lazily
 refreshes from
@@ -455,8 +455,8 @@ between refreshes won't catch an advisory published in the last
 ~day; for live signals on every install, use
 `advisoryCheckEveryInstall = true` instead.
 
-- `off` (default): plain reinstalls skip OSV entirely. Fresh-resolution
-  installs still hit the live API via `advisoryCheck`.
+- `off` (default): skip the local mirror. Fresh resolutions still use
+  `advisoryCheck`; plain reinstalls may use `advisoryBloomCheck`.
 - `on`: plain reinstalls check the resolved graph against the mirror.
   Fail open (continue with `WARN_AUBE_OSV_MIRROR_REFRESH_FAILED`) when
   the mirror can't be refreshed.
