@@ -43,17 +43,22 @@ const TOOLS = (process.env.BENCH_TOOLS || 'aube,pnpm')
 // One `tak run --export-json` file per scenario, with an entry per tool
 // (hyperfine's result shape plus `subject`). A tool that failed is absent
 // from it and reported as n/a.
+//
+// The published value is the median. A few slow samples from a busy
+// runner, or a first sample that pays a one-time cost, would otherwise
+// drag the mean far from a typical install and decide a close comparison.
 function readResult (benchDir, name, tool) {
   try {
     const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
     const r = data.results.find((result) => result.subject === tool)
     if (!r) return missing()
-    if (!Number.isFinite(r.mean)) {
-      throw new Error('missing benchmark mean')
+    if (!Number.isFinite(r.median) || !Number.isFinite(r.mean)) {
+      throw new Error('missing benchmark median or mean')
     }
     const stddev = Number.isFinite(r.stddev) ? r.stddev : 0
     return {
-      text: `${r.mean.toFixed(3)}s ± ${stddev.toFixed(3)}s`,
+      text: `${r.median.toFixed(3)}s (mean ${r.mean.toFixed(3)}s ± ${stddev.toFixed(3)}s)`,
+      median: r.median,
       mean: r.mean,
       stddev,
       min: r.min,
@@ -68,15 +73,15 @@ function readResult (benchDir, name, tool) {
 }
 
 function missing () {
-  return { text: 'n/a', mean: null, stddev: null, min: null, max: null }
+  return { text: 'n/a', median: null, mean: null, stddev: null, min: null, max: null }
 }
 
-function fmtSpeedup (baseMean, aubeMean) {
-  if (baseMean == null || aubeMean == null) return ''
-  if (aubeMean < baseMean) {
-    return ` (${(baseMean / aubeMean).toFixed(1)}x faster)`
-  } else if (aubeMean > baseMean) {
-    return ` (${(aubeMean / baseMean).toFixed(1)}x slower)`
+function fmtSpeedup (base, aube) {
+  if (base == null || aube == null) return ''
+  if (aube < base) {
+    return ` (${(base / aube).toFixed(1)}x faster)`
+  } else if (aube > base) {
+    return ` (${(aube / base).toFixed(1)}x slower)`
   }
   return ''
 }
@@ -144,18 +149,18 @@ benchmarks.filter(([name]) => SELECTED_BENCHMARKS.has(name)).forEach(([name, lab
     cells.push(results[tool].text)
   }
   if (TOOLS.includes('pnpm') && TOOLS.includes('aube')) {
-    cells.push(fmtSpeedup(results.pnpm.mean, results.aube.mean).trim())
+    cells.push(fmtSpeedup(results.pnpm.median, results.aube.median).trim())
   }
   if (TOOLS.includes('bun') && TOOLS.includes('aube')) {
-    cells.push(fmtSpeedup(results.bun.mean, results.aube.mean).trim())
+    cells.push(fmtSpeedup(results.bun.median, results.aube.median).trim())
   }
   lines.push(`| ${cells.join(' | ')} |`)
 
   const values = {}
   const stats = {}
   for (const tool of TOOLS) {
-    values[tool] = results[tool].mean == null ? null : Math.round(results[tool].mean * 1000)
-    stats[tool] = results[tool].mean == null ? null : results[tool]
+    values[tool] = results[tool].median == null ? null : Math.round(results[tool].median * 1000)
+    stats[tool] = results[tool].median == null ? null : results[tool]
   }
 
   json.rows.push({ key: name, label, values, stats })

@@ -17,8 +17,8 @@
 //       {
 //         key: string,                         // stable identifier, matches bench.sh scenario names
 //         label: string,                       // human-readable column label
-//         values: { [manager]: number | null } // mean in `unit`
-//         stats?: { [manager]: { mean, stddev, min, max, text } | null }
+//         values: { [manager]: number | null } // median in `unit`
+//         stats?: { [manager]: { median, mean, stddev, min, max, text } | null }
 //       },
 //       ...
 //     ],
