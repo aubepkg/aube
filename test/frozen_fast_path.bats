@@ -122,3 +122,16 @@ EOF
 	assert_output --partial "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH"
 
 }
+
+@test "explicit frozen install still runs root lifecycle hooks when scripts are enabled" {
+	cat >record-hook.cjs <<'EOF'
+require('fs').appendFileSync('hooks.log', process.env.npm_lifecycle_event + '\n');
+EOF
+	node -e 'const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json")); p.scripts = Object.fromEntries(["preinstall", "install", "postinstall", "prepare"].map(name => [name, "node record-hook.cjs"])); fs.writeFileSync("package.json", JSON.stringify(p));'
+	aube install --no-frozen-lockfile
+	rm hooks.log
+	run aube install --frozen-lockfile --offline
+	assert_success
+	assert_file_exists hooks.log
+	assert_equal "$(cat hooks.log)" "$(printf 'preinstall\ninstall\npostinstall\nprepare')"
+}

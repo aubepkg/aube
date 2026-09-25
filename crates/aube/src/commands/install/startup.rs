@@ -38,11 +38,13 @@ pub(super) fn try_install_fast_path(
     let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
     let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
     // Strict frozen installs can reuse current state when their root lockfile
-    // exists. Workspaces and declared patches retain the full pipeline until
+    // exists and lifecycle scripts are disabled. Workspaces and declared
+    // patches retain the full pipeline until
     // freshness tracks workspace membership and arbitrary patch paths. Keep
     // missing/disabled and relocated lockfiles on the full validation path.
     if opts.strict_no_lockfile
-        && (!aube_settings::resolved::lockfile(&ctx)
+        && ((!opts.ignore_scripts && !aube_settings::resolved::ignore_scripts(&ctx))
+            || !aube_settings::resolved::lockfile(&ctx)
             || aube_settings::resolved::lockfile_dir(&ctx).is_some()
             || aube_lockfile::detect_existing_lockfile_kind(cwd).is_none()
             || aube_workspace::is_workspace_project_root(cwd)
