@@ -54,6 +54,12 @@ pub(super) fn try_install_fast_path(
             .all_dependencies()
             .chain(
                 manifest
+                    .peer_dependencies
+                    .iter()
+                    .map(|(name, spec)| (name.as_str(), spec.as_str())),
+            )
+            .chain(
+                manifest
                     .optional_dependencies
                     .iter()
                     .map(|(name, spec)| (name.as_str(), spec.as_str())),

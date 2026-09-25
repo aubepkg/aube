@@ -156,3 +156,14 @@ EOF
 	run aube install --frozen-lockfile --offline --ignore-scripts
 	assert_failure
 }
+
+@test "explicit frozen install validates a removed local peer tarball" {
+	mkdir -p archive/package
+	echo '{"name":"local-archive","version":"1.0.0"}' >archive/package/package.json
+	tar -czf archive.tgz -C archive package
+	echo '{"name":"tarball-root","peerDependencies":{"local-archive":"file:./archive.tgz"}}' >package.json
+	aube install --no-frozen-lockfile --ignore-scripts
+	rm archive.tgz
+	run aube install --frozen-lockfile --offline --ignore-scripts
+	assert_failure
+}
