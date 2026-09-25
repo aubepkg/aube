@@ -141,7 +141,7 @@ when_to_use_release:
 
 commits:
   format: <type>(<scope>): <description>
-  style: conventional commits — start the description lowercase, use imperative mood, keep it concise, subject typically <=80 chars (p95 in history is 73), usually no body
+  style: conventional commits — start the description lowercase or with an acronym such as `CLI`, use imperative mood, keep it concise, subject typically <=80 chars (p95 in history is 73), usually no body
   why: PR titles drive release-plz version bumps (feat→minor, fix→patch, BREAKING CHANGE/`!` →major, others→no bump). enforced by .github/workflows/semantic-pr-lint.yml on PR title via amannn/action-semantic-pull-request
   types[12]: fix, feat, refactor, chore, docs, style, test, perf, build, ci, revert, security
   scope_optional: true (omit for repo-wide changes like `chore: release v1.2.0`)
