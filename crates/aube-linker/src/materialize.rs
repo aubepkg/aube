@@ -360,7 +360,7 @@ impl Linker {
     }
 
     /// Validate and repair the dependency links inside an existing global
-    /// virtual-store package entry. The package directory itself can be a
+    /// virtual-store package entry, returning the targets they now hold. The package directory itself can be a
     /// valid cache hit while one of its sibling links still targets an old
     /// graph identity.
     pub(crate) fn reconcile_virtual_store_entry(
@@ -368,24 +368,23 @@ impl Linker {
         dep_path: &str,
         pkg: &LockedPackage,
         nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<(String, PathBuf)>, Error> {
         let pkg_nm_parent = self
             .virtual_store
             .join(self.virtual_store_subdir(dep_path))
             .join("node_modules");
-        for (dep_name, target) in
-            self.virtual_store_dep_link_targets(dep_path, pkg, nested_link_targets)?
-        {
-            let symlink_path = pkg_nm_parent.join(&dep_name);
-            if reconcile_dir_link(&symlink_path, &target)? {
+        let targets = self.virtual_store_dep_link_targets(dep_path, pkg, nested_link_targets)?;
+        for (dep_name, target) in &targets {
+            let symlink_path = pkg_nm_parent.join(dep_name);
+            if reconcile_dir_link(&symlink_path, target)? {
                 continue;
             }
             if let Some(parent) = symlink_path.parent() {
                 mkdirp(parent)?;
             }
-            create_dir_link_idempotent(&target, &symlink_path)?;
+            create_dir_link_idempotent(target, &symlink_path)?;
         }
-        Ok(())
+        Ok(targets)
     }
 
     /// The dependency links a global virtual-store entry holds, as

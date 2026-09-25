@@ -332,7 +332,7 @@ impl Linker {
                             if project_local {
                                 return Ok((local_stats, None));
                             }
-                            self.reconcile_virtual_store_entry(
+                            let reconciled = self.reconcile_virtual_store_entry(
                                 dep_path,
                                 pkg,
                                 nested_link_targets.as_ref(),
@@ -340,12 +340,8 @@ impl Linker {
                             let targets = if cfg!(windows) {
                                 None
                             } else {
-                                recordable_dep_link_targets(self.virtual_store_dep_link_targets(
-                                    dep_path,
-                                    pkg,
-                                    nested_link_targets.as_ref(),
-                                )?)
-                                .map(|targets| (key, targets))
+                                recordable_dep_link_targets(reconciled)
+                                    .map(|targets| (key, targets))
                             };
                             return Ok((local_stats, targets));
                         }
@@ -445,7 +441,10 @@ impl Linker {
             // Windows junctions store normalized absolute targets that
             // don't compare equal to the computed ones; read them from disk.
             if cfg!(not(windows)) {
-                stats.gvs_dep_link_targets = Some(dep_link_targets);
+                *self
+                    .gvs_dep_link_targets
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(dep_link_targets);
             }
             tracing::debug!("link:step1 (gvs populate) {:.1?}", step1_timer.elapsed());
         } else {

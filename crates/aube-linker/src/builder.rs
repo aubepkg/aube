@@ -25,6 +25,7 @@ impl Linker {
             use_global_virtual_store,
             project_local_dep_paths: rustc_hash::FxHashSet::default(),
             fresh_virtual_store_entries: rustc_hash::FxHashSet::default(),
+            gvs_dep_link_targets: std::sync::Mutex::new(None),
             strategy,
             patches: Patches::new(),
             hashes: None,
@@ -144,6 +145,19 @@ impl Linker {
     ) -> Self {
         self.project_local_dep_paths = dep_paths.into_iter().collect();
         self
+    }
+
+    /// The dependency links of every global virtual-store entry the last
+    /// [`Linker::link_all`] created or verified, so the install state can
+    /// record them without reading each one back. `None` when nothing was
+    /// recorded (workspace linking, per-project layout, Windows); entries
+    /// with a `link:` transitive are left out. Callers read anything
+    /// missing from disk.
+    pub fn take_gvs_dep_link_targets(&self) -> Option<crate::GvsDepLinkTargets> {
+        self.gvs_dep_link_targets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 
     /// Mark dep paths whose global virtual-store entry this install just

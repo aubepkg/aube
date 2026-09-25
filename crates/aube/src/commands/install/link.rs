@@ -46,6 +46,7 @@ pub(super) struct LinkPhaseOutput {
     pub(super) current_subtree_hashes: Option<BTreeMap<String, String>>,
     pub(super) patch_hashes: BTreeMap<String, String>,
     pub(super) managed_bin_links: ManagedBinLinks,
+    pub(super) gvs_dep_link_targets: Option<aube_linker::GvsDepLinkTargets>,
 }
 
 pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPhaseOutput> {
@@ -319,6 +320,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             .link_all(cwd, graph_for_link, package_indices)
             .map_err(|error| (error, "failed to link node_modules"))
     };
+    let gvs_dep_link_targets = linker.take_gvs_dep_link_targets();
     let stats = match stats {
         Ok(stats) => stats,
         Err((error, context)) => {
@@ -423,5 +425,6 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         current_subtree_hashes,
         patch_hashes,
         managed_bin_links,
+        gvs_dep_link_targets,
     })
 }

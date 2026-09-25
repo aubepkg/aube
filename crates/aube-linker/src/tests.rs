@@ -1695,8 +1695,10 @@ fn test_recorded_gvs_dep_link_targets_match_disk() {
 
     // Once materializing and once reusing the existing entries.
     for _ in 0..2 {
-        let stats = linker.link_all(&project_dir, &graph, &indices).unwrap();
-        let recorded = stats.gvs_dep_link_targets.expect("recorded under GVS");
+        linker.link_all(&project_dir, &graph, &indices).unwrap();
+        let recorded = linker
+            .take_gvs_dep_link_targets()
+            .expect("recorded under GVS");
         assert_eq!(recorded.len(), graph.packages.len());
         let foo = &recorded["foo@1.0.0"];
         assert_eq!(foo.len(), 1);

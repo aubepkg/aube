@@ -105,6 +105,9 @@ pub struct Linker {
     /// graph hashes. Their dependency links were just written from the
     /// graph, so the link phase doesn't read them back to verify.
     fresh_virtual_store_entries: rustc_hash::FxHashSet<String>,
+    /// What the last `link_all` recorded for
+    /// [`Linker::take_gvs_dep_link_targets`].
+    gvs_dep_link_targets: std::sync::Mutex<Option<GvsDepLinkTargets>>,
     strategy: LinkStrategy,
     /// Per-`name@version` patch contents applied at materialize
     /// time. Empty when the project has no `pnpm.patchedDependencies`.
@@ -281,10 +284,8 @@ pub struct LinkStats {
     /// `None` means "isolated layout — use the `.aube/<dep_path>`
     /// convention".
     pub hoisted_placements: Option<HoistedPlacements>,
-    /// The dependency links of every global virtual-store entry the link
-    /// phase created or verified, as `dep_path -> [(dep_name, target)]`,
-    /// so the install state can record them without reading each one back.
-    /// `None` when not collected (workspace linking, per-project layout,
-    /// Windows); callers then read the links from disk.
-    pub gvs_dep_link_targets: Option<BTreeMap<String, Vec<(String, PathBuf)>>>,
 }
+
+/// Dependency links of global virtual-store entries, as
+/// `dep_path -> [(dep_name, target)]`.
+pub type GvsDepLinkTargets = BTreeMap<String, Vec<(String, PathBuf)>>;
