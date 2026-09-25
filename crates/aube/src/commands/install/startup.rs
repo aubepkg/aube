@@ -34,7 +34,20 @@ pub(super) fn try_install_fast_path(
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
 ) -> miette::Result<Option<usize>> {
-    let dangerously_allow_all_builds = resolve_dangerously_allow_all_builds(cwd, opts);
+    let files = super::super::FileSources::load(cwd);
+    let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
+    let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    // Strict frozen installs can reuse current state when their root lockfile
+    // exists. Keep missing/disabled lockfiles and custom lockfile locations on
+    // the full path so its validation and importer guards still run.
+    if opts.strict_no_lockfile
+        && (!aube_settings::resolved::lockfile(&ctx)
+            || aube_settings::resolved::lockfile_dir(&ctx).is_some()
+            || aube_lockfile::detect_existing_lockfile_kind(cwd).is_none())
+    {
+        return Ok(None);
+    }
+    let dangerously_allow_all_builds = aube_settings::resolved::dangerously_allow_all_builds(&ctx);
     if !install_fast_path_eligible(
         cwd,
         opts,
@@ -57,13 +70,6 @@ pub(super) fn try_install_fast_path(
     Ok(Some(total))
 }
 
-fn resolve_dangerously_allow_all_builds(cwd: &Path, opts: &InstallOptions) -> bool {
-    let files = super::super::FileSources::load(cwd);
-    let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
-    let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
-    aube_settings::resolved::dangerously_allow_all_builds(&ctx)
-}
-
 fn install_fast_path_eligible(
     cwd: &Path,
     opts: &InstallOptions,
@@ -76,7 +82,6 @@ fn install_fast_path_eligible(
         && !opts.lockfile_only
         && !opts.dep_selection.is_filtered()
         && !opts.merge_git_branch_lockfiles
-        && !opts.strict_no_lockfile
         && !dangerously_allow_all_builds
         && opts.workspace_filter.is_empty()
         && modules_cache_sweep_default;
