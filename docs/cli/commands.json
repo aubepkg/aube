@@ -2140,7 +2140,7 @@
             "hide": false,
             "args_override_self": true,
             "help": "List configured registries from the project + user `.npmrc`.",
-            "help_long": "List configured registries from the project + user `.npmrc`.\n\naube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.",
+            "help_long": "List configured registries from the project + user `.npmrc`.\n\nPrints the registries currently configured for this project, rather than the registry partitions present in the cache.",
             "name": "list-registries",
             "aliases": [],
             "hidden_aliases": [],

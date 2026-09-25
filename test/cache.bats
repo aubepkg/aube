@@ -177,3 +177,53 @@ EOF
 	assert_success
 	assert_output --partial "default:"
 }
+
+@test "cache list and delete cover registry partitions and exact versions" {
+	cache_root="$HOME/.cache/aube"
+	for subdir in packuments-v1/origin-one packuments-full-v1/origin-two; do
+		mkdir -p "$cache_root/$subdir"
+		echo '{}' >"$cache_root/$subdir/@scope__pkg.json"
+		echo '{}' >"$cache_root/$subdir/keep.json"
+	done
+	exact="$cache_root/packuments-full-v1/exact-v1/origin-two/@scope__pkg"
+	mkdir -p "$exact"
+	echo '{"exact":{"metadata":{"version":"1.0.0"}}}' >"$exact/one.json"
+	echo '{"exact":{"metadata":{"version":"2.0.0"}}}' >"$exact/two.json"
+	run aube cache list
+	assert_success
+	assert_output $'@scope/pkg\nkeep'
+	run aube cache view @scope/pkg
+	assert_success
+	assert_output --partial 'version:       1.0.0'
+	assert_output --partial 'version:       2.0.0'
+	run aube cache delete '@scope/*'
+	assert_success
+	[ ! -e "$exact/one.json" ]
+	[ ! -e "$exact/two.json" ]
+	[ ! -e "$cache_root/packuments-v1/origin-one/@scope__pkg.json" ]
+	[ ! -e "$cache_root/packuments-full-v1/origin-two/@scope__pkg.json" ]
+	run aube cache list
+	assert_success
+	assert_output 'keep'
+	run aube cache delete '*'
+	assert_success
+	run aube cache list
+	assert_success
+	assert_output ''
+}
+
+@test "cache deletion does not follow symlinks or traverse unrelated directories" {
+	cache="$(_cache_dir)"
+	mkdir -p "$cache/origin-one" "$cache/unrelated" "$TEST_TEMP_DIR/external"
+	echo '{}' >"$TEST_TEMP_DIR/external/keep.json"
+	ln -s "$TEST_TEMP_DIR/external" "$cache/origin-linked"
+	ln -s "$TEST_TEMP_DIR/external/keep.json" "$cache/origin-one/linked.json"
+	echo '{}' >"$cache/unrelated/keep.json"
+	echo '{}' >"$cache/origin-one/delete.json"
+	run aube cache delete '*'
+	assert_success
+	[ ! -e "$cache/origin-one/delete.json" ]
+	[ -f "$TEST_TEMP_DIR/external/keep.json" ]
+	[ -L "$cache/origin-one/linked.json" ]
+	[ -f "$cache/unrelated/keep.json" ]
+}

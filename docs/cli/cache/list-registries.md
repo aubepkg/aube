@@ -11,7 +11,7 @@ editLink: false
 
 List configured registries from the project + user `.npmrc`.
 
-aube stores all packuments in a single flat directory (unlike pnpm's per-host layout), so this prints the registries you're currently configured to talk to rather than the registries that happen to be in the cache.
+Prints the registries currently configured for this project, rather than the registry partitions present in the cache.
 
 <!-- docs-navigation:start -->
 
