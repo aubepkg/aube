@@ -1,6 +1,7 @@
 use tracing::{debug, trace, warn};
 
 use crate::patches::apply_multi_file_patch;
+use crate::pool::with_link_pool;
 use crate::sweep::{
     EntryState, classify_entry_state, create_dir_link_idempotent, mkdirp, reconcile_dir_link,
     try_remove_entry,
@@ -684,7 +685,7 @@ impl Linker {
         // `link_file` does defensively. Pass `fresh = true` to suppress
         // the unlink syscall on every file. For a 1.4k-package install
         // that's ~45k wasted `unlink` calls on the hot path.
-        for (rel_path, stored) in index {
+        let link_one = |(rel_path, stored): (&String, &StoredFile)| -> Result<(), Error> {
             // Key already validated in the parent-collection loop
             // above. The index is immutable between the two loops.
             let target = pkg_nm_dir.join(rel_path);
@@ -696,7 +697,6 @@ impl Linker {
                 }
                 return Err(e);
             }
-            stats.files_linked += 1;
 
             if stored.executable {
                 // `create_cas_file` writes every CAS entry as 0o644
@@ -711,7 +711,23 @@ impl Linker {
                 #[cfg(unix)]
                 xx::file::make_executable(&target).map_err(|e| Error::Xx(e.to_string()))?;
             }
+            Ok(())
+        };
+        // A package is materialized as one task, so a large one that
+        // finishes downloading last links its files alone after every
+        // other package is done: date-fns (4.8k files) held a cold install
+        // open for ~110 ms after its import. Spread large packages across
+        // the linker pool; below the threshold the handoff isn't worth it.
+        const PARALLEL_LINK_MIN_FILES: usize = 256;
+        if index.len() >= PARALLEL_LINK_MIN_FILES {
+            use rayon::prelude::*;
+            with_link_pool(self.link_parallelism(), || {
+                index.par_iter().try_for_each(link_one)
+            })?;
+        } else {
+            index.iter().try_for_each(link_one)?;
         }
+        stats.files_linked += index.len();
 
         // Apply any user-supplied patch for this `(name, version)`.
         // Patches are applied *after* the files have been linked into
