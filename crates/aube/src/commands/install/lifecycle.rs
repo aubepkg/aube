@@ -922,10 +922,56 @@ pub(super) fn import_verified_tarball_streamed(
     )
 }
 
+/// Upper bound on tarball body bytes buffered, across every in-flight
+/// download, before their imports start. Without it, the fetch limiter's
+/// 256 concurrent downloads could each hold up to the 1 MiB streaming
+/// threshold.
+const BUFFERED_BODY_BUDGET: u64 = 64 << 20;
+static BUFFERED_BODY_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One download's share of [`BUFFERED_BODY_BUDGET`], returned on `release`
+/// or when the download ends for any reason.
+#[derive(Default)]
+struct BufferedBodyBytes(u64);
+
+impl BufferedBodyBytes {
+    /// Reserve `len` more bytes, or return `false` without reserving when
+    /// that would exceed the budget.
+    fn try_add(&mut self, len: u64) -> bool {
+        use std::sync::atomic::Ordering;
+        let reserved = BUFFERED_BODY_BYTES
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                held.checked_add(len)
+                    .filter(|&next| next <= BUFFERED_BODY_BUDGET)
+            })
+            .is_ok();
+        if reserved {
+            self.0 += len;
+        }
+        reserved
+    }
+
+    fn release(&mut self) {
+        BUFFERED_BODY_BYTES.fetch_sub(
+            std::mem::take(&mut self.0),
+            std::sync::atomic::Ordering::AcqRel,
+        );
+    }
+}
+
+impl Drop for BufferedBodyBytes {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 /// Fetch + import in one streaming pass. HTTP body chunks pipe through
 /// SHA-512 hasher + a bounded channel into a blocking task that runs
-/// gz+tar+CAS as bytes arrive. RSS bound is current tar entry size,
-/// not full tarball. SHA-512 verifies AFTER import: CAS files use
+/// gz+tar+CAS as bytes arrive. Bodies under 1 MiB are buffered whole
+/// before the import starts, within `BUFFERED_BODY_BUDGET` across all
+/// downloads; past that, RSS is bounded by the buffered prefix plus the
+/// current tar entry, not the full tarball. SHA-512
+/// verifies AFTER import: CAS files use
 /// content-addressed BLAKE3 paths so a verify mismatch leaves orphan
 /// shards but no package_index referencing them.
 ///
@@ -1019,9 +1065,12 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     // import held its thread for the whole download, mostly idle on the
     // network, and materialization fell behind until downloads ended. So
     // the body is buffered here until it ends or passes this size; most
-    // tarballs are tens of KB, and only large ones still stream.
+    // tarballs are tens of KB, and only large ones still stream. A download
+    // that would take the process-wide buffered total past its budget starts
+    // streaming at once instead.
     const STREAM_AFTER_BYTES: u64 = 1 << 20;
     let mut buffered: Vec<bytes::Bytes> = Vec::new();
+    let mut reservation = BufferedBodyBytes::default();
     let mut import_handle: Option<
         tokio::task::JoinHandle<miette::Result<aube_store::PackageIndex>>,
     > = None;
@@ -1056,8 +1105,10 @@ pub(super) async fn fetch_and_import_tarball_streaming(
                 total += chunk.len() as u64;
                 hasher.update(&chunk);
                 if import_handle.is_none() {
+                    let fits = reservation.try_add(chunk.len() as u64);
                     buffered.push(chunk);
-                    if total >= STREAM_AFTER_BYTES {
+                    if !fits || total >= STREAM_AFTER_BYTES {
+                        reservation.release();
                         import_handle = start_import
                             .take()
                             .map(|start| start(std::mem::take(&mut buffered)));
@@ -1092,6 +1143,7 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     {
         import_handle = Some(start(buffered));
     }
+    reservation.release();
     let import_result = match import_handle {
         Some(handle) => Some(handle.await.into_diagnostic().map_err(local)?),
         None => None,
@@ -1315,6 +1367,21 @@ pub(super) fn unreviewed_dep_builds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_body_budget_refuses_past_the_cap_and_frees_on_drop() {
+        let mut first = BufferedBodyBytes::default();
+        assert!(first.try_add(BUFFERED_BODY_BUDGET));
+        let mut second = BufferedBodyBytes::default();
+        assert!(!second.try_add(1), "budget is full");
+        drop(first);
+        assert!(
+            second.try_add(1),
+            "dropping a reservation returns its bytes"
+        );
+        second.release();
+        assert!(second.try_add(BUFFERED_BODY_BUDGET));
+    }
 
     #[tokio::test]
     async fn global_virtual_store_lifecycle_uses_physical_package_dir() {

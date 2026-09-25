@@ -56,3 +56,48 @@ impl std::io::Read for ChunkReader {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ChunkReader;
+    use std::io::Read;
+
+    fn chunk(text: &str) -> bytes::Bytes {
+        bytes::Bytes::copy_from_slice(text.as_bytes())
+    }
+
+    #[test]
+    fn reads_buffered_chunks_then_the_channel() {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tx.try_send(Ok(chunk("three"))).unwrap();
+        drop(tx);
+        let mut reader = ChunkReader::with_buffered(vec![chunk("one "), chunk("two ")], rx);
+        let mut out = String::new();
+        reader.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "one two three");
+    }
+
+    #[test]
+    fn surfaces_a_channel_error_after_the_buffered_prefix() {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tx.try_send(Err(std::io::Error::other("stream reset")))
+            .unwrap();
+        drop(tx);
+        let mut reader = ChunkReader::with_buffered(vec![chunk("prefix")], rx);
+        let mut out = [0u8; 6];
+        reader.read_exact(&mut out).unwrap();
+        assert_eq!(&out, b"prefix");
+        let err = reader.read(&mut [0u8; 8]).unwrap_err();
+        assert_eq!(err.to_string(), "stream reset");
+    }
+
+    #[test]
+    fn buffered_only_body_ends_when_the_channel_closes() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(tx);
+        let mut reader = ChunkReader::with_buffered(vec![chunk("whole body")], rx);
+        let mut out = String::new();
+        reader.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "whole body");
+    }
+}
