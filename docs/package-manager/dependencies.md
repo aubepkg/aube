@@ -73,6 +73,24 @@ aube update --latest react
 `--latest` updates past the current manifest range and rewrites the manifest
 specifier to the resolved version.
 
+`aube update --interactive` (`-i`) lists every dependency with a newer version
+and lets you choose, per package, between staying put, the newest version its
+range allows, and the registry's `latest`:
+
+```
+Choose which dependencies to update
+              Current     Range      Latest
+ > chalk      [•] ^4.1.2             [ ] ^6.0.0
+   is-number  [•] ^6.0.0             [ ] ^7.0.0
+   ms         [ ] 2.0.0   [•] 2.1.3
+   semver     [ ] 7.5.0   [•] 7.8.5
+↑/↓/k/j up/down • ←/→/h/l choose • / filter • enter confirm
+```
+
+The manifest keeps each specifier's shape: `^4.1.2` becomes `^6.0.0`, and an
+exact pin such as `7.5.0` is offered the newest release its caret range allows,
+then stays an exact pin (`7.8.5`).
+
 ## Dedupe
 
 ```sh

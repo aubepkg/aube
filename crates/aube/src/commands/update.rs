@@ -11,10 +11,23 @@ struct CatalogUpdateTarget {
     source: super::CatalogSource,
 }
 
-type RecursiveCatalogChoices = BTreeMap<(String, String), bool>;
+/// What `update --interactive` bumps a dependency to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateChoice {
+    /// The newest version the manifest range allows. An exact pin is
+    /// treated as its caret range and stays an exact pin after the bump.
+    Range,
+    /// The registry's `latest` dist-tag, past the manifest range.
+    Latest,
+}
+
+/// Per catalog entry, the choice made the first time a recursive update
+/// showed it (`None` when it was left alone), so later workspace packages
+/// don't prompt for it again.
+type RecursiveCatalogChoices = BTreeMap<(String, String), Option<UpdateChoice>>;
 
 struct InteractiveSelection {
-    selected: BTreeSet<String>,
+    selected: BTreeMap<String, UpdateChoice>,
     shown: BTreeSet<String>,
 }
 
@@ -39,9 +52,15 @@ pub struct UpdateArgs {
     /// Parsed for pnpm compatibility.
     #[usage(short = 'g', long)]
     pub global: bool,
-    /// Interactive update picker.
+    /// Pick which dependencies to update, and how far.
     ///
-    /// Parsed for pnpm compatibility.
+    /// Lists every dependency with a newer version as a row showing its
+    /// current version, the newest version its range allows, and the
+    /// registry's `latest`. Use ↑/↓ to move between rows and ←/→ to
+    /// choose a version; leaving a row on its current version skips it.
+    /// An exact pin is offered the newest version its caret range would
+    /// allow and stays an exact pin after the bump. With `--latest`,
+    /// rows start on the latest version.
     #[usage(short = 'i', long)]
     pub interactive: bool,
     /// Update past the manifest range unless paired with `--no-save`.
@@ -186,11 +205,6 @@ async fn run_inner(
     let packages = &parsed_packages[..];
     let latest = args.latest;
     let no_save = args.no_save;
-    // `--latest` flag triggers manifest rewrites for every direct dep;
-    // `<pkg>@latest` triggers it only for that one entry. Combine them
-    // into a per-key predicate so the same code path serves both.
-    let effective_latest = latest || !explicit_latest_keys.is_empty();
-    let should_rewrite_key = |key: &str| -> bool { latest || explicit_latest_keys.contains(key) };
     let mut cwd = crate::dirs::project_root()?;
     // `-w/--workspace-root`: act on the workspace root manifest
     // regardless of which sub-package the user ran from. Mirrors
@@ -223,13 +237,6 @@ async fn run_inner(
         ignored: ignored_updates,
         rewrites_specifier: rewrites_specifier_setting,
     } = resolve_update_settings(&cwd, &manifest)?;
-    // Cosmetic floor-bump: outside `--latest` and `--no-save`, with
-    // `updateRewritesSpecifier=true` (default), `aube update <pkg>` also
-    // tracks the resolved in-range version in `package.json`. Limited to
-    // `^X.Y.Z` / `~X.Y.Z` specs at the rewrite site below; other shapes
-    // (`>=`, `1.x`, exact, dist-tags, git, workspace:) are preserved.
-    let cosmetic_rewrite_eligible = !effective_latest && rewrites_specifier_setting && !no_save;
-
     // Read the lockfile from the project, or fall back to the shared
     // workspace-root one when the project doesn't have its own (the
     // common shape after a fresh `aube install` from the workspace
@@ -479,6 +486,16 @@ async fn run_inner(
         BTreeSet::new()
     };
 
+    // Direct deps bumped past their manifest range to `latest`: every
+    // one under `--latest`, only the named ones for `<pkg>@latest`, or
+    // whatever the interactive picker chose.
+    let mut latest_keys: BTreeSet<String> = if latest {
+        manifest_keys_to_update.iter().cloned().collect()
+    } else {
+        explicit_latest_keys.clone()
+    };
+    // Exact pins the interactive picker bumped within their caret range.
+    let mut pinned_range_keys: BTreeSet<String> = BTreeSet::new();
     if args.interactive && !manifest_keys_to_update.is_empty() {
         let mut picker_keys = manifest_keys_to_update.clone();
         let previously_selected = recursive_catalog_choices
@@ -489,19 +506,20 @@ async fn run_inner(
             .unwrap_or_default();
         let selection = if picker_keys.is_empty() {
             InteractiveSelection {
-                selected: BTreeSet::new(),
+                selected: BTreeMap::new(),
                 shown: BTreeSet::new(),
             }
         } else {
             match pick_update_interactively(
                 &picker_keys,
-                &manifest,
                 &all_specifiers,
                 existing.as_ref(),
                 &existing_importers,
                 &preserve_pin,
                 &cwd,
                 latest,
+                no_save,
+                args.exact,
             )
             .await?
             {
@@ -518,7 +536,7 @@ async fn run_inner(
                 &selection.selected,
             );
         }
-        let selected: BTreeSet<String> = selection
+        let selected: BTreeMap<String, UpdateChoice> = selection
             .selected
             .into_iter()
             .chain(previously_selected)
@@ -527,8 +545,36 @@ async fn run_inner(
             eprintln!("No packages selected.");
             return Ok(None);
         }
-        manifest_keys_to_update.retain(|key| selected.contains(key));
+        manifest_keys_to_update.retain(|key| selected.contains_key(key));
+        latest_keys.clear();
+        for (key, choice) in selected {
+            match choice {
+                UpdateChoice::Latest => {
+                    latest_keys.insert(key);
+                }
+                UpdateChoice::Range => {
+                    let spec = all_specifiers.get(&key).map(String::as_str).unwrap_or("");
+                    if exact_pin_version(spec).is_some() {
+                        pinned_range_keys.insert(key);
+                    }
+                }
+            }
+        }
     }
+    // `--latest` flag triggers manifest rewrites for every direct dep;
+    // `<pkg>@latest` triggers it only for that one entry. Combine them
+    // into a per-key predicate so the same code path serves both.
+    let effective_latest = latest || !latest_keys.is_empty();
+    let should_rewrite_key = |key: &str| -> bool { latest_keys.contains(key) };
+    // Cosmetic floor-bump: outside `--latest` and `--no-save`, with
+    // `updateRewritesSpecifier=true` (default), `aube update <pkg>` also
+    // tracks the resolved in-range version in `package.json`. Limited to
+    // `^X.Y.Z` / `~X.Y.Z` specs at the rewrite site below; other shapes
+    // (`>=`, `1.x`, exact, dist-tags, git, workspace:) are preserved.
+    // The interactive picker chooses per dependency, so its in-range
+    // picks get the floor-bump even when others go to `latest`.
+    let cosmetic_rewrite_eligible =
+        (args.interactive || !effective_latest) && rewrites_specifier_setting && !no_save;
 
     let real_names_to_update: std::collections::HashSet<String> = manifest_keys_to_update
         .iter()
@@ -583,17 +629,22 @@ async fn run_inner(
     // pin alone. Both `--latest` (every direct dep) and `<pkg>@latest`
     // (only the named entries — see `should_rewrite_key`) flow
     // through this loop.
-    let resolver_manifest = if effective_latest && !no_save {
+    //
+    // Exact pins the picker bumped within range resolve against their
+    // caret range instead, since the pin itself only ever matches the
+    // version it names.
+    let resolver_manifest = if (effective_latest || !pinned_range_keys.is_empty()) && !no_save {
         let mut m = manifest.clone();
         for key in &manifest_keys_to_update {
-            if !should_rewrite_key(key) {
+            let pinned_range = pinned_range_keys.contains(key);
+            if !should_rewrite_key(key) && !pinned_range {
                 continue;
             }
             let real_name = resolve_real_name(key);
             let original = all_specifiers.get(key).map(String::as_str).unwrap_or("");
             if aube_util::pkg::is_workspace_spec(original)
                 || aube_util::pkg::is_catalog_spec(original)
-                || preserve_pin.contains(key)
+                || (preserve_pin.contains(key) && !pinned_range)
             {
                 continue;
             }
@@ -604,10 +655,14 @@ async fn run_inner(
                 // the package.json rewrite loop below.
                 continue;
             }
+            let range = match exact_pin_version(original) {
+                Some(pin) if pinned_range => format!("^{pin}"),
+                _ => "latest".to_string(),
+            };
             let new_spec = if original.starts_with("npm:") {
-                format!("npm:{real_name}@latest")
+                format!("npm:{real_name}@{range}")
             } else {
-                "latest".to_string()
+                range
             };
             if m.dependencies.contains_key(key) {
                 m.dependencies.insert(key.clone(), new_spec);
@@ -833,10 +888,11 @@ async fn run_inner(
     // contradict the unchanged `package.json` specifier.
     if no_save && (effective_latest || rewrites_specifier_setting) {
         eprintln!("Skipping package.json update (--no-save)");
-    } else if effective_latest || cosmetic_rewrite_eligible {
+    } else if effective_latest || cosmetic_rewrite_eligible || !pinned_range_keys.is_empty() {
         let mut wrote_any = false;
         for key in &manifest_keys_to_update {
-            if effective_latest && !should_rewrite_key(key) {
+            let past_range = should_rewrite_key(key) || pinned_range_keys.contains(key);
+            if !past_range && !cosmetic_rewrite_eligible {
                 continue;
             }
             let real_name = resolve_real_name(key);
@@ -861,7 +917,7 @@ async fn run_inner(
             // `range_prefix` defaults to `"^"` for unknown shapes so it
             // can't be the discriminator here. Caret/tilde under an
             // `npm:` alias lives on the post-`@` portion.
-            if !effective_latest {
+            if !past_range {
                 let range_slice = original
                     .strip_prefix("npm:")
                     .and_then(|rest| rest.rsplit_once('@').map(|(_, r)| r))
@@ -1075,21 +1131,23 @@ fn workspace_package_versions(cwd: &std::path::Path) -> miette::Result<HashMap<S
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Interactively pick which dependencies to update. The successful result
-/// carries both the selected keys and the keys actually shown to the user;
+/// Interactively pick which dependencies to update, and for each whether
+/// to stay within its manifest range or jump to `latest`. The successful
+/// result carries both the choices and the keys actually shown to the user;
 /// recursive mode uses the latter to distinguish a rejection from an entry
 /// hidden because it had no drift or its packument could not be fetched.
 /// `Ok(None)` means the user cancelled the picker (Ctrl-C / Esc), which the
 /// caller maps to exit code 130.
 async fn pick_update_interactively(
     keys: &[String],
-    manifest: &aube_manifest::PackageJson,
     specifiers: &BTreeMap<String, String>,
     existing: Option<&aube_lockfile::LockfileGraph>,
     existing_importers: &[&str],
     preserve_pin: &BTreeSet<String>,
     cwd: &std::path::Path,
     latest: bool,
+    no_save: bool,
+    exact: bool,
 ) -> miette::Result<Option<InteractiveSelection>> {
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err(miette!(
@@ -1100,18 +1158,19 @@ async fn pick_update_interactively(
 
     // Discussion #602: filter the picker to deps that have actual
     // drift, drop sibling-workspace and local-link entries (no
-    // registry version to bump them to), and show `current → target`
-    // so the user can tell at a glance what each toggle would change.
+    // registry version to bump them to), and show the current,
+    // in-range and latest versions side by side so the user can tell
+    // at a glance what each choice would change.
     // Workspace-protocol specs land in the manifest as `workspace:*`
     // / `workspace:^` / `workspace:~`, and `link:` / `file:` deps
     // carry a path; none of them are registry-resolvable. The
     // pre-fetch is the same packument round-trip `aube outdated`
     // makes, just gated on the `-i` path.
     //
-    // Discussion #623: also drop `preserve_pin` entries — direct deps
-    // whose locked version sits above the registry's `latest` dist-tag.
-    // The post-picker rewrite path skips these so showing them as
-    // toggleable in the picker would be a lie.
+    // Discussion #623: `preserve_pin` entries — direct deps whose locked
+    // version sits above the registry's `latest` dist-tag — get no
+    // `latest` choice. The post-picker rewrite path skips them, so
+    // offering one would be a lie.
     let registry_keys: Vec<&String> = keys
         .iter()
         .filter(|key| {
@@ -1119,12 +1178,11 @@ async fn pick_update_interactively(
             !aube_util::pkg::is_workspace_spec(spec)
                 && !spec.starts_with("link:")
                 && !spec.starts_with("file:")
-                && !preserve_pin.contains(key.as_str())
         })
         .collect();
     if registry_keys.is_empty() {
         return Ok(Some(InteractiveSelection {
-            selected: BTreeSet::new(),
+            selected: BTreeMap::new(),
             shown: BTreeSet::new(),
         }));
     }
@@ -1175,8 +1233,8 @@ async fn pick_update_interactively(
         }
     }
 
-    let mut picker = demand::MultiSelect::new("Choose which dependencies to update")
-        .description("Space to toggle, Enter to confirm")
+    let mut picker = demand::GridSelect::new("Choose which dependencies to update")
+        .columns(["Current", "Range", "Latest"])
         .filterable(true);
     let mut shown = BTreeSet::new();
     let mut blocked_updates = BTreeMap::new();
@@ -1189,61 +1247,104 @@ async fn pick_update_interactively(
         let Some(packument) = packuments.get(key.as_str()) else {
             continue;
         };
-        let current = existing
+        let Some(current) = existing
             .and_then(|g| lookup_pkg(g, existing_importers, key, &real_name))
-            .map(|p| p.version.as_str());
-        let wanted_info = super::policy_version_info(
-            packument,
-            &real_name,
-            spec,
-            minimum_release_age.as_ref(),
-            current,
-        );
-        // `--latest` rewrites past the manifest range, so the picker
-        // shows the newest policy-eligible release. Without `--latest`
-        // we only refresh inside the range, so target = wanted.
-        let target_info = if latest {
+            .map(|p| p.version.as_str())
+        else {
+            continue;
+        };
+        // An exact pin only matches itself, so its "range" is the caret
+        // range the pin would have: newer compatible releases are still
+        // worth offering. Bumping a pin rewrites the manifest, which
+        // `--no-save` rules out.
+        let pin = exact_pin_version(spec);
+        let range_spec = match pin {
+            Some(_) if no_save => None,
+            Some(pin) => Some(format!("^{pin}")),
+            None => Some(spec.to_string()),
+        };
+        let range_info = range_spec.map(|range| {
+            super::policy_version_info(
+                packument,
+                &real_name,
+                &range,
+                minimum_release_age.as_ref(),
+                Some(current),
+            )
+        });
+        // `--no-save` keeps the manifest range, so nothing past it can
+        // be offered.
+        let latest_info = (!no_save && !preserve_pin.contains(key.as_str())).then(|| {
             super::policy_version_info(
                 packument,
                 &real_name,
                 "latest",
                 minimum_release_age.as_ref(),
-                current,
+                Some(current),
             )
+        });
+        let range_target = range_info
+            .as_ref()
+            .and_then(|info| info.selected.clone())
+            .filter(|v| v != current);
+        let latest_target = latest_info
+            .as_ref()
+            .and_then(|info| info.selected.clone())
+            .filter(|v| v != current && Some(v) != range_target.as_ref());
+        let blocked = if latest {
+            latest_info.and_then(|info| info.blocked)
         } else {
-            wanted_info.clone()
+            range_info.and_then(|info| info.blocked)
         };
-        if let Some(blocked) = target_info.blocked {
+        if let Some(blocked) = blocked {
             blocked_updates.insert((*key).clone(), blocked);
         }
-        let target = target_info
-            .selected
-            .or(wanted_info.selected)
-            .or_else(|| current.map(str::to_owned));
-        let (Some(current), Some(target)) = (current, target.as_deref()) else {
-            continue;
-        };
-        if current == target {
+        if range_target.is_none() && latest_target.is_none() {
             continue;
         }
-        let label = format!("{} {key} {current} → {target}", dep_bucket(manifest, key),);
-        let label = aube_util::terminal::sanitize_inline(&label);
-        picker = picker.option(
-            demand::DemandOption::new((*key).clone())
-                .label(label.as_ref())
-                .selected(true),
-        );
+
+        // Show versions the way the manifest will record them: keep the
+        // range operator, or none for an exact pin.
+        let prefix = if exact {
+            ""
+        } else {
+            range_prefix(spec.strip_prefix("npm:").map_or(spec, |rest| {
+                rest.rsplit_once('@').map_or("", |(_, range)| range)
+            }))
+        };
+        let cell = |version: &str| {
+            aube_util::terminal::sanitize_inline(&format!("{prefix}{version}")).into_owned()
+        };
+        let mut row = demand::GridRow::new((*key).clone())
+            .label(&aube_util::terminal::sanitize_inline(key))
+            .cell(cell(current));
+        row = match &range_target {
+            Some(v) => row.cell(cell(v)),
+            None => row.empty_cell(),
+        };
+        row = match &latest_target {
+            Some(v) => row.cell(cell(v)),
+            None => row.empty_cell(),
+        };
+        // Preselect what the flags would have done without `-i`, so
+        // Enter alone matches the non-interactive update.
+        let default = match (latest, &range_target, &latest_target) {
+            (true, _, Some(_)) => 2,
+            (_, Some(_), _) => 1,
+            _ => 0,
+        };
+        picker = picker.row(row.selected(default));
         shown.insert((*key).clone());
     }
     super::warn_age_gated_updates(&blocked_updates);
     if shown.is_empty() {
         return Ok(Some(InteractiveSelection {
-            selected: BTreeSet::new(),
+            selected: BTreeMap::new(),
             shown,
         }));
     }
 
-    let picked: Vec<String> = match picker.run() {
+    let picked = match picker.run() {
         Ok(picked) => picked,
         // Cancelled (Ctrl-C / Esc): signal to the caller, which returns exit
         // code 130 via the return path rather than hard-exiting in place,
@@ -1255,20 +1356,15 @@ async fn pick_update_interactively(
                 .wrap_err("failed to read update selection");
         }
     };
-    Ok(Some(InteractiveSelection {
-        selected: picked.into_iter().collect(),
-        shown,
-    }))
-}
-
-fn dep_bucket(manifest: &aube_manifest::PackageJson, key: &str) -> &'static str {
-    if manifest.dependencies.contains_key(key) {
-        "dependencies"
-    } else if manifest.dev_dependencies.contains_key(key) {
-        "devDependencies"
-    } else {
-        "optionalDependencies"
-    }
+    let selected = picked
+        .into_iter()
+        .filter_map(|(key, column)| match column {
+            1 => Some((key, UpdateChoice::Range)),
+            2 => Some((key, UpdateChoice::Latest)),
+            _ => None,
+        })
+        .collect();
+    Ok(Some(InteractiveSelection { selected, shown }))
 }
 
 fn real_name_from_spec(manifest_key: &str, specifier: Option<&String>) -> String {
@@ -1646,19 +1742,19 @@ fn apply_previous_catalog_choices(
     picker_keys: &mut Vec<String>,
     specifiers: &BTreeMap<String, String>,
     choices: &RecursiveCatalogChoices,
-) -> BTreeSet<String> {
-    let mut selected = BTreeSet::new();
+) -> BTreeMap<String, UpdateChoice> {
+    let mut selected = BTreeMap::new();
     picker_keys.retain(|key| {
         let original = specifiers.get(key).map(String::as_str).unwrap_or("");
         let Some(catalog) = catalog_name_from_spec(original) else {
             return true;
         };
         match choices.get(&(catalog.to_string(), key.clone())) {
-            Some(true) => {
-                selected.insert(key.clone());
+            Some(Some(choice)) => {
+                selected.insert(key.clone(), *choice);
                 false
             }
-            Some(false) => false,
+            Some(None) => false,
             None => true,
         }
     });
@@ -1669,14 +1765,17 @@ fn record_recursive_catalog_choices(
     choices: &mut RecursiveCatalogChoices,
     specifiers: &BTreeMap<String, String>,
     shown: &BTreeSet<String>,
-    selected: &BTreeSet<String>,
+    selected: &BTreeMap<String, UpdateChoice>,
 ) {
     for key in shown {
         let original = specifiers.get(key).map(String::as_str).unwrap_or("");
         let Some(catalog) = catalog_name_from_spec(original) else {
             continue;
         };
-        choices.insert((catalog.to_string(), key.clone()), selected.contains(key));
+        choices.insert(
+            (catalog.to_string(), key.clone()),
+            selected.get(key).copied(),
+        );
     }
 }
 
@@ -2086,12 +2185,15 @@ mod tests {
         ]);
         let choices = RecursiveCatalogChoices::from([(
             ("default".to_string(), "lighthouse".to_string()),
-            true,
+            Some(UpdateChoice::Latest),
         )]);
 
         let selected = apply_previous_catalog_choices(&mut picker_keys, &specifiers, &choices);
 
-        assert_eq!(selected, BTreeSet::from(["lighthouse".to_string()]));
+        assert_eq!(
+            selected,
+            BTreeMap::from([("lighthouse".to_string(), UpdateChoice::Latest)])
+        );
         assert_eq!(picker_keys, vec!["local-only"]);
     }
 
@@ -2101,7 +2203,7 @@ mod tests {
         let specifiers = BTreeMap::from([("lighthouse".to_string(), "catalog:".to_string())]);
         let choices = RecursiveCatalogChoices::from([(
             ("default".to_string(), "lighthouse".to_string()),
-            false,
+            None,
         )]);
 
         let selected = apply_previous_catalog_choices(&mut picker_keys, &specifiers, &choices);
@@ -2117,14 +2219,14 @@ mod tests {
             ("hidden".to_string(), "catalog:".to_string()),
         ]);
         let shown = BTreeSet::from(["shown".to_string()]);
-        let selected = BTreeSet::new();
+        let selected = BTreeMap::new();
         let mut choices = RecursiveCatalogChoices::new();
 
         record_recursive_catalog_choices(&mut choices, &specifiers, &shown, &selected);
 
         assert_eq!(
             choices.get(&("default".to_string(), "shown".to_string())),
-            Some(&false)
+            Some(&None)
         );
         assert!(!choices.contains_key(&("default".to_string(), "hidden".to_string())));
     }

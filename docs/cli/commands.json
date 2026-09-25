@@ -15518,9 +15518,9 @@
           {
             "name": "interactive",
             "usage": "-i --interactive",
-            "help": "Interactive update picker.",
-            "help_long": "Interactive update picker.\n\nParsed for pnpm compatibility.",
-            "help_first_line": "Interactive update picker.",
+            "help": "Pick which dependencies to update, and how far.",
+            "help_long": "Pick which dependencies to update, and how far.\n\nLists every dependency with a newer version as a row showing its current version, the newest version its range allows, and the registry's `latest`. Use ↑/↓ to move between rows and ←/→ to choose a version; leaving a row on its current version skips it. An exact pin is offered the newest version its caret range would allow and stays an exact pin after the bump. With `--latest`, rows start on the latest version.",
+            "help_first_line": "Pick which dependencies to update, and how far.",
             "short": [
               "i"
             ],
