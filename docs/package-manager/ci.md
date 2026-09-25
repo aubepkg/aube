@@ -73,6 +73,44 @@ without downloading or linking anything. Don't pair the cache with `aube ci`:
 it deletes `node_modules` before installing, so the restored cache is thrown
 away.
 
+The [aube setup action](https://github.com/jdx/aube-action) does this with
+`cache: true`:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: jdx/aube-action@v1
+    with:
+      node-version: "24"
+      run-install: true
+      cache: true
+  - run: aube run --no-install test
+```
+
+With `cache: true`, `run-install` installs with
+`aube install --frozen-lockfile` instead of `aube ci` and saves `node_modules`
+right after an install that missed the cache. The key covers the runner OS and
+architecture, the Node.js and aube versions, the checkout path, every lockfile,
+`package.json`, and workspace or `.npmrc` configuration under
+`working-directory`, and the `install-args` input. In a workspace, list each
+package's `node_modules` in `cache-path`:
+
+```yaml
+- uses: jdx/aube-action@v1
+  with:
+    node-version: "24"
+    run-install: true
+    cache: true
+    cache-path: |
+      node_modules
+      packages/*/node_modules
+```
+
+### Caching without the action input
+
+To manage the cache yourself, for example with a different install step, use
+`actions/cache` directly:
+
 ```yaml
 steps:
   - uses: actions/checkout@v7
@@ -97,10 +135,9 @@ package's `node_modules` directory to `path`; the `**/aube-lock.yaml` pattern
 already covers member lockfiles when workspace packages keep their own. aube
 keeps an existing [lockfile format](/package-manager/lockfiles), so if the
 project uses `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`, or an npm lockfile,
-hash that file instead. If the
-repository also contains unrelated lockfiles, such as test fixtures, list only
-the project's lockfiles in `hashFiles` so changes to them don't invalidate the
-cache.
+hash that file instead. If the repository also contains unrelated lockfiles,
+such as test fixtures, list only the project's lockfiles in `hashFiles` so
+changes to them don't invalidate the cache.
 
 Restore the cache at the same checkout path it was saved from. Windows
 junctions and transitive `link:` dependencies store absolute paths, so a tree
