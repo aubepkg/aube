@@ -1169,3 +1169,47 @@ async fn selective_stale_lookup_carries_metadata_and_validators_into_revalidatio
         serde_json::to_value(full).unwrap()
     );
 }
+
+#[test]
+fn selective_cache_rejects_malformed_historical_download_metadata() {
+    let cache = tempfile::tempdir().unwrap();
+    let client = RegistryClient::new("https://registry.example");
+    let path = super::cache::packument_full_cache_path(
+        cache.path(),
+        "demo",
+        client.config.registry_for("demo"),
+    )
+    .unwrap();
+    for dist in [
+        serde_json::json!({"attestations":{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}}),
+        serde_json::json!({"tarball":42}),
+        serde_json::json!({"tarball":"url","integrity":42}),
+        serde_json::json!({"tarball":"url","unpackedSize":"large"}),
+    ] {
+        let raw = serde_json::json!({"name":"demo", "versions":{
+            "1.0.0":{"name":"demo","version":"1.0.0","dist":dist},
+            "2.0.0":{"name":"demo","version":"2.0.0","dist":{"tarball":"url"}}
+        },"dist-tags":{"latest":"2.0.0"}});
+        super::cache::write_cached_full_packument(
+            &path,
+            None,
+            None,
+            super::cache::now_secs(),
+            None,
+            &raw,
+        )
+        .unwrap();
+        assert!(
+            client
+                .cached_resolution_packument("demo", cache.path())
+                .packument
+                .is_none()
+        );
+        assert!(
+            client
+                .cached_full_packument_lookup("demo", cache.path())
+                .packument
+                .is_none()
+        );
+    }
+}

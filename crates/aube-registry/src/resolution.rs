@@ -108,7 +108,7 @@ struct Candidate {
     )]
     npm_user: Option<crate::NpmUser>,
     #[serde(default)]
-    dist: Option<crate::VersionTrustDist>,
+    dist: Option<crate::Dist>,
 }
 
 impl Candidate {
@@ -116,7 +116,9 @@ impl Candidate {
         crate::VersionTrustMetadata {
             approver: self.approver,
             npm_user: self.npm_user,
-            dist: self.dist,
+            dist: self.dist.map(|dist| crate::VersionTrustDist {
+                attestations: dist.attestations,
+            }),
         }
     }
 }
