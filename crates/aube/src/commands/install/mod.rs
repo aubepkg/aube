@@ -1092,6 +1092,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // shortcut below cannot classify an entry without it. The
             // prewarm and link phases reuse the same hashes.
             let lock_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
+                cwd: &cwd,
                 graph: &lock_materialize_graph,
                 store: &store,
                 link_strategy: lock_strategy,
@@ -1907,6 +1908,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // classify already-linked packages the same way the linker
             // will.
             let materialize_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
+                cwd: &cwd,
                 graph: &materialize_graph_arc,
                 store: &store,
                 link_strategy: materialize_strategy,
