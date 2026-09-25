@@ -15,7 +15,9 @@ scenario under identical conditions. Samples are interleaved: each round
 times every package manager that still has runs left, in a freshly shuffled
 order, so drift on the benchmark machine is spread across all of them rather
 than landing on whichever one happened to be running. Slower managers get
-fewer runs, spread evenly across the rounds.
+fewer runs, spread evenly across the rounds. Each number is the median of a
+manager's runs, so an occasional slow sample on a busy machine doesn't
+decide a close comparison.
 
 ::: tip Methodology
 Every scenario assumes a committed lockfile is present. The main axis is
