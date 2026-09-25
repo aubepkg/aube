@@ -62,9 +62,89 @@ directory. Registry metadata lives separately under the configured cache
 directory. `aube doctor` shows the resolved paths.
 
 The [global virtual store](/package-manager/global-virtual-store) is disabled
-in CI by default. Cache package files when useful; a frozen lockfile still
-controls which versions are installed. A cache is an optimization, not a
-replacement for the committed lockfile or build policy.
+in CI by default, so `node_modules` holds real package files and can be cached
+like any other directory. A frozen lockfile still controls which versions are
+installed. A cache is an optimization, not a replacement for the committed
+lockfile or build policy.
+
+To reuse installs across jobs, cache `node_modules` and run
+`aube install --frozen-lockfile`. A restored job reports "Already up to date"
+without downloading or linking anything. Don't pair the cache with `aube ci`:
+it deletes `node_modules` before installing, so the restored cache is thrown
+away.
+
+The [aube setup action](https://github.com/jdx/aube-action) does this with
+`cache: true`:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: jdx/aube-action@v1
+    with:
+      node-version: "24"
+      run-install: true
+      cache: true
+  - run: aube run --no-install test
+```
+
+With `cache: true`, `run-install` installs with
+`aube install --frozen-lockfile` instead of `aube ci` and saves `node_modules`
+right after an install that missed the cache. The key covers the runner OS and
+architecture, the Node.js and aube versions, the checkout path, every lockfile,
+`package.json`, and workspace or `.npmrc` configuration under
+`working-directory`, and the `install-args` input. In a workspace, list each
+package's `node_modules` in `cache-path`:
+
+```yaml
+- uses: jdx/aube-action@v1
+  with:
+    node-version: "24"
+    run-install: true
+    cache: true
+    cache-path: |
+      node_modules
+      packages/*/node_modules
+```
+
+### Caching without the action input
+
+To manage the cache yourself, for example with a different install step, use
+`actions/cache` directly:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: jdx/aube-action@v1
+    id: aube
+    with:
+      node-version: "24"
+  - uses: actions/cache@v6
+    with:
+      path: node_modules
+      key: aube-nm-${{ runner.os }}-${{ runner.arch }}-node${{ steps.aube.outputs.node-version }}-${{ hashFiles('**/aube-lock.yaml') }}
+  - run: aube install --frozen-lockfile
+  - run: aube run --no-install test
+```
+
+Include the Node.js version and runner architecture in the key. Dependency
+builds approved in `allowBuilds` can compile native addons for one Node.js ABI,
+and aube does not reinstall a restored `node_modules` when only the Node.js
+version changes. Don't add a `restore-keys` fallback for this cache: a partial
+match would be treated as the installed state. In a workspace, add each
+package's `node_modules` directory to `path`; the `**/aube-lock.yaml` pattern
+already covers member lockfiles when workspace packages keep their own. aube
+keeps an existing [lockfile format](/package-manager/lockfiles), so if the
+project uses `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`, or an npm lockfile,
+hash that file instead. If the repository also contains unrelated lockfiles,
+such as test fixtures, list only the project's lockfiles in `hashFiles` so
+changes to them don't invalidate the cache.
+
+Restore the cache at the same checkout path it was saved from. Windows
+junctions and transitive `link:` dependencies store absolute paths, so a tree
+restored under a different directory can report "Already up to date" while
+those links point at the old location. GitHub-hosted runners check out to the
+same path for a repository on each OS; if a job changes it (for example with
+`actions/checkout`'s `path` input), include that path in the key.
 
 ## Container builds
 
