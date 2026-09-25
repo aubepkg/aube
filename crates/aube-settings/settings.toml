@@ -394,8 +394,9 @@ type = '"on" | "required" | "off"'
 default = "\"on\""
 docs = """
 OSV `MAL-*` malicious-package checks. Explicit `aube add`, `aube update`,
-and `aube dlx` checks query the live OSV API, including the resolved
-transitive graph. Ordinary fresh-resolution installs (missing lockfile or new
+and transient `aube dlx` installs query the live OSV API, including the
+resolved transitive graph. Running an existing local binary through `dlx`
+does not install packages or perform an advisory check. Ordinary fresh-resolution installs (missing lockfile or new
 resolved versions) use a bloom prefilter when the graph contains more
 than 10 distinct public-npm package/version pairs. Smaller graphs are
 checked live.
@@ -444,7 +445,7 @@ mirror of OSV's npm advisory dump so there's no per-install
 A hit fails the install with `ERR_AUBE_MALICIOUS_PACKAGE` — same
 exit as `advisoryCheck`. Fresh-resolution installs use the separate
 `advisoryCheck` gate regardless of this setting: explicit add/update/dlx
-checks stay live, while large ordinary fresh resolutions use a bloom
+install-time checks stay live, while large ordinary fresh resolutions use a bloom
 prefilter under the default policy.
 
 The mirror lives at `$XDG_CACHE_HOME/aube/osv/npm/` and lazily
@@ -520,8 +521,9 @@ type = "bool"
 default = "false"
 docs = """
 By default, `advisoryCheck` covers fresh resolutions. Explicit
-`aube add`, `aube update`, and `aube dlx` operations and small graphs
-query live OSV. Large ordinary fresh resolutions use the Bloom
+`aube add`, `aube update`, transient `aube dlx` installs, and small fresh
+graphs query live OSV. The `dlx` shortcut for an existing local binary
+does not perform an install or advisory check. Large ordinary fresh resolutions use the Bloom
 prefilter under the default policy; only probable hits are checked
 live. Plain reinstalls can use the optional local mirror
 (`advisoryCheckOnInstall`) or Bloom check (`advisoryBloomCheck`).

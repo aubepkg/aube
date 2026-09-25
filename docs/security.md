@@ -332,7 +332,7 @@ and configured policy:
 
 | Install path | Backend | Setting |
 | --- | --- | --- |
-| Explicit `aube add` / `aube update` / `aube dlx` checks | Full live API | `advisoryCheck` (default `on`) |
+| Explicit `aube add` / `aube update` checks and transient `aube dlx` installs | Full live API | `advisoryCheck` (default `on`) |
 | Ordinary fresh resolution, more than 10 public-npm package/version pairs | Bloom, then live confirmation of hits | `advisoryCheck: on` |
 | Ordinary fresh resolution, 10 pairs or fewer | Full live API | `advisoryCheck: on` |
 | Fresh resolution with `advisoryCheck: required` | Full live API | `advisoryCheck` |
@@ -351,7 +351,9 @@ result avoids that API query. False positives only cause extra queries.
 Large ordinary fresh-resolution installs use this prefilter by default,
 including installs without a lockfile. If the filter cannot be refreshed
 or validated, aube falls back to a live check of the full graph. Small
-checks and explicit add/update/dlx checks remain live. `advisoryBloomCheck`
+checks and explicit add/update checks or transient dlx installs remain live.
+The dlx shortcut for an existing local binary does not install packages or
+perform an advisory check. `advisoryBloomCheck`
 continues to control the separate, optional check on lockfile-driven
 reinstalls; its default remains `off`.
 
@@ -374,7 +376,7 @@ Confirmed hits from any backend fail the install with the same
 `ERR_AUBE_MALICIOUS_PACKAGE` exit.
 
 ```yaml
-# Default: live API on add/update/dlx; bloom first for large fresh installs.
+# Default: live API on add/update and dlx installs; bloom first for large fresh installs.
 # Plain reinstalls skip OSV entirely.
 advisoryCheck: on
 advisoryBloomCheck: off
