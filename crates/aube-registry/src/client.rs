@@ -22,7 +22,7 @@ mod seed_tests;
 #[cfg(test)]
 mod slow_tarball_tests;
 
-pub use cache::CachedPackumentLookup;
+pub use cache::{CachedPackumentLookup, CachedResolutionPackumentLookup};
 use dist_tags::*;
 pub use endpoints::PackageSearchResult;
 pub(crate) use http::probe_client_builder;

@@ -27,7 +27,7 @@ use crate::locked_index::LockedIndex;
 use crate::package_ext::{
     apply_package_extensions, apply_package_extensions_to_deps, pick_override_spec,
 };
-use crate::semver_util::{PickResult, pick_version, version_satisfies};
+use crate::semver_util::{PickResult, version_satisfies};
 use crate::{
     Error, ExoticSubdepDetails, FxHashMap, FxHashSet, ResolutionMode, ResolveTask, ResolvedPackage,
     Resolver, error, is_deprecation_allowed, is_supported,
@@ -336,6 +336,7 @@ impl<'a> ResolveDriver<'a> {
                         task.name.as_str(),
                         task.range.as_str(),
                         self.published_by.as_deref(),
+                        false,
                     );
                 }
                 continue;
@@ -390,8 +391,12 @@ impl<'a> ResolveDriver<'a> {
             .is_some_and(|packument| packument.versions.contains_key(version));
         let key = FetchKey::Exact(name.to_string(), version.to_string());
         if !ready && !self.failed_fetches.contains_key(&key) {
-            self.fetcher
-                .ensure_exact_optional_fetch(name, version, self.published_by.as_deref());
+            self.fetcher.ensure_exact_optional_fetch(
+                name,
+                version,
+                self.published_by.as_deref(),
+                false,
+            );
         }
     }
 
@@ -408,16 +413,31 @@ impl<'a> ResolveDriver<'a> {
     fn record_fetch_result(
         &mut self,
         name: String,
-        packument: aube_registry::Packument,
+        packument: aube_registry::ResolutionPackument,
         trust_history: Option<TrustHistory>,
+        cached_exact_version: Option<&str>,
     ) {
-        merge_fetch_result(
+        let accepted = merge_fetch_result(
             &mut self.resolver.cache,
             &mut self.trust_histories,
-            name,
+            name.clone(),
             packument,
             trust_history,
+            cached_exact_version,
         );
+        if !accepted
+            && let Some(version) = cached_exact_version
+            && !self.cache_satisfies(&name, Some(version))
+        {
+            // A full fetch superseded this disk snapshot but lacks the
+            // requested version. Retry live, never resurrect the old snapshot.
+            self.fetcher.ensure_exact_optional_fetch(
+                &name,
+                version,
+                self.published_by.as_deref(),
+                true,
+            );
+        }
     }
 
     /// Outer BFS loop. Pops tasks until the queue drains, with a
@@ -570,7 +590,15 @@ impl<'a> ResolveDriver<'a> {
                     if source == super::fetch::FetchSource::Primer {
                         self.fetcher.note_primer_seeded(name.clone());
                     }
-                    self.record_fetch_result(name, packument, trust_history);
+                    let cached_exact_version = match &key {
+                        FetchKey::Exact(_, version)
+                            if source == super::fetch::FetchSource::Disk =>
+                        {
+                            Some(version.as_str())
+                        }
+                        _ => None,
+                    };
+                    self.record_fetch_result(name, packument, trust_history, cached_exact_version);
                     self.packument_fetch_count += 1;
                 }
                 Some(Ok((key, Err(e)))) => {
@@ -727,7 +755,7 @@ impl<'a> ResolveDriver<'a> {
             let packument = self.resolver.cache.get(&registry_name).ok_or_else(|| {
                 Error::Registry(registry_name.clone(), "packument not in cache".to_string())
             })?;
-            let pick = pick_version(
+            let pick = crate::semver_util::pick_resolution_version(
                 packument,
                 version_range,
                 locked_version,
@@ -737,11 +765,26 @@ impl<'a> ResolveDriver<'a> {
                 strict,
                 is_age_exempt,
             );
+            let decode_failed = pick.is_err();
+            let refresh = decode_failed
+                || (matches!(&pick, Ok(PickResult::AgeGated | PickResult::NoMatch))
+                    && self.fetcher.take_primer_seeded(&registry_name));
             match pick {
-                PickResult::Found(meta) => break meta.clone(),
-                PickResult::AgeGated | PickResult::NoMatch
-                    if self.fetcher.take_primer_seeded(&registry_name) =>
-                {
+                Ok(PickResult::Found(meta)) => break meta.clone(),
+                _ if refresh => {
+                    if decode_failed
+                        && let Some(dir) = self.resolver.packument_full_cache_dir.clone()
+                    {
+                        // Only deferred disk metadata can fail to decode here.
+                        // Treat it as a corrupt cache entry, not an install error.
+                        let client = self.resolver.client.clone();
+                        let name = registry_name.clone();
+                        tokio::task::spawn_blocking(move || {
+                            client.invalidate_full_packument_cache(&name, &dir)
+                        })
+                        .await
+                        .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?;
+                    }
                     let fetch_start = std::time::Instant::now();
                     let live = if self.needs_time {
                         match self.resolver.packument_full_cache_dir.as_ref() {
@@ -771,7 +814,9 @@ impl<'a> ResolveDriver<'a> {
                     .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?;
                     self.packument_fetch_time += fetch_start.elapsed();
                     self.packument_fetch_count += 1;
-                    self.resolver.cache.insert(registry_name.clone(), live);
+                    self.resolver
+                        .cache
+                        .insert(registry_name.clone(), live.into());
                     self.trust_histories.remove(&registry_name);
                 }
                 // Only surface `AgeGate` when the cutoff actually
@@ -780,66 +825,79 @@ impl<'a> ResolveDriver<'a> {
                 // never opted into the supply-chain age gate, so
                 // the failure should report as a plain no-match
                 // instead of a misleading "older than 0 minutes".
-                PickResult::AgeGated => match self.resolver.minimum_release_age.as_ref() {
+                Ok(PickResult::AgeGated) => match self.resolver.minimum_release_age.as_ref() {
                     Some(mra) => {
                         return Err(Error::AgeGate(Box::new(error::build_age_gate(
                             &task,
-                            packument,
+                            &packument.materialize().map_err(|e| {
+                                Error::Registry(registry_name.clone(), e.to_string())
+                            })?,
                             mra.minutes,
                         ))));
                     }
                     None => {
                         return Err(Error::NoMatch(Box::new(error::build_no_match(
-                            &task, packument,
+                            &task,
+                            &packument.materialize().map_err(|e| {
+                                Error::Registry(registry_name.clone(), e.to_string())
+                            })?,
                         ))));
                     }
                 },
-                PickResult::NoMatch => {
+                Ok(PickResult::NoMatch) => {
                     return Err(Error::NoMatch(Box::new(error::build_no_match(
-                        &task, packument,
+                        &task,
+                        &packument
+                            .materialize()
+                            .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?,
                     ))));
                 }
+                Err(error) => return Err(error),
             }
         };
         let packument = self.resolver.cache.get(&registry_name).ok_or_else(|| {
             Error::Registry(registry_name.clone(), "packument not in cache".to_string())
         })?;
-        let picked_ref = prefer_non_vulnerable_pick(
+        // Vulnerability repicking still uses the full metadata scanner. Trust
+        // policy uses the complete compact evidence collected at cache read.
+        let full = if is_vulnerable(
             task.registry_name(),
-            packument,
-            version_range,
-            &selected_pick,
-            pick_lowest,
-            cutoff_for_pkg,
-            exempt_cutoff,
+            &selected_pick.version,
             &self.resolver.vulnerable_ranges,
-            is_age_exempt,
-        );
-        // Trust-policy enforcement runs *before* any other
-        // post-pick processing (mirrors pnpm's placement
-        // immediately after `pickPackage`). Skip when policy is
-        // off so the off-by-default case is a single enum
-        // compare. The check needs the live packument's `time`
-        // map and all version metadata, both of which are still
-        // in scope here from L1191.
+        ) {
+            Some(
+                packument
+                    .materialize()
+                    .map_err(|e| Error::Registry(registry_name.clone(), e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let picked_ref = if let Some(packument) = full.as_ref() {
+            prefer_non_vulnerable_pick(
+                task.registry_name(),
+                packument,
+                version_range,
+                &selected_pick,
+                pick_lowest,
+                cutoff_for_pkg,
+                exempt_cutoff,
+                &self.resolver.vulnerable_ranges,
+                is_age_exempt,
+            )
+        } else {
+            &selected_pick
+        };
+        // Trust checks retain every historical release's publishing evidence,
+        // without decoding those releases' dependency maps.
         if self.resolver.dependency_policy.trust_policy == crate::TrustPolicy::NoDowngrade {
-            let result = match self.trust_histories.get(&registry_name) {
-                Some(history) => crate::trust::check_no_downgrade_compact(
-                    packument,
-                    &picked_ref.version,
-                    picked_ref,
-                    history,
-                    &self.resolver.dependency_policy.trust_policy_exclude,
-                    self.resolver.dependency_policy.trust_policy_ignore_after,
-                ),
-                None => crate::trust::check_no_downgrade(
-                    packument,
-                    &picked_ref.version,
-                    picked_ref,
-                    &self.resolver.dependency_policy.trust_policy_exclude,
-                    self.resolver.dependency_policy.trust_policy_ignore_after,
-                ),
-            };
+            let result = crate::trust::check_no_downgrade_resolution(
+                packument,
+                picked_ref,
+                self.trust_histories.get(&registry_name),
+                &self.resolver.dependency_policy.trust_policy_exclude,
+                self.resolver.dependency_policy.trust_policy_ignore_after,
+            );
             result.map_err(|e| match e {
                 crate::trust::TrustCheckError::Downgrade(d) => Error::TrustDowngrade(Box::new(d)),
                 crate::trust::TrustCheckError::MissingTime(d) => {
@@ -2308,12 +2366,18 @@ impl<'a> ResolveDriver<'a> {
 }
 
 fn merge_fetch_result(
-    cache: &mut FxHashMap<String, aube_registry::Packument>,
+    cache: &mut FxHashMap<String, aube_registry::ResolutionPackument>,
     trust_histories: &mut FxHashMap<String, TrustHistory>,
     name: String,
-    mut packument: aube_registry::Packument,
+    mut packument: aube_registry::ResolutionPackument,
     trust_history: Option<TrustHistory>,
-) {
+    cached_exact_version: Option<&str>,
+) -> bool {
+    // Exact cache reads may race a full refresh (or another live exact
+    // response). They are only authoritative while the resolver has no data.
+    if cached_exact_version.is_some() && cache.contains_key(&name) {
+        return false;
+    }
     let Some(history) = trust_history else {
         if trust_histories.contains_key(&name)
             && let Some(existing) = cache.get(&name)
@@ -2338,12 +2402,12 @@ fn merge_fetch_result(
                         .or_insert_with(|| time.clone());
                 }
                 cache.insert(name, packument);
-                return;
+                return true;
             }
         }
         cache.insert(name.clone(), packument);
         trust_histories.remove(&name);
-        return;
+        return true;
     };
 
     // A full result is normally authoritative. It can be stale, though: a
@@ -2358,12 +2422,12 @@ fn merge_fetch_result(
             .keys()
             .any(|version| !existing.versions.contains_key(version));
         if !has_missing_version {
-            return;
+            return true;
         }
         existing.versions.append(&mut packument.versions);
         existing.time.append(&mut packument.time);
         trust_histories.insert(name, history);
-        return;
+        return true;
     }
 
     if let Some(existing) = cache.get_mut(&name) {
@@ -2373,6 +2437,7 @@ fn merge_fetch_result(
         cache.insert(name.clone(), packument);
     }
     trust_histories.entry(name).or_default().extend(history);
+    true
 }
 
 fn attach_integrity_to_git_source(local: &mut LocalSource, integrity: Option<&str>) {
@@ -2388,7 +2453,7 @@ mod tests {
     use super::*;
     use aube_lockfile::GitSource;
 
-    fn test_packument(versions: &[&str]) -> aube_registry::Packument {
+    fn test_packument(versions: &[&str]) -> aube_registry::ResolutionPackument {
         aube_registry::Packument {
             name: "shared".to_string(),
             modified: None,
@@ -2416,6 +2481,7 @@ mod tests {
                 })
                 .collect(),
         }
+        .into()
     }
 
     fn test_history() -> TrustHistory {
@@ -2432,6 +2498,76 @@ mod tests {
     }
 
     #[test]
+    fn cached_exact_snapshot_cannot_replace_a_completed_refresh() {
+        let mut cache = FxHashMap::default();
+        let mut histories = FxHashMap::default();
+        let mut refreshed = test_packument(&["1.0.0", "2.0.0"]);
+        refreshed
+            .time
+            .insert("1.0.0".into(), "refreshed-time".into());
+        let expected = serde_json::to_value(refreshed.materialize().unwrap()).unwrap();
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".into(),
+            refreshed,
+            None,
+            None,
+        );
+        assert!(!merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".into(),
+            test_packument(&["1.0.0"]),
+            None,
+            Some("1.0.0"),
+        ));
+        assert_eq!(
+            serde_json::to_value(cache["shared"].materialize().unwrap()).unwrap(),
+            expected
+        );
+        // Even a version missing from the fresh response must be retried live,
+        // not reintroduced together with an obsolete trust/time snapshot.
+        assert!(!merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".into(),
+            test_packument(&["3.0.0"]),
+            None,
+            Some("3.0.0"),
+        ));
+        assert!(!cache["shared"].versions.contains_key("3.0.0"));
+    }
+
+    #[test]
+    fn full_refresh_replaces_an_earlier_cached_exact_snapshot() {
+        let mut cache = FxHashMap::default();
+        let mut histories = FxHashMap::default();
+        assert!(merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".into(),
+            test_packument(&["1.0.0"]),
+            None,
+            Some("1.0.0"),
+        ));
+        let refreshed = test_packument(&["2.0.0"]);
+        let expected = serde_json::to_value(refreshed.materialize().unwrap()).unwrap();
+        merge_fetch_result(
+            &mut cache,
+            &mut histories,
+            "shared".into(),
+            refreshed,
+            None,
+            None,
+        );
+        assert_eq!(
+            serde_json::to_value(cache["shared"].materialize().unwrap()).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
     fn full_fetch_remains_authoritative_when_it_finishes_first() {
         let mut cache = FxHashMap::default();
         let mut histories = FxHashMap::default();
@@ -2442,6 +2578,7 @@ mod tests {
             "shared".to_string(),
             test_packument(&["1.0.0", "2.0.0"]),
             None,
+            None,
         );
         merge_fetch_result(
             &mut cache,
@@ -2449,6 +2586,7 @@ mod tests {
             "shared".to_string(),
             test_packument(&["1.0.0"]),
             Some(test_history()),
+            None,
         );
 
         assert_eq!(cache["shared"].versions.len(), 2);
@@ -2466,12 +2604,14 @@ mod tests {
             "shared".to_string(),
             test_packument(&["1.0.0"]),
             Some(test_history()),
+            None,
         );
         merge_fetch_result(
             &mut cache,
             &mut histories,
             "shared".to_string(),
             test_packument(&["1.0.0", "2.0.0"]),
+            None,
             None,
         );
 
@@ -2494,12 +2634,14 @@ mod tests {
             "shared".to_string(),
             compact,
             Some(test_history()),
+            None,
         );
         merge_fetch_result(
             &mut cache,
             &mut histories,
             "shared".to_string(),
             test_packument(&["1.0.0"]),
+            None,
             None,
         );
 
@@ -2526,6 +2668,7 @@ mod tests {
             "shared".to_string(),
             test_packument(&["1.0.0"]),
             None,
+            None,
         );
         merge_fetch_result(
             &mut cache,
@@ -2533,6 +2676,7 @@ mod tests {
             "shared".to_string(),
             test_packument(&["2.0.0"]),
             Some(test_history()),
+            None,
         );
 
         assert_eq!(

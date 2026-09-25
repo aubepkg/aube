@@ -42,7 +42,12 @@ pub(super) struct FetchScheduler {
 }
 
 pub(super) type TrustHistory = std::collections::BTreeMap<String, VersionTrustMetadata>;
-pub(super) type FetchResult = (String, Packument, FetchSource, Option<TrustHistory>);
+pub(super) type FetchResult = (
+    String,
+    aube_registry::ResolutionPackument,
+    FetchSource,
+    Option<TrustHistory>,
+);
 pub(super) type FetchOutcome =
     Option<Result<(FetchKey, Result<FetchResult, Error>), tokio::task::JoinError>>;
 
@@ -141,6 +146,7 @@ impl FetchScheduler {
         name: &str,
         version: &str,
         published_by: Option<&str>,
+        force_refresh: bool,
     ) {
         let key = FetchKey::Exact(name.to_string(), version.to_string());
         if !self.active_fetches.insert(key.clone()) {
@@ -157,7 +163,7 @@ impl FetchScheduler {
             force_metadata_primer: self.force_metadata_primer,
             sem: self.sem.clone(),
             needs_time: self.needs_time,
-            force_refresh: false,
+            force_refresh,
         };
         let version = version.to_string();
         let task_key = key.clone();
@@ -227,11 +233,57 @@ struct FetchInputs {
     force_refresh: bool,
 }
 
+/// Reuse the authoritative full cache for both ranges and exact optionals.
+async fn fetch_cached_resolution(
+    inputs: &FetchInputs,
+) -> Result<Option<aube_registry::client::CachedResolutionPackumentLookup>, Error> {
+    if !inputs.needs_time || inputs.force_refresh {
+        return Ok(None);
+    }
+    let Some(dir) = inputs.full_cache_dir.clone() else {
+        return Ok(None);
+    };
+    let permit = Arc::clone(&PACKUMENT_CACHE_IO)
+        .acquire_owned()
+        .await
+        .map_err(|e| Error::Registry(inputs.name.clone(), e.to_string()))?;
+    let client = Arc::clone(&inputs.client);
+    let name = inputs.name.clone();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        Some(client.cached_resolution_packument(&name, &dir))
+    })
+    .await
+    .map_err(|e| Error::Registry(inputs.name.clone(), e.to_string()))
+}
+
 /// Body of the per-packument fetch task spawned by the resolver.
 ///
 /// Returns the result source so callers can distinguish incomplete local
 /// metadata from a live registry response.
 async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> {
+    let _diag_span =
+        aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
+            .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&inputs.name)));
+    let _diag_inflight = aube_util::diag::inflight(aube_util::diag::Slot::Pack);
+    let mut selective = fetch_cached_resolution(&inputs).await?;
+    if let Some(indexed) = selective
+        .as_mut()
+        .and_then(|lookup| lookup.packument.take())
+    {
+        aube_util::diag::instant_lazy(
+            aube_util::diag::Category::Resolver,
+            "packument_disk_hit",
+            || {
+                format!(
+                    r#"{{"name":{},"versions":{}}}"#,
+                    aube_util::diag::jstr(&inputs.name),
+                    indexed.versions.len()
+                )
+            },
+        );
+        return Ok((inputs.name, indexed, FetchSource::Disk, None));
+    }
     let FetchInputs {
         name,
         client,
@@ -243,16 +295,14 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         needs_time,
         force_refresh,
     } = inputs;
-    let _diag_span =
-        aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
-            .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&name)));
-    let _diag_inflight = aube_util::diag::inflight(aube_util::diag::Slot::Pack);
     let cache_lookup_dir = if needs_time {
         full_cache_dir.clone()
     } else {
         cache_dir.clone()
     };
-    let mut cached = if let Some(cache_lookup_dir) = cache_lookup_dir {
+    let mut cached = if let Some(lookup) = selective {
+        lookup.revalidation
+    } else if let Some(cache_lookup_dir) = cache_lookup_dir {
         let cache_io_permit = Arc::clone(&PACKUMENT_CACHE_IO)
             .acquire_owned()
             .await
@@ -287,7 +337,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
                 )
             },
         );
-        return Ok((name, packument, FetchSource::Disk, None));
+        return Ok((name, packument.into(), FetchSource::Disk, None));
     }
     let use_metadata_primer = !force_refresh
         && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
@@ -338,7 +388,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
                 )
             },
         );
-        return Ok((name, packument, FetchSource::Primer, None));
+        return Ok((name, packument.into(), FetchSource::Primer, None));
     }
     // The adaptive limit models registry capacity. Local metadata does not
     // consume that capacity and must not queue behind slow HTTP requests.
@@ -396,13 +446,19 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
             )
         },
     );
-    Ok((name, packument, FetchSource::Network, None))
+    Ok((name, packument.into(), FetchSource::Network, None))
 }
 
 async fn fetch_exact_optional_packument(
     inputs: FetchInputs,
     version: String,
 ) -> Result<FetchResult, Error> {
+    if let Some(lookup) = fetch_cached_resolution(&inputs).await?
+        && let Some(indexed) = lookup.packument
+        && indexed.versions.contains_key(&version)
+    {
+        return Ok((inputs.name, indexed, FetchSource::Disk, None));
+    }
     let permit = inputs.sem.acquire().await;
     let name = inputs.name.clone();
     let fetched = inputs
@@ -422,7 +478,8 @@ async fn fetch_exact_optional_packument(
                     versions,
                     dist_tags: std::collections::BTreeMap::new(),
                     time: exact.history.time,
-                },
+                }
+                .into(),
                 FetchSource::Exact,
                 Some(exact.history.versions),
             ))
@@ -499,6 +556,110 @@ mod tests {
         body: Vec<u8>,
     ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
         serve_registry_responses(vec![body]).await
+    }
+
+    #[tokio::test]
+    async fn exact_optional_uses_fresh_full_cache_without_network_capacity() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = Arc::new(RegistryClient::new("http://127.0.0.1:9"));
+        let full: Packument = serde_json::from_value(serde_json::json!({
+            "name":"cache-only-demo", "versions": {
+                "1.0.0":{"name":"cache-only-demo","version":"1.0.0","dependencies":{"child":"^1"}},
+                "2.0.0":{"name":"cache-only-demo","version":"2.0.0","deprecated":"old"}
+            }, "time":{"1.0.0":"2024-01-01","2.0.0":"2024-02-01"}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("cache-only-demo", cache.path(), &full, None, None, true);
+        let limiter = AdaptiveLimit::new(1, 1, 1);
+        let _held = limiter.acquire().await;
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, limiter, true);
+        scheduler.ensure_exact_optional_fetch("cache-only-demo", "1.0.0", None, false);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), scheduler.join_next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(result.2, FetchSource::Disk);
+        assert!(result.3.is_none()); // Complete inventory, not an exact-only response.
+        assert_eq!(result.1.versions.len(), 2);
+        assert_eq!(
+            result.1.versions["1.0.0"].metadata().unwrap().dependencies["child"],
+            "^1"
+        );
+        assert_eq!(result.1.time, full.time);
+    }
+
+    #[tokio::test]
+    async fn superseded_exact_cache_snapshot_can_retry_live() {
+        let cache = tempfile::tempdir().unwrap();
+        let exact =
+            serde_json::json!({"name":"shared", "version":"1.0.0", "dependencies":{"fresh":"^2"}});
+        let history = serde_json::json!({"name":"shared", "versions":{"1.0.0":exact.clone()}, "time":{"1.0.0":"2024-01-01"}});
+        let (registry, requests, server) =
+            serve_registry(serde_json::to_vec(&history).unwrap()).await;
+        let client = Arc::new(RegistryClient::new(&registry));
+        let old = serde_json::from_value(serde_json::json!({"name":"shared", "versions":{"1.0.0":{"name":"shared","version":"1.0.0","dependencies":{"old":"^1"}}}})).unwrap();
+        client.seed_full_packument_cache("shared", cache.path(), &old, None, None, true);
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        scheduler.ensure_exact_optional_fetch("shared", "1.0.0", None, true);
+        let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+        let (_, packument, source, _) = result.unwrap();
+        assert_eq!(source, FetchSource::Exact);
+        assert_eq!(
+            packument.versions["1.0.0"].metadata().unwrap().dependencies["fresh"],
+            "^2"
+        );
+        assert!(requests.load(Ordering::Relaxed) > 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn malformed_selected_disk_metadata_is_invalidated_and_refetched() {
+        let cache = tempfile::tempdir().unwrap();
+        let bad = serde_json::json!({"name":"shared", "versions":{"1.0.0":{"name":"shared","version":"1.0.0","dependencies":42}}, "dist-tags":{"latest":"1.0.0"}});
+        let good = serde_json::json!({"name":"shared", "versions":{"1.0.0":{"name":"shared","version":"1.0.0","dist":{"tarball":"https://example.com/shared.tgz"}}}, "dist-tags":{"latest":"1.0.0"}, "time":{"1.0.0":"2024-01-01T00:00:00.000Z"}});
+        let (registry, requests, server) = serve_registry_responses(vec![
+            serde_json::to_vec(&bad).unwrap(),
+            serde_json::to_vec(&good).unwrap(),
+        ])
+        .await;
+        let client = Arc::new(RegistryClient::new(&registry));
+        // Raw JSON is cached before typed decoding rejects the first response.
+        assert!(
+            client
+                .fetch_packument_with_time_cached("shared", cache.path())
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .cached_resolution_packument("shared", cache.path())
+                .packument
+                .is_some()
+        );
+        let mut resolver =
+            Resolver::new(client.clone()).with_packument_full_cache(cache.path().to_path_buf());
+        let mut manifest = aube_manifest::PackageJson::default();
+        manifest
+            .dependencies
+            .insert("shared".into(), "1.0.0".into());
+        let graph = resolver.resolve(&manifest, None).await.unwrap();
+        assert_eq!(graph.packages.len(), 1);
+        assert_eq!(requests.load(Ordering::Relaxed), 2);
+        assert!(
+            client
+                .cached_resolution_packument("shared", cache.path())
+                .packument
+                .unwrap()
+                .versions["1.0.0"]
+                .metadata()
+                .is_ok()
+        );
+        server.abort();
     }
 
     #[tokio::test]
@@ -623,7 +784,7 @@ mod tests {
         let resolver = Resolver::new(Arc::new(RegistryClient::new(&registry)));
         let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
 
-        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None);
+        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
         let Some(Ok((FetchKey::Exact(_, version), Err(Error::Registry(_, message))))) =
             scheduler.join_next().await
         else {
@@ -668,7 +829,7 @@ mod tests {
         let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
         let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
 
-        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None);
+        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
         let Some(Ok((FetchKey::Exact(_, _), Ok((_, packument, source, _))))) =
             scheduler.join_next().await
         else {

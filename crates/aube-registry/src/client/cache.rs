@@ -35,6 +35,13 @@ pub struct CachedPackumentLookup {
     pub(super) cached: Option<CachedPackumentLookupEntry>,
 }
 
+/// A selective cache hit, or an already-read entry for normal revalidation.
+#[derive(Debug, Default)]
+pub struct CachedResolutionPackumentLookup {
+    pub packument: Option<crate::ResolutionPackument>,
+    pub revalidation: CachedPackumentLookup,
+}
+
 #[derive(Debug)]
 pub(super) enum CachedPackumentLookupEntry {
     Abbreviated(CachedPackument),

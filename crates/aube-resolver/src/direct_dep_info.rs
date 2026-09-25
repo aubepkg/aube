@@ -66,19 +66,26 @@ impl Resolver {
                 let Some(range) = dep.specifier.as_deref() else {
                     continue;
                 };
-                let crate::PickResult::Found(selected) = crate::pick_version_for_add(
-                    packument,
-                    pkg.registry_name(),
-                    range,
-                    Some(minimum_release_age),
-                ) else {
+                let Ok(crate::PickResult::Found(selected)) =
+                    crate::semver_util::pick_resolution_for_add(
+                        packument,
+                        pkg.registry_name(),
+                        range,
+                        Some(minimum_release_age),
+                    )
+                else {
                     continue;
                 };
                 if selected.version != pkg.version {
                     continue;
                 }
-                let crate::PickResult::Found(ungated) =
-                    crate::pick_version_for_add(packument, pkg.registry_name(), range, None)
+                let Ok(crate::PickResult::Found(ungated)) =
+                    crate::semver_util::pick_resolution_for_add(
+                        packument,
+                        pkg.registry_name(),
+                        range,
+                        None,
+                    )
                 else {
                     continue;
                 };
@@ -120,7 +127,7 @@ impl Resolver {
                 let deprecated = packument
                     .versions
                     .get(&pkg.version)
-                    .is_some_and(|v| v.deprecated.is_some());
+                    .is_some_and(|v| v.is_deprecated());
                 let latest = packument
                     .dist_tags
                     .get("latest")

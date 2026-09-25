@@ -8,6 +8,59 @@ use crate::{Error, NetworkMode, Packument};
 use std::path::{Path, PathBuf};
 
 impl RegistryClient {
+    /// Read fresh metadata without decoding every release's dependency maps.
+    /// Uses the existing registry-partitioned cache and freshness policy.
+    pub fn cached_resolution_packument(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+    ) -> CachedResolutionPackumentLookup {
+        #[derive(serde::Deserialize)]
+        struct Cached<'a> {
+            etag: Option<String>,
+            last_modified: Option<String>,
+            fetched_at: u64,
+            #[serde(default)]
+            max_age_secs: Option<u64>,
+            #[serde(borrow)]
+            packument: crate::resolution::RawResolutionPackument<'a>,
+        }
+        let Some(path) = packument_full_cache_path(cache_dir, name, self.config.registry_for(name))
+        else {
+            return Default::default();
+        };
+        let Ok(content) = std::fs::read(path) else {
+            return Default::default();
+        };
+        let content = bytes::Bytes::from(content);
+        let Ok(cached) = sonic_rs::from_slice::<Cached>(&content) else {
+            return Default::default();
+        };
+        if self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
+            return CachedResolutionPackumentLookup {
+                packument: cached.packument.into_resolution(&content),
+                revalidation: Default::default(),
+            };
+        }
+        let Some(packument) = cached.packument.into_packument() else {
+            return Default::default();
+        };
+        CachedResolutionPackumentLookup {
+            packument: None,
+            revalidation: CachedPackumentLookup {
+                packument: None,
+                stale: true,
+                cached: Some(CachedPackumentLookupEntry::Full(CachedFullPackumentTyped {
+                    etag: cached.etag,
+                    last_modified: cached.last_modified,
+                    fetched_at: cached.fetched_at,
+                    max_age_secs: cached.max_age_secs,
+                    packument,
+                })),
+            },
+        }
+    }
+
     pub fn cached_packument_lookup(&self, name: &str, cache_dir: &Path) -> CachedPackumentLookup {
         let registry_url = self.config.registry_for(name).to_string();
         let Some(cache_path) = packument_cache_path(cache_dir, name, &registry_url) else {

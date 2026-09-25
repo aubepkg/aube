@@ -1044,3 +1044,172 @@ async fn scoped_packument_request_is_url_encoded() {
         "corgi Accept header must include JSON and */* fallbacks",
     );
 }
+
+#[test]
+fn selective_cache_obeys_expiry_origin_and_invalidation() {
+    let cache = tempfile::tempdir().unwrap();
+    let client = RegistryClient::new("https://registry.example");
+    let full: Packument = serde_json::from_value(
+        serde_json::json!({"name":"demo","versions":{"1.0.0":{"name":"demo","version":"1.0.0"}}}),
+    )
+    .unwrap();
+    client.seed_full_packument_cache("demo", cache.path(), &full, None, None, true);
+    assert!(
+        client
+            .cached_resolution_packument("demo", cache.path())
+            .packument
+            .is_some()
+    );
+    assert!(
+        RegistryClient::new("https://other.example")
+            .cached_resolution_packument("demo", cache.path())
+            .packument
+            .is_none()
+    );
+    client.invalidate_full_packument_cache("demo", cache.path());
+    assert!(
+        client
+            .cached_resolution_packument("demo", cache.path())
+            .packument
+            .is_none()
+    );
+    client.seed_full_packument_cache("demo", cache.path(), &full, None, None, false);
+    assert!(
+        client
+            .cached_resolution_packument("demo", cache.path())
+            .packument
+            .is_none()
+    );
+    for mode in [
+        crate::NetworkMode::Offline,
+        crate::NetworkMode::PreferOffline,
+    ] {
+        assert!(
+            RegistryClient::new("https://registry.example")
+                .with_network_mode(mode)
+                .cached_resolution_packument("demo", cache.path())
+                .packument
+                .is_some()
+        );
+    }
+}
+
+#[tokio::test]
+async fn selective_read_keeps_raw_view_fields_and_owns_its_snapshot() {
+    let cache = tempfile::tempdir().unwrap();
+    let client = RegistryClient::new("https://registry.example");
+    let raw = serde_json::json!({"name":"demo", "description":"keep this", "versions":{
+        "1.0.0":{"name":"demo","version":"1.0.0","dependencies":{"child":"^2"},"custom":{"future":"field"}}
+    }});
+    let path = super::cache::packument_full_cache_path(
+        cache.path(),
+        "demo",
+        client.config.registry_for("demo"),
+    )
+    .unwrap();
+    super::cache::write_cached_full_packument(
+        &path,
+        Some("tag"),
+        None,
+        super::cache::now_secs(),
+        Some(1800),
+        &raw,
+    )
+    .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let projected = client
+        .cached_resolution_packument("demo", cache.path())
+        .packument
+        .unwrap();
+    assert_eq!(
+        client
+            .fetch_packument_full_cached("demo", cache.path())
+            .await
+            .unwrap(),
+        raw
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    client.invalidate_full_packument_cache("demo", cache.path());
+    assert_eq!(
+        projected.versions["1.0.0"].metadata().unwrap().dependencies["child"],
+        "^2"
+    );
+    assert!(!path.exists()); // Reading the snapshot never republishes an invalidated entry.
+}
+
+#[tokio::test]
+async fn selective_stale_lookup_carries_metadata_and_validators_into_revalidation() {
+    let cache = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let client = client_with(&server, FetchPolicy::default());
+    let full: Packument = serde_json::from_value(serde_json::json!({
+        "name":"demo", "versions":{"1.0.0":{"name":"demo","version":"1.0.0","dependencies":{"child":"^1"}}},
+        "time":{"1.0.0":"2024-01-01"}
+    })).unwrap();
+    client.seed_full_packument_cache("demo", cache.path(), &full, Some("old-tag"), None, false);
+    let lookup = client.cached_resolution_packument("demo", cache.path());
+    assert!(lookup.packument.is_none());
+    assert!(lookup.revalidation.stale);
+    // The retained entry is sufficient even if the file disappears before
+    // revalidation, proving the selective lookup carries its first read on.
+    client.invalidate_full_packument_cache("demo", cache.path());
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .and(header("if-none-match", "old-tag"))
+        .respond_with(ResponseTemplate::new(304))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let fetched = client
+        .fetch_packument_with_time_cached_after_lookup("demo", cache.path(), lookup.revalidation)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(fetched).unwrap(),
+        serde_json::to_value(full).unwrap()
+    );
+}
+
+#[test]
+fn selective_cache_rejects_malformed_historical_download_metadata() {
+    let cache = tempfile::tempdir().unwrap();
+    let client = RegistryClient::new("https://registry.example");
+    let path = super::cache::packument_full_cache_path(
+        cache.path(),
+        "demo",
+        client.config.registry_for("demo"),
+    )
+    .unwrap();
+    for dist in [
+        serde_json::json!({"attestations":{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}}),
+        serde_json::json!({"tarball":42}),
+        serde_json::json!({"tarball":"url","integrity":42}),
+        serde_json::json!({"tarball":"url","unpackedSize":"large"}),
+    ] {
+        let raw = serde_json::json!({"name":"demo", "versions":{
+            "1.0.0":{"name":"demo","version":"1.0.0","dist":dist},
+            "2.0.0":{"name":"demo","version":"2.0.0","dist":{"tarball":"url"}}
+        },"dist-tags":{"latest":"2.0.0"}});
+        super::cache::write_cached_full_packument(
+            &path,
+            None,
+            None,
+            super::cache::now_secs(),
+            None,
+            &raw,
+        )
+        .unwrap();
+        assert!(
+            client
+                .cached_resolution_packument("demo", cache.path())
+                .packument
+                .is_none()
+        );
+        assert!(
+            client
+                .cached_full_packument_lookup("demo", cache.path())
+                .packument
+                .is_none()
+        );
+    }
+}

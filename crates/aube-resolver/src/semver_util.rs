@@ -1,6 +1,6 @@
 use aube_registry::Packument;
 
-/// Outcome of [`pick_version`]. Distinguishes "nothing in the range
+/// Outcome of `pick_version`. Distinguishes "nothing in the range
 /// at all" from "the cutoff filtered every otherwise-satisfying
 /// version" so the caller can surface a meaningful strict-mode error
 /// instead of pretending the range itself was wrong.
@@ -26,7 +26,7 @@ impl<'a> PickResult<'a> {
 
 /// Single-package version pick for `aube add`'s manifest step, honoring
 /// `minimumReleaseAge` with the same dist-tag preference, exemption, and
-/// strict/lenient fallback semantics [`pick_version`] applies inside full
+/// strict/lenient fallback semantics `pick_version` applies inside full
 /// resolution. Without it, `add` writes the freshly published version into
 /// the manifest as a pinned spec, which the resolver's lenient fallback then
 /// honors — bypassing the very gate `minimumReleaseAge` exists to provide.
@@ -37,7 +37,7 @@ impl<'a> PickResult<'a> {
 /// then highest satisfying).
 ///
 /// A gated `latest` range is normalized to `*` here, at the API boundary,
-/// so no caller can reintroduce the bypass: [`pick_version`]'s internal
+/// so no caller can reintroduce the bypass: `pick_version`'s internal
 /// dist-tag fallback turns `latest` into the tagged version's exact range,
 /// whose lenient fallback would admit a fresh publish — the very thing the
 /// gate exists to block. `*` keeps the dist-tag preference for a mature
@@ -49,6 +49,54 @@ pub fn pick_version_for_add<'a>(
     range: &str,
     minimum_release_age: Option<&crate::MinimumReleaseAge>,
 ) -> PickResult<'a> {
+    match pick_key_for_add(
+        VersionIndex {
+            versions: &packument.versions,
+            dist_tags: &packument.dist_tags,
+            time: &packument.time,
+        },
+        registry_name,
+        range,
+        minimum_release_age,
+    ) {
+        VersionPick::Found(key) => packument
+            .versions
+            .get(key)
+            .map(PickResult::Found)
+            .unwrap_or(PickResult::NoMatch),
+        VersionPick::NoMatch => PickResult::NoMatch,
+        VersionPick::AgeGated => PickResult::AgeGated,
+    }
+}
+
+/// Apply the same add/report age policy to deferred release metadata.
+pub(crate) fn pick_resolution_for_add<'a>(
+    p: &'a aube_registry::ResolutionPackument,
+    registry_name: &str,
+    range: &str,
+    minimum_release_age: Option<&crate::MinimumReleaseAge>,
+) -> Result<PickResult<'a>, crate::Error> {
+    resolution_pick(
+        p,
+        pick_key_for_add(
+            VersionIndex {
+                versions: &p.versions,
+                dist_tags: &p.dist_tags,
+                time: &p.time,
+            },
+            registry_name,
+            range,
+            minimum_release_age,
+        ),
+    )
+}
+
+fn pick_key_for_add<'a, V: VersionCandidate>(
+    packument: VersionIndex<'a, V>,
+    registry_name: &str,
+    range: &str,
+    minimum_release_age: Option<&crate::MinimumReleaseAge>,
+) -> VersionPick<'a> {
     let cutoff = minimum_release_age.and_then(|m| m.cutoff());
     let range = registry_alias_range(range);
     let range = if range == "latest" && cutoff.is_some() {
@@ -67,7 +115,7 @@ pub fn pick_version_for_add<'a>(
             },
         })
     };
-    pick_version(
+    pick_version_key(
         packument,
         range,
         None,
@@ -129,6 +177,7 @@ fn registry_alias_range(range: &str) -> &str {
 /// non-deprecated one in the same range — see [`outranks`].
 #[inline]
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn pick_version<'a>(
     packument: &'a Packument,
     range_str: &str,
@@ -165,6 +214,59 @@ pub(crate) fn pick_version<'a>(
 /// Information needed to rank releases, without their dependency metadata.
 pub(crate) trait VersionCandidate {
     fn is_deprecated(&self) -> bool;
+}
+
+impl VersionCandidate for aube_registry::ResolutionVersion {
+    fn is_deprecated(&self) -> bool {
+        self.is_deprecated()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pick_resolution_version<'a>(
+    p: &'a aube_registry::ResolutionPackument,
+    range: &str,
+    locked: Option<&str>,
+    lowest: bool,
+    cutoff: Option<&str>,
+    wall: Option<&str>,
+    strict: bool,
+    exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
+) -> Result<PickResult<'a>, crate::Error> {
+    resolution_pick(
+        p,
+        pick_version_key(
+            VersionIndex {
+                versions: &p.versions,
+                dist_tags: &p.dist_tags,
+                time: &p.time,
+            },
+            range,
+            locked,
+            lowest,
+            cutoff,
+            wall,
+            strict,
+            exempt,
+        ),
+    )
+}
+
+fn resolution_pick<'a>(
+    p: &'a aube_registry::ResolutionPackument,
+    pick: VersionPick<'_>,
+) -> Result<PickResult<'a>, crate::Error> {
+    match pick {
+        VersionPick::Found(key) => match p.versions.get(key) {
+            Some(v) => v
+                .metadata()
+                .map(PickResult::Found)
+                .map_err(|e| crate::Error::Registry(p.name.clone(), e.to_string())),
+            None => Ok(PickResult::NoMatch),
+        },
+        VersionPick::NoMatch => Ok(PickResult::NoMatch),
+        VersionPick::AgeGated => Ok(PickResult::AgeGated),
+    }
 }
 
 impl VersionCandidate for aube_registry::VersionMetadata {
