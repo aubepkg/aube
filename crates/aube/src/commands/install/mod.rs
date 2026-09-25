@@ -1093,6 +1093,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // prewarm and link phases reuse the same hashes.
             let lock_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
                 cwd: &cwd,
+                reuse_existing_entries: !(has_workspace || explicit_store_dir_override),
                 graph: &lock_materialize_graph,
                 store: &store,
                 link_strategy: lock_strategy,
@@ -1909,6 +1910,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // will.
             let materialize_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
                 cwd: &cwd,
+                reuse_existing_entries: !(has_workspace || explicit_store_dir_override),
                 graph: &materialize_graph_arc,
                 store: &store,
                 link_strategy: materialize_strategy,

@@ -99,6 +99,7 @@ impl VirtualStorePlan {
 /// already-linked shortcut and take the verified path instead.
 pub(super) struct VirtualStorePlanInputs<'a> {
     pub cwd: &'a std::path::Path,
+    pub reuse_existing_entries: bool,
     pub graph: &'a std::sync::Arc<aube_lockfile::LockfileGraph>,
     pub store: &'a aube_store::Store,
     pub link_strategy: aube_linker::LinkStrategy,
@@ -124,6 +125,7 @@ pub(super) async fn plan_virtual_store(
 ) -> miette::Result<VirtualStorePlan> {
     let VirtualStorePlanInputs {
         cwd,
+        reuse_existing_entries,
         graph,
         store,
         link_strategy,
@@ -143,6 +145,11 @@ pub(super) async fn plan_virtual_store(
         probe = probe.with_use_global_virtual_store(enabled);
     }
     if !probe.uses_global_virtual_store() {
+        if !reuse_existing_entries {
+            return Ok(VirtualStorePlan::PerProject {
+                reusable: Default::default(),
+            });
+        }
         let cwd = cwd.to_path_buf();
         let graph = graph.clone();
         let reusable = tokio::task::spawn_blocking(move || {
