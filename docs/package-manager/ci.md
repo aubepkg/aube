@@ -83,7 +83,7 @@ steps:
   - uses: actions/cache@v6
     with:
       path: node_modules
-      key: aube-nm-${{ runner.os }}-${{ runner.arch }}-node${{ steps.aube.outputs.node-version }}-${{ hashFiles('aube-lock.yaml') }}
+      key: aube-nm-${{ runner.os }}-${{ runner.arch }}-node${{ steps.aube.outputs.node-version }}-${{ hashFiles('**/aube-lock.yaml') }}
   - run: aube install --frozen-lockfile
   - run: aube run --no-install test
 ```
@@ -93,7 +93,15 @@ builds approved in `allowBuilds` can compile native addons for one Node.js ABI,
 and aube does not reinstall a restored `node_modules` when only the Node.js
 version changes. Don't add a `restore-keys` fallback for this cache: a partial
 match would be treated as the installed state. In a workspace, add each
-package's `node_modules` directory to `path`.
+package's `node_modules` directory to `path`; the `**/aube-lock.yaml` pattern
+already covers member lockfiles when workspace packages keep their own.
+
+Restore the cache at the same checkout path it was saved from. Windows
+junctions and transitive `link:` dependencies store absolute paths, so a tree
+restored under a different directory can report "Already up to date" while
+those links point at the old location. GitHub-hosted runners check out to the
+same path for a repository on each OS; if a job changes it (for example with
+`actions/checkout`'s `path` input), include that path in the key.
 
 ## Container builds
 
