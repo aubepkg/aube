@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/aubepkg/aube/compare/v2.3.0...v2.4.0) - 2026-09-25
+
+### Added
+
+- *(install)* reuse a hidden lockfile in node_modules when the lockfile is missing ([#1594](https://github.com/aubepkg/aube/pull/1594))
+
+### Fixed
+
+- *(install)* hold buffered tarball bytes against the budget until import ([#1605](https://github.com/aubepkg/aube/pull/1605))
+- *(install)* strip verbatim prefix from Windows install root ([#1591](https://github.com/aubepkg/aube/pull/1591))
+- *(update)* keep workspace member importers when updating at the root ([#1579](https://github.com/aubepkg/aube/pull/1579))
+
+### Other
+
+- *(install)* buffer small tarballs before starting their import ([#1604](https://github.com/aubepkg/aube/pull/1604))
+- *(install)* skip reading back GVS links written this install ([#1603](https://github.com/aubepkg/aube/pull/1603))
+- *(install)* cap blocking threads on Linux and skip per-file CAS chmod ([#1598](https://github.com/aubepkg/aube/pull/1598))
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
 ## [2.3.0](https://github.com/aubepkg/aube/compare/v2.2.17...v2.3.0) - 2026-09-22
 
 ### Added

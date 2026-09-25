@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.3.0...aube-lockfile-v2.4.0) - 2026-09-25
+
+### Fixed
+
+- *(lockfile)* read required importer peers from npm lockfiles ([#1588](https://github.com/aubepkg/aube/pull/1588))
+- *(update)* keep workspace member importers when updating at the root ([#1579](https://github.com/aubepkg/aube/pull/1579))
+
+### Other
+
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
 ## [2.3.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.2.17...aube-lockfile-v2.3.0) - 2026-09-22
 
 ### Fixed

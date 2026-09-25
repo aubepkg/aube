@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/aubepkg/aube/compare/aube-scripts-v2.3.0...aube-scripts-v2.4.0) - 2026-09-25
+
+### Other
+
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
 ## [2.3.0](https://github.com/aubepkg/aube/compare/aube-scripts-v2.2.17...aube-scripts-v2.3.0) - 2026-09-22
 
 ### Fixed

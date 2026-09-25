@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.3.0...aube-linker-v2.4.0) - 2026-09-25
+
+### Other
+
+- *(install)* skip reading back GVS links written this install ([#1603](https://github.com/aubepkg/aube/pull/1603))
+- *(linker)* build the hidden hoist tree in parallel ([#1601](https://github.com/aubepkg/aube/pull/1601))
+- *(linker)* link large packages' files in parallel ([#1602](https://github.com/aubepkg/aube/pull/1602))
+- *(linker)* create materialize staging dirs top-down ([#1600](https://github.com/aubepkg/aube/pull/1600))
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
 ## [2.3.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.17...aube-linker-v2.3.0) - 2026-09-22
 
 ### Added
