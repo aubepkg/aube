@@ -34,7 +34,58 @@ pub(super) fn try_install_fast_path(
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
 ) -> miette::Result<Option<usize>> {
-    let dangerously_allow_all_builds = resolve_dangerously_allow_all_builds(cwd, opts);
+    let files = super::super::FileSources::load(cwd);
+    let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
+    let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    if aube_settings::resolved::advisory_check_every_install(&ctx)
+        && (aube_settings::resolved::paranoid(&ctx)
+            || !matches!(
+                aube_settings::resolved::advisory_check(&ctx),
+                aube_settings::resolved::AdvisoryCheck::Off
+            ))
+    {
+        return Ok(None);
+    }
+    // Local sources can include archives that freshness state does not track,
+    // including archives reached through a local directory dependency.
+    if opts.strict_no_lockfile {
+        let manifest = super::super::load_manifest_or_default(cwd)?;
+        if manifest
+            .all_dependencies()
+            .chain(
+                manifest
+                    .peer_dependencies
+                    .iter()
+                    .map(|(name, spec)| (name.as_str(), spec.as_str())),
+            )
+            .chain(
+                manifest
+                    .optional_dependencies
+                    .iter()
+                    .map(|(name, spec)| (name.as_str(), spec.as_str())),
+            )
+            .any(|(_, spec)| aube_lockfile::LocalSource::parse(spec, cwd).is_some())
+        {
+            return Ok(None);
+        }
+    }
+    // Strict frozen installs can reuse current state when their root lockfile
+    // exists and lifecycle scripts are disabled. Workspaces and declared
+    // patches retain the full pipeline until
+    // freshness tracks workspace membership and arbitrary patch paths. Keep
+    // missing/disabled and relocated lockfiles on the full validation path.
+    if opts.strict_no_lockfile
+        && ((!opts.ignore_scripts && !aube_settings::resolved::ignore_scripts(&ctx))
+            || !aube_settings::resolved::lockfile(&ctx)
+            || aube_settings::resolved::lockfile_dir(&ctx).is_some()
+            || aube_lockfile::detect_existing_lockfile_kind(cwd).is_none()
+            || aube_workspace::is_workspace_project_root(cwd)
+            || crate::patches::load_declared_patch_paths(cwd)
+                .map_or(true, |patches| !patches.is_empty()))
+    {
+        return Ok(None);
+    }
+    let dangerously_allow_all_builds = aube_settings::resolved::dangerously_allow_all_builds(&ctx);
     if !install_fast_path_eligible(
         cwd,
         opts,
@@ -57,13 +108,6 @@ pub(super) fn try_install_fast_path(
     Ok(Some(total))
 }
 
-fn resolve_dangerously_allow_all_builds(cwd: &Path, opts: &InstallOptions) -> bool {
-    let files = super::super::FileSources::load(cwd);
-    let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
-    let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
-    aube_settings::resolved::dangerously_allow_all_builds(&ctx)
-}
-
 fn install_fast_path_eligible(
     cwd: &Path,
     opts: &InstallOptions,
@@ -76,7 +120,6 @@ fn install_fast_path_eligible(
         && !opts.lockfile_only
         && !opts.dep_selection.is_filtered()
         && !opts.merge_git_branch_lockfiles
-        && !opts.strict_no_lockfile
         && !dangerously_allow_all_builds
         && opts.workspace_filter.is_empty()
         && modules_cache_sweep_default;
@@ -90,7 +133,7 @@ fn install_fast_path_eligible(
     // freshness reason is otherwise discarded here (only `.is_none()` is
     // consulted), leaving `aube install -v` silent on repeat-install loops
     // that originate from state drift rather than lockfile drift.
-    match state::check_needs_install_with_flags(cwd, &opts.cli_flags) {
+    match state::check_needs_install_with_flags(cwd, &opts.cli_flags, opts.strict_no_lockfile) {
         None => compatibility_metadata_is_current(cwd, opts),
         Some(reason) => {
             tracing::debug!("install warm path skipped: {reason}");
