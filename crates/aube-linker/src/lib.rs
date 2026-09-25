@@ -254,9 +254,10 @@ pub enum LinkStrategy {
     /// non-APFS same-FS volume (HFS+) — where `clonefile` is unsupported but
     /// hardlinks are not — `auto` degrades to a hardlink before copy,
     /// keeping the link zero-cost where explicit `clone` / `clone-or-copy`
-    /// would copy. (Small macOS files copy outright before any reflink or
-    /// hardlink attempt; the hardlink step is the reflink-*failure* fallback,
-    /// not an unconditional same-FS guarantee.) Explicit `clone` /
+    /// would copy. Small macOS files (known size at most 16 KiB) attempt
+    /// a reflink first, then copy on failure to preserve isolation from the
+    /// store. The hardlink fallback applies to larger or unknown-size files.
+    /// Explicit `clone` /
     /// `clone-or-copy` keep their documented copy fallback and never take
     /// this hardlink step.
     ///
