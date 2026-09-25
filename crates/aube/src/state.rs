@@ -334,7 +334,7 @@ pub struct InstalledPackageState {
 
 /// Check if install is needed. Returns None if up-to-date, or Some(reason) if stale.
 pub fn check_needs_install(project_dir: &Path) -> Option<String> {
-    check_needs_install_inner(project_dir, None)
+    check_needs_install_inner(project_dir, None, false)
 }
 
 /// Variant of [`check_needs_install`] that also checks `settings_hash`
@@ -342,16 +342,21 @@ pub fn check_needs_install(project_dir: &Path) -> Option<String> {
 /// path short circuit so `--node-linker=hoisted` and friends also feed
 /// the hash. `ensure_installed` (from `aube run`) uses the plain
 /// [`check_needs_install`] on purpose, see the note there.
+///
+/// Strict frozen installs set `verify_contents` to hash lockfiles and manifests
+/// even when their size and modification time match the saved metadata.
 pub fn check_needs_install_with_flags(
     project_dir: &Path,
     cli_flags: &[(String, String)],
+    verify_contents: bool,
 ) -> Option<String> {
-    check_needs_install_inner(project_dir, Some(cli_flags))
+    check_needs_install_inner(project_dir, Some(cli_flags), verify_contents)
 }
 
 fn check_needs_install_inner(
     project_dir: &Path,
     cli_flags: Option<&[(String, String)]>,
+    verify_contents: bool,
 ) -> Option<String> {
     // Surface the warm-path verdict on the diagnostic pipeline. A miss
     // re-runs the full resolve/fetch/delta/link pipeline (the visible
@@ -360,7 +365,7 @@ fn check_needs_install_inner(
     // install` now names the exact freshness input that drifted instead
     // of leaving them to guess. Trace-level on a hit keeps the default
     // output clean.
-    let reason = check_needs_install_compute(project_dir, cli_flags);
+    let reason = check_needs_install_compute(project_dir, cli_flags, verify_contents);
     match &reason {
         Some(reason) => tracing::debug!(
             project_dir = %project_dir.display(),
@@ -377,6 +382,7 @@ fn check_needs_install_inner(
 fn check_needs_install_compute(
     project_dir: &Path,
     cli_flags: Option<&[(String, String)]>,
+    verify_contents: bool,
 ) -> Option<String> {
     let _diag =
         aube_util::diag::Span::new(aube_util::diag::Category::Frozen, "check_needs_install");
@@ -433,7 +439,7 @@ fn check_needs_install_compute(
             (Some(current), Some(stored)) => current == stored,
             _ => false,
         };
-        if !meta_matches {
+        if verify_contents || !meta_matches {
             let current_hash = hash_file(&path);
             if current_hash != state.lockfile_hash {
                 return Some(format!("{lockfile_name} has changed"));
@@ -461,7 +467,7 @@ fn check_needs_install_compute(
     // lockfile exists, this is also the only member check (the `else if`
     // above just avoids a spurious "no lockfile found").
     if !state.member_lockfile_hashes.is_empty()
-        && let Some(reason) = member_lockfiles_stale(project_dir, &state)
+        && let Some(reason) = member_lockfiles_stale(project_dir, &state, verify_contents)
     {
         return Some(reason);
     }
@@ -469,7 +475,7 @@ fn check_needs_install_compute(
 
     let _diag_pjs =
         aube_util::diag::Span::new(aube_util::diag::Category::Frozen, "package_jsons_stale");
-    if let Some(reason) = package_jsons_stale(project_dir, &state) {
+    if let Some(reason) = package_jsons_stale(project_dir, &state, verify_contents) {
         return Some(reason);
     }
     drop(_diag_pjs);
@@ -554,7 +560,11 @@ fn check_needs_install_compute(
     None
 }
 
-fn package_jsons_stale(project_dir: &Path, state: &FreshnessState) -> Option<String> {
+fn package_jsons_stale(
+    project_dir: &Path,
+    state: &FreshnessState,
+    verify_contents: bool,
+) -> Option<String> {
     for (rel, stored_hash) in &state.package_json_hashes {
         let path = if rel == "." {
             project_dir.join("package.json")
@@ -564,13 +574,12 @@ fn package_jsons_stale(project_dir: &Path, state: &FreshnessState) -> Option<Str
         if !path.exists() {
             return Some(format!("{rel} is missing"));
         }
-        // Fast path: if a `(size, mtime)` snapshot was recorded last
-        // install AND it still matches, the file is byte-identical
-        // (mtime + size pair is sufficient evidence that nothing was
-        // overwritten in place). Skip the BLAKE3 hash entirely. Falls
-        // through on schema upgrades where `package_json_meta` is
-        // empty.
-        if let Some(stored_meta) = state.package_json_meta.get(rel)
+        // Ordinary installs use matching size and mtime as a freshness hint.
+        // Strict frozen installs hash contents even when metadata matches,
+        // since a file can be rewritten with its original size and timestamp.
+        // Missing metadata from older state schemas also requires hashing.
+        if !verify_contents
+            && let Some(stored_meta) = state.package_json_meta.get(rel)
             && let Some(current_meta) = FileMeta::capture(&path)
             && current_meta == *stored_meta
         {
@@ -653,7 +662,11 @@ fn collect_member_lockfile_state(
 /// fast path [`package_jsons_stale`] uses. Returns `Some(reason)` on
 /// the first drift, `None` when every member lockfile matches what the
 /// last install recorded.
-fn member_lockfiles_stale(project_dir: &Path, state: &FreshnessState) -> Option<String> {
+fn member_lockfiles_stale(
+    project_dir: &Path,
+    state: &FreshnessState,
+    verify_contents: bool,
+) -> Option<String> {
     let members = aube_workspace::find_workspace_packages(project_dir).unwrap_or_default();
     let mut seen = std::collections::BTreeSet::new();
     for member_dir in &members {
@@ -671,7 +684,8 @@ fn member_lockfiles_stale(project_dir: &Path, state: &FreshnessState) -> Option<
             }
             return Some(format!("{key} lockfile is missing"));
         };
-        if let Some(stored_meta) = state.member_lockfile_meta.get(&key)
+        if !verify_contents
+            && let Some(stored_meta) = state.member_lockfile_meta.get(&key)
             && let Some(current_meta) = FileMeta::capture(&path)
             && current_meta == *stored_meta
         {
@@ -2470,22 +2484,22 @@ mod tests {
         };
 
         // Every recorded member matches what is on disk → fresh.
-        assert_eq!(member_lockfiles_stale(&dir, &state), None);
+        assert_eq!(member_lockfiles_stale(&dir, &state, false), None);
 
         // Editing a member's lockfile busts the warm path.
         std::fs::write(&a_lock, "lockfileVersion: '9.0'\n# a edited\n").unwrap();
         assert_eq!(
-            member_lockfiles_stale(&dir, &state),
+            member_lockfiles_stale(&dir, &state, false),
             Some("packages/a lockfile has changed".to_string())
         );
         std::fs::write(&a_lock, "lockfileVersion: '9.0'\n# a\n").unwrap();
-        assert_eq!(member_lockfiles_stale(&dir, &state), None);
+        assert_eq!(member_lockfiles_stale(&dir, &state, false), None);
 
         // A brand-new member (absent from the recorded state) busts it.
         let c_dir = dir.join("packages/c");
         write_member("c", "lockfileVersion: '9.0'\n# c\n");
         assert_eq!(
-            member_lockfiles_stale(&dir, &state),
+            member_lockfiles_stale(&dir, &state, false),
             Some("packages/c is a new workspace member".to_string())
         );
         std::fs::remove_dir_all(&c_dir).unwrap();
@@ -2493,7 +2507,7 @@ mod tests {
         // A removed member (recorded but gone) busts it.
         std::fs::remove_dir_all(dir.join("packages/b")).unwrap();
         assert_eq!(
-            member_lockfiles_stale(&dir, &state),
+            member_lockfiles_stale(&dir, &state, false),
             Some("packages/b was removed from the workspace".to_string())
         );
     }
