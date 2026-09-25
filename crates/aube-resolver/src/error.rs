@@ -150,17 +150,21 @@ fn format_trust_downgrade_help(d: &TrustDowngradeDetails) -> String {
     let ver = &d.picked_version;
     let prior = &d.prior_version;
     let spec = format!("{name}@{ver}");
-    // A higher version published *earlier* than the picked one means the
-    // picked release is a maintenance backport on an older line, the most
+    // A higher release line published *earlier* than the picked stable
+    // version means the picked release is a maintenance backport, the most
     // common benign cause (e.g. webpack-dev-middleware@7.4.6 after 8.x).
+    // Prereleases are excluded: `8.0.0-beta.1` after `8.0.0` is not a
+    // backport.
     let backport = match (
         node_semver::Version::parse(prior),
         node_semver::Version::parse(ver),
     ) {
-        (Ok(p), Ok(v)) if p > v => format!(
-            "{prior} is a newer release line published before {ver}, so {spec} looks like a \
+        (Ok(p), Ok(v)) if v.pre_release.is_empty() && (p.major, p.minor) > (v.major, v.minor) => {
+            format!(
+                "{prior} is a newer release line published before {ver}, so {spec} looks like a \
              backport published outside the trusted release workflow.\n\n"
-        ),
+            )
+        }
         _ => String::new(),
     };
     format!(
@@ -601,5 +605,22 @@ mod tests {
             "8.0.0 is a newer release line published before 7.4.6, so \
              webpack-dev-middleware@7.4.6 looks like a backport"
         ));
+    }
+
+    #[test]
+    fn trust_downgrade_help_skips_backport_hint_for_prerelease_or_same_line() {
+        for (picked, prior) in [("8.0.0-beta.1", "8.0.0"), ("8.0.1", "8.0.2")] {
+            let help = format_trust_downgrade_help(&TrustDowngradeDetails {
+                name: "pkg".into(),
+                picked_version: picked.into(),
+                current_evidence: None,
+                prior_evidence: TrustEvidence::TrustedPublisher,
+                prior_version: prior.into(),
+            });
+            assert!(
+                !help.contains("looks like a backport"),
+                "{picked} after {prior}"
+            );
+        }
     }
 }
