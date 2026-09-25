@@ -290,6 +290,9 @@ impl RegistryClient {
         let (exact, max_age_secs, public_cacheable) = self
             .fetch_exact_version_packument_response(name, version)
             .await?;
+        if !self.exact_cache_allows_anonymous_reuse(name) {
+            return Ok(exact);
+        }
         if !public_cacheable {
             // Remove any previous anonymous entry when a response stops being reusable.
             tokio::task::spawn_blocking(move || {
@@ -301,9 +304,6 @@ impl RegistryClient {
             })
             .await
             .map_err(|error| Error::Io(std::io::Error::other(error)))?;
-            return Ok(exact);
-        }
-        if !self.exact_cache_allows_anonymous_reuse(name) {
             return Ok(exact);
         }
         let cached = CachedExact {
@@ -810,57 +810,70 @@ mod exact_cache_tests {
 
     #[tokio::test]
     async fn exact_cache_never_reuses_authenticated_metadata() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(document()))
-            .expect(3)
-            .mount(&server)
-            .await;
-        let dir = tempfile::tempdir().unwrap();
-        let anonymous = RegistryClient::new(&server.uri());
-        anonymous
-            .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
-            .await
-            .unwrap();
-        for token in ["first-user", "second-user"] {
-            let mut config = crate::config::NpmConfig {
-                registry: anonymous.config.registry.clone(),
-                ..Default::default()
-            };
-            config.auth_by_uri.insert(
-                server.uri().replacen("http:", "", 1),
-                crate::config::AuthConfig {
-                    auth_token: Some(token.into()),
-                    ..Default::default()
-                },
-            );
-            let mut client = RegistryClient::from_config(config);
-            assert!(
-                client
-                    .cached_exact_version_packument("demo", "1.0.0", dir.path())
-                    .await
-                    .unwrap()
-                    .is_none()
-            );
-            client
+        for header in ["public, max-age=300", "private", "no-cache", "no-store"] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(document()))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let dir = tempfile::tempdir().unwrap();
+            let anonymous = RegistryClient::new(&server.uri());
+            anonymous
                 .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
                 .await
                 .unwrap();
-            client.network_mode = NetworkMode::Offline;
-            assert!(matches!(
+            server.verify().await;
+            server.reset().await;
+            Mock::given(method("GET"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("cache-control", header)
+                        .set_body_json(document()),
+                )
+                .expect(2)
+                .mount(&server)
+                .await;
+            for token in ["first-user", "second-user"] {
+                let mut config = crate::config::NpmConfig {
+                    registry: anonymous.config.registry.clone(),
+                    ..Default::default()
+                };
+                config.auth_by_uri.insert(
+                    server.uri().replacen("http:", "", 1),
+                    crate::config::AuthConfig {
+                        auth_token: Some(token.into()),
+                        ..Default::default()
+                    },
+                );
+                let mut client = RegistryClient::from_config(config);
+                assert!(
+                    client
+                        .cached_exact_version_packument("demo", "1.0.0", dir.path())
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
                 client
                     .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
-                    .await,
-                Err(Error::Offline(_))
-            ));
+                    .await
+                    .unwrap();
+                client.network_mode = NetworkMode::Offline;
+                assert!(matches!(
+                    client
+                        .fetch_exact_version_packument_cached("demo", "1.0.0", dir.path())
+                        .await,
+                    Err(Error::Offline(_))
+                ));
+            }
+            assert!(
+                anonymous
+                    .cached_exact_version_packument("demo", "1.0.0", dir.path())
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
         }
-        assert!(
-            anonymous
-                .cached_exact_version_packument("demo", "1.0.0", dir.path())
-                .await
-                .unwrap()
-                .is_some()
-        );
     }
 
     #[tokio::test]
