@@ -302,16 +302,16 @@ async fn fetch_one_packument(
         );
         return Ok((inputs.name, indexed, FetchSource::Disk, None));
     }
+    let primer_inputs = inputs.clone();
     let FetchInputs {
         name,
         client,
         cache_dir,
         full_cache_dir,
-        primer_covers_cutoff,
-        force_metadata_primer,
         sem,
         needs_time,
         force_refresh,
+        ..
     } = inputs;
     let cache_lookup_dir = if needs_time {
         full_cache_dir.clone()
@@ -357,58 +357,13 @@ async fn fetch_one_packument(
         );
         return Ok((name, packument.into(), FetchSource::Disk, None));
     }
-    let use_metadata_primer = allow_primer
-        && !force_refresh
-        && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
-        && primer_covers_cutoff;
-    if use_metadata_primer
+    if allow_primer
         && !cached.stale
-        && let Some(seed) = crate::primer::get(&name)
+        && let Some(fetched) = fetch_primer(&primer_inputs, None)
     {
-        let mut packument = seed.packument();
-        if force_metadata_primer {
-            for version in packument.versions.values_mut() {
-                let tarball = client.tarball_url(&version.name, &version.version);
-                version.dist = version.dist.take().map(|mut dist| {
-                    dist.tarball = tarball;
-                    dist
-                });
-            }
-        }
-        if needs_time {
-            if let Some(dir) = full_cache_dir.as_ref() {
-                client.seed_full_packument_cache(
-                    &name,
-                    dir,
-                    &packument,
-                    seed.etag.as_deref(),
-                    seed.last_modified.as_deref(),
-                    false,
-                );
-            }
-        } else if let Some(dir) = cache_dir.as_ref() {
-            client.seed_packument_cache(
-                &name,
-                dir,
-                &packument,
-                seed.etag.as_deref(),
-                seed.last_modified.as_deref(),
-                false,
-            );
-        }
-        aube_util::diag::instant_lazy(
-            aube_util::diag::Category::Resolver,
-            "packument_primer_hit",
-            || {
-                format!(
-                    r#"{{"name":{},"versions":{}}}"#,
-                    aube_util::diag::jstr(&name),
-                    packument.versions.len()
-                )
-            },
-        );
-        return Ok((name, packument.into(), FetchSource::Primer, None));
+        return Ok(fetched);
     }
+    let primer_fallback = !allow_primer && required_version.is_some() && !cached.stale;
     // The adaptive limit models registry capacity. Local metadata does not
     // consume that capacity and must not queue behind slow HTTP requests.
     let permit_wait = std::time::Instant::now();
@@ -452,6 +407,10 @@ async fn fetch_one_packument(
             } else {
                 permit.record_cancelled();
             }
+            if primer_fallback && let Some(fetched) = fetch_primer(&primer_inputs, required_version)
+            {
+                return Ok(fetched);
+            }
             return Err(Error::Registry(name.clone(), e.to_string()));
         }
     };
@@ -467,6 +426,73 @@ async fn fetch_one_packument(
         },
     );
     Ok((name, packument, FetchSource::Network, None))
+}
+
+fn fetch_primer(inputs: &FetchInputs, required_version: Option<&str>) -> Option<FetchResult> {
+    let FetchInputs {
+        name,
+        client,
+        cache_dir,
+        full_cache_dir,
+        primer_covers_cutoff,
+        force_metadata_primer,
+        needs_time,
+        force_refresh,
+        ..
+    } = inputs;
+    if !*force_refresh
+        && (*force_metadata_primer || client.uses_default_npm_registry_for(name))
+        && *primer_covers_cutoff
+        && let Some(seed) = crate::primer::get(name)
+    {
+        let mut packument = seed.packument();
+        if required_version.is_some_and(|version| !packument.versions.contains_key(version)) {
+            return None;
+        }
+        if *force_metadata_primer {
+            for version in packument.versions.values_mut() {
+                let tarball = client.tarball_url(&version.name, &version.version);
+                version.dist = version.dist.take().map(|mut dist| {
+                    dist.tarball = tarball;
+                    dist
+                });
+            }
+        }
+        if *needs_time {
+            if let Some(dir) = full_cache_dir.as_ref() {
+                client.seed_full_packument_cache(
+                    name,
+                    dir,
+                    &packument,
+                    seed.etag.as_deref(),
+                    seed.last_modified.as_deref(),
+                    false,
+                );
+            }
+        } else if let Some(dir) = cache_dir.as_ref() {
+            client.seed_packument_cache(
+                name,
+                dir,
+                &packument,
+                seed.etag.as_deref(),
+                seed.last_modified.as_deref(),
+                false,
+            );
+        }
+        aube_util::diag::instant_lazy(
+            aube_util::diag::Category::Resolver,
+            "packument_primer_hit",
+            || {
+                format!(
+                    r#"{{"name":{},"versions":{}}}"#,
+                    aube_util::diag::jstr(name),
+                    packument.versions.len()
+                )
+            },
+        );
+        return Some((name.clone(), packument.into(), FetchSource::Primer, None));
+    }
+    None
 }
 
 async fn fetch_exact_optional_packument(
@@ -522,16 +548,7 @@ async fn fetch_full_exact_optional(
     let mut refresh_inputs = inputs.clone();
     // Live exact fetches do not seed a capped primer. Preserve the existing
     // primer fallback when an uncached compact request has failed, though.
-    let fetched = match fetch_one_packument(inputs, allow_primer, Some(&version)).await {
-        Ok(fetched) => fetched,
-        Err(error) if !allow_primer => {
-            tracing::debug!(
-                "full exact metadata fetch failed; trying the existing primer fallback: {error}"
-            );
-            fetch_one_packument(refresh_inputs.clone(), true, Some(&version)).await?
-        }
-        Err(error) => return Err(error),
-    };
+    let fetched = fetch_one_packument(inputs, allow_primer, Some(&version)).await?;
     if fetched.1.versions.contains_key(&version) {
         return Ok(fetched);
     }
@@ -972,6 +989,30 @@ mod tests {
         let (_, packument, source, _) = result.unwrap();
         assert_eq!(source, FetchSource::Primer);
         assert!(packument.versions.contains_key(version));
+    }
+
+    #[tokio::test]
+    async fn failed_exact_full_fetch_does_not_repeat_without_a_primer() {
+        let (registry, requests, server) = serve_registry(b"not json".to_vec()).await;
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::from_config_with_policy(
+            aube_registry::config::NpmConfig {
+                registry,
+                ..Default::default()
+            },
+            aube_registry::config::FetchPolicy {
+                retries: 0,
+                ..Default::default()
+            },
+        );
+        let resolver =
+            Resolver::new(Arc::new(client)).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        scheduler.ensure_exact_optional_fetch("shared", "1.0.0", None, false);
+        let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+        assert!(result.is_err());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        server.abort();
     }
 
     #[tokio::test]
