@@ -1213,6 +1213,137 @@ async fn selective_stale_lookup_carries_metadata_and_validators_into_revalidatio
     );
 }
 
+#[tokio::test]
+async fn stale_revalidation_preserves_view_fields_and_trust_history() {
+    for selective in [true, false] {
+        let cache = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        let client = client_with(&server, FetchPolicy::default());
+        let raw = serde_json::json!({
+            "name":"demo", "description":"kept for view", "future":{"escaped":"a\nb"},
+            "versions":{
+                "1.0.0":{"name":"demo","version":"1.0.0","custom":[true, null, 3],
+                    "_npmUser":{"trustedPublisher":{"id":"github"}}},
+                "2.0.0":{"name":"demo","version":"2.0.0","dependencies":{"child":"^1"}}
+            },
+            "time":{"1.0.0":"2024-01-01", "2.0.0":"2024-02-01"}
+        });
+        let cache_path = super::cache::packument_full_cache_path(
+            cache.path(),
+            "demo",
+            client.config.registry_for("demo"),
+        )
+        .unwrap();
+        super::cache::write_cached_full_packument(
+            &cache_path,
+            Some("tag"),
+            Some("yesterday"),
+            0,
+            Some(0),
+            &raw,
+        )
+        .unwrap();
+        let lookup = client.cached_resolution_packument("demo", cache.path());
+        assert_eq!(lookup.revalidation.contains_version("2.0.0"), Some(true));
+        assert_eq!(lookup.revalidation.contains_version("3.0.0"), Some(false));
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .and(header("if-none-match", "tag"))
+            .and(header("if-modified-since", "yesterday"))
+            .respond_with(ResponseTemplate::new(304).insert_header("Cache-Control", "max-age=600"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let fetched = if selective {
+            client
+                .fetch_resolution_packument_after_lookup("demo", cache.path(), lookup.revalidation)
+                .await
+                .unwrap()
+        } else {
+            client
+                .fetch_packument_with_time_cached_after_lookup(
+                    "demo",
+                    cache.path(),
+                    lookup.revalidation,
+                )
+                .await
+                .unwrap()
+                .into()
+        };
+        assert_eq!(
+            fetched.versions["2.0.0"].metadata().unwrap().dependencies["child"],
+            "^1"
+        );
+        assert!(
+            fetched.versions["1.0.0"]
+                .trust_metadata()
+                .npm_user
+                .is_some()
+        );
+        let cached: super::cache::CachedFullPackument =
+            super::cache::read_cached_full_packument(&cache_path).unwrap();
+        assert_eq!(cached.packument, raw);
+        assert_eq!(cached.etag.as_deref(), Some("tag"));
+        assert_eq!(cached.last_modified.as_deref(), Some("yesterday"));
+        assert_eq!(cached.max_age_secs, Some(600));
+        assert!(cached.fetched_at > 0);
+    }
+}
+
+#[tokio::test]
+async fn concurrent_stale_resolution_lookups_share_revalidation_and_new_history() {
+    let cache = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let client = client_with(&server, FetchPolicy::default());
+    let old: Packument = serde_json::from_value(serde_json::json!({
+        "name":"demo", "versions":{"1.0.0":{"name":"demo","version":"1.0.0"}}
+    }))
+    .unwrap();
+    client.seed_full_packument_cache("demo", cache.path(), &old, Some("old-tag"), None, false);
+    let first = client.cached_resolution_packument("demo", cache.path());
+    let second = client.cached_resolution_packument("demo", cache.path());
+    let new = serde_json::json!({
+        "name":"demo", "description":"new raw metadata", "versions":{
+            "1.0.0":{"name":"demo","version":"1.0.0","approver":{"name":"approved"}},
+            "2.0.0":{"name":"demo","version":"2.0.0"}
+        }, "time":{"1.0.0":"2024-01-01", "2.0.0":"2024-02-01"}
+    });
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .and(header("if-none-match", "old-tag"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(&new)
+                .insert_header("ETag", "new-tag")
+                .insert_header("Cache-Control", "max-age=600")
+                .set_delay(std::time::Duration::from_millis(100)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (first, second) = tokio::join!(
+        client.fetch_resolution_packument_after_lookup("demo", cache.path(), first.revalidation),
+        client.fetch_resolution_packument_after_lookup("demo", cache.path(), second.revalidation),
+    );
+    for result in [first, second] {
+        let packument = result.unwrap();
+        assert!(packument.versions.contains_key("2.0.0"));
+        assert!(
+            packument.versions["1.0.0"]
+                .trust_metadata()
+                .approver
+                .is_some()
+        );
+    }
+    assert_eq!(
+        client
+            .fetch_packument_full_cached("demo", cache.path())
+            .await
+            .unwrap(),
+        new
+    );
+}
+
 #[test]
 fn selective_cache_rejects_malformed_historical_download_metadata() {
     let cache = tempfile::tempdir().unwrap();
@@ -1342,45 +1473,63 @@ async fn cold_resolution_reports_invalid_selected_and_historical_metadata() {
 }
 
 #[tokio::test]
-async fn cold_resolution_retries_invalid_json_inside_unused_fields() {
-    for invalid in [
-        r#"{"name":"demo","future":{"ignored":[tru]}}"#,
-        r#"{"name":"demo","future":{"ignored":"\uZZZZ"}}"#,
-        r#"{"name":"demo","versions":{}} trailing"#,
-        r#"{"name":"demo","future":{"ignored":"\uD800"}}"#,
-        r#"{"name":"demo","future":{"ignored":1e999}}"#,
-    ] {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/demo"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(invalid, "application/json"))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/demo"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(make_packument_json()))
-            .expect(1)
-            .mount(&server)
-            .await;
-        let client = client_with(
-            &server,
-            FetchPolicy {
-                retries: 1,
-                retry_min_timeout_ms: 1,
-                retry_max_timeout_ms: 1,
-                ..FetchPolicy::default()
-            },
-        );
-        let cache = tempfile::tempdir().unwrap();
-        assert_eq!(
-            client
-                .fetch_resolution_packument_after_lookup("demo", cache.path(), Default::default())
-                .await
-                .unwrap()
-                .name,
-            "demo"
-        );
-        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+async fn resolution_retries_invalid_json_inside_unused_fields() {
+    for stale in [false, true] {
+        for invalid in [
+            r#"{"name":"demo","future":{"ignored":[tru]}}"#,
+            r#"{"name":"demo","future":{"ignored":"\uZZZZ"}}"#,
+            r#"{"name":"demo","versions":{}} trailing"#,
+            r#"{"name":"demo","future":{"ignored":"\uD800"}}"#,
+            r#"{"name":"demo","future":{"ignored":1e999}}"#,
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/demo"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(invalid, "application/json"))
+                .up_to_n_times(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/demo"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(make_packument_json()))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = client_with(
+                &server,
+                FetchPolicy {
+                    retries: 1,
+                    retry_min_timeout_ms: 1,
+                    retry_max_timeout_ms: 1,
+                    ..FetchPolicy::default()
+                },
+            );
+            let cache = tempfile::tempdir().unwrap();
+            let lookup = if stale {
+                let packument: Packument = serde_json::from_value(make_packument_json()).unwrap();
+                client.seed_full_packument_cache(
+                    "demo",
+                    cache.path(),
+                    &packument,
+                    Some("old-tag"),
+                    None,
+                    false,
+                );
+                client
+                    .cached_resolution_packument("demo", cache.path())
+                    .revalidation
+            } else {
+                Default::default()
+            };
+            assert_eq!(
+                client
+                    .fetch_resolution_packument_after_lookup("demo", cache.path(), lookup)
+                    .await
+                    .unwrap()
+                    .name,
+                "demo"
+            );
+            assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        }
     }
 }

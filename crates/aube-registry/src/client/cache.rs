@@ -308,6 +308,31 @@ pub(super) fn read_cached_full_packument<T: serde::de::DeserializeOwned>(
     sonic_rs::from_slice(&content).ok()
 }
 
+/// Keep the complete cache payload for revalidation without building a JSON
+/// tree or copying its body out of the file buffer.
+pub(super) fn read_cached_full_packument_raw(
+    path: &Path,
+) -> Option<CachedFullPackument<RawPackument>> {
+    let content = bytes::Bytes::from(std::fs::read(path).ok()?);
+    let cached: CachedFullPackument<sonic_rs::LazyValue<'_>> =
+        sonic_rs::from_slice(&content).ok()?;
+    let raw = cached.packument.as_raw_str().as_bytes();
+    // A borrowed payload must be inside this file read. An unexpected owned
+    // LazyValue is a cache miss rather than a panic in Bytes::slice_ref.
+    let start = (raw.as_ptr() as usize).checked_sub(content.as_ptr() as usize)?;
+    let end = start
+        .checked_add(raw.len())
+        .filter(|end| *end <= content.len())?;
+    let packument = RawPackument::from_bytes(content.slice(start..end)).ok()?;
+    Some(CachedFullPackument {
+        etag: cached.etag,
+        last_modified: cached.last_modified,
+        fetched_at: cached.fetched_at,
+        max_age_secs: cached.max_age_secs,
+        packument,
+    })
+}
+
 /// Typed fast-path read used by `fetch_packument_with_time_cached`
 /// in the warm-cache branch. Reads the file once and uses `sonic-rs`
 /// to deserialize the cached wrapper directly into a tiny typed struct

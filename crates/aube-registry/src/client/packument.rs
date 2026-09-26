@@ -695,8 +695,13 @@ impl RegistryClient {
         let sf_key = format!("full:{registry_url}:{name}");
         let sf_mutex = self.packument_singleflight_mutex(sf_key);
         let mut sf_guard = Some(sf_mutex.lock().await);
-        if let Some(refreshed) = read_cached_full_packument_typed(&cache_path, force_cache) {
-            return Ok(refreshed);
+        // A waiter only needs to decode releases when another request has
+        // refreshed the cache. Stale entries retain the typed snapshot above.
+        if let Some(refreshed) = read_cached_full_packument_raw(&cache_path)
+            && (force_cache || cached_is_fresh(refreshed.fetched_at, refreshed.max_age_secs))
+            && let Ok(packument) = sonic_rs::from_slice(&refreshed.packument.0)
+        {
+            return Ok(packument);
         }
 
         let label = format!("packument {name}");
@@ -742,22 +747,21 @@ impl RegistryClient {
                 Ok(resp) if resp.status() == reqwest::StatusCode::NOT_MODIFIED => {
                     let revalidated_max_age =
                         parse_cache_control_max_age(&resp).or(cached.max_age_secs);
-                    let to_cache = if let Some(to_cache) =
-                        read_cached_full_packument::<serde_json::Value>(&cache_path)
-                    {
-                        to_cache
-                    } else {
-                        let packument = serde_json::to_value(&cached.packument).map_err(|e| {
-                            Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-                        })?;
-                        CachedFullPackument {
-                            etag: cached.etag.clone(),
-                            last_modified: cached.last_modified.clone(),
-                            fetched_at: cached.fetched_at,
-                            max_age_secs: cached.max_age_secs,
-                            packument,
-                        }
-                    };
+                    let to_cache =
+                        if let Some(to_cache) = read_cached_full_packument_raw(&cache_path) {
+                            to_cache
+                        } else {
+                            let packument = sonic_rs::to_vec(&cached.packument).map_err(|e| {
+                                Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                            })?;
+                            CachedFullPackument {
+                                etag: cached.etag.clone(),
+                                last_modified: cached.last_modified.clone(),
+                                fetched_at: cached.fetched_at,
+                                max_age_secs: cached.max_age_secs,
+                                packument: RawPackument(bytes::Bytes::from(packument)),
+                            }
+                        };
                     if let Err(e) = write_cached_full_packument(
                         &cache_path,
                         to_cache.etag.as_deref(),
@@ -780,7 +784,7 @@ impl RegistryClient {
                     let max_age_secs = parse_cache_control_max_age(&resp);
                     let resp = resp.error_for_status()?;
                     check_body_cap(&resp, self.fetch_policy.packument_max_bytes, &label)?;
-                    match parse_full_response::<serde_json::Value>(resp).await {
+                    match parse_full_response_with(resp, RawPackument::from_bytes).await {
                         Ok(value) => {
                             if let Err(e) = write_cached_full_packument(
                                 &cache_path,
@@ -797,7 +801,7 @@ impl RegistryClient {
                                 );
                             }
                             let packument: Packument =
-                                serde_json::from_value(value).map_err(|e| {
+                                sonic_rs::from_slice(&value.0).map_err(|e| {
                                     Error::Io(std::io::Error::new(
                                         std::io::ErrorKind::InvalidData,
                                         e,
