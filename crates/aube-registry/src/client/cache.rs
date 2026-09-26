@@ -14,18 +14,95 @@ pub(super) struct CachedPackument {
     pub(super) packument: Packument,
 }
 
+/// Validated JSON retained without allocating a tree of arbitrary fields.
+/// The canonical cache still contains the complete registry response.
+#[derive(Debug, Clone)]
+pub(super) struct RawPackument(pub(super) bytes::Bytes);
+
+impl RawPackument {
+    pub(super) fn from_bytes(bytes: bytes::Bytes) -> Result<Self, sonic_rs::Error> {
+        // LazyValue's scanner does not validate Unicode escape digits. Visit
+        // every scalar without retaining it, matching the former Value decode.
+        sonic_rs::from_slice::<ValidatedJson>(&bytes)?;
+        Ok(Self(bytes))
+    }
+}
+
+impl<'de> Deserialize<'de> for RawPackument {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = sonic_rs::LazyValue::deserialize(deserializer)?;
+        Self::from_bytes(bytes::Bytes::copy_from_slice(raw.as_raw_str().as_bytes()))
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for RawPackument {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let raw: sonic_rs::LazyValue<'_> =
+            sonic_rs::from_slice(&self.0).map_err(serde::ser::Error::custom)?;
+        raw.serialize(serializer)
+    }
+}
+
+/// Validate scalars through the normal decoder without allocating a JSON tree.
+/// IgnoredAny would use the same permissive string-skipping path as LazyValue.
+struct ValidatedJson;
+
+impl<'de> Deserialize<'de> for ValidatedJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(Self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for ValidatedJson {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("valid JSON")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self, E> {
+        Ok(self)
+    }
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self, E> {
+        Ok(self)
+    }
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self, E> {
+        Ok(self)
+    }
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self, E> {
+        Ok(self)
+    }
+    fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self, E> {
+        Ok(self)
+    }
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self, A::Error> {
+        while seq.next_element::<Self>()?.is_some() {}
+        Ok(self)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self, A::Error> {
+        while map.next_entry::<Self, Self>()?.is_some() {}
+        Ok(self)
+    }
+}
+
 /// Disk-cached *full* (non-corgi) packument. Stored as raw JSON so we
 /// preserve fields the resolver doesn't parse (`description`, `repository`,
 /// `license`, `keywords`, `maintainers`, ...), for use by human-facing
 /// commands like `aube view`.
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct CachedFullPackument {
+pub(super) struct CachedFullPackument<T = serde_json::Value> {
     pub(super) etag: Option<String>,
     pub(super) last_modified: Option<String>,
     pub(super) fetched_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) max_age_secs: Option<u64>,
-    pub(super) packument: serde_json::Value,
+    pub(super) packument: T,
 }
 
 #[derive(Debug, Default)]
@@ -199,7 +276,9 @@ pub(super) fn write_cached_trust_history(
     aube_util::fs_atomic::atomic_write(path, &json)
 }
 
-pub(super) fn read_cached_full_packument(path: &Path) -> Option<CachedFullPackument> {
+pub(super) fn read_cached_full_packument<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> Option<CachedFullPackument<T>> {
     let content = std::fs::read(path).ok()?;
     sonic_rs::from_slice(&content).ok()
 }
@@ -260,26 +339,24 @@ pub(super) fn read_cached_full_packument_typed(
     read_cached_full_packument_typed_lookup(path, force_cache).packument
 }
 
-pub(super) fn write_cached_full_packument(
+pub(super) fn write_cached_full_packument<T: Serialize>(
     path: &Path,
     etag: Option<&str>,
     last_modified: Option<&str>,
     fetched_at: u64,
     max_age_secs: Option<u64>,
-    packument: &serde_json::Value,
+    packument: &T,
 ) -> std::io::Result<()> {
-    // Serialize through a borrow struct so popular packuments don't pay
-    // a multi-MB `serde_json::Value::clone` per write. The owned
-    // `CachedFullPackument` is still used by the read path; the writer
-    // just doesn't need ownership.
+    // Serialize by reference. Raw responses retain every field without
+    // allocating a JSON tree; typed primer entries use the same envelope.
     #[derive(Serialize)]
-    struct CachedFullPackumentRef<'a> {
+    struct CachedFullPackumentRef<'a, T> {
         etag: Option<&'a str>,
         last_modified: Option<&'a str>,
         fetched_at: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         max_age_secs: Option<u64>,
-        packument: &'a serde_json::Value,
+        packument: &'a T,
     }
     let json = sonic_rs::to_vec(&CachedFullPackumentRef {
         etag,

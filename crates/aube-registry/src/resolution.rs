@@ -63,16 +63,25 @@ impl RawResolutionPackument<'_> {
         })
     }
 
-    pub(crate) fn into_resolution(self, content: &bytes::Bytes) -> Option<ResolutionPackument> {
+    pub(crate) fn into_resolution(
+        self,
+        content: &bytes::Bytes,
+    ) -> Result<ResolutionPackument, sonic_rs::Error> {
+        use serde::de::Error as _;
+
         let mut versions = BTreeMap::new();
         for (key, value) in self.versions {
             let raw = value.as_raw_str();
             // LazyValue borrows JSON objects from this input. Bounds checks
             // also make an unexpected owned value a cache miss, not a panic.
-            let start = (raw.as_ptr() as usize).checked_sub(content.as_ptr() as usize)?;
-            let end = start.checked_add(raw.len())?;
-            content.get(start..end)?;
-            let candidate: Candidate = sonic_rs::from_str(raw).ok()?;
+            let invalid_range =
+                || sonic_rs::Error::custom("release JSON is outside the response buffer");
+            let start = (raw.as_ptr() as usize)
+                .checked_sub(content.as_ptr() as usize)
+                .ok_or_else(invalid_range)?;
+            let end = start.checked_add(raw.len()).ok_or_else(invalid_range)?;
+            content.get(start..end).ok_or_else(invalid_range)?;
+            let candidate: Candidate = sonic_rs::from_str(raw)?;
             versions.insert(
                 key,
                 ResolutionVersion {
@@ -85,7 +94,7 @@ impl RawResolutionPackument<'_> {
                 },
             );
         }
-        Some(ResolutionPackument {
+        Ok(ResolutionPackument {
             name: self.name,
             modified: self.modified,
             versions,
