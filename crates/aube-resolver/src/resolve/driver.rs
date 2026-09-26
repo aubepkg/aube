@@ -775,8 +775,9 @@ impl<'a> ResolveDriver<'a> {
                     if decode_failed
                         && let Some(dir) = self.resolver.packument_full_cache_dir.clone()
                     {
-                        // Only deferred disk metadata can fail to decode here.
-                        // Treat it as a corrupt cache entry, not an install error.
+                        // Deferred metadata may come from disk or a live response.
+                        // Invalidate it and retry through the fully typed path;
+                        // a persistent schema error then fails that fetch.
                         let client = self.resolver.client.clone();
                         let name = registry_name.clone();
                         tokio::task::spawn_blocking(move || {
