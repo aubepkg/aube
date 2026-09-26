@@ -386,7 +386,19 @@ async fn fetch_one_packument(
     let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
     let fetch_outcome = if needs_time {
         match full_cache_dir.as_ref() {
-            Some(dir) if force_refresh => client.refresh_resolution_packument(&name, dir).await,
+            Some(dir) if force_refresh => {
+                client
+                    .refresh_resolution_packument(
+                        &name,
+                        dir,
+                        if requested_refresh {
+                            None
+                        } else {
+                            required_version
+                        },
+                    )
+                    .await
+            }
             Some(dir) => {
                 client
                     .fetch_resolution_packument_after_lookup(&name, dir, cached)

@@ -797,6 +797,49 @@ async fn concurrent_corgi_fetches_for_same_name_coalesce_to_one_request() {
 }
 
 #[tokio::test]
+async fn concurrent_exact_refreshes_reuse_only_an_inventory_with_the_required_version() {
+    for includes_second in [true, false] {
+        let server = MockServer::start().await;
+        let mut body = serde_json::json!({"name":"demo","versions":{
+            "1.0.0":{"name":"demo","version":"1.0.0"},
+            "2.0.0":{"name":"demo","version":"2.0.0"}
+        }});
+        if includes_second {
+            body["versions"]["3.0.0"] = serde_json::json!({"name":"demo","version":"3.0.0"});
+        }
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(100))
+                    .set_body_json(body),
+            )
+            .mount(&server)
+            .await;
+        let client = client_with(&server, FetchPolicy::default());
+        let cache = tempfile::tempdir().unwrap();
+        let old = serde_json::from_value(serde_json::json!({"name":"demo","versions":{
+            "1.0.0":{"name":"demo","version":"1.0.0"}
+        }}))
+        .unwrap();
+        client.seed_full_packument_cache("demo", cache.path(), &old, None, None, true);
+        let (first, second) = tokio::join!(
+            client.refresh_resolution_packument("demo", cache.path(), Some("2.0.0")),
+            client.refresh_resolution_packument("demo", cache.path(), Some("3.0.0")),
+        );
+        assert!(first.unwrap().versions.contains_key("2.0.0"));
+        assert_eq!(
+            second.unwrap().versions.contains_key("3.0.0"),
+            includes_second
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            if includes_second { 1 } else { 2 }
+        );
+    }
+}
+
+#[tokio::test]
 async fn concurrent_full_fetches_for_same_name_coalesce_to_one_request() {
     // Mirror of the corgi test for the full-packument path:
     // `fetch_packument_full_cached` must also dedup concurrent
