@@ -1,5 +1,6 @@
 use super::body::{check_body_cap, is_retriable_status, retry_after_from};
 use super::cache::*;
+use super::parse::parse_full_response_with;
 use super::{
     PACKUMENT_ACCEPT, PACKUMENT_FULL_ACCEPT, RegistryClient, force_full_packument,
     parse_full_response,
@@ -38,7 +39,7 @@ impl RegistryClient {
         };
         if self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
             return CachedResolutionPackumentLookup {
-                packument: cached.packument.into_resolution(&content),
+                packument: cached.packument.into_resolution(&content).ok(),
                 revalidation: Default::default(),
             };
         }
@@ -187,10 +188,23 @@ impl RegistryClient {
         name: &str,
         cache_dir: &Path,
     ) -> Result<serde_json::Value, Error> {
+        self.fetch_packument_full_cached_with(name, cache_dir, |bytes| sonic_rs::from_slice(&bytes))
+            .await
+    }
+
+    async fn fetch_packument_full_cached_with<T>(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+        decode: impl Fn(bytes::Bytes) -> Result<T, sonic_rs::Error> + Copy,
+    ) -> Result<T, Error>
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize + Clone,
+    {
         let registry_url = self.config.registry_for(name).to_string();
         let cache_path = packument_full_cache_path(cache_dir, name, &registry_url)
             .ok_or_else(|| Error::InvalidName(name.to_string()))?;
-        let cached = read_cached_full_packument(&cache_path);
+        let cached = read_cached_full_packument::<T>(&cache_path);
 
         // --prefer-offline / --offline: trust any cached copy regardless of age.
         // --offline additionally forbids falling back to the network on a miss.
@@ -213,7 +227,7 @@ impl RegistryClient {
         let sf_key = format!("full:{registry_url}:{name}");
         let sf_mutex = self.packument_singleflight_mutex(sf_key);
         let mut sf_guard = Some(sf_mutex.lock().await);
-        let cached = match read_cached_full_packument(&cache_path) {
+        let cached = match read_cached_full_packument::<T>(&cache_path) {
             Some(c) if force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs) => {
                 return Ok(c.packument);
             }
@@ -305,7 +319,7 @@ impl RegistryClient {
                     let max_age_secs = parse_cache_control_max_age(&resp);
                     let resp = resp.error_for_status()?;
                     check_body_cap(&resp, self.fetch_policy.packument_max_bytes, &label)?;
-                    match parse_full_response::<serde_json::Value>(resp).await {
+                    match parse_full_response_with(resp, decode).await {
                         Ok(packument) => {
                             if let Err(e) = write_cached_full_packument(
                                 &cache_path,
@@ -389,17 +403,13 @@ impl RegistryClient {
             return Ok(packument);
         }
 
-        // Slow path: full value round-trip covers revalidation + fresh
-        // network fetches + all the ETag bookkeeping.
-        // `fetch_packument_full_cached` is the single source of truth
-        // for those branches; we just re-parse its `Value` into
-        // `Packument` here. The one `from_value` walk this still pays
-        // is amortized across the network round-trip so it doesn't
-        // show up in steady-state resolves.
-        let value = self.fetch_packument_full_cached(name, cache_dir).await?;
-        let packument: Packument = serde_json::from_value(value)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-        Ok(packument)
+        // Keep the complete response in the shared cache, but decode the
+        // install shape directly instead of building an intermediate JSON tree.
+        let raw = self
+            .fetch_packument_full_cached_with(name, cache_dir, RawPackument::from_bytes)
+            .await?;
+        sonic_rs::from_slice(&raw.0)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
     pub async fn fetch_packument_with_time_cached_after_lookup(
@@ -415,6 +425,31 @@ impl RegistryClient {
             }
             _ => self.fetch_packument_with_time_cached(name, cache_dir).await,
         }
+    }
+
+    /// Fetch complete selection and trust history while deferring dependency
+    /// metadata decoding until a release is selected. Uses the canonical full
+    /// cache and the same conditional requests, single-flight gate, and retries.
+    pub async fn fetch_resolution_packument_after_lookup(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+        lookup: CachedPackumentLookup,
+    ) -> Result<crate::ResolutionPackument, Error> {
+        if let Some(CachedPackumentLookupEntry::Full(cached)) = lookup.cached {
+            return self
+                .revalidate_full_packument_typed(name, cache_dir, cached)
+                .await
+                .map(Into::into);
+        }
+        let raw = self
+            .fetch_packument_full_cached_with(name, cache_dir, RawPackument::from_bytes)
+            .await?;
+        let projected: crate::resolution::RawResolutionPackument = sonic_rs::from_slice(&raw.0)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+        projected
+            .into_resolution(&raw.0)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
     /// Fetch the compact trust history (`time` map plus per-version trust
@@ -655,7 +690,9 @@ impl RegistryClient {
                 Ok(resp) if resp.status() == reqwest::StatusCode::NOT_MODIFIED => {
                     let revalidated_max_age =
                         parse_cache_control_max_age(&resp).or(cached.max_age_secs);
-                    let to_cache = if let Some(to_cache) = read_cached_full_packument(&cache_path) {
+                    let to_cache = if let Some(to_cache) =
+                        read_cached_full_packument::<serde_json::Value>(&cache_path)
+                    {
                         to_cache
                     } else {
                         let packument = serde_json::to_value(&cached.packument).map_err(|e| {

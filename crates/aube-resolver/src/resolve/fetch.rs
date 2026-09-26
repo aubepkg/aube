@@ -409,17 +409,18 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         match full_cache_dir.as_ref() {
             Some(dir) => {
                 client
-                    .fetch_packument_with_time_cached_after_lookup(&name, dir, cached)
+                    .fetch_resolution_packument_after_lookup(&name, dir, cached)
                     .await
             }
-            None => client.fetch_packument(&name).await,
+            None => client.fetch_packument(&name).await.map(Into::into),
         }
     } else if let Some(ref dir) = cache_dir {
         client
             .fetch_packument_cached_after_lookup(&name, dir, cached)
             .await
+            .map(Into::into)
     } else {
-        client.fetch_packument(&name).await
+        client.fetch_packument(&name).await.map(Into::into)
     };
     let packument = match fetch_outcome {
         Ok(p) => {
@@ -446,7 +447,7 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
             )
         },
     );
-    Ok((name, packument.into(), FetchSource::Network, None))
+    Ok((name, packument, FetchSource::Network, None))
 }
 
 async fn fetch_exact_optional_packument(

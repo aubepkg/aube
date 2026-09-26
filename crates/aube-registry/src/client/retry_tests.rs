@@ -1161,11 +1161,11 @@ async fn selective_stale_lookup_carries_metadata_and_validators_into_revalidatio
         .mount(&server)
         .await;
     let fetched = client
-        .fetch_packument_with_time_cached_after_lookup("demo", cache.path(), lookup.revalidation)
+        .fetch_resolution_packument_after_lookup("demo", cache.path(), lookup.revalidation)
         .await
         .unwrap();
     assert_eq!(
-        serde_json::to_value(fetched).unwrap(),
+        serde_json::to_value(fetched.materialize().unwrap()).unwrap(),
         serde_json::to_value(full).unwrap()
     );
 }
@@ -1211,5 +1211,133 @@ fn selective_cache_rejects_malformed_historical_download_metadata() {
                 .packument
                 .is_none()
         );
+    }
+}
+
+#[tokio::test]
+async fn cold_resolution_keeps_full_cache_and_historical_trust_evidence() {
+    let server = MockServer::start().await;
+    let raw = serde_json::json!({
+        "name": "demo", "description": "preserve for view", "future": {"field": [1, 2]},
+        "versions": {
+            "1.0.0": {"name":"demo", "version":"1.0.0", "dependencies":{"old":"^1"},
+                "_npmUser":{"name":"bot","trustedPublisher":{"id":"github","oidcConfigId":"id"}},
+                "dist":{"tarball":"https://example.test/old.tgz", "attestations":{"provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}}},
+            "2.0.0": {"name":"demo", "version":"2.0.0", "dependencies":{"child":"^2"},
+                "optionalDependencies":{"optional":"3"}, "peerDependencies":{"peer":"*"},
+                "dist":{"tarball":"https://example.test/new.tgz"}}
+        },
+        "time":{"1.0.0":"2024-01-01", "2.0.0":"2024-02-01"},
+        "dist-tags":{"latest":"2.0.0"}
+    });
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&raw))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = client_with(&server, FetchPolicy::default());
+    let cache = tempfile::tempdir().unwrap();
+    let projected = client
+        .fetch_resolution_packument_after_lookup("demo", cache.path(), Default::default())
+        .await
+        .unwrap();
+    let full: Packument = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(projected.materialize().unwrap()).unwrap(),
+        serde_json::to_value(full).unwrap()
+    );
+    let history: crate::PackumentTrustHistory = serde_json::from_value(raw.clone()).unwrap();
+    for (version, candidate) in &projected.versions {
+        assert_eq!(
+            serde_json::to_value(candidate.trust_metadata()).unwrap(),
+            serde_json::to_value(&history.versions[version]).unwrap()
+        );
+    }
+    let offline = client.with_network_mode(NetworkMode::Offline);
+    assert_eq!(
+        offline
+            .fetch_packument_full_cached("demo", cache.path())
+            .await
+            .unwrap(),
+        raw
+    );
+}
+
+#[tokio::test]
+async fn cold_resolution_reports_invalid_selected_and_historical_metadata() {
+    for (versions, selected_error) in [
+        (
+            serde_json::json!({"1.0.0":{"name":"demo","version":"1.0.0","dependencies":42}}),
+            true,
+        ),
+        (
+            serde_json::json!({"1.0.0":{"dist":{"tarball":42}}, "2.0.0":{"name":"demo","version":"2.0.0"}}),
+            false,
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"name":"demo", "versions":versions})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let cache = tempfile::tempdir().unwrap();
+        let result = client_with(&server, FetchPolicy::default())
+            .fetch_resolution_packument_after_lookup("demo", cache.path(), Default::default())
+            .await;
+        if selected_error {
+            assert!(result.unwrap().versions["1.0.0"].metadata().is_err());
+        } else {
+            assert!(result.is_err());
+        }
+    }
+}
+
+#[tokio::test]
+async fn cold_resolution_retries_invalid_json_inside_unused_fields() {
+    for invalid in [
+        r#"{"name":"demo","future":{"ignored":[tru]}}"#,
+        r#"{"name":"demo","future":{"ignored":"\uZZZZ"}}"#,
+        r#"{"name":"demo","versions":{}} trailing"#,
+        r#"{"name":"demo","future":{"ignored":"\uD800"}}"#,
+        r#"{"name":"demo","future":{"ignored":1e999}}"#,
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(invalid, "application/json"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(make_packument_json()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = client_with(
+            &server,
+            FetchPolicy {
+                retries: 1,
+                retry_min_timeout_ms: 1,
+                retry_max_timeout_ms: 1,
+                ..FetchPolicy::default()
+            },
+        );
+        let cache = tempfile::tempdir().unwrap();
+        assert_eq!(
+            client
+                .fetch_resolution_packument_after_lookup("demo", cache.path(), Default::default())
+                .await
+                .unwrap()
+                .name,
+            "demo"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
     }
 }
