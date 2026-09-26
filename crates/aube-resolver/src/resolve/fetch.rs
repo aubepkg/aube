@@ -132,7 +132,7 @@ impl FetchScheduler {
         };
         let task_key = key.clone();
         let handle = self.in_flight.spawn(async move {
-            let result = fetch_one_packument(inputs).await;
+            let result = fetch_one_packument(inputs, true).await;
             (task_key, result)
         });
         self.task_keys.insert(handle.id(), key);
@@ -261,7 +261,10 @@ async fn fetch_cached_resolution(
 ///
 /// Returns the result source so callers can distinguish incomplete local
 /// metadata from a live registry response.
-async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> {
+async fn fetch_one_packument(
+    inputs: FetchInputs,
+    allow_primer: bool,
+) -> Result<FetchResult, Error> {
     let _diag_span =
         aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
             .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&inputs.name)));
@@ -339,7 +342,8 @@ async fn fetch_one_packument(inputs: FetchInputs) -> Result<FetchResult, Error> 
         );
         return Ok((name, packument.into(), FetchSource::Disk, None));
     }
-    let use_metadata_primer = !force_refresh
+    let use_metadata_primer = allow_primer
+        && !force_refresh
         && (force_metadata_primer || client.uses_default_npm_registry_for(&name))
         && primer_covers_cutoff;
     if use_metadata_primer
@@ -454,11 +458,11 @@ async fn fetch_exact_optional_packument(
     inputs: FetchInputs,
     version: String,
 ) -> Result<FetchResult, Error> {
-    if let Some(lookup) = fetch_cached_resolution(&inputs).await?
-        && let Some(indexed) = lookup.packument
-        && indexed.versions.contains_key(&version)
-    {
-        return Ok((inputs.name, indexed, FetchSource::Disk, None));
+    if inputs.needs_time && inputs.full_cache_dir.is_some() {
+        // Exact optional fetches already download the full document for trust
+        // history. Reuse the canonical full cache and selective decoder so a
+        // later install can use that response without another full download.
+        return fetch_full_exact_optional(inputs, version, false).await;
     }
     let permit = inputs.sem.acquire().await;
     let name = inputs.name.clone();
@@ -490,30 +494,39 @@ async fn fetch_exact_optional_packument(
                 "compact exact metadata fetch failed for optional dep {name}@{version}; falling back to full packument: {err}"
             );
             permit.record_cancelled();
-            let fallback_inputs = inputs.clone();
-            let fallback = fetch_one_packument(inputs).await?;
-            if fallback.1.versions.contains_key(&version) {
-                Ok(fallback)
-            } else if matches!(fallback.2, FetchSource::Disk | FetchSource::Primer) {
-                let mut refresh_inputs = fallback_inputs;
-                refresh_inputs.force_refresh = true;
-                let refreshed = fetch_one_packument(refresh_inputs).await?;
-                if refreshed.1.versions.contains_key(&version) {
-                    Ok(refreshed)
-                } else {
-                    Err(Error::Registry(
-                        name,
-                        format!("version {version} is missing from the full packument"),
-                    ))
-                }
-            } else {
-                Err(Error::Registry(
-                    name,
-                    format!("version {version} is missing from the full packument"),
-                ))
-            }
+            fetch_full_exact_optional(inputs, version, true).await
         }
     }
+}
+
+async fn fetch_full_exact_optional(
+    inputs: FetchInputs,
+    version: String,
+    allow_primer: bool,
+) -> Result<FetchResult, Error> {
+    let mut refresh_inputs = inputs.clone();
+    // Live exact fetches do not seed a capped primer. Preserve the existing
+    // primer fallback when an uncached compact request has failed, though.
+    let fetched = fetch_one_packument(inputs, allow_primer).await?;
+    if fetched.1.versions.contains_key(&version) {
+        return Ok(fetched);
+    }
+    if !refresh_inputs.force_refresh
+        && (matches!(fetched.2, FetchSource::Disk | FetchSource::Primer)
+            || refresh_inputs.full_cache_dir.is_some())
+    {
+        // A newer exact requirement can supersede a fresh cache or a capped
+        // primer that was just revalidated by a 304. Retry without validators.
+        refresh_inputs.force_refresh = true;
+        let refreshed = fetch_one_packument(refresh_inputs, false).await?;
+        if refreshed.1.versions.contains_key(&version) {
+            return Ok(refreshed);
+        }
+    }
+    Err(Error::Registry(
+        fetched.0,
+        format!("version {version} is missing from the full packument"),
+    ))
 }
 
 #[cfg(test)]
@@ -594,6 +607,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exact_optional_populates_the_full_cache_for_later_installs() {
+        let cache = tempfile::tempdir().unwrap();
+        let body = serde_json::json!({
+            "name":"shared", "versions": {
+                "1.0.0":{"name":"shared","version":"1.0.0","dependencies":{"child":"^1"}},
+                "2.0.0":{"name":"shared","version":"2.0.0","approver":{"name":"approved"}}
+            }, "time":{"1.0.0":"2024-01-01","2.0.0":"2024-02-01"}
+        });
+        let (registry, requests, server) = serve_registry(serde_json::to_vec(&body).unwrap()).await;
+        let client = Arc::new(RegistryClient::new(&registry));
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut first = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        first.ensure_exact_optional_fetch("shared", "1.0.0", None, false);
+        let (_, result) = first.join_next().await.unwrap().unwrap();
+        let (_, packument, source, history) = result.unwrap();
+        assert_eq!(source, FetchSource::Network);
+        assert!(history.is_none()); // The full inventory carries its own trust history.
+        assert_eq!(packument.versions.len(), 2);
+        assert!(
+            packument.versions["2.0.0"]
+                .trust_metadata()
+                .approver
+                .is_some()
+        );
+        assert_eq!(
+            packument.versions["1.0.0"].metadata().unwrap().dependencies["child"],
+            "^1"
+        );
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+
+        // A separate resolver must reuse the disk response even while all
+        // registry capacity is occupied. Request the other version to prove
+        // that this is the canonical full cache, not an exact-version entry.
+        let client = Arc::new(RegistryClient::new(&registry));
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let limiter = AdaptiveLimit::new(1, 1, 1);
+        let _held = limiter.acquire().await;
+        let mut second = FetchScheduler::new(&resolver, limiter, true);
+        second.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
+        let (_, result) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), second.join_next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        let (_, packument, source, _) = result.unwrap();
+        assert_eq!(source, FetchSource::Disk);
+        assert_eq!(packument.versions.len(), 2);
+        assert!(
+            packument.versions["2.0.0"]
+                .trust_metadata()
+                .approver
+                .is_some()
+        );
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn superseded_exact_cache_snapshot_can_retry_live() {
         let cache = tempfile::tempdir().unwrap();
         let exact =
@@ -609,7 +681,7 @@ mod tests {
         scheduler.ensure_exact_optional_fetch("shared", "1.0.0", None, true);
         let (_, result) = scheduler.join_next().await.unwrap().unwrap();
         let (_, packument, source, _) = result.unwrap();
-        assert_eq!(source, FetchSource::Exact);
+        assert_eq!(source, FetchSource::Network);
         assert_eq!(
             packument.versions["1.0.0"].metadata().unwrap().dependencies["fresh"],
             "^2"
@@ -798,7 +870,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exact_fallback_refreshes_an_incomplete_disk_entry() {
+    async fn exact_optional_refreshes_a_revalidated_incomplete_inventory() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let registry = format!("http://{}/", listener.local_addr().unwrap());
+        let body = serde_json::json!({"name":"shared","versions":{
+            "1.0.0":{"name":"shared","version":"1.0.0"},
+            "2.0.0":{"name":"shared","version":"2.0.0"}
+        },"time":{"1.0.0":"2024-01-01","2.0.0":"2024-02-01"}})
+        .to_string();
+        let server = tokio::spawn(async move {
+            for response in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 2048];
+                while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0);
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
+                if response == 0 {
+                    assert!(request.contains("if-none-match: \"old\""));
+                    socket.write_all(b"HTTP/1.1 304 Not Modified\r\ncontent-length: 0\r\ncache-control: max-age=3600\r\nconnection: close\r\n\r\n").await.unwrap();
+                } else {
+                    assert!(!request.contains("if-none-match:"));
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                }
+            }
+        });
+        let cache = tempfile::tempdir().unwrap();
+        let client = Arc::new(RegistryClient::new(&registry));
+        let incomplete = serde_json::from_value(serde_json::json!({"name":"shared","versions":{
+            "1.0.0":{"name":"shared","version":"1.0.0"}
+        }}))
+        .unwrap();
+        client.seed_full_packument_cache(
+            "shared",
+            cache.path(),
+            &incomplete,
+            Some("\"old\""),
+            None,
+            false,
+        );
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
+        let (_, result) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), scheduler.join_next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        assert!(result.unwrap().1.versions.contains_key("2.0.0"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn exact_optional_refreshes_an_incomplete_disk_entry() {
         let incomplete = serde_json::from_value(serde_json::json!({
             "name": "shared",
             "versions": {
@@ -821,9 +953,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let compact_miss = serde_json::to_vec(&incomplete).unwrap();
-        let (registry, requests, server) =
-            serve_registry_responses(vec![compact_miss, refreshed]).await;
+        let (registry, requests, server) = serve_registry(refreshed).await;
         let cache = tempfile::tempdir().unwrap();
         let client = Arc::new(RegistryClient::new(&registry));
         client.seed_full_packument_cache("shared", cache.path(), &incomplete, None, None, true);
@@ -838,7 +968,7 @@ mod tests {
         };
         assert!(packument.versions.contains_key("2.0.0"));
         assert_eq!(source, FetchSource::Network);
-        assert_eq!(requests.load(Ordering::Relaxed), 2);
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
         server.abort();
     }
 
