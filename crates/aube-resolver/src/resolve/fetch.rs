@@ -322,7 +322,10 @@ async fn fetch_one_packument(
     } else {
         cache_dir.clone()
     };
-    let mut cached = if let Some(lookup) = selective {
+    let mut cached = if force_refresh && needs_time {
+        // Bypass validators without deleting usable versions if the request fails.
+        Default::default()
+    } else if let Some(lookup) = selective {
         lookup.revalidation
     } else if let Some(cache_lookup_dir) = cache_lookup_dir {
         let cache_io_permit = Arc::clone(&PACKUMENT_CACHE_IO)
@@ -333,9 +336,6 @@ async fn fetch_one_packument(
         let lookup_name = name.clone();
         tokio::task::spawn_blocking(move || {
             let _cache_io_permit = cache_io_permit;
-            if force_refresh && needs_time {
-                lookup_client.invalidate_full_packument_cache(&lookup_name, &cache_lookup_dir);
-            }
             if needs_time {
                 lookup_client.cached_full_packument_lookup(&lookup_name, &cache_lookup_dir)
             } else {
@@ -362,12 +362,13 @@ async fn fetch_one_packument(
         return Ok((name, packument.into(), FetchSource::Disk, None));
     }
     if allow_primer
+        && !force_refresh
         && !cached.stale
-        && let Some(fetched) = fetch_primer(&primer_inputs, None)
+        && let Some(fetched) = fetch_primer(&primer_inputs, None, true)
     {
         return Ok(fetched);
     }
-    let primer_fallback = !allow_primer && required_version.is_some() && !cached.stale;
+    let primer_fallback = required_version.is_some() && !cached.stale;
     // The adaptive limit models registry capacity. Local metadata does not
     // consume that capacity and must not queue behind slow HTTP requests.
     let permit_wait = std::time::Instant::now();
@@ -385,6 +386,7 @@ async fn fetch_one_packument(
     let _holder_guard = aube_util::diag::register_holder(aube_util::diag::Slot::Pack, &name);
     let fetch_outcome = if needs_time {
         match full_cache_dir.as_ref() {
+            Some(dir) if force_refresh => client.refresh_resolution_packument(&name, dir).await,
             Some(dir) => {
                 client
                     .fetch_resolution_packument_after_lookup(&name, dir, cached)
@@ -411,7 +413,8 @@ async fn fetch_one_packument(
             } else {
                 permit.record_cancelled();
             }
-            if primer_fallback && let Some(fetched) = fetch_primer(&primer_inputs, required_version)
+            if primer_fallback
+                && let Some(fetched) = fetch_primer(&primer_inputs, required_version, false)
             {
                 return Ok(fetched);
             }
@@ -432,7 +435,11 @@ async fn fetch_one_packument(
     Ok((name, packument, FetchSource::Network, None))
 }
 
-fn fetch_primer(inputs: &FetchInputs, required_version: Option<&str>) -> Option<FetchResult> {
+fn fetch_primer(
+    inputs: &FetchInputs,
+    required_version: Option<&str>,
+    seed_cache: bool,
+) -> Option<FetchResult> {
     let FetchInputs {
         name,
         client,
@@ -462,7 +469,9 @@ fn fetch_primer(inputs: &FetchInputs, required_version: Option<&str>) -> Option<
                 });
             }
         }
-        if *needs_time {
+        // Error fallbacks stay in memory: they must not replace an existing
+        // authoritative inventory with the primer's capped history.
+        if seed_cache && *needs_time {
             if let Some(dir) = full_cache_dir.as_ref() {
                 client.seed_full_packument_cache(
                     name,
@@ -473,7 +482,7 @@ fn fetch_primer(inputs: &FetchInputs, required_version: Option<&str>) -> Option<
                     false,
                 );
             }
-        } else if let Some(dir) = cache_dir.as_ref() {
+        } else if seed_cache && let Some(dir) = cache_dir.as_ref() {
             client.seed_packument_cache(
                 name,
                 dir,
@@ -1011,8 +1020,9 @@ mod tests {
             let client = RegistryClient::new("https://registry.npmjs.org")
                 .with_network_mode(aube_registry::NetworkMode::Offline);
             client.seed_full_packument_cache(name, cache.path(), &primer, None, None, true);
-            let resolver = Resolver::new(Arc::new(client))
-                .with_packument_full_cache(cache.path().to_path_buf());
+            let client = Arc::new(client);
+            let resolver =
+                Resolver::new(client.clone()).with_packument_full_cache(cache.path().to_path_buf());
             let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
             scheduler.ensure_exact_optional_fetch(name, &version, None, force_refresh);
             let (_, result) = scheduler.join_next().await.unwrap().unwrap();
@@ -1023,6 +1033,12 @@ mod tests {
                 assert_eq!(source, FetchSource::Primer);
                 assert!(packument.versions.contains_key(&version));
             }
+            let retained = client
+                .cached_resolution_packument(name, cache.path())
+                .packument
+                .unwrap();
+            assert!(!retained.versions.contains_key(&version));
+            assert_eq!(retained.versions.len(), primer.versions.len());
         }
     }
 
@@ -1046,6 +1062,46 @@ mod tests {
         scheduler.ensure_exact_optional_fetch("shared", "1.0.0", None, false);
         let (_, result) = scheduler.join_next().await.unwrap().unwrap();
         assert!(result.is_err());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_exact_refresh_preserves_other_cached_versions_for_offline_use() {
+        let (registry, requests, server) = serve_registry(b"not json".to_vec()).await;
+        let cache = tempfile::tempdir().unwrap();
+        let client = Arc::new(RegistryClient::from_config_with_policy(
+            aube_registry::config::NpmConfig {
+                registry: registry.clone(),
+                ..Default::default()
+            },
+            aube_registry::config::FetchPolicy {
+                retries: 0,
+                ..Default::default()
+            },
+        ));
+        let old = serde_json::from_value(serde_json::json!({"name":"shared","versions":{
+            "1.0.0":{"name":"shared","version":"1.0.0"}
+        }}))
+        .unwrap();
+        client.seed_full_packument_cache("shared", cache.path(), &old, None, None, true);
+        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
+        let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+        assert!(result.is_err());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+
+        let offline =
+            RegistryClient::new(&registry).with_network_mode(aube_registry::NetworkMode::Offline);
+        let resolver =
+            Resolver::new(Arc::new(offline)).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        scheduler.ensure_exact_optional_fetch("shared", "1.0.0", None, false);
+        let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+        let (_, packument, source, _) = result.unwrap();
+        assert_eq!(source, FetchSource::Disk);
+        assert!(packument.versions.contains_key("1.0.0"));
         assert_eq!(requests.load(Ordering::Relaxed), 1);
         server.abort();
     }

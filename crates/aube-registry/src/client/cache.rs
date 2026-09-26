@@ -26,6 +26,11 @@ impl RawPackument {
         sonic_rs::from_slice::<ValidatedJson>(&bytes)?;
         Ok(Self(bytes))
     }
+
+    pub(super) fn into_resolution(self) -> Result<crate::ResolutionPackument, sonic_rs::Error> {
+        let projected: crate::resolution::RawResolutionPackument = sonic_rs::from_slice(&self.0)?;
+        projected.into_resolution(&self.0)
+    }
 }
 
 impl<'de> Deserialize<'de> for RawPackument {
