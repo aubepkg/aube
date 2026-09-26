@@ -270,6 +270,7 @@ async fn fetch_one_packument(
         aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
             .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&inputs.name)));
     let _diag_inflight = aube_util::diag::inflight(aube_util::diag::Slot::Pack);
+    let requested_refresh = inputs.force_refresh;
     let mut selective = fetch_cached_resolution(&inputs).await?;
     if let Some(version) = required_version
         && let Some(lookup) = selective.as_ref()
@@ -302,7 +303,10 @@ async fn fetch_one_packument(
         );
         return Ok((inputs.name, indexed, FetchSource::Disk, None));
     }
-    let primer_inputs = inputs.clone();
+    let mut primer_inputs = inputs.clone();
+    // An incomplete inventory needs a live refresh, but must not disable an
+    // otherwise eligible offline fallback. Explicit refresh requests still do.
+    primer_inputs.force_refresh = requested_refresh;
     let FetchInputs {
         name,
         client,
@@ -989,6 +993,37 @@ mod tests {
         let (_, packument, source, _) = result.unwrap();
         assert_eq!(source, FetchSource::Primer);
         assert!(packument.versions.contains_key(version));
+    }
+
+    #[tokio::test]
+    async fn incomplete_exact_cache_preserves_offline_fallback_unless_refresh_was_requested() {
+        let Some(name) = crate::primer::popular_package_names()
+            .lines()
+            .find(|name| crate::primer::get(name).is_some())
+        else {
+            return;
+        };
+        let mut primer = crate::primer::get(name).unwrap().packument();
+        let version = primer.versions.keys().next().unwrap().clone();
+        primer.versions.remove(&version);
+        for force_refresh in [false, true] {
+            let cache = tempfile::tempdir().unwrap();
+            let client = RegistryClient::new("https://registry.npmjs.org")
+                .with_network_mode(aube_registry::NetworkMode::Offline);
+            client.seed_full_packument_cache(name, cache.path(), &primer, None, None, true);
+            let resolver = Resolver::new(Arc::new(client))
+                .with_packument_full_cache(cache.path().to_path_buf());
+            let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+            scheduler.ensure_exact_optional_fetch(name, &version, None, force_refresh);
+            let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+            if force_refresh {
+                assert!(result.is_err());
+            } else {
+                let (_, packument, source, _) = result.unwrap();
+                assert_eq!(source, FetchSource::Primer);
+                assert!(packument.versions.contains_key(&version));
+            }
+        }
     }
 
     #[tokio::test]
