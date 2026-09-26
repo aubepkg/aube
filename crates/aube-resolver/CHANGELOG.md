@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.4.0...aube-resolver-v2.5.0) - 2026-09-26
+
+### Fixed
+
+- *(resolver)* show paste-ready exemptions in trust downgrade errors ([#1609](https://github.com/aubepkg/aube/pull/1609))
+
+### Other
+
+- *(resolver)* decode fetched release metadata on demand ([#1620](https://github.com/aubepkg/aube/pull/1620))
+- *(resolver)* decode cached release metadata on demand ([#1619](https://github.com/aubepkg/aube/pull/1619))
+- *(resolver)* separate version selection from dependency metadata ([#1618](https://github.com/aubepkg/aube/pull/1618))
+- refresh benchmarks for v2.4.0 ([#1608](https://github.com/aubepkg/aube/pull/1608))
+- refresh benchmarks for v2.4.0 ([#1595](https://github.com/aubepkg/aube/pull/1595))
+
 ## [2.4.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.3.0...aube-resolver-v2.4.0) - 2026-09-25
 
 ### Fixed

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/aubepkg/aube/compare/v2.4.0...v2.5.0) - 2026-09-26
+
+### Added
+
+- *(update)* choose range or latest per package in --interactive ([#1612](https://github.com/aubepkg/aube/pull/1612))
+
+### Fixed
+
+- *(install)* recover after removing cache and lockfile ([#1613](https://github.com/aubepkg/aube/pull/1613))
+
+### Other
+
+- *(install)* reuse current state for explicit frozen installs ([#1615](https://github.com/aubepkg/aube/pull/1615))
+- *(install)* prefilter bulk fresh-install advisory checks ([#1616](https://github.com/aubepkg/aube/pull/1616))
+- refresh benchmarks for v2.4.0 ([#1608](https://github.com/aubepkg/aube/pull/1608))
+- refresh benchmarks for v2.4.0 ([#1595](https://github.com/aubepkg/aube/pull/1595))
+
 ## [2.4.0](https://github.com/aubepkg/aube/compare/v2.3.0...v2.4.0) - 2026-09-25
 
 ### Added
