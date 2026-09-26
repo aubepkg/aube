@@ -26,6 +26,11 @@ impl RawPackument {
         sonic_rs::from_slice::<ValidatedJson>(&bytes)?;
         Ok(Self(bytes))
     }
+
+    pub(super) fn into_resolution(self) -> Result<crate::ResolutionPackument, sonic_rs::Error> {
+        let projected: crate::resolution::RawResolutionPackument = sonic_rs::from_slice(&self.0)?;
+        projected.into_resolution(&self.0)
+    }
 }
 
 impl<'de> Deserialize<'de> for RawPackument {
@@ -110,6 +115,26 @@ pub struct CachedPackumentLookup {
     pub packument: Option<Packument>,
     pub stale: bool,
     pub(super) cached: Option<CachedPackumentLookupEntry>,
+}
+
+impl CachedPackumentLookup {
+    /// Whether the retained cache inventory contains a version, including a
+    /// stale entry awaiting revalidation. `None` means no cached inventory.
+    pub fn contains_version(&self, version: &str) -> Option<bool> {
+        self.packument
+            .as_ref()
+            .map(|packument| packument.versions.contains_key(version))
+            .or_else(|| {
+                self.cached.as_ref().map(|cached| match cached {
+                    CachedPackumentLookupEntry::Abbreviated(cached) => {
+                        cached.packument.versions.contains_key(version)
+                    }
+                    CachedPackumentLookupEntry::Full(cached) => {
+                        cached.packument.versions.contains_key(version)
+                    }
+                })
+            })
+    }
 }
 
 /// A selective cache hit, or an already-read entry for normal revalidation.

@@ -188,14 +188,22 @@ impl RegistryClient {
         name: &str,
         cache_dir: &Path,
     ) -> Result<serde_json::Value, Error> {
-        self.fetch_packument_full_cached_with(name, cache_dir, |bytes| sonic_rs::from_slice(&bytes))
-            .await
+        self.fetch_packument_full_cached_with(
+            name,
+            cache_dir,
+            false,
+            |_| true,
+            |bytes| sonic_rs::from_slice(&bytes),
+        )
+        .await
     }
 
     async fn fetch_packument_full_cached_with<T>(
         &self,
         name: &str,
         cache_dir: &Path,
+        force_refresh: bool,
+        can_reuse: impl Fn(&T) -> bool,
         decode: impl Fn(bytes::Bytes) -> Result<T, sonic_rs::Error> + Copy,
     ) -> Result<T, Error>
     where
@@ -204,7 +212,11 @@ impl RegistryClient {
         let registry_url = self.config.registry_for(name).to_string();
         let cache_path = packument_full_cache_path(cache_dir, name, &registry_url)
             .ok_or_else(|| Error::InvalidName(name.to_string()))?;
-        let cached = read_cached_full_packument::<T>(&cache_path);
+        let cached = if force_refresh {
+            None
+        } else {
+            read_cached_full_packument::<T>(&cache_path)
+        };
 
         // --prefer-offline / --offline: trust any cached copy regardless of age.
         // --offline additionally forbids falling back to the network on a miss.
@@ -228,10 +240,14 @@ impl RegistryClient {
         let sf_mutex = self.packument_singleflight_mutex(sf_key);
         let mut sf_guard = Some(sf_mutex.lock().await);
         let cached = match read_cached_full_packument::<T>(&cache_path) {
-            Some(c) if force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs) => {
+            Some(c)
+                if (force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs))
+                    && can_reuse(&c.packument) =>
+            {
                 return Ok(c.packument);
             }
-            recheck => recheck.or(cached),
+            recheck if !force_refresh => recheck.or(cached),
+            _ => None,
         };
         let started = std::time::Instant::now();
 
@@ -406,7 +422,13 @@ impl RegistryClient {
         // Keep the complete response in the shared cache, but decode the
         // install shape directly instead of building an intermediate JSON tree.
         let raw = self
-            .fetch_packument_full_cached_with(name, cache_dir, RawPackument::from_bytes)
+            .fetch_packument_full_cached_with(
+                name,
+                cache_dir,
+                false,
+                |_| true,
+                RawPackument::from_bytes,
+            )
             .await?;
         sonic_rs::from_slice(&raw.0)
             .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
@@ -443,12 +465,42 @@ impl RegistryClient {
                 .map(Into::into);
         }
         let raw = self
-            .fetch_packument_full_cached_with(name, cache_dir, RawPackument::from_bytes)
+            .fetch_packument_full_cached_with(
+                name,
+                cache_dir,
+                false,
+                |_| true,
+                RawPackument::from_bytes,
+            )
             .await?;
-        let projected: crate::resolution::RawResolutionPackument = sonic_rs::from_slice(&raw.0)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-        projected
-            .into_resolution(&raw.0)
+        raw.into_resolution()
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+    }
+
+    /// Refresh an incomplete inventory without validators, preserving its disk
+    /// entry until a response replaces it through the normal atomic cache write.
+    /// A required version allows a fresh inventory written by a concurrent
+    /// request to satisfy this refresh. `None` forces an unconditional request.
+    /// Offline mode still forbids the request.
+    pub async fn refresh_resolution_packument(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+        required_version: Option<&str>,
+    ) -> Result<crate::ResolutionPackument, Error> {
+        let raw = self
+            .fetch_packument_full_cached_with(
+                name,
+                cache_dir,
+                true,
+                |raw: &RawPackument| {
+                    required_version
+                        .is_some_and(|version| sonic_rs::get(&raw.0, ["versions", version]).is_ok())
+                },
+                RawPackument::from_bytes,
+            )
+            .await?;
+        raw.into_resolution()
             .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
