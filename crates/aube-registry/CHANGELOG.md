@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.4.0...aube-registry-v2.5.0) - 2026-09-26
+
+### Other
+
+- *(resolver)* decode fetched release metadata on demand ([#1620](https://github.com/aubepkg/aube/pull/1620))
+- *(resolver)* decode cached release metadata on demand ([#1619](https://github.com/aubepkg/aube/pull/1619))
+- refresh benchmarks for v2.4.0 ([#1608](https://github.com/aubepkg/aube/pull/1608))
+- refresh benchmarks for v2.4.0 ([#1595](https://github.com/aubepkg/aube/pull/1595))
+
 ## [2.4.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.3.0...aube-registry-v2.4.0) - 2026-09-25
 
 ### Fixed
