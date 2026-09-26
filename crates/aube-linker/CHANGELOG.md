@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.4.0...aube-linker-v2.5.0) - 2026-09-26
+
+### Other
+
+- *(linker)* avoid directory contention when hardlinking packages ([#1621](https://github.com/aubepkg/aube/pull/1621))
+- *(linker)* speed up cached installs on macOS ([#1614](https://github.com/aubepkg/aube/pull/1614))
+- refresh benchmarks for v2.4.0 ([#1608](https://github.com/aubepkg/aube/pull/1608))
+- refresh benchmarks for v2.4.0 ([#1595](https://github.com/aubepkg/aube/pull/1595))
+
 ## [2.4.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.3.0...aube-linker-v2.4.0) - 2026-09-25
 
 ### Other
