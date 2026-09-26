@@ -784,7 +784,7 @@ impl RegistryClient {
                     let max_age_secs = parse_cache_control_max_age(&resp);
                     let resp = resp.error_for_status()?;
                     check_body_cap(&resp, self.fetch_policy.packument_max_bytes, &label)?;
-                    match parse_full_response_with(resp, RawPackument::from_bytes).await {
+                    match parse_full_response::<serde_json::Value>(resp).await {
                         Ok(value) => {
                             if let Err(e) = write_cached_full_packument(
                                 &cache_path,
@@ -801,7 +801,7 @@ impl RegistryClient {
                                 );
                             }
                             let packument: Packument =
-                                sonic_rs::from_slice(&value.0).map_err(|e| {
+                                serde_json::from_value(value).map_err(|e| {
                                     Error::Io(std::io::Error::new(
                                         std::io::ErrorKind::InvalidData,
                                         e,

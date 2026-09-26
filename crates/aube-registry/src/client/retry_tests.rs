@@ -1291,6 +1291,71 @@ async fn stale_revalidation_preserves_view_fields_and_trust_history() {
 }
 
 #[tokio::test]
+async fn stale_refresh_normalizes_duplicate_fields_before_typed_decode() {
+    for selective in [true, false] {
+        let cache = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        let client = client_with(&server, FetchPolicy::default());
+        let old: Packument = serde_json::from_value(serde_json::json!({
+            "name":"demo", "versions":{"1.0.0":{"name":"demo","version":"1.0.0"}}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("demo", cache.path(), &old, Some("old"), None, false);
+        let lookup = client.cached_resolution_packument("demo", cache.path());
+        let raw = r#"{"name":"old","name":"demo","description":"for view","versions":{
+            "2.0.0":{"name":"demo","version":"wrong","version":"2.0.0",
+            "dependencies":{"old":"1"},"dependencies":{"child":"2"}}
+        }}"#;
+        Mock::given(method("GET"))
+            .and(path("/demo"))
+            .and(header("if-none-match", "old"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(raw, "application/json")
+                    .insert_header("Cache-Control", "max-age=600"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let fetched = if selective {
+            client
+                .fetch_resolution_packument_after_lookup("demo", cache.path(), lookup.revalidation)
+                .await
+                .unwrap()
+        } else {
+            client
+                .fetch_packument_with_time_cached_after_lookup(
+                    "demo",
+                    cache.path(),
+                    lookup.revalidation,
+                )
+                .await
+                .unwrap()
+                .into()
+        };
+        let metadata = fetched.versions["2.0.0"].metadata().unwrap();
+        assert_eq!(metadata.version, "2.0.0");
+        assert_eq!(metadata.dependencies["child"], "2");
+        assert!(!metadata.dependencies.contains_key("old"));
+        let fresh = client
+            .cached_resolution_packument("demo", cache.path())
+            .packument
+            .unwrap();
+        assert_eq!(
+            fresh.versions["2.0.0"].metadata().unwrap().dependencies["child"],
+            "2"
+        );
+        assert_eq!(
+            client
+                .fetch_packument_full_cached("demo", cache.path())
+                .await
+                .unwrap(),
+            serde_json::from_str::<serde_json::Value>(raw).unwrap()
+        );
+    }
+}
+
+#[tokio::test]
 async fn concurrent_stale_resolution_lookups_share_revalidation_and_new_history() {
     let cache = tempfile::tempdir().unwrap();
     let server = MockServer::start().await;
