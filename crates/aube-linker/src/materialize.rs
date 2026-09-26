@@ -684,18 +684,21 @@ impl Linker {
         // `link_file` does defensively. Pass `fresh = true` to suppress
         // the unlink syscall on every file. For a 1.4k-package install
         // that's ~45k wasted `unlink` calls on the hot path.
-        let link_one = |(rel_path, stored): (&String, &StoredFile)| -> Result<(), Error> {
+        let link_one = |(rel_path, stored): (&String, &StoredFile)| -> Result<LinkStrategy, Error> {
             // Key already validated in the parent-collection loop
             // above. The index is immutable between the two loops.
             let target = pkg_nm_dir.join(rel_path);
 
-            if let Err(e) = self.link_file_fresh(stored, rel_path, &target, pkg_nm_dir_fd.as_ref())
-            {
-                if let Error::MissingStoreFile { .. } = &e {
-                    invalidate_stale_index_for_package(&self.store, pkg);
-                }
-                return Err(e);
-            }
+            let realized =
+                match self.link_file_fresh(stored, rel_path, &target, pkg_nm_dir_fd.as_ref()) {
+                    Ok(realized) => realized,
+                    Err(e) => {
+                        if let Error::MissingStoreFile { .. } = &e {
+                            invalidate_stale_index_for_package(&self.store, pkg);
+                        }
+                        return Err(e);
+                    }
+                };
 
             if stored.executable {
                 // `create_cas_file` writes every CAS entry as 0o644
@@ -710,7 +713,7 @@ impl Linker {
                 #[cfg(unix)]
                 xx::file::make_executable(&target).map_err(|e| Error::Xx(e.to_string()))?;
             }
-            Ok(())
+            Ok(realized)
         };
         // A package is materialized as one task, so a large one that
         // finishes downloading last links its files alone after every
@@ -721,10 +724,43 @@ impl Linker {
         if index.len() >= PARALLEL_LINK_MIN_FILES {
             use rayon::prelude::*;
             with_link_pool(self.link_parallelism(), || {
-                index.par_iter().try_for_each(link_one)
+                if cfg!(target_os = "linux") && matches!(self.strategy, LinkStrategy::Hardlink) {
+                    // linkat takes the destination directory's write lock.
+                    // Give each directory one worker so siblings do not spin
+                    // on that lock, while independent directories still link
+                    // concurrently.
+                    let mut directories: rustc_hash::FxHashMap<_, Vec<_>> = Default::default();
+                    for entry in index {
+                        directories
+                            .entry(Path::new(entry.0).parent())
+                            .or_default()
+                            .push(entry);
+                    }
+                    directories.into_par_iter().try_for_each(|(_, files)| {
+                        let mut files = files.into_iter();
+                        while let Some(entry) = files.next() {
+                            if matches!(link_one(entry)?, LinkStrategy::Copy) {
+                                // An explicitly requested hardlink can still
+                                // fall back to copy (for example, on EXDEV).
+                                // Copies benefit from per-file parallelism.
+                                return files
+                                    .as_slice()
+                                    .par_iter()
+                                    .try_for_each(|entry| link_one(*entry).map(|_| ()));
+                            }
+                        }
+                        Ok(())
+                    })
+                } else {
+                    index
+                        .par_iter()
+                        .try_for_each(|entry| link_one(entry).map(|_| ()))
+                }
             })?;
         } else {
-            index.iter().try_for_each(link_one)?;
+            index
+                .iter()
+                .try_for_each(|entry| link_one(entry).map(|_| ()))?;
         }
         stats.files_linked += index.len();
 
@@ -865,13 +901,14 @@ impl Linker {
     /// `remove_file(dst)` an idempotent variant would need is skipped.
     /// Eliminates one syscall per linked file (~45k on the medium
     /// benchmark fixture).
+    /// Returns the realized strategy, including any fallback.
     pub(crate) fn link_file_fresh(
         &self,
         stored: &StoredFile,
         rel_path: &str,
         dst: &Path,
         dst_dir: Option<&std::fs::File>,
-    ) -> Result<(), Error> {
+    ) -> Result<LinkStrategy, Error> {
         let map_io = |e: std::io::Error| classify_link_error(stored, rel_path, dst, e);
         let missing_source = || Error::MissingStoreFile {
             store_path: stored.store_path.clone(),
@@ -1052,7 +1089,11 @@ impl Linker {
             };
             aube_util::diag::event(aube_util::diag::Category::Linker, name, t0.elapsed(), None);
         }
-        Ok(())
+        Ok(match realized {
+            "hardlink" | "reflink_fallback_hardlink" => LinkStrategy::Hardlink,
+            "reflink" => LinkStrategy::Reflink,
+            _ => LinkStrategy::Copy,
+        })
     }
 }
 
