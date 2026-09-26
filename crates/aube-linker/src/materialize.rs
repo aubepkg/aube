@@ -721,7 +721,24 @@ impl Linker {
         if index.len() >= PARALLEL_LINK_MIN_FILES {
             use rayon::prelude::*;
             with_link_pool(self.link_parallelism(), || {
-                index.par_iter().try_for_each(link_one)
+                if cfg!(target_os = "linux") && matches!(self.strategy, LinkStrategy::Hardlink) {
+                    // linkat takes the destination directory's write lock.
+                    // Give each directory one worker so siblings do not spin
+                    // on that lock, while independent directories still link
+                    // concurrently.
+                    let mut directories: rustc_hash::FxHashMap<_, Vec<_>> = Default::default();
+                    for entry in index {
+                        directories
+                            .entry(Path::new(entry.0).parent())
+                            .or_default()
+                            .push(entry);
+                    }
+                    directories
+                        .into_par_iter()
+                        .try_for_each(|(_, files)| files.into_iter().try_for_each(link_one))
+                } else {
+                    index.par_iter().try_for_each(link_one)
+                }
             })?;
         } else {
             index.iter().try_for_each(link_one)?;

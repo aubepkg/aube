@@ -1765,10 +1765,18 @@ fn test_large_package_links_every_file_in_parallel() {
     std::fs::create_dir_all(&project_dir).unwrap();
     let (store, mut indices) = setup_store_with_files(dir.path());
     let foo = indices.get_mut("foo@1.0.0").unwrap();
-    for i in 0..300 {
+    let paths: Vec<_> = (0..300)
+        .map(|i| match i % 4 {
+            0 => format!("f{i}.js"),
+            1 => format!("lib/f{i}.js"),
+            2 => format!("lib/deep/f{i}.js"),
+            _ => format!("lib-other/f{i}.js"),
+        })
+        .collect();
+    for (i, path) in paths.iter().enumerate() {
         let content = format!("module.exports = {i};");
         let stored = store.import_bytes(content.as_bytes(), i % 7 == 0).unwrap();
-        foo.insert(format!("lib/{}/f{i}.js", i % 10), stored);
+        foo.insert(path.clone(), stored);
     }
 
     // Pin several workers so the files really link concurrently even on a
@@ -1780,8 +1788,8 @@ fn test_large_package_links_every_file_in_parallel() {
     assert_eq!(stats.files_linked, 303);
 
     let pkg = project_dir.join("node_modules/.aube/foo@1.0.0/node_modules/foo");
-    for i in 0..300 {
-        let file = pkg.join(format!("lib/{}/f{i}.js", i % 10));
+    for (i, path) in paths.iter().enumerate() {
+        let file = pkg.join(path);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             format!("module.exports = {i};")
@@ -1793,6 +1801,30 @@ fn test_large_package_links_every_file_in_parallel() {
             assert_eq!(mode & 0o111 != 0, i % 7 == 0, "exec bit of f{i}.js");
         }
     }
+}
+
+#[test]
+fn large_hardlinked_package_invalidates_index_when_a_store_file_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, mut indices) = setup_store_with_files(dir.path());
+    let foo = indices.get_mut("foo@1.0.0").unwrap();
+    let stored = store.import_bytes(b"shared content", false).unwrap();
+    for i in 0..300 {
+        foo.insert(format!("f{i}.js"), stored.clone());
+    }
+    store.save_index("foo", "1.0.0", None, foo).unwrap();
+    std::fs::remove_file(&foo["package.json"].store_path).unwrap();
+
+    let linker = Linker::new(&store, LinkStrategy::Hardlink).with_link_concurrency(Some(4));
+    let err = linker
+        .link_all(&project_dir, &make_graph(), &indices)
+        .expect_err("a missing CAS file must fail even within a large directory group");
+    assert!(
+        matches!(err, Error::MissingStoreFile { ref rel_path, .. } if rel_path == "package.json")
+    );
+    assert!(!store.index_dir().join("foo@1.0.0.json").exists());
 }
 
 #[cfg(not(windows))]
