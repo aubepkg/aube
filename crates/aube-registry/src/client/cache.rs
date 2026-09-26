@@ -112,6 +112,26 @@ pub struct CachedPackumentLookup {
     pub(super) cached: Option<CachedPackumentLookupEntry>,
 }
 
+impl CachedPackumentLookup {
+    /// Whether the retained cache inventory contains a version, including a
+    /// stale entry awaiting revalidation. `None` means no cached inventory.
+    pub fn contains_version(&self, version: &str) -> Option<bool> {
+        self.packument
+            .as_ref()
+            .map(|packument| packument.versions.contains_key(version))
+            .or_else(|| {
+                self.cached.as_ref().map(|cached| match cached {
+                    CachedPackumentLookupEntry::Abbreviated(cached) => {
+                        cached.packument.versions.contains_key(version)
+                    }
+                    CachedPackumentLookupEntry::Full(cached) => {
+                        cached.packument.versions.contains_key(version)
+                    }
+                })
+            })
+    }
+}
+
 /// A selective cache hit, or an already-read entry for normal revalidation.
 #[derive(Debug, Default)]
 pub struct CachedResolutionPackumentLookup {

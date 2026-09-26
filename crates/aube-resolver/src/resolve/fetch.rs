@@ -132,7 +132,7 @@ impl FetchScheduler {
         };
         let task_key = key.clone();
         let handle = self.in_flight.spawn(async move {
-            let result = fetch_one_packument(inputs, true).await;
+            let result = fetch_one_packument(inputs, true, None).await;
             (task_key, result)
         });
         self.task_keys.insert(handle.id(), key);
@@ -262,14 +262,29 @@ async fn fetch_cached_resolution(
 /// Returns the result source so callers can distinguish incomplete local
 /// metadata from a live registry response.
 async fn fetch_one_packument(
-    inputs: FetchInputs,
+    mut inputs: FetchInputs,
     allow_primer: bool,
+    required_version: Option<&str>,
 ) -> Result<FetchResult, Error> {
     let _diag_span =
         aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "packument_fetch")
             .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&inputs.name)));
     let _diag_inflight = aube_util::diag::inflight(aube_util::diag::Slot::Pack);
     let mut selective = fetch_cached_resolution(&inputs).await?;
+    if let Some(version) = required_version
+        && let Some(lookup) = selective.as_ref()
+        && lookup
+            .packument
+            .as_ref()
+            .map(|packument| packument.versions.contains_key(version))
+            .or_else(|| lookup.revalidation.contains_version(version))
+            == Some(false)
+    {
+        // Do not send a validator for an inventory already known to lack the
+        // requested version: a 304 cannot fill in a capped primer's history.
+        inputs.force_refresh = true;
+        selective = None;
+    }
     if let Some(indexed) = selective
         .as_mut()
         .and_then(|lookup| lookup.packument.take())
@@ -507,18 +522,25 @@ async fn fetch_full_exact_optional(
     let mut refresh_inputs = inputs.clone();
     // Live exact fetches do not seed a capped primer. Preserve the existing
     // primer fallback when an uncached compact request has failed, though.
-    let fetched = fetch_one_packument(inputs, allow_primer).await?;
+    let fetched = match fetch_one_packument(inputs, allow_primer, Some(&version)).await {
+        Ok(fetched) => fetched,
+        Err(error) if !allow_primer => {
+            tracing::debug!(
+                "full exact metadata fetch failed; trying the existing primer fallback: {error}"
+            );
+            fetch_one_packument(refresh_inputs.clone(), true, Some(&version)).await?
+        }
+        Err(error) => return Err(error),
+    };
     if fetched.1.versions.contains_key(&version) {
         return Ok(fetched);
     }
-    if !refresh_inputs.force_refresh
-        && (matches!(fetched.2, FetchSource::Disk | FetchSource::Primer)
-            || refresh_inputs.full_cache_dir.is_some())
+    if !refresh_inputs.force_refresh && matches!(fetched.2, FetchSource::Disk | FetchSource::Primer)
     {
-        // A newer exact requirement can supersede a fresh cache or a capped
-        // primer that was just revalidated by a 304. Retry without validators.
+        // A primer fallback can still omit the requested version. A live
+        // response is authoritative and must not trigger another download.
         refresh_inputs.force_refresh = true;
-        let refreshed = fetch_one_packument(refresh_inputs, false).await?;
+        let refreshed = fetch_one_packument(refresh_inputs, false, Some(&version)).await?;
         if refreshed.1.versions.contains_key(&version) {
             return Ok(refreshed);
         }
@@ -870,16 +892,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exact_optional_refreshes_a_revalidated_incomplete_inventory() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let registry = format!("http://{}/", listener.local_addr().unwrap());
-        let body = serde_json::json!({"name":"shared","versions":{
-            "1.0.0":{"name":"shared","version":"1.0.0"},
-            "2.0.0":{"name":"shared","version":"2.0.0"}
-        },"time":{"1.0.0":"2024-01-01","2.0.0":"2024-02-01"}})
-        .to_string();
-        let server = tokio::spawn(async move {
-            for response in 0..2 {
+    async fn exact_optional_revalidates_complete_but_refreshes_incomplete_inventories() {
+        for complete in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let registry = format!("http://{}/", listener.local_addr().unwrap());
+            let body = serde_json::json!({"name":"shared","versions":{
+                "1.0.0":{"name":"shared","version":"1.0.0"},
+                "2.0.0":{"name":"shared","version":"2.0.0"}
+            },"time":{"1.0.0":"2024-01-01","2.0.0":"2024-02-01"}})
+            .to_string();
+            let mut inventory: Packument = serde_json::from_str(&body).unwrap();
+            if !complete {
+                inventory.versions.remove("2.0.0");
+            }
+            let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = Vec::new();
                 let mut buffer = [0; 2048];
@@ -889,44 +915,91 @@ mod tests {
                     request.extend_from_slice(&buffer[..count]);
                 }
                 let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
-                if response == 0 {
-                    assert!(request.contains("if-none-match: \"old\""));
+                assert_eq!(request.contains("if-none-match: \"old\""), complete);
+                if complete {
                     socket.write_all(b"HTTP/1.1 304 Not Modified\r\ncontent-length: 0\r\ncache-control: max-age=3600\r\nconnection: close\r\n\r\n").await.unwrap();
                 } else {
-                    assert!(!request.contains("if-none-match:"));
                     let response = format!(
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     socket.write_all(response.as_bytes()).await.unwrap();
                 }
-            }
-        });
+            });
+            let cache = tempfile::tempdir().unwrap();
+            let client = Arc::new(RegistryClient::new(&registry));
+            client.seed_full_packument_cache(
+                "shared",
+                cache.path(),
+                &inventory,
+                Some("\"old\""),
+                None,
+                false,
+            );
+            let resolver =
+                Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+            let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+            scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
+            let (_, result) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), scheduler.join_next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            assert!(result.unwrap().1.versions.contains_key("2.0.0"));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_optional_preserves_offline_primer_fallback() {
+        let Some(name) = crate::primer::popular_package_names()
+            .lines()
+            .find(|name| crate::primer::get(name).is_some())
+        else {
+            return;
+        };
+        let primer = crate::primer::get(name).unwrap().packument();
+        let version = primer.versions.keys().next().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new("https://registry.npmjs.org")
+            .with_network_mode(aube_registry::NetworkMode::Offline);
+        let resolver =
+            Resolver::new(Arc::new(client)).with_packument_full_cache(cache.path().to_path_buf());
+        let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
+        scheduler.ensure_exact_optional_fetch(name, version, None, false);
+        let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+        let (_, packument, source, _) = result.unwrap();
+        assert_eq!(source, FetchSource::Primer);
+        assert!(packument.versions.contains_key(version));
+    }
+
+    #[tokio::test]
+    async fn live_missing_exact_version_keeps_the_full_cache_without_retrying() {
+        let body = serde_json::json!({"name":"shared","versions":{
+            "1.0.0":{"name":"shared","version":"1.0.0"}
+        }});
+        let (registry, requests, server) = serve_registry(serde_json::to_vec(&body).unwrap()).await;
         let cache = tempfile::tempdir().unwrap();
         let client = Arc::new(RegistryClient::new(&registry));
-        let incomplete = serde_json::from_value(serde_json::json!({"name":"shared","versions":{
-            "1.0.0":{"name":"shared","version":"1.0.0"}
-        }}))
-        .unwrap();
-        client.seed_full_packument_cache(
-            "shared",
-            cache.path(),
-            &incomplete,
-            Some("\"old\""),
-            None,
-            false,
-        );
-        let resolver = Resolver::new(client).with_packument_full_cache(cache.path().to_path_buf());
+        let resolver =
+            Resolver::new(client.clone()).with_packument_full_cache(cache.path().to_path_buf());
         let mut scheduler = FetchScheduler::new(&resolver, AdaptiveLimit::new(1, 1, 1), true);
         scheduler.ensure_exact_optional_fetch("shared", "2.0.0", None, false);
-        let (_, result) =
-            tokio::time::timeout(std::time::Duration::from_secs(2), scheduler.join_next())
-                .await
+        let (_, result) = scheduler.join_next().await.unwrap().unwrap();
+        assert!(
+            matches!(result, Err(Error::Registry(_, message)) if message.contains("version 2.0.0 is missing"))
+        );
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        assert!(
+            client
+                .cached_resolution_packument("shared", cache.path())
+                .packument
                 .unwrap()
-                .unwrap()
-                .unwrap();
-        assert!(result.unwrap().1.versions.contains_key("2.0.0"));
-        server.await.unwrap();
+                .versions
+                .contains_key("1.0.0")
+        );
+        server.abort();
     }
 
     #[tokio::test]
