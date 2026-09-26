@@ -1827,6 +1827,59 @@ fn large_hardlinked_package_invalidates_index_when_a_store_file_is_missing() {
     assert!(!store.index_dir().join("foo@1.0.0.json").exists());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn large_flat_package_preserves_copy_fallback_across_filesystems() {
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    // Linux CI provides tmpfs here. Other environments may not expose a
+    // second writable filesystem, so only run when EXDEV is reproducible.
+    let Ok(project) = tempfile::tempdir_in("/dev/shm") else {
+        return;
+    };
+    if dir.path().metadata().unwrap().dev() == project.path().metadata().unwrap().dev() {
+        return;
+    }
+    let (store, mut indices) = setup_store_with_files(dir.path());
+    let foo = indices.get_mut("foo@1.0.0").unwrap();
+    for i in 0..300 {
+        let content = format!("module.exports = {i};");
+        foo.insert(
+            format!("f{i}.js"),
+            store.import_bytes(content.as_bytes(), i % 7 == 0).unwrap(),
+        );
+    }
+    let linker =
+        Linker::new_with_gvs(&store, LinkStrategy::Hardlink, false).with_link_concurrency(Some(4));
+    let sample = &foo["f0.js"];
+    let realized = linker
+        .link_file_fresh(sample, "probe", &project.path().join("probe"), None)
+        .unwrap();
+    assert!(matches!(realized, LinkStrategy::Copy));
+
+    let stats = linker
+        .link_all(project.path(), &make_graph(), &indices)
+        .unwrap();
+    assert_eq!(stats.files_linked, 303);
+    let pkg = project
+        .path()
+        .join("node_modules/.aube/foo@1.0.0/node_modules/foo");
+    for i in 0..300 {
+        let file = pkg.join(format!("f{i}.js"));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("module.exports = {i};")
+        );
+        assert_eq!(file.metadata().unwrap().mode() & 0o111 != 0, i % 7 == 0);
+    }
+    std::fs::write(pkg.join("f0.js"), b"changed").unwrap();
+    assert_eq!(
+        std::fs::read(&indices["foo@1.0.0"]["f0.js"].store_path).unwrap(),
+        b"module.exports = 0;"
+    );
+}
+
 #[cfg(not(windows))]
 #[test]
 fn test_recorded_gvs_dep_link_targets_match_disk() {
