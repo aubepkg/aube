@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1](https://github.com/aubepkg/aube/compare/v2.5.0...v2.5.1) - 2026-09-27
+
+### Other
+
+- *(install)* cache clean OSV confirmations briefly ([#1631](https://github.com/aubepkg/aube/pull/1631))
+- refresh benchmarks for v2.5.0 ([#1630](https://github.com/aubepkg/aube/pull/1630))
+- *(release)* start aube about 0.6 ms faster on Linux by linking non-PIE ([#1625](https://github.com/aubepkg/aube/pull/1625))
+
 ## [2.5.0](https://github.com/aubepkg/aube/compare/v2.4.0...v2.5.0) - 2026-09-26
 
 ### Added

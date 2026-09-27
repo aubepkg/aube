@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1](https://github.com/aubepkg/aube/compare/aube-registry-v2.5.0...aube-registry-v2.5.1) - 2026-09-27
+
+### Other
+
+- *(install)* cache clean OSV confirmations briefly ([#1631](https://github.com/aubepkg/aube/pull/1631))
+- refresh benchmarks for v2.5.0 ([#1630](https://github.com/aubepkg/aube/pull/1630))
+
 ## [2.5.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.4.0...aube-registry-v2.5.0) - 2026-09-26
 
 ### Other

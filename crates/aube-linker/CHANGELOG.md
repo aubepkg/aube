@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.5.0...aube-linker-v2.5.1) - 2026-09-27
+
+### Fixed
+
+- *(linker)* silence unused dep_path on Windows ([#1628](https://github.com/aubepkg/aube/pull/1628))
+
+### Other
+
+- *(linker)* reuse unchanged hidden hoist links ([#1632](https://github.com/aubepkg/aube/pull/1632))
+- refresh benchmarks for v2.5.0 ([#1630](https://github.com/aubepkg/aube/pull/1630))
+- *(linker)* avoid redundant package directory operations ([#1626](https://github.com/aubepkg/aube/pull/1626))
+
 ## [2.5.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.4.0...aube-linker-v2.5.0) - 2026-09-26
 
 ### Other
