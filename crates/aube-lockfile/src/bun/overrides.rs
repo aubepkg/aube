@@ -20,13 +20,25 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Translate bun's `overrides` block into selector keys.
+///
+/// Two entries can name the same rule: bun only writes groups, but a
+/// lockfile an older aube saved holds `parent>child` string rows, so a
+/// merged file can carry both `"foo>bar"` and `"foo": { "bar": … }`.
+/// Conflicting versions are an error rather than a silent pick.
 pub(super) fn read(raw: &BTreeMap<String, Value>) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
+    let mut insert = |key: String, version: &str| match out.get(&key) {
+        Some(existing) if existing != version => Err(format!(
+            "override {key:?} is set twice, to {existing:?} and {version:?}"
+        )),
+        _ => {
+            out.insert(key, version.to_string());
+            Ok(())
+        }
+    };
     for (key, value) in raw {
         match value {
-            Value::String(version) => {
-                out.insert(key.clone(), version.clone());
-            }
+            Value::String(version) => insert(key.clone(), version)?,
             Value::Object(children) => {
                 if split_segment(key).is_none() || pnpm_delimiter(key).is_some() {
                     return Err(format!("invalid override key {key:?}"));
@@ -38,13 +50,13 @@ pub(super) fn read(raw: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Str
                         ));
                     };
                     if child == "." {
-                        out.insert(key.clone(), version.clone());
+                        insert(key.clone(), version)?;
                         continue;
                     }
                     if split_segment(child).is_none() || pnpm_delimiter(child).is_some() {
                         return Err(format!("invalid override key {child:?} under {key:?}"));
                     }
-                    out.insert(format!("{key}>{child}"), version.clone());
+                    insert(format!("{key}>{child}"), version)?;
                 }
             }
             other => {
@@ -260,6 +272,18 @@ mod tests {
                 ("@s/p@1>child@>=2", "6.0.0"),
             ])
         );
+    }
+
+    #[test]
+    fn read_rejects_a_string_row_that_conflicts_with_a_group() {
+        let raw: BTreeMap<String, Value> =
+            serde_json::from_str(r#"{ "foo>bar": "1.0.0", "foo": { "bar": "2.0.0" } }"#).unwrap();
+        let err = read(&raw).unwrap_err();
+        assert!(err.contains(r#""foo>bar" is set twice"#), "{err}");
+
+        let raw: BTreeMap<String, Value> =
+            serde_json::from_str(r#"{ "foo>bar": "2.0.0", "foo": { "bar": "2.0.0" } }"#).unwrap();
+        assert_eq!(read(&raw).unwrap(), map(&[("foo>bar", "2.0.0")]));
     }
 
     #[test]

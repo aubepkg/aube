@@ -371,6 +371,8 @@ EOF
 
 	run aube install --no-frozen-lockfile
 	assert_success
+	run node -p 'require(require.resolve("is-number/package.json", { paths: [require("path").dirname(require.resolve("is-odd"))] })).version'
+	assert_output "7.0.0"
 	# Everything above `packages` (version stamp, workspaces, overrides)
 	# is byte-identical. Package rows can pick up metadata the test
 	# registry adds, such as `deprecated`.

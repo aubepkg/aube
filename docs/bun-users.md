@@ -22,8 +22,8 @@ aube reads and updates the text-format `bun.lock` in place and installs
 packages into `node_modules/.aube/`. It reads every text version Bun has
 written: `lockfileVersion: 1`, `2` (Bun 1.4's default), and `3`, which Bun
 1.4 writes while `overrides` hold scoped rules. It stamps the version the
-way Bun does: `3` while scoped rules exist, otherwise the version the file
-already had.
+way Bun does: `3` while scoped rules exist. Otherwise it keeps `1` or `2`,
+and writes a `3` file whose scoped rules are gone as `2`.
 
 Scoped `overrides` in `package.json` work the way Bun reads them. A nested
 object scopes a rule to a parent package, and `"."` targets the parent
