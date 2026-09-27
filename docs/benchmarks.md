@@ -56,6 +56,7 @@ users get them out of the box.
 
 - **Fresh install (warm cache)** — frozen lockfile, `node_modules` wiped, store and packument cache warm.
 - **Fresh install (cold cache)** — frozen lockfile but the store, packument cache, and `node_modules` are all wiped. Measures registry fetch, store import, and link/materialization work from scratch.
+- **Dependency update after git pull** — the previous commit is installed, then its `package.json` and lockfile are replaced with a commit that bumps ten pinned direct dependencies (Babel, MUI, ESLint, TypeScript, webpack, and others) and adds two more, the shape of a Renovate or Dependabot merge. Each tool updates its own lockfile ahead of time, so the timed run is the install a developer runs after pulling. Store and cache stay warm, so this measures finding what changed and relinking it rather than downloading. npm runs `npm install` here, since `npm ci` deletes `node_modules` first.
 - **npm install && npm run test (already installed)** — models the developer loop after dependencies are already installed. Each timed run repeats the tool's normal "install if needed, then run tests" command. aube can skip the install work when its install-state file is fresh; other tools still revalidate their lockfile or install state before dispatching the script. The fixture's `test` script is a no-op `node -e`, so this scenario mostly measures install short-circuiting and script dispatch.
 
 ## Interpreting the results
@@ -81,7 +82,7 @@ mise run bench:bump
 
 The task calls [`benchmarks/bench.sh`](https://github.com/aubepkg/aube/blob/main/benchmarks/bench.sh)
 through `mise x`, installs the benchmark toolchain declared on the
-task, sets `RUNS=10 WARMUP=3`, and points `RESULTS_JSON` at
+task, sets `WARMUP=3` with tak choosing each run count, and points `RESULTS_JSON` at
 `benchmarks/results.json` so the file is rewritten in-place. Commit the
 updated JSON to refresh the chart above — the VitePress data loader at
 [`docs/benchmarks.data.ts`](https://github.com/aubepkg/aube/blob/main/docs/benchmarks.data.ts)

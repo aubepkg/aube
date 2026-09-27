@@ -32,13 +32,15 @@ dir = "{{ env.BENCH_DIR }}/project-{{ subject }}"
 env = { HOME = "{{ env.BENCH_DIR }}/home-{{ subject }}" }
 # Recorded as each result's `version`; generate-results.js reads it from there.
 version_cmd = ["{{ vars.bin }}", "--version"]
-# Restore the saved lockfile over a project with no node_modules: the state
-# every install scenario starts from. The script reads `$BENCH_DIR` from its
+# Restore the fixture's package.json and saved lockfile over a project with no
+# node_modules: the state every install scenario starts from. pull-update leaves
+# its own package.json behind, so every prepare puts the fixture's back. The script reads `$BENCH_DIR` from its
 # environment and takes the tool and lockfile as arguments, so no path is ever
 # spliced into shell code — a TMPDIR containing a quote cannot break it.
 prepare = ["sh", "-c", '''
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json &&
+cp "$BENCH_DIR/original-package.json" package.json &&
 cp "$BENCH_DIR/saved-lockfile-$1" "$2"
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 # An install that silently did nothing would be the fastest sample of all.
@@ -88,6 +90,63 @@ cmd = ["{{ env.BENCH_VLT_BIN }}", "install", "--frozen-lockfile"]
 [bench.gvs-warm]
 subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 
+# ── Dependency update after git pull ───────────────────────────────────────
+# The previous commit is installed, then `git pull` brings in a package.json
+# and lockfile that bump ten pinned direct dependencies and add two, the shape
+# of a Renovate or Dependabot merge. bench.sh resolves both lockfiles per tool
+# before timing. Each sample's prepare installs the previous commit, untimed,
+# with the same command the timed run uses, then drops in the pulled files.
+# Store and cache stay warm: this is the incremental relink, not a download.
+#
+# The untimed install drops AUBE_BENCH_PHASES_FILE so bench.sh's phase sample
+# records only the timed one.
+#
+# Each command is the one a developer runs after a pull. npm uses `install`,
+# not `ci`: `ci` deletes node_modules first, which is the cold path again.
+
+[bench.pull-update]
+subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
+prepare = ["sh", "-c", '''
+rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
+  bun.lock bun.lockb deno.lock vlt-lock.json &&
+cp "$BENCH_DIR/before-package.json" package.json &&
+cp "$BENCH_DIR/saved-lockfile-before-$1" "$2" &&
+(unset AUBE_BENCH_PHASES_FILE; {{ vars.run }}) &&
+cp "$BENCH_DIR/after-package.json" package.json &&
+cp "$BENCH_DIR/saved-lockfile-after-$1" "$2"
+''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
+# zod is only in the pulled package.json, so an install that kept the old
+# tree fails here.
+check = ["test", "-f", "node_modules/zod/package.json"]
+
+[bench.pull-update.subject.aube]
+vars = { run = '"$BENCH_AUBE_BIN" install --frozen-lockfile --ignore-scripts >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.pull-update.subject.bun]
+vars = { run = '"$BENCH_BUN_BIN" install --cache-dir "$BENCH_DIR/cache-bun" --ignore-scripts --no-summary --minimum-release-age="$MIN_RELEASE_AGE_SECONDS" --frozen-lockfile >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.pull-update.subject.deno]
+vars = { run = '"$BENCH_DENO_BIN" install --frozen --quiet --minimum-dependency-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.pull-update.subject.pnpm]
+vars = { run = '"$BENCH_PNPM_BIN" install --frozen-lockfile --ignore-scripts --config.minimum-release-age="$MIN_RELEASE_AGE_MINUTES" >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.pull-update.subject.npm]
+vars = { run = '"$BENCH_NPM_BIN" install --ignore-scripts --no-audit --no-fund --legacy-peer-deps --prefer-offline --min-release-age="$MIN_RELEASE_AGE_DAYS" >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.pull-update.subject.yarn]
+vars = { run = '"$BENCH_YARN_BIN" install --immutable >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.pull-update.subject.vlt]
+vars = { run = '"$BENCH_VLT_BIN" install --frozen-lockfile >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
 # ── Fresh install, cold cache ──────────────────────────────────────────────
 # Lockfile present, store and cache empty: fetch from the registry, import,
 # link. The prepare step also wipes every store and cache location each tool
@@ -104,6 +163,7 @@ rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   "$H/.cache/aube" "$H/.cache/yarn" "$H/.cache/bun" "$H/.cache/deno" "$H/.cache/vlt" \
   "$H/.config/vlt" "$H/Library/Caches/deno" &&
 mkdir -p "$H" &&
+cp "$BENCH_DIR/original-package.json" package.json &&
 cp "$BENCH_DIR/saved-lockfile-$1" "$2"
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 
@@ -128,6 +188,7 @@ subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 prepare = ["sh", "-c", '''
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json &&
+cp "$BENCH_DIR/original-package.json" package.json &&
 cp "$BENCH_DIR/saved-lockfile-$1" "$2" &&
 {{ vars.run }}
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]

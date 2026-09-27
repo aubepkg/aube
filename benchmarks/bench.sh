@@ -62,7 +62,7 @@ WARMUP="${WARMUP:-1}"
 # run count from how long its samples take, within `min_runs`.
 RUNS="${RUNS:-}"
 BENCH_TOOLS="${BENCH_TOOLS:-aube,bun,pnpm,npm,yarn,deno}"
-BENCH_SCENARIOS="${BENCH_SCENARIOS:-gvs-warm,gvs-cold,install-test}"
+BENCH_SCENARIOS="${BENCH_SCENARIOS:-gvs-warm,gvs-cold,pull-update,install-test}"
 BENCH_PHASES="${BENCH_PHASES:-1}"
 
 # ── Validation ──────────────────────────────────────────────────────────────
@@ -168,15 +168,19 @@ PROGRESS_COMPLETED=0
 PROGRESS_STARTED=0
 PROGRESS_TOTAL=${#TOOLS[@]}
 # Each scenario is one tak run over every tool, so it is one unit.
-for scenario in gvs-warm gvs-cold install-test; do
+for scenario in gvs-warm gvs-cold pull-update install-test; do
 	if scenario_selected "$scenario"; then
 		PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
 	fi
 done
+# pull-update resolves its two lockfiles once per tool before any timing.
+if scenario_selected "pull-update"; then
+	PROGRESS_TOTAL=$((PROGRESS_TOTAL + ${#TOOLS[@]}))
+fi
 if [ "$BENCH_PHASES" != "0" ]; then
 	for tool in "${TOOLS[@]}"; do
 		[ "$tool" = "aube" ] || continue
-		for scenario in gvs-warm gvs-cold; do
+		for scenario in gvs-warm gvs-cold pull-update; do
 			if scenario_selected "$scenario"; then
 				PROGRESS_TOTAL=$((PROGRESS_TOTAL + 1))
 			fi
@@ -314,28 +318,16 @@ if [ "${BENCH_HERMETIC:-0}" = "1" ]; then
 	hermetic_use_warm_uplink
 fi
 
-for i in "${!TOOLS[@]}"; do
-	tool="${TOOLS[$i]}"
-	dir="${TOOL_PROJECTS[$i]}"
-	bin="${TOOL_BINS[$i]}"
-	home="${TOOL_HOMES[$i]}"
-	cache="${TOOL_CACHES[$i]}"
-	lockfile_name=$(lockfile_name_for "$tool")
-	progress_start "populate/$tool"
-	echo "Populating store and cache for $tool..."
-	# Wipe every known lockfile so an earlier failed run doesn't
-	# leave a stale one behind that would fool the pm into a
-	# different code path.
-	rm -rf "$dir/node_modules" \
-		"$dir/pnpm-lock.yaml" \
-		"$dir/aube-lock.yaml" \
-		"$dir/package-lock.json" \
-		"$dir/yarn.lock" \
-		"$dir/bun.lock" \
-		"$dir/bun.lockb" \
-		"$dir/deno.lock" \
-		"$dir/vlt-lock.json"
-
+# Run the non-frozen install of the tool at index $1 in its project directory: it resolves
+# whatever package.json asks for, building on a lockfile that is already
+# there, and fills the store and cache. `update` as $2 marks an incremental
+# update of an existing lockfile rather than a first resolve.
+populate_install() {
+	local i=$1 mode=${2:-fresh}
+	local tool="${TOOLS[$i]}" dir="${TOOL_PROJECTS[$i]}" bin="${TOOL_BINS[$i]}"
+	local home="${TOOL_HOMES[$i]}" cache="${TOOL_CACHES[$i]}"
+	local bun_args=(--cache-dir "$cache" --ignore-scripts --no-summary)
+	[ "$mode" = "update" ] || bun_args+=(--force)
 	case "$tool" in
 	aube)
 		# Aube's built-in trusted-dependency list can allow known-safe
@@ -365,9 +357,10 @@ for i in "${!TOOLS[@]}"; do
 	bun)
 		# Bun takes `--cache-dir` as a CLI flag and `BUN_INSTALL` as
 		# the global install prefix. Point both at the hermetic temp
-		# to keep it from touching `~/.bun`.
-		cd "$dir" && HOME="$home" BUN_INSTALL="$home/.bun" "$bin" install \
-			--cache-dir "$cache" --ignore-scripts --no-summary --force
+		# to keep it from touching `~/.bun`. `--force` re-resolves
+		# from scratch, so an update keeps it off to build on the
+		# existing lockfile like every other tool does.
+		cd "$dir" && HOME="$home" BUN_INSTALL="$home/.bun" "$bin" install "${bun_args[@]}"
 		;;
 	deno)
 		# Deno 2 reads package.json and writes deno.lock + populates
@@ -383,7 +376,31 @@ for i in "${!TOOLS[@]}"; do
 		cd "$dir" && HOME="$home" npm_config_cache="$cache" "$bin" install
 		;;
 	esac
+}
 
+# Wipe every known lockfile and node_modules from project $1 so an earlier
+# failed run doesn't leave a stale one behind that would fool the pm into a
+# different code path.
+reset_project() {
+	rm -rf "$1/node_modules" \
+		"$1/pnpm-lock.yaml" \
+		"$1/aube-lock.yaml" \
+		"$1/package-lock.json" \
+		"$1/yarn.lock" \
+		"$1/bun.lock" \
+		"$1/bun.lockb" \
+		"$1/deno.lock" \
+		"$1/vlt-lock.json"
+}
+
+for i in "${!TOOLS[@]}"; do
+	tool="${TOOLS[$i]}"
+	dir="${TOOL_PROJECTS[$i]}"
+	lockfile_name=$(lockfile_name_for "$tool")
+	progress_start "populate/$tool"
+	echo "Populating store and cache for $tool..."
+	reset_project "$dir"
+	populate_install "$i"
 	if [ ! -f "$dir/$lockfile_name" ]; then
 		echo "error: $lockfile_name was not created for $tool in $dir" >&2
 		exit 1
@@ -391,6 +408,35 @@ for i in "${!TOOLS[@]}"; do
 	cp "$dir/$lockfile_name" "$BENCH_DIR/saved-lockfile-$tool"
 	progress_finish "populate/$tool"
 done
+
+# ── Dependency update lockfiles ────────────────────────────────────────────
+# The pull-update scenario installs a project, then pulls a commit that
+# updates its dependencies: the weekly Renovate/Dependabot merge, or a
+# teammate's `add`; benchmarks/pull-update-fixtures.mts writes both
+# commits' package.json. Each tool resolves the earlier commit on its own,
+# then updates its own lockfile to the later one, so the pulled lockfile
+# keeps every transitive version the update did not have to move, the way a
+# real update does.
+if scenario_selected "pull-update"; then
+	node "$SCRIPT_DIR/pull-update-fixtures.mts" "$SCRIPT_DIR/fixture.package.json" "$BENCH_DIR"
+	for i in "${!TOOLS[@]}"; do
+		tool="${TOOLS[$i]}"
+		dir="${TOOL_PROJECTS[$i]}"
+		lockfile_name=$(lockfile_name_for "$tool")
+		progress_start "populate-update/$tool"
+		echo "Resolving the dependency update for $tool..."
+		reset_project "$dir"
+		cp "$BENCH_DIR/before-package.json" "$dir/package.json"
+		populate_install "$i"
+		cp "$dir/$lockfile_name" "$BENCH_DIR/saved-lockfile-before-$tool"
+		cp "$BENCH_DIR/after-package.json" "$dir/package.json"
+		populate_install "$i" update
+		cp "$dir/$lockfile_name" "$BENCH_DIR/saved-lockfile-after-$tool"
+		reset_project "$dir"
+		cp "$SCRIPT_DIR/fixture.package.json" "$dir/package.json"
+		progress_finish "populate-update/$tool"
+	done
+fi
 
 if [ "${BENCH_HERMETIC:-0}" = "1" ]; then
 	hermetic_use_no_uplink
@@ -511,12 +557,24 @@ echo ""
 echo "━━━ Benchmark 1: Fresh install (warm cache) ━━━"
 run_scenario "gvs-warm" run_bench "gvs-warm"
 
-# ── Benchmark 2: Fresh install, cold cache ─────────────────────────────────
+# ── Benchmark 2: Dependency update after git pull ──────────────────────────
+# node_modules installed from the previous commit's lockfile, then the
+# pulled package.json and lockfile land: a handful of direct dependencies
+# bumped and two added, as a Renovate/Dependabot merge would. Store and
+# cache stay warm, so this measures working out what changed and relinking
+# it, not downloading. It runs before the cold scenario, which leaves each
+# cache holding only the main lockfile's packages.
+
+echo ""
+echo "━━━ Benchmark 2: Dependency update after git pull ━━━"
+run_scenario "pull-update" run_bench "pull-update"
+
+# ── Benchmark 3: Fresh install, cold cache ─────────────────────────────────
 # Lockfile present, but store and cache are empty.
 # Measures fetch-from-registry + import + link/materialization work.
 
 echo ""
-echo "━━━ Benchmark 2: Fresh install (cold cache) ━━━"
+echo "━━━ Benchmark 3: Fresh install (cold cache) ━━━"
 run_scenario "gvs-cold" run_bench "gvs-cold"
 
 # ── Aube phase timing sample ───────────────────────────────────────────────
@@ -529,10 +587,11 @@ echo ""
 echo "━━━ Aube install phase timings ━━━"
 if [ "$BENCH_PHASES" != "0" ]; then
 	run_scenario "gvs-warm" run_aube_phase_bench "gvs-warm"
+	run_scenario "pull-update" run_aube_phase_bench "pull-update"
 	run_scenario "gvs-cold" run_aube_phase_bench "gvs-cold"
 fi
 
-# ── Benchmark 3: install + run test (developer loop) ───────────────────────
+# ── Benchmark 4: install + run test (developer loop) ───────────────────────
 # Warm store+cache, lockfile present, node_modules *already* populated.
 # Models the developer-loop case: "I've installed, now I keep re-running
 # my tests." Each iteration's prepare runs the full install-test command
@@ -542,7 +601,7 @@ fi
 # on the timed run; tools without one still pay for lockfile revalidation.
 
 echo ""
-echo "━━━ Benchmark 3: install + run test (already installed) ━━━"
+echo "━━━ Benchmark 4: install + run test (already installed) ━━━"
 run_scenario "install-test" run_bench "install-test"
 
 # ── Summary ────────────────────────────────────────────────────────────────
