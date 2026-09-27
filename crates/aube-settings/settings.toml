@@ -3183,9 +3183,9 @@ materialization: creating package directories,
 reflinking / hardlinking files, and writing dependency symlinks.
 Defaults are platform-aware because APFS reflink metadata work and
 Linux hardlink work saturate at different points (currently 4 on
-macOS, 16 elsewhere, bounded by available parallelism). Set this when
-you know your filesystem prefers a different amount of link-phase
-parallelism.
+macOS, 8 on Linux, 16 elsewhere, bounded by available parallelism).
+Set this when you know your filesystem prefers a different amount of
+link-phase parallelism.
 """
 sources.cli = []
 sources.env = ["npm_config_link_concurrency", "NPM_CONFIG_LINK_CONCURRENCY", "AUBE_LINK_CONCURRENCY"]
