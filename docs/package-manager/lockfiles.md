@@ -19,7 +19,7 @@ aube reads *and writes* all of the following formats:
 | `package-lock.json` | v2 and v3 | Keep the file in place |
 | `npm-shrinkwrap.json` | npm shrinkwrap | Takes precedence over `package-lock.json` |
 | `yarn.lock` | Classic v1 and Berry v2+ | PnP projects need a `node_modules` linker |
-| `bun.lock` | Text format v1 | Convert binary `bun.lockb` with Bun first |
+| `bun.lock` | Text format v1 and v2 (Bun 1.4) | Convert binary `bun.lockb` with Bun first |
 
 ## Write behavior
 

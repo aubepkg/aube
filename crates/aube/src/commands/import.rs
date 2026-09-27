@@ -51,7 +51,7 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
         ));
     }
 
-    let (graph, kind) = match aube_lockfile::parse_for_import(&cwd, &manifest) {
+    let (mut graph, kind) = match aube_lockfile::parse_for_import(&cwd, &manifest) {
         Ok(pair) => pair,
         Err(aube_lockfile::Error::NotFound(_)) => {
             return Err(miette!(
@@ -63,6 +63,25 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
             return Err(miette::Report::new(e)).wrap_err("failed to parse source lockfile");
         }
     };
+
+    // npm and bun lockfiles record which packages declare peers but not
+    // which copy satisfies each one. Without the peer-context pass the
+    // written aube-lock.yaml links no peers at all: a package like
+    // `vitepress-plugin-mermaid` gets no `mermaid` next to it and fails
+    // to resolve its import at runtime.
+    //
+    // Install also runs `hoist_auto_installed_peers` first, but only to
+    // link `node_modules/<peer>` for the current install. Written to the
+    // lockfile, those synthetic importer rows read as dependencies the
+    // manifest removed, so `--frozen-lockfile` would reject the import.
+    if crate::commands::install::lockfile_needs_peer_pass(kind) {
+        let peer_options = super::with_settings_ctx(
+            &cwd,
+            crate::commands::install::lockfile_peer_context_options,
+        );
+        graph = aube_resolver::apply_peer_contexts(graph, &peer_options)
+            .map_err(|e| miette!("peer-context pass failed: {e}"))?;
+    }
 
     let pkg_count = graph.packages.len();
     aube_lockfile::write_lockfile(&cwd, &graph, &manifest)

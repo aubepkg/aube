@@ -4,6 +4,7 @@ use super::source::{
     bin_value_to_map, bun_key_to_alias_name, classify_bun_ident,
     rebase_workspace_scoped_local_source, resolve_nested_bun, resolve_workspace_dep, split_ident,
 };
+use super::{LOCKFILE_VERSION_KEY, SUPPORTED_LOCKFILE_VERSIONS};
 use crate::{DepType, DirectDep, Error, LockedPackage, LockfileGraph, PeerDepMeta};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -20,16 +21,21 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
 
     let raw: RawBunLockfile = match serde_json::from_str(&cleaned) {
         Ok(v) => v,
-        Err(e) => return Err(Error::parse_json_err(path, raw_content, &e)),
+        Err(e) => {
+            // A v3 lockfile's object-valued `overrides` fail the typed
+            // parse before the version check below can run. Name the
+            // version instead of pointing at a type mismatch.
+            if let Some(version) = unsupported_lockfile_version(&cleaned) {
+                return Err(Error::parse(path, unsupported_version_message(version)));
+            }
+            return Err(Error::parse_json_err(path, raw_content, &e));
+        }
     };
 
-    if raw.lockfile_version != 1 {
+    if !SUPPORTED_LOCKFILE_VERSIONS.contains(&raw.lockfile_version) {
         return Err(Error::parse(
             path,
-            format!(
-                "bun.lock lockfileVersion {} is not supported (expected 1)",
-                raw.lockfile_version
-            ),
+            unsupported_version_message(raw.lockfile_version),
         ));
     }
 
@@ -344,6 +350,18 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         catalogs_map.insert(catalog_name.clone(), inner);
     }
 
+    // `LockfileGraph` has no typed slot for bun's `lockfileVersion`, so
+    // a non-default version rides in `extra_fields` for the writer to
+    // stamp back. Re-saving a v2 lockfile as v1 would churn every bun
+    // 1.4 project's `bun.lock` on the first aube install.
+    let mut extra_fields = raw.extra;
+    if raw.lockfile_version != 1 {
+        extra_fields.insert(
+            LOCKFILE_VERSION_KEY.to_string(),
+            serde_json::Value::from(raw.lockfile_version),
+        );
+    }
+
     Ok(LockfileGraph {
         importers,
         packages,
@@ -364,8 +382,35 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             out
         },
         catalogs: catalogs_map,
-        extra_fields: raw.extra,
+        extra_fields,
         workspace_extra_fields,
         ..Default::default()
     })
+}
+
+/// The `lockfileVersion` of a lockfile that failed the typed parse, when
+/// it names a version this parser does not read.
+fn unsupported_lockfile_version(cleaned: &str) -> Option<u32> {
+    #[derive(serde::Deserialize)]
+    struct VersionOnly {
+        #[serde(rename = "lockfileVersion")]
+        lockfile_version: u32,
+    }
+    let version = serde_json::from_str::<VersionOnly>(cleaned)
+        .ok()?
+        .lockfile_version;
+    (!SUPPORTED_LOCKFILE_VERSIONS.contains(&version)).then_some(version)
+}
+
+fn unsupported_version_message(version: u32) -> String {
+    if version == 3 {
+        // bun stamps v3 only while the lockfile holds parent-scoped or
+        // `name@range` override rules, whose object form aube does not
+        // read or write yet.
+        "bun.lock lockfileVersion 3 is not supported yet: it records scoped `overrides` \
+         (parent-scoped or `name@range` rules), which aube cannot read"
+            .to_string()
+    } else {
+        format!("bun.lock lockfileVersion {version} is not supported (expected 1 or 2)")
+    }
 }

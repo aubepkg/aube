@@ -526,6 +526,93 @@ fn test_write_roundtrips_config_version() {
     );
 }
 
+/// bun 1.4 stamps `lockfileVersion: 2` on content identical to v1. The
+/// parser must read it, and re-saving must keep the 2 the way bun does
+/// rather than churn the file back to 1.
+#[test]
+fn test_parse_and_write_roundtrips_lockfile_version_2() {
+    let project = tempfile::TempDir::new().unwrap();
+    let pj = project.path().join("package.json");
+    std::fs::write(&pj, r#"{"name":"root","dependencies":{"foo":"^1.0.0"}}"#).unwrap();
+    let lock_path = project.path().join("bun.lock");
+    let integrity = fake_sri('a');
+    std::fs::write(
+        &lock_path,
+        format!(
+            r#"{{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {{
+    "": {{ "name": "root", "dependencies": {{ "foo": "^1.0.0" }} }}
+  }},
+  "packages": {{
+    "foo": ["foo@1.2.3", "", {{}}, "{integrity}"]
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&lock_path).unwrap();
+    assert!(graph.packages.contains_key("foo@1.2.3"));
+
+    let manifest = aube_manifest::PackageJson::from_path(&pj).unwrap();
+    write(&lock_path, &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        written.contains("\"lockfileVersion\": 2,"),
+        "lockfileVersion 2 must round-trip, got:\n{written}"
+    );
+    assert_eq!(
+        written.matches("lockfileVersion").count(),
+        1,
+        "lockfileVersion must be written once, got:\n{written}"
+    );
+}
+
+/// bun writes v3 only for scoped `overrides`, whose object values the
+/// typed parse cannot read. The error must name the version, not the
+/// JSON type mismatch it trips over first.
+#[test]
+fn test_parse_rejects_lockfile_version_3_by_name() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let lock_path = dir.path().join("bun.lock");
+    std::fs::write(
+        &lock_path,
+        r#"{
+  "lockfileVersion": 3,
+  "configVersion": 1,
+  "workspaces": { "": { "name": "root" } },
+  "overrides": { "parent@^1": { "child": "2.0.0" } },
+  "packages": {}
+}"#,
+    )
+    .unwrap();
+
+    let err = parse(&lock_path).unwrap_err().to_string();
+    assert!(
+        err.contains("lockfileVersion 3 is not supported"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_parse_rejects_unknown_lockfile_version() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let lock_path = dir.path().join("bun.lock");
+    std::fs::write(
+        &lock_path,
+        r#"{ "lockfileVersion": 9, "workspaces": {}, "packages": {} }"#,
+    )
+    .unwrap();
+
+    let err = parse(&lock_path).unwrap_err().to_string();
+    assert!(
+        err.contains("lockfileVersion 9 is not supported (expected 1 or 2)"),
+        "unexpected error: {err}"
+    );
+}
+
 /// Hand-authored bun.lock with two workspace entries (root and
 /// `packages/app`) round-trips through the parser with both
 /// importers populated, and the writer regenerates both

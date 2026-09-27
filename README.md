@@ -84,7 +84,7 @@ argument forwarding, and workspace runs.
 | `package-lock.json` | v2 and v3 |
 | `npm-shrinkwrap.json` | npm shrinkwrap |
 | `yarn.lock` | Classic v1 and Berry v2+ |
-| `bun.lock` | Text format v1 |
+| `bun.lock` | Text format v1 and v2 (Bun 1.4) |
 
 Run `aube install`, inspect the diff, and run your tests. You do not need to
 import or delete a supported lockfile. Upgrade older pnpm lockfiles with pnpm

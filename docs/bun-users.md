@@ -19,7 +19,10 @@ install automatically when dependencies are stale. Use `aubx <pkg>` for
 one-off tools.
 
 aube reads and updates the text-format `bun.lock` at `lockfileVersion: 1`
-in place and installs packages into `node_modules/.aube/`.
+or `2` (the version Bun 1.4 writes) in place, keeping the version the file
+already has, and installs packages into `node_modules/.aube/`. Bun writes
+`lockfileVersion: 3` only for scoped `overrides` (parent-scoped or
+`name@range` rules), which aube does not read yet.
 
 aube does not read Bun's older binary `bun.lockb` format. Projects still
 on `bun.lockb` can generate the text lockfile with a modern Bun once:

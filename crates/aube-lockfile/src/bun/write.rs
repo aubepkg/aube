@@ -459,6 +459,15 @@ pub fn write(
     // lockfiles that predate the field) so a bun-bumped value round-
     // trips instead of silently downgrading on re-emit.
     let config_version = graph.bun_config_version.unwrap_or(1);
+    // Keep the `lockfileVersion` the parser read, as bun does on re-save.
+    // A fresh lockfile, or one from another format, is written as v1.
+    let lockfile_version = graph
+        .extra_fields
+        .get(super::LOCKFILE_VERSION_KEY)
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok())
+        .filter(|v| super::SUPPORTED_LOCKFILE_VERSIONS.contains(v))
+        .unwrap_or(1);
 
     // Collect top-level blocks bun understands natively. Overrides /
     // catalog / catalogs / patchedDependencies / trustedDependencies
@@ -535,6 +544,7 @@ pub fn write(
     let body = format_bun_lockfile(
         &workspace_pairs,
         &package_entries,
+        lockfile_version,
         config_version,
         &top_level_extras,
     );
@@ -559,17 +569,18 @@ pub fn write(
 /// map in BTreeMap order — each is rendered as a single-line
 /// `[ident, "", {meta}, integrity]` array.
 ///
-/// `config_version` is echoed back into the output as bun itself does —
-/// hardcoding would silently downgrade the field when bun bumps it.
+/// `lockfile_version` and `config_version` are echoed back into the
+/// output as bun itself does — hardcoding would silently downgrade them.
 fn format_bun_lockfile(
     workspaces: &[(String, Vec<(String, serde_json::Value)>)],
     package_entries: &[(String, serde_json::Value)],
+    lockfile_version: u32,
     config_version: u32,
     top_level_extras: &[(String, serde_json::Value)],
 ) -> String {
     let mut out = String::with_capacity(8192);
     out.push_str("{\n");
-    out.push_str("  \"lockfileVersion\": 1,\n");
+    out.push_str(&format!("  \"lockfileVersion\": {lockfile_version},\n"));
     out.push_str(&format!("  \"configVersion\": {config_version},\n"));
 
     // Workspaces block. Emits root (`""`) first, then each non-root

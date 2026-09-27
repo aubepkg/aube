@@ -33,7 +33,9 @@ mod sweep;
 mod unreviewed_builds;
 mod workspace;
 
-pub(crate) use resolve::check_patch_drift;
+pub(crate) use resolve::{
+    check_patch_drift, lockfile_needs_peer_pass, lockfile_peer_context_options,
+};
 
 use advisory::resolve_osv_routing_settings;
 pub use args::{EmbedderInstallOverrides, InstallArgs, InstallOptions};
