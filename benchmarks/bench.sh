@@ -21,7 +21,9 @@ set -euo pipefail
 #                  take: see `runs = "auto"` in benchmarks/tak.toml.
 #   RESULTS_JSON — override the structured JSON output path
 #   BENCH_TOOLS  — comma-separated tools to include
-#                  (default: aube,bun,pnpm,npm,yarn,deno; vlt is
+#                  (default: aube,aube-nogvs,bun,pnpm,npm,yarn,deno;
+#                  aube-nogvs is aube with the global virtual store
+#                  off, the layout aube uses under CI; vlt is
 #                  temporarily disabled — its --frozen-lockfile still
 #                  makes network requests, skewing results)
 #   BENCH_SCENARIOS — comma-separated scenario keys to run
@@ -61,7 +63,7 @@ WARMUP="${WARMUP:-1}"
 # Unset means benchmarks/tak.toml's `runs = "auto"`: tak sizes each tool's
 # run count from how long its samples take, within `min_runs`.
 RUNS="${RUNS:-}"
-BENCH_TOOLS="${BENCH_TOOLS:-aube,bun,pnpm,npm,yarn,deno}"
+BENCH_TOOLS="${BENCH_TOOLS:-aube,aube-nogvs,bun,pnpm,npm,yarn,deno}"
 BENCH_SCENARIOS="${BENCH_SCENARIOS:-gvs-warm,gvs-cold,install-test}"
 BENCH_PHASES="${BENCH_PHASES:-1}"
 
@@ -153,6 +155,7 @@ scenario_selected() {
 # Order matters for the console output; keep aube first so the
 # headline comparison is prominent and the rest follow alphabetically.
 register_tool "aube" "$AUBE_BIN"
+register_tool "aube-nogvs" "$AUBE_BIN"
 register_tool "bun" "$BUN_BIN"
 register_tool "deno" "$DENO_BIN"
 register_tool "pnpm" "$PNPM_BIN"
@@ -218,7 +221,7 @@ echo "workdir: $BENCH_DIR"
 # benchmarks/tak.toml) into every scenario's export, and generate-results.js
 # reads it from there.
 for i in "${!TOOLS[@]}"; do
-	printf "%-5s %s\n" "${TOOLS[$i]}:" "${TOOL_BINS[$i]}"
+	printf "%-11s %s\n" "${TOOLS[$i]}:" "${TOOL_BINS[$i]}"
 done
 echo ""
 
@@ -228,7 +231,7 @@ echo ""
 # scenarios.
 lockfile_name_for() {
 	case "$1" in
-	aube) echo "aube-lock.yaml" ;;
+	aube | aube-nogvs) echo "aube-lock.yaml" ;;
 	bun) echo "bun.lock" ;;
 	deno) echo "deno.lock" ;;
 	npm) echo "package-lock.json" ;;
@@ -341,6 +344,16 @@ for i in "${!TOOLS[@]}"; do
 		# Aube's built-in trusted-dependency list can allow known-safe
 		# install scripts; opt out explicitly to match every other PM.
 		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" "$bin" install --ignore-scripts
+		;;
+	aube-nogvs)
+		# Same binary as aube with the global virtual store off. Start
+		# from aube's lockfile when aube ran too, so both subjects
+		# install the identical graph and differ only in layout.
+		if [ -f "$BENCH_DIR/saved-lockfile-aube" ]; then
+			cp "$BENCH_DIR/saved-lockfile-aube" "$dir/$lockfile_name"
+		fi
+		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" \
+			npm_config_enable_global_virtual_store=false "$bin" install --ignore-scripts
 		;;
 	npm)
 		# `--legacy-peer-deps` is the only way npm tolerates the

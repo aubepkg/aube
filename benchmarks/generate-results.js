@@ -12,7 +12,7 @@
 // Usage:
 //   node generate-results.js <benchDir> <outputMarkdown>
 // Optional env:
-//   BENCH_TOOLS=aube,bun,pnpm,npm,yarn,deno,vlt
+//   BENCH_TOOLS=aube,aube-nogvs,bun,pnpm,npm,yarn,deno,vlt
 //                                   comma-separated tool order
 //                                   (defaults to aube + pnpm)
 //   RESULTS_JSON=<path>             override the JSON output path
@@ -110,7 +110,8 @@ const lines = [
 // tak records each tool's `--version` output (`version_cmd` in
 // benchmarks/tak.toml) and the machine it ran on in every scenario's export.
 // Versions are trimmed to the first semver-looking token so the docs chart
-// shows `1.4.2` rather than `bun 1.4.2+abc (…)`.
+// shows `1.4.2` rather than `bun 1.4.2+abc (…)`. `aube-nogvs` runs the aube
+// binary, so its recorded version is aube's.
 const versions = {}
 let machine = null
 for (const [name] of benchmarks) {

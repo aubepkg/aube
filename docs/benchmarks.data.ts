@@ -12,7 +12,7 @@
 //   {
 //     updated: string (ISO timestamp),
 //     unit: "ms",
-//     managers: string[],                      // e.g. ["pnpm", "aube"]
+//     managers: string[],                      // e.g. ["aube", "aube-nogvs", "pnpm"]
 //     rows: [
 //       {
 //         key: string,                         // stable identifier, matches bench.sh scenario names

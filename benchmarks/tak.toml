@@ -23,7 +23,9 @@
 # Every tool is held to the same minimum release age (aube's 24h supply-chain
 # default), each in its own unit, so none of them skips work the others do.
 # aube's global virtual store is pinned on through its env alias, so GitHub
-# Actions' inherited CI=true cannot switch it to per-project mode.
+# Actions' inherited CI=true cannot switch it to per-project mode. The
+# `aube-nogvs` subject pins it off instead: the per-project layout aube uses by
+# default under CI.
 
 [defaults]
 runs = "auto"
@@ -55,6 +57,16 @@ check = ["test", "-f", "node_modules/typescript/package.json"]
 [subject.aube]
 vars = { bin = "{{ env.BENCH_AUBE_BIN }}", lockfile = "aube-lock.yaml" }
 env = { XDG_CACHE_HOME = "{{ env.BENCH_DIR }}/cache-aube", XDG_DATA_HOME = "{{ env.BENCH_DIR }}/home-aube/.local/share", npm_config_minimum_release_age = "{{ env.MIN_RELEASE_AGE_MINUTES }}", npm_config_enable_global_virtual_store = "true" }
+cmd = ["{{ env.BENCH_AUBE_BIN }}", "install", "--frozen-lockfile", "--ignore-scripts"]
+
+# The same binary with the global virtual store off, so every install
+# materializes node_modules/.aube in the project, as under CI. It has its own
+# cache and store, so it never reuses the GVS subject's global virtual store,
+# and bench.sh installs it from aube's saved lockfile so both resolve the same
+# graph.
+[subject.aube-nogvs]
+vars = { bin = "{{ env.BENCH_AUBE_BIN }}", lockfile = "aube-lock.yaml" }
+env = { XDG_CACHE_HOME = "{{ env.BENCH_DIR }}/cache-aube-nogvs", XDG_DATA_HOME = "{{ env.BENCH_DIR }}/home-aube-nogvs/.local/share", npm_config_minimum_release_age = "{{ env.MIN_RELEASE_AGE_MINUTES }}", npm_config_enable_global_virtual_store = "false" }
 cmd = ["{{ env.BENCH_AUBE_BIN }}", "install", "--frozen-lockfile", "--ignore-scripts"]
 
 [subject.bun]
@@ -93,7 +105,7 @@ cmd = ["{{ env.BENCH_VLT_BIN }}", "install", "--frozen-lockfile"]
 # Lockfile present, node_modules deleted, store and cache warm.
 
 [bench.gvs-warm]
-subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
+subjects = ["aube", "aube-nogvs", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 
 # ── Fresh install, cold cache ──────────────────────────────────────────────
 # Lockfile present, store and cache empty: fetch from the registry, import,
@@ -101,7 +113,7 @@ subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 # is known to use, so every sample downloads everything again.
 
 [bench.gvs-cold]
-subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
+subjects = ["aube", "aube-nogvs", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 prepare = ["sh", "-c", '''
 H="$BENCH_DIR/home-$1"
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
@@ -130,7 +142,7 @@ cmd = ["{{ env.BENCH_NPM_BIN }}", "ci", "--ignore-scripts", "--no-audit", "--no-
 # exactly the same thing. These chain an install and a test, so they need sh.
 
 [bench.install-test]
-subjects = ["aube", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
+subjects = ["aube", "aube-nogvs", "bun", "deno", "pnpm", "npm", "yarn", "vlt"]
 # `vars.run` is fixed text from this file, referring only to variables, so it
 # is safe to place in the script; paths still come in as arguments.
 prepare = ["sh", "-c", '''
@@ -142,6 +154,10 @@ sync
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 
 [bench.install-test.subject.aube]
+vars = { run = '"$BENCH_AUBE_BIN" test >/dev/null 2>&1' }
+cmd = ["sh", "-c", "{{ vars.run }}"]
+
+[bench.install-test.subject.aube-nogvs]
 vars = { run = '"$BENCH_AUBE_BIN" test >/dev/null 2>&1' }
 cmd = ["sh", "-c", "{{ vars.run }}"]
 
