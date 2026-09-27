@@ -1544,10 +1544,13 @@ impl Linker {
                 .join(source_subdir)
                 .join("node_modules")
                 .join(&pkg.name);
+            let target_dir = hidden.join(&pkg.name);
             if !source_dir.exists() {
+                if sweep_stale_entries {
+                    try_remove_entry(&target_dir);
+                }
                 return Ok(());
             }
-            let target_dir = hidden.join(&pkg.name);
             let link_parent = target_dir.parent().unwrap_or(&hidden);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());

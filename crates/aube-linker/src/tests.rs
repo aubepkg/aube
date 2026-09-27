@@ -1231,6 +1231,26 @@ fn test_hidden_hoist_reconciles_on_relink() {
     );
 }
 
+#[test]
+fn hidden_hoist_drops_link_when_package_source_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let linker = Linker::new(&store, LinkStrategy::Copy);
+    let graph = make_graph();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let aube_dir = project_dir.join("node_modules/.aube");
+    let hidden_foo = aube_dir.join("node_modules/foo");
+    assert!(hidden_foo.exists());
+    std::fs::remove_dir_all(aube_dir.join("foo@1.0.0/node_modules/foo")).unwrap();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    assert!(std::fs::symlink_metadata(hidden_foo).is_err());
+    assert!(aube_dir.join("node_modules/bar/index.js").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn hidden_hoist_replaces_tampered_scope_without_following_it() {
