@@ -1803,10 +1803,9 @@ mod tests {
     use super::{
         InstallLayoutMode, InstallLayoutState, InstallState, InstalledPackageState,
         WriteStateLayout, collect_package_json_hashes_from_manifests, empty_blake3_hash,
-        fresh_state_file, gvs_nested_links_are_current, hash_file, hash_settings,
-        install_state_file, member_lockfiles_stale, read_hoisted_placements,
-        read_or_migrate_fresh_state, relative_path_or_original, remove_state,
-        verify_install_layout, write_hoisted_placements,
+        fresh_state_file, hash_file, hash_settings, install_state_file, member_lockfiles_stale,
+        read_hoisted_placements, read_or_migrate_fresh_state, relative_path_or_original,
+        remove_state, verify_install_layout, write_hoisted_placements,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -1967,6 +1966,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verify_install_layout_flags_retargeted_gvs_nested_link() {
+        use super::gvs_nested_links_are_current;
+
         let project_dir = temp_project_dir("retargeted-gvs-link");
         let link_path = project_dir.join("node_modules/.aube/parent@1.0.0/node_modules/child");
         std::fs::create_dir_all(link_path.parent().expect("link parent"))

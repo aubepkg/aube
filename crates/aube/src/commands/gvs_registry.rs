@@ -295,7 +295,7 @@ fn collect_candidate_files(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn prune(global_virtual_store: &Path, dry_run: bool) -> miette::Result<usize> {
     let _lock = lock_for_prune(global_virtual_store, false)?;
     let plan = plan_prune(global_virtual_store)?;

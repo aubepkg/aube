@@ -601,25 +601,19 @@ fn is_native_executable(target: &Path) -> bool {
         }
     }
 
-    #[cfg(windows)]
-    {
-        // A shebang is stronger evidence than a Windows-looking suffix. This
-        // keeps intentionally interpreter-backed polyglot bins on their shim.
-        if header[..n].starts_with(b"#!") {
-            return false;
-        }
-        return target
+    // On Windows, trust a native suffix — unless a shebang, which is stronger
+    // evidence, keeps an intentionally interpreter-backed polyglot bin on
+    // its shim.
+    cfg!(windows)
+        && !header[..n].starts_with(b"#!")
+        && target
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| {
                 ["exe", "cmd", "bat", "com"]
                     .iter()
                     .any(|candidate| ext.eq_ignore_ascii_case(candidate))
-            });
-    }
-
-    #[cfg(not(windows))]
-    false
+            })
 }
 
 fn is_native_magic(magic: &[u8]) -> bool {
