@@ -30,6 +30,7 @@ pub const WARN_AUBE_DELTA_INVALIDATE_FAILED: &str = "WARN_AUBE_DELTA_INVALIDATE_
 pub const WARN_AUBE_GVS_INCOMPATIBLE: &str = "WARN_AUBE_GVS_INCOMPATIBLE";
 pub const WARN_AUBE_GVS_MODE_CHANGED: &str = "WARN_AUBE_GVS_MODE_CHANGED";
 pub const WARN_AUBE_GVS_CROSS_VOLUME: &str = "WARN_AUBE_GVS_CROSS_VOLUME";
+pub const WARN_AUBE_GVS_REDIRECTED: &str = "WARN_AUBE_GVS_REDIRECTED";
 pub const WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED: &str = "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED";
 #[rustfmt::skip] pub const WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE: &str = "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE";
 
@@ -284,6 +285,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE,
         category: category::INSTALL_LIFECYCLE,
         description: "A `link:` dependency's `package.json` couldn't be read or parsed, so install skipped linking its bins into `node_modules/.bin`.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_GVS_REDIRECTED,
+        category: category::INSTALL_LIFECYCLE,
+        description: "On Windows, the global virtual store would land in a packaged (MSIX) app's redirected AppData, where Node can't follow its links; installed per-project instead.",
         exit_code: None,
     },
     CodeMeta {

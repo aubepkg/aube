@@ -214,3 +214,20 @@ disableGlobalVirtualStoreForPackages=[]
 
 Only use that when you know the project's tools tolerate symlinks that point
 outside the project.
+
+### Packaged Windows apps
+
+On Windows, programs started from an app installed as an MSIX package, such as
+the Claude desktop app, have directories they newly create under `AppData`
+(including `%LOCALAPPDATA%` and `%APPDATA%`) redirected into that app's private
+`%LOCALAPPDATA%\Packages\<app>\LocalCache`. A store that already exists at its
+real location, created from outside the app, is not affected. Node can't follow the junctions
+inside a global virtual store created there, so ESM imports between packages
+fail with `ERR_MODULE_NOT_FOUND`. Programs outside the app can't see that store
+at all.
+
+When `enableGlobalVirtualStore` isn't set explicitly and the store would land in
+such a redirected folder, aube installs per-project instead and warns
+(`WARN_AUBE_GVS_REDIRECTED`). To keep the global virtual store, point
+`globalVirtualStoreDir` at a directory outside AppData. To silence the warning,
+set `enableGlobalVirtualStore=false`.

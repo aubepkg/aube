@@ -603,8 +603,12 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     let prog = InstallProgress::try_new();
     let prog_ref = prog.as_ref();
 
-    let use_global_virtual_store_override =
-        gvs::resolve_global_virtual_store_override(&settings_ctx, &manifests, &opts.env_snapshot);
+    let use_global_virtual_store_override = gvs::resolve_global_virtual_store_override(
+        &cwd,
+        &settings_ctx,
+        &manifests,
+        &opts.env_snapshot,
+    );
 
     // Remember which lockfile format the project currently uses so
     // every downstream write site (the `--lockfile-only` short-circuit
