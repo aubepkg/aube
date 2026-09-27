@@ -1204,6 +1204,31 @@ fn test_hidden_hoist_reconciles_on_relink() {
     graph.packages.remove("@scope/baz@1.0.0");
     linker.link_all(&project_dir, &graph, &indices).unwrap();
     assert!(!hidden.join("@scope/baz").exists());
+
+    let old_foo_target = std::fs::read_link(hidden.join("foo")).unwrap();
+    assert!(hidden.join(&old_foo_target).exists());
+    let new_foo_file = store
+        .import_bytes(b"module.exports = 'foo v2';", false)
+        .unwrap();
+    let mut new_foo_index = PackageIndex::default();
+    new_foo_index.insert("index.js".to_string(), new_foo_file);
+    indices.insert("foo@2.0.0".to_string(), new_foo_index);
+    let mut new_foo = graph.packages.remove("foo@1.0.0").unwrap();
+    new_foo.version = "2.0.0".to_string();
+    new_foo.dep_path = "foo@2.0.0".to_string();
+    graph.packages.insert(new_foo.dep_path.clone(), new_foo);
+    graph.importers.get_mut(".").unwrap()[0].dep_path = "foo@2.0.0".to_string();
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+    assert!(hidden.join(&old_foo_target).exists());
+    assert_ne!(
+        std::fs::read_link(hidden.join("foo")).unwrap(),
+        old_foo_target
+    );
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("foo/index.js")).unwrap(),
+        "module.exports = 'foo v2';"
+    );
 }
 
 #[cfg(unix)]
