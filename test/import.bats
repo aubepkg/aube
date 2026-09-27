@@ -309,6 +309,30 @@ EOF
 	assert_link_exists "${matches[0]}/node_modules/picomatch"
 }
 
+@test "aube import from package-lock.json records peer contexts in aube-lock.yaml" {
+	# Same shape as the bun.lock case above: npm installs `picomatch`
+	# at `node_modules/picomatch` only because `fdir` peers on it, and
+	# the lockfile does not say which copy satisfies that peer.
+	cp "$PROJECT_ROOT/fixtures/import-npm-peer-only/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-npm-peer-only/package-lock.json" .
+
+	run aube import
+	assert_success
+
+	run grep -F "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+	run bash -c "sed -n '/^importers:/,/^packages:/p' aube-lock.yaml | grep -E '^ +picomatch:'"
+	assert_failure
+
+	rm package-lock.json
+	run aube install --frozen-lockfile
+	assert_success
+
+	local matches=(node_modules/.aube/fdir@6.5.0_picomatch@4.0.4*)
+	[ "${#matches[@]}" -eq 1 ] || fail "expected exactly one peer-qualified fdir dir, got: ${matches[*]}"
+	assert_link_exists "${matches[0]}/node_modules/picomatch"
+}
+
 @test "aube import reads a bun 1.4 lockfileVersion 2 bun.lock" {
 	cp "$PROJECT_ROOT/fixtures/import-bun-peer-only-in-packages/package.json" .
 	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
