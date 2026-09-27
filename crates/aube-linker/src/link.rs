@@ -1537,7 +1537,7 @@ impl Linker {
         // address the same hidden link. If a later package's source is
         // missing, it must not remove a link just placed for an earlier
         // package whose source is still present.
-        let mut valid_collision_targets: rustc_hash::FxHashMap<
+        let mut valid_collision_sources: rustc_hash::FxHashMap<
             String,
             rustc_hash::FxHashSet<PathBuf>,
         > = rustc_hash::FxHashMap::default();
@@ -1547,15 +1547,11 @@ impl Linker {
                     .join(self.aube_dir_entry_name(dep_path))
                     .join("node_modules")
                     .join(&pkg.name);
-                if source_dir.exists() {
-                    let target_dir = hidden.join(&pkg.name);
-                    let link_parent = target_dir.parent().unwrap_or(&hidden);
-                    let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
-                        .unwrap_or_else(|| source_dir.clone());
-                    valid_collision_targets
+                if let Ok(canonical_source) = source_dir.canonicalize() {
+                    valid_collision_sources
                         .entry(pkg.name.to_lowercase())
                         .or_default()
-                        .insert(rel_target);
+                        .insert(canonical_source);
                 }
             }
         }
@@ -1574,8 +1570,8 @@ impl Linker {
             if !source_dir.exists() {
                 if sweep_stale_entries {
                     let points_to_live_collision =
-                        std::fs::read_link(&target_dir).ok().is_some_and(|target| {
-                            valid_collision_targets
+                        target_dir.canonicalize().ok().is_some_and(|target| {
+                            valid_collision_sources
                                 .get(&pkg.name.to_lowercase())
                                 .is_some_and(|targets| targets.contains(&target))
                         });
