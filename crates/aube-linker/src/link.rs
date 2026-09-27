@@ -90,7 +90,7 @@ impl Linker {
         mkdirp(&aube_dir)?;
 
         // Reclaim space from prior aborted installs. A crash or
-        // Ctrl+C between materialize_into and the atomic rename
+        // Ctrl+C between materialize_at and the atomic rename
         // leaves `.tmp-<pid>-*` dirs in the virtual store. Sweep
         // them now so the current install starts clean.
         sweep_stale_tmp_dirs(&aube_dir);
@@ -234,8 +234,8 @@ impl Linker {
                 }
             }
             if !aube_entry.exists() {
-                self.materialize_into(
-                    &aube_dir,
+                self.materialize_at(
+                    &aube_dir.join(self.aube_dir_entry_name(dep_path)),
                     &aube_dir,
                     dep_path,
                     pkg,
@@ -375,8 +375,8 @@ impl Linker {
                             if !matches!(state, EntryState::Missing) {
                                 try_remove_entry(&local_aube_entry);
                             }
-                            self.materialize_into(
-                                &aube_dir,
+                            self.materialize_at(
+                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
                                 &aube_dir,
                                 dep_path,
                                 pkg,
@@ -453,7 +453,7 @@ impl Linker {
             // `wipe_changed_patched_entries` above already removed any
             // `.aube/<dep_path>` whose patch fingerprint changed since
             // the last install, so the existence check below will fall
-            // through to `materialize_into` for those packages and
+            // through to `materialize_at` for those packages and
             // pick up the current patch state. In per-project mode the
             // dep paths are already isolated, so we can materialize
             // them independently on the same rayon pool the gvs path
@@ -504,8 +504,8 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.materialize_into(
-                                &aube_dir,
+                            self.materialize_at(
+                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
                                 &aube_dir,
                                 dep_path,
                                 pkg,
@@ -551,7 +551,7 @@ impl Linker {
         // Step 2: Create top-level entries as symlinks into .aube.
         // The .aube/<dep_path>/node_modules/ directory already contains the
         // package and sibling symlinks to its direct deps (set up by
-        // materialize_into / ensure_in_virtual_store), so a single symlink at
+        // materialize_at / ensure_in_virtual_store), so a single symlink at
         // node_modules/<name> gives Node everything it needs to resolve
         // transitive deps via its normal directory walk.
         use rayon::prelude::*;
@@ -894,8 +894,8 @@ impl Linker {
                 stats.packages_cached += 1;
                 continue;
             }
-            self.materialize_into(
-                &aube_dir,
+            self.materialize_at(
+                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
                 &aube_dir,
                 dep_path,
                 pkg,
@@ -992,8 +992,8 @@ impl Linker {
                                 if !matches!(state, EntryState::Missing) {
                                     try_remove_entry(&local_aube_entry);
                                 }
-                                self.materialize_into(
-                                    &aube_dir,
+                                self.materialize_at(
+                                    &aube_dir.join(self.aube_dir_entry_name(dep_path)),
                                     &aube_dir,
                                     dep_path,
                                     pkg,
@@ -1076,8 +1076,8 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.materialize_into(
-                                &aube_dir,
+                            self.materialize_at(
+                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
                                 &aube_dir,
                                 dep_path,
                                 pkg,

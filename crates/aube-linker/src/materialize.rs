@@ -283,10 +283,10 @@ impl Linker {
         // Materialize into a temp directory, then atomically rename into place
         // to avoid TOCTOU races between concurrent `aube install` processes.
         let tmp_name = materialize_tmp_name();
-        let tmp_base = self.virtual_store.join(&tmp_name);
+        let tmp_entry = self.virtual_store.join(&tmp_name);
 
-        let result = self.materialize_into(
-            &tmp_base,
+        let result = self.materialize_at(
+            &tmp_entry,
             &self.virtual_store,
             dep_path,
             pkg,
@@ -297,19 +297,18 @@ impl Linker {
         );
 
         if result.is_err() {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return result;
         }
 
         // Atomically move the dep_path entry from the temp dir to the final location.
-        let tmp_entry = tmp_base.join(subdir);
         let final_entry = self.virtual_store.join(subdir);
 
         // Ensure the parent of the final entry exists (e.g. for scoped packages).
         if let Some(parent) = final_entry.parent()
             && let Err(e) = mkdirp(parent)
         {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return Err(e);
         }
 
@@ -324,36 +323,14 @@ impl Linker {
                 stats.packages_linked = stats.packages_linked.saturating_sub(1);
                 stats.files_linked = stats.files_linked.saturating_sub(index.len());
                 stats.packages_cached += 1;
-                // Lost-race path: our `subdir` is still inside
-                // `tmp_base`, so a full recursive delete is needed.
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                // Our staging entry was not moved, so discard its tree.
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Ok(());
             }
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Err(Error::Io(final_entry, e));
             }
-        }
-
-        // Successful rename: `tmp_base` is now an empty wrapper directory
-        // (its single child was the subdir we just renamed out). Use
-        // `remove_dir` instead of `remove_dir_all` — the latter still
-        // does the full `opendir`/`fdopendir`(fcntl)/`readdir`/`close`
-        // walk even on an empty dir, which dtrace shows as ~6 extra
-        // syscalls per package. At 227 packages that's ~1.4k wasted
-        // syscalls on every cold install.
-        //
-        // `remove_dir` fails with `ENOTEMPTY` if a future change to
-        // `materialize_into` starts dropping extra files into
-        // `tmp_base`. Log at debug so the leak is observable without
-        // being fatal; the worst-case outcome is a stray tmp dir, and
-        // concurrent-writer races already use the full
-        // `remove_dir_all` branch above.
-        if let Err(e) = std::fs::remove_dir(&tmp_base) {
-            debug!(
-                "remove_dir({}) failed, leaving tmp in place: {e}",
-                tmp_base.display()
-            );
         }
 
         Ok(())
@@ -451,7 +428,7 @@ impl Linker {
     /// Used by the isolated linker in global-virtual-store mode. Plain
     /// `file:` / `link:` / `portal:` / `exec:` sources resolve against
     /// a path inside the project and are materialized per-project
-    /// instead (see `materialize_into` with `apply_hashes = false`),
+    /// instead (see `materialize_at` with `apply_hashes = false`),
     /// but git and remote-tarball sources are content-pinned and shared
     /// like registry packages. They MUST live in the shared store when
     /// it is enabled: a registry dependent in the shared store links
@@ -523,9 +500,9 @@ impl Linker {
         }
 
         let tmp_name = materialize_tmp_name();
-        let tmp_base = aube_dir.join(&tmp_name);
-        let result = self.materialize_into(
-            &tmp_base,
+        let tmp_entry = aube_dir.join(&tmp_name);
+        let result = self.materialize_at(
+            &tmp_entry,
             aube_dir,
             dep_path,
             pkg,
@@ -536,15 +513,14 @@ impl Linker {
         );
 
         if result.is_err() {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return result;
         }
 
-        let tmp_entry = tmp_base.join(&subdir);
         if let Some(parent) = final_entry.parent()
             && let Err(e) = mkdirp(parent)
         {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return Err(e);
         }
 
@@ -554,34 +530,26 @@ impl Linker {
                 stats.packages_linked = stats.packages_linked.saturating_sub(1);
                 stats.files_linked = stats.files_linked.saturating_sub(index.len());
                 stats.packages_cached += 1;
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Ok(());
             }
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Err(Error::Io(final_entry, e));
             }
-        }
-
-        if let Err(e) = std::fs::remove_dir(&tmp_base) {
-            debug!(
-                "remove_dir({}) failed, leaving tmp in place: {e}",
-                tmp_base.display()
-            );
         }
 
         Ok(())
     }
 
-    /// Materialize a package's files and transitive dep symlinks into a base directory.
+    /// Materialize a package's files and dependency links at an explicit entry path.
     ///
-    /// `base_dir` is where files are written during materialization.
-    /// `final_base_dir` is where those files will live after any
-    /// wrapper rename. These differ for `.tmp-*` staging dirs; Windows
+    /// `entry_dir` contains the package's `node_modules` directory.
+    /// `final_base_dir` is the store root containing the final entries. These differ for `.tmp-*` staging dirs; Windows
     /// junctions need the final root because they persist absolute
     /// targets at creation time.
     ///
-    /// `apply_hashes` controls whether per-dep subdir names are run
+    /// `apply_hashes` controls whether dependency-link target names are run
     /// through `vstore_key` (the content-addressed name) or used as
     /// raw `dep_path` strings. Global-store callers pass `true` so
     /// the shared `~/.cache/aube/virtual-store/` can hold isolated
@@ -589,9 +557,9 @@ impl Linker {
     /// per-project `.aube/` callers pass `false` because node's
     /// runtime module walk resolves by dep_path only.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn materialize_into(
+    pub(crate) fn materialize_at(
         &self,
-        base_dir: &Path,
+        entry_dir: &Path,
         final_base_dir: &Path,
         dep_path: &str,
         pkg: &LockedPackage,
@@ -616,12 +584,7 @@ impl Linker {
         for dep_name in pkg.dependencies.keys() {
             validate_package_link_name(dep_name)?;
         }
-        let subdir = if apply_hashes {
-            self.virtual_store_subdir(dep_path)
-        } else {
-            self.aube_dir_entry_name(dep_path)
-        };
-        let pkg_nm_dir = base_dir.join(&subdir).join("node_modules").join(&pkg.name);
+        let pkg_nm_dir = entry_dir.join("node_modules").join(&pkg.name);
 
         // Pre-compute the set of unique parent directories across
         // every file in the index AND every scoped transitive-dep
@@ -629,14 +592,14 @@ impl Linker {
         // pass. Previously each file looped through `mkdirp(parent)`
         // which always did an `exists()` check (= statx syscall) even
         // though the same parents were shared by dozens of siblings —
-        // `materialize_into` for a typical 32-file npm package
+        // `materialize_at` for a typical 32-file npm package
         // resulted in ~25 redundant statx calls. Collecting the unique
         // parents first, sorting by length (so ancestors precede
         // descendants), and calling `create_dir_all` once each cuts
         // out the redundant stats entirely. `BTreeSet` sorts
         // lexicographically, which is good enough because every
         // ancestor of a directory is a prefix of it.
-        let pkg_nm_parent = base_dir.join(&subdir).join("node_modules");
+        let pkg_nm_parent = entry_dir.join("node_modules");
         // Collect into Vec + sort + dedup instead of BTreeSet. For a
         // package with thousands of files (typescript, next), the
         // BTreeSet's per-insert log-N PathBuf comparison (~50-byte
@@ -666,7 +629,7 @@ impl Linker {
         }
         parents.sort_unstable();
         parents.dedup();
-        create_dirs_under(base_dir, &parents)?;
+        create_dirs_under(entry_dir, &parents)?;
 
         // Linux can resolve every destination relative to one open package
         // directory instead of walking the long GVS staging path per file.
@@ -677,7 +640,7 @@ impl Linker {
         #[cfg(not(target_os = "linux"))]
         let pkg_nm_dir_fd: Option<std::fs::File> = None;
 
-        // `materialize_into` always writes into a fresh location
+        // `materialize_at` always writes into a fresh location
         // (either a `.tmp-<pid>-...` staging dir for the global virtual
         // store or a per-project `.aube/<dep_path>` just created by
         // the caller), so we can skip the `remove_file(dst)` that
@@ -822,7 +785,7 @@ impl Linker {
             // is fixable; together every `pathdiff` variant lands one
             // component off and the link dangles. Sibling symlinks
             // get away with relative paths because both endpoints
-            // live inside `base_dir` and move together; nested-link
+            // live inside `entry_dir` and move together; nested-link
             // targets are *external* (under `project_dir`) so the
             // tricks that work for siblings don't apply. Windows
             // already uses absolute targets for the same reason (see
@@ -852,8 +815,8 @@ impl Linker {
             // difference for us, yielding `../..` for `foo` and
             // `../../..` for `@vue/shared`, both relative to whatever
             // parent `symlink_path` ends up with.
-            // `pkg_nm_parent` is `<base_dir>/<subdir>/node_modules/`, so
-            // two parents deep brings us to `<base_dir>/` where all
+            // `pkg_nm_parent` is `<entry_dir>/node_modules/`, so
+            // two parents deep brings us to the store root where all
             // sibling subdirs live side-by-side.
             #[cfg(not(windows))]
             let target = {
@@ -871,13 +834,13 @@ impl Linker {
             };
 
             // Staged materialization writes into `.tmp-<pid>-<id>/`,
-            // then atomic-renames into `final_base_dir/<subdir>/`.
+            // then atomic-renames the entry into its final store location.
             // POSIX symlinks store the relative offset verbatim.
-            // Offset stays invariant under the wrapper rename, so the
+            // Offset stays invariant under the entry rename, so the
             // link resolves correctly after the move. Windows junctions
             // resolve the target against `link.parent()` at create time
             // and persist an absolute path, which binds the junction to
-            // the tmp wrapper. Point Windows at the final root up front
+            // the temporary entry. Point Windows at the final root up front
             // so the stored absolute path survives the rename.
             #[cfg(windows)]
             let target = final_base_dir
@@ -895,7 +858,7 @@ impl Linker {
     }
 
     /// Hardlink-or-copy a file into a freshly-created destination.
-    /// Assumes `dst` does not exist — callers (`materialize_into`)
+    /// Assumes `dst` does not exist — callers (`materialize_at`)
     /// always write into a `.tmp-<pid>-...` staging dir or a
     /// just-wiped per-project `.aube/<dep_path>`, so the defensive
     /// `remove_file(dst)` an idempotent variant would need is skipped.

@@ -447,6 +447,73 @@ fn test_link_all_handles_self_referential_dep_at_different_version() {
 }
 
 #[test]
+fn staged_entries_preserve_scoped_links_and_clean_failed_writes() {
+    for global in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, indices) = setup_store_with_files(dir.path());
+        let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, global);
+        let root = if global {
+            store.virtual_store_dir()
+        } else {
+            dir.path().join("project/node_modules/.aube")
+        };
+        let graph = make_graph();
+        let mut foo = graph.packages["foo@1.0.0"].clone();
+        foo.dependencies.clear();
+        foo.dependencies.insert("@scope/bar".into(), "2.0.0".into());
+        let mut bar = graph.packages["bar@2.0.0"].clone();
+        bar.name = "@scope/bar".into();
+        bar.dep_path = "@scope/bar@2.0.0".into();
+        let place = |pkg: &LockedPackage, index: &PackageIndex| {
+            let mut stats = LinkStats::default();
+            if global {
+                linker.ensure_in_virtual_store(&pkg.dep_path, pkg, index, &mut stats, None)
+            } else {
+                linker.ensure_in_aube_dir(&root, &pkg.dep_path, pkg, index, &mut stats, None)
+            }
+        };
+        place(&foo, &indices["foo@1.0.0"]).unwrap();
+        place(&bar, &indices["bar@2.0.0"]).unwrap();
+        let foo_entry = if global {
+            linker.virtual_store_subdir(&foo.dep_path)
+        } else {
+            linker.aube_dir_entry_name(&foo.dep_path)
+        };
+        assert_eq!(
+            std::fs::read_to_string(
+                root.join(foo_entry)
+                    .join("node_modules/@scope/bar/index.js")
+            )
+            .unwrap(),
+            "module.exports = 'bar';"
+        );
+
+        let mut broken = foo.clone();
+        broken.name = "broken".into();
+        broken.dep_path = "broken@1.0.0".into();
+        let mut index = indices["foo@1.0.0"].clone();
+        index.get_mut("index.js").unwrap().store_path = dir.path().join("missing-store-file");
+        assert!(matches!(
+            place(&broken, &index),
+            Err(Error::MissingStoreFile { .. })
+        ));
+        let broken_entry = if global {
+            linker.virtual_store_subdir(&broken.dep_path)
+        } else {
+            linker.aube_dir_entry_name(&broken.dep_path)
+        };
+        assert!(!root.join(broken_entry).exists());
+        assert!(std::fs::read_dir(&root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp-")
+        }));
+    }
+}
+
+#[test]
 fn test_ensure_in_aube_dir_handles_concurrent_same_dep_path() {
     const THREADS: usize = 16;
 
@@ -867,8 +934,8 @@ fn small_reflink_preserves_permissions_and_isolates_writes() {
                 let linker = Linker::new_with_gvs(&store, strategy, false);
                 let _forced = force_failure.then(ForcedReflinkFailure::engage);
                 linker
-                    .materialize_into(
-                        &base,
+                    .materialize_at(
+                        &base.join("foo@1.0.0"),
                         &base,
                         "foo@1.0.0",
                         &pkg,
