@@ -736,6 +736,13 @@ impl PackageJson {
     /// round-trip as their raw selector strings: bare name (`foo`),
     /// parent-chain (`parent>foo`), version-suffixed (`foo@<2`,
     /// `parent@1>foo`), and yarn wildcards (`**/foo`, `parent/foo`).
+    ///
+    /// Top-level `overrides` may also nest one level the way npm and bun
+    /// write it: `{"parent@1": {".": "2.0.0", "child": "3.0.0"}}` reads as
+    /// `parent@1` and `parent@1>child`. Like bun, the child is scoped to
+    /// `parent` as its direct dependent; npm applies it anywhere below.
+    /// Entries nested deeper are skipped and listed by
+    /// [`Self::skipped_nested_overrides`].
     /// Structural validation lives in `aube_resolver::override_rule`;
     /// this layer just filters out malformed keys and non-string
     /// values. Workspace-level overrides from `pnpm-workspace.yaml`
@@ -768,9 +775,34 @@ impl PackageJson {
         // Top-level `overrides` (npm / pnpm) — highest priority
         if let Some(obj) = self.extra.get("overrides").and_then(|v| v.as_object()) {
             insert(&mut out, obj);
+            for (parent, child, value) in nested_override_entries(obj) {
+                if let NestedOverride::Rule(version) = value {
+                    let key = if child == "." {
+                        parent.to_string()
+                    } else {
+                        format!("{parent}>{child}")
+                    };
+                    out.insert(key, version.to_string());
+                }
+            }
         }
 
         out
+    }
+
+    /// Nested top-level `overrides` entries that [`Self::overrides_map`]
+    /// skips because they nest deeper than one level: a child that is
+    /// itself an object, a child key with its own `>` chain, or a group
+    /// whose parent key is already a chain. Returned as `parent > child`
+    /// paths so the caller can warn about each one.
+    pub fn skipped_nested_overrides(&self) -> Vec<String> {
+        let Some(obj) = self.extra.get("overrides").and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+        nested_override_entries(obj)
+            .filter(|(_, _, value)| matches!(value, NestedOverride::TooDeep))
+            .map(|(parent, child, _)| format!("{parent} > {child}"))
+            .collect()
     }
 
     /// Look up a package name in `dependencies`, then `devDependencies`,
@@ -1005,6 +1037,45 @@ impl AllowBuildRaw {
 /// reaches the resolver unchanged.
 fn is_valid_selector_key(k: &str) -> bool {
     !k.is_empty()
+}
+
+enum NestedOverride<'a> {
+    Rule(&'a str),
+    TooDeep,
+}
+
+/// `(parent, child, value)` for every child of an object-valued top-level
+/// `overrides` entry. Non-string leaf values are dropped, as they are for
+/// flat entries.
+fn nested_override_entries(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> impl Iterator<Item = (&str, &str, NestedOverride<'_>)> {
+    obj.iter()
+        .filter(|(parent, _)| is_valid_selector_key(parent))
+        .filter_map(|(parent, value)| Some((parent, value.as_object()?)))
+        .flat_map(|(parent, children)| {
+            children.iter().filter_map(move |(child, value)| {
+                let too_deep = value.is_object()
+                    || has_parent_delimiter(parent)
+                    || (child != "." && has_parent_delimiter(child));
+                let entry = if too_deep {
+                    NestedOverride::TooDeep
+                } else if is_valid_selector_key(child) {
+                    NestedOverride::Rule(value.as_str()?)
+                } else {
+                    return None;
+                };
+                Some((parent.as_str(), child.as_str(), entry))
+            })
+        })
+}
+
+/// Whether an override selector already carries a pnpm `parent>child`
+/// delimiter: a `>` not preceded by a space, `|` or `@`, which would
+/// make it part of a range (`foo@>=1`).
+fn has_parent_delimiter(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    (1..bytes.len()).any(|i| bytes[i] == b'>' && !matches!(bytes[i - 1], b' ' | b'|' | b'@'))
 }
 
 /// Append the string entries of `arr` to `dst`, skipping duplicates
@@ -1773,10 +1844,45 @@ mod tests {
     }
 
     #[test]
-    fn overrides_map_skips_object_values() {
-        // npm allows nested override objects; we don't support those yet,
-        // so they should be silently dropped rather than panicking.
-        let p = parse(r#"{"overrides": {"foo": {"bar": "1.0.0"}}}"#);
+    fn overrides_map_reads_one_level_of_nested_overrides() {
+        let p = parse(
+            r#"{"overrides": {
+                "foo": {".": "1.0.0", "bar": "2.0.0", "@s/baz@<2": "3.0.0"},
+                "qux@^1": {".": "4.0.0"},
+                "flat": "5.0.0"
+            }}"#,
+        );
+        let m = p.overrides_map();
+        assert_eq!(m.get("foo").map(String::as_str), Some("1.0.0"));
+        assert_eq!(m.get("foo>bar").map(String::as_str), Some("2.0.0"));
+        assert_eq!(m.get("foo>@s/baz@<2").map(String::as_str), Some("3.0.0"));
+        assert_eq!(m.get("qux@^1").map(String::as_str), Some("4.0.0"));
+        assert_eq!(m.get("flat").map(String::as_str), Some("5.0.0"));
+        assert_eq!(m.len(), 5);
+        assert!(p.skipped_nested_overrides().is_empty());
+    }
+
+    #[test]
+    fn overrides_map_skips_overrides_nested_deeper_than_one_level() {
+        let p = parse(
+            r#"{"overrides": {
+                "foo": {"bar": {"baz": "1.0.0"}, "a>b": "2.0.0", "ok@>=1": "3.0.0"},
+                "x>y": {"z": "4.0.0"}
+            }}"#,
+        );
+        let m = p.overrides_map();
+        assert_eq!(m.get("foo>ok@>=1").map(String::as_str), Some("3.0.0"));
+        assert_eq!(m.len(), 1);
+        assert_eq!(
+            p.skipped_nested_overrides(),
+            vec!["foo > bar", "foo > a>b", "x>y > z"]
+        );
+    }
+
+    #[test]
+    fn pnpm_overrides_do_not_read_nested_objects() {
+        // pnpm has no nested form; only top-level `overrides` does.
+        let p = parse(r#"{"pnpm": {"overrides": {"foo": {"bar": "1.0.0"}}}}"#);
         assert!(p.overrides_map().is_empty());
     }
 

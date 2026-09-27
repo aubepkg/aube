@@ -347,6 +347,55 @@ EOF
 	assert_success
 }
 
+@test "aube install reads a bun 1.4 lockfileVersion 3 bun.lock with scoped overrides" {
+	# Written by bun 1.4.2 from `"overrides": { "is-odd": { "is-number": "7.0.0" } }`:
+	# is-number@7.0.0 only under is-odd, 6.0.0 at the root.
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .
+	cp bun.lock bun.lock.before
+
+	run aube install --frozen-lockfile
+	assert_success
+	run node -p 'require("is-number/package.json").version'
+	assert_output "6.0.0"
+	run node -p 'require(require.resolve("is-number/package.json", { paths: [require("path").dirname(require.resolve("is-odd"))] })).version'
+	assert_output "7.0.0"
+	run cmp -s bun.lock bun.lock.before
+	assert_success
+}
+
+@test "aube re-resolving a v3 bun.lock keeps its scoped overrides as bun wrote them" {
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .
+	cp bun.lock bun.lock.before
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	# Everything above `packages` (version stamp, workspaces, overrides)
+	# is byte-identical. Package rows can pick up metadata the test
+	# registry adds, such as `deprecated`.
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
+	assert_success
+	run grep -F '"is-odd/is-number": ["is-number@7.0.0"' bun.lock
+	assert_success
+}
+
+@test "aube import from a v3 bun.lock writes scoped overrides as parent>child" {
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .
+
+	run aube import
+	assert_success
+	run grep -F "is-odd>is-number: 7.0.0" aube-lock.yaml
+	assert_success
+
+	rm bun.lock
+	run aube install --frozen-lockfile
+	assert_success
+	assert_dir_exists node_modules/.aube/is-number@7.0.0
+	assert_dir_exists node_modules/.aube/is-number@6.0.0
+}
+
 @test "aube import refuses to overwrite existing aube-lock.yaml" {
 	cp "$PROJECT_ROOT/fixtures/import-npm/package.json" .
 	cp "$PROJECT_ROOT/fixtures/import-npm/package-lock.json" .

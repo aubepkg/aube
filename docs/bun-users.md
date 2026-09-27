@@ -18,11 +18,31 @@ tests. For daily work, `aubr build`, `aube test`, and `aube exec <bin>`
 install automatically when dependencies are stale. Use `aubx <pkg>` for
 one-off tools.
 
-aube reads and updates the text-format `bun.lock` at `lockfileVersion: 1`
-or `2` (the version Bun 1.4 writes) in place, keeping the version the file
-already has, and installs packages into `node_modules/.aube/`. Bun writes
-`lockfileVersion: 3` only for scoped `overrides` (parent-scoped or
-`name@range` rules), which aube does not read yet.
+aube reads and updates the text-format `bun.lock` in place and installs
+packages into `node_modules/.aube/`. It reads every text version Bun has
+written: `lockfileVersion: 1`, `2` (Bun 1.4's default), and `3`, which Bun
+1.4 writes while `overrides` hold scoped rules. It stamps the version the
+way Bun does: `3` while scoped rules exist, otherwise the version the file
+already had.
+
+Scoped `overrides` in `package.json` work the way Bun reads them. A nested
+object scopes a rule to a parent package, and `"."` targets the parent
+itself:
+
+```json
+{
+  "overrides": {
+    "is-odd": { ".": "3.0.1", "is-number": "7.0.0" }
+  }
+}
+```
+
+Here `is-number` is pinned to `7.0.0` only where `is-odd` depends on it
+directly, the same as the pnpm key `is-odd>is-number`. Like Bun, aube reads
+one level of nesting; deeper entries are skipped with
+`WARN_AUBE_OVERRIDE_TOO_DEEP`. npm applies a nested rule anywhere below the
+parent, so an npm project that relies on that reaches only direct
+dependencies here.
 
 aube does not read Bun's older binary `bun.lockb` format. Projects still
 on `bun.lockb` can generate the text lockfile with a modern Bun once:

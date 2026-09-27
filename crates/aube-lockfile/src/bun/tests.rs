@@ -570,30 +570,119 @@ fn test_parse_and_write_roundtrips_lockfile_version_2() {
     );
 }
 
-/// bun writes v3 only for scoped `overrides`, whose object values the
-/// typed parse cannot read. The error must name the version, not the
-/// JSON type mismatch it trips over first.
+/// Write `graph` back to `lock_path` and return the text.
+fn rewrite(lock_path: &Path, pj: &Path, graph: &LockfileGraph) -> String {
+    let manifest = aube_manifest::PackageJson::from_path(pj).unwrap();
+    write(lock_path, graph, &manifest).unwrap();
+    std::fs::read_to_string(lock_path).unwrap()
+}
+
+fn write_project(lockfile: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let project = tempfile::TempDir::new().unwrap();
+    let pj = project.path().join("package.json");
+    std::fs::write(&pj, r#"{"name":"root","dependencies":{}}"#).unwrap();
+    let lock_path = project.path().join("bun.lock");
+    std::fs::write(&lock_path, lockfile).unwrap();
+    (project, pj, lock_path)
+}
+
+/// bun 1.4 writes v3 while scoped `overrides` exist: selector-keyed
+/// groups whose `"."` child targets the parent itself. The parser must
+/// read them as pnpm-style keys, and a re-save must write the same
+/// groups, in bun's layout, still stamped v3.
 #[test]
-fn test_parse_rejects_lockfile_version_3_by_name() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let lock_path = dir.path().join("bun.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
+fn test_parse_and_write_roundtrips_lockfile_version_3_scoped_overrides() {
+    let lockfile = r#"{
   "lockfileVersion": 3,
   "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+  },
+  "overrides": {
+    "flat": "1.0.0",
+    "foo": {
+      ".": "2.0.0",
+      "bar": "3.0.0",
+    },
+    "qux@^1": {
+      ".": "4.0.0",
+    },
+  },
+  "packages": {
+  }
+}
+"#;
+    let (_project, pj, lock_path) = write_project(lockfile);
+
+    let graph = parse(&lock_path).unwrap();
+    let expected: BTreeMap<String, String> = [
+        ("flat", "1.0.0"),
+        ("foo", "2.0.0"),
+        ("foo>bar", "3.0.0"),
+        ("qux@^1", "4.0.0"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    assert_eq!(graph.overrides, expected);
+
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(
+        written.contains("\"lockfileVersion\": 3,"),
+        "scoped overrides must keep v3, got:\n{written}"
+    );
+    assert!(
+        written.contains(
+            "  \"overrides\": {\n    \"flat\": \"1.0.0\",\n    \"foo\": {\n      \".\": \"2.0.0\",\n      \"bar\": \"3.0.0\",\n    },\n    \"qux@^1\": {\n      \".\": \"4.0.0\",\n    },\n  },\n"
+        ),
+        "override groups must be written in bun's layout, got:\n{written}"
+    );
+    assert_eq!(parse(&lock_path).unwrap().overrides, expected);
+}
+
+/// bun stamps v3 whenever scoped rules exist, even on a lockfile it
+/// loaded as v1, and walks a v3 lockfile whose scoped rules are gone
+/// back down to v2.
+#[test]
+fn test_write_stamps_lockfile_version_from_scoped_overrides() {
+    let (_project, pj, lock_path) = write_project(
+        r#"{ "lockfileVersion": 1, "workspaces": { "": { "name": "root" } }, "packages": {} }"#,
+    );
+    let mut graph = parse(&lock_path).unwrap();
+    graph
+        .overrides
+        .insert("parent>child".to_string(), "1.0.0".to_string());
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(written.contains("\"lockfileVersion\": 3,"), "{written}");
+    assert!(
+        written.contains("\"parent\": {\n      \"child\": \"1.0.0\",\n    },"),
+        "{written}"
+    );
+
+    let mut graph = parse(&lock_path).unwrap();
+    graph.overrides.clear();
+    graph
+        .overrides
+        .insert("plain".to_string(), "1.0.0".to_string());
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(written.contains("\"lockfileVersion\": 2,"), "{written}");
+    assert!(written.contains("\"plain\": \"1.0.0\","), "{written}");
+}
+
+#[test]
+fn test_parse_rejects_malformed_scoped_overrides() {
+    let (_project, _pj, lock_path) = write_project(
+        r#"{
+  "lockfileVersion": 3,
   "workspaces": { "": { "name": "root" } },
-  "overrides": { "parent@^1": { "child": "2.0.0" } },
+  "overrides": { "parent": { "child": { "deeper": "1.0.0" } } },
   "packages": {}
 }"#,
-    )
-    .unwrap();
-
-    let err = parse(&lock_path).unwrap_err().to_string();
-    assert!(
-        err.contains("lockfileVersion 3 is not supported"),
-        "unexpected error: {err}"
     );
+    let err = parse(&lock_path).unwrap_err().to_string();
+    assert!(err.contains("must be a string"), "unexpected error: {err}");
 }
 
 #[test]
@@ -608,7 +697,7 @@ fn test_parse_rejects_unknown_lockfile_version() {
 
     let err = parse(&lock_path).unwrap_err().to_string();
     assert!(
-        err.contains("lockfileVersion 9 is not supported (expected 1 or 2)"),
+        err.contains("lockfileVersion 9 is not supported (expected 1, 2, or 3)"),
         "unexpected error: {err}"
     );
 }

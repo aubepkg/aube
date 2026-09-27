@@ -245,6 +245,57 @@ teardown() {
 	assert_failure
 }
 
+@test "npm-style nested overrides pin a dep only under the named parent" {
+	# One level of nesting reads as `is-odd>is-number`, the same rule bun
+	# writes for this form. The root is-number keeps its own version.
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-overrides",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1", "is-number": "6.0.0" },
+		  "overrides": { "is-odd": { "is-number": "7.0.0" } }
+		}
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_dir_exists node_modules/.aube/is-number@7.0.0
+	assert_dir_exists node_modules/.aube/is-number@6.0.0
+	run grep -F "is-odd>is-number: 7.0.0" aube-lock.yaml
+	assert_success
+
+	run aube install --frozen-lockfile
+	assert_success
+}
+
+@test "a nested overrides \".\" key overrides the parent itself" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-overrides",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "^3.0.0" },
+		  "overrides": { "is-odd": { ".": "0.1.2" } }
+		}
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_dir_exists node_modules/.aube/is-odd@0.1.2
+}
+
+@test "overrides nested more than one level warn and are skipped" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "test-overrides",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "3.0.1" },
+		  "overrides": { "is-odd": { "is-number": { "kind-of": "6.0.3" } } }
+		}
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_output --partial "WARN_AUBE_OVERRIDE_TOO_DEEP"
+	assert_dir_exists node_modules/.aube/is-number@6.0.0
+}
+
 @test "parent>child selector does not override when the parent name doesn't match" {
 	# Pin only when is-number is a child of `nonexistent`. is-odd's
 	# is-number should therefore resolve normally to 6.0.0.

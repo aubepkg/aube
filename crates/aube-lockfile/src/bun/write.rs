@@ -459,15 +459,23 @@ pub fn write(
     // lockfiles that predate the field) so a bun-bumped value round-
     // trips instead of silently downgrading on re-emit.
     let config_version = graph.bun_config_version.unwrap_or(1);
-    // Keep the `lockfileVersion` the parser read, as bun does on re-save.
-    // A fresh lockfile, or one from another format, is written as v1.
-    let lockfile_version = graph
+    let (overrides_block, scoped_overrides) = super::overrides::write(&graph.overrides);
+    // Stamp the version the way bun does: v3 while scoped override
+    // groups exist, whatever version was loaded. Otherwise keep the
+    // loaded v1 or v2, walking a v3 lockfile whose scoped rules are gone
+    // down to v2. A fresh lockfile, or one from another format, is v1.
+    let loaded_version = graph
         .extra_fields
         .get(super::LOCKFILE_VERSION_KEY)
-        .and_then(Value::as_u64)
-        .and_then(|v| u32::try_from(v).ok())
-        .filter(|v| super::SUPPORTED_LOCKFILE_VERSIONS.contains(v))
-        .unwrap_or(1);
+        .and_then(Value::as_u64);
+    let lockfile_version = if scoped_overrides {
+        3
+    } else {
+        match loaded_version {
+            Some(2 | 3) => 2,
+            _ => 1,
+        }
+    };
 
     // Collect top-level blocks bun understands natively. Overrides /
     // catalog / catalogs / patchedDependencies / trustedDependencies
@@ -475,11 +483,7 @@ pub fn write(
     // lockfile carried drops through `graph.extra_fields`.
     let mut top_level_extras: Vec<(String, Value)> = Vec::new();
     if !graph.overrides.is_empty() {
-        let mut obj = serde_json::Map::new();
-        for (k, v) in &graph.overrides {
-            obj.insert(k.clone(), Value::String(v.clone()));
-        }
-        top_level_extras.push(("overrides".to_string(), Value::Object(obj)));
+        top_level_extras.push(("overrides".to_string(), overrides_block));
     }
     if !graph.patched_dependencies.is_empty() {
         let mut obj = serde_json::Map::new();
@@ -641,11 +645,25 @@ fn format_bun_lockfile(
             serde_json::Value::Object(map) if !map.is_empty() => {
                 out.push_str(&format!("  {key_str}: {{\n"));
                 for (dk, dv) in map {
-                    out.push_str(&format!(
-                        "    {}: {},\n",
-                        serde_json::to_string(dk).unwrap(),
-                        inline_json(dv, 0)
-                    ));
+                    let dk_str = serde_json::to_string(dk).unwrap();
+                    match dv {
+                        // bun writes each scoped override group across
+                        // lines, with a trailing comma on every row.
+                        serde_json::Value::Object(group) if k == "overrides" => {
+                            out.push_str(&format!("    {dk_str}: {{\n"));
+                            for (gk, gv) in group {
+                                out.push_str(&format!(
+                                    "      {}: {},\n",
+                                    serde_json::to_string(gk).unwrap(),
+                                    inline_json(gv, 0)
+                                ));
+                            }
+                            out.push_str("    },\n");
+                        }
+                        _ => {
+                            out.push_str(&format!("    {dk_str}: {},\n", inline_json(dv, 0)));
+                        }
+                    }
                 }
                 out.push_str("  },\n");
             }

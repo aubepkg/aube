@@ -32,6 +32,7 @@
 //! to `serde_json`.
 
 mod jsonc;
+mod overrides;
 mod raw;
 mod read;
 mod source;
@@ -46,9 +47,9 @@ pub use write::write;
 /// `lockfileVersion` values the parser reads. bun 1.4 writes v2, which has
 /// the same content as v1 and only makes bun's own parser stricter (npm
 /// tarballs outside the configured registry must carry an integrity hash,
-/// and git tags must be safe path components). v3 adds object-valued
-/// scoped `overrides`, which aube does not model.
-const SUPPORTED_LOCKFILE_VERSIONS: [u32; 2] = [1, 2];
+/// and git tags must be safe path components). v3 is v2 plus scoped
+/// `overrides` groups, and bun stamps it only while such rules exist.
+const SUPPORTED_LOCKFILE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// `LockfileGraph::extra_fields` key carrying a non-default
 /// `lockfileVersion` from the parser to the writer.

@@ -44,6 +44,7 @@ pub const WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE: &str =
 pub const WARN_AUBE_OVERRIDE_MISSING_DEP: &str = "WARN_AUBE_OVERRIDE_MISSING_DEP";
 pub const WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED: &str =
     "WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED";
+pub const WARN_AUBE_OVERRIDE_TOO_DEEP: &str = "WARN_AUBE_OVERRIDE_TOO_DEEP";
 pub const WARN_AUBE_INVALID_PEER_PATTERN: &str = "WARN_AUBE_INVALID_PEER_PATTERN";
 pub const WARN_AUBE_INVALID_SAVE_PREFIX: &str = "WARN_AUBE_INVALID_SAVE_PREFIX";
 pub const WARN_AUBE_CONCURRENCY_ENV_INVALID: &str = "WARN_AUBE_CONCURRENCY_ENV_INVALID";
@@ -325,6 +326,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED,
         category: category::SETTINGS_CONFIG,
         description: "An `overrides` entry used pnpm's deprecated `$` version reference syntax.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_OVERRIDE_TOO_DEEP,
+        category: category::SETTINGS_CONFIG,
+        description: "A nested `overrides` entry went deeper than one level (or chained `>` inside a group) and was skipped.",
         exit_code: None,
     },
     CodeMeta {

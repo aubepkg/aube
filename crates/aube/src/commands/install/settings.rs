@@ -1153,6 +1153,13 @@ pub(crate) fn configure_resolver(
         }
     };
     let mut effective_overrides = manifest.overrides_map();
+    for path in manifest.skipped_nested_overrides() {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_OVERRIDE_TOO_DEEP,
+            "override {path:?} nests more than one level deep; skipping it. \
+             Write it as a `parent>child` key instead"
+        );
+    }
     merge_string_map_setting(settings_ctx, "overrides", &mut effective_overrides);
     for (key, dep) in deprecated_dollar_override_refs(&effective_overrides) {
         tracing::warn!(

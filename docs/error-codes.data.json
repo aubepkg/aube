@@ -759,6 +759,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_OVERRIDE_TOO_DEEP",
+      "category": "Settings / config validation",
+      "description": "A nested `overrides` entry went deeper than one level (or chained `>` inside a group) and was skipped.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_INVALID_PEER_PATTERN",
       "category": "Settings / config validation",
       "description": "A `peerDependencyRules` pattern was unparseable and skipped.",
