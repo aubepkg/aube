@@ -568,6 +568,11 @@ run_scenario "gvs-warm" run_bench "gvs-warm"
 echo ""
 echo "━━━ Benchmark 2: Dependency update after git pull ━━━"
 run_scenario "pull-update" run_bench "pull-update"
+# Its phase sample is taken here, while the caches are still warm; after the
+# cold scenario, its prepare would download the previous commit's packages.
+if [ "$BENCH_PHASES" != "0" ]; then
+	run_scenario "pull-update" run_aube_phase_bench "pull-update"
+fi
 
 # ── Benchmark 3: Fresh install, cold cache ─────────────────────────────────
 # Lockfile present, but store and cache are empty.
@@ -587,7 +592,6 @@ echo ""
 echo "━━━ Aube install phase timings ━━━"
 if [ "$BENCH_PHASES" != "0" ]; then
 	run_scenario "gvs-warm" run_aube_phase_bench "gvs-warm"
-	run_scenario "pull-update" run_aube_phase_bench "pull-update"
 	run_scenario "gvs-cold" run_aube_phase_bench "gvs-cold"
 fi
 
