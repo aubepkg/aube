@@ -523,6 +523,12 @@ the full graph live instead. A negative filter result reflects the
 upstream snapshot, so newly published advisories may not be detected
 until the filter refreshes. This default fresh-resolution behavior does
 not require `advisoryBloomCheck`, which controls lockfile-driven reinstalls.
+When a live confirmation finds no malicious advisory, ordinary fresh
+resolutions may reuse that exact package/version result for 30 seconds
+while the validated Bloom snapshot is unchanged. A newly published
+advisory for a previously cleared version can therefore take up to 30
+seconds to be detected on repeated installs. Failed queries and Bloom
+refresh failures are never cached.
 
 `required` and `advisoryCheckEveryInstall = true` bypass the prefilter
 and query the full graph live. A confirmed hit fails installation with

@@ -140,7 +140,13 @@ pub struct Bloom {
     k: u32,
     seed: [u8; 32],
     bits: Box<[u8]>,
+    /// Identity of the exact bytes decoded into this filter. Captured under
+    /// the same mutex as probing so concurrent refreshes cannot swap it.
+    filter_sha256: [u8; 32],
 }
+
+/// Escalation candidates and the SHA-256 identity of the filter used to find them.
+pub type BloomProbe = (Vec<(String, String)>, [u8; 32]);
 
 impl Bloom {
     /// Decode the wire format. Bails on bad magic, format-version
@@ -174,6 +180,8 @@ impl Bloom {
         if got < needed {
             return Err(BloomError::BadFormat("bitset truncated"));
         }
+        let mut filter_sha256 = [0u8; 32];
+        filter_sha256.copy_from_slice(&Sha256::digest(bytes));
         Ok(Self {
             m,
             k,
@@ -181,6 +189,7 @@ impl Bloom {
             bits: bytes[HEADER_LEN..HEADER_LEN + needed]
                 .to_vec()
                 .into_boxed_slice(),
+            filter_sha256,
         })
     }
 
@@ -399,6 +408,16 @@ impl OsvBloomClient {
         &self,
         pkgs: &[(String, String)],
     ) -> Result<Vec<(String, String)>, BloomError> {
+        self.probe_lockfile_with_identity(pkgs)
+            .map(|(hits, _)| hits)
+    }
+
+    /// Return the probe results and the identity of the filter used for them.
+    /// Both are read under one lock so a concurrent refresh cannot mix them.
+    pub fn probe_lockfile_with_identity(
+        &self,
+        pkgs: &[(String, String)],
+    ) -> Result<BloomProbe, BloomError> {
         let guard = self.bloom.lock().expect("bloom mutex poisoned");
         let bloom = guard.as_ref().ok_or(BloomError::NotInitialized)?;
         let mut hits = Vec::new();
@@ -418,7 +437,7 @@ impl OsvBloomClient {
                 hits.push((name.clone(), version.clone()));
             }
         }
-        Ok(hits)
+        Ok((hits, bloom.filter_sha256))
     }
 
     pub fn build_client() -> Result<reqwest::Client, BloomError> {
@@ -716,11 +735,12 @@ mod tests {
             ("evil".to_string(), "3.0.0".to_string()),
             ("safe".to_string(), "1.0.0".to_string()),
         ];
-        let hits = client.probe_lockfile(&pkgs).expect("probe");
+        let (hits, identity) = client.probe_lockfile_with_identity(&pkgs).expect("probe");
         // "evil" 1.x is in the filter, "evil" 3.x is not (different
         // bucket, no wildcard), "safe" is not. Only the version
         // that actually trips the bloom is escalated.
         assert_eq!(hits, vec![("evil".to_string(), "1.4.0".to_string())]);
+        assert_eq!(identity.as_slice(), Sha256::digest(&bytes).as_slice());
     }
 
     #[test]

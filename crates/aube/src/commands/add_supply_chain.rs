@@ -376,7 +376,7 @@ fn osv_negative_cache_key(
     sorted.sort_unstable();
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"aube-osv-negative-v1\0");
-    hasher.update(blake3::hash(bloom_snapshot).as_bytes());
+    hasher.update(bloom_snapshot);
     for (name, version) in sorted {
         hasher.update(name.as_bytes());
         hasher.update(&[0]);
@@ -428,18 +428,48 @@ async fn run_fresh_resolution_osv_gate(
         let bloom = OsvBloomClient::open(cache_dir);
         let http = OsvBloomClient::build_client()?;
         bloom.refresh_if_stale_default(&http).await?;
-        bloom.probe_lockfile(&pairs)
+        bloom.probe_lockfile_with_identity(&pairs)
     };
-    let (queries, bloom_checked) = fresh_osv_queries(&pairs, probe).await;
+    run_fresh_resolution_osv_gate_with(
+        &pairs,
+        cache_dir.as_deref(),
+        probe,
+        |queries, cache| async move {
+            run_versioned_osv_gate(
+                &queries,
+                AdvisoryCheck::On,
+                cache
+                    .as_ref()
+                    .map(|(path, key)| (path.as_path(), key.as_str())),
+            )
+            .await
+        },
+    )
+    .await
+}
+
+async fn run_fresh_resolution_osv_gate_with<Fut>(
+    pairs: &[(String, String)],
+    cache_dir: Option<&Path>,
+    probe: impl std::future::Future<
+        Output = Result<
+            aube_registry::osv_bloom_client::BloomProbe,
+            aube_registry::osv_bloom_client::BloomError,
+        >,
+    >,
+    live_check: impl FnOnce(Vec<(String, String)>, Option<(PathBuf, String)>) -> Fut,
+) -> miette::Result<()>
+where
+    Fut: std::future::Future<Output = miette::Result<()>>,
+{
+    let (queries, bloom_identity) = fresh_osv_queries(pairs, probe).await;
     // A failed Bloom refresh falls back to live validation without using a
-    // cached answer. Include the validated Bloom snapshot in the cache key:
-    // a changed advisory set must force a fresh exact-version check.
-    let negative_cache = if bloom_checked && !queries.is_empty() {
-        cache_dir.as_ref().and_then(|dir| {
-            std::fs::read(dir.join("osv-bloom/state.json"))
-                .ok()
-                .map(|snapshot| osv_negative_cache_key(dir, &snapshot, &queries))
-        })
+    // cached answer. Key by the exact filter used for the probe so a
+    // concurrent process refreshing the on-disk files cannot change it.
+    let negative_cache = if !queries.is_empty() {
+        cache_dir
+            .zip(bloom_identity)
+            .map(|(dir, identity)| osv_negative_cache_key(dir, &identity, &queries))
     } else {
         None
     };
@@ -449,34 +479,30 @@ async fn run_fresh_resolution_osv_gate(
     {
         return Ok(());
     }
-    run_versioned_osv_gate(
-        &queries,
-        AdvisoryCheck::On,
-        negative_cache
-            .as_ref()
-            .map(|(path, key)| (path.as_path(), key.as_str())),
-    )
-    .await
+    live_check(queries, negative_cache).await
 }
 
 async fn fresh_osv_queries(
     pairs: &[(String, String)],
     probe: impl std::future::Future<
-        Output = Result<Vec<(String, String)>, aube_registry::osv_bloom_client::BloomError>,
+        Output = Result<
+            aube_registry::osv_bloom_client::BloomProbe,
+            aube_registry::osv_bloom_client::BloomError,
+        >,
     >,
-) -> (Vec<(String, String)>, bool) {
+) -> (Vec<(String, String)>, Option<[u8; 32]>) {
     // For a handful of packages, prefer the freshest answer without depending
     // on a locally cached filter. The probe future is lazy and never polled.
     if pairs.len() <= 10 {
-        return (pairs.to_vec(), false);
+        return (pairs.to_vec(), None);
     }
     let _diag =
         aube_util::diag::Span::new(aube_util::diag::Category::Registry, "osv_bloom_prefilter");
     match probe.await {
-        Ok(hits) => (hits, true),
+        Ok((hits, identity)) => (hits, Some(identity)),
         Err(error) => {
             tracing::debug!(%error, "OSV bloom unavailable; checking the full graph live");
-            (pairs.to_vec(), false)
+            (pairs.to_vec(), None)
         }
     }
 }
@@ -2150,12 +2176,12 @@ mod tests {
             let pairs: Vec<_> = (0..count)
                 .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
                 .collect();
-            let (queries, bloom_checked) = fresh_osv_queries(&pairs, async {
+            let (queries, bloom_identity) = fresh_osv_queries(&pairs, async {
                 panic!("small checks must go directly to the live API")
             })
             .await;
             assert_eq!(queries, pairs);
-            assert!(!bloom_checked);
+            assert!(bloom_identity.is_none());
         }
     }
 
@@ -2165,15 +2191,18 @@ mod tests {
             .map(|i| (format!("package-{i}"), format!("1.0.{i}")))
             .collect();
         let hits = vec![pairs[2].clone(), pairs[7].clone()];
-        let (queries, bloom_checked) = fresh_osv_queries(&pairs, async { Ok(hits.clone()) }).await;
+        let identity = [7u8; 32];
+        let (queries, bloom_identity) =
+            fresh_osv_queries(&pairs, async { Ok((hits.clone(), identity)) }).await;
         assert_eq!(queries, hits);
-        assert!(bloom_checked);
-        let (queries, bloom_checked) = fresh_osv_queries(&pairs, async { Ok(Vec::new()) }).await;
+        assert_eq!(bloom_identity, Some(identity));
+        let (queries, bloom_identity) =
+            fresh_osv_queries(&pairs, async { Ok((Vec::new(), identity)) }).await;
         assert!(
             queries.is_empty(),
             "a clean validated filter needs no live queries"
         );
-        assert!(bloom_checked);
+        assert_eq!(bloom_identity, Some(identity));
     }
 
     #[tokio::test]
@@ -2192,10 +2221,113 @@ mod tests {
             },
             BloomError::Io(std::io::Error::other("refresh failed")),
         ] {
-            let (queries, bloom_checked) = fresh_osv_queries(&pairs, async { Err(error) }).await;
+            let (queries, bloom_identity) = fresh_osv_queries(&pairs, async { Err(error) }).await;
             assert_eq!(queries, pairs);
-            assert!(!bloom_checked);
+            assert!(bloom_identity.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_gate_reuses_only_a_current_clean_confirmation() {
+        use aube_registry::osv_bloom_client::BloomError;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pairs: Vec<_> = (0..11)
+            .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
+            .collect();
+        let hits = vec![pairs[2].clone()];
+        let identity = [7u8; 32];
+        let calls = AtomicUsize::new(0);
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), identity)) },
+            |queries, cache| {
+                let calls = &calls;
+                let hits = &hits;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, hits);
+                    let (path, key) = cache.expect("validated Bloom result has a cache key");
+                    let now = unix_time_ms().expect("current timestamp");
+                    aube_util::fs_atomic::atomic_write(&path, format!("{key} {now}\n").as_bytes())
+                        .expect("cache clean confirmation");
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("first live confirmation");
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), identity)) },
+            |_, _| async { panic!("current clean confirmation must skip the live check") },
+        )
+        .await
+        .expect("cached repeat");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), [8u8; 32])) },
+            |queries, cache| {
+                let calls = &calls;
+                let hits = &hits;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, hits);
+                    assert!(cache.is_some());
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("changed Bloom filter calls OSV");
+
+        let (path, key) = osv_negative_cache_key(tmp.path(), &identity, &hits);
+        aube_util::fs_atomic::atomic_write(&path, format!("{key} 0\n").as_bytes())
+            .expect("expire cache");
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), identity)) },
+            |queries, cache| {
+                let calls = &calls;
+                let hits = &hits;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, hits);
+                    assert!(cache.is_some());
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("expired confirmation calls OSV");
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Err(BloomError::NotInitialized) },
+            |queries, cache| {
+                let calls = &calls;
+                let pairs = &pairs;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, pairs);
+                    assert!(cache.is_none());
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("failed Bloom probe calls OSV with the full graph");
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
     }
 
     #[test]
