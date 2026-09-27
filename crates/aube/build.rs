@@ -23,6 +23,9 @@ fn main() {
 /// `main` runs. Linked non-PIE, those pointers are final in the file.
 /// Dependencies are still compiled position-independent; the flag reaches only
 /// bin targets, so the FFI and Node addon libraries are not linked with it.
+/// musl is left out on purpose: its static-PIE start code crashes when linked
+/// with `-no-pie`, and the alternative, `-C relocation-model=static`, is not
+/// something a build script can set.
 fn link_without_pie() {
     println!("cargo:rerun-if-env-changed=AUBE_NO_PIE");
     let linux_gnu = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
