@@ -36,10 +36,17 @@ version_cmd = ["{{ vars.bin }}", "--version"]
 # every install scenario starts from. The script reads `$BENCH_DIR` from its
 # environment and takes the tool and lockfile as arguments, so no path is ever
 # spliced into shell code — a TMPDIR containing a quote cannot break it.
+#
+# Every prepare ends in `sync`. Deleting node_modules unlinks tens of thousands
+# of files for the tools that materialize it per project, and the filesystem
+# defers much of that work: left alone, the writeback and journal commits land
+# inside the next timed sample and show up as multi-second outliers. Flushing
+# here, untimed, starts each sample from a quiet filesystem.
 prepare = ["sh", "-c", '''
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json &&
-cp "$BENCH_DIR/saved-lockfile-$1" "$2"
+cp "$BENCH_DIR/saved-lockfile-$1" "$2" &&
+sync
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 # An install that silently did nothing would be the fastest sample of all.
 # The fixture depends on typescript, so every install has to leave it behind.
@@ -104,7 +111,8 @@ rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   "$H/.cache/aube" "$H/.cache/yarn" "$H/.cache/bun" "$H/.cache/deno" "$H/.cache/vlt" \
   "$H/.config/vlt" "$H/Library/Caches/deno" &&
 mkdir -p "$H" &&
-cp "$BENCH_DIR/saved-lockfile-$1" "$2"
+cp "$BENCH_DIR/saved-lockfile-$1" "$2" &&
+sync
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 
 # No --prefer-offline here: the cache is empty, so it would change nothing.
@@ -129,7 +137,8 @@ prepare = ["sh", "-c", '''
 rm -rf node_modules pnpm-lock.yaml aube-lock.yaml package-lock.json yarn.lock \
   bun.lock bun.lockb deno.lock vlt-lock.json &&
 cp "$BENCH_DIR/saved-lockfile-$1" "$2" &&
-{{ vars.run }}
+{{ vars.run }} &&
+sync
 ''', "prepare", "{{ subject }}", "{{ vars.lockfile }}"]
 
 [bench.install-test.subject.aube]

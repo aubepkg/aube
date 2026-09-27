@@ -26,7 +26,9 @@ each tool's default install model, which means aube's
 [global virtual store](/package-manager/global-virtual-store) is enabled
 and pnpm's comparable feature is left at pnpm's default of off. *Warm*
 clears `node_modules` but keeps each tool's store/cache populated;
-*cold* wipes the store and cache too. The fixture, scripts, and raw
+*cold* wipes the store and cache too. That untimed cleanup ends with a
+`sync`, so filesystem writeback left over from deleting the previous
+`node_modules` finishes before the next timed run starts. The fixture, scripts, and raw
 results live at
 [`benchmarks/`](https://github.com/aubepkg/aube/tree/main/benchmarks).
 Reproduce locally with `mise run bench`.
