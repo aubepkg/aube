@@ -216,6 +216,58 @@ pub(crate) fn sweep_stale_top_level_entries(
     }
 }
 
+/// Reconcile the project-owned hidden hoist without rebuilding every link.
+/// Never descend through a scope symlink: the hidden tree may have been
+/// modified since the last install, and only real scope directories are ours
+/// to sweep. The caller checks each retained package link's target afterward.
+pub(crate) fn sweep_stale_hidden_hoist_entries(
+    hidden: &Path,
+    preserve: &rustc_hash::FxHashSet<&str>,
+) {
+    match std::fs::symlink_metadata(hidden) {
+        Ok(md) if md.file_type().is_symlink() => {
+            remove_hidden_hoist_tree(hidden);
+            return;
+        }
+        Ok(md) if !md.is_dir() => {
+            try_remove_entry(hidden);
+            return;
+        }
+        Ok(_) => {}
+        Err(_) => return,
+    }
+    let scopes: rustc_hash::FxHashSet<&str> = preserve
+        .iter()
+        .filter_map(|name| name.split_once('/').map(|(scope, _)| scope))
+        .collect();
+    let Ok(entries) = std::fs::read_dir(hidden) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let path = entry.path();
+        if scopes.contains(name.as_ref()) {
+            let is_real_dir = std::fs::symlink_metadata(&path)
+                .is_ok_and(|md| md.is_dir() && !md.file_type().is_symlink());
+            if !is_real_dir {
+                try_remove_entry(&path);
+                continue;
+            }
+            if let Ok(inner) = std::fs::read_dir(&path) {
+                for child in inner.flatten() {
+                    let full = format!("{name}/{}", child.file_name().to_string_lossy());
+                    if !preserve.contains(full.as_str()) {
+                        try_remove_entry(&child.path());
+                    }
+                }
+            }
+        } else if !preserve.contains(name.as_ref()) {
+            try_remove_entry(&path);
+        }
+    }
+}
+
 /// Sweep broken entries from a shared hidden-hoist directory without
 /// deleting live links owned by other projects. The GVS hidden hoist is
 /// global, so "not in this project's graph" is not stale enough: another

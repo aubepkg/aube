@@ -8,8 +8,8 @@ use crate::pool::with_link_pool;
 use crate::sweep::{
     EntryState, classify_entry_state, classify_local_entry_state, create_dir_link_idempotent,
     is_physical_importer, mkdirp, reconcile_dir_link, remove_hidden_hoist_tree,
-    sweep_dead_hidden_hoist_entries, sweep_stale_tmp_dirs, sweep_stale_top_level_entries,
-    try_remove_entry,
+    sweep_dead_hidden_hoist_entries, sweep_stale_hidden_hoist_entries, sweep_stale_tmp_dirs,
+    sweep_stale_top_level_entries, try_remove_entry,
 };
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
@@ -1493,13 +1493,14 @@ impl Linker {
             }
             return Ok(());
         }
-        // Wipe before repopulating so a dependency removed from the
-        // graph (or a pattern that no longer matches) doesn't linger.
-        // The shared GVS hidden hoist only prunes broken entries:
-        // removing live cross-project links would make the directory
-        // last-writer-wins for sequential installs.
+        // The project-owned hidden hoist can drop names removed from this
+        // graph while keeping correctly targeted links. The shared GVS
+        // hidden hoist only prunes broken entries: removing live links
+        // there would disrupt another project.
         if sweep_stale_entries {
-            remove_hidden_hoist_tree(&hidden);
+            let preserve: rustc_hash::FxHashSet<&str> =
+                packages.iter().map(|(_, pkg)| pkg.name.as_str()).collect();
+            sweep_stale_hidden_hoist_entries(&hidden, &preserve);
         } else {
             sweep_dead_hidden_hoist_entries(&hidden);
         }
@@ -1550,13 +1551,6 @@ impl Linker {
             let link_parent = target_dir.parent().unwrap_or(&hidden);
             let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
                 .unwrap_or_else(|| source_dir.clone());
-            // After a wipe the tree is empty, so skip the link check that
-            // every entry would miss. Something that survived the wipe
-            // falls through to the reconcile below.
-            if sweep_stale_entries && sys::create_dir_link(&rel_target, &target_dir).is_ok() {
-                trace!("hidden-hoist: {}", pkg.name);
-                return Ok(());
-            }
             if reconcile_dir_link(&target_dir, &rel_target)? {
                 return Ok(());
             }
