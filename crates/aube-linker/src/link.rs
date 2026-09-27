@@ -1533,6 +1533,32 @@ impl Linker {
         let (case_colliding, independent): (Vec<_>, Vec<_>) = packages
             .iter()
             .partition(|(_, pkg)| folded[&pkg.name.to_lowercase()] > 1);
+        // On case-insensitive filesystems, two case-colliding names can
+        // address the same hidden link. If a later package's source is
+        // missing, it must not remove a link just placed for an earlier
+        // package whose source is still present.
+        let mut valid_collision_targets: rustc_hash::FxHashMap<
+            String,
+            rustc_hash::FxHashSet<PathBuf>,
+        > = rustc_hash::FxHashMap::default();
+        if sweep_stale_entries {
+            for &&(dep_path, pkg) in &case_colliding {
+                let source_dir = source_root
+                    .join(self.aube_dir_entry_name(dep_path))
+                    .join("node_modules")
+                    .join(&pkg.name);
+                if source_dir.exists() {
+                    let target_dir = hidden.join(&pkg.name);
+                    let link_parent = target_dir.parent().unwrap_or(&hidden);
+                    let rel_target = pathdiff::diff_paths(&source_dir, link_parent)
+                        .unwrap_or_else(|| source_dir.clone());
+                    valid_collision_targets
+                        .entry(pkg.name.to_lowercase())
+                        .or_default()
+                        .insert(rel_target);
+                }
+            }
+        }
         use rayon::prelude::*;
         let link_one = |(dep_path, pkg): &&(&String, &LockedPackage)| -> Result<(), Error> {
             let source_subdir = if use_hashed_subdirs {
@@ -1547,7 +1573,15 @@ impl Linker {
             let target_dir = hidden.join(&pkg.name);
             if !source_dir.exists() {
                 if sweep_stale_entries {
-                    try_remove_entry(&target_dir);
+                    let points_to_live_collision =
+                        std::fs::read_link(&target_dir).ok().is_some_and(|target| {
+                            valid_collision_targets
+                                .get(&pkg.name.to_lowercase())
+                                .is_some_and(|targets| targets.contains(&target))
+                        });
+                    if !points_to_live_collision {
+                        try_remove_entry(&target_dir);
+                    }
                 }
                 return Ok(());
             }

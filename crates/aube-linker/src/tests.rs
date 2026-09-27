@@ -1229,6 +1229,16 @@ fn test_hidden_hoist_reconciles_on_relink() {
         std::fs::read_to_string(hidden.join("foo/index.js")).unwrap(),
         "module.exports = 'foo v2';"
     );
+
+    // `Bar` and `bar` share one slot on case-insensitive filesystems.
+    // Removing the later package's source must leave the earlier live link.
+    std::fs::remove_dir_all(project_dir.join("node_modules/.aube/bar@2.0.0/node_modules/bar"))
+        .unwrap();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("Bar/index.js")).unwrap(),
+        "module.exports = 'Bar';"
+    );
 }
 
 #[test]
