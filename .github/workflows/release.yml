@@ -366,6 +366,9 @@ jobs:
           AUBE_PGO_BOLT: "1"
           AUBE_PGO_USE_LLD: "1"
           AUBE_PGO_LLVM_VERSION: ${{ env.LLVM_VERSION }}
+          # Links the executables non-PIE (see link_without_pie in
+          # crates/aube/build.rs).
+          AUBE_NO_PIE: "1"
         run: |
           container_home="$RUNNER_TEMP/aube-home"
           # Docker creates missing bind-mount sources as root. Create target as
@@ -384,6 +387,7 @@ jobs:
             --env AUBE_PGO_BOLT \
             --env AUBE_PGO_USE_LLD \
             --env AUBE_PGO_LLVM_VERSION \
+            --env AUBE_NO_PIE \
             --env HOME=/tmp/aube-home \
             --env CARGO_HOME=/tmp/aube-home/.cargo \
             --env MISE_CACHE_DIR=/tmp/mise-cache \
@@ -411,6 +415,10 @@ jobs:
           if [ -n "$max_glibc" ] && \
              [ "$(printf '%s\n' GLIBC_2.31 "$max_glibc" | sort -V | tail -1)" != "GLIBC_2.31" ]; then
             echo "::error::ARM64 release requires $max_glibc, newer than GLIBC_2.31"
+            exit 1
+          fi
+          if ! readelf -h "$bin" | grep -q 'Type:.*EXEC'; then
+            echo "::error::$bin is not linked non-PIE; AUBE_NO_PIE did not reach build.rs"
             exit 1
           fi
           "$bin" --version
@@ -597,7 +605,20 @@ jobs:
           AUBE_PGO_TARGET: ${{ matrix.target }}
           AUBE_PGO_BOLT: ${{ matrix.bolt && '1' || '' }}
           AUBE_PGO_LLVM_VERSION: ${{ matrix.bolt && '18' || '' }}
+          # Links the Linux GNU executables non-PIE (see link_without_pie in
+          # crates/aube/build.rs); ignored for every other target.
+          AUBE_NO_PIE: "1"
         run: bash benchmarks/pgo.bash
+      - name: Check the Linux GNU binary is linked non-PIE
+        if: contains(matrix.target, '-linux-gnu')
+        shell: bash
+        env:
+          BINARY: target/${{ matrix.target }}/release-pgo/aube
+        run: |
+          if ! readelf -h "$BINARY" | grep -q 'Type:.*EXEC'; then
+            echo "::error::$BINARY is not linked non-PIE; AUBE_NO_PIE did not reach build.rs"
+            exit 1
+          fi
       - name: Codesign macOS binaries
         if: startsWith(matrix.os, 'macos')
         shell: bash

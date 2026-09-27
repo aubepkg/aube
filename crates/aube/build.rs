@@ -10,9 +10,26 @@ fn main() {
     {
         println!("cargo:rustc-link-arg-bins=/STACK:8388608");
     }
+    link_without_pie();
     generate_bundled_package_extensions();
     println!("cargo:rustc-env=AUBE_BUILD_DATE={}", build_date());
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Release builds for Linux GNU set `AUBE_NO_PIE=1` (see
+/// .github/workflows/release.yml) to link the executables at a fixed address.
+/// As a position-independent executable, aube makes the dynamic loader patch
+/// about 56k pointers on every launch, which copies hundreds of pages before
+/// `main` runs. Linked non-PIE, those pointers are final in the file.
+/// Dependencies are still compiled position-independent; the flag reaches only
+/// bin targets, so the FFI and Node addon libraries are not linked with it.
+fn link_without_pie() {
+    println!("cargo:rerun-if-env-changed=AUBE_NO_PIE");
+    let linux_gnu = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu");
+    if linux_gnu && std::env::var("AUBE_NO_PIE").as_deref() == Ok("1") {
+        println!("cargo:rustc-link-arg-bins=-no-pie");
+    }
 }
 
 fn generate_bundled_package_extensions() {
