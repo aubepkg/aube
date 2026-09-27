@@ -757,7 +757,7 @@ jobs:
   # The packslip is this release's signed inventory: every archive's digest,
   # the three multicall executables inside it, the shared objects it needs
   # from the host, and the workflow identity that signed for all of it. An
-  # installer checks a download against jdx/aube's identity rather than
+  # installer checks a download against aubepkg/aube's identity rather than
   # against a key this project would have to hold. See https://packslip.dev.
   #
   # Its own job because the four upload jobs above each write straight to the

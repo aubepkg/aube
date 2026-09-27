@@ -1,6 +1,6 @@
 # Changelog
 
-For current releases, see [GitHub Releases](https://github.com/jdx/aube/releases)
+For current releases, see [GitHub Releases](https://github.com/aubepkg/aube/releases)
 and the [CLI changelog](crates/aube/CHANGELOG.md). The entries below record the
 early project releases.
 

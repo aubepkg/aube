@@ -161,7 +161,7 @@ jobs:
   # The packslip is this release's signed inventory: every CLI archive's
   # digest, the executables inside it, and the workflow identity that signed
   # for all of it, so an installer can check a download against
-  # github.com/jdx/aube's identity rather than a key this project would have
+  # github.com/aubepkg/aube's identity rather than a key this project would have
   # to hold. `upload-assets` already attests each archive's build provenance
   # with actions/attest-build-provenance, so `attest: link` only links those
   # statements instead of attesting a second time. The FFI libraries stay out
@@ -438,7 +438,7 @@ jobs:
             const pr = match?.[4];
             const [, items] = sections.get(type) || sections.get('default');
             const scoped = scope ? `*(${scope})* ${desc}` : desc;
-            const linked = pr ? `${scoped} ([#${pr}](https://github.com/jdx/aube/pull/${pr}))` : scoped;
+            const linked = pr ? `${scoped} ([#${pr}](https://github.com/aubepkg/aube/pull/${pr}))` : scoped;
             items.push(`- ${linked}`);
           }
 
@@ -448,7 +448,7 @@ jobs:
             body.push(`### ${heading}`, '', ...items, '');
           }
           const changelogEntry = [
-            `## [${newVersion}](https://github.com/jdx/aube/compare/${latestTag}...v${newVersion}) - ${today}`,
+            `## [${newVersion}](https://github.com/aubepkg/aube/compare/${latestTag}...v${newVersion}) - ${today}`,
             '',
             ...body,
           ].join('\n').trimEnd();

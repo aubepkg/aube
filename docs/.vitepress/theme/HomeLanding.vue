@@ -48,7 +48,7 @@ onBeforeUnmount(() => clearTimeout(copyTimer));
       <div class="aube-hero-copy">
         <a
           class="aube-release"
-          :href="`https://github.com/jdx/aube/releases/tag/v${aubeVersion}`"
+          :href="`https://github.com/aubepkg/aube/releases/tag/v${aubeVersion}`"
         >
           v{{ aubeVersion }} <span aria-hidden="true">·</span> Release notes
           <span aria-hidden="true">↗</span>

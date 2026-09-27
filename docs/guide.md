@@ -52,4 +52,4 @@ the [global virtual store](/package-manager/global-virtual-store), and the
 - [Embedding](/embedding/): Rust, Node-API, and C ABI integration.
 
 To help improve aube, see [contributing](/contributing) or start a
-[Discussion](https://github.com/jdx/aube/discussions).
+[Discussion](https://github.com/aubepkg/aube/discussions).

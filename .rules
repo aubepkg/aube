@@ -62,7 +62,7 @@ subsystems:
 
 support:
   issues_disabled: true
-  channel: https://github.com/jdx/aube/discussions
+  channel: https://github.com/aubepkg/aube/discussions
   doc_phrasing: link Discussions, never "file an issue" or "open an issue"
 
 pr_release_notes:

@@ -6,7 +6,7 @@ description: Set up aube for development, run tests, maintain generated document
 
 Help is welcome with reproducible bug reports, focused fixes, tests, and clear
 documentation. For a new feature or a substantial change, discuss the direction
-in [GitHub Discussions](https://github.com/jdx/aube/discussions) or
+in [GitHub Discussions](https://github.com/aubepkg/aube/discussions) or
 [Discord](https://discord.gg/UBa7pJUN7Z) before investing in an implementation.
 Small, obvious fixes can go straight to a pull request.
 

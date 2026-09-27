@@ -190,9 +190,9 @@ export default defineConfig({
           { text: "Contributing", link: "/contributing" },
           {
             text: "Discussions",
-            link: "https://github.com/jdx/aube/discussions",
+            link: "https://github.com/aubepkg/aube/discussions",
           },
-          { text: "Releases", link: "https://github.com/jdx/aube/releases" },
+          { text: "Releases", link: "https://github.com/aubepkg/aube/releases" },
         ],
       },
     ],
@@ -328,7 +328,7 @@ export default defineConfig({
     footer: false,
 
     editLink: {
-      pattern: "https://github.com/jdx/aube/edit/main/docs/:path",
+      pattern: "https://github.com/aubepkg/aube/edit/main/docs/:path",
       text: "Edit this page on GitHub",
     },
 
