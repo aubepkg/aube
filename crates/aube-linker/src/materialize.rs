@@ -372,7 +372,7 @@ impl Linker {
     /// phase's record of what it left on disk.
     pub(crate) fn virtual_store_dep_link_targets(
         &self,
-        dep_path: &str,
+        #[cfg_attr(windows, allow(unused_variables))] dep_path: &str,
         pkg: &LockedPackage,
         nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
     ) -> Result<Vec<(String, PathBuf)>, Error> {
