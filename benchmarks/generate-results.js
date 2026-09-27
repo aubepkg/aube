@@ -26,6 +26,7 @@ const outputFile = process.argv[3]
 const benchmarks = [
   ['gvs-warm', 'Fresh install (warm cache)'],
   ['gvs-cold', 'Fresh install (cold cache)'],
+  ['pull-update', 'Dependency update after git pull'],
   ['install-test', 'npm install && npm run test'],
 ]
 const SELECTED_BENCHMARKS = new Set(
