@@ -21,15 +21,18 @@ decide a close comparison.
 
 ::: tip Methodology
 Every scenario assumes a committed lockfile is present. The main axis is
-how warm the tool's cache/store is before the command runs; rows use
-each tool's default local install model, which means aube's
+how warm the tool's cache/store is before the command runs; each tool's
+row uses its default local install model, which means aube's
 [global virtual store](/package-manager/global-virtual-store) is enabled
-and pnpm's comparable feature is left at pnpm's default of off. *Warm*
-clears `node_modules` but keeps each tool's store/cache populated;
-*cold* wipes the store and cache too. That untimed cleanup ends with a
-`sync`, so filesystem writeback left over from deleting the previous
-`node_modules` finishes before the next timed run starts. The fixture,
-scripts, and raw results live at
+and pnpm's comparable feature is left at pnpm's default of off.
+<span v-if="data.managers.includes('aube-nogvs')">The *aube (no GVS)*
+row is the one exception, described below.</span>
+*Warm* clears `node_modules` but keeps each tool's store/cache populated;
+*cold* wipes the store and cache too.
+<span v-if="data.managers.includes('aube-nogvs')">That untimed cleanup
+ends with a `sync`, so filesystem writeback left over from deleting the
+previous `node_modules` finishes before the next timed run starts.</span>
+The fixture, scripts, and raw results live at
 [`benchmarks/`](https://github.com/aubepkg/aube/tree/main/benchmarks).
 Reproduce locally with `mise run bench`.
 :::
