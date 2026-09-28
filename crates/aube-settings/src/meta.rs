@@ -144,6 +144,18 @@ mod tests {
         let shapes = ["null", "true", "\"x\"", "0", "{}", "[]"];
         for s in SETTINGS {
             for key in s.workspace_yaml_keys {
+                if s.name == "defaultLockfile" {
+                    // This new setting is resolved from raw workspace YAML. Adding a
+                    // public WorkspaceConfig field would break struct literals in
+                    // downstream crates, so verify its actual read path instead.
+                    let raw: std::collections::BTreeMap<String, yaml_serde::Value> =
+                        yaml_serde::from_str("defaultLockfile: pnpm-lock.yaml\n").unwrap();
+                    assert_eq!(
+                        crate::values::string_from_workspace_yaml(s.name, &raw).as_deref(),
+                        Some("pnpm-lock.yaml")
+                    );
+                    continue;
+                }
                 let mut recognized = false;
                 let top_level_key = key.split('.').next().unwrap_or(key);
                 for shape in shapes {
