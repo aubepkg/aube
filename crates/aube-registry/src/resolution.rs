@@ -1,6 +1,6 @@
 //! An in-memory projection of the existing cache, with deferred release decoding.
 use crate::{Packument, VersionMetadata};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     collections::BTreeMap,
     sync::{Arc, OnceLock},
@@ -95,6 +95,85 @@ impl RawResolutionPackument<'_> {
             );
         }
         Ok(ResolutionPackument {
+            name: self.name,
+            modified: self.modified,
+            versions,
+            dist_tags: self.dist_tags,
+            time: self.time,
+        })
+    }
+}
+
+/// Compact, derived inventory for a full packument cache entry. Byte ranges
+/// refer to the authoritative JSON file, which is checked before reuse.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ResolutionIndex {
+    name: String,
+    modified: Option<String>,
+    versions: BTreeMap<String, IndexedVersion>,
+    dist_tags: BTreeMap<String, String>,
+    time: BTreeMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct IndexedVersion {
+    start: usize,
+    end: usize,
+    deprecated: bool,
+    trust: crate::VersionTrustMetadata,
+}
+
+impl ResolutionPackument {
+    pub(crate) fn index(&self, content: &bytes::Bytes) -> Option<ResolutionIndex> {
+        let mut versions = BTreeMap::new();
+        for (key, version) in &self.versions {
+            let VersionData::Deferred { raw, .. } = version.data.as_ref() else {
+                return None;
+            };
+            let start = (raw.as_ptr() as usize).checked_sub(content.as_ptr() as usize)?;
+            let end = start.checked_add(raw.len())?;
+            content.get(start..end)?;
+            versions.insert(
+                key.clone(),
+                IndexedVersion {
+                    start,
+                    end,
+                    deprecated: version.deprecated,
+                    trust: version.trust.clone(),
+                },
+            );
+        }
+        Some(ResolutionIndex {
+            name: self.name.clone(),
+            modified: self.modified.clone(),
+            versions,
+            dist_tags: self.dist_tags.clone(),
+            time: self.time.clone(),
+        })
+    }
+}
+
+impl ResolutionIndex {
+    pub(crate) fn into_resolution(self, content: &bytes::Bytes) -> Option<ResolutionPackument> {
+        let mut versions = BTreeMap::new();
+        for (key, version) in self.versions {
+            let raw = content.get(version.start..version.end)?;
+            if !raw.starts_with(b"{") || !raw.ends_with(b"}") {
+                return None;
+            }
+            versions.insert(
+                key,
+                ResolutionVersion {
+                    deprecated: version.deprecated,
+                    trust: version.trust,
+                    data: Arc::new(VersionData::Deferred {
+                        raw: content.slice(version.start..version.end),
+                        metadata: OnceLock::new(),
+                    }),
+                },
+            );
+        }
+        Some(ResolutionPackument {
             name: self.name,
             modified: self.modified,
             versions,

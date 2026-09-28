@@ -8,6 +8,42 @@ use super::{
 use crate::{Error, NetworkMode, Packument};
 use std::path::{Path, PathBuf};
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedResolutionIndex {
+    source_len: u64,
+    source_modified_ns: u128,
+    #[cfg(unix)]
+    source_inode: u64,
+    source_digest: String,
+    fetched_at: u64,
+    max_age_secs: Option<u64>,
+    index: crate::resolution::ResolutionIndex,
+}
+
+fn resolution_index_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".resolution-index-v1");
+    PathBuf::from(name)
+}
+
+fn source_stamp(path: &Path) -> Option<(u64, u128, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.ino()
+    };
+    #[cfg(not(unix))]
+    let inode = 0;
+    Some((metadata.len(), modified, inode))
+}
+
 impl RegistryClient {
     /// Read fresh metadata without decoding every release's dependency maps.
     /// Uses the existing registry-partitioned cache and freshness policy.
@@ -30,16 +66,61 @@ impl RegistryClient {
         else {
             return Default::default();
         };
-        let Ok(content) = std::fs::read(path) else {
+        let before = source_stamp(&path);
+        let Ok(content) = std::fs::read(&path) else {
             return Default::default();
         };
         let content = bytes::Bytes::from(content);
+        if let Some(stamp) = before.filter(|stamp| source_stamp(&path) == Some(*stamp))
+            && let Ok(raw) = std::fs::read(resolution_index_path(&path))
+            && let Ok(cached) = sonic_rs::from_slice::<CachedResolutionIndex>(&raw)
+            && cached.source_len == stamp.0
+            && cached.source_modified_ns == stamp.1
+            && cached.source_digest == blake3::hash(&content).to_hex().as_str()
+            && {
+                #[cfg(unix)]
+                {
+                    cached.source_inode == stamp.2
+                }
+                #[cfg(not(unix))]
+                {
+                    true
+                }
+            }
+            && self.trust_cached_packument(cached.fetched_at, cached.max_age_secs)
+            && let Some(packument) = cached.index.into_resolution(&content)
+        {
+            return CachedResolutionPackumentLookup {
+                packument: Some(packument),
+                revalidation: Default::default(),
+            };
+        }
         let Ok(cached) = sonic_rs::from_slice::<Cached>(&content) else {
             return Default::default();
         };
         if self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
+            let packument = cached.packument.into_resolution(&content).ok();
+            if let (Some(stamp), Some(packument)) = (before, packument.as_ref())
+                && source_stamp(&path) == Some(stamp)
+                && let Some(index) = packument.index(&content)
+            {
+                let cached_index = CachedResolutionIndex {
+                    source_len: stamp.0,
+                    source_modified_ns: stamp.1,
+                    #[cfg(unix)]
+                    source_inode: stamp.2,
+                    source_digest: blake3::hash(&content).to_hex().to_string(),
+                    fetched_at: cached.fetched_at,
+                    max_age_secs: cached.max_age_secs,
+                    index,
+                };
+                if let Ok(bytes) = sonic_rs::to_vec(&cached_index) {
+                    let _ =
+                        aube_util::fs_atomic::atomic_write(&resolution_index_path(&path), &bytes);
+                }
+            }
             return CachedResolutionPackumentLookup {
-                packument: cached.packument.into_resolution(&content).ok(),
+                packument,
                 revalidation: Default::default(),
             };
         }
@@ -1200,5 +1281,118 @@ impl RegistryClient {
             }
         }
         unreachable!("retry loop exited without returning; max_attempts was {max_attempts}")
+    }
+}
+
+#[cfg(test)]
+mod resolution_index_tests {
+    use super::*;
+
+    #[test]
+    fn derived_index_tracks_the_full_cache_and_invalidates_after_rewrite() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new("https://registry.npmjs.org/");
+        let first: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {
+                "1.0.0": {"name": "index-demo", "version": "1.0.0", "dependencies": {"child": "^1"}},
+                "1.1.0": {"name": "index-demo", "version": "1.1.0", "deprecated": "old", "approver": {"name": "reviewer"}}
+            },
+            "dist-tags": {"latest": "1.0.0"},
+            "time": {"1.0.0": "2024-01-01T00:00:00.000Z", "1.1.0": "2024-02-01T00:00:00.000Z"}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("index-demo", cache.path(), &first, None, None, true);
+        let path = packument_full_cache_path(
+            cache.path(),
+            "index-demo",
+            client.config.registry_for("index-demo"),
+        )
+        .unwrap();
+        let dotted_package_path = packument_full_cache_path(
+            cache.path(),
+            "index-demo.resolution-index-v1",
+            client.config.registry_for("index-demo.resolution-index-v1"),
+        )
+        .unwrap();
+        assert_ne!(resolution_index_path(&path), dotted_package_path);
+        let initial = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(resolution_index_path(&path).exists());
+        assert!(initial.versions["1.1.0"].is_deprecated());
+        assert_eq!(
+            initial.versions["1.0.0"].metadata().unwrap().dependencies["child"],
+            "^1"
+        );
+        let indexed = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert_eq!(indexed.time, initial.time);
+        assert_eq!(indexed.versions.len(), 2);
+        assert_eq!(
+            indexed.versions["1.1.0"].trust_metadata().approver,
+            initial.versions["1.1.0"].trust_metadata().approver
+        );
+
+        let second: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {"2.0.0": {"name": "index-demo", "version": "2.0.0"}},
+            "dist-tags": {"latest": "2.0.0"}
+        }))
+        .unwrap();
+        write_cached_full_packument(&path, None, None, now_secs(), None, &second).unwrap();
+        let after_rewrite = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(after_rewrite.versions.contains_key("2.0.0"));
+        assert!(!after_rewrite.versions.contains_key("1.0.0"));
+    }
+
+    #[test]
+    fn derived_index_rejects_same_length_rewrite_with_unchanged_timestamp() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new("https://registry.npmjs.org/");
+        let packument: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {"1.0.0": {"name": "index-demo", "version": "1.0.0"}},
+            "dist-tags": {"latest": "1.0.0"}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("index-demo", cache.path(), &packument, None, None, true);
+        let path = packument_full_cache_path(
+            cache.path(),
+            "index-demo",
+            client.config.registry_for("index-demo"),
+        )
+        .unwrap();
+        let initial = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(initial.versions.contains_key("1.0.0"));
+        assert!(resolution_index_path(&path).exists());
+
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+        let rewritten = original.replace("1.0.0", "2.0.0");
+        assert_eq!(original.len(), rewritten.len());
+        std::fs::write(&path, rewritten).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+
+        let after_rewrite = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(after_rewrite.versions.contains_key("2.0.0"));
+        assert!(!after_rewrite.versions.contains_key("1.0.0"));
     }
 }
