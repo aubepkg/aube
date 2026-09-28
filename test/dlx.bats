@@ -231,6 +231,21 @@ teardown() {
 	assert_file_contains child.out "CHILD GOT SIGINT"
 }
 
+@test "aube dlx resolves a relative file: spec from the invoking directory" {
+	# dlx installs into a scratch dir under TMPDIR; a path the user wrote
+	# relative to where they ran dlx must not resolve against that dir.
+	mkdir -p tools/printer work
+	cat >tools/printer/package.json <<-'JSON'
+		{ "name": "np-printer", "version": "1.0.0", "bin": { "np-printer": "cli.js" } }
+	JSON
+	printf '#!/usr/bin/env node\nconsole.log("printer ran")\n' >tools/printer/cli.js
+	chmod +x tools/printer/cli.js
+	cd work
+	run aube dlx -p file:../tools/printer np-printer
+	assert_success
+	assert_line "printer ran"
+}
+
 @test "aube dlx -c infers the package from the first word when -p is omitted" {
 	# Without -p the first whitespace-separated word is taken as the
 	# install spec — same convention as plain `aube dlx <cmd>`.

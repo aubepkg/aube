@@ -160,8 +160,13 @@ pub async fn run_in(
     // local-bin bin and `aubx` honor the project's .nvmrc / devEngines. The
     // fast path replaces the image immediately, so this must run before it or
     // a local `dlx` bin would launch with the ambient runtime.
+    // An embedder's `base_dir` may be relative; anchor it to the process's
+    // live cwd now (`join` keeps an absolute one as is), because the install
+    // below switches into the scratch project and relative `file:` specs
+    // are resolved against this directory. Not the cached `dirs::cwd()`:
+    // a host process can change its cwd between calls.
     let initial_cwd = match base_dir {
-        Some(dir) => dir,
+        Some(dir) => std::env::current_dir().into_diagnostic()?.join(dir),
         None => crate::dirs::cwd()?,
     };
     crate::runtime::ensure_for_cwd(&initial_cwd).await?;
@@ -197,7 +202,7 @@ pub async fn run_in(
         .wrap_err("failed to create dlx scratch dir")?;
     let project_dir = tmp.path().to_path_buf();
 
-    let manifest = dlx_manifest(&install_specs, &allow_build);
+    let manifest = dlx_manifest(&install_specs, &allow_build, &initial_cwd)?;
     let manifest_bytes = serde_json::to_vec_pretty(&manifest).into_diagnostic()?;
     aube_util::fs_atomic::atomic_write(&project_dir.join("package.json"), &manifest_bytes)
         .into_diagnostic()
@@ -320,12 +325,17 @@ pub async fn run_in(
     Ok(None)
 }
 
-fn dlx_manifest(install_specs: &[String], allow_build: &[String]) -> serde_json::Value {
+fn dlx_manifest(
+    install_specs: &[String],
+    allow_build: &[String],
+    invocation_dir: &std::path::Path,
+) -> miette::Result<serde_json::Value> {
     // Minimal package.json. Version specs and dist-tags pass through as-is
     // — the resolver handles them exactly as it would from a real manifest.
     let mut deps = serde_json::Map::new();
     for spec in install_specs {
         let (mut name, value) = synthesize_dlx_dep(spec);
+        let value = anchor_local_spec(&value, invocation_dir)?;
         if deps.contains_key(&name) {
             let mut suffix = 2usize;
             while deps.contains_key(&format!("{name}-{suffix}")) {
@@ -358,7 +368,7 @@ fn dlx_manifest(install_specs: &[String], allow_build: &[String]) -> serde_json:
             serde_json::json!({ "allowBuilds": allow_builds }),
         );
     }
-    serde_json::Value::Object(manifest)
+    Ok(serde_json::Value::Object(manifest))
 }
 
 fn dlx_install_options(allow_build: &[String]) -> InstallOptions {
@@ -519,6 +529,32 @@ fn derive_dlx_pkg_name(spec: &str) -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+/// A relative `file:` / `link:` spec made absolute against `invocation_dir`.
+/// The scratch project dlx installs into lives under TMPDIR, so a path the
+/// user wrote relative to where they ran `aube dlx` would otherwise resolve
+/// against that scratch dir and never be found — `npx -p file:./tool`
+/// resolves it from the invoking directory too. Every other spec passes
+/// through unchanged.
+fn anchor_local_spec(value: &str, invocation_dir: &std::path::Path) -> miette::Result<String> {
+    for prefix in ["file:", "link:"] {
+        if let Some(path) = value.strip_prefix(prefix)
+            && std::path::Path::new(path).is_relative()
+        {
+            // `package.json` holds UTF-8 strings, so a path that isn't
+            // valid UTF-8 can't be written there without changing it.
+            let anchored = invocation_dir.join(path);
+            let anchored = anchored.to_str().ok_or_else(|| {
+                miette!(
+                    "cannot resolve `{value}` from {}: the path is not valid UTF-8",
+                    invocation_dir.display()
+                )
+            })?;
+            return Ok(format!("{prefix}{anchored}"));
+        }
+    }
+    Ok(value.to_string())
 }
 
 fn synthesize_dlx_dep(spec: &str) -> (String, String) {
@@ -706,7 +742,8 @@ mod tests {
     fn dlx_manifest_records_allow_build_approvals() {
         let install_specs = vec!["vite".to_string()];
         let allow_build = vec!["esbuild".to_string()];
-        let manifest = dlx_manifest(&install_specs, &allow_build);
+        let manifest =
+            dlx_manifest(&install_specs, &allow_build, std::path::Path::new(".")).unwrap();
         assert_eq!(manifest["dependencies"]["vite"], "latest");
         assert_eq!(manifest["pnpm"]["allowBuilds"]["esbuild"], true);
     }
@@ -714,7 +751,7 @@ mod tests {
     #[test]
     fn dlx_manifest_omits_policy_when_no_builds_are_approved() {
         let install_specs = vec!["vite".to_string()];
-        let manifest = dlx_manifest(&install_specs, &[]);
+        let manifest = dlx_manifest(&install_specs, &[], std::path::Path::new(".")).unwrap();
         assert!(manifest.get("pnpm").is_none());
     }
 
@@ -822,6 +859,62 @@ mod tests {
         let (name, _) = synthesize_dlx_dep(r"file:.\tools\printer");
         assert_eq!(name, "printer");
         assert_eq!(bin_name_for(r"file:C:\Users\me\tools\printer"), "printer");
+    }
+
+    #[test]
+    fn anchor_local_spec_rejects_an_invocation_dir_that_is_not_utf8() {
+        #[cfg(unix)]
+        let dir = {
+            use std::os::unix::ffi::OsStrExt;
+            std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/work/\xff"))
+        };
+        #[cfg(windows)]
+        let dir = {
+            use std::os::windows::ffi::OsStringExt;
+            let mut wide: Vec<u16> = r"C:\work\".encode_utf16().collect();
+            wide.push(0xD800);
+            std::path::PathBuf::from(std::ffi::OsString::from_wide(&wide))
+        };
+        assert!(anchor_local_spec("file:./tool", &dir).is_err());
+        assert_eq!(
+            anchor_local_spec("^1.2.3", &dir).unwrap(),
+            "^1.2.3",
+            "specs that need no anchoring still pass through"
+        );
+    }
+
+    #[test]
+    fn anchor_local_spec_resolves_relative_paths_from_the_invocation_dir() {
+        let dir = std::path::Path::new("/work/app");
+        assert_eq!(
+            anchor_local_spec("file:../tools/printer", dir).unwrap(),
+            format!("file:{}", dir.join("../tools/printer").display())
+        );
+        assert_eq!(
+            anchor_local_spec("link:./tool", dir).unwrap(),
+            format!("link:{}", dir.join("./tool").display())
+        );
+        let absolute = std::env::temp_dir().join("tool");
+        let absolute_spec = format!("file:{}", absolute.display());
+        assert_eq!(
+            anchor_local_spec(&absolute_spec, dir).unwrap(),
+            absolute_spec
+        );
+        assert_eq!(
+            anchor_local_spec("github:user/repo", dir).unwrap(),
+            "github:user/repo"
+        );
+        assert_eq!(anchor_local_spec("^1.2.3", dir).unwrap(), "^1.2.3");
+    }
+
+    #[test]
+    fn dlx_manifest_anchors_named_local_specs() {
+        let dir = std::path::Path::new("/work/app");
+        let manifest = dlx_manifest(&["printer@file:./printer".to_string()], &[], dir).unwrap();
+        assert_eq!(
+            manifest["dependencies"]["printer"],
+            format!("file:{}", dir.join("./printer").display())
+        );
     }
 
     #[test]
