@@ -134,6 +134,20 @@ Commands run through aube use the project's Node pin from `devEngines.runtime`,
 See [workspaces](https://aube.sh/package-manager/workspaces) and
 [Node runtime switching](https://aube.sh/package-manager/node-runtime).
 
+## Agent skill
+
+The [aube skill](skills/aube/SKILL.md) helps coding agents manage dependencies,
+run scripts, and diagnose installs while preserving the project's lockfile and
+build approvals. Release Packslips pin the skill to the release's source commit.
+With a release that includes the skill active in mise, link it into your project:
+
+```sh
+mise skills sync --dir .agents/skills
+```
+
+See [mise's skills documentation](https://mise.jdx.dev/dev-tools/packslip-resources.html#skills)
+for discovery and automatic synchronization.
+
 ## Find your next step
 
 - [CI and containers](https://aube.sh/package-manager/ci): frozen installs, production dependencies, and cache choices.

@@ -777,6 +777,15 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
+          persist-credentials: false
+      - name: Resolve the skill's release commit
+        id: source
+        run: |
+          test -f skills/aube/SKILL.md
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Download the release archives
         shell: bash
         env:
@@ -837,9 +846,11 @@ jobs:
       - uses: jdx/packslip@87479dfc6443253dff69601cace5fc6ea07e6df5 # v1.4.0
         with:
           tag: ${{ inputs.tag }}
+          commit: ${{ steps.source.outputs.commit }}
           artifacts: dist/aube-v*.tar.gz dist/aube-v*.zip
           bin: aube aubr aubx
           resources: |
+            skill/aube=repo:skills/aube
             cli-spec/usage/aube=asset:resources/aube.usage.kdl
             completion/bash/aube=asset:resources/aube.bash
             completion/zsh/aube=asset:resources/aube.zsh
