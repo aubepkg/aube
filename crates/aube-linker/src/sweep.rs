@@ -456,10 +456,14 @@ pub(crate) fn create_dir_link_idempotent(target: &Path, link_path: &Path) -> Res
 pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Result<bool, Error> {
     #[cfg(windows)]
     {
-        // NTFS junctions store normalized absolute targets, sometimes with a
-        // `\\?\` prefix, so compare canonical destinations rather than the
-        // relative target passed to `create_dir_link`.
-        let expected_abs = if expected_target.is_absolute() {
+        // NTFS junctions store the normalized absolute target
+        // `create_dir_link` computed, sometimes read back with a `\\?\`
+        // prefix. Compare that stored target, as the Unix branch does, and
+        // not the canonical destination: with the global virtual store,
+        // `node_modules/<name>` reached through the old and the new
+        // `virtualStoreDir` canonicalizes to the same shared entry, which
+        // kept links into a relocated virtual store from being rewritten.
+        let expected = if expected_target.is_absolute() {
             expected_target.to_path_buf()
         } else {
             link_path
@@ -467,11 +471,15 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
                 .unwrap_or_else(|| Path::new(""))
                 .join(expected_target)
         };
+        // `Linker` accepts relative roots, so `link_path` (and thus
+        // `expected`) can be relative while the junction stores an absolute
+        // target. `absolute` resolves against the cwd without touching the
+        // filesystem, the same base `create_dir_link` resolved against.
+        let expected_abs = std::path::absolute(&expected).unwrap_or(expected);
         // The link destination is mutable during reconciliation and shared
         // installs can repair it concurrently, so it must never be cached.
-        if let Ok(link_canon) = link_path.canonicalize()
-            && let Ok(exp_canon) = expected_abs.canonicalize()
-            && link_canon == exp_canon
+        if let Ok(existing) = std::fs::read_link(link_path)
+            && same_windows_path(&existing, &expected_abs)
         {
             return Ok(true);
         }
@@ -502,8 +510,125 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
     }
 }
 
+/// Whether two Windows paths name the same location, ignoring a `\\?\`
+/// prefix and `.`/`..` segments. Paths that differ only in case usually
+/// do, but not inside a directory made case-sensitive (`fsutil file
+/// setCaseSensitiveInfo`), so the filesystem settles those.
+#[cfg(windows)]
+fn same_windows_path(a: &Path, b: &Path) -> bool {
+    let plain = |p: &Path| {
+        let normalized = crate::sys::normalize_path(p);
+        let text = normalized.to_string_lossy();
+        text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
+    };
+    let (a_plain, b_plain) = (plain(a), plain(b));
+    a_plain == b_plain
+        || (a_plain.eq_ignore_ascii_case(&b_plain)
+            && matches!(
+                (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+                (Ok(a), Ok(b)) if a == b
+            ))
+}
+
 #[cfg(test)]
 mod tests {
+    /// `Store\pkg` and `store\pkg` under `root`, with `node_modules\pkg`
+    /// linked to the former.
+    #[cfg(windows)]
+    fn link_into_case_variant_stores(root: &std::path::Path) -> std::path::PathBuf {
+        for store in ["Store", "store"] {
+            std::fs::create_dir_all(root.join(store).join("pkg")).unwrap();
+        }
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        let link = root.join("node_modules").join("pkg");
+        crate::sys::create_dir_link(&root.join("Store").join("pkg"), &link).unwrap();
+        link
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_junction_whose_target_differs_only_in_case() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = link_into_case_variant_stores(tmp.path());
+        // `store` is the same directory as `Store` here.
+        let expected = tmp.path().join("store").join("pkg");
+        assert!(super::reconcile_dir_link(&link, &expected).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_rewrites_a_junction_into_a_case_variant_of_a_case_sensitive_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let enabled = std::process::Command::new("fsutil")
+            .args(["file", "setCaseSensitiveInfo"])
+            .arg(tmp.path())
+            .arg("enable")
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if !enabled {
+            eprintln!("skipping: this system can't make a directory case-sensitive");
+            return;
+        }
+        let link = link_into_case_variant_stores(tmp.path());
+        let expected = tmp.path().join("store").join("pkg");
+        assert!(!super::reconcile_dir_link(&link, &expected).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_rewrites_a_junction_into_another_store_with_the_same_destination() {
+        use super::reconcile_dir_link;
+        // `old/pkg` and `new/pkg` are both junctions into `shared`, like a
+        // global-virtual-store entry reached through two `virtualStoreDir`s.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("shared")).unwrap();
+        for store in ["old", "new"] {
+            std::fs::create_dir(root.join(store)).unwrap();
+            crate::sys::create_dir_link(&root.join("shared"), &root.join(store).join("pkg"))
+                .unwrap();
+        }
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        let link = root.join("node_modules").join("pkg");
+        crate::sys::create_dir_link(std::path::Path::new(r"..\old\pkg"), &link).unwrap();
+
+        assert!(reconcile_dir_link(&link, std::path::Path::new(r"..\old\pkg")).unwrap());
+        assert!(!reconcile_dir_link(&link, std::path::Path::new(r"..\new\pkg")).unwrap());
+        assert!(
+            link.symlink_metadata().is_err(),
+            "stale link should be removed"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_current_junction_given_a_relative_link_path() {
+        use super::reconcile_dir_link;
+        // `Linker` accepts relative roots, so `link_path` can be relative
+        // while the junction stores an absolute target.
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempfile::tempdir_in(&cwd).unwrap();
+        let root = tmp.path().strip_prefix(&cwd).unwrap();
+        std::fs::create_dir(root.join("target")).unwrap();
+        let link = root.join("link");
+        crate::sys::create_dir_link(std::path::Path::new("target"), &link).unwrap();
+        assert!(link.is_relative());
+        assert!(reconcile_dir_link(&link, std::path::Path::new("target")).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_dangling_junction_that_stores_the_expected_target() {
+        use super::reconcile_dir_link;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("target")).unwrap();
+        let link = root.join("link");
+        crate::sys::create_dir_link(std::path::Path::new("target"), &link).unwrap();
+        std::fs::remove_dir(root.join("target")).unwrap();
+        assert!(reconcile_dir_link(&link, std::path::Path::new("target")).unwrap());
+    }
+
     use super::{dedupe_skips_member_link, importer_resolves_through_root, is_physical_importer};
     use aube_lockfile::{DepType, DirectDep};
     use std::collections::BTreeMap;
