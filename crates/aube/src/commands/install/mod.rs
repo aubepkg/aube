@@ -17,6 +17,7 @@ mod frozen;
 mod git_prepare;
 mod gvs;
 mod hidden_lockfile;
+mod index_remap;
 mod layout;
 mod lifecycle;
 mod link;
@@ -51,12 +52,10 @@ pub use control::{
 };
 pub use dep_selection::DepSelection;
 pub(super) use fetch::fetch_packages;
-use fetch::{
-    fetch_packages_with_root, import_local_source, remap_indices_to_contextualized,
-    strip_peer_context_suffix, version_from_dep_path,
-};
+use fetch::{fetch_packages_with_root, import_local_source, version_from_dep_path};
 pub use frozen::{FrozenMode, FrozenOverride, GlobalVirtualStoreFlags};
 pub(crate) use gvs::detect_existing_global_virtual_store;
+use index_remap::{remap_indices_to_contextualized, strip_peer_context_suffix};
 pub(crate) use lifecycle::{
     JailBuildPolicy, build_policy_from_manifest_sources, build_policy_from_sources,
     run_dep_lifecycle_scripts,
@@ -2002,8 +2001,8 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // linker can find each variant by the dep_path on its
             // `LockedPackage`. Multiple contextualized variants of the
             // same canonical package share a single set of files, so
-            // cloning the PackageIndex is cheap relative to re-extraction.
-            let mut indices = remap_indices_to_contextualized(&canonical_indices, &graph);
+            // only additional placements need to clone the PackageIndex.
+            let mut indices = remap_indices_to_contextualized(canonical_indices, &graph);
             apply_computed_integrities(&mut graph, &computed_integrities);
 
             // Write the lockfile in whatever format the project was already

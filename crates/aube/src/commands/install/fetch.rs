@@ -1,5 +1,8 @@
 use super::critical_path::is_likely_native_build;
 use super::git_prepare::{prepare_scratch_copy, run_git_dep_prepare};
+#[cfg(test)]
+use super::index_remap::remap_indices_to_contextualized;
+use super::index_remap::strip_peer_context_suffix;
 use super::lifecycle::run_import_on_blocking;
 use super::settings::{
     default_lockfile_network_concurrency, resolve_network_concurrency,
@@ -1107,59 +1110,6 @@ pub(super) fn version_from_dep_path(dep_path: &str, name: &str) -> String {
     tail.split('(').next().unwrap_or(tail).to_string()
 }
 
-/// Re-key a canonical-indexed indices map to match the peer-contextualized
-/// dep_paths in `graph`. Each contextualized entry points at the same
-/// underlying files as its canonical name@version. Cloned indexes share
-/// their file metadata, including across different peer contexts.
-pub(super) fn remap_indices_to_contextualized(
-    canonical_indices: &BTreeMap<String, aube_store::PackageIndex>,
-    graph: &aube_lockfile::LockfileGraph,
-) -> BTreeMap<String, aube_store::PackageIndex> {
-    let mut out = BTreeMap::new();
-    for (dep_path, pkg) in &graph.packages {
-        let canonical_key = pkg.spec_key();
-        // The peer-context pass appends a `(peer@ver)` suffix (or a
-        // parenthesized `(<short-hash>)` when it exceeds the cap) onto a
-        // package's canonical dep_path. Source-backed deps (git /
-        // remote tarball / file) are streamed from the resolver — and
-        // therefore keyed in `canonical_indices` — under their
-        // *source-coordinate* dep_path (`name@git+<short>`), not their
-        // semver `spec_key()`. So once such a dep picks up a peer
-        // suffix, neither the contextualized `dep_path` (carries the
-        // suffix) nor `spec_key()` (semver, not the git coordinate)
-        // matches the streamed key, and the index would be silently
-        // dropped — later tripping `ERR_AUBE_MISSING_PACKAGE_INDEX` in
-        // the linker's global-virtual-store pass. Stripping the suffix
-        // recovers the exact canonical coordinate the index was stored
-        // under (the peer-context pass builds the key as
-        // `{canonical_base}{suffix}`, so this is its precise inverse).
-        let canonical_dep_path = strip_peer_context_suffix(dep_path);
-        if let Some(idx) = canonical_indices
-            .get(dep_path)
-            .or_else(|| canonical_indices.get(canonical_dep_path))
-            .or_else(|| canonical_indices.get(&canonical_key))
-        {
-            out.insert(dep_path.clone(), idx.clone());
-        }
-    }
-    out
-}
-
-/// Strip the peer-context suffix from a `dep_path`, recovering the
-/// canonical dep_path the resolver streamed it under (and that
-/// `canonical_indices` is keyed by). The peer-context pass in
-/// `aube-resolver` appends either a parenthesized `(peer@ver)…` tail
-/// or, when the suffix body exceeds the length cap, a single
-/// parenthesized short hash `(<short-hash>)` (pnpm's
-/// `createPeerDepGraphHash`). Both forms begin at the first `(`, so
-/// cutting there is the exact inverse and recovers the canonical
-/// coordinate. A `dep_path` with no suffix is returned unchanged — a
-/// bare `_<hex>` tail belongs to a `git+`/`url+`/`file+` source
-/// coordinate and is never a peer marker, so it is preserved.
-pub(super) fn strip_peer_context_suffix(dep_path: &str) -> &str {
-    dep_path.split('(').next().unwrap_or(dep_path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::lockfile_tarball_url_matches_metadata;
@@ -1287,7 +1237,7 @@ mod tests {
             .packages
             .insert(contextualized.clone(), git_pkg(&contextualized));
 
-        let out = super::remap_indices_to_contextualized(&canonical_indices, &graph);
+        let out = super::remap_indices_to_contextualized(canonical_indices, &graph);
         assert!(
             out.contains_key(&contextualized),
             "git dep with peer suffix should recover its canonical index; got {:?}",
@@ -1311,7 +1261,7 @@ mod tests {
             .packages
             .insert(contextualized.clone(), git_pkg(&contextualized));
 
-        let out = super::remap_indices_to_contextualized(&canonical_indices, &graph);
+        let out = super::remap_indices_to_contextualized(canonical_indices, &graph);
         assert!(
             out.contains_key(&contextualized),
             "git dep with hashed peer suffix should recover its canonical index; got {:?}",
@@ -1333,7 +1283,7 @@ mod tests {
             .packages
             .insert(canonical.to_string(), git_pkg(canonical));
 
-        let out = super::remap_indices_to_contextualized(&canonical_indices, &graph);
+        let out = super::remap_indices_to_contextualized(canonical_indices, &graph);
         assert!(out.contains_key(canonical));
     }
 }

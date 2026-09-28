@@ -31,18 +31,22 @@ jobs:
         run: |
           mise exec -- cargo check --locked --workspace --all-targets
           mise exec -- cargo test --locked -p aube-store -p aube-linker --lib
+          mise exec -- cargo test --locked -p aube --lib remap
       - name: Build paired examples
         run: |
           git worktree add --detach /tmp/upm-base 8f375c93
-          mkdir -p /tmp/upm-base/crates/aube-store/examples
-          cp crates/aube-store/examples/index_fanout.rs /tmp/upm-base/crates/aube-store/examples/
+          mkdir -p /tmp/upm-base/crates/aube/examples
+          cp crates/aube/examples/index_remap.rs /tmp/upm-base/crates/aube/examples/
+          python3 .github/upm-prepare-base.py
           cd /tmp/upm-base/
           mise trust
-          mise exec -- cargo build --locked --release -p aube-store --example index_fanout
-          cp /tmp/upm-target/release/examples/index_fanout /tmp/index-base
+          mise exec -- cargo build --locked --release -p aube --bin aube --example index_remap
+          cp /tmp/upm-target/release/examples/index_remap /tmp/index-base
+          cp /tmp/upm-target/release/aube /tmp/aube-base
           cd "$GITHUB_WORKSPACE/"
-          mise exec -- cargo build --locked --release -p aube-store --example index_fanout
-          cp /tmp/upm-target/release/examples/index_fanout /tmp/index-candidate
+          mise exec -- cargo build --locked --release -p aube --bin aube --example index_remap
+          cp /tmp/upm-target/release/examples/index_remap /tmp/index-candidate
+          cp /tmp/upm-target/release/aube /tmp/aube-candidate
       - name: Alternate paired samples
         run: python3 .github/upm-index-probe.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
