@@ -47,6 +47,23 @@ pub fn merge_branch_lockfiles(
     merge_branch_lockfiles_as(project_dir, manifest, LockfileKind::Aube)
 }
 
+/// Choose one branch-lockfile format for a merge without an explicit selection.
+/// Existing Aube files keep their precedence; pnpm branch files are used when
+/// no Aube lockfile or branch files exist.
+pub fn branch_lockfile_kind_for_merge(project_dir: &Path) -> LockfileKind {
+    let aube = LockfileKind::Aube;
+    if project_dir.join(aube.filename()).exists()
+        || !discover_branch_lockfiles(project_dir, aube.filename()).is_empty()
+    {
+        return aube;
+    }
+    let pnpm = LockfileKind::Pnpm;
+    if !discover_branch_lockfiles(project_dir, pnpm.filename()).is_empty() {
+        return pnpm;
+    }
+    aube
+}
+
 /// Merge branch lockfiles for the selected YAML lockfile format.
 pub fn merge_branch_lockfiles_as(
     project_dir: &Path,
@@ -514,6 +531,28 @@ mod tests {
                 .unwrap()
                 .packages
                 .contains_key("selected@1.0.0")
+        );
+    }
+
+    #[test]
+    fn implicit_branch_merge_prefers_aube_and_ignores_inactive_pnpm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("aube-lock.feature.yaml"), "").unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.feature.yaml"), "invalid: [\n").unwrap();
+        assert_eq!(
+            branch_lockfile_kind_for_merge(dir.path()),
+            LockfileKind::Aube
+        );
+        std::fs::remove_file(dir.path().join("aube-lock.feature.yaml")).unwrap();
+        std::fs::write(dir.path().join("aube-lock.yaml"), "").unwrap();
+        assert_eq!(
+            branch_lockfile_kind_for_merge(dir.path()),
+            LockfileKind::Aube
+        );
+        std::fs::remove_file(dir.path().join("aube-lock.yaml")).unwrap();
+        assert_eq!(
+            branch_lockfile_kind_for_merge(dir.path()),
+            LockfileKind::Pnpm
         );
     }
 
