@@ -1,5 +1,5 @@
 // Fetch the platform-matching @endevco/aube-<os>-<arch> sub-package at
-// install time and hardlink (or copy) its three binaries into ./bin so
+// install time and hardlink (or copy) its executable under three names into ./bin so
 // npm's `bin` wrapper resolves directly to the native executable. The root
 // package's bin targets are stable `./bin/<name>` paths so npm/npx can create
 // shims without reading a rewritten package.json. On Windows, npm's generated
@@ -107,8 +107,10 @@ function linkSubpkgBins(subpkgName, platform) {
 
     var subpkgBin = subpkg.bin || {};
     ALLOWED_BINS.forEach(function(name) {
-        var srcRel = subpkgBin[name];
-        if (typeof srcRel !== 'string') return;
+        var srcRel = subpkgBin.aube;
+        if (typeof srcRel !== 'string') {
+            throw new Error('platform package has no aube executable');
+        }
 
         var src = path.resolve(subpkgDir, srcRel);
         // String-only containment first: rejects `../` traversal before
@@ -161,4 +163,4 @@ function linkSubpkgBins(subpkgName, platform) {
 
 if (require.main === module) main();
 
-module.exports = { childNpmEnv: childNpmEnv };
+module.exports = { childNpmEnv: childNpmEnv, linkSubpkgBins: linkSubpkgBins };
