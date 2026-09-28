@@ -98,6 +98,7 @@ Use `aube config find <words>` to search from your terminal, or `aube config exp
 | [`strictSsl`](#setting-strictssl) | `bool` | Validate SSL certificates for HTTPS requests. |
 | [`lockfile`](#setting-lockfile) | `bool` | Read and generate `aube-lock.yaml`. |
 | [`defaultLockfileFormat`](#setting-defaultlockfileformat) | `"aube" \| "pnpm"` | Lockfile format to create when a project has no supported lockfile. |
+| [`defaultLockfile`](#setting-defaultlockfile) | `string` | Lockfile to read and write when a project has multiple supported lockfiles. |
 | [`lockfileDir`](#setting-lockfiledir) | `path` | Directory the lockfile is written to and read from. |
 | [`preferFrozenLockfile`](#setting-preferfrozenlockfile) | `bool` | Perform a headless install if the lockfile already satisfies `package.json`. |
 | [`lockfileIncludeTarballUrl`](#setting-lockfileincludetarballurl) | `bool` | Add the full tarball URL to each lockfile entry. |
@@ -1616,6 +1617,32 @@ second lockfile alongside an existing `aube-lock.yaml`, `package-lock.json`,
 Examples:
 
 - `echo 'default-lockfile-format=pnpm' >> .npmrc && aube install`
+
+### `defaultLockfile` {#setting-defaultlockfile}
+
+Lockfile to read and write when a project has multiple supported lockfiles.
+
+- Type: `string`
+- Default: `null`
+- Environment: `AUBE_DEFAULT_LOCKFILE`
+- .npmrc keys: `default-lockfile`, `defaultLockfile`
+- Workspace YAML keys: `defaultLockfile`
+
+Selects one supported lockfile by filename, regardless of the presence of
+other lockfiles. For example, `pnpm-lock.yaml` makes aube read and write
+that file even when `aube-lock.yaml` also exists. Accepted filenames are
+`aube-lock.yaml`, `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`,
+`npm-shrinkwrap.json`, and `package-lock.json`. Branch lockfiles use the
+selected format's branch-specific filename when enabled.
+
+If the selected file is missing, a normal install creates it from
+`package.json`; a frozen install fails. When unset, existing lockfile
+precedence and `defaultLockfileFormat` keep their current behavior.
+`lockfileDir` separately selects the directory containing the file.
+
+Examples:
+
+- `echo 'default-lockfile=pnpm-lock.yaml' >> .npmrc && aube install`
 
 ### `lockfileDir` {#setting-lockfiledir}
 

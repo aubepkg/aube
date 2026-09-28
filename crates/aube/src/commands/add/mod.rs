@@ -95,7 +95,7 @@ pub(crate) async fn add_to_project_with_overrides(
     let original_manifest = std::fs::read(&manifest_path)
         .into_diagnostic()
         .wrap_err("failed to snapshot package.json before embedded add")?;
-    let lockfile_path = no_save::lockfile_path_for_project(lock.project_dir());
+    let lockfile_path = no_save::lockfile_path_for_project(lock.project_dir())?;
     let original_lockfile = no_save::snapshot_lockfile(&lockfile_path)?;
     let mutation_control = options.control.clone();
     let mutation_result = install::control::scope(options.control.clone(), async {
@@ -522,7 +522,7 @@ pub async fn run(
     // When no lockfile exists yet the resolver uses the configured
     // creation default, so we target that path and the restore step
     // deletes it (since `lockfile_bytes` is `None`).
-    let lockfile_path = no_save::lockfile_path_for_project(&cwd);
+    let lockfile_path = no_save::lockfile_path_for_project(&cwd)?;
     let no_save_snapshot = if no_save {
         Some(no_save::snapshot_manifest_and_lockfile(
             &manifest_path,

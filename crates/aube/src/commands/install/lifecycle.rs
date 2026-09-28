@@ -940,6 +940,8 @@ impl BufferedBodyBytes {
     /// that would exceed the budget.
     fn try_add(&mut self, len: u64) -> bool {
         use std::sync::atomic::Ordering;
+        // `try_update` replaces this on newer Rust, but is above our MSRV.
+        #[allow(deprecated)]
         let reserved = BUFFERED_BODY_BYTES
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
                 held.checked_add(len)

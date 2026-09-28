@@ -176,6 +176,62 @@ teardown() {
 	assert_file_not_exists pnpm-lock.yaml
 }
 
+@test "defaultLockfile selects one of two lockfiles for frozen reads and writes" {
+	cat >package.json <<-'EOF'
+		{"name":"test-selected-lockfile","version":"1.0.0","dependencies":{"is-odd":"3.0.1"}}
+	EOF
+	cat >>.npmrc <<-'EOF'
+
+		default-lockfile=pnpm-lock.yaml
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	cp pnpm-lock.yaml aube-lock.yaml
+	printf '\ninvalid: [\n' >>aube-lock.yaml
+	cp aube-lock.yaml untouched-aube-lock.yaml
+
+	run aube install --frozen-lockfile
+	assert_success
+	run aube add is-number@7.0.0
+	assert_success
+	assert_file_exists pnpm-lock.yaml
+	run cmp aube-lock.yaml untouched-aube-lock.yaml
+	assert_success
+	run grep 'is-number' pnpm-lock.yaml
+	assert_success
+}
+
+@test "defaultLockfile does not fall back to a different existing lockfile" {
+	cat >package.json <<-'EOF'
+		{"name":"test-missing-selected-lockfile","version":"1.0.0","dependencies":{"is-odd":"3.0.1"}}
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_file_exists aube-lock.yaml
+	cat >>.npmrc <<-'EOF'
+
+		default-lockfile=pnpm-lock.yaml
+	EOF
+	run aube install --frozen-lockfile
+	assert_failure
+	run aube install --no-frozen-lockfile
+	assert_success
+	assert_file_exists pnpm-lock.yaml
+}
+
+@test "defaultLockfile rejects an unsupported filename" {
+	cat >package.json <<-'EOF'
+		{"name":"test-invalid-selected-lockfile","version":"1.0.0"}
+	EOF
+	cat >>.npmrc <<-'EOF'
+
+		default-lockfile=other.lock
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_failure
+	assert_output --partial 'ERR_AUBE_INVALID_DEFAULT_LOCKFILE'
+}
+
 # `lockfileIncludeTarballUrl=true` records each registry package's full
 # tarball URL in the lockfile's `resolution.tarball:` field.
 

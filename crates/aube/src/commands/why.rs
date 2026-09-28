@@ -80,7 +80,7 @@ pub async fn run(
     // a default manifest so the lockfile parser sees the same shape.
     let manifest = super::load_manifest_or_default(&cwd)?;
 
-    let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(
@@ -129,7 +129,7 @@ fn run_filtered(
 
     let manifest = super::load_manifest_or_default(&workspace_root)?;
 
-    let graph = match aube_lockfile::parse_lockfile(&workspace_root, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&workspace_root, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(

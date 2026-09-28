@@ -15,6 +15,7 @@ use crate::CodeMeta;
 pub const ERR_AUBE_NO_LOCKFILE: &str = "ERR_AUBE_NO_LOCKFILE";
 pub const ERR_AUBE_LOCKFILE_PARSE: &str = "ERR_AUBE_LOCKFILE_PARSE";
 pub const ERR_AUBE_LOCKFILE_UNSUPPORTED_FORMAT: &str = "ERR_AUBE_LOCKFILE_UNSUPPORTED_FORMAT";
+pub const ERR_AUBE_INVALID_DEFAULT_LOCKFILE: &str = "ERR_AUBE_INVALID_DEFAULT_LOCKFILE";
 pub const ERR_AUBE_RESOLUTION_SHAPE_MISMATCH: &str = "ERR_AUBE_RESOLUTION_SHAPE_MISMATCH";
 pub const ERR_AUBE_LOCKFILE_CONFIG_MISMATCH: &str = "ERR_AUBE_LOCKFILE_CONFIG_MISMATCH";
 pub const ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY: &str = "ERR_AUBE_UNSUPPORTED_NAMED_REGISTRY";
@@ -175,6 +176,12 @@ pub const ALL: &[CodeMeta] = &[
         category: category::LOCKFILE,
         description: "Lockfile filename was recognized but its format isn't supported on this aube version.",
         exit_code: Some(12),
+    },
+    CodeMeta {
+        name: ERR_AUBE_INVALID_DEFAULT_LOCKFILE,
+        category: category::LOCKFILE,
+        description: "The defaultLockfile setting does not name a supported lockfile filename.",
+        exit_code: None,
     },
     CodeMeta {
         name: ERR_AUBE_RESOLUTION_SHAPE_MISMATCH,

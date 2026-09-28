@@ -48,6 +48,19 @@ This also preserves the pnpm filename after `aube clean --lockfile` followed
 by `aube install`. The setting does not convert an existing lockfile; the
 existing supported file still wins.
 
+When a project keeps more than one supported lockfile, choose the file aube
+reads and writes explicitly:
+
+```ini
+default-lockfile=pnpm-lock.yaml
+```
+
+The value must be one of the supported filenames in the table above. For
+example, with both `aube-lock.yaml` and `pnpm-lock.yaml` present, this setting
+uses `pnpm-lock.yaml` and leaves `aube-lock.yaml` alone. If the selected file
+is missing, a normal install creates it from `package.json`; a frozen install
+fails. Without this setting, the precedence above still applies.
+
 Keep one canonical lockfile while both tools are in use. Review lockfile
 diffs as you would with the original package manager; preserving the format
 does not prevent merge conflicts or guarantee identical version selection.
@@ -57,6 +70,8 @@ does not prevent merge conflicts or guarantee identical version selection.
 `aube import` reads an existing supported lockfile and writes `aube-lock.yaml`.
 Use it only when you want to change formats. The new file takes precedence;
 retire the previous lockfile once all workflows use the new one.
+If `defaultLockfile` selects another file, unset it or change it to
+`aube-lock.yaml` when switching to the imported file.
 
 ## Frozen installs
 

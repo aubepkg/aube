@@ -615,13 +615,15 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
     // doesn't bypass the format-preserving write logic. Skipped when
     // `lockfile=false` — no lockfile is read and no format is
     // preserved, so the install always writes nothing (see below).
+    let selected_lockfile = super::selected_lockfile_kind_with_ctx(&settings_ctx)?;
     let source_kind_before = if lockfile_enabled {
-        aube_lockfile::detect_existing_lockfile_kind(&lockfile_dir)
+        aube_lockfile::detect_existing_lockfile_kind_selecting(&lockfile_dir, selected_lockfile)
     } else {
         None
     };
-    let write_kind =
-        source_kind_before.unwrap_or_else(|| super::default_lockfile_kind(&settings_ctx));
+    let write_kind = source_kind_before
+        .or(selected_lockfile)
+        .unwrap_or_else(|| super::default_lockfile_kind(&settings_ctx));
 
     // Hand any parseable lockfile to the resolver as `existing` so
     // unchanged specs reuse their already-pinned versions and only
@@ -661,11 +663,15 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         &lockfile_importer_key,
         &manifest,
         lockfile_parse_options,
+        selected_lockfile,
     )?;
     let lockfile_conflict_marker_warning_emitted = lockfile_pre_parse.is_none()
         && lockfile_enabled
         && matches!(mode, FrozenMode::Fix | FrozenMode::Prefer)
-        && aube_lockfile::active_lockfile_has_conflict_markers(&lockfile_dir);
+        && aube_lockfile::active_lockfile_has_conflict_markers_selecting(
+            &lockfile_dir,
+            selected_lockfile,
+        );
     let existing_for_resolver: Option<&aube_lockfile::LockfileGraph> =
         lockfile_pre_parse.as_ref().map(|(g, _)| g);
 
@@ -690,6 +696,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 lockfile_importer_key: &lockfile_importer_key,
                 manifest: &manifest,
                 parse_options: lockfile_parse_options,
+                selected: selected_lockfile,
                 manifests: &manifests,
                 ws_config: &ws_config_shared,
                 workspace_catalogs: &workspace_catalogs,
@@ -884,6 +891,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         lockfile_importer_key: &lockfile_importer_key,
         manifest: &manifest,
         parse_options: lockfile_parse_options,
+        selected: selected_lockfile,
         manifests: &manifests,
         ws_config: &ws_config_shared,
         workspace_catalogs: &workspace_catalogs,
@@ -1200,6 +1208,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                             &lockfile_importer_key,
                             &manifest,
                             lockfile_parse_options,
+                            selected_lockfile,
                         )
                         .ok()
                         .map(|(g, _)| g.packages.len())
@@ -1814,6 +1823,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 &lockfile_importer_key,
                 &manifest,
                 lockfile_parse_options,
+                selected_lockfile,
             ) {
                 graph.overlay_metadata_from(&prior);
             }

@@ -78,7 +78,11 @@ pub(super) fn try_install_fast_path(
         && ((!opts.ignore_scripts && !aube_settings::resolved::ignore_scripts(&ctx))
             || !aube_settings::resolved::lockfile(&ctx)
             || aube_settings::resolved::lockfile_dir(&ctx).is_some()
-            || aube_lockfile::detect_existing_lockfile_kind(cwd).is_none()
+            || aube_lockfile::detect_existing_lockfile_kind_selecting(
+                cwd,
+                crate::commands::selected_lockfile_kind_with_ctx(&ctx)?,
+            )
+            .is_none()
             || aube_workspace::is_workspace_project_root(cwd)
             || crate::patches::load_declared_patch_paths(cwd)
                 .map_or(true, |patches| !patches.is_empty()))
@@ -100,7 +104,7 @@ pub(super) fn try_install_fast_path(
         .map(|packages| packages.len())
         .or_else(|| {
             let manifest = super::super::load_manifest_or_default(cwd).ok()?;
-            aube_lockfile::parse_lockfile_with_kind(cwd, &manifest)
+            crate::commands::parse_lockfile_with_kind(cwd, &manifest)
                 .ok()
                 .map(|(graph, _)| graph.packages.len())
         })

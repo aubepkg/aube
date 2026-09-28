@@ -409,7 +409,7 @@ fn patch_paths_for_importer(
     let Ok(source_manifest) = PackageJson::from_path(&source_root.join("package.json")) else {
         return Ok(all());
     };
-    let Ok((graph, _)) = aube_lockfile::parse_lockfile_with_kind(source_root, &source_manifest)
+    let Ok((graph, _)) = crate::commands::parse_lockfile_with_kind(source_root, &source_manifest)
     else {
         return Ok(all());
     };
@@ -480,14 +480,14 @@ fn seed_target_lockfile(
         tracing::debug!("deploy: workspace root package.json unreadable, skipping lockfile subset");
         return Ok(false);
     };
-    let (graph, kind) = match aube_lockfile::parse_lockfile_with_kind(source_root, &source_manifest)
-    {
-        Ok(pair) => pair,
-        Err(e) => {
-            tracing::debug!("deploy: no usable source lockfile ({e}); fresh install instead");
-            return Ok(false);
-        }
-    };
+    let (graph, kind) =
+        match crate::commands::parse_lockfile_with_kind(source_root, &source_manifest) {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::debug!("deploy: no usable source lockfile ({e}); fresh install instead");
+                return Ok(false);
+            }
+        };
 
     // Workspace-relative importer path ("." for root, "packages/lib"
     // for a sibling) — same shape pnpm writes into `importers:`

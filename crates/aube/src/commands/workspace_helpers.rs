@@ -24,7 +24,7 @@ pub(crate) fn load_graph(
     manifest: &aube_manifest::PackageJson,
     missing_hint: &str,
 ) -> miette::Result<aube_lockfile::LockfileGraph> {
-    match aube_lockfile::parse_lockfile(project_dir, manifest) {
+    match crate::commands::parse_lockfile(project_dir, manifest) {
         Ok(g) => Ok(g),
         Err(aube_lockfile::Error::NotFound(_)) => Err(miette!("{missing_hint}")),
         Err(e) => Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
@@ -126,7 +126,7 @@ pub(crate) fn write_and_log_lockfile(
     graph: &aube_lockfile::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<PathBuf> {
-    let kind = super::lockfile_kind_for_write(cwd);
+    let kind = super::lockfile_kind_for_write(cwd)?;
     let written_path = aube_lockfile::write_lockfile_as(cwd, graph, manifest, kind)
         .into_diagnostic()
         .wrap_err("failed to write lockfile")?;

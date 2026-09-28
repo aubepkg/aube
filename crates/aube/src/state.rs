@@ -421,6 +421,9 @@ fn check_needs_install_compute(
     let mut lockfile_missing = false;
     let mut refreshed_lockfile_meta = false;
     if let Some(path) = lockfile_path {
+        if state.lockfile_snapshot_name.as_deref() != Some(lockfile_name.as_str()) {
+            return Some(format!("active lockfile changed to {lockfile_name}"));
+        }
         // This branch also absorbs a `sharedWorkspaceLockfile` flip from
         // false to true. The previous false-layout install left a
         // non-empty `member_lockfile_hashes` and an empty `lockfile_hash`
@@ -638,9 +641,12 @@ fn collect_member_lockfile_state(
     let Ok(members) = aube_workspace::find_workspace_packages(project_dir) else {
         return (hashes, metas);
     };
+    let root_selected = crate::commands::selected_lockfile_kind(project_dir)
+        .ok()
+        .flatten();
     for member_dir in members {
         let key = relative_path_or_original(&member_dir, project_dir);
-        match active_lockfile(&member_dir).1 {
+        match active_lockfile_with_fallback(&member_dir, root_selected).1 {
             Some(path) => {
                 hashes.insert(key.clone(), hash_file(&path));
                 if let Some(meta) = FileMeta::capture(&path) {
@@ -668,6 +674,9 @@ fn member_lockfiles_stale(
     verify_contents: bool,
 ) -> Option<String> {
     let members = aube_workspace::find_workspace_packages(project_dir).unwrap_or_default();
+    let root_selected = crate::commands::selected_lockfile_kind(project_dir)
+        .ok()
+        .flatten();
     let mut seen = std::collections::BTreeSet::new();
     for member_dir in &members {
         let key = relative_path_or_original(member_dir, project_dir);
@@ -675,7 +684,7 @@ fn member_lockfiles_stale(
             return Some(format!("{key} is a new workspace member"));
         };
         seen.insert(key.clone());
-        let Some(path) = active_lockfile(member_dir).1 else {
+        let Some(path) = active_lockfile_with_fallback(member_dir, root_selected).1 else {
             // An empty stored hash means "member had no lockfile last
             // install" — still none now is consistent. A non-empty hash
             // means the member's lockfile vanished, which is drift.
@@ -1187,66 +1196,22 @@ pub fn remove_state(project_dir: &Path) -> Result<(), std::io::Error> {
     }
 }
 
-/// Pick the lockfile path that an install in `project_dir` will actually
-/// read or write through, mirroring `aube_lockfile::lockfile_candidates`.
-///
-/// Order:
-///   1. `aube-lock.<branch>.yaml` (only if `gitBranchLockfile` is on
-///      and we resolve a branch — the preferred value).
-///   2. `aube-lock.yaml` — the default base file. Critical for the
-///      freshly-enabled-branch case: the branch file hasn't been
-///      written yet, but the base file exists, and without this step
-///      `check_needs_install` would fall through to pnpm lockfiles
-///      (or to `None` on aube-lock projects) and loop on
-///      every `aube run` / `aube exec`.
-///   3. `pnpm-lock.<branch>.yaml` / `pnpm-lock.yaml`.
-///
-/// Returns the display name (for messages) plus the resolved path, if
-/// any exists.
+/// Use the same lockfile candidate order as parsing, including an explicit
+/// `defaultLockfile` choice and branch-file fallback within its format.
+/// Returns the display name plus the resolved path, if one exists.
 fn active_lockfile(project_dir: &Path) -> (String, Option<PathBuf>) {
-    let basename = aube_util::embedder().lockfile_basename;
-    let stem = basename.rsplit_once('.').map_or(basename, |(s, _)| s);
-    let preferred = aube_lockfile::aube_lock_filename(project_dir);
-    let preferred_path = project_dir.join(&preferred);
-    if preferred_path.exists() {
-        return (preferred, Some(preferred_path));
-    }
-    // Freshly-enabled `gitBranchLockfile`: base file exists, branch
-    // file does not. Pick up the base so we don't loop on every run.
-    if preferred != basename {
-        let base = project_dir.join(basename);
-        if base.exists() {
-            return (basename.to_string(), Some(base));
-        }
-    }
-    // Preserve pnpm-lock.yaml (and its branch variant) as an active
-    // lockfile when the project already uses it.
-    let pnpm_preferred = preferred.replacen(&format!("{stem}."), "pnpm-lock.", 1);
-    if pnpm_preferred != preferred {
-        let pnpm_branch = project_dir.join(&pnpm_preferred);
-        if pnpm_branch.exists() {
-            return (pnpm_preferred, Some(pnpm_branch));
-        }
-    }
-    let pnpm_base = project_dir.join("pnpm-lock.yaml");
-    if pnpm_base.exists() {
-        return ("pnpm-lock.yaml".to_string(), Some(pnpm_base));
-    }
-    // Also track npm/yarn/bun lockfiles written by the format-preserving
-    // install path, so `check_needs_install` doesn't loop on "no lockfile
-    // found" for projects that use these formats.
-    for name in [
-        "bun.lock",
-        "yarn.lock",
-        "npm-shrinkwrap.json",
-        "package-lock.json",
-    ] {
-        let path = project_dir.join(name);
-        if path.exists() {
-            return (name.to_string(), Some(path));
-        }
-    }
-    (preferred, None)
+    active_lockfile_with_fallback(project_dir, None)
+}
+
+fn active_lockfile_with_fallback(
+    project_dir: &Path,
+    fallback: Option<aube_lockfile::LockfileKind>,
+) -> (String, Option<PathBuf>) {
+    let selected = crate::commands::selected_lockfile_kind(project_dir)
+        .ok()
+        .flatten()
+        .or(fallback);
+    aube_lockfile::active_lockfile_path_selecting(project_dir, selected)
 }
 
 fn read_state(state_path: &Path) -> Option<InstallState> {
@@ -1628,6 +1593,11 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
     hasher.update(b"\0");
     let lockfile_enabled = aube_settings::resolved::lockfile(&ctx);
     hasher.update(format!("lockfile={lockfile_enabled}\0").as_bytes());
+    hasher.update(b"default_lockfile=");
+    if let Some(filename) = aube_settings::resolved::default_lockfile(&ctx) {
+        hasher.update(filename.as_bytes());
+    }
+    hasher.update(b"\0");
     // Catalog pruning runs after resolution, so a false→true environment
     // change must invalidate the warm path even though it does not alter the
     // installed dependency tree itself.

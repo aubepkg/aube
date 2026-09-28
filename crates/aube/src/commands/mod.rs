@@ -148,14 +148,15 @@ pub(crate) use settings_context::{
     lockfile_kind_for_write, lockfile_kind_for_write_with_ctx, make_client, metadata_cache_anchor,
     open_store, open_store_for_maintenance, open_store_with_ctx, packument_cache_dir,
     packument_cache_dir_for_cwd, packument_full_cache_dir, packument_full_cache_dir_for_cwd,
+    parse_lockfile, parse_lockfile_with_kind, parse_lockfile_with_kind_and_options,
     project_modules_dir, resolve_fetch_policy, resolve_modules_dir_name_for_cwd,
     resolve_virtual_store_dir, resolve_virtual_store_dir_for_cwd,
     resolve_virtual_store_dir_max_length, resolve_virtual_store_dir_max_length_for_cwd,
     resolved_cache_dir, resolved_cache_dir_with_ctx, resolved_store_dir,
     resolved_store_dir_with_ctx, run_pnpmfile_pre_resolution, scope_embedder_install_overrides,
-    set_fetch_cli_overrides, set_global_frozen_override, set_global_output_flags,
-    set_global_virtual_store_flags, set_registry_override,
-    set_skip_auto_install_on_package_manager_mismatch,
+    selected_lockfile_kind, selected_lockfile_kind_with_ctx, set_fetch_cli_overrides,
+    set_global_frozen_override, set_global_output_flags, set_global_virtual_store_flags,
+    set_registry_override, set_skip_auto_install_on_package_manager_mismatch,
     skip_auto_install_on_package_manager_mismatch, with_settings_ctx, with_settings_ctx_and_cli,
 };
 pub(crate) use workspace_helpers::{

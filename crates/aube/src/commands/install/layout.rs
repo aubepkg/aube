@@ -104,7 +104,11 @@ pub(super) fn resolve_lockfile_location(
         None => (cwd.to_path_buf(), ".".to_string()),
     };
 
-    guard_lockfile_location(manifest, &location)?;
+    guard_lockfile_location(
+        manifest,
+        &location,
+        crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?,
+    )?;
     Ok(location)
 }
 
@@ -113,11 +117,12 @@ pub(super) fn resolve_lockfile_location(
 fn guard_lockfile_location(
     manifest: &aube_manifest::PackageJson,
     (lockfile_dir, lockfile_importer_key): &(std::path::PathBuf, String),
+    selected: Option<aube_lockfile::LockfileKind>,
 ) -> miette::Result<()> {
     if lockfile_importer_key == "." {
         return Ok(());
     }
-    match aube_lockfile::parse_lockfile(lockfile_dir, manifest) {
+    match aube_lockfile::parse_lockfile_selecting(lockfile_dir, manifest, selected) {
         Ok(graph) => {
             guard_against_foreign_importers(lockfile_dir, lockfile_importer_key, &graph)
                 .map_err(miette::Report::new)?;

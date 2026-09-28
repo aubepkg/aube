@@ -277,12 +277,27 @@ fn project_section(anchor: &Path, report: &mut Report) -> Section {
         }
     }
 
-    let lockfile = aube_lockfile::detect_existing_lockfile_kind(anchor);
+    let selected = match crate::commands::selected_lockfile_kind(anchor) {
+        Ok(selected) => selected,
+        Err(err) => {
+            report.errors.push(err.to_string());
+            None
+        }
+    };
+    let lockfile = aube_lockfile::detect_existing_lockfile_kind_selecting(anchor, selected);
+    let default_kind = selected.unwrap_or_else(|| {
+        crate::commands::with_settings_ctx(anchor, crate::commands::default_lockfile_kind)
+    });
     s.push(
         "lockfile",
         lockfile
             .map(|k| k.filename().to_string())
-            .unwrap_or_else(|| "(none — first install will create aube-lock.yaml)".to_string()),
+            .unwrap_or_else(|| {
+                format!(
+                    "(none — first install will create {})",
+                    default_kind.filename()
+                )
+            }),
     );
 
     s

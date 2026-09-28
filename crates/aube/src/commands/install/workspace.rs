@@ -257,12 +257,23 @@ pub(super) fn merge_member_lockfile_graphs(
     graph: &mut aube_lockfile::LockfileGraph,
     manifests: &[(String, aube_manifest::PackageJson)],
 ) {
+    let root_selected = crate::commands::selected_lockfile_kind(workspace_root)
+        .ok()
+        .flatten();
     for (importer_path, manifest) in manifests {
         if importer_path == "." || graph.importers.contains_key(importer_path) {
             continue;
         }
         let member_dir = importer_project_dir(workspace_root, importer_path);
-        let member_graph = match aube_lockfile::parse_lockfile(&member_dir, manifest) {
+        let selected = crate::commands::selected_lockfile_kind(&member_dir)
+            .ok()
+            .flatten()
+            .or(root_selected);
+        let member_graph = match aube_lockfile::parse_lockfile_selecting(
+            &member_dir,
+            manifest,
+            selected,
+        ) {
             Ok(member_graph) => member_graph,
             Err(e) => {
                 tracing::debug!(
@@ -406,6 +417,7 @@ pub(super) fn write_per_project_lockfiles(
     write_selection: Option<&std::collections::BTreeSet<String>>,
 ) -> miette::Result<()> {
     use miette::IntoDiagnostic;
+    let root_selected = crate::commands::selected_lockfile_kind(workspace_root)?;
     for (importer_path, pkg_manifest) in workspace_manifests {
         // Filtered install: only (re)write the selected importers'
         // lockfiles. Without this an `aube install --filter <member>`
@@ -450,8 +462,14 @@ pub(super) fn write_per_project_lockfiles(
         // without one fall back to the workspace default. Without this,
         // a `pnpm-lock.yaml`-based member gets a redundant `aube-lock.yaml`
         // written alongside its (preserved) pnpm lockfile.
-        let write_kind =
-            aube_lockfile::detect_existing_lockfile_kind(&pkg_dir).unwrap_or(fallback_kind);
+        let selected = crate::commands::selected_lockfile_kind(&pkg_dir)?.or(root_selected);
+        let write_kind = match selected {
+            Some(kind) => {
+                aube_lockfile::detect_existing_lockfile_kind_selecting(&pkg_dir, Some(kind))
+                    .unwrap_or(kind)
+            }
+            None => aube_lockfile::detect_existing_lockfile_kind(&pkg_dir).unwrap_or(fallback_kind),
+        };
         let written = aube_lockfile::write_lockfile_as(&pkg_dir, &subset, pkg_manifest, write_kind)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to write per-project lockfile at {importer_path}"))?;

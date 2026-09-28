@@ -36,7 +36,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
     // Read the existing lockfile purely for the diff. We do NOT pass it to
     // the resolver — passing `None` is what makes this "dedupe" instead of
     // "install": the resolver won't reuse stale pinned versions.
-    let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
+    let existing = crate::commands::parse_lockfile(&cwd, &manifest).ok();
 
     // Discover workspace packages so we resolve every importer, not just
     // the root package.json. Without this, dedupe would produce a graph

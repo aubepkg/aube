@@ -170,7 +170,7 @@ async fn run_filtered(
 ) -> miette::Result<Option<i32>> {
     let (root, matched) = super::select_workspace_packages(cwd, filter, "outdated")?;
     let manifest = super::load_manifest(&root.join("package.json"))?;
-    let graph = match aube_lockfile::parse_lockfile(&root, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&root, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(
@@ -275,7 +275,7 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
         matched_install = true;
 
         let manifest = super::load_manifest(&info.install_dir.join("package.json"))?;
-        let graph = match aube_lockfile::parse_lockfile(&info.install_dir, &manifest) {
+        let graph = match crate::commands::parse_lockfile(&info.install_dir, &manifest) {
             Ok(g) => g,
             Err(aube_lockfile::Error::NotFound(_)) => {
                 skipped_lockfile = true;
@@ -343,7 +343,7 @@ async fn run_one(cwd: &Path, args: OutdatedArgs, importer: Option<String>) -> mi
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
     let ignored = super::update::ignored_update_dependencies(cwd, &manifest)?;
 
-    let graph = match aube_lockfile::parse_lockfile(cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(

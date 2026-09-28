@@ -387,16 +387,69 @@ pub(crate) fn default_lockfile_kind(
     }
 }
 
+pub(crate) fn selected_lockfile_kind_with_ctx(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> Result<Option<aube_lockfile::LockfileKind>, aube_lockfile::Error> {
+    aube_settings::resolved::default_lockfile(ctx)
+        .map(|name| {
+            aube_lockfile::LockfileKind::from_filename(&name)
+                .ok_or(aube_lockfile::Error::InvalidDefaultLockfile(name))
+        })
+        .transpose()
+}
+
+pub(crate) fn selected_lockfile_kind(
+    cwd: &std::path::Path,
+) -> Result<Option<aube_lockfile::LockfileKind>, aube_lockfile::Error> {
+    with_settings_ctx(cwd, selected_lockfile_kind_with_ctx)
+}
+
+pub(crate) fn parse_lockfile(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+) -> Result<aube_lockfile::LockfileGraph, aube_lockfile::Error> {
+    aube_lockfile::parse_lockfile_selecting(cwd, manifest, selected_lockfile_kind(cwd)?)
+}
+
+pub(crate) fn parse_lockfile_with_kind(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+) -> Result<(aube_lockfile::LockfileGraph, aube_lockfile::LockfileKind), aube_lockfile::Error> {
+    aube_lockfile::parse_lockfile_with_kind_selecting(cwd, manifest, selected_lockfile_kind(cwd)?)
+}
+
+pub(crate) fn parse_lockfile_with_kind_and_options(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+    options: aube_lockfile::ParseOptions,
+) -> Result<(aube_lockfile::LockfileGraph, aube_lockfile::LockfileKind), aube_lockfile::Error> {
+    aube_lockfile::parse_lockfile_with_kind_and_options_selecting(
+        cwd,
+        manifest,
+        options,
+        selected_lockfile_kind(cwd)?,
+    )
+}
+
 /// Pick the lockfile format a mutating command should write: preserve an
 /// existing supported file, otherwise honor `defaultLockfileFormat`.
 pub(crate) fn lockfile_kind_for_write_with_ctx(
     cwd: &std::path::Path,
     ctx: &aube_settings::ResolveCtx<'_>,
-) -> aube_lockfile::LockfileKind {
-    aube_lockfile::detect_existing_lockfile_kind(cwd).unwrap_or_else(|| default_lockfile_kind(ctx))
+) -> Result<aube_lockfile::LockfileKind, aube_lockfile::Error> {
+    let selected = selected_lockfile_kind_with_ctx(ctx)?;
+    Ok(match selected {
+        Some(kind) => {
+            aube_lockfile::detect_existing_lockfile_kind_selecting(cwd, Some(kind)).unwrap_or(kind)
+        }
+        None => aube_lockfile::detect_existing_lockfile_kind(cwd)
+            .unwrap_or_else(|| default_lockfile_kind(ctx)),
+    })
 }
 
-pub(crate) fn lockfile_kind_for_write(cwd: &std::path::Path) -> aube_lockfile::LockfileKind {
+pub(crate) fn lockfile_kind_for_write(
+    cwd: &std::path::Path,
+) -> Result<aube_lockfile::LockfileKind, aube_lockfile::Error> {
     with_settings_ctx(cwd, |ctx| lockfile_kind_for_write_with_ctx(cwd, ctx))
 }
 
@@ -497,7 +550,7 @@ pub(crate) fn build_resolver(
     // cross-platform widening rules — native package-manager lockfiles
     // that record per-package platform metadata keep optional natives for
     // every platform, while formats without that metadata stay host-only.
-    let target_lockfile_kind = Some(lockfile_kind_for_write_with_ctx(cwd, &ctx));
+    let target_lockfile_kind = Some(lockfile_kind_for_write_with_ctx(cwd, &ctx)?);
     let dependency_policy = install::resolve_dependency_policy(manifest, &ctx)?;
     Ok(install::configure_resolver(
         aube_resolver::Resolver::new(std::sync::Arc::new(make_client(cwd))),

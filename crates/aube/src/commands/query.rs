@@ -74,7 +74,7 @@ pub async fn run(
     // lockfile parser only uses the manifest to classify yarn.lock
     // direct deps, so a default manifest is fine for the read path.
     let manifest = super::load_manifest_or_default(&read_from)?;
-    let graph = match aube_lockfile::parse_lockfile(&read_from, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&read_from, &manifest) {
         Ok(graph) => graph,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(

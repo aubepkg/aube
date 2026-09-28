@@ -23,6 +23,7 @@ pub(super) fn pre_parse_lockfile(
     lockfile_importer_key: &str,
     manifest: &aube_manifest::PackageJson,
     parse_options: aube_lockfile::ParseOptions,
+    selected: Option<LockfileKind>,
 ) -> miette::Result<ParsedLockfile> {
     if !lockfile_enabled || !matches!(mode, FrozenMode::Fix | FrozenMode::Prefer) {
         return Ok(None);
@@ -32,10 +33,11 @@ pub(super) fn pre_parse_lockfile(
         lockfile_importer_key,
         manifest,
         parse_options,
+        selected,
     ) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(aube_lockfile::Error::NotFound(_)) => Ok(None),
-        Err(e) if active_lockfile_has_conflict_markers(lockfile_dir) => {
+        Err(e) if active_lockfile_has_conflict_markers(lockfile_dir, selected) => {
             warn_lockfile_conflict_markers(lockfile_dir, &e);
             Ok(None)
         }
@@ -109,6 +111,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         write_lockfile,
         prog_ref,
     } = input;
+    let selected = crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?;
 
     // `--no-frozen-lockfile` means "always re-resolve", so skip the
     // freshness check entirely in that mode. Otherwise (Prefer, Fix,
@@ -130,6 +133,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                 lockfile_importer_key,
                 manifest,
                 parse_options,
+                selected,
             );
             match &parsed_owned {
                 Ok((g, k)) => Ok((g, *k)),
@@ -139,7 +143,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     if let Err(e) = parsed
         && !matches!(e, aube_lockfile::Error::NotFound(_))
     {
-        if active_lockfile_has_conflict_markers(lockfile_dir) {
+        if active_lockfile_has_conflict_markers(lockfile_dir, selected) {
             if !lockfile_conflict_marker_warning_emitted {
                 warn_lockfile_conflict_markers(lockfile_dir, e);
             }
@@ -156,6 +160,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                 lockfile_importer_key,
                 manifest,
                 parse_options,
+                selected,
             ) {
                 Ok(_) => {
                     // Race: second parse succeeded while first failed.
@@ -395,6 +400,7 @@ pub(super) struct SelectLockfileInput<'a> {
     pub lockfile_importer_key: &'a str,
     pub manifest: &'a aube_manifest::PackageJson,
     pub parse_options: aube_lockfile::ParseOptions,
+    pub selected: Option<LockfileKind>,
     pub manifests: &'a [(String, aube_manifest::PackageJson)],
     pub ws_config: &'a aube_manifest::workspace::WorkspaceConfig,
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
@@ -413,6 +419,7 @@ pub(super) fn select_lockfile_result(
         lockfile_importer_key,
         manifest,
         parse_options,
+        selected,
         manifests,
         ws_config,
         workspace_catalogs,
@@ -438,6 +445,7 @@ pub(super) fn select_lockfile_result(
                 lockfile_importer_key,
                 manifest,
                 parse_options,
+                selected,
             );
             if let Ok((ref graph, kind)) = parsed {
                 if let DriftStatus::Stale { reason } =
@@ -543,8 +551,11 @@ pub(crate) fn check_patch_drift(
     )
 }
 
-fn active_lockfile_has_conflict_markers(lockfile_dir: &Path) -> bool {
-    aube_lockfile::active_lockfile_has_conflict_markers(lockfile_dir)
+fn active_lockfile_has_conflict_markers(
+    lockfile_dir: &Path,
+    selected: Option<LockfileKind>,
+) -> bool {
+    aube_lockfile::active_lockfile_has_conflict_markers_selecting(lockfile_dir, selected)
 }
 
 fn warn_lockfile_conflict_markers(lockfile_dir: &Path, err: &aube_lockfile::Error) {

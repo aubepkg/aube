@@ -246,13 +246,13 @@ async fn run_inner(
     // — the indirect's snapshot lives in the shared lockfile, not in
     // each project's directory, and without the fallback the
     // indirect-arg validation below would reject it.
-    let existing = aube_lockfile::parse_lockfile(&cwd, &manifest)
+    let existing = crate::commands::parse_lockfile(&cwd, &manifest)
         .ok()
         .or_else(|| {
             super::find_workspace_root(&cwd)
                 .ok()
                 .filter(|ws| ws.as_path() != cwd.as_path())
-                .and_then(|ws| aube_lockfile::parse_lockfile(&ws, &manifest).ok())
+                .and_then(|ws| crate::commands::parse_lockfile(&ws, &manifest).ok())
         });
     // Importer keys to try when looking up a direct dep in `existing`.
     // Order matters: try the cwd's own importer first, then fall through
@@ -1637,11 +1637,11 @@ async fn run_filtered(
                 // lockfile (the one `aube install` writes) when there
                 // isn't one yet.
                 let project_lockfile_names: BTreeSet<String> =
-                    aube_lockfile::parse_lockfile(&pkg.dir, &project_manifest)
+                    crate::commands::parse_lockfile(&pkg.dir, &project_manifest)
                         .ok()
                         .or_else(|| {
                             super::find_workspace_root(&pkg.dir).ok().and_then(|ws| {
-                                aube_lockfile::parse_lockfile(&ws, &project_manifest).ok()
+                                crate::commands::parse_lockfile(&ws, &project_manifest).ok()
                             })
                         })
                         .map(|g| g.packages.values().map(|p| p.name.clone()).collect())
@@ -1803,7 +1803,7 @@ async fn merge_filtered_update_lockfile(
         return Ok(());
     }
 
-    let pkg_graph = aube_lockfile::parse_lockfile(pkg_dir, pkg_manifest)
+    let pkg_graph = crate::commands::parse_lockfile(pkg_dir, pkg_manifest)
         .map_err(miette::Report::new)
         .wrap_err_with(|| format!("failed to parse {}", pkg_lockfile.display()))?;
     merge_update_graph_into_workspace_lockfile(
@@ -2041,7 +2041,7 @@ fn read_workspace_lockfile(
     workspace_root: &std::path::Path,
     root_manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<aube_lockfile::LockfileGraph> {
-    match aube_lockfile::parse_lockfile(workspace_root, root_manifest) {
+    match crate::commands::parse_lockfile(workspace_root, root_manifest) {
         Ok(graph) => Ok(graph),
         Err(aube_lockfile::Error::NotFound(_)) => Ok(aube_lockfile::LockfileGraph::default()),
         Err(e) => Err(miette::Report::new(e)).wrap_err("failed to parse workspace lockfile"),

@@ -15,9 +15,14 @@ pub(super) fn parse_lockfile_dir_remapped_with_kind_and_options(
     importer_key: &str,
     manifest: &aube_manifest::PackageJson,
     options: aube_lockfile::ParseOptions,
+    selected: Option<aube_lockfile::LockfileKind>,
 ) -> Result<(aube_lockfile::LockfileGraph, aube_lockfile::LockfileKind), aube_lockfile::Error> {
-    let (mut graph, kind) =
-        aube_lockfile::parse_lockfile_with_kind_and_options(lockfile_dir, manifest, options)?;
+    let (mut graph, kind) = aube_lockfile::parse_lockfile_with_kind_and_options_selecting(
+        lockfile_dir,
+        manifest,
+        options,
+        selected,
+    )?;
     remap_lockfile_importer(&mut graph, importer_key);
     Ok((graph, kind))
 }

@@ -51,7 +51,7 @@ pub async fn run(args: DeprecationsArgs) -> miette::Result<Option<i32>> {
 
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
 
-    let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(

@@ -42,6 +42,19 @@ impl Default for ParseOptions {
 }
 
 impl LockfileKind {
+    /// Parse a supported canonical lockfile filename (not an arbitrary path).
+    pub fn from_filename(filename: &str) -> Option<Self> {
+        match filename {
+            name if name == aube_util::embedder().lockfile_basename => Some(Self::Aube),
+            "pnpm-lock.yaml" => Some(Self::Pnpm),
+            "package-lock.json" => Some(Self::Npm),
+            "npm-shrinkwrap.json" => Some(Self::NpmShrinkwrap),
+            "yarn.lock" => Some(Self::Yarn),
+            "bun.lock" => Some(Self::Bun),
+            _ => None,
+        }
+    }
+
     pub fn filename(self) -> &'static str {
         match self {
             LockfileKind::Aube => aube_util::embedder().lockfile_basename,
@@ -154,7 +167,15 @@ pub fn write_lockfile_as(
 /// supported lockfile gets that file written back, not a surprise
 /// `aube-lock.yaml` alongside it.
 pub fn detect_existing_lockfile_kind(project_dir: &Path) -> Option<LockfileKind> {
-    for (path, kind) in lockfile_candidates(project_dir, /*include_aube=*/ true) {
+    detect_existing_lockfile_kind_selecting(project_dir, None)
+}
+
+/// Detect only the configured lockfile when `selected` is present.
+pub fn detect_existing_lockfile_kind_selecting(
+    project_dir: &Path,
+    selected: Option<LockfileKind>,
+) -> Option<LockfileKind> {
+    for (path, kind) in lockfile_candidates_selecting(project_dir, true, selected) {
         if path.exists() {
             return Some(refine_yarn_kind(&path, kind));
         }
@@ -169,7 +190,14 @@ pub fn detect_existing_lockfile_kind(project_dir: &Path) -> Option<LockfileKind>
 /// repaired by regenerating from the already-resolved `package.json`,
 /// while other parse failures should stay loud.
 pub fn active_lockfile_has_conflict_markers(project_dir: &Path) -> bool {
-    for (path, _) in lockfile_candidates(project_dir, /*include_aube=*/ true) {
+    active_lockfile_has_conflict_markers_selecting(project_dir, None)
+}
+
+pub fn active_lockfile_has_conflict_markers_selecting(
+    project_dir: &Path,
+    selected: Option<LockfileKind>,
+) -> bool {
+    for (path, _) in lockfile_candidates_selecting(project_dir, true, selected) {
         if !path.exists() {
             continue;
         }
@@ -297,12 +325,33 @@ pub fn parse_lockfile(
     Ok(graph)
 }
 
+pub fn parse_lockfile_selecting(
+    project_dir: &Path,
+    manifest: &aube_manifest::PackageJson,
+    selected: Option<LockfileKind>,
+) -> Result<LockfileGraph, Error> {
+    parse_lockfile_with_kind_selecting(project_dir, manifest, selected).map(|(graph, _)| graph)
+}
+
 /// Like [`parse_lockfile`] but also returns which format was read.
 pub fn parse_lockfile_with_kind(
     project_dir: &Path,
     manifest: &aube_manifest::PackageJson,
 ) -> Result<(LockfileGraph, LockfileKind), Error> {
     parse_lockfile_with_kind_and_options(project_dir, manifest, ParseOptions::default())
+}
+
+pub fn parse_lockfile_with_kind_selecting(
+    project_dir: &Path,
+    manifest: &aube_manifest::PackageJson,
+    selected: Option<LockfileKind>,
+) -> Result<(LockfileGraph, LockfileKind), Error> {
+    parse_lockfile_with_kind_and_options_selecting(
+        project_dir,
+        manifest,
+        ParseOptions::default(),
+        selected,
+    )
 }
 
 /// Like [`parse_lockfile_with_kind`] but lets callers opt into parser
@@ -312,8 +361,19 @@ pub fn parse_lockfile_with_kind_and_options(
     manifest: &aube_manifest::PackageJson,
     options: ParseOptions,
 ) -> Result<(LockfileGraph, LockfileKind), Error> {
-    reject_bun_binary(project_dir)?;
-    for (path, kind) in lockfile_candidates(project_dir, /*include_aube=*/ true) {
+    parse_lockfile_with_kind_and_options_selecting(project_dir, manifest, options, None)
+}
+
+pub fn parse_lockfile_with_kind_and_options_selecting(
+    project_dir: &Path,
+    manifest: &aube_manifest::PackageJson,
+    options: ParseOptions,
+    selected: Option<LockfileKind>,
+) -> Result<(LockfileGraph, LockfileKind), Error> {
+    if selected.is_none() || selected == Some(LockfileKind::Bun) {
+        reject_bun_binary(project_dir)?;
+    }
+    for (path, kind) in lockfile_candidates_selecting(project_dir, true, selected) {
         if !path.exists() {
             continue;
         }
@@ -414,6 +474,46 @@ fn lockfile_candidates(project_dir: &Path, include_aube: bool) -> Vec<(PathBuf, 
         out.append(&mut aube_entries);
     }
     out
+}
+
+fn lockfile_candidates_selecting(
+    project_dir: &Path,
+    include_aube: bool,
+    selected: Option<LockfileKind>,
+) -> Vec<(PathBuf, LockfileKind)> {
+    let mut candidates = lockfile_candidates(project_dir, include_aube);
+    if let Some(selected) = selected {
+        candidates.retain(|(_, kind)| {
+            *kind == selected
+                || (*kind == LockfileKind::Yarn && selected == LockfileKind::YarnBerry)
+        });
+    }
+    candidates
+}
+
+/// Return the active filename and existing path, using the same selection
+/// order as parsing. An absent selected file never falls back to another kind.
+pub fn active_lockfile_path_selecting(
+    project_dir: &Path,
+    selected: Option<LockfileKind>,
+) -> (String, Option<PathBuf>) {
+    for (path, _) in lockfile_candidates_selecting(project_dir, true, selected) {
+        if path.exists() {
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            return (name, Some(path));
+        }
+    }
+    let kind = selected.unwrap_or(LockfileKind::Aube);
+    let name = match kind {
+        LockfileKind::Aube => aube_lock_filename(project_dir),
+        LockfileKind::Pnpm => pnpm_lock_filename(project_dir),
+        other => other.filename().to_string(),
+    };
+    (name, None)
 }
 
 fn parse_one(
@@ -566,13 +666,32 @@ fn dep_path_has_registry_version(dep_path: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{dep_path_has_registry_version, validate_dependency_aliases};
+    use super::{
+        LockfileKind, active_lockfile_path_selecting, dep_path_has_registry_version,
+        detect_existing_lockfile_kind_selecting, validate_dependency_aliases,
+    };
     use crate::{
         DepType, DirectDep, GitSource, LocalSource, LockedPackage, PeerDepMeta, RemoteTarballSource,
     };
     use proptest::prelude::*;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn explicit_selection_ignores_other_lockfiles_and_preserves_yarn_variant() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("aube-lock.yaml"), "invalid").unwrap();
+        std::fs::write(dir.path().join("yarn.lock"), "__metadata:\n  version: 8\n").unwrap();
+
+        assert_eq!(
+            detect_existing_lockfile_kind_selecting(dir.path(), Some(LockfileKind::Yarn)),
+            Some(LockfileKind::YarnBerry)
+        );
+        assert_eq!(
+            active_lockfile_path_selecting(dir.path(), Some(LockfileKind::Pnpm)),
+            ("pnpm-lock.yaml".to_string(), None)
+        );
+    }
 
     fn package_name() -> impl Strategy<Value = String> {
         prop_oneof![
@@ -768,6 +887,9 @@ fn refine_yarn_kind(path: &Path, kind: LockfileKind) -> LockfileKind {
 
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum Error {
+    #[error("invalid defaultLockfile `{0}`: choose a supported lockfile filename")]
+    #[diagnostic(code(ERR_AUBE_INVALID_DEFAULT_LOCKFILE))]
+    InvalidDefaultLockfile(String),
     #[error("no lockfile found in {0}")]
     #[diagnostic(code(ERR_AUBE_NO_LOCKFILE))]
     NotFound(std::path::PathBuf),

@@ -110,7 +110,7 @@ pub async fn run(
     // Build and validate resolver configuration before persisting the
     // manifest mutation. A malformed policy must leave package.json and
     // the installed graph in their original, consistent state.
-    let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
+    let existing = crate::commands::parse_lockfile(&cwd, &manifest).ok();
     let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
     let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs.clone())?;
 
@@ -172,8 +172,7 @@ pub async fn run(
     let workspace_config = aube_manifest::WorkspaceConfig::load(&cwd)
         .map_err(miette::Report::new)
         .wrap_err("failed to load workspace config")?;
-    let lockfile_kind = aube_lockfile::detect_existing_lockfile_kind(&cwd)
-        .unwrap_or(aube_lockfile::LockfileKind::Aube);
+    let lockfile_kind = super::lockfile_kind_for_write(&cwd)?;
     let patch_status = existing
         .as_ref()
         .map(|graph| install::check_patch_drift(&cwd, graph, lockfile_kind))

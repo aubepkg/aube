@@ -265,7 +265,7 @@ pub async fn run(
 
     // Lockfile may be absent in a brand-new project — treat that as "nothing
     // installed yet" rather than a hard error, and print an empty tree.
-    let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(

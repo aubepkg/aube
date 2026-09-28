@@ -772,7 +772,7 @@ pub(crate) fn lockfile_node_pin(
         return None;
     }
     let (graph, _) =
-        aube_lockfile::parse_lockfile_with_kind_and_options(project_dir, manifest, parse_options)
+        crate::commands::parse_lockfile_with_kind_and_options(project_dir, manifest, parse_options)
             .ok()?;
     graph.runtimes.get("node").cloned()
 }

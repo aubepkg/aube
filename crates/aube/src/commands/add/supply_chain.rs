@@ -69,7 +69,7 @@ fn locked_registry_names(
     lockfile_dir: &Path,
     manifest: &aube_manifest::PackageJson,
 ) -> BTreeSet<String> {
-    match aube_lockfile::parse_lockfile_with_kind(lockfile_dir, manifest) {
+    match crate::commands::parse_lockfile_with_kind(lockfile_dir, manifest) {
         Ok((graph, _)) => graph
             .packages
             .values()

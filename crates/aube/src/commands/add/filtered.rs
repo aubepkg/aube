@@ -49,7 +49,7 @@ pub(super) async fn run(
     .await?;
 
     let mut snapshots = Vec::new();
-    let lockfile_path = no_save::lockfile_path_for_project(&root);
+    let lockfile_path = no_save::lockfile_path_for_project(&root)?;
     let root_lockfile_snapshot = if args.no_save {
         no_save::snapshot_lockfile(&lockfile_path)?
     } else {

@@ -1563,6 +1563,29 @@ examples = [
   "echo 'default-lockfile-format=pnpm' >> .npmrc && aube install",
 ]
 
+[defaultLockfile]
+description = "Lockfile to read and write when a project has multiple supported lockfiles."
+type = "string"
+default = "null"
+docs = """
+Selects one supported lockfile by filename, regardless of the presence of
+other lockfiles. For example, `pnpm-lock.yaml` makes aube read and write
+that file even when `aube-lock.yaml` also exists. Accepted filenames are
+`aube-lock.yaml`, `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`,
+`npm-shrinkwrap.json`, and `package-lock.json`. Branch lockfiles use the
+selected format's branch-specific filename when enabled.
+
+If the selected file is missing, a normal install creates it from
+`package.json`; a frozen install fails. When unset, existing lockfile
+precedence and `defaultLockfileFormat` keep their current behavior.
+`lockfileDir` separately selects the directory containing the file.
+"""
+sources.cli = []
+sources.env = ["AUBE_DEFAULT_LOCKFILE"]
+sources.npmrc = ["default-lockfile", "defaultLockfile"]
+sources.workspaceYaml = ["defaultLockfile"]
+examples = ["echo 'default-lockfile=pnpm-lock.yaml' >> .npmrc && aube install"]
+
 [lockfileDir]
 description = "Directory the lockfile is written to and read from."
 type = "path"

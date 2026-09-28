@@ -42,7 +42,7 @@ pub async fn run(args: PruneArgs) -> miette::Result<()> {
 
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
 
-    let graph = aube_lockfile::parse_lockfile(&cwd, &manifest)
+    let graph = crate::commands::parse_lockfile(&cwd, &manifest)
         .map_err(miette::Report::new)
         .wrap_err(format!(
             "failed to read lockfile — run `{}` first",

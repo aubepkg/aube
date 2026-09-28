@@ -670,7 +670,7 @@ pub(crate) async fn finalize_lockfile_graph(
         .wrap_err("failed to load workspace config for lockfile finalization")?;
     let env = aube_settings::values::process_env();
     let ctx = files.ctx(&raw_workspace, env, &[]);
-    let write_kind = crate::commands::lockfile_kind_for_write_with_ctx(cwd, &ctx);
+    let write_kind = crate::commands::lockfile_kind_for_write_with_ctx(cwd, &ctx)?;
     let local_pnpmfile = if ignore_pnpmfile {
         None
     } else {

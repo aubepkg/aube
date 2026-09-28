@@ -49,7 +49,7 @@ pub async fn run(args: FetchArgs) -> miette::Result<()> {
         serde_json::from_str::<aube_manifest::PackageJson>("{}").into_diagnostic()?
     };
 
-    let (graph, kind) = match aube_lockfile::parse_lockfile_with_kind(&cwd, &manifest) {
+    let (graph, kind) = match crate::commands::parse_lockfile_with_kind(&cwd, &manifest) {
         Ok(pair) => pair,
         Err(aube_lockfile::Error::NotFound(_)) => {
             return Err(miette!(
