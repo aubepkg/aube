@@ -245,53 +245,60 @@ pub(super) fn merge_branch_lockfiles_if_needed(
         return Ok(());
     }
 
-    let kind = crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?
-        .unwrap_or(aube_lockfile::LockfileKind::Aube);
-    match aube_lockfile::merge::merge_branch_lockfiles_as(cwd, manifest, kind) {
-        Ok(report) => {
-            if !report.merged_files.is_empty() {
-                let filenames: Vec<String> = report
-                    .merged_files
-                    .iter()
-                    .filter_map(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
-                tracing::info!(
-                    "merged {} branch lockfile(s) into {}: {}",
-                    report.merged_files.len(),
-                    kind.filename(),
-                    filenames.join(", ")
+    let selected = crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?;
+    let kinds = selected.map_or_else(
+        || {
+            vec![
+                aube_lockfile::LockfileKind::Aube,
+                aube_lockfile::LockfileKind::Pnpm,
+            ]
+        },
+        |kind| vec![kind],
+    );
+    for kind in kinds {
+        let report = aube_lockfile::merge::merge_branch_lockfiles_as(cwd, manifest, kind)
+            .map_err(|err| miette!("failed to merge branch lockfiles: {err}"))?;
+        if !report.merged_files.is_empty() {
+            let filenames: Vec<String> = report
+                .merged_files
+                .iter()
+                .filter_map(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                })
+                .collect();
+            tracing::info!(
+                "merged {} branch lockfile(s) into {}: {}",
+                report.merged_files.len(),
+                kind.filename(),
+                filenames.join(", ")
+            );
+            if !report.conflicts.is_empty() {
+                super::control::output(
+                    super::InstallOutputLevel::Warning,
+                    None,
+                    format!(
+                        "{} conflict(s) resolved during branch-lockfile merge:",
+                        report.conflicts.len()
+                    ),
                 );
-                if !report.conflicts.is_empty() {
+                for c in &report.conflicts {
                     super::control::output(
                         super::InstallOutputLevel::Warning,
                         None,
-                        format!(
-                            "{} conflict(s) resolved during branch-lockfile merge:",
-                            report.conflicts.len()
-                        ),
+                        format!("  {c}"),
                     );
-                    for c in &report.conflicts {
-                        super::control::output(
-                            super::InstallOutputLevel::Warning,
-                            None,
-                            format!("  {c}"),
-                        );
-                    }
                 }
-            } else {
-                tracing::debug!(
-                    "branch-lockfile merge triggered but no {} branch files were found",
-                    kind.filename()
-                );
             }
-            Ok(())
+        } else {
+            tracing::debug!(
+                "branch-lockfile merge triggered but no {} branch files were found",
+                kind.filename()
+            );
         }
-        Err(err) => Err(miette!("failed to merge branch lockfiles: {err}")),
     }
+    Ok(())
 }
 
 pub(super) fn warn_accepted_noop_install_settings(settings_ctx: &aube_settings::ResolveCtx<'_>) {
