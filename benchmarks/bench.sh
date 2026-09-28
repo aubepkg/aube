@@ -337,18 +337,23 @@ populate_install() {
 	aube)
 		# Aube's built-in trusted-dependency list can allow known-safe
 		# install scripts; opt out explicitly to match every other PM.
-		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" "$bin" install --ignore-scripts
+		# CI defaults to a frozen lockfile, but this step must generate or
+		# update one before the timed frozen installs. Prefer keeps unchanged
+		# lockfile entries pinned during the pull-update setup.
+		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" "$bin" install --ignore-scripts --prefer-frozen-lockfile
 		;;
 	aube-nogvs)
 		# Same binary as aube with the global virtual store off. Start
 		# from the lockfile aube saved for this step when aube ran too,
 		# so both subjects install the identical graph and differ only
 		# in layout.
+		local aube_lockfile_flag=--prefer-frozen-lockfile
 		if [ -f "$BENCH_DIR/saved-lockfile-${stage}aube" ]; then
 			cp "$BENCH_DIR/saved-lockfile-${stage}aube" "$dir/aube-lock.yaml"
+			aube_lockfile_flag=--frozen-lockfile
 		fi
 		cd "$dir" && HOME="$home" XDG_CACHE_HOME="$cache" XDG_DATA_HOME="$home/.local/share" \
-			npm_config_enable_global_virtual_store=false "$bin" install --ignore-scripts
+			npm_config_enable_global_virtual_store=false "$bin" install --ignore-scripts "$aube_lockfile_flag"
 		;;
 	npm)
 		# `--legacy-peer-deps` is the only way npm tolerates the
