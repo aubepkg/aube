@@ -952,7 +952,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // projects, and the cold resolve path (which already
             // produces every importer).
             if !shared_workspace_lockfile && has_workspace {
-                merge_member_lockfile_graphs(&cwd, &mut graph, &manifests);
+                merge_member_lockfile_graphs(&cwd, &mut graph, &manifests)?;
             }
             // Both writes below take the full graph, before the
             // host-only platform filter trims it for the linker.

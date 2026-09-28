@@ -19,12 +19,6 @@
       "exit_code": 12
     },
     {
-      "name": "ERR_AUBE_INVALID_DEFAULT_LOCKFILE",
-      "category": "Lockfile",
-      "description": "The defaultLockfile setting does not name a supported lockfile filename.",
-      "exit_code": null
-    },
-    {
       "name": "ERR_AUBE_RESOLUTION_SHAPE_MISMATCH",
       "category": "Lockfile",
       "description": "A registry-style lockfile dependency path is backed by a git, local directory, or direct tarball resolution.",

@@ -245,7 +245,12 @@ pub(super) fn merge_branch_lockfiles_if_needed(
         return Ok(());
     }
 
-    match aube_lockfile::merge_branch_lockfiles(cwd, manifest) {
+    let kind =
+        crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?.unwrap_or_else(|| {
+            aube_lockfile::detect_existing_lockfile_kind(cwd)
+                .unwrap_or_else(|| crate::commands::default_lockfile_kind(settings_ctx))
+        });
+    match aube_lockfile::merge::merge_branch_lockfiles_as(cwd, manifest, kind) {
         Ok(report) => {
             if !report.merged_files.is_empty() {
                 let filenames: Vec<String> = report
@@ -258,8 +263,9 @@ pub(super) fn merge_branch_lockfiles_if_needed(
                     })
                     .collect();
                 tracing::info!(
-                    "merged {} branch lockfile(s) into aube-lock.yaml: {}",
+                    "merged {} branch lockfile(s) into {}: {}",
                     report.merged_files.len(),
+                    kind.filename(),
                     filenames.join(", ")
                 );
                 if !report.conflicts.is_empty() {
@@ -281,7 +287,8 @@ pub(super) fn merge_branch_lockfiles_if_needed(
                 }
             } else {
                 tracing::debug!(
-                    "branch-lockfile merge triggered but no aube-lock.*.yaml files were found"
+                    "branch-lockfile merge triggered but no {} branch files were found",
+                    kind.filename()
                 );
             }
             Ok(())

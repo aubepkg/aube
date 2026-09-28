@@ -1798,10 +1798,11 @@ async fn merge_filtered_update_lockfile(
 ) -> miette::Result<()> {
     let importer_path = super::workspace_importer_path(workspace_root, pkg_dir)?;
     let remove_pkg_lockfile = importer_path != ".";
-    let pkg_lockfile = pkg_dir.join(aube_lockfile::LockfileKind::Aube.filename());
-    if !pkg_lockfile.exists() {
+    let selected = crate::commands::selected_lockfile_kind(pkg_dir)?;
+    let (_, Some(pkg_lockfile)) = aube_lockfile::active_lockfile_path_selecting(pkg_dir, selected)
+    else {
         return Ok(());
-    }
+    };
 
     let pkg_graph = crate::commands::parse_lockfile(pkg_dir, pkg_manifest)
         .map_err(miette::Report::new)
@@ -2186,6 +2187,47 @@ fn exact_semver_pin(spec: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn filtered_workspace_update_merges_selected_member_lockfile() {
+        let root = tempfile::tempdir().unwrap();
+        let member = root.path().join("packages/app");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(root.path().join("package.json"), "{}\n").unwrap();
+        std::fs::write(member.join("package.json"), "{}\n").unwrap();
+        std::fs::write(member.join(".npmrc"), "default-lockfile=pnpm-lock.yaml\n").unwrap();
+        let manifest = aube_manifest::PackageJson::default();
+        let mut member_graph = aube_lockfile::LockfileGraph::default();
+        member_graph.importers.insert(".".into(), Vec::new());
+        aube_lockfile::write_lockfile_as(
+            &member,
+            &member_graph,
+            &manifest,
+            aube_lockfile::LockfileKind::Pnpm,
+        )
+        .unwrap();
+        std::fs::write(member.join("aube-lock.yaml"), "invalid: [\n").unwrap();
+
+        merge_filtered_update_lockfile(
+            root.path(),
+            &member,
+            &manifest,
+            &manifest,
+            aube_lockfile::LockfileGraph::default(),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(!member.join("pnpm-lock.yaml").exists());
+        assert_eq!(
+            std::fs::read_to_string(member.join("aube-lock.yaml")).unwrap(),
+            "invalid: [\n"
+        );
+        let merged = aube_lockfile::parse_lockfile(root.path(), &manifest).unwrap();
+        assert!(merged.importers.contains_key("packages/app"));
+    }
 
     #[test]
     fn exact_semver_pin_rejects_floating_ranges() {

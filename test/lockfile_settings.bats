@@ -229,7 +229,7 @@ teardown() {
 	EOF
 	run aube install --no-frozen-lockfile
 	assert_failure
-	assert_output --partial 'ERR_AUBE_INVALID_DEFAULT_LOCKFILE'
+	assert_output --partial 'ERR_AUBE_LOCKFILE_UNSUPPORTED_FORMAT'
 }
 
 # `lockfileIncludeTarballUrl=true` records each registry package's full

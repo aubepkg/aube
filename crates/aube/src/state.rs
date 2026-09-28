@@ -411,6 +411,10 @@ fn check_needs_install_compute(
         return Some(format!("{name} is missing"));
     }
 
+    if let Err(error) = crate::commands::selected_lockfile_kind(project_dir) {
+        return Some(error.to_string());
+    }
+
     // Check lockfile hash. Honor `gitBranchLockfile` so a branch-specific
     // lockfile is the freshness anchor when present, but fall back to the
     // base lockfile names so a freshly-enabled branch doesn't loop on
@@ -674,11 +678,15 @@ fn member_lockfiles_stale(
     verify_contents: bool,
 ) -> Option<String> {
     let members = aube_workspace::find_workspace_packages(project_dir).unwrap_or_default();
-    let root_selected = crate::commands::selected_lockfile_kind(project_dir)
-        .ok()
-        .flatten();
+    let root_selected = match crate::commands::selected_lockfile_kind(project_dir) {
+        Ok(selected) => selected,
+        Err(error) => return Some(error.to_string()),
+    };
     let mut seen = std::collections::BTreeSet::new();
     for member_dir in &members {
+        if let Err(error) = crate::commands::selected_lockfile_kind(member_dir) {
+            return Some(error.to_string());
+        }
         let key = relative_path_or_original(member_dir, project_dir);
         let Some(stored_hash) = state.member_lockfile_hashes.get(&key) else {
             return Some(format!("{key} is a new workspace member"));

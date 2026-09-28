@@ -2,11 +2,12 @@
 //!
 //! Implements pnpm's `merge-git-branch-lockfiles` workflow for aube.
 //! When `gitBranchLockfile: true` is set, each branch writes its
-//! lockfile to `aube-lock.<branch>.yaml`. When the user lands on a
+//! lockfile to `aube-lock.<branch>.yaml` or `pnpm-lock.<branch>.yaml`.
+//! When the user lands on a
 //! collapse branch (e.g. `main` or `release/*`, configured via
 //! `mergeGitBranchLockfilesBranchPattern`), or when they pass
 //! `--merge-git-branch-lockfiles`, aube globs the branch-specific
-//! files, unions their package graphs into `aube-lock.yaml`, and
+//! files, unions their package graphs into the selected base file, and
 //! deletes the branch files.
 //!
 //! Conflict rule: when two branch files record the same `dep_path`
@@ -15,7 +16,7 @@
 //! `tracing`. Stable tie-breaking: equal semver keeps the base file
 //! value (or the first branch file in sorted-filename order).
 
-use crate::{DirectDep, LockfileGraph, pnpm};
+use crate::{DirectDep, LockfileGraph, LockfileKind, pnpm};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -43,14 +44,27 @@ pub fn merge_branch_lockfiles(
     project_dir: &Path,
     manifest: &aube_manifest::PackageJson,
 ) -> Result<MergeReport, crate::Error> {
+    merge_branch_lockfiles_as(project_dir, manifest, LockfileKind::Aube)
+}
+
+/// Merge branch lockfiles for the selected YAML lockfile format.
+pub fn merge_branch_lockfiles_as(
+    project_dir: &Path,
+    manifest: &aube_manifest::PackageJson,
+    kind: LockfileKind,
+) -> Result<MergeReport, crate::Error> {
     let mut report = MergeReport::default();
 
-    let branch_paths = discover_branch_lockfiles(project_dir);
+    if !matches!(kind, LockfileKind::Aube | LockfileKind::Pnpm) {
+        return Ok(report);
+    }
+    let basename = kind.filename();
+    let branch_paths = discover_branch_lockfiles(project_dir, basename);
     if branch_paths.is_empty() {
         return Ok(report);
     }
 
-    let base_path = project_dir.join(aube_util::embedder().lockfile_basename);
+    let base_path = project_dir.join(basename);
     let mut merged = if base_path.exists() {
         pnpm::parse(&base_path)?
     } else {
@@ -133,14 +147,13 @@ fn branch_matches_patterns(branch: &str, patterns: &[String]) -> bool {
     any_positive && any_positive_match
 }
 
-fn discover_branch_lockfiles(project_dir: &Path) -> Vec<PathBuf> {
+fn discover_branch_lockfiles(project_dir: &Path, basename: &str) -> Vec<PathBuf> {
     // `glob` needs a string pattern. Project dirs with non-UTF-8
     // segments can't be matched; fall back to empty (aube doesn't
     // support non-UTF-8 project roots elsewhere either).
     let Some(dir_str) = project_dir.to_str() else {
         return Vec::new();
     };
-    let basename = aube_util::embedder().lockfile_basename;
     let (stem, ext) = basename.rsplit_once('.').unwrap_or((basename, "yaml"));
     let pattern = format!("{dir_str}/{stem}.*.{ext}");
     let mut out: Vec<PathBuf> = glob::glob(&pattern)
@@ -462,6 +475,47 @@ fn prefer_higher_version(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
     use crate::LockedPackage;
+
+    #[test]
+    fn selected_pnpm_branch_files_merge_into_pnpm_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = aube_manifest::PackageJson::default();
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "selected@1.0.0".into(),
+            LockedPackage {
+                name: "selected".into(),
+                version: "1.0.0".into(),
+                ..Default::default()
+            },
+        );
+        pnpm::write(
+            &dir.path().join("pnpm-lock.feature.yaml"),
+            &graph,
+            &manifest,
+        )
+        .unwrap();
+        pnpm::write(
+            &dir.path().join("aube-lock.feature.yaml"),
+            &LockfileGraph::default(),
+            &manifest,
+        )
+        .unwrap();
+
+        let report = merge_branch_lockfiles_as(dir.path(), &manifest, LockfileKind::Pnpm).unwrap();
+        assert_eq!(
+            report.merged_files,
+            vec![dir.path().join("pnpm-lock.feature.yaml")]
+        );
+        assert!(dir.path().join("aube-lock.feature.yaml").exists());
+        assert!(!dir.path().join("aube-lock.yaml").exists());
+        assert!(
+            pnpm::parse(&dir.path().join("pnpm-lock.yaml"))
+                .unwrap()
+                .packages
+                .contains_key("selected@1.0.0")
+        );
+    }
 
     #[test]
     fn branch_matches_patterns_basic() {

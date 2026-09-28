@@ -392,8 +392,11 @@ pub(crate) fn selected_lockfile_kind_with_ctx(
 ) -> Result<Option<aube_lockfile::LockfileKind>, aube_lockfile::Error> {
     aube_settings::resolved::default_lockfile(ctx)
         .map(|name| {
-            aube_lockfile::LockfileKind::from_filename(&name)
-                .ok_or(aube_lockfile::Error::InvalidDefaultLockfile(name))
+            aube_lockfile::LockfileKind::from_filename(&name).ok_or_else(|| {
+                aube_lockfile::Error::UnsupportedFormat(format!(
+                    "defaultLockfile `{name}` is not a supported lockfile filename"
+                ))
+            })
         })
         .transpose()
 }

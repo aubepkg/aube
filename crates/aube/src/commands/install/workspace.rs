@@ -256,19 +256,14 @@ pub(super) fn merge_member_lockfile_graphs(
     workspace_root: &std::path::Path,
     graph: &mut aube_lockfile::LockfileGraph,
     manifests: &[(String, aube_manifest::PackageJson)],
-) {
-    let root_selected = crate::commands::selected_lockfile_kind(workspace_root)
-        .ok()
-        .flatten();
+) -> Result<(), aube_lockfile::Error> {
+    let root_selected = crate::commands::selected_lockfile_kind(workspace_root)?;
     for (importer_path, manifest) in manifests {
         if importer_path == "." || graph.importers.contains_key(importer_path) {
             continue;
         }
         let member_dir = importer_project_dir(workspace_root, importer_path);
-        let selected = crate::commands::selected_lockfile_kind(&member_dir)
-            .ok()
-            .flatten()
-            .or(root_selected);
+        let selected = crate::commands::selected_lockfile_kind(&member_dir)?.or(root_selected);
         let member_graph = match aube_lockfile::parse_lockfile_selecting(
             &member_dir,
             manifest,
@@ -289,6 +284,7 @@ pub(super) fn merge_member_lockfile_graphs(
             graph.packages.entry(dep_path).or_insert(pkg);
         }
     }
+    Ok(())
 }
 
 pub(super) fn order_lifecycle_manifests(
@@ -841,7 +837,7 @@ mod member_graph_merge_tests {
             importers: BTreeMap::from([(".".to_string(), Vec::new())]),
             ..Default::default()
         };
-        merge_member_lockfile_graphs(root.path(), &mut root_only, &manifests);
+        merge_member_lockfile_graphs(root.path(), &mut root_only, &manifests).unwrap();
 
         let app_deps = root_only
             .importers
@@ -873,7 +869,7 @@ mod member_graph_merge_tests {
             (".".to_string(), manifest("root")),
             ("packages/app".to_string(), manifest("@test/app")),
         ];
-        merge_member_lockfile_graphs(root.path(), &mut graph, &manifests);
+        merge_member_lockfile_graphs(root.path(), &mut graph, &manifests).unwrap();
         assert_eq!(graph.importers.len(), before);
     }
 }

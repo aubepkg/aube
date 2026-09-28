@@ -887,9 +887,6 @@ fn refine_yarn_kind(path: &Path, kind: LockfileKind) -> LockfileKind {
 
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum Error {
-    #[error("invalid defaultLockfile `{0}`: choose a supported lockfile filename")]
-    #[diagnostic(code(ERR_AUBE_INVALID_DEFAULT_LOCKFILE))]
-    InvalidDefaultLockfile(String),
     #[error("no lockfile found in {0}")]
     #[diagnostic(code(ERR_AUBE_NO_LOCKFILE))]
     NotFound(std::path::PathBuf),

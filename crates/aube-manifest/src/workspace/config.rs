@@ -205,10 +205,6 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub default_lockfile_format: Option<String>,
 
-    /// Explicit lockfile filename to read and write when multiple are present.
-    #[serde(default)]
-    pub default_lockfile: Option<String>,
-
     /// Directory the lockfile is written to and read from. When unset
     /// or equal to the project root, behaves as before. When set to a
     /// different directory, the project becomes an importer keyed by
