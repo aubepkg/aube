@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0](https://github.com/aubepkg/aube/compare/v2.5.1...v2.6.0) - 2026-09-28
+
+### Added
+
+- *(lockfile)* select the lockfile aube reads and writes ([#1649](https://github.com/aubepkg/aube/pull/1649))
+- publish an agent skill with release packslips ([#1644](https://github.com/aubepkg/aube/pull/1644))
+- support Bun 1.4 scoped overrides in bun.lock and package.json ([#1639](https://github.com/aubepkg/aube/pull/1639))
+
+### Fixed
+
+- *(import)* read Bun 1.4 lockfiles and link peer dependencies when importing ([#1638](https://github.com/aubepkg/aube/pull/1638))
+
+### Other
+
+- *(install)* avoid deep-copying indexes during peer remapping ([#1650](https://github.com/aubepkg/aube/pull/1650))
+
 ## [2.5.1](https://github.com/aubepkg/aube/compare/v2.5.0...v2.5.1) - 2026-09-27
 
 ### Other
