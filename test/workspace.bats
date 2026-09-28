@@ -584,6 +584,11 @@ _setup_shared_direct_dep_workspace() {
 		assert_success
 		if [ -L "$bin" ]; then
 			target="$(readlink -f "$bin")"
+		elif [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN|Windows_NT) ]]; then
+			# Windows shims carry no v2 marker; the `.cmd` launcher names
+			# the target with backslashes.
+			target="$(grep -o '[^"]*my-tool\.mjs' "$bin.cmd" | head -1)"
+			target="${target//\\//}"
 		else
 			# `aube-bin-shim v2 target=...` line embeds the
 			# $basedir-relative path to the workspace file.

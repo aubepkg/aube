@@ -87,8 +87,7 @@ EOF
 
 	# link: deps are a direct symlink, not a `.aube/` entry.
 	[ -L node_modules/vendor-link ]
-	run readlink node_modules/vendor-link
-	assert_output "../../vendor-link"
+	_assert_link_target node_modules/vendor-link "../../vendor-link"
 	assert_file_exists node_modules/vendor-link/package.json
 
 	# Editing the target should be visible through the symlink.
@@ -221,8 +220,7 @@ EOF
 	assert_success
 	assert_file_exists node_modules/vendor-dir/package.json
 	[ -L node_modules/vendor-link ]
-	run readlink node_modules/vendor-link
-	assert_output "../../vendor-link"
+	_assert_link_target node_modules/vendor-link "../../vendor-link"
 }
 
 @test "aube install handles file:/link: in a workspace importer" {
@@ -311,8 +309,7 @@ EOF
 	assert_success
 
 	[ -L pkg-a/node_modules/pkg-b ]
-	run readlink pkg-a/node_modules/pkg-b
-	assert_output "../../gems/pkg-b-parent/pkg-b"
+	_assert_link_target pkg-a/node_modules/pkg-b "../../gems/pkg-b-parent/pkg-b"
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
 }
 
@@ -591,8 +588,7 @@ EOF
 	assert_success
 
 	[ -L pkg-a/node_modules/pkg-b ]
-	run readlink pkg-a/node_modules/pkg-b
-	assert_output "../../gems/pkg-b-parent/pkg-b"
+	_assert_link_target pkg-a/node_modules/pkg-b "../../gems/pkg-b-parent/pkg-b"
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
 }
 
@@ -636,8 +632,7 @@ EOF
 	assert_success
 
 	[ -L pkg-a/node_modules/pkg-b ]
-	run readlink pkg-a/node_modules/pkg-b
-	assert_output "../../pkg-b"
+	_assert_link_target pkg-a/node_modules/pkg-b "../../pkg-b"
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
 }
 
