@@ -494,6 +494,10 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     // same maintainer who published every earlier 7.x release. It is what
     // webpack-dev-server@5's `^7.4.2` range selects, so keep it version-scoped.
     "webpack-dev-middleware@7.4.6",
+    // why-is-node-running@3.2.2 (2025-01-08) was published by the same npm
+    // account as the attested 3.2.0 release, but without provenance metadata.
+    // Keep the exception version-scoped so later releases remain protected.
+    "why-is-node-running@3.2.2",
     "chokidar",
     "eslint-config-prettier",
     "eslint-import-resolver-typescript",
@@ -1670,6 +1674,19 @@ mod tests {
         assert!(!r.matches(
             "webpack-dev-middleware",
             &node_semver::Version::parse("8.3.0").unwrap()
+        ));
+    }
+
+    #[test]
+    fn default_excludes_why_is_node_running_3_2_2_only() {
+        let r = TrustExcludeRules::default();
+        assert!(r.matches(
+            "why-is-node-running",
+            &node_semver::Version::parse("3.2.2").unwrap()
+        ));
+        assert!(!r.matches(
+            "why-is-node-running",
+            &node_semver::Version::parse("3.2.3").unwrap()
         ));
     }
 
