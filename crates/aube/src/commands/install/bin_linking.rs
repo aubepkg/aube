@@ -303,9 +303,13 @@ pub(super) fn link_bins(
     std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
 
     for dep in graph.root_deps() {
-        if let Some(ws_dir) = ws_dirs.and_then(|m| m.get(&dep.name)) {
+        // An explicit `link:` wins over a workspace package of the same name:
+        // `node_modules/<name>` points at the link target.
+        let linked_dir = link_dep_dir(graph, &dep.dep_path, project_dir)
+            .or_else(|| ws_dirs.and_then(|m| m.get(&dep.name)).cloned());
+        if let Some(dir) = linked_dir {
             link_bins_for_workspace_dep(
-                ws_cache, &bin_dir, ws_dir, &dep.name, shim_opts, managed, preserved,
+                ws_cache, &bin_dir, &dir, &dep.name, shim_opts, managed, preserved,
             )?;
         } else {
             link_bins_for_dep(
@@ -327,8 +331,28 @@ pub(super) fn link_bins(
     Ok(())
 }
 
-/// Link bins declared by a `workspace:` dep into the importer's
-/// `.bin/`. Workspace deps don't get a `.aube/<dep_path>/` materialization
+/// The directory to read a `link:` dep's bins from. The linker never
+/// materializes `link:` deps in the virtual store — it only symlinks
+/// `<modules_dir>/<name>` at the target — so `link_bins_for_dep` finds no
+/// `package.json` for them. Read the target itself, whose path the graph
+/// keeps relative to `project_dir`: a workspace member's own symlink may
+/// be missing when `dedupe-direct-deps` leaves only the root's. `None`
+/// for every other kind of dep.
+fn link_dep_dir(
+    graph: &aube_lockfile::LockfileGraph,
+    dep_path: &str,
+    project_dir: &Path,
+) -> Option<PathBuf> {
+    match &graph.packages.get(dep_path)?.local_source {
+        Some(aube_lockfile::LocalSource::Link(path)) => {
+            Some(aube_util::path::normalize_lexical(&project_dir.join(path)))
+        }
+        _ => None,
+    }
+}
+
+/// Link bins declared by a `workspace:` (or, via [`link_dep_dir`], a
+/// `link:`) dep into the importer's `.bin/`. Workspace deps don't get a `.aube/<dep_path>/` materialization
 /// (the linker symlinks them straight into the importer's `node_modules/`),
 /// so `link_bins_for_dep` finds nothing on disk and silently skips. Read
 /// the workspace package's own `package.json` and shim each bin entry,
@@ -356,13 +380,13 @@ pub(super) fn link_bins_for_workspace_dep(
                 aube_manifest::parse_json::<serde_json::Value>(&pkg_json_path, content)
                     .map_err(miette::Report::new)
                     .wrap_err_with(|| {
-                        format!("failed to parse package.json for workspace dep {name}")
+                        format!("failed to parse package.json for linked dep {name}")
                     })?,
             ),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => {
                 return Err(miette!(
-                    "failed to read package.json for workspace dep {name} at {}: {e}",
+                    "failed to read package.json for linked dep {name} at {}: {e}",
                     pkg_json_path.display()
                 ));
             }
@@ -862,11 +886,13 @@ pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
             let bin_dir = pkg_dir.join(modules_dir_name).join(".bin");
             std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
             for dep in deps {
-                if let Some(ws_dir) = ws_dirs.get(&dep.name) {
+                let linked_dir = link_dep_dir(graph, &dep.dep_path, project_dir)
+                    .or_else(|| ws_dirs.get(&dep.name).cloned());
+                if let Some(dir) = linked_dir {
                     link_bins_for_workspace_dep(
                         &mut ws_pkg_json_cache,
                         &bin_dir,
-                        ws_dir,
+                        &dir,
                         &dep.name,
                         shim_opts,
                         &mut managed,

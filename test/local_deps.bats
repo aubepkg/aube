@@ -97,6 +97,117 @@ EOF
 	assert_output --partial '"version":"2.0.1"'
 }
 
+@test "aube install links the bins of a link: dep" {
+	# pnpm exposes a `link:` dep's bins in `.bin` like any other direct
+	# dep's; the linker never materializes it in `.aube`, so they are read
+	# from the link target.
+	mkdir -p linked-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+
+	run aube install
+	assert_success
+	[ -e node_modules/.bin/linked-tool ]
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "aube install links the bins of a link: dep in a workspace member" {
+	mkdir -p linked-tool packages/app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cat >package.json <<'EOF'
+{"name":"ws-root","version":"0.0.0","private":true}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - "packages/*"
+EOF
+	cat >packages/app/package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}
+EOF
+
+	run aube install
+	assert_success
+	[ -e packages/app/node_modules/.bin/linked-tool ]
+	cd packages/app
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "a workspace member keeps a link: dep's bins when dedupe-direct-deps drops its link" {
+	# With the root and a member linking the same target,
+	# `dedupe-direct-deps` leaves only the root's `node_modules` entry;
+	# the member's `.bin` still needs the tool, as for a registry dep.
+	mkdir -p linked-tool packages/app
+	cat >linked-tool/package.json <<'JSON'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+JSON
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cat >package.json <<'JSON'
+{"name":"ws-root","version":"0.0.0","private":true,"dependencies":{"linked-tool":"link:./linked-tool"}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "packages/*"
+YAML
+	cat >packages/app/package.json <<'JSON'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}
+JSON
+	echo 'dedupe-direct-deps=true' >.npmrc
+
+	run aube install
+	assert_success
+	[ ! -e packages/app/node_modules/linked-tool ]
+	[ -e packages/app/node_modules/.bin/linked-tool ]
+	cd packages/app
+	run aube exec linked-tool
+	assert_success
+	# Member-side freshness checks may auto-install first under
+	# dedupe-direct-deps (a separate issue), so look for the tool's line.
+	assert_line "linked-tool ran"
+}
+
+@test "a link: dep's bins win over a same-named workspace package" {
+	mkdir -p outside/tool packages/tool
+	cat >outside/tool/package.json <<'EOF'
+{"name":"tool","version":"9.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("from link");\n' >outside/tool/cli.js
+	chmod +x outside/tool/cli.js
+	cat >packages/tool/package.json <<'EOF'
+{"name":"tool","version":"1.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("from workspace");\n' >packages/tool/cli.js
+	chmod +x packages/tool/cli.js
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - "packages/*"
+EOF
+	cat >package.json <<'EOF'
+{"name":"ws-root","version":"0.0.0","private":true,"dependencies":{"tool":"link:./outside/tool"}}
+EOF
+
+	run aube install
+	assert_success
+	run aube exec tool
+	assert_success
+	assert_output "from link"
+}
+
 @test "aube install handles file: tarball dep" {
 	# BSD tar (macOS) has no --transform, so stage the files under an
 	# actual `package/` directory before archiving.
