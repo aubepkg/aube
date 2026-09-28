@@ -313,6 +313,14 @@ jobs:
           shared-key: windows
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: mise exec -- cargo build --workspace
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Test npm binary aliases
+        env:
+          AUBE_TEST_BINARY: target/debug/aube.exe
+        run: node --test npm/installArchSpecificPackage.test.js
       - run: mise exec -- cargo test --workspace
 
   # Aggregator that required-status-checks can target. If any upstream job

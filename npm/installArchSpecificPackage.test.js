@@ -40,7 +40,12 @@ for (const platform of ['linux', 'win32']) {
         fs.mkdirSync(packageBinDir, { recursive: true });
         var suffix = platform === 'win32' ? '.exe' : '';
         var source = path.join(packageBinDir, 'aube' + suffix);
-        fs.writeFileSync(source, '#!/bin/sh\nprintf "%s" "${0##*/}"\n', { mode: 0o755 });
+        var nativeWindowsBinary = platform === 'win32' && process.platform === 'win32' && process.env.AUBE_TEST_BINARY;
+        if (nativeWindowsBinary) {
+            fs.copyFileSync(path.resolve(process.env.AUBE_TEST_BINARY), source);
+        } else {
+            fs.writeFileSync(source, '#!/bin/sh\nprintf "%s" "${0##*/}"\n', { mode: 0o755 });
+        }
         fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
             name: '@endevco/aube-test',
             bin: { aube: 'bin/aube' + suffix },
@@ -49,9 +54,19 @@ for (const platform of ['linux', 'win32']) {
         require(installerPath).linkSubpkgBins('@endevco/aube-test', platform);
         for (var name of ['aube', 'aubr', 'aubx']) {
             var destination = path.join(root, 'bin', name + suffix);
-            assert.equal(fs.readFileSync(destination, 'utf8'), fs.readFileSync(source, 'utf8'));
+            if (nativeWindowsBinary) {
+                assert.equal(fs.statSync(destination).size, fs.statSync(source).size);
+            } else {
+                assert.equal(fs.readFileSync(destination, 'utf8'), fs.readFileSync(source, 'utf8'));
+            }
             if (platform === 'win32') {
                 assert.equal(fs.readFileSync(path.join(root, 'bin', name), 'utf8'), '#!' + destination.replace(/\\/g, '/') + '\n');
+                if (nativeWindowsBinary) {
+                    var help = spawnSync(destination, ['--help'], { encoding: 'utf8' });
+                    assert.equal(help.status, 0, help.stderr);
+                    var usage = name === 'aube' ? 'Usage: aube [FLAGS]' : name === 'aubr' ? 'Usage: aube run' : 'Usage: aube dlx';
+                    assert.ok(help.stdout.includes(usage), help.stdout);
+                }
             } else if (process.platform !== 'win32') {
                 var result = spawnSync(destination, { encoding: 'utf8' });
                 assert.equal(result.status, 0);
