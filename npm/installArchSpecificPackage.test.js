@@ -75,3 +75,21 @@ for (const platform of ['linux', 'win32']) {
         }
     });
 }
+
+test('reports the aube source when it escapes the platform package', function(t) {
+    var root = fs.mkdtempSync(path.join(os.tmpdir(), 'aube-npm-bin-'));
+    t.after(function() { fs.rmSync(root, { recursive: true, force: true }); });
+
+    var installerPath = path.join(root, 'installArchSpecificPackage.js');
+    fs.copyFileSync(path.join(__dirname, 'installArchSpecificPackage.js'), installerPath);
+    var packageDir = path.join(root, 'node_modules', '@endevco', 'aube-test');
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+        name: '@endevco/aube-test',
+        bin: { aube: '../outside' },
+    }));
+
+    assert.throws(function() {
+        require(installerPath).linkSubpkgBins('@endevco/aube-test', 'linux');
+    }, /platform package bin "aube" escapes its package directory/);
+});
