@@ -781,11 +781,14 @@ jobs:
         with:
           ref: ${{ format('refs/tags/{0}', inputs.tag) }}
           persist-credentials: false
-      - name: Resolve the skill's release commit
+      - name: Resolve the release source and available skill
         id: source
         run: |
-          test -f skills/aube/SKILL.md
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # Recovery runs can target releases older than the skill.
+          if [ -f skills/aube/SKILL.md ]; then
+            echo "skill=skill/aube=repo:skills/aube" >> "$GITHUB_OUTPUT"
+          fi
       - name: Download the release archives
         shell: bash
         env:
@@ -840,9 +843,8 @@ jobs:
           POWERSHELL
           pwsh -NoProfile -NonInteractive -File completion-syntax-check.ps1
           gh release upload "$TAG" resources/* --repo "$REPO" --clobber
-      # The jobs that built these archives already attested them as they went,
-      # which is the stronger claim; attesting again here would only add a
-      # second statement about the same digests.
+      # The jobs that built these archives already attested them as they went.
+      # Link that provenance from the inventory without attesting them again.
       - uses: jdx/packslip@87479dfc6443253dff69601cace5fc6ea07e6df5 # v1.4.0
         with:
           tag: ${{ inputs.tag }}
@@ -850,7 +852,7 @@ jobs:
           artifacts: dist/aube-v*.tar.gz dist/aube-v*.zip
           bin: aube aubr aubx
           resources: |
-            skill/aube=repo:skills/aube
+            ${{ steps.source.outputs.skill }}
             cli-spec/usage/aube=asset:resources/aube.usage.kdl
             completion/bash/aube=asset:resources/aube.bash
             completion/zsh/aube=asset:resources/aube.zsh
@@ -864,5 +866,5 @@ jobs:
             completion/zsh/aubx=asset:resources/aubx.zsh
             completion/fish/aubx=asset:resources/aubx.fish
             completion/powershell/aubx=asset:resources/aubx.powershell
-          attest: "false"
+          attest: link
           token: ${{ secrets.AUBE_GH_TOKEN }}

@@ -158,35 +158,10 @@ jobs:
       CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
       CERTIFICATES_P12_PASS: ${{ secrets.CERTIFICATES_P12_PASS }}
 
-  # The packslip is this release's signed inventory: every CLI archive's
-  # digest, the executables inside it, and the workflow identity that signed
-  # for all of it, so an installer can check a download against
-  # github.com/aubepkg/aube's identity rather than a key this project would have
-  # to hold. `upload-assets` already attests each archive's build provenance
-  # with actions/attest-build-provenance, so `attest: link` only links those
-  # statements instead of attesting a second time. The FFI libraries stay out
-  # — nothing installs a binary directly from them the way it does from these
-  # archives. See https://packslip.dev.
-  packslip:
-    name: Publish the packslip
-    needs: [release-plz-release, upload-assets]
-    if: ${{ needs.release-plz-release.outputs.tag != '' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-    steps:
-      - uses: jdx/packslip@87479dfc6443253dff69601cace5fc6ea07e6df5 # v1.4.0
-        with:
-          tag: ${{ needs.release-plz-release.outputs.tag }}
-          download: aube-*.tar.gz aube-*.zip
-          bin: aube aubr aubx
-          attest: link
-          token: ${{ secrets.AUBE_GH_TOKEN }}
-
   # Flip the draft release to non-draft once *every* asset uploaded
-  # cleanly and Communiqué has written the final notes. With immutable
-  # GitHub releases enabled, a published release can't have its assets
+  # cleanly and Communiqué has written the final notes. `upload-assets`
+  # includes the Packslip with provenance, completions, and available skills.
+  # With immutable GitHub releases enabled, a published release can't have its assets
   # replaced — so if any matrix target failed, we leave the draft in
   # place rather than ship a release with missing platform binaries
   # (downstream npm / COPR / PPA jobs would also fail trying to fetch
@@ -197,7 +172,7 @@ jobs:
   # happen after confirming the Communiqué notes are present too.
   publish-release:
     name: Publish release
-    needs: [release-plz-release, upload-assets, upload-ffi-assets, enhance-release, packslip]
+    needs: [release-plz-release, upload-assets, upload-ffi-assets, enhance-release]
     if: ${{ needs.release-plz-release.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
