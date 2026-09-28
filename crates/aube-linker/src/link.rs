@@ -397,17 +397,17 @@ impl Linker {
                             nested_link_targets.as_ref(),
                         )?;
 
-                        // Only pay the `remove_dir`/`remove_file` syscalls
-                        // when we actually have something to remove.
-                        // On Windows, `.aube/<dep_path>` is an NTFS
-                        // junction (created via `sys::create_dir_link`);
-                        // `remove_file` can't unlink those, so try
-                        // `remove_dir` first and fall back to
-                        // `remove_file` for the unix case (where
-                        // `symlink` produces a file-style link).
+                        // Only pay the removal syscalls when we actually
+                        // have something to remove. Besides a stale link
+                        // (an NTFS junction on Windows), the entry can be a
+                        // real directory: a copy of the project that
+                        // followed its links (Windows Explorer, `cp -rL`)
+                        // leaves one, and creating the link over it fails
+                        // with EEXIST. `try_remove_entry` clears every
+                        // shape without following links, as
+                        // `materialize.rs` already does.
                         if matches!(state, EntryState::Stale) {
-                            let _ = std::fs::remove_dir(&local_aube_entry)
-                                .or_else(|_| std::fs::remove_file(&local_aube_entry));
+                            try_remove_entry(&local_aube_entry);
                         }
                         // Parent dirs were pre-created above the
                         // par_iter; no per-package `mkdirp` here.
@@ -1057,9 +1057,10 @@ impl Linker {
                                 nested_link_targets.as_ref(),
                             )?;
 
+                            // A real directory is possible here too; see
+                            // the `link_all` counterpart.
                             if matches!(state, EntryState::Stale) {
-                                let _ = std::fs::remove_dir(&local_aube_entry)
-                                    .or_else(|_| std::fs::remove_file(&local_aube_entry));
+                                try_remove_entry(&local_aube_entry);
                             }
                             // Parent dirs were pre-created above the
                             // par_iter; no per-package `mkdirp` here.
