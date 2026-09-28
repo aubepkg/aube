@@ -245,11 +245,8 @@ pub(super) fn merge_branch_lockfiles_if_needed(
         return Ok(());
     }
 
-    let kind =
-        crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?.unwrap_or_else(|| {
-            aube_lockfile::detect_existing_lockfile_kind(cwd)
-                .unwrap_or_else(|| crate::commands::default_lockfile_kind(settings_ctx))
-        });
+    let kind = crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?
+        .unwrap_or(aube_lockfile::LockfileKind::Aube);
     match aube_lockfile::merge::merge_branch_lockfiles_as(cwd, manifest, kind) {
         Ok(report) => {
             if !report.merged_files.is_empty() {
