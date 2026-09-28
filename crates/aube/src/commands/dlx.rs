@@ -509,7 +509,11 @@ fn is_owner_repo_shorthand(s: &str) -> bool {
 fn derive_dlx_pkg_name(spec: &str) -> Option<String> {
     let body = spec.split('#').next().unwrap_or(spec);
     let after_colon = body.rsplit(':').next().unwrap_or(body);
-    let last = after_colon.rsplit('/').next().unwrap_or(after_colon);
+    // `\` too: a Windows `file:` path (`file:C:\tools\cli`) has no `/`.
+    let last = after_colon
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(after_colon);
     let trimmed = last.strip_suffix(".git").unwrap_or(last);
     if trimmed.is_empty() {
         return None;
@@ -808,6 +812,16 @@ mod tests {
         let (name, value) = synthesize_dlx_dep("github:user/repo#v1.2.3");
         assert_eq!(name, "repo");
         assert_eq!(value, "github:user/repo#v1.2.3");
+    }
+
+    #[test]
+    fn synthesize_dlx_dep_names_windows_file_paths_after_their_last_segment() {
+        let (name, value) = synthesize_dlx_dep(r"file:C:\Users\me\tools\printer");
+        assert_eq!(name, "printer");
+        assert_eq!(value, r"file:C:\Users\me\tools\printer");
+        let (name, _) = synthesize_dlx_dep(r"file:.\tools\printer");
+        assert_eq!(name, "printer");
+        assert_eq!(bin_name_for(r"file:C:\Users\me\tools\printer"), "printer");
     }
 
     #[test]
