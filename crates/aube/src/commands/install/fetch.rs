@@ -1109,9 +1109,8 @@ pub(super) fn version_from_dep_path(dep_path: &str, name: &str) -> String {
 
 /// Re-key a canonical-indexed indices map to match the peer-contextualized
 /// dep_paths in `graph`. Each contextualized entry points at the same
-/// underlying files as its canonical name@version, so we look each graph
-/// entry up by canonical and clone the index — a no-op when canonical ==
-/// contextualized (i.e. the package has no peer deps).
+/// underlying files as its canonical name@version. Cloned indexes share
+/// their file metadata, including across different peer contexts.
 pub(super) fn remap_indices_to_contextualized(
     canonical_indices: &BTreeMap<String, aube_store::PackageIndex>,
     graph: &aube_lockfile::LockfileGraph,

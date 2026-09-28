@@ -100,18 +100,7 @@ mod stored_path {
     }
 }
 
-/// Index of all files in a package, keyed by relative path within the package.
-///
-/// Backed by `FxMap` (foldhash) rather than `BTreeMap`: the linker
-/// iterates this map per package and only two non-hot call sites do
-/// keyed lookups (`ignored_builds` checks for `"package.json"` and
-/// `"binding.gyp"`). Hash-based lookup is O(1) for those, and the
-/// flat-bucket layout deserializes/clones with one allocation
-/// instead of one per entry. Iteration order is no longer
-/// lexicographic — cache JSON files now ship in hash order, which
-/// doesn't affect any caller (caches are keyed by tarball path, not
-/// file content).
-pub type PackageIndex = aube_util::collections::FxMap<String, StoredFile>;
+pub use crate::package_index::PackageIndex;
 
 /// Deterministic content fingerprint of a materialized package.
 ///
@@ -129,7 +118,7 @@ pub type PackageIndex = aube_util::collections::FxMap<String, StoredFile>;
 /// graph hash folds this in so the two land at distinct GVS paths
 /// instead of the first writer's tree leaking into the second project.
 ///
-/// `PackageIndex` is an `FxMap` with non-deterministic iteration order,
+/// `PackageIndex` wraps an `FxMap` with non-deterministic iteration order,
 /// so the entries are collected and sorted by path before hashing.
 pub fn index_content_fingerprint(index: &PackageIndex) -> String {
     let mut entries: Vec<(&str, &str, bool)> = index

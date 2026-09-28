@@ -7,6 +7,7 @@ mod cas;
 mod git;
 mod index;
 mod integrity;
+mod package_index;
 mod tarball;
 
 pub use git::{
