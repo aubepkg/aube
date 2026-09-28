@@ -16,6 +16,8 @@ lto = "fat"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+# BOLT needs symbols in the phase 3b input; pgo.bash strips the final output.
+strip = "debuginfo"
 
 # Node-API addons execute inside the host process, so panics must unwind to
 # the napi-rs boundary instead of aborting the entire JavaScript runtime.

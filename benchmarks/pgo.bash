@@ -436,7 +436,9 @@ echo ">>> Rebuilding with -Cprofile-use${PGO_BOLT:+ + --emit-relocs}"
 # functions.
 phase3b_rustflags="${BASE_RUSTFLAGS:+$BASE_RUSTFLAGS }-Cprofile-use=$PGO_MERGED -Cllvm-args=-pgo-warn-missing-function=false"
 if [ -n "$PGO_BOLT" ]; then
-	phase3b_rustflags="$phase3b_rustflags -C link-arg=-Wl,--emit-relocs -C link-arg=-Wl,-q"
+	phase3b_rustflags="$phase3b_rustflags -Cstrip=debuginfo -C link-arg=-Wl,--emit-relocs -C link-arg=-Wl,-q"
+else
+	phase3b_rustflags="$phase3b_rustflags -Cstrip=symbols"
 fi
 # shellcheck disable=SC2086 # intentional word-splitting on $target_arg
 RUSTFLAGS="$phase3b_rustflags" \
@@ -534,5 +536,6 @@ echo ">>> [4d/4] Rewriting binary"
 	-use-gnu-stack
 
 mv -f "$PGO_FINAL_BIN.bolt" "$PGO_FINAL_BIN"
+strip --strip-all "$PGO_FINAL_BIN"
 echo ">>> PGO+BOLT build complete: $PGO_FINAL_BIN"
 ls -lh "$PGO_FINAL_BIN"
