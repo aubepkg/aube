@@ -172,3 +172,47 @@ JSON
 	run grep -E "^[[:space:]]+project:" ../aube-lock.yaml
 	assert_success
 }
+
+@test "aube install --lockfile-dir: local deps survive a reinstall from a lockfile below the project" {
+	# pnpm records `file:` directories and tarballs relative to the
+	# lockfile directory and `link:` targets relative to the project.
+	# Writing project-relative `file:` paths, or reading them back
+	# against the wrong directory, made every later install look for
+	# `<project>/../vendor/...` and fail (or link to it, for `link:`).
+	mkdir -p project/vendor/dir-dep project/vendor/link-dep project/tgz/package
+	echo '{"name":"dir-dep","version":"2.0.0"}' >project/vendor/dir-dep/package.json
+	echo '{"name":"link-dep","version":"3.0.0"}' >project/vendor/link-dep/package.json
+	echo '{"name":"tgz-dep","version":"4.0.0"}' >project/tgz/package/package.json
+	(cd project/tgz && tar czf ../tgz-dep.tgz package)
+	cat >project/package.json <<'JSON'
+{
+  "name": "lfd-local-deps",
+  "version": "1.0.0",
+  "dependencies": {
+    "dir-dep": "file:./vendor/dir-dep",
+    "link-dep": "link:./vendor/link-dep",
+    "tgz-dep": "file:./tgz-dep.tgz"
+  }
+}
+JSON
+
+	cd project || return
+	run aube install --lockfile-dir .lock --no-frozen-lockfile
+	assert_success
+
+	run cat .lock/aube-lock.yaml
+	assert_output --partial "directory: ../vendor/dir-dep"
+	assert_output --partial "tarball: file:../tgz-dep.tgz"
+	assert_output --partial "version: link:vendor/link-dep"
+
+	for flags in --no-frozen-lockfile --frozen-lockfile; do
+		rm -rf node_modules
+		run aube install --lockfile-dir .lock "$flags"
+		assert_success
+		run cat node_modules/dir-dep/package.json node_modules/link-dep/package.json \
+			node_modules/tgz-dep/package.json
+		assert_output --partial '"version":"2.0.0"'
+		assert_output --partial '"version":"3.0.0"'
+		assert_output --partial '"version":"4.0.0"'
+	done
+}
