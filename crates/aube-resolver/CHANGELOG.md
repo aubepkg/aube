@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.6.0...aube-resolver-v2.6.1) - 2026-09-29
+
+### Fixed
+
+- *(resolver)* converge peer-context pass on dense hashed peer webs ([#1669](https://github.com/aubepkg/aube/pull/1669))
+
+### Other
+
+- refresh benchmarks for v2.6.0 ([#1667](https://github.com/aubepkg/aube/pull/1667))
+
 ## [2.6.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.5.1...aube-resolver-v2.6.0) - 2026-09-28
 
 ### Added

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.6.0...aube-lockfile-v2.6.1) - 2026-09-29
+
+### Fixed
+
+- *(install)* reuse linked trees when the lockfile and store are deleted ([#1671](https://github.com/aubepkg/aube/pull/1671))
+
+### Other
+
+- refresh benchmarks for v2.6.0 ([#1667](https://github.com/aubepkg/aube/pull/1667))
+
 ## [2.6.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.5.1...aube-lockfile-v2.6.0) - 2026-09-28
 
 ### Added

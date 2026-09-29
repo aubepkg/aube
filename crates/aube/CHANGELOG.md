@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1](https://github.com/aubepkg/aube/compare/v2.6.0...v2.6.1) - 2026-09-29
+
+### Fixed
+
+- *(install)* reuse linked trees when the lockfile and store are deleted ([#1671](https://github.com/aubepkg/aube/pull/1671))
+
+### Other
+
+- *(deps)* bump usage-rs to 6.12.0 and adapt to FlagMeta::effect() ([#1668](https://github.com/aubepkg/aube/pull/1668))
+- *(install)* verify each store entry once across dep_paths ([#1659](https://github.com/aubepkg/aube/pull/1659))
+- refresh benchmarks for v2.6.0 ([#1667](https://github.com/aubepkg/aube/pull/1667))
+
 ## [2.6.0](https://github.com/aubepkg/aube/compare/v2.5.1...v2.6.0) - 2026-09-28
 
 ### Added
