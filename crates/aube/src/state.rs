@@ -1089,9 +1089,8 @@ pub struct WarmStateSnapshot {
     pub layout: Option<InstallLayoutState>,
     /// Number of recorded package content hashes. `None` means the
     /// state has no fingerprints (pre-delta aube or fresh state),
-    /// matching the `None` from
-    /// [`read_state_package_content_hashes`]; the caller falls back to
-    /// counting the lockfile graph.
+    /// matching the `None` the old per-field accessor returned; the
+    /// caller falls back to counting the lockfile graph.
     pub package_count: Option<usize>,
 }
 

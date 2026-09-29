@@ -36,8 +36,12 @@ fn main() {
         let mut grouped_samples = Vec::new();
         for pair in 0..pairs + 2 {
             let fixture = std::env::temp_dir().join(format!(
-                "aube-group-bench-{}-{placements}",
-                std::process::id()
+                "aube-group-bench-{}-{placements}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or_default()
             ));
             let store = Store::with_dirs(fixture.join("files"), fixture.join("cache"));
             std::fs::create_dir_all(store.root()).unwrap();
