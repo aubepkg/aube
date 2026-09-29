@@ -927,6 +927,109 @@ pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
     Ok(managed)
 }
 
+/// Remove shims aube wrote for commands the current graph no longer claims.
+///
+/// `.bin/` is otherwise append-only, so a dependency removed from the
+/// manifest keeps its shim, which then points at a package that is gone
+/// (or about to be swept from the virtual store) and shadows any
+/// same-named executable further down `PATH`. Only aube-authored
+/// launchers are touched; files a lifecycle script or the user put there
+/// are left alone. Must run after a full linking pass so `managed.seen`
+/// holds every command this install claims.
+pub(crate) fn remove_unclaimed_bin_links(
+    project_dir: &Path,
+    modules_dir_name: &str,
+    aube_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    managed: &ManagedBinLinks,
+) {
+    let aube_dir = aube_util::path::normalize_lexical(aube_dir);
+    let mut bin_dirs = BTreeSet::from([project_dir.join(modules_dir_name).join(".bin")]);
+    for importer_path in graph.importers.keys() {
+        if importer_path != "." && aube_linker::is_physical_importer(importer_path) {
+            bin_dirs.insert(
+                project_dir
+                    .join(importer_path)
+                    .join(modules_dir_name)
+                    .join(".bin"),
+            );
+        }
+    }
+    for bin_dir in bin_dirs {
+        let claimed = managed.seen.get(&bin_dir);
+        let mut unclaimed = BTreeSet::new();
+        let Ok(entries) = std::fs::read_dir(&bin_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with('@') && entry.path().is_dir() {
+                let Ok(scoped) = std::fs::read_dir(entry.path()) else {
+                    continue;
+                };
+                for inner in scoped.flatten() {
+                    let name = format!("{file_name}/{}", inner.file_name().to_string_lossy());
+                    if is_unclaimed_aube_bin_link(&inner.path(), &name, claimed, &aube_dir) {
+                        unclaimed.insert(command_family_name(&name).to_string());
+                    }
+                }
+            } else if is_unclaimed_aube_bin_link(&entry.path(), &file_name, claimed, &aube_dir) {
+                unclaimed.insert(command_family_name(&file_name).to_string());
+            }
+        }
+        for name in unclaimed {
+            tracing::debug!(
+                "removing unclaimed bin shim {}",
+                bin_dir.join(&name).display()
+            );
+            aube_linker::remove_bin_shim(&bin_dir, &name);
+        }
+    }
+}
+
+/// The command a launcher file belongs to. Windows writes `name`,
+/// `name.cmd` and `name.ps1` for one command.
+fn command_family_name(file_name: &str) -> &str {
+    if cfg!(windows) {
+        file_name
+            .strip_suffix(".cmd")
+            .or_else(|| file_name.strip_suffix(".ps1"))
+            .unwrap_or(file_name)
+    } else {
+        file_name
+    }
+}
+
+fn is_unclaimed_aube_bin_link(
+    path: &Path,
+    name: &str,
+    claimed: Option<&BTreeSet<String>>,
+    aube_dir: &Path,
+) -> bool {
+    if claimed.is_some_and(|names| names.contains(command_family_name(name))) {
+        return false;
+    }
+    // The `.ps1` stub carries no decodable marker; its sibling launchers
+    // decide for the whole command.
+    if cfg!(windows) && name.ends_with(".ps1") {
+        return false;
+    }
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() {
+        let Ok(target) = std::fs::read_link(path) else {
+            return false;
+        };
+        let resolved = aube_util::path::normalize_lexical(
+            &path.parent().unwrap_or(Path::new("")).join(target),
+        );
+        return !path.exists() || resolved.starts_with(aube_dir);
+    }
+    matches!(aube_linker::sys::resolve_bin_shim(path), Ok(Some(_)))
+}
+
 /// Remove only shims that still match entries created by the pre-build pass.
 /// Lifecycle-produced files or retargeted symlinks are left untouched.
 pub(crate) fn remove_managed_bin_links(
@@ -1286,6 +1389,89 @@ mod tests {
             bin,
             ..Default::default()
         }
+    }
+
+    /// A shim left behind by a removed dependency must go, while shims the
+    /// current install claims and files aube did not write stay put.
+    #[test]
+    fn remove_unclaimed_bin_links_drops_only_stale_aube_shims() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let aube_dir = project.join("node_modules/.aube");
+        let bin_dir = project.join("node_modules/.bin");
+        let pkg_dir = aube_dir.join("gone@1.0.0/node_modules/gone");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let tool = pkg_dir.join("tool.js");
+        std::fs::write(&tool, "#!/usr/bin/env node\n").unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        let mut previous = ManagedBinLinks::default();
+        for name in ["gone", "kept"] {
+            create_bin_link(
+                &bin_dir,
+                name,
+                &tool,
+                opts,
+                &mut previous,
+                None,
+                BinConflict::Overwrite,
+            )
+            .unwrap();
+        }
+        std::fs::write(bin_dir.join("foreign"), "#!/bin/sh\necho hi\n").unwrap();
+
+        let mut current = ManagedBinLinks::default();
+        current
+            .seen
+            .entry(bin_dir.clone())
+            .or_default()
+            .insert("kept".to_string());
+        let graph = LockfileGraph::default();
+        remove_unclaimed_bin_links(project, "node_modules", &aube_dir, &graph, &current);
+
+        assert!(!bin_dir.join("gone").exists(), "stale shim is removed");
+        assert!(bin_dir.join("kept").exists(), "claimed shim stays");
+        assert!(
+            bin_dir.join("foreign").exists(),
+            "a file aube did not write stays"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_unclaimed_bin_links_drops_dangling_and_virtual_store_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let aube_dir = project.join("node_modules/.aube");
+        let bin_dir = project.join("node_modules/.bin");
+        let live = aube_dir.join("gone@1.0.0/node_modules/gone/tool.js");
+        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+        std::fs::write(&live, "").unwrap();
+        let outside = project.join("outside.js");
+        std::fs::write(&outside, "").unwrap();
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::os::unix::fs::symlink(
+            "../.aube/gone@1.0.0/node_modules/gone/tool.js",
+            bin_dir.join("gone"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("../missing/x.js", bin_dir.join("dangling")).unwrap();
+        std::os::unix::fs::symlink("../../outside.js", bin_dir.join("user")).unwrap();
+
+        remove_unclaimed_bin_links(
+            project,
+            "node_modules",
+            &aube_dir,
+            &LockfileGraph::default(),
+            &ManagedBinLinks::default(),
+        );
+
+        assert!(bin_dir.join("gone").symlink_metadata().is_err());
+        assert!(bin_dir.join("dangling").symlink_metadata().is_err());
+        assert!(bin_dir.join("user").symlink_metadata().is_ok());
     }
 
     /// The hoisted transitive pass links every package's bins into the

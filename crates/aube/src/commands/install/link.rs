@@ -1,4 +1,6 @@
-use super::bin_linking::{LinkAllBinsInput, ManagedBinLinks, link_all_bins};
+use super::bin_linking::{
+    LinkAllBinsInput, ManagedBinLinks, link_all_bins, remove_unclaimed_bin_links,
+};
 use super::sweep::invalidate_changed_aube_entries;
 use super::{InstallPhaseTimings, lifecycle::resolve_link_strategy};
 use super::{delta, gvs};
@@ -411,6 +413,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             capture_managed: !ignore_scripts && build_policy.has_any_allow_rule(),
             preserved: None,
         })?;
+        remove_unclaimed_bin_links(cwd, modules_dir_name, aube_dir, graph_for_link, &managed);
         tracing::debug!("phase:link_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("link_bins", phase_start.elapsed());
         managed

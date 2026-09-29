@@ -395,6 +395,54 @@ EOF
 	refute_output --partial 'is-odd'
 }
 
+@test "aube remove drops the removed dependency's .bin shim" {
+	# A leftover shim would outlive the package it launches and shadow a
+	# same-named command further down PATH.
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-bin",
+  "version": "0.0.0"
+}
+EOF
+
+	run aube add semver@7.7.4
+	assert_success
+	assert_file_exists node_modules/.bin/semver
+
+	run aube remove semver
+	assert_success
+	[ ! -e node_modules/.bin/semver ]
+	[ ! -L node_modules/.bin/semver ]
+}
+
+@test "aube install drops the .bin shim of a dependency deleted from the manifest" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-install-stale-bin",
+  "version": "0.0.0",
+  "dependencies": {
+    "semver": "7.7.4"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	assert_file_exists node_modules/.bin/semver
+
+	cat >package.json <<'EOF'
+{
+  "name": "test-install-stale-bin",
+  "version": "0.0.0"
+}
+EOF
+
+	run aube install
+	assert_success
+	[ ! -e node_modules/.bin/semver ]
+	[ ! -L node_modules/.bin/semver ]
+}
+
 @test "aube add: refuses to add to workspace root without -W" {
 	cat >package.json <<'EOF'
 {
