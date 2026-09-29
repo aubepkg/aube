@@ -340,3 +340,28 @@ _assert_installed_is_odd_root() {
 	run node -e 'if (!require("is-odd")(3)) process.exit(1)'
 	assert_success
 }
+
+@test "per-project workspace install recovers offline after deleting cache and root lockfile" {
+	# The vlt `node_modules` benchmark shape on a monorepo: lockfile,
+	# store and cache are gone but the linked tree is intact. The hidden
+	# lockfile supplies the graph and the already-linked shortcut must
+	# keep the fetch phase from re-downloading every tarball. `--offline`
+	# makes that observable: a fetch would fail with no registry access.
+	_setup_ws_fixture
+	echo 'enable-global-virtual-store=false' >>.npmrc
+
+	run aube install --ignore-scripts
+	assert_success
+	_assert_installed_is_odd
+
+	store_v1="$(aube store path)"
+	rm -rf "${store_v1:?}" "${XDG_CACHE_HOME:?}/aube"
+	rm aube-lock.yaml
+	assert_file_exists node_modules/.aube-lock.yaml
+
+	run aube install --ignore-scripts --offline
+	assert_success
+	_assert_installed_is_odd
+	run node -e 'if (!require("./packages/a/node_modules/is-odd")(3)) process.exit(1)'
+	assert_success
+}

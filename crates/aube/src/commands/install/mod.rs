@@ -1102,7 +1102,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // prewarm and link phases reuse the same hashes.
             let lock_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
                 cwd: &cwd,
-                reuse_existing_entries: !(has_workspace || explicit_store_dir_override),
+                reuse_existing_entries: !explicit_store_dir_override,
                 graph: &lock_materialize_graph,
                 store: &store,
                 link_strategy: lock_strategy,
@@ -1146,8 +1146,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 &packument_cache_dir,
                 Some(lock_materialize_tx),
                 /*already_linked_shortcut=*/
-                (!(has_workspace || explicit_store_dir_override))
-                    .then_some(&lock_virtual_store_plan),
+                (!explicit_store_dir_override).then_some(&lock_virtual_store_plan),
                 &lock_project_local_dep_paths,
                 virtual_store_dir_max_length,
                 opts.ignore_scripts,
@@ -1921,7 +1920,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // will.
             let materialize_virtual_store_plan = plan_virtual_store(VirtualStorePlanInputs {
                 cwd: &cwd,
-                reuse_existing_entries: !(has_workspace || explicit_store_dir_override),
+                reuse_existing_entries: !explicit_store_dir_override,
                 graph: &materialize_graph_arc,
                 store: &store,
                 link_strategy: materialize_strategy,
@@ -2226,8 +2225,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                         &packument_cache_dir,
                         /*materialize_tx=*/ None,
                         /*already_linked_shortcut=*/
-                        (!(has_workspace || explicit_store_dir_override))
-                            .then_some(&materialize_virtual_store_plan),
+                        (!explicit_store_dir_override).then_some(&materialize_virtual_store_plan),
                         &project_local_dep_paths,
                         virtual_store_dir_max_length,
                         opts.ignore_scripts,

@@ -819,7 +819,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
     Ok(())
 }
 
-fn registry_tarball_url_is_not_derivable(
+/// Whether `tarball_url` differs from the standard
+/// `<registry>/<name>/-/<basename>-<version>.tgz` layout, i.e. whether
+/// the lockfile has to record it because it can't be re-derived on
+/// read. A missing URL is derivable.
+pub fn registry_tarball_url_is_not_derivable(
     name: &str,
     version: &str,
     tarball_url: Option<&str>,

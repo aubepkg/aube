@@ -479,12 +479,8 @@ pub(super) async fn fetch_packages_with_root<F>(
     //
     // Callers pass `None` when either:
     //
-    //   - the shortcut has not been turned on for that install shape
-    //     yet. Workspaces are the live case: `link_workspace`'s step 1b
-    //     mirrors `link_all`'s state machine exactly, so the
-    //     classification below is as sound there as it is here, but
-    //     switching monorepos over is a perf change that wants its own
-    //     measurement rather than a ride on a correctness fix; or
+    //   - the install pins an explicit store directory (`--store-dir` or
+    //     an embedder override); or
     //   - the caller needs the verified index load to actually run as
     //     its store verification step (`aube fetch`, which treats the
     //     act of walking the store-file existence check as the

@@ -7,9 +7,9 @@
 //!
 //! Fix. blake3 each package over the fields that actually change
 //! what hits disk. name, version, integrity, sorted dependencies,
-//! os, cpu, libc, tarball_url, alias_of, local_source. Diff the
-//! old and new maps. Emit [`DeltaPlan`] with added, removed,
-//! changed.
+//! os, cpu, libc, non-derivable tarball_url, alias_of, local_source.
+//! Diff the old and new maps. Emit [`DeltaPlan`] with added,
+//! removed, changed.
 //!
 //! Missing or corrupt fingerprints in the prior state cascade to a
 //! full install. Feature is additive, never load-bearing.
@@ -440,7 +440,19 @@ fn fingerprint(pkg: &LockedPackage, patch_hash: Option<&str>, project_root: &Pat
     update_field(&mut h, b"version", pkg.version.as_bytes());
     update_field(&mut h, b"dep_path", pkg.dep_path.as_bytes());
     update_optional(&mut h, b"integrity", pkg.integrity.as_deref());
-    update_optional(&mut h, b"tarball_url", pkg.tarball_url.as_deref());
+    // A standard registry URL is derivable from name + version, so no
+    // lockfile records it and a graph read back from one has `None`
+    // here. Hashing it would make the same install fingerprint
+    // differently depending on whether the graph was freshly resolved
+    // or parsed, and state written by one never matches the other.
+    let tarball_url = pkg.tarball_url.as_deref().filter(|url| {
+        aube_lockfile::pnpm::registry_tarball_url_is_not_derivable(
+            pkg.registry_name(),
+            &pkg.version,
+            Some(url),
+        )
+    });
+    update_optional(&mut h, b"tarball_url", tarball_url);
     update_optional(&mut h, b"alias_of", pkg.alias_of.as_deref());
     update_optional(&mut h, b"patch", patch_hash);
     // BTreeMap iteration is canonical. Length-prefix every entry so
@@ -778,6 +790,23 @@ mod tests {
         a.tarball_url = Some("https://a.example/a-1.tgz".into());
         b.tarball_url = Some("https://b.example/a-1.tgz".into());
         assert_ne!(fp(&a), fp(&b));
+    }
+
+    #[test]
+    fn derivable_tarball_url_does_not_change_fingerprint() {
+        // Lockfiles drop a standard registry URL, so a parsed graph has
+        // `None` where a freshly resolved one has the URL.
+        let resolved = {
+            let mut p = pkg("a", "1");
+            p.tarball_url = Some("https://registry.example/a/-/a-1.tgz".into());
+            p
+        };
+        let parsed = pkg("a", "1");
+        assert_eq!(fp(&resolved), fp(&parsed));
+
+        let mut other_host = resolved.clone();
+        other_host.tarball_url = Some("https://mirror.example/a/-/a-1.tgz".into());
+        assert_eq!(fp(&resolved), fp(&other_host));
     }
 
     #[test]
