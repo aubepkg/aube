@@ -2926,8 +2926,9 @@ fn dedupe_peers_cycle_break_still_converges() {
 
 // A dense web of mutually peering packages whose suffixes all exceed
 // `peersSuffixMaxLength`: every suffix is hashed, and the hash of one
-// member embeds the hash of the next. Variant dedupe is off so that only
-// the hash-aware cycle break can make this converge.
+// member embeds the hash of the next. Run with variant dedupe off, where
+// only the hash-aware cycle break can make this converge, and with the
+// production default.
 #[test]
 fn mutual_peer_web_with_hashed_suffixes_converges() {
     const MEMBERS: usize = 8;
@@ -2968,21 +2969,25 @@ fn mutual_peer_web_with_hashed_suffixes_converges() {
         packages,
         ..Default::default()
     };
-    let options = PeerContextOptions {
-        dedupe_peer_dependents: false,
-        peers_suffix_max_length: 10,
-        ..PeerContextOptions::default()
-    };
-    let out = apply_peer_contexts(graph, &options).expect("mutual peer web should converge");
+    for dedupe_peer_dependents in [false, true] {
+        let options = PeerContextOptions {
+            dedupe_peer_dependents,
+            peers_suffix_max_length: 10,
+            ..PeerContextOptions::default()
+        };
+        let out = apply_peer_contexts(graph.clone(), &options).unwrap_or_else(|e| {
+            panic!("mutual peer web should converge (dedupe_peer_dependents={dedupe_peer_dependents}): {e}")
+        });
 
-    for pkg in out.packages.values() {
-        for (child_name, child_tail) in &pkg.dependencies {
-            let child_key = format!("{child_name}@{child_tail}");
-            assert!(
-                out.packages.contains_key(&child_key),
-                "dangling dep_path {child_key} referenced from {}",
-                pkg.dep_path
-            );
+        for pkg in out.packages.values() {
+            for (child_name, child_tail) in &pkg.dependencies {
+                let child_key = format!("{child_name}@{child_tail}");
+                assert!(
+                    out.packages.contains_key(&child_key),
+                    "dangling dep_path {child_key} referenced from {} (dedupe_peer_dependents={dedupe_peer_dependents})",
+                    pkg.dep_path
+                );
+            }
         }
     }
 }
