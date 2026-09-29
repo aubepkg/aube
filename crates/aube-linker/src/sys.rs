@@ -1195,18 +1195,7 @@ pub fn resolve_bin_shim_with_node(path: &Path) -> io::Result<Option<ResolvedBinS
             )
         })
     };
-    let binding = content
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("@REM ")
-                .unwrap_or(line)
-                .strip_prefix(NODE_SHIM_MARKER)
-        })
-        .map(|value| {
-            let bytes = hex::decode(value.trim()).map_err(io::Error::other)?;
-            serde_json::from_slice::<NodeShimBinding>(&bytes).map_err(io::Error::other)
-        })
-        .transpose()?;
+    let binding = node_shim_binding(content)?;
     let parsed = parsed.or_else(|| {
         binding.as_ref().map(|binding| {
             (
@@ -1245,6 +1234,21 @@ pub fn resolve_bin_shim_with_node(path: &Path) -> io::Result<Option<ResolvedBinS
     }))
 }
 
+fn node_shim_binding(content: &str) -> io::Result<Option<NodeShimBinding>> {
+    content
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("@REM ")
+                .unwrap_or(line)
+                .strip_prefix(NODE_SHIM_MARKER)
+        })
+        .map(|value| {
+            let bytes = hex::decode(value.trim()).map_err(io::Error::other)?;
+            serde_json::from_slice::<NodeShimBinding>(&bytes).map_err(io::Error::other)
+        })
+        .transpose()
+}
+
 /// Whether `path` is a launcher `create_bin_shim` wrote for a Windows
 /// command: the `<name>.cmd` wrapper, or the extensionless / `<name>.ps1`
 /// sibling of one. The `.cmd` wrapper is the only member that is always
@@ -1272,7 +1276,37 @@ pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Ok(false);
     };
-    Ok(content.contains(&relative_bin_target(dir, &shim.target)))
+    let rel = relative_bin_target(dir, &shim.target);
+    Ok(if file_name.ends_with(".ps1") {
+        sibling_launcher_matches(&content, "#!/usr/bin/env pwsh", ("& ", " $args"), &rel)
+    } else {
+        sibling_launcher_matches(&content, "#!/bin/sh", ("exec ", " \"$@\""), &rel)
+    })
+}
+
+/// Structural match of a generated `.ps1` / extensionless launcher against
+/// the relative target its `.cmd` wrapper records. A bound-Node launcher
+/// names its target in metadata that is compared as data; an ordinary one
+/// must carry the generated shebang and an invocation line that ends in the
+/// quoted target. Merely mentioning the path does not qualify.
+fn sibling_launcher_matches(
+    content: &str,
+    shebang: &str,
+    (call_prefix, call_suffix): (&str, &str),
+    rel: &str,
+) -> bool {
+    if content.lines().next().map(|l| l.trim_end_matches('\r')) != Some(shebang) {
+        return false;
+    }
+    if let Ok(Some(binding)) = node_shim_binding(content) {
+        return binding.target == rel;
+    }
+    let quoted = format!("\"$basedir/{rel}\"{call_suffix}");
+    content.lines().any(|line| {
+        let line = line.trim();
+        let line = line.strip_prefix("$input | ").unwrap_or(line);
+        line.starts_with(call_prefix) && line.ends_with(&quoted)
+    })
 }
 
 fn parse_cmd_shim_target(content: &str) -> Option<&str> {
@@ -1919,6 +1953,49 @@ process.exit(17);
         create_dir_link(&rel, &link).unwrap();
 
         assert_eq!(std::fs::read(link.join("marker.txt")).unwrap(), b"hi");
+    }
+
+    #[test]
+    fn sibling_launcher_matches_requires_the_generated_shape() {
+        let rel = "../.aube/it's@1.0.0/node_modules/it's/cli.js";
+        let ps1 = format!(
+            "#!/usr/bin/env pwsh\n$ret=0\nif ($MyInvocation.ExpectingInput) {{\n  $input | & \"$basedir/node$exe\" \"$basedir/{rel}\" $args\n}} else {{\n  & \"$basedir/node$exe\" \"$basedir/{rel}\" $args\n}}\n"
+        );
+        let shebang = "#!/usr/bin/env pwsh";
+        let call = ("& ", " $args");
+        assert!(sibling_launcher_matches(&ps1, shebang, call, rel));
+        assert!(!sibling_launcher_matches(
+            &ps1,
+            shebang,
+            call,
+            "../other.js"
+        ));
+
+        // Mentioning the path in a comment or variable is not enough.
+        let replaced =
+            format!("#!/usr/bin/env pwsh\n# was \"$basedir/{rel}\" $args\n$old = '{rel}'\n");
+        assert!(!sibling_launcher_matches(&replaced, shebang, call, rel));
+        let no_shebang = ps1.replacen("#!/usr/bin/env pwsh\n", "", 1);
+        assert!(!sibling_launcher_matches(&no_shebang, shebang, call, rel));
+
+        // Bound-Node launchers carry the target as metadata, so quoting in
+        // the script body (a doubled apostrophe) is irrelevant.
+        let binding = NodeShimBinding {
+            target: rel.to_string(),
+            node: PathBuf::from("/usr/bin/node"),
+            args: Vec::new(),
+        };
+        let metadata = hex::encode(serde_json::to_vec(&binding).unwrap());
+        let bound = format!(
+            "#!/usr/bin/env pwsh\n{NODE_SHIM_MARKER}{metadata}\n$target=Join-Path $basedir 'it''s'\n"
+        );
+        assert!(sibling_launcher_matches(&bound, shebang, call, rel));
+        assert!(!sibling_launcher_matches(
+            &bound,
+            shebang,
+            call,
+            "../other.js"
+        ));
     }
 
     #[cfg(windows)]
