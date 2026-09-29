@@ -945,8 +945,14 @@ pub(crate) fn remove_unclaimed_bin_links(
 ) -> miette::Result<()> {
     let aube_dir = aube_util::path::normalize_lexical(aube_dir);
     let mut bin_dirs = BTreeSet::from([project_dir.join(modules_dir_name).join(".bin")]);
+    // A workspace dependency's native executable is linked from its own
+    // package directory, outside the virtual store and `node_modules`.
+    let mut workspace_dirs = Vec::new();
     for importer_path in graph.importers.keys() {
         if importer_path != "." && aube_linker::is_physical_importer(importer_path) {
+            workspace_dirs.push(aube_util::path::normalize_lexical(
+                &project_dir.join(importer_path),
+            ));
             bin_dirs.insert(
                 project_dir
                     .join(importer_path)
@@ -958,9 +964,19 @@ pub(crate) fn remove_unclaimed_bin_links(
     for bin_dir in bin_dirs {
         let claimed = managed.seen.get(&bin_dir);
         let modules_dir = aube_util::path::normalize_lexical(bin_dir.parent().unwrap_or(&bin_dir));
+        let launcher_roots: Vec<&Path> = [aube_dir.as_path(), modules_dir.as_path()]
+            .into_iter()
+            .chain(workspace_dirs.iter().map(PathBuf::as_path))
+            .collect();
         let mut stale = Vec::new();
         for (path, name) in list_bin_entries(&bin_dir)? {
-            if is_unclaimed_aube_bin_link(&path, &name, claimed, &aube_dir, &modules_dir) {
+            if is_unclaimed_aube_bin_link(
+                &path,
+                &name,
+                claimed,
+                (&aube_dir, &modules_dir),
+                &launcher_roots,
+            ) {
                 stale.push(path);
             }
         }
@@ -1044,8 +1060,8 @@ fn is_unclaimed_aube_bin_link(
     path: &Path,
     name: &str,
     claimed: Option<&BTreeSet<String>>,
-    aube_dir: &Path,
-    modules_dir: &Path,
+    (aube_dir, modules_dir): (&Path, &Path),
+    launcher_roots: &[&Path],
 ) -> bool {
     // A command literally named `foo.cmd` is recorded under that name, so
     // check the file's own name before falling back to its command stem.
@@ -1073,7 +1089,7 @@ fn is_unclaimed_aube_bin_link(
             || (resolved.starts_with(modules_dir) && !path.exists());
     }
     if cfg!(windows) {
-        return aube_linker::sys::is_generated_windows_launcher(path, &[aube_dir, modules_dir])
+        return aube_linker::sys::is_generated_windows_launcher(path, launcher_roots)
             .unwrap_or(false);
     }
     matches!(aube_linker::sys::resolve_bin_shim(path), Ok(Some(_)))
