@@ -1263,8 +1263,11 @@ pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
         .strip_suffix(".cmd")
         .or_else(|| file_name.strip_suffix(".ps1"))
         .unwrap_or(file_name);
-    let Some(shim) = resolve_bin_shim(&dir.join(format!("{stem}.cmd")))? else {
-        return Ok(false);
+    let shim = match resolve_bin_shim(&dir.join(format!("{stem}.cmd"))) {
+        Ok(Some(shim)) => shim,
+        Ok(None) => return Ok(false),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
     };
     if file_name.ends_with(".cmd") {
         return Ok(true);
