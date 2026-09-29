@@ -2924,6 +2924,68 @@ fn dedupe_peers_cycle_break_still_converges() {
     }
 }
 
+// A dense web of mutually peering packages whose suffixes all exceed
+// `peersSuffixMaxLength`: every suffix is hashed, and the hash of one
+// member embeds the hash of the next. Variant dedupe picks canonical
+// keys by hash order, so it must not keep undoing the renaming.
+#[test]
+fn mutual_peer_web_with_hashed_suffixes_converges() {
+    const MEMBERS: usize = 8;
+    let name = |i: usize| format!("m{i}");
+    let mut packages = BTreeMap::new();
+    for i in 0..MEMBERS {
+        // Each member peers on every other member, plus a shared leaf
+        // so the web has a non-cyclic base to resolve against.
+        let others: Vec<String> = (0..MEMBERS).filter(|j| *j != i).map(name).collect();
+        let mut deps: Vec<(&str, &str)> = others.iter().map(|n| (n.as_str(), "1.0.0")).collect();
+        deps.push(("leaf", "1.0.0"));
+        let mut peers: Vec<(&str, &str)> = others.iter().map(|n| (n.as_str(), "^1")).collect();
+        peers.push(("leaf", "^1"));
+        packages.insert(
+            format!("{}@1.0.0", name(i)),
+            mk_locked(&name(i), "1.0.0", &deps, &peers),
+        );
+    }
+    packages.insert(
+        "leaf@1.0.0".to_string(),
+        mk_locked("leaf", "1.0.0", &[], &[]),
+    );
+
+    let direct = |dep: String| DirectDep {
+        name: dep.clone(),
+        dep_path: format!("{dep}@1.0.0"),
+        dep_type: DepType::Production,
+        specifier: Some("^1".to_string()),
+    };
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        (0..MEMBERS).map(|i| direct(name(i))).collect(),
+    );
+
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let options = PeerContextOptions {
+        peers_suffix_max_length: 10,
+        ..PeerContextOptions::default()
+    };
+    let out = apply_peer_contexts(graph, &options).expect("mutual peer web should converge");
+
+    for pkg in out.packages.values() {
+        for (child_name, child_tail) in &pkg.dependencies {
+            let child_key = format!("{child_name}@{child_tail}");
+            assert!(
+                out.packages.contains_key(&child_key),
+                "dangling dep_path {child_key} referenced from {}",
+                pkg.dep_path
+            );
+        }
+    }
+}
+
 #[test]
 fn peer_chain_deeper_than_legacy_limit_converges() {
     const CHAIN_LEN: usize = 20;

@@ -404,9 +404,20 @@ pub fn apply_peer_contexts(
     // to `pkgs * 3 + deps * 2` tokens — ~25k entries on a 1000-pkg
     // graph). One hash per iter instead of two.
     let mut before = graph_hash(&current);
+    // `dedupe-peer-dependents` collapses variants onto the smallest key,
+    // and hashed keys (`peersSuffixMaxLength`) are renamed whenever a
+    // tail they embed changes. On dense peer webs the two can undo each
+    // other forever, so a graph seen twice means the dedupe is
+    // ping-ponging. Stop deduping and let the plain contextualization
+    // settle; an undeduped graph is valid, just less compact.
+    let mut dedupe = options.dedupe_peer_dependents;
+    let mut seen_hashes: FxHashSet<u64> = FxHashSet::default();
+    // Remembers what each `(<short-hash>)` suffix stands for so the
+    // cycle breaker can still see through it on later iterations.
+    let mut hashed_suffixes = HashedSuffixes::default();
     for i in 0..iteration_limit {
-        let after_once = apply_peer_contexts_once(current, options);
-        let next = if options.dedupe_peer_dependents {
+        let after_once = apply_peer_contexts_once(current, options, &mut hashed_suffixes);
+        let next = if dedupe {
             dedupe_peer_variants(after_once)
         } else {
             after_once
@@ -417,6 +428,12 @@ pub fn apply_peer_contexts(
             current = next;
             converged = true;
             break;
+        }
+        if dedupe && !seen_hashes.insert(after) {
+            tracing::debug!(
+                "peer-context variant dedupe oscillated at iteration {i}; continuing without it"
+            );
+            dedupe = false;
         }
         current = next;
         before = after;
@@ -675,6 +692,7 @@ pub(crate) fn dedupe_peer_variants(graph: LockfileGraph) -> LockfileGraph {
 fn apply_peer_contexts_once(
     canonical: LockfileGraph,
     options: &PeerContextOptions,
+    hashed_suffixes: &mut HashedSuffixes,
 ) -> LockfileGraph {
     let mut out_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
     let mut new_importers: BTreeMap<String, Vec<DirectDep>> = BTreeMap::new();
@@ -743,6 +761,7 @@ fn apply_peer_contexts_once(
                 &mut out_packages,
                 &mut visiting,
                 options,
+                hashed_suffixes,
             )
             .unwrap_or_else(|| dep.dep_path.clone());
             new_deps.push(DirectDep {
@@ -924,6 +943,41 @@ pub(crate) fn contains_canonical_back_ref(value: &str, canonical: &str) -> bool 
             }
         }
         i += 1;
+    }
+    false
+}
+
+/// Hashed peer suffix (`(<short-hash>)`) -> the `(name@version)…` suffix
+/// it was computed from.
+type HashedSuffixes = FxHashMap<String, String>;
+
+/// [`contains_canonical_back_ref`], also following `(<short-hash>)`
+/// segments recorded in `hashed`. Once a suffix crosses
+/// `peersSuffixMaxLength` its text is replaced by a hash, so a mutual
+/// peer cycle routed through a hashed tail would otherwise never be
+/// recognized and every pass would wrap the previous pass's hash in a
+/// new one.
+fn refers_back_through_hashes(value: &str, canonical: &str, hashed: &HashedSuffixes) -> bool {
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    let mut pending = vec![value];
+    while let Some(text) = pending.pop() {
+        if contains_canonical_back_ref(text, canonical) {
+            return true;
+        }
+        if hashed.is_empty() {
+            continue;
+        }
+        for (open, _) in text.match_indices('(') {
+            // `(` + 32 hex digits + `)`
+            let Some(segment) = text.get(open..open + 34) else {
+                continue;
+            };
+            if let Some((key, expanded)) = hashed.get_key_value(segment)
+                && seen.insert(key.as_str())
+            {
+                pending.push(expanded);
+            }
+        }
     }
     false
 }
@@ -1625,6 +1679,7 @@ fn visit_peer_context<'g>(
     out_packages: &mut BTreeMap<String, LockedPackage>,
     visiting: &mut FxHashSet<String>,
     options: &PeerContextOptions,
+    hashed_suffixes: &mut HashedSuffixes,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
 
@@ -1830,7 +1885,11 @@ fn visit_peer_context<'g>(
     let suffix: String = peer_context
         .iter()
         .map(|(n, provider)| {
-            let cycles_back = contains_canonical_back_ref(&provider.context_tail, &canonical_base);
+            let cycles_back = refers_back_through_hashes(
+                &provider.context_tail,
+                &canonical_base,
+                hashed_suffixes,
+            );
             let display_v = if cycles_back {
                 canonical_tail(&provider.context_tail).to_string()
             } else {
@@ -1844,6 +1903,9 @@ fn visit_peer_context<'g>(
     // parenthesized short hash `(<hash>)` so the lockfile key stays
     // bounded and byte-compatible with pnpm's `createPeerDepGraphHash`.
     let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
+    if effective_suffix != suffix {
+        hashed_suffixes.insert(effective_suffix.clone(), suffix);
+    }
     let contextualized = format!("{canonical_base}{effective_suffix}");
 
     if out_packages.contains_key(&contextualized) || visiting.contains(&contextualized) {
@@ -1911,6 +1973,7 @@ fn visit_peer_context<'g>(
             out_packages,
             visiting,
             options,
+            hashed_suffixes,
         );
         let new_tail = match child_new {
             Some(new_dep_path) => new_dep_path
@@ -1941,6 +2004,7 @@ fn visit_peer_context<'g>(
             out_packages,
             visiting,
             options,
+            hashed_suffixes,
         );
         if let Some(new_dep_path) = child_new {
             let new_tail = new_dep_path
