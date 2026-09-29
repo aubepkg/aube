@@ -1044,19 +1044,6 @@ fn snapshot_active_lockfile(
     Ok((hash_bytes(&content), Some(name)))
 }
 
-/// Read per-package fingerprints from a project's state directory.
-/// Returns `None` on any failure path (file missing, malformed
-/// JSON, pre-delta aube). Caller treats that as "no prior
-/// fingerprints, full install". Never surfaces an error because
-/// delta is additive. A miss just lands on the full-install path.
-pub fn read_state_package_content_hashes(project_dir: &Path) -> Option<BTreeMap<String, String>> {
-    let state = read_state(&state_dir(project_dir))?;
-    if state.package_content_hashes.is_empty() {
-        return None;
-    }
-    Some(state.package_content_hashes)
-}
-
 /// All delta-install fields from the last install's state, extracted in
 /// a single parse. `finalize` needs every one of them; reading each
 /// through its own accessor re-parses the full O(graph) state file (and
@@ -1090,6 +1077,38 @@ pub fn read_state_delta_snapshot(project_dir: &Path) -> Option<DeltaStateSnapsho
 /// should take the normal path once to refresh derived metadata.
 pub fn read_state_layout(project_dir: &Path) -> Option<InstallLayoutState> {
     read_state(&state_dir(project_dir))?.layout
+}
+
+/// Layout freshness and the package count, from one full parse of the
+/// install state. The warm path previously parsed the state file once
+/// for the layout (inside the eligibility check) and again just to
+/// count the recorded package content hashes.
+pub struct WarmStateSnapshot {
+    /// See [`InstallState::layout`]. `None` when the install predates
+    /// layout tracking, which the warm path treats as ineligible.
+    pub layout: Option<InstallLayoutState>,
+    /// Number of recorded package content hashes. `None` means the
+    /// state has no fingerprints (pre-delta aube or fresh state),
+    /// matching the `None` from
+    /// [`read_state_package_content_hashes`]; the caller falls back to
+    /// counting the lockfile graph.
+    pub package_count: Option<usize>,
+}
+
+/// Read the warm-path state fields in one parse. `None` when the state
+/// file is missing or malformed — the warm path is ineligible then,
+/// same as today.
+pub fn read_state_warm_snapshot(project_dir: &Path) -> Option<WarmStateSnapshot> {
+    let state = read_state(&state_dir(project_dir))?;
+    let package_count = if state.package_content_hashes.is_empty() {
+        None
+    } else {
+        Some(state.package_content_hashes.len())
+    };
+    Some(WarmStateSnapshot {
+        layout: state.layout,
+        package_count,
+    })
 }
 
 /// Persist the exact hoisted tree produced by the linker. This is a separate

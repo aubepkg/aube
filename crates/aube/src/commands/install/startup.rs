@@ -90,18 +90,25 @@ pub(super) fn try_install_fast_path(
         return Ok(None);
     }
     let dangerously_allow_all_builds = aube_settings::resolved::dangerously_allow_all_builds(&ctx);
-    if !install_fast_path_eligible(
+    let fast_path_snapshot = install_fast_path_eligible(
         cwd,
         opts,
         mode,
         modules_cache_sweep_default,
         dangerously_allow_all_builds,
-    ) {
+    );
+    let Some(fast_path_snapshot) = fast_path_snapshot else {
         return Ok(None);
-    }
+    };
     opts.control.check_cancelled()?;
-    let total = state::read_state_package_content_hashes(cwd)
-        .map(|packages| packages.len())
+    // The eligibility check already parsed the state file once for the
+    // layout check; reuse that same parse for the package count
+    // instead of reading the state file again. `package_count` is
+    // `None` in exactly the cases
+    // `read_state_package_content_hashes` returned `None`, so the
+    // lockfile fallback still applies unchanged.
+    let total = fast_path_snapshot
+        .package_count
         .or_else(|| {
             let manifest = super::super::load_manifest_or_default(cwd).ok()?;
             crate::commands::parse_lockfile_with_kind(cwd, &manifest)
@@ -118,7 +125,7 @@ fn install_fast_path_eligible(
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
     dangerously_allow_all_builds: bool,
-) -> bool {
+) -> Option<state::WarmStateSnapshot> {
     let preconditions_met = matches!(mode, FrozenMode::Frozen | FrozenMode::Prefer)
         && !opts.force
         && !opts.lockfile_only
@@ -128,26 +135,40 @@ fn install_fast_path_eligible(
         && opts.workspace_filter.is_empty()
         && modules_cache_sweep_default;
     if !preconditions_met {
-        return false;
+        return None;
     }
     if paranoid_requires_full_pipeline(cwd, opts) {
-        return false;
+        return None;
     }
     // Surface *why* the warm path was missed at debug level — the state
     // freshness reason is otherwise discarded here (only `.is_none()` is
     // consulted), leaving `aube install -v` silent on repeat-install loops
     // that originate from state drift rather than lockfile drift.
     match state::check_needs_install_with_flags(cwd, &opts.cli_flags, opts.strict_no_lockfile) {
-        None => compatibility_metadata_is_current(cwd, opts),
+        None => {
+            // One full state parse feeds both the layout check below
+            // and the caller's package count.
+            let snapshot = state::read_state_warm_snapshot(cwd);
+            let layout_current = compatibility_metadata_is_current(
+                cwd,
+                opts,
+                snapshot.as_ref().and_then(|snap| snap.layout.clone()),
+            );
+            layout_current.then_some(snapshot).flatten()
+        }
         Some(reason) => {
             tracing::debug!("install warm path skipped: {reason}");
-            false
+            None
         }
     }
 }
 
-fn compatibility_metadata_is_current(cwd: &Path, opts: &InstallOptions) -> bool {
-    let Some(layout) = state::read_state_layout(cwd) else {
+fn compatibility_metadata_is_current(
+    cwd: &Path,
+    opts: &InstallOptions,
+    layout: Option<state::InstallLayoutState>,
+) -> bool {
+    let Some(layout) = layout else {
         return false;
     };
     let modules_dir_name = super::super::resolve_modules_dir_name_for_cwd(cwd);
