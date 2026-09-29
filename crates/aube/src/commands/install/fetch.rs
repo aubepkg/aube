@@ -16,7 +16,7 @@ use crate::progress::InstallProgress;
 use aube_lockfile::dep_path_filename::dep_path_to_filename;
 use miette::{Context, IntoDiagnostic, miette};
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Materialize a local-source package into the store.
 ///
@@ -571,23 +571,63 @@ where
         NeedsFetch,
     }
 
-    // Parallel index check (rayon)
-    let check_results: Vec<_> = packages
-        .par_iter()
-        .filter(|(_, pkg)| pkg.local_source.is_none())
+    // Verify each distinct store entry once, before the per-dep_path
+    // check. Peer placements re-enter the same (registry name, version,
+    // integrity) once per dep_path, and every verified load stats one
+    // file per index entry; grouping the loads means the stat-per-file
+    // verification runs a single time no matter how many placements
+    // share the package. Packages that will take the already-linked
+    // shortcut (or are local sources) never needed a load, so they are
+    // excluded here to keep the shortcut's zero-read behavior.
+    let needs_check: Vec<bool> = packages
+        .iter()
         .map(|(dep_path, pkg)| {
+            if pkg.local_source.is_some() {
+                return false;
+            }
+            match already_linked_shortcut {
+                Some(plan) if !force_index_dep_paths.contains(dep_path) => {
+                    let entry_name = dep_path_to_filename(dep_path, virtual_store_dir_max_length);
+                    let entry = aube_dir.join(&entry_name);
+                    !plan.entry_is_current(&entry, dep_path, virtual_store_dir_max_length)
+                }
+                _ => true,
+            }
+        })
+        .collect();
+    let mut store_keys: Vec<(&str, &str, Option<&str>)> = Vec::new();
+    for ((_, pkg), needs) in packages.iter().zip(&needs_check) {
+        if !needs {
+            continue;
+        }
+        let key = (
+            pkg.registry_name(),
+            pkg.version.as_str(),
+            pkg.integrity.as_deref(),
+        );
+        if !store_keys.contains(&key) {
+            store_keys.push(key);
+        }
+    }
+    let verified: HashMap<(&str, &str, Option<&str>), Option<aube_store::PackageIndex>> =
+        store_keys
+            .par_iter()
+            .map(|key| (*key, store.load_index_verified(key.0, key.1, key.2)))
+            .collect();
+
+    let packages_refs: Vec<(&String, &aube_lockfile::LockedPackage)> = packages.iter().collect();
+
+    // Parallel index check (rayon)
+    let check_results: Vec<_> = packages_refs
+        .par_iter()
+        .enumerate()
+        .map(|(i, (dep_path, pkg))| {
             // `force_index_dep_paths` is the project-local closure the
             // linker materializes as real directories rather than
             // shared-store symlinks, so its freshness test is a
             // different one; those always take the verified path.
-            if let Some(plan) = already_linked_shortcut
-                && !force_index_dep_paths.contains(dep_path)
-            {
-                let entry_name = dep_path_to_filename(dep_path, virtual_store_dir_max_length);
-                let entry = aube_dir.join(&entry_name);
-                if plan.entry_is_current(&entry, dep_path, virtual_store_dir_max_length) {
-                    return (dep_path.clone(), pkg, CheckResult::AlreadyLinked);
-                }
+            if !needs_check[i] {
+                return (dep_path.to_string(), pkg, CheckResult::AlreadyLinked);
             }
             // Keyed by registry name so two npm-aliases of the same
             // real package share one store index entry instead of
@@ -606,14 +646,18 @@ where
             // a stale index drops here and falls through to `NeedsFetch`,
             // which re-fetches the tarball cleanly — the alternative is
             // the materializer dying mid-link with `ERR_AUBE_MISSING_STORE_FILE`,
-            // forcing the user to retry the whole install.
-            match store.load_index_verified(
+            // forcing the user to retry the whole install. The grouped
+            // verification above keeps the staleness window the same
+            // size as a single pass: every dep_path of one store entry
+            // now sees the same verified snapshot.
+            let key = (
                 pkg.registry_name(),
-                &pkg.version,
+                pkg.version.as_str(),
                 pkg.integrity.as_deref(),
-            ) {
-                Some(index) => (dep_path.clone(), pkg, CheckResult::Cached(index)),
-                None => (dep_path.clone(), pkg, CheckResult::NeedsFetch),
+            );
+            match verified.get(&key).cloned().flatten() {
+                Some(index) => (dep_path.to_string(), pkg, CheckResult::Cached(index)),
+                None => (dep_path.to_string(), pkg, CheckResult::NeedsFetch),
             }
         })
         .collect();
