@@ -1,6 +1,7 @@
 //! Paired timing probe: per-dep_path verified index loads vs grouping
 //! loads by store identity. Mirrors the fetch.rs check boundary.
 use aube_store::{PackageIndex, Store, StoredFile};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -44,27 +45,51 @@ fn main() {
             // warm-up pairs run once each before samples are taken
             let warm = pair < 2;
 
-            let start = Instant::now();
-            let baseline: BTreeMap<usize, PackageIndex> = (0..placements)
-                .map(|i| {
-                    (
-                        i,
-                        store
-                            .load_index_verified("bench-pkg", "1.0.0", None)
-                            .unwrap(),
-                    )
-                })
-                .collect();
-            let base = start.elapsed();
+            // Production verified placements in parallel (rayon), so
+            // the baseline here does the same. The grouped side
+            // verifies the distinct entry once and clones per
+            // placement. Alternating the running order per pair
+            // cancels OS-cache warmth between the two sides.
+            let group_first = pair % 2 == 0;
 
-            let start = Instant::now();
-            let canonical = store
-                .load_index_verified("bench-pkg", "1.0.0", None)
-                .unwrap();
-            let grouped: BTreeMap<usize, PackageIndex> =
-                (0..placements).map(|i| (i, canonical.clone())).collect();
-            let group = start.elapsed();
-
+            let (base, group, baseline, grouped) = {
+                let baseline = || {
+                    (0..placements)
+                        .into_par_iter()
+                        .map(|i| {
+                            (
+                                i,
+                                store
+                                    .load_index_verified("bench-pkg", "1.0.0", None)
+                                    .unwrap(),
+                            )
+                        })
+                        .collect::<BTreeMap<usize, PackageIndex>>()
+                };
+                let grouped = || {
+                    let canonical = store
+                        .load_index_verified("bench-pkg", "1.0.0", None)
+                        .unwrap();
+                    (0..placements)
+                        .map(|i| (i, canonical.clone()))
+                        .collect::<BTreeMap<usize, PackageIndex>>()
+                };
+                if group_first {
+                    let start = Instant::now();
+                    let b = baseline();
+                    let base = start.elapsed();
+                    let start = Instant::now();
+                    let g = grouped();
+                    (base, start.elapsed(), b, g)
+                } else {
+                    let start = Instant::now();
+                    let g = grouped();
+                    let group = start.elapsed();
+                    let start = Instant::now();
+                    let b = baseline();
+                    (start.elapsed(), group, b, g)
+                }
+            };
             assert_eq!(baseline.len(), grouped.len());
             for i in 0..placements {
                 assert_eq!(baseline[&i].len(), grouped[&i].len());

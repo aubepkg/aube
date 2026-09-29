@@ -571,14 +571,16 @@ where
         NeedsFetch,
     }
 
+    let packages_refs: Vec<(&String, &aube_lockfile::LockedPackage)> = packages.iter().collect();
+
     // Verify each distinct store entry once, before the per-dep_path
     // check. Peer placements re-enter the same (registry name, version,
     // integrity) once per dep_path, and every verified load stats one
     // file per index entry; grouping the loads means the stat-per-file
     // verification runs a single time no matter how many placements
     // share the package. Packages that will take the already-linked
-    // shortcut (or are local sources) never needed a load, so they are
-    // excluded here to keep the shortcut's zero-read behavior.
+    // shortcut never needed a load, so they are excluded here to keep
+    // the shortcut's zero-read behavior.
     let needs_check: Vec<bool> = packages
         .iter()
         .map(|(dep_path, pkg)| {
@@ -596,6 +598,8 @@ where
         })
         .collect();
     let mut store_keys: Vec<(&str, &str, Option<&str>)> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<(&str, &str, Option<&str>)> =
+        std::collections::HashSet::new();
     for ((_, pkg), needs) in packages.iter().zip(&needs_check) {
         if !needs {
             continue;
@@ -605,7 +609,7 @@ where
             pkg.version.as_str(),
             pkg.integrity.as_deref(),
         );
-        if !store_keys.contains(&key) {
+        if seen_keys.insert(key) {
             store_keys.push(key);
         }
     }
@@ -615,17 +619,15 @@ where
             .map(|key| (*key, store.load_index_verified(key.0, key.1, key.2)))
             .collect();
 
-    let packages_refs: Vec<(&String, &aube_lockfile::LockedPackage)> = packages.iter().collect();
-
-    // Parallel index check (rayon)
+    // Parallel index check (rayon). Local sources are imported
+    // separately below, so they stay filtered out like before; the
+    // remaining packages either take the already-linked shortcut
+    // (needs_check is false) or read their group's verified snapshot.
     let check_results: Vec<_> = packages_refs
         .par_iter()
         .enumerate()
+        .filter(|(_, (_, pkg))| pkg.local_source.is_none())
         .map(|(i, (dep_path, pkg))| {
-            // `force_index_dep_paths` is the project-local closure the
-            // linker materializes as real directories rather than
-            // shared-store symlinks, so its freshness test is a
-            // different one; those always take the verified path.
             if !needs_check[i] {
                 return (dep_path.to_string(), pkg, CheckResult::AlreadyLinked);
             }
