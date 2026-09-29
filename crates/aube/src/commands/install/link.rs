@@ -413,7 +413,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             capture_managed: !ignore_scripts && build_policy.has_any_allow_rule(),
             preserved: None,
         })?;
-        remove_unclaimed_bin_links(cwd, modules_dir_name, aube_dir, graph_for_link, &managed);
+        remove_unclaimed_bin_links(cwd, modules_dir_name, aube_dir, graph_for_link, &managed)?;
         tracing::debug!("phase:link_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("link_bins", phase_start.elapsed());
         managed
