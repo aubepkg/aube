@@ -1056,29 +1056,18 @@ fn is_unclaimed_aube_bin_link(
         let resolved = aube_util::path::normalize_lexical(
             &path.parent().unwrap_or(Path::new("")).join(target),
         );
-        return resolved.starts_with(aube_dir) || resolved.starts_with(modules_dir);
+        // A live link into the virtual store is aube's private layout. A
+        // dangling link is also ours when it points into the importer's
+        // `node_modules`, where hoisted installs link bins and the
+        // package has since been swept. Anything else, or a live link
+        // someone aimed at a file under `node_modules`, is not aube's.
+        return resolved.starts_with(aube_dir)
+            || (resolved.starts_with(modules_dir) && !path.exists());
     }
-    if cfg!(windows) && name.ends_with(".ps1") {
-        return is_aube_ps1_stub(path);
+    if cfg!(windows) {
+        return aube_linker::sys::is_generated_windows_launcher(path).unwrap_or(false);
     }
     matches!(aube_linker::sys::resolve_bin_shim(path), Ok(Some(_)))
-}
-
-/// The `.ps1` stub has no marker of its own, so it counts as aube's only
-/// when the extensionless wrapper beside it is aube's and the stub invokes
-/// the very target that wrapper records.
-fn is_aube_ps1_stub(path: &Path) -> bool {
-    let sibling = path.with_extension("");
-    let Ok(Some(_)) = aube_linker::sys::resolve_bin_shim(&sibling) else {
-        return false;
-    };
-    let Ok(wrapper) = std::fs::read_to_string(&sibling) else {
-        return false;
-    };
-    let Some(target) = aube_linker::parse_posix_shim_target(&wrapper) else {
-        return false;
-    };
-    std::fs::read_to_string(path).is_ok_and(|stub| stub.contains(&format!("\"$basedir/{target}\"")))
 }
 
 /// Remove only shims that still match entries created by the pre-build pass.

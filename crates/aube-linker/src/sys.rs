@@ -1245,6 +1245,36 @@ pub fn resolve_bin_shim_with_node(path: &Path) -> io::Result<Option<ResolvedBinS
     }))
 }
 
+/// Whether `path` is a launcher `create_bin_shim` wrote for a Windows
+/// command: the `<name>.cmd` wrapper, or the extensionless / `<name>.ps1`
+/// sibling of one. The `.cmd` wrapper is the only member that is always
+/// decodable, so it vouches for the family; a sibling additionally has to
+/// mention the same relative target, which a replaced file will not.
+pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
+    let (Some(dir), Some(file_name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+    else {
+        return Ok(false);
+    };
+    let stem = file_name
+        .strip_suffix(".cmd")
+        .or_else(|| file_name.strip_suffix(".ps1"))
+        .unwrap_or(file_name);
+    let Some(shim) = resolve_bin_shim(&dir.join(format!("{stem}.cmd")))? else {
+        return Ok(false);
+    };
+    if file_name.ends_with(".cmd") {
+        return Ok(true);
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_BIN_SHIM_BYTES {
+        return Ok(false);
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    Ok(content.contains(&relative_bin_target(dir, &shim.target)))
+}
+
 fn parse_cmd_shim_target(content: &str) -> Option<&str> {
     let mut lines = content.lines();
     if lines.next()?.trim_end_matches('\r') != "@SETLOCAL" {
@@ -1889,6 +1919,29 @@ process.exit(17);
         create_dir_link(&rel, &link).unwrap();
 
         assert_eq!(std::fs::read(link.join("marker.txt")).unwrap(), b"hi");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn generated_windows_launcher_recognizes_family_but_not_replacements() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let pkg_dir = dir
+            .path()
+            .join("node_modules/.aube/tool@1.0.0/node_modules/tool");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let script = pkg_dir.join("cli.js");
+        std::fs::write(&script, "#!/usr/bin/env node\n").unwrap();
+        create_bin_shim(&bin_dir, "tool", &script, BinShimOptions::default()).unwrap();
+
+        for file in ["tool", "tool.cmd", "tool.ps1"] {
+            assert!(is_generated_windows_launcher(&bin_dir.join(file)).unwrap());
+        }
+
+        std::fs::write(bin_dir.join("tool.ps1"), "Write-Host 'mine'\n").unwrap();
+        assert!(!is_generated_windows_launcher(&bin_dir.join("tool.ps1")).unwrap());
+        std::fs::write(bin_dir.join("other.ps1"), "Write-Host 'mine'\n").unwrap();
+        assert!(!is_generated_windows_launcher(&bin_dir.join("other.ps1")).unwrap());
     }
 
     #[cfg(windows)]
