@@ -320,10 +320,13 @@ mod tests {
                 .find(|f| f.flag.name == name)
                 .unwrap_or_else(|| panic!("`aube completion` has no --{name}"))
         };
-        assert_eq!(flag("install").effect, Some(usage_rs::spec::Effect::Write));
+        assert_eq!(
+            flag("install").effect(),
+            Some(usage_rs::spec::Effect::Write)
+        );
         // `--force` only widens which file an install may replace, so it writes for that reason
         // rather than one of its own.
-        assert_eq!(flag("force").effect, Some(usage_rs::spec::Effect::Write));
+        assert_eq!(flag("force").effect(), Some(usage_rs::spec::Effect::Write));
     }
 
     #[test]
