@@ -1249,6 +1249,33 @@ fn node_shim_binding(content: &str) -> io::Result<Option<NodeShimBinding>> {
         .transpose()
 }
 
+/// The forward-slash target of a generated direct-launch `.cmd` wrapper
+/// (`@SETLOCAL`, an optional `NODE_PATH`, then one invocation line), or
+/// `None` for anything else.
+fn direct_cmd_shim_target(path: &Path) -> io::Result<Option<String>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_BIN_SHIM_BYTES {
+        return Ok(None);
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    Ok(parse_direct_cmd_shim_target(&content).map(|target| target.replace('\\', "/")))
+}
+
+fn parse_direct_cmd_shim_target(content: &str) -> Option<&str> {
+    let mut lines = content.lines().map(|line| line.trim_end_matches('\r'));
+    if lines.next()? != "@SETLOCAL" {
+        return None;
+    }
+    let mut line = lines.next()?;
+    if line.starts_with("@SET NODE_PATH=") {
+        line = lines.next()?;
+    }
+    let target = line.strip_prefix("@\"%~dp0\\")?.strip_suffix("\" %*")?;
+    (!target.is_empty() && !target.contains('"') && lines.next().is_none()).then_some(target)
+}
+
 /// Whether `path` is a launcher `create_bin_shim` wrote for a Windows
 /// command: the `<name>.cmd` wrapper, or the extensionless / `<name>.ps1`
 /// sibling of one. The `.cmd` wrapper is the only member that is always
@@ -1263,9 +1290,15 @@ pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
         .strip_suffix(".cmd")
         .or_else(|| file_name.strip_suffix(".ps1"))
         .unwrap_or(file_name);
-    let shim = match resolve_bin_shim(&dir.join(format!("{stem}.cmd"))) {
-        Ok(Some(shim)) => shim,
-        Ok(None) => return Ok(false),
+    let cmd_path = dir.join(format!("{stem}.cmd"));
+    let rel = match resolve_bin_shim(&cmd_path) {
+        Ok(Some(shim)) => relative_bin_target(dir, &shim.target),
+        // Native targets get a direct-launch wrapper that `resolve_bin_shim`
+        // deliberately does not decode.
+        Ok(None) => match direct_cmd_shim_target(&cmd_path)? {
+            Some(rel) => rel,
+            None => return Ok(false),
+        },
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e),
     };
@@ -1279,7 +1312,6 @@ pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Ok(false);
     };
-    let rel = relative_bin_target(dir, &shim.target);
     Ok(if file_name.ends_with(".ps1") {
         sibling_launcher_matches(&content, "#!/usr/bin/env pwsh", ("& ", " $args"), &rel)
     } else {
@@ -1959,6 +1991,25 @@ process.exit(17);
     }
 
     #[test]
+    fn direct_cmd_shim_parser_accepts_only_the_generated_shape() {
+        assert_eq!(
+            parse_direct_cmd_shim_target("@SETLOCAL\r\n@\"%~dp0\\..\\pkg\\tool.exe\" %*\r\n"),
+            Some("..\\pkg\\tool.exe")
+        );
+        assert_eq!(
+            parse_direct_cmd_shim_target(
+                "@SETLOCAL\r\n@SET NODE_PATH=%~dp0\\..\r\n@\"%~dp0\\t.exe\" %*\r\n"
+            ),
+            Some("t.exe")
+        );
+        assert_eq!(
+            parse_direct_cmd_shim_target("@SETLOCAL\r\n@\"%~dp0\\t.exe\" %*\r\necho extra\r\n"),
+            None
+        );
+        assert_eq!(parse_direct_cmd_shim_target("echo hi\r\n"), None);
+    }
+
+    #[test]
     fn sibling_launcher_matches_requires_the_generated_shape() {
         let rel = "../.aube/it's@1.0.0/node_modules/it's/cli.js";
         let ps1 = format!(
@@ -2015,6 +2066,13 @@ process.exit(17);
         create_bin_shim(&bin_dir, "tool", &script, BinShimOptions::default()).unwrap();
 
         for file in ["tool", "tool.cmd", "tool.ps1"] {
+            assert!(is_generated_windows_launcher(&bin_dir.join(file)).unwrap());
+        }
+
+        let native = pkg_dir.join("native.exe");
+        std::fs::write(&native, b"MZ").unwrap();
+        create_bin_shim(&bin_dir, "native", &native, BinShimOptions::default()).unwrap();
+        for file in ["native", "native.cmd", "native.ps1"] {
             assert!(is_generated_windows_launcher(&bin_dir.join(file)).unwrap());
         }
 

@@ -1004,7 +1004,13 @@ fn list_bin_entries(bin_dir: &Path) -> miette::Result<Vec<(PathBuf, String)>> {
     for entry in entries {
         let entry = entry.into_diagnostic()?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        let is_real_dir = entry.file_type().into_diagnostic()?.is_dir();
+        let file_type = entry.file_type().into_diagnostic()?;
+        let is_real_dir = file_type.is_dir();
+        // A symlinked `@scope` is a directory link, not a command, and
+        // removing it would take every command beneath it away.
+        if file_name.starts_with('@') && file_type.is_symlink() {
+            continue;
+        }
         if file_name.starts_with('@') && is_real_dir {
             let scope_dir = entry.path();
             for inner in std::fs::read_dir(&scope_dir)
@@ -1532,6 +1538,8 @@ mod tests {
         std::fs::create_dir_all(&bin_dir).unwrap();
         std::os::unix::fs::symlink("../.aube/gone/x.js", elsewhere.join("tool")).unwrap();
         std::os::unix::fs::symlink(&elsewhere, bin_dir.join("@scope")).unwrap();
+        std::fs::create_dir_all(aube_dir.join("@vs")).unwrap();
+        std::os::unix::fs::symlink("../.aube/@vs", bin_dir.join("@inside")).unwrap();
 
         remove_unclaimed_bin_links(
             project,
@@ -1543,6 +1551,10 @@ mod tests {
         .unwrap();
 
         assert!(elsewhere.join("tool").symlink_metadata().is_ok());
+        assert!(
+            bin_dir.join("@inside").symlink_metadata().is_ok(),
+            "a scope link into the virtual store is not a stale command"
+        );
     }
 
     /// The hoisted transitive pass links every package's bins into the
