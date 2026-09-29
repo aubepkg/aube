@@ -677,6 +677,44 @@ fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
     assert_eq!(second.packages_cached, 2);
 }
 
+#[cfg(windows)]
+#[test]
+fn dedupe_reports_a_member_link_it_cannot_remove() {
+    // A member entry the linker dedupes must go, or it shadows the root's
+    // link while install state only tracks the root's. A file held open
+    // without delete sharing keeps it from being removed.
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let stale = project_dir.join("packages/app/node_modules/foo");
+    std::fs::create_dir_all(&stale).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let _held = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .share_mode(0)
+        .open(stale.join("index.js"))
+        .unwrap();
+
+    let result = Linker::new(&store, LinkStrategy::Copy)
+        .with_dedupe_direct_deps(true)
+        .link_workspace(&project_dir, &graph, &indices, &BTreeMap::new());
+
+    assert!(stale.exists(), "the held entry should have survived");
+    assert!(result.is_err(), "surviving stale link must fail the link");
+}
+
 #[test]
 fn workspace_selected_package_materializes_locally_while_dependencies_use_gvs() {
     let dir = tempfile::tempdir().unwrap();
