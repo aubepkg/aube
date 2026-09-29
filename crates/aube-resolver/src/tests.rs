@@ -2926,8 +2926,8 @@ fn dedupe_peers_cycle_break_still_converges() {
 
 // A dense web of mutually peering packages whose suffixes all exceed
 // `peersSuffixMaxLength`: every suffix is hashed, and the hash of one
-// member embeds the hash of the next. Variant dedupe picks canonical
-// keys by hash order, so it must not keep undoing the renaming.
+// member embeds the hash of the next. Variant dedupe is off so that only
+// the hash-aware cycle break can make this converge.
 #[test]
 fn mutual_peer_web_with_hashed_suffixes_converges() {
     const MEMBERS: usize = 8;
@@ -2969,6 +2969,7 @@ fn mutual_peer_web_with_hashed_suffixes_converges() {
         ..Default::default()
     };
     let options = PeerContextOptions {
+        dedupe_peer_dependents: false,
         peers_suffix_max_length: 10,
         ..PeerContextOptions::default()
     };
