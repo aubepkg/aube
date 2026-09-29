@@ -1008,7 +1008,9 @@ fn list_bin_entries(bin_dir: &Path) -> miette::Result<Vec<(PathBuf, String)>> {
         let is_real_dir = file_type.is_dir();
         // A symlinked `@scope` is a directory link, not a command, and
         // removing it would take every command beneath it away.
-        if file_name.starts_with('@') && file_type.is_symlink() {
+        // A bare `@tool` command can be a symlink too, so only skip links
+        // that actually resolve to a directory.
+        if file_name.starts_with('@') && file_type.is_symlink() && entry.path().is_dir() {
             continue;
         }
         if file_name.starts_with('@') && is_real_dir {
@@ -1071,7 +1073,8 @@ fn is_unclaimed_aube_bin_link(
             || (resolved.starts_with(modules_dir) && !path.exists());
     }
     if cfg!(windows) {
-        return aube_linker::sys::is_generated_windows_launcher(path).unwrap_or(false);
+        return aube_linker::sys::is_generated_windows_launcher(path, &[aube_dir, modules_dir])
+            .unwrap_or(false);
     }
     matches!(aube_linker::sys::resolve_bin_shim(path), Ok(Some(_)))
 }
@@ -1504,6 +1507,11 @@ mod tests {
             bin_dir.join("gone"),
         )
         .unwrap();
+        std::os::unix::fs::symlink(
+            "../.aube/gone@1.0.0/node_modules/gone/tool.js",
+            bin_dir.join("@tool"),
+        )
+        .unwrap();
         std::os::unix::fs::symlink("../hoisted/x.js", bin_dir.join("dangling")).unwrap();
         std::os::unix::fs::symlink("../../outside.js", bin_dir.join("user")).unwrap();
         std::os::unix::fs::symlink("../../missing.js", bin_dir.join("foreign_dangling")).unwrap();
@@ -1518,6 +1526,10 @@ mod tests {
         .unwrap();
 
         assert!(bin_dir.join("gone").symlink_metadata().is_err());
+        assert!(
+            bin_dir.join("@tool").symlink_metadata().is_err(),
+            "a bare `@`-prefixed command is not a scope directory"
+        );
         assert!(bin_dir.join("dangling").symlink_metadata().is_err());
         assert!(bin_dir.join("user").symlink_metadata().is_ok());
         assert!(

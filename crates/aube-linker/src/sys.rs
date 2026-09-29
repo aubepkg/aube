@@ -1280,8 +1280,10 @@ fn parse_direct_cmd_shim_target(content: &str) -> Option<&str> {
 /// command: the `<name>.cmd` wrapper, or the extensionless / `<name>.ps1`
 /// sibling of one. The `.cmd` wrapper is the only member that is always
 /// decodable, so it vouches for the family; a sibling additionally has to
-/// mention the same relative target, which a replaced file will not.
-pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
+/// mention the same relative target, which a replaced file will not. A
+/// direct-launch (native target) wrapper carries no marker, so its target
+/// must additionally resolve under one of `roots`.
+pub fn is_generated_windows_launcher(path: &Path, roots: &[&Path]) -> io::Result<bool> {
     let (Some(dir), Some(file_name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
     else {
         return Ok(false);
@@ -1296,8 +1298,16 @@ pub fn is_generated_windows_launcher(path: &Path) -> io::Result<bool> {
         // Native targets get a direct-launch wrapper that `resolve_bin_shim`
         // deliberately does not decode.
         Ok(None) => match direct_cmd_shim_target(&cmd_path)? {
-            Some(rel) => rel,
-            None => return Ok(false),
+            // That format has no aube-specific marker, so a foreign wrapper
+            // written in the same shape would pass. Only claim it when its
+            // target sits under one of the caller's install roots.
+            Some(rel)
+                if resolve_shim_relative_path(dir, &rel, BinShimStyle::Posix)
+                    .is_some_and(|target| roots.iter().any(|root| target.starts_with(root))) =>
+            {
+                rel
+            }
+            _ => return Ok(false),
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e),
@@ -2010,6 +2020,41 @@ process.exit(17);
     }
 
     #[test]
+    fn direct_windows_launcher_needs_a_target_under_an_install_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let write_family = |name: &str, rel: &str| {
+            let back = rel.replace('/', "\\");
+            std::fs::write(
+                bin_dir.join(format!("{name}.cmd")),
+                format!("@SETLOCAL\r\n@\"%~dp0\\{back}\" %*\r\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                bin_dir.join(format!("{name}.ps1")),
+                format!("#!/usr/bin/env pwsh\n  & \"$basedir/{rel}\" $args\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                bin_dir.join(name),
+                format!("#!/bin/sh\nexec \"$basedir/{rel}\" \"$@\"\n"),
+            )
+            .unwrap();
+        };
+        write_family("ours", "../.aube/p@1.0.0/node_modules/p/t.exe");
+        write_family("foreign", "../../tools/t.exe");
+        let roots = normalize_path(&dir.path().join("node_modules/.aube"));
+
+        for file in ["ours", "ours.cmd", "ours.ps1"] {
+            assert!(is_generated_windows_launcher(&bin_dir.join(file), &[&roots]).unwrap());
+        }
+        for file in ["foreign", "foreign.cmd", "foreign.ps1"] {
+            assert!(!is_generated_windows_launcher(&bin_dir.join(file), &[&roots]).unwrap());
+        }
+    }
+
+    #[test]
     fn sibling_launcher_matches_requires_the_generated_shape() {
         let rel = "../.aube/it's@1.0.0/node_modules/it's/cli.js";
         let ps1 = format!(
@@ -2064,22 +2109,23 @@ process.exit(17);
         let script = pkg_dir.join("cli.js");
         std::fs::write(&script, "#!/usr/bin/env node\n").unwrap();
         create_bin_shim(&bin_dir, "tool", &script, BinShimOptions::default()).unwrap();
+        let roots = normalize_path(&dir.path().join("node_modules"));
 
         for file in ["tool", "tool.cmd", "tool.ps1"] {
-            assert!(is_generated_windows_launcher(&bin_dir.join(file)).unwrap());
+            assert!(is_generated_windows_launcher(&bin_dir.join(file), &[&roots]).unwrap());
         }
 
         let native = pkg_dir.join("native.exe");
         std::fs::write(&native, b"MZ").unwrap();
         create_bin_shim(&bin_dir, "native", &native, BinShimOptions::default()).unwrap();
         for file in ["native", "native.cmd", "native.ps1"] {
-            assert!(is_generated_windows_launcher(&bin_dir.join(file)).unwrap());
+            assert!(is_generated_windows_launcher(&bin_dir.join(file), &[&roots]).unwrap());
         }
 
         std::fs::write(bin_dir.join("tool.ps1"), "Write-Host 'mine'\n").unwrap();
-        assert!(!is_generated_windows_launcher(&bin_dir.join("tool.ps1")).unwrap());
+        assert!(!is_generated_windows_launcher(&bin_dir.join("tool.ps1"), &[&roots]).unwrap());
         std::fs::write(bin_dir.join("other.ps1"), "Write-Host 'mine'\n").unwrap();
-        assert!(!is_generated_windows_launcher(&bin_dir.join("other.ps1")).unwrap());
+        assert!(!is_generated_windows_launcher(&bin_dir.join("other.ps1"), &[&roots]).unwrap());
     }
 
     #[cfg(windows)]
