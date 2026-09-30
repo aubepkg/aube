@@ -123,7 +123,8 @@ fn apply_with_eof_context(
     // hunk's section heading (extra space plus a blank line that re-parses
     // as context), so write the `@@` headers without it. Diffy's exact
     // matching still validates every hunk, and the unterminated context can
-    // only match EOF.
+    // only match EOF. The check above guarantees the last line is a
+    // newline-terminated context line, so every other line is terminated too.
     let mut annotated = String::from("--- a\n+++ b\n");
     for hunk in patch.hunks() {
         annotated.push_str(&format!(
@@ -139,10 +140,6 @@ fn apply_with_eof_context(
             };
             annotated.push(prefix);
             annotated.push_str(text);
-            if !text.ends_with('\n') {
-                annotated.push('\n');
-                annotated.push_str("\\ No newline at end of file\n");
-            }
         }
     }
     annotated.push_str("\\ No newline at end of file\n");
