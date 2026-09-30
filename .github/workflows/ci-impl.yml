@@ -322,6 +322,10 @@ jobs:
           AUBE_TEST_BINARY: target/debug/aube.exe
         run: node --test npm/installArchSpecificPackage.test.js
       - run: mise exec -- cargo test --workspace
+      # `#[cfg]` decides what code exists, so some clippy warnings only appear
+      # on Windows. The Linux lint job cannot see them.
+      - run: rustup component add clippy
+      - run: mise exec -- cargo clippy --workspace --all-targets -- -D warnings
 
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is
