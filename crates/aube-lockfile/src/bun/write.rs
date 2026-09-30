@@ -40,6 +40,16 @@ pub fn write(
             continue;
         }
         canonical.entry(pkg.spec_key()).or_insert(pkg);
+        // The hoist tree looks packages up by their dep_path, which for
+        // `file:` packages carries the path hash instead of the version.
+        if matches!(
+            pkg.local_source,
+            Some(LocalSource::Directory(_) | LocalSource::Tarball(_))
+        ) {
+            canonical
+                .entry(crate::npm::canonical_key_from_dep_path(&pkg.dep_path))
+                .or_insert(pkg);
+        }
     }
 
     // Build the hoist tree from every importer's direct deps (not just
@@ -230,6 +240,7 @@ pub fn write(
                 .declared_dependencies
                 .get(dep_name)
                 .cloned()
+                .or_else(|| local_child_spec(pkg, canonical.get(&key).copied()?))
                 .unwrap_or_else(|| {
                     crate::npm::dep_value_as_version(dep_name, dep_value).to_string()
                 });
@@ -348,14 +359,31 @@ pub fn write(
         // collapsed to the alias name and produced a gratuitous diff
         // against bun's own output.
         let ident_name = pkg.alias_of.as_deref().unwrap_or(&pkg.name);
-        let ident = format!("{}@{}", ident_name, pkg.version);
         let integrity = pkg.integrity.clone().unwrap_or_default();
-        let entry = Value::Array(vec![
-            Value::String(ident),
-            Value::String(String::new()),
-            Value::Object(meta),
-            Value::String(integrity),
-        ]);
+        // bun identifies `file:` packages by their root-relative path:
+        // `[name@file:dir, meta]` for a directory and
+        // `[name@./file.tgz, meta, integrity]` for a tarball.
+        let entry = match &pkg.local_source {
+            Some(LocalSource::Directory(dir)) => Value::Array(vec![
+                Value::String(format!("{ident_name}@file:{}", bun_local_path(dir))),
+                Value::Object(meta),
+            ]),
+            Some(LocalSource::Tarball(tarball)) => {
+                let tarball = bun_local_path(tarball);
+                let prefix = if tarball.starts_with("..") { "" } else { "./" };
+                Value::Array(vec![
+                    Value::String(format!("{ident_name}@{prefix}{tarball}")),
+                    Value::Object(meta),
+                    Value::String(integrity),
+                ])
+            }
+            _ => Value::Array(vec![
+                Value::String(format!("{}@{}", ident_name, pkg.version)),
+                Value::String(String::new()),
+                Value::Object(meta),
+                Value::String(integrity),
+            ]),
+        };
         package_entries.push((bun_key, entry));
     }
 
@@ -575,6 +603,55 @@ pub fn write(
 ///
 /// `lockfile_version` and `config_version` are echoed back into the
 /// output as bun itself does — hardcoding would silently downgrade them.
+/// A root-relative local path in the form bun writes it: normalized,
+/// with forward slashes and no leading `./`.
+fn bun_local_path(path: &Path) -> String {
+    aube_util::path::normalize_lexical(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The `file:` spec a local package declares for a local child, as bun
+/// writes it: relative to the parent's directory. A fresh resolve keeps
+/// no declared specs for local packages, only the child's dep_path.
+fn local_child_spec(parent: &LockedPackage, child: &LockedPackage) -> Option<String> {
+    let Some(LocalSource::Directory(child_path) | LocalSource::Tarball(child_path)) =
+        &child.local_source
+    else {
+        return None;
+    };
+    let child_path = aube_util::path::normalize_lexical(child_path);
+    let relative = match &parent.local_source {
+        Some(LocalSource::Directory(parent_dir)) => {
+            let parent_dir = aube_util::path::normalize_lexical(parent_dir);
+            let parent_parts: Vec<_> = parent_dir.components().collect();
+            let child_parts: Vec<_> = child_path.components().collect();
+            let common = parent_parts
+                .iter()
+                .zip(&child_parts)
+                .take_while(|(a, b)| a == b)
+                .count();
+            // A `..` left in the parent's own path can't be climbed out of.
+            if parent_parts[common..]
+                .iter()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            {
+                bun_local_path(&child_path)
+            } else {
+                let mut parts: Vec<String> = vec!["..".to_string(); parent_parts.len() - common];
+                parts.extend(
+                    child_parts[common..]
+                        .iter()
+                        .map(|part| part.as_os_str().to_string_lossy().into_owned()),
+                );
+                parts.join("/")
+            }
+        }
+        _ => bun_local_path(&child_path),
+    };
+    Some(format!("file:{relative}"))
+}
+
 fn format_bun_lockfile(
     workspaces: &[(String, Vec<(String, serde_json::Value)>)],
     package_entries: &[(String, serde_json::Value)],

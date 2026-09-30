@@ -1774,3 +1774,91 @@ fn dev_and_optional_overlap_yields_one_direct_dep() {
     assert_eq!(root[0].name, "foo");
     assert_eq!(root[0].dep_type, DepType::Dev);
 }
+
+/// A fresh resolve keys `file:` packages by a path-hash dep_path and
+/// keeps no declared specs for them. The writer must still emit them in
+/// bun's shape, or `bun install --frozen-lockfile` sees them missing.
+#[test]
+fn test_write_file_directory_and_tarball_packages() {
+    let dir = LocalSource::Directory(PathBuf::from("vendor/x"));
+    let nested = LocalSource::Directory(PathBuf::from("vendor/y"));
+    let tarball = LocalSource::Tarball(PathBuf::from("vendor/t.tgz"));
+    let (x_path, y_path, t_path) = (
+        dir.dep_path("x"),
+        nested.dep_path("y"),
+        tarball.dep_path("t"),
+    );
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        x_path.clone(),
+        LockedPackage {
+            name: "x".to_string(),
+            version: "1.2.3".to_string(),
+            dep_path: x_path.clone(),
+            local_source: Some(dir),
+            dependencies: BTreeMap::from([(
+                "y".to_string(),
+                y_path.strip_prefix("y@").unwrap().to_string(),
+            )]),
+            ..Default::default()
+        },
+    );
+    for (name, version, dep_path, local) in [
+        ("y", "0.1.0", &y_path, nested),
+        ("t", "3.0.0", &t_path, tarball),
+    ] {
+        graph.packages.insert(
+            dep_path.clone(),
+            LockedPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dep_path: dep_path.clone(),
+                local_source: Some(local),
+                ..Default::default()
+            },
+        );
+    }
+    graph.importers.insert(
+        ".".to_string(),
+        [("x", &x_path), ("t", &t_path)]
+            .into_iter()
+            .map(|(name, dep_path)| DirectDep {
+                name: name.to_string(),
+                dep_path: dep_path.clone(),
+                dep_type: DepType::Production,
+                specifier: None,
+            })
+            .collect(),
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        ..Default::default()
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("bun.lock");
+    write(&path, &graph, &manifest).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(r#""x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }]"#),
+        "{written}"
+    );
+    assert!(
+        written.contains(r#""y": ["y@file:vendor/y", {}]"#),
+        "{written}"
+    );
+    assert!(
+        written.contains(r#""t": ["t@./vendor/t.tgz", {}, ""]"#),
+        "{written}"
+    );
+
+    let reparsed = parse(&path).unwrap();
+    let local_sources: Vec<_> = reparsed
+        .packages
+        .values()
+        .filter_map(|pkg| pkg.local_source.clone())
+        .collect();
+    assert!(local_sources.contains(&LocalSource::Directory(PathBuf::from("vendor/x"))));
+    assert!(local_sources.contains(&LocalSource::Directory(PathBuf::from("vendor/y"))));
+    assert!(local_sources.contains(&LocalSource::Tarball(PathBuf::from("./vendor/t.tgz"))));
+}
