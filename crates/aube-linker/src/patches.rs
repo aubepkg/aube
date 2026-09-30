@@ -118,10 +118,34 @@ fn apply_with_eof_context(
     if line.strip_suffix('\n') != original.rsplit('\n').next() {
         return Err(error);
     }
-    // Format the parsed patch to discard trailing non-patch text, then
-    // annotate only its final context line. Diffy's exact matching still
-    // validates every hunk, and the unterminated context can only match EOF.
-    let annotated = format!("{patch}\\ No newline at end of file\n");
+    // Re-render the hunks to discard trailing non-patch text, then
+    // annotate only the final context line. Diffy's `Display` mangles a
+    // hunk's section heading (extra space plus a blank line that re-parses
+    // as context), so write the `@@` headers without it. Diffy's exact
+    // matching still validates every hunk, and the unterminated context can
+    // only match EOF.
+    let mut annotated = String::from("--- a\n+++ b\n");
+    for hunk in patch.hunks() {
+        annotated.push_str(&format!(
+            "@@ -{} +{} @@\n",
+            hunk.old_range(),
+            hunk.new_range()
+        ));
+        for line in hunk.lines() {
+            let (prefix, text) = match line {
+                diffy::Line::Context(text) => (' ', text),
+                diffy::Line::Delete(text) => ('-', text),
+                diffy::Line::Insert(text) => ('+', text),
+            };
+            annotated.push(prefix);
+            annotated.push_str(text);
+            if !text.ends_with('\n') {
+                annotated.push('\n');
+                annotated.push_str("\\ No newline at end of file\n");
+            }
+        }
+    }
+    annotated.push_str("\\ No newline at end of file\n");
     let annotated = diffy::Patch::from_str(&annotated).map_err(|_| error)?;
     diffy::apply(original, &annotated)
 }
@@ -773,6 +797,30 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("index.js")).unwrap(),
             "prefix\nONE\nextra\ntwo\nTHREE\nend"
+        );
+    }
+
+    #[test]
+    fn missing_eof_context_marker_supports_hunk_section_headings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("index.js"),
+            "a\nmodule.exports = 1;\nb\nc\nend",
+        )
+        .unwrap();
+        let patch = "diff --git a/index.js b/index.js\n\
+                     --- a/index.js\n\
+                     +++ b/index.js\n\
+                     @@ -2,4 +2,4 @@ module.exports = 1;\n\
+                     \x20module.exports = 1;\n\
+                     -b\n\
+                     +B\n\
+                     \x20c\n\
+                     \x20end\n";
+        apply_multi_file_patch(dir.path(), patch).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("index.js")).unwrap(),
+            "a\nmodule.exports = 1;\nB\nc\nend"
         );
     }
 
