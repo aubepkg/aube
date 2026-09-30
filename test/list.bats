@@ -331,3 +331,24 @@ JSON
 	assert_success
 	assert_output --partial "($outside_vstore/"
 }
+
+@test "aube ll --long points a workspace dep at the member directory" {
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - packages/*
+YAML
+	cat >package.json <<'JSON'
+{ "name": "root", "private": true, "dependencies": { "lib": "workspace:*" } }
+JSON
+	mkdir -p packages/lib
+	cat >packages/lib/package.json <<'JSON'
+{ "name": "lib", "version": "1.4.0" }
+JSON
+	run aube install
+	assert_success
+
+	run aube ll
+	assert_success
+	assert_output --regexp '└── lib .*  \(\./packages[/\]lib\)'
+	refute_output --partial ".aube/lib@"
+}
