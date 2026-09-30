@@ -927,6 +927,9 @@ impl Linker {
                 {
                     let link_path = aube_entry.join("node_modules").join(name);
                     if !reconcile_dir_link(&link_path, ws_dir)? {
+                        if let Some(parent) = link_path.parent() {
+                            mkdirp(parent)?;
+                        }
                         sys::create_dir_link(ws_dir, &link_path)
                             .map_err(|e| Error::Io(link_path.clone(), e))?;
                     }
