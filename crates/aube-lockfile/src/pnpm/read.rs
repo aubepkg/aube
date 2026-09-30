@@ -193,16 +193,8 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         true
     };
 
-    // `link:` values from `overrides`: an importer whose specifier is one of
-    // these got it from the override, which is root-relative.
-    let link_overrides: BTreeSet<String> = raw
-        .overrides
-        .iter()
-        .flatten()
-        .map(|(_, value)| value)
-        .filter(|value| value.starts_with("link:"))
-        .cloned()
-        .collect();
+    // An importer `link:` that an override set is root-relative.
+    let overrides = raw.overrides.clone().unwrap_or_default();
     let mut push_direct = |deps: &mut Vec<DirectDep>,
                            alias_remaps: &mut Vec<(String, String, String, String)>,
                            importer_path: &str,
@@ -264,7 +256,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 Some(spec @ LocalSource::Link(_))
                     if importer_path != "." && matches!(local, LocalSource::Link(_)) =>
                 {
-                    if link_overrides.contains(&info.specifier) {
+                    if super::override_sets(&overrides, name, &info.specifier) {
                         spec
                     } else {
                         rebase_importer_local(spec, importer_path)

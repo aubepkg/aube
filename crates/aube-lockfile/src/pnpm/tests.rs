@@ -4811,3 +4811,26 @@ snapshots:
     assert_eq!(root[0].name, "foo");
     assert_eq!(root[0].dep_type, DepType::Production);
 }
+
+#[test]
+fn override_sets_matches_the_selector_target_not_just_the_value() {
+    let overrides = BTreeMap::from([
+        ("foo".to_string(), "link:./vendor/x".to_string()),
+        ("@scope/bar@^1".to_string(), "link:./libs/bar".to_string()),
+        ("parent>baz@>=2".to_string(), "link:./libs/baz".to_string()),
+    ]);
+    assert!(super::override_sets(&overrides, "foo", "link:./vendor/x"));
+    assert!(super::override_sets(
+        &overrides,
+        "@scope/bar",
+        "link:./libs/bar"
+    ));
+    assert!(super::override_sets(&overrides, "baz", "link:./libs/baz"));
+    // Same value, but the override is for another package.
+    assert!(!super::override_sets(&overrides, "x", "link:./vendor/x"));
+    assert!(!super::override_sets(
+        &overrides,
+        "parent",
+        "link:./libs/baz"
+    ));
+}

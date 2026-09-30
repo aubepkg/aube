@@ -48,6 +48,37 @@ pub fn __bench_write_to(
     write::write(path, graph, manifest).expect("bench write");
 }
 
+/// Whether an `overrides` entry for package `name` has the value
+/// `specifier`. Only the selector's last segment has to name the package;
+/// its version range and parents aren't checked. An override for another
+/// package with the same value doesn't count.
+pub(super) fn override_sets(
+    overrides: &std::collections::BTreeMap<String, String>,
+    name: &str,
+    specifier: &str,
+) -> bool {
+    overrides
+        .iter()
+        .any(|(key, value)| value == specifier && override_target_name(key) == name)
+}
+
+/// The package named by an override selector's last segment: `bar` for
+/// `bar`, `bar@^1`, or `foo>bar@<2`. As in pnpm, a `>` after a space, `|`,
+/// or `@` belongs to a version range, not a parent boundary.
+fn override_target_name(key: &str) -> &str {
+    let bytes = key.as_bytes();
+    let start = (1..bytes.len())
+        .rev()
+        .find(|&i| bytes[i] == b'>' && !matches!(bytes[i - 1], b' ' | b'|' | b'@'))
+        .map_or(0, |i| i + 1);
+    let segment = &key[start..];
+    // Skip a leading `@` so a scope isn't read as a version separator.
+    match segment.get(1..).and_then(|rest| rest.find('@')) {
+        Some(at) => &segment[..=at],
+        None => segment,
+    }
+}
+
 pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {
     let Some((host, path)) = http_url_host_and_path(url) else {
         return false;

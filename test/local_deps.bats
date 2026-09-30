@@ -367,6 +367,56 @@ YAML
 	assert_output --partial "version: link:../libs/y"
 }
 
+@test "aube install keeps a member's link: member-relative when an override for another package has the same value" {
+	# An override for `foo` shares the value `link:./vendor/x` with pkg-a's
+	# own `x`. That doesn't make `x` override-derived, so it still resolves
+	# from pkg-a, not from the root's `vendor/x`.
+	mkdir -p pkg-a/vendor/x vendor/x
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"foo":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"link:./vendor/x"}}
+JSON
+	echo '{"name":"x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+	cat >pnpm-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+overrides:
+  foo: link:./vendor/x
+
+importers:
+
+  .: {}
+
+  pkg-a:
+    dependencies:
+      x:
+        specifier: link:./vendor/x
+        version: link:vendor/x
+YAML
+
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"x"'
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run cat pnpm-lock.yaml
+	assert_output --partial "version: link:vendor/x"
+	refute_output --partial "version: link:pkg-a/vendor/x"
+}
+
 @test "aube install preserves pnpm workspace link targets in hoisted mode" {
 	mkdir -p pkg-a gems/pkg-b-parent/pkg-b
 	cat >package.json <<'EOF'
