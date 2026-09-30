@@ -853,10 +853,13 @@ impl Linker {
 
         let nested_link_targets =
             build_workspace_nested_link_targets(&root_dir, graph, workspace_dirs);
-        let workspace_peer_owners: rustc_hash::FxHashSet<&str> =
-            workspace_sibling_edges(graph, workspace_dirs)
-                .map(|(owner, ..)| owner)
-                .collect();
+        let mut workspace_peer_links: BTreeMap<&str, Vec<(&str, &PathBuf)>> = BTreeMap::new();
+        for (owner, _, name, ws_dir) in workspace_sibling_edges(graph, workspace_dirs) {
+            workspace_peer_links
+                .entry(owner)
+                .or_default()
+                .push((name, ws_dir));
+        }
 
         // Step 1a: Materialize local (`file:` dir/tarball, `portal:`,
         // `exec:`) packages straight into the shared per-project
@@ -902,13 +905,7 @@ impl Linker {
                 continue;
             };
             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-            // A cached `file:` tarball entry would keep a workspace peer
-            // link that points at the directory the peer had when the entry
-            // was written, so a moved workspace package leaves it dangling.
-            let has_workspace_peer = workspace_peer_owners.contains(dep_path.as_str());
-            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_))
-                || (has_workspace_peer && matches!(local, LocalSource::Tarball(_)))
-            {
+            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -920,6 +917,20 @@ impl Linker {
                 }
             }
             if aube_entry.exists() {
+                // A cached `file:` tarball entry keeps the workspace peer
+                // link it was written with, which dangles once the workspace
+                // package moves. Repoint just those links.
+                for (name, ws_dir) in workspace_peer_links
+                    .get(dep_path.as_str())
+                    .into_iter()
+                    .flatten()
+                {
+                    let link_path = aube_entry.join("node_modules").join(name);
+                    if !reconcile_dir_link(&link_path, ws_dir)? {
+                        sys::create_dir_link(ws_dir, &link_path)
+                            .map_err(|e| Error::Io(link_path.clone(), e))?;
+                    }
+                }
                 stats.packages_cached += 1;
                 continue;
             }
