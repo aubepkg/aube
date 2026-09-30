@@ -677,3 +677,28 @@ EOF
 	assert_success
 	assert_output "shared"
 }
+
+@test "aube install keeps a file: tarball's workspace peer linked after the workspace package moves" {
+	_make_workspace_with_file_dep_peer
+	mkdir -p tarball-src/package
+	echo '{"name":"@x/tgz","version":"1.0.0","main":"index.js","peerDependencies":{"@x/shared":"*"}}' >tarball-src/package/package.json
+	echo "module.exports = require('@x/shared');" >tarball-src/package/index.js
+	tar -czf apps/app/tgz.tgz -C tarball-src package
+	echo '{"name":"app","private":true,"dependencies":{"@x/shared":"workspace:*","@x/tgz":"file:./tgz.tgz"}}' >apps/app/package.json
+
+	run aube install
+	assert_success
+	cd apps/app
+	run node -e "console.log(require('@x/tgz'))"
+	assert_success
+	assert_output "shared"
+
+	cd ../..
+	mv packages/shared packages/shared-moved
+	run aube install
+	assert_success
+	cd apps/app
+	run node -e "console.log(require('@x/tgz'))"
+	assert_success
+	assert_output "shared"
+}

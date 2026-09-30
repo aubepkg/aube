@@ -853,6 +853,10 @@ impl Linker {
 
         let nested_link_targets =
             build_workspace_nested_link_targets(&root_dir, graph, workspace_dirs);
+        let workspace_peer_owners: rustc_hash::FxHashSet<&str> =
+            workspace_sibling_edges(graph, workspace_dirs)
+                .map(|(owner, ..)| owner)
+                .collect();
 
         // Step 1a: Materialize local (`file:` dir/tarball, `portal:`,
         // `exec:`) packages straight into the shared per-project
@@ -898,7 +902,13 @@ impl Linker {
                 continue;
             };
             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            // A cached `file:` tarball entry would keep a workspace peer
+            // link that points at the directory the peer had when the entry
+            // was written, so a moved workspace package leaves it dangling.
+            let has_workspace_peer = workspace_peer_owners.contains(dep_path.as_str());
+            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_))
+                || (has_workspace_peer && matches!(local, LocalSource::Tarball(_)))
+            {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
