@@ -943,6 +943,8 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         }
     }
 
+    adopt_link_dependency_edges(&mut packages);
+
     let settings = raw
         .settings
         .map(|s| crate::LockfileSettings {
@@ -1035,6 +1037,48 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         extra_fields: BTreeMap::new(),
         workspace_extra_fields: BTreeMap::new(),
     })
+}
+
+/// pnpm records a snapshot dependency on a workspace package as
+/// `<name>: link:<path from the lockfile root>`, for example the
+/// workspace peer of a `file:` package. Rewrite each such edge to the tail
+/// of the `LocalSource::Link` package the importer loop would key the same
+/// target under, adding that package when no importer links it, so the
+/// linker can point the sibling symlink at the target directory.
+fn adopt_link_dependency_edges(packages: &mut BTreeMap<String, LockedPackage>) {
+    let mut link_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
+    for pkg in packages.values_mut() {
+        let edges = pkg
+            .dependencies
+            .iter_mut()
+            .chain(pkg.optional_dependencies.iter_mut());
+        for (name, value) in edges {
+            if !value.starts_with("link:") {
+                continue;
+            }
+            let Some(local @ LocalSource::Link(_)) = LocalSource::parse(value, Path::new(""))
+            else {
+                continue;
+            };
+            let dep_path = local.dep_path(name);
+            *value = dep_path
+                .strip_prefix(&format!("{name}@"))
+                .unwrap_or(&dep_path)
+                .to_string();
+            link_packages
+                .entry(dep_path.clone())
+                .or_insert_with(|| LockedPackage {
+                    name: name.clone(),
+                    version: "0.0.0".to_string(),
+                    dep_path,
+                    local_source: Some(local),
+                    ..Default::default()
+                });
+        }
+    }
+    for (dep_path, link) in link_packages {
+        packages.entry(dep_path).or_insert(link);
+    }
 }
 
 fn tarball_url_needs_preserve(url: &str) -> bool {

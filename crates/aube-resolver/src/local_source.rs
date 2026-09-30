@@ -142,6 +142,8 @@ pub(crate) struct LocalManifest {
     pub version: String,
     pub dependencies: BTreeMap<String, String>,
     pub optional_dependencies: BTreeMap<String, String>,
+    pub peer_dependencies: BTreeMap<String, String>,
+    pub peer_dependencies_meta: BTreeMap<String, aube_lockfile::PeerDepMeta>,
 }
 
 pub(crate) fn read_local_manifest(
@@ -177,11 +179,32 @@ pub(crate) fn read_local_manifest(
     let pj: aube_manifest::PackageJson = sonic_rs::from_slice(&content)
         .or_else(|_| serde_json::from_slice(&content))
         .map_err(|e| Error::Registry(local.specifier(), e.to_string()))?;
+    // A peer declared only in `peerDependenciesMeta` still counts as a
+    // peer (range `*`), matching how registry packuments are read.
+    let peer_dependencies_meta: BTreeMap<String, aube_lockfile::PeerDepMeta> = pj
+        .extra
+        .get("peerDependenciesMeta")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|meta| meta.keys())
+        .map(|name| {
+            let optional = pj.peer_dependency_is_optional(name);
+            (name.clone(), aube_lockfile::PeerDepMeta { optional })
+        })
+        .collect();
+    let mut peer_dependencies = pj.peer_dependencies.clone();
+    for name in peer_dependencies_meta.keys() {
+        peer_dependencies
+            .entry(name.clone())
+            .or_insert_with(|| "*".to_string());
+    }
     Ok(LocalManifest {
         name: pj.name.unwrap_or_default(),
         version: pj.version.unwrap_or_else(|| "0.0.0".to_string()),
         dependencies: pj.dependencies,
         optional_dependencies: pj.optional_dependencies,
+        peer_dependencies,
+        peer_dependencies_meta,
     })
 }
 

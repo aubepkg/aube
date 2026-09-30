@@ -579,3 +579,85 @@ EOF
 	run cat "$optional_nested/package.json"
 	assert_output --partial '"version":"7.8.9"'
 }
+
+_make_workspace_with_file_dep_peer() {
+	mkdir -p apps/app/modules/md packages/shared
+	printf 'packages:\n  - apps/*\n  - packages/*\n' >pnpm-workspace.yaml
+	echo '{"name":"root","private":true}' >package.json
+	echo '{"name":"@x/shared","version":"1.0.0","main":"index.js"}' >packages/shared/package.json
+	echo "module.exports = 'shared';" >packages/shared/index.js
+	echo '{"name":"app","private":true,"dependencies":{"@x/shared":"workspace:*","@x/md":"file:./modules/md"}}' >apps/app/package.json
+	echo '{"name":"@x/md","version":"1.0.0","main":"index.js","peerDependencies":{"@x/shared":"*"}}' >apps/app/modules/md/package.json
+	echo "module.exports = require('@x/shared');" >apps/app/modules/md/index.js
+}
+
+@test "aube install links a file: dependency's workspace peer" {
+	_make_workspace_with_file_dep_peer
+
+	run aube install
+	assert_success
+
+	cd apps/app
+	run node -e "console.log(require('@x/md'))"
+	assert_success
+	assert_output "shared"
+}
+
+@test "aube install --node-linker=hoisted links a file: dependency's workspace peer" {
+	_make_workspace_with_file_dep_peer
+
+	run aube install --node-linker=hoisted
+	assert_success
+
+	cd apps/app
+	run node -e "console.log(require('@x/md'))"
+	assert_success
+	assert_output "shared"
+}
+
+@test "aube install --frozen-lockfile links a file: dependency's workspace peer from pnpm-lock.yaml" {
+	_make_workspace_with_file_dep_peer
+	cat >pnpm-lock.yaml <<'EOF'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  apps/app:
+    dependencies:
+      '@x/md':
+        specifier: file:./modules/md
+        version: file:apps/app/modules/md(@x/shared@packages+shared)
+      '@x/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+
+  packages/shared: {}
+
+packages:
+
+  '@x/md@file:apps/app/modules/md':
+    resolution: {directory: apps/app/modules/md, type: directory}
+    peerDependencies:
+      '@x/shared': '*'
+
+snapshots:
+
+  '@x/md@file:apps/app/modules/md(@x/shared@packages+shared)':
+    dependencies:
+      '@x/shared': link:packages/shared
+EOF
+
+	run aube install --frozen-lockfile
+	assert_success
+
+	cd apps/app
+	run node -e "console.log(require('@x/md'))"
+	assert_success
+	assert_output "shared"
+}

@@ -1627,6 +1627,8 @@ impl<'a> ResolveDriver<'a> {
                 ),
             ));
         }
+        let mut local_peers = BTreeMap::new();
+        let mut local_peers_meta = BTreeMap::new();
         let (mut local, real_version, mut target_deps, mut target_optional_deps, integrity) =
             if let LocalSource::Git(ref g) = raw_local {
                 let shallow =
@@ -1692,7 +1694,11 @@ impl<'a> ResolveDriver<'a> {
                                 version: "0.0.0".to_string(),
                                 dependencies: BTreeMap::new(),
                                 optional_dependencies: BTreeMap::new(),
+                                peer_dependencies: BTreeMap::new(),
+                                peer_dependencies_meta: BTreeMap::new(),
                             });
+                        local_peers = manifest.peer_dependencies;
+                        local_peers_meta = manifest.peer_dependencies_meta;
                         (
                             manifest.version,
                             manifest.dependencies,
@@ -1773,6 +1779,8 @@ impl<'a> ResolveDriver<'a> {
                     integrity: integrity.clone(),
                     dep_path: dep_path.clone(),
                     local_source: Some(local.clone()),
+                    peer_dependencies: local_peers,
+                    peer_dependencies_meta: local_peers_meta,
                     ..Default::default()
                 },
             );

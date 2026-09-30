@@ -415,6 +415,92 @@ snapshots:
     assert_eq!(local.optional_dependencies.get("native").unwrap(), "1.0.0");
 }
 
+const FILE_PACKAGE_WITH_WORKSPACE_PEER_LOCKFILE: &str = r#"
+lockfileVersion: '9.0'
+
+importers:
+  .: {}
+
+  apps/app:
+    dependencies:
+      '@x/md':
+        specifier: file:./modules/md
+        version: file:apps/app/modules/md(@x/shared@packages+shared)
+      '@x/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+
+  packages/shared: {}
+
+packages:
+  '@x/md@file:apps/app/modules/md':
+    resolution: {directory: apps/app/modules/md, type: directory}
+    peerDependencies:
+      '@x/shared': '*'
+
+snapshots:
+  '@x/md@file:apps/app/modules/md(@x/shared@packages+shared)':
+    dependencies:
+      '@x/shared': link:packages/shared
+"#;
+
+#[test]
+fn parse_snapshot_link_dependency_points_at_the_importer_link_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&lockfile_path, FILE_PACKAGE_WITH_WORKSPACE_PEER_LOCKFILE).unwrap();
+
+    let graph = parse(&lockfile_path).unwrap();
+
+    let md = graph
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "@x/md")
+        .unwrap();
+    let tail = md.dependencies.get("@x/shared").unwrap();
+    let edge_dep_path = format!("@x/shared@{tail}");
+    let shared = graph.packages.get(&edge_dep_path).unwrap_or_else(|| {
+        panic!("the `link:` edge must name a package in the graph, got {edge_dep_path}")
+    });
+    assert_eq!(
+        shared.local_source,
+        Some(LocalSource::Link("packages/shared".into()))
+    );
+    let importer_dep = graph.importers["apps/app"]
+        .iter()
+        .find(|dep| dep.name == "@x/shared")
+        .unwrap();
+    assert_eq!(importer_dep.dep_path, edge_dep_path);
+}
+
+#[test]
+fn write_renders_link_dependency_edges_as_link_specifiers() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_path = dir.path().join("source-lock.yaml");
+    std::fs::write(&source_path, FILE_PACKAGE_WITH_WORKSPACE_PEER_LOCKFILE).unwrap();
+    let graph = parse(&source_path).unwrap();
+
+    let out_path = dir.path().join("out-lock.yaml");
+    write(&out_path, &graph, &PackageJson::default()).unwrap();
+
+    let written = std::fs::read_to_string(&out_path).unwrap();
+    assert!(
+        written.contains("'@x/shared': link:packages/shared"),
+        "snapshot edge should keep pnpm's `link:` shape:\n{written}"
+    );
+    let reparsed = parse(&out_path).unwrap();
+    let md = reparsed
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "@x/md")
+        .unwrap();
+    let edge_dep_path = format!("@x/shared@{}", md.dependencies["@x/shared"]);
+    assert_eq!(
+        reparsed.packages[&edge_dep_path].local_source,
+        Some(LocalSource::Link("packages/shared".into()))
+    );
+}
+
 #[test]
 fn parse_workspace_local_snapshot_keys_do_not_duplicate_rebased_packages() {
     let dir = tempfile::tempdir().unwrap();

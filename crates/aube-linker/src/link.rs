@@ -153,7 +153,7 @@ impl Linker {
             );
         }
 
-        let nested_link_targets = build_nested_link_targets(&project_dir, graph);
+        let nested_link_targets = build_nested_link_targets(&project_dir, graph, &BTreeMap::new());
 
         // Step 1: Populate .aube virtual store
         //
@@ -736,6 +736,25 @@ impl Linker {
             &mut placements,
         )?;
 
+        // A placed package can depend on a workspace package too (the
+        // workspace peer of a `file:` package). It may have been hoisted
+        // to a directory the sibling's importer link does not cover, so
+        // link the sibling inside the package's own `node_modules`.
+        for (owner, _, name, ws_dir) in workspace_sibling_edges(graph, workspace_dirs) {
+            crate::validate_package_link_name(name)?;
+            for pkg_dir in placements.all_package_dirs(owner) {
+                let link_path = pkg_dir.join("node_modules").join(name);
+                if let Some(parent) = link_path.parent() {
+                    mkdirp(parent)?;
+                }
+                try_remove_entry(&link_path);
+                let link_parent = link_path.parent().unwrap_or(pkg_dir);
+                let target = pathdiff::diff_paths(ws_dir, link_parent).unwrap_or(ws_dir.clone());
+                sys::create_dir_link(&target, &link_path)
+                    .map_err(|e| Error::Io(link_path.clone(), e))?;
+            }
+        }
+
         // Drop workspace deps in as symlinks, same as isolated mode.
         for (importer_path, deps) in &graph.importers {
             if !is_physical_importer(importer_path) {
@@ -833,7 +852,7 @@ impl Linker {
             );
         }
 
-        let nested_link_targets = build_nested_link_targets(&root_dir, graph);
+        let nested_link_targets = build_nested_link_targets(&root_dir, graph, workspace_dirs);
 
         // Step 1a: Materialize local (`file:` dir/tarball, `portal:`,
         // `exec:`) packages straight into the shared per-project
@@ -1708,14 +1727,19 @@ impl Linker {
 }
 
 /// Build a `dep_path → absolute on-disk target` map for every
-/// `LocalSource::Link` in the graph. Returned `None` when the graph
-/// has no link entries (vast majority of installs), so the materialize
-/// hot path can short-circuit without a per-dep lookup.
+/// `LocalSource::Link` in the graph, plus every workspace package a
+/// dependency edge points at without a `packages:` entry of its own (the
+/// resolver records only a `DirectDep` for workspace siblings, so a peer of
+/// a `file:` package that resolves to one has no other way to find its
+/// directory). Returned `None` when there are no such targets (vast
+/// majority of installs), so the materialize hot path can short-circuit
+/// without a per-dep lookup.
 pub fn build_nested_link_targets(
     project_dir: &Path,
     graph: &LockfileGraph,
+    workspace_dirs: &BTreeMap<String, PathBuf>,
 ) -> Option<BTreeMap<String, PathBuf>> {
-    let map: BTreeMap<String, PathBuf> = graph
+    let mut map: BTreeMap<String, PathBuf> = graph
         .packages
         .iter()
         .filter_map(|(dp, pkg)| match pkg.local_source.as_ref() {
@@ -1723,7 +1747,34 @@ pub fn build_nested_link_targets(
             _ => None,
         })
         .collect();
+    for (_, key, _, dir) in workspace_sibling_edges(graph, workspace_dirs) {
+        map.insert(key, dir.clone());
+    }
     if map.is_empty() { None } else { Some(map) }
+}
+
+/// Dependency edges whose target is a workspace package with no
+/// `packages:` entry: `(owner dep_path, target dep_path, name, workspace dir)`.
+fn workspace_sibling_edges<'a>(
+    graph: &'a LockfileGraph,
+    workspace_dirs: &'a BTreeMap<String, PathBuf>,
+) -> impl Iterator<Item = (&'a str, String, &'a str, &'a PathBuf)> {
+    graph
+        .packages
+        .iter()
+        .filter(|_| !workspace_dirs.is_empty())
+        .flat_map(move |(owner, pkg)| {
+            pkg.dependencies.iter().filter_map(move |(name, tail)| {
+                let dir = workspace_dirs.get(name)?;
+                let key = format!("{name}@{tail}");
+                (!graph.packages.contains_key(&key)).then_some((
+                    owner.as_str(),
+                    key,
+                    name.as_str(),
+                    dir,
+                ))
+            })
+        })
 }
 
 /// The dependency links of a global virtual-store entry that are safe to

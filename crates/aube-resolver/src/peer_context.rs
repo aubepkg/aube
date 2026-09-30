@@ -2006,13 +2006,15 @@ fn visit_peer_context<'g>(
             options,
             hashed_suffixes,
         );
-        if let Some(new_dep_path) = child_new {
-            let new_tail = new_dep_path
-                .strip_prefix(&format!("{peer_name}@"))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| provider.target_tail.clone());
-            new_dependencies.insert(peer_name.clone(), new_tail);
-        }
+        // A peer provider with no `packages:` entry is a workspace
+        // package (the resolver only records a `DirectDep` for those);
+        // keep the edge so the linker can point it at the workspace
+        // directory.
+        let new_tail = child_new
+            .as_deref()
+            .and_then(|new_dep_path| new_dep_path.strip_prefix(&format!("{peer_name}@")))
+            .map_or_else(|| provider.target_tail.clone(), str::to_string);
+        new_dependencies.insert(peer_name.clone(), new_tail);
     }
 
     visiting.remove(&contextualized);
@@ -2196,6 +2198,46 @@ mod tests {
             plugin.dependencies.get("theme").map(String::as_str),
             Some("link+0123456789abcdef"),
             "the peer suffix uses the manifest version while the linker keeps the local target"
+        );
+    }
+
+    #[test]
+    fn workspace_package_peer_without_packages_entry_is_wired() {
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            "apps/app".to_string(),
+            vec![
+                DirectDep {
+                    name: "md".to_string(),
+                    dep_path: "md@file+0123456789abcdef".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("file:./modules/md".to_string()),
+                },
+                DirectDep {
+                    name: "shared".to_string(),
+                    dep_path: "shared@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("workspace:*".to_string()),
+                },
+            ],
+        );
+        let mut md = locked("md", &[]);
+        md.dep_path = "md@file+0123456789abcdef".to_string();
+        md.local_source = Some(LocalSource::Directory("apps/app/modules/md".into()));
+        md.peer_dependencies
+            .insert("shared".to_string(), "*".to_string());
+        g.packages.insert(md.dep_path.clone(), md);
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        let md = out
+            .packages
+            .get("md@file+0123456789abcdef(shared@1.0.0)")
+            .expect("workspace peer should contextualize the local package");
+        assert_eq!(
+            md.dependencies.get("shared").map(String::as_str),
+            Some("1.0.0"),
+            "the edge must survive so the linker can point it at the workspace directory"
         );
     }
 }

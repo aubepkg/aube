@@ -652,7 +652,6 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     .or_else(|| graph.packages.get(&peerless_dep_path(&name, &value)));
                 let rewritten = if let Some(target) = target
                     && let Some(ref local) = target.local_source
-                    && !matches!(local, LocalSource::Link(_))
                 {
                     local.specifier()
                 } else if native_pnpm_aliases

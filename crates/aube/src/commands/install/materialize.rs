@@ -7,6 +7,7 @@ pub(super) struct GvsPrewarmInputs {
     pub graph: std::sync::Arc<aube_lockfile::LockfileGraph>,
     pub store: std::sync::Arc<aube_store::Store>,
     pub cwd: std::path::PathBuf,
+    pub workspace_dirs: std::collections::BTreeMap<String, std::path::PathBuf>,
     pub virtual_store_dir_max_length: usize,
     pub link_strategy: aube_linker::LinkStrategy,
     pub link_concurrency: Option<usize>,
@@ -299,6 +300,7 @@ pub(super) async fn run_gvs_prewarm_materializer(
         graph,
         store,
         cwd,
+        workspace_dirs,
         virtual_store_dir_max_length,
         link_strategy,
         link_concurrency,
@@ -315,12 +317,19 @@ pub(super) async fn run_gvs_prewarm_materializer(
         probe = probe.with_use_global_virtual_store(enabled);
     }
     let Some(graph_hashes_arc) = virtual_store_plan.hashes().cloned() else {
-        return run_aube_dir_materializer(probe, graph, cwd, link_concurrency, materialize_rx)
-            .await;
+        return run_aube_dir_materializer(
+            probe,
+            graph,
+            cwd,
+            &workspace_dirs,
+            link_concurrency,
+            materialize_rx,
+        )
+        .await;
     };
 
-    let nested_link_targets =
-        aube_linker::build_nested_link_targets(&cwd, &graph).map(std::sync::Arc::new);
+    let nested_link_targets = aube_linker::build_nested_link_targets(&cwd, &graph, &workspace_dirs)
+        .map(std::sync::Arc::new);
 
     // Channel emits `pkg.dep_path` (canonical on resolver first-pass,
     // contextualized on post-pass). When the received key is canonical
@@ -514,13 +523,14 @@ async fn run_aube_dir_materializer(
     linker: aube_linker::Linker,
     graph: std::sync::Arc<aube_lockfile::LockfileGraph>,
     cwd: std::path::PathBuf,
+    workspace_dirs: &std::collections::BTreeMap<String, std::path::PathBuf>,
     link_concurrency: Option<usize>,
     materialize_rx: tokio::sync::mpsc::Receiver<(String, aube_store::PackageIndex)>,
 ) -> miette::Result<PrewarmOutcome> {
     let aube_dir = std::sync::Arc::new(linker.aube_dir_for(&cwd));
     aube_linker::mkdirp(&aube_dir).map_err(|e| miette!("create {}: {e}", aube_dir.display()))?;
-    let nested_link_targets =
-        aube_linker::build_nested_link_targets(&cwd, &graph).map(std::sync::Arc::new);
+    let nested_link_targets = aube_linker::build_nested_link_targets(&cwd, &graph, workspace_dirs)
+        .map(std::sync::Arc::new);
 
     // Channel emits `pkg.dep_path` (canonical on the resolver's
     // first-pass packages, contextualized on post-pass). When the
