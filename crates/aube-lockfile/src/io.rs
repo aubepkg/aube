@@ -553,8 +553,10 @@ fn parse_one(
         LockfileKind::Npm | LockfileKind::NpmShrinkwrap => npm::parse(path),
         LockfileKind::Bun => bun::parse(path),
     }?;
-    if matches!(kind, LockfileKind::Aube | LockfileKind::Pnpm)
-        && let Some(lockfile_dir) = path.parent()
+    if matches!(
+        kind,
+        LockfileKind::Aube | LockfileKind::Pnpm | LockfileKind::Bun
+    ) && let Some(lockfile_dir) = path.parent()
     {
         fill_local_package_versions(&mut graph, lockfile_dir);
     }
@@ -563,10 +565,11 @@ fn parse_one(
 }
 
 /// pnpm-format lockfiles record no version for `file:` directory, `link:`,
-/// and `portal:` packages, so the reader stores a `0.0.0` placeholder. Read
-/// the real version from the package's own `package.json`, as a fresh
-/// resolve does — otherwise installs from the lockfile and `aube list`
-/// report those packages as `0.0.0`. Their paths are relative to
+/// and `portal:` packages, so the reader stores a `0.0.0` placeholder; the
+/// bun reader keeps the `file:` or `workspace:` spec a package is listed
+/// under instead. Read the real version from the package's own
+/// `package.json`, as a fresh resolve does — otherwise installs from the
+/// lockfile and `aube list` report the placeholder. Their paths are relative to
 /// `base_dir`: the lockfile's directory for a project lockfile, and the
 /// project root for the hidden lockfile kept under the modules dir.
 pub fn fill_local_package_versions(graph: &mut LockfileGraph, base_dir: &Path) {
@@ -579,7 +582,11 @@ pub fn fill_local_package_versions(graph: &mut LockfileGraph, base_dir: &Path) {
         else {
             continue;
         };
-        if pkg.version != "0.0.0" {
+        let placeholder = pkg.version == "0.0.0"
+            || pkg.version.starts_with("file:")
+            // bun reads a `workspace:` spec that names no path as `.`.
+            || (pkg.version.starts_with("workspace:") && dir != Path::new("."));
+        if !placeholder {
             continue;
         }
         let manifest_path = base_dir.join(dir).join("package.json");
@@ -590,8 +597,9 @@ pub fn fill_local_package_versions(graph: &mut LockfileGraph, base_dir: &Path) {
         match version {
             Some(version) => pkg.version = version,
             None => tracing::debug!(
-                "no version in {}; keeping 0.0.0 for {}",
+                "no version in {}; keeping {} for {}",
                 manifest_path.display(),
+                pkg.version,
                 pkg.name
             ),
         }

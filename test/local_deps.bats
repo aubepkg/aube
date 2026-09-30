@@ -400,6 +400,58 @@ EOF
 	refute_output --partial "0.0.0"
 }
 
+@test "installs from bun.lock report the real versions of file: deps and workspace members" {
+	mkdir -p packages/a packages/b vendor/x
+	echo '{"name":"root","private":true,"workspaces":["packages/*"],"dependencies":{"x":"file:./vendor/x"}}' >package.json
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}' >packages/a/package.json
+	echo '{"name":"b","version":"2.0.0"}' >packages/b/package.json
+	echo '{"name":"x","version":"1.2.3"}' >vendor/x/package.json
+	# bun.lock records the `file:` and `workspace:` specs, not versions.
+	cat >bun.lock <<'EOF'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "x": "file:./vendor/x",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "workspace:*",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "version": "2.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "b": ["b@workspace:packages/b"],
+
+    "x": ["x@file:vendor/x", {}],
+  }
+}
+EOF
+
+	run aube install --frozen-lockfile
+	assert_success
+	assert_output --partial "+ x@1.2.3"
+	assert_output --partial "+ b@2.0.0"
+	refute_output --partial "file:vendor/x"
+	refute_output --partial "workspace:packages/b"
+
+	run aube list
+	assert_success
+	assert_output --partial "x 1.2.3"
+}
+
 @test "aube install handles file: tarball dep" {
 	# BSD tar (macOS) has no --transform, so stage the files under an
 	# actual `package/` directory before archiving.

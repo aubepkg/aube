@@ -1960,3 +1960,90 @@ fn test_local_child_spec_from_an_absolute_parent_with_a_relative_project_dir() {
         "{spec}"
     );
 }
+
+/// bun.lock lists no version for `file:` directories or workspace
+/// members; reading it fills the real ones from their package.json, and
+/// writing that graph back must still reproduce what bun wrote.
+#[test]
+fn test_parse_fills_local_versions_and_writes_bun_lock_back_unchanged() {
+    let project = tempfile::tempdir().unwrap();
+    let dir = project.path();
+    for (path, manifest) in [
+        (
+            "package.json",
+            r#"{"name":"root","private":true,"workspaces":["packages/*"],"dependencies":{"x":"file:./vendor/x"}}"#,
+        ),
+        (
+            "packages/a/package.json",
+            r#"{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}"#,
+        ),
+        (
+            "packages/b/package.json",
+            r#"{"name":"b","version":"2.0.0"}"#,
+        ),
+        (
+            "vendor/x/package.json",
+            r#"{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y"}}"#,
+        ),
+        ("vendor/y/package.json", r#"{"name":"y","version":"0.1.0"}"#),
+    ] {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, manifest).unwrap();
+    }
+    // What bun 1.4 writes for this project.
+    let original = r#"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "x": "file:./vendor/x",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "workspace:*",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "version": "2.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "b": ["b@workspace:packages/b"],
+
+    "x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }],
+
+    "x/y": ["y@file:vendor/y", {}],
+  }
+}
+"#;
+    std::fs::write(dir.join("bun.lock"), original).unwrap();
+    let manifest = aube_manifest::PackageJson::from_path(&dir.join("package.json")).unwrap();
+
+    let graph = crate::parse_lockfile(dir, &manifest).unwrap();
+    let version_of = |name: &str| {
+        graph
+            .packages
+            .values()
+            .find(|pkg| pkg.name == name)
+            .map(|pkg| pkg.version.as_str())
+    };
+    // aube hoists `y` where bun nests it under `x`; bun accepts both.
+    let out = dir.join("bun.lock.out");
+    write(&out, &graph, &manifest).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        original.replace(r#""x/y":"#, r#""y":"#)
+    );
+    assert_eq!(version_of("x"), Some("1.2.3"));
+    assert_eq!(version_of("y"), Some("0.1.0"));
+    assert_eq!(version_of("b"), Some("2.0.0"));
+}
