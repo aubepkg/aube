@@ -48,36 +48,6 @@ pub fn __bench_write_to(
     write::write(path, graph, manifest).expect("bench write");
 }
 
-/// Whether an `overrides` entry sets importer direct dependency `name` to
-/// `specifier`. The selector has to name the package, with or without a
-/// version range, and have no parent: an importer's direct dependencies
-/// have no parent package, so `parent>name` never applies to them. An
-/// override for another package with the same value doesn't count.
-pub(super) fn override_sets_direct_dep(
-    overrides: &std::collections::BTreeMap<String, String>,
-    name: &str,
-    specifier: &str,
-) -> bool {
-    overrides
-        .iter()
-        .any(|(key, value)| value == specifier && parentless_override_target(key) == Some(name))
-}
-
-/// The package a parentless override selector names: `bar` for `bar` or
-/// `bar@^1`, and `None` for `foo>bar`. As in pnpm, a `>` after a space,
-/// `|`, or `@` belongs to a version range, not a parent boundary.
-fn parentless_override_target(key: &str) -> Option<&str> {
-    let bytes = key.as_bytes();
-    if (1..bytes.len()).any(|i| bytes[i] == b'>' && !matches!(bytes[i - 1], b' ' | b'|' | b'@')) {
-        return None;
-    }
-    // Skip a leading `@` so a scope isn't read as a version separator.
-    Some(match key.get(1..).and_then(|rest| rest.find('@')) {
-        Some(at) => &key[..=at],
-        None => key,
-    })
-}
-
 pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {
     let Some((host, path)) = http_url_host_and_path(url) else {
         return false;

@@ -4813,20 +4813,32 @@ snapshots:
 }
 
 #[test]
-fn override_sets_direct_dep_needs_a_parentless_selector_for_the_dep() {
-    let overrides = BTreeMap::from([
-        ("foo".to_string(), "link:./vendor/x".to_string()),
-        ("@scope/bar@^1".to_string(), "link:./libs/bar".to_string()),
-        ("baz@>=2".to_string(), "link:./libs/baz".to_string()),
-        ("parent>qux".to_string(), "link:./libs/qux".to_string()),
-    ]);
-    let sets =
-        |name: &str, specifier: &str| super::override_sets_direct_dep(&overrides, name, specifier);
-    assert!(sets("foo", "link:./vendor/x"));
-    assert!(sets("@scope/bar", "link:./libs/bar"));
-    assert!(sets("baz", "link:./libs/baz"));
-    // Same value, but the override is for another package.
-    assert!(!sets("x", "link:./vendor/x"));
-    // A parent-qualified override never applies to a direct dependency.
-    assert!(!sets("qux", "link:./libs/qux"));
+fn member_link_version_settles_the_target() {
+    // (version, expected root-relative target) for pkg-a's `link:./vendor/x`.
+    let cases = [
+        // pnpm and aube: relative to the member, normalized.
+        ("link:vendor/x", "pkg-a/vendor/x"),
+        // Older aube: the member's own link written root-relative.
+        ("link:pkg-a/vendor/x", "pkg-a/vendor/x"),
+        // An override target, relative to the member.
+        ("link:../vendor/x", "vendor/x"),
+    ];
+    for (version, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let lockfile_path = dir.path().join("pnpm-lock.yaml");
+        std::fs::write(
+            &lockfile_path,
+            format!(
+                "lockfileVersion: '9.0'\n\nimporters:\n  .: {{}}\n\n  pkg-a:\n    dependencies:\n      x:\n        specifier: link:./vendor/x\n        version: {version}\n"
+            ),
+        )
+        .unwrap();
+        let graph = parse(&lockfile_path).unwrap();
+        let dep = &graph.importers["pkg-a"][0];
+        assert_eq!(
+            graph.packages[&dep.dep_path].local_source,
+            Some(LocalSource::Link(expected.into())),
+            "version {version}"
+        );
+    }
 }

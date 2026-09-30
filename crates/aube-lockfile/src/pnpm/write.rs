@@ -246,18 +246,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 .and_then(|p| p.local_source.as_ref())
             {
                 match local {
-                    // pnpm records a member's own `link:` relative to the
-                    // member; the graph keeps it relative to the root. A
-                    // specifier taken from a `link:` override stays
-                    // root-relative, as the reader expects.
+                    // pnpm records a member's `link:` relative to the
+                    // member, a target an override set included; the graph
+                    // keeps it relative to the root.
                     LocalSource::Link(path)
-                        if importer_path != "."
-                            && specifier.starts_with("link:")
-                            && !super::override_sets_direct_dep(
-                                &graph.overrides,
-                                &dep.name,
-                                specifier,
-                            ) =>
+                        if importer_path != "." && specifier.starts_with("link:") =>
                     {
                         format!("link:{}", relative_to_importer(path, importer_path))
                     }

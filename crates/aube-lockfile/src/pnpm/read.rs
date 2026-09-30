@@ -193,8 +193,6 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         true
     };
 
-    // An importer `link:` that an override set is root-relative.
-    let overrides = raw.overrides.clone().unwrap_or_default();
     let mut push_direct = |deps: &mut Vec<DirectDep>,
                            alias_remaps: &mut Vec<(String, String, String, String)>,
                            importer_path: &str,
@@ -247,19 +245,26 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             let should_rebase = importer_path != "."
                 && (info.specifier == classify_version || info.specifier.starts_with("workspace:"));
             let local = match LocalSource::parse(&info.specifier, Path::new("")) {
-                // A member's `link:` specifier settles its target, whatever
-                // form the version took: pnpm records it relative to the
-                // member and normalized (`link:./x` as `link:x`), which the
-                // equality check above misses, and older aube wrote it
-                // root-relative. A specifier taken from a `link:` override
-                // is root-relative.
+                // A member's `link:` version is relative to the member, as
+                // pnpm writes it (normalized, `link:./x` as `link:x`), which
+                // the equality check above misses. That holds for a target
+                // an override set too, so the version, not the specifier,
+                // settles the target. Older aube wrote a member's own link
+                // root-relative: a version equal to the specifier resolved
+                // from the member.
                 Some(spec @ LocalSource::Link(_))
                     if importer_path != "." && matches!(local, LocalSource::Link(_)) =>
                 {
-                    if super::override_sets_direct_dep(&overrides, name, &info.specifier) {
-                        spec
+                    let own = rebase_importer_local(spec, importer_path);
+                    let root_relative = matches!(
+                        (&own, &local),
+                        (LocalSource::Link(own), LocalSource::Link(version))
+                            if *own == normalize_lexical(version)
+                    );
+                    if root_relative {
+                        own
                     } else {
-                        rebase_importer_local(spec, importer_path)
+                        rebase_importer_local(local, importer_path)
                     }
                 }
                 _ if should_rebase => rebase_importer_local(local, importer_path),
