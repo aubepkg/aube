@@ -603,6 +603,22 @@ _make_workspace_with_file_dep_peer() {
 	assert_output "shared"
 }
 
+@test "aube install --frozen-lockfile links a file: dependency's workspace peer from aube-lock.yaml" {
+	_make_workspace_with_file_dep_peer
+
+	run aube install
+	assert_success
+	rm -rf node_modules apps/app/node_modules
+
+	run aube install --frozen-lockfile
+	assert_success
+
+	cd apps/app
+	run node -e "console.log(require('@x/md'))"
+	assert_success
+	assert_output "shared"
+}
+
 @test "aube install --node-linker=hoisted links a file: dependency's workspace peer" {
 	_make_workspace_with_file_dep_peer
 

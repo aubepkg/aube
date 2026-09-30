@@ -328,8 +328,9 @@ pub(super) async fn run_gvs_prewarm_materializer(
         .await;
     };
 
-    let nested_link_targets = aube_linker::build_nested_link_targets(&cwd, &graph, &workspace_dirs)
-        .map(std::sync::Arc::new);
+    let nested_link_targets =
+        aube_linker::build_workspace_nested_link_targets(&cwd, &graph, &workspace_dirs)
+            .map(std::sync::Arc::new);
 
     // Channel emits `pkg.dep_path` (canonical on resolver first-pass,
     // contextualized on post-pass). When the received key is canonical
@@ -529,8 +530,9 @@ async fn run_aube_dir_materializer(
 ) -> miette::Result<PrewarmOutcome> {
     let aube_dir = std::sync::Arc::new(linker.aube_dir_for(&cwd));
     aube_linker::mkdirp(&aube_dir).map_err(|e| miette!("create {}: {e}", aube_dir.display()))?;
-    let nested_link_targets = aube_linker::build_nested_link_targets(&cwd, &graph, workspace_dirs)
-        .map(std::sync::Arc::new);
+    let nested_link_targets =
+        aube_linker::build_workspace_nested_link_targets(&cwd, &graph, workspace_dirs)
+            .map(std::sync::Arc::new);
 
     // Channel emits `pkg.dep_path` (canonical on the resolver's
     // first-pass packages, contextualized on post-pass). When the

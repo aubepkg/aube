@@ -153,7 +153,7 @@ impl Linker {
             );
         }
 
-        let nested_link_targets = build_nested_link_targets(&project_dir, graph, &BTreeMap::new());
+        let nested_link_targets = build_nested_link_targets(&project_dir, graph);
 
         // Step 1: Populate .aube virtual store
         //
@@ -744,11 +744,10 @@ impl Linker {
             crate::validate_package_link_name(name)?;
             for pkg_dir in placements.all_package_dirs(owner) {
                 let link_path = pkg_dir.join("node_modules").join(name);
-                if let Some(parent) = link_path.parent() {
-                    mkdirp(parent)?;
-                }
-                try_remove_entry(&link_path);
+                // `link_path` always has a parent: it sits below `pkg_dir`.
                 let link_parent = link_path.parent().unwrap_or(pkg_dir);
+                mkdirp(link_parent)?;
+                try_remove_entry(&link_path);
                 let target = pathdiff::diff_paths(ws_dir, link_parent).unwrap_or(ws_dir.clone());
                 sys::create_dir_link(&target, &link_path)
                     .map_err(|e| Error::Io(link_path.clone(), e))?;
@@ -852,7 +851,8 @@ impl Linker {
             );
         }
 
-        let nested_link_targets = build_nested_link_targets(&root_dir, graph, workspace_dirs);
+        let nested_link_targets =
+            build_workspace_nested_link_targets(&root_dir, graph, workspace_dirs);
 
         // Step 1a: Materialize local (`file:` dir/tarball, `portal:`,
         // `exec:`) packages straight into the shared per-project
@@ -1727,14 +1727,22 @@ impl Linker {
 }
 
 /// Build a `dep_path → absolute on-disk target` map for every
-/// `LocalSource::Link` in the graph, plus every workspace package a
-/// dependency edge points at without a `packages:` entry of its own (the
-/// resolver records only a `DirectDep` for workspace siblings, so a peer of
-/// a `file:` package that resolves to one has no other way to find its
-/// directory). Returned `None` when there are no such targets (vast
-/// majority of installs), so the materialize hot path can short-circuit
-/// without a per-dep lookup.
+/// `LocalSource::Link` in the graph. Returned `None` when the graph
+/// has no link entries (vast majority of installs), so the materialize
+/// hot path can short-circuit without a per-dep lookup.
 pub fn build_nested_link_targets(
+    project_dir: &Path,
+    graph: &LockfileGraph,
+) -> Option<BTreeMap<String, PathBuf>> {
+    build_workspace_nested_link_targets(project_dir, graph, &BTreeMap::new())
+}
+
+/// [`build_nested_link_targets`] plus every workspace package that a
+/// per-project local package (for example a `file:` directory) depends on
+/// without a `packages:` entry of its own. The resolver records only a
+/// `DirectDep` for workspace siblings, so such an edge has no other way to
+/// find its directory.
+pub fn build_workspace_nested_link_targets(
     project_dir: &Path,
     graph: &LockfileGraph,
     workspace_dirs: &BTreeMap<String, PathBuf>,
@@ -1753,8 +1761,12 @@ pub fn build_nested_link_targets(
     if map.is_empty() { None } else { Some(map) }
 }
 
-/// Dependency edges whose target is a workspace package with no
-/// `packages:` entry: `(owner dep_path, target dep_path, name, workspace dir)`.
+/// Dependency edges of per-project local packages whose target is a
+/// workspace package with no `packages:` entry:
+/// `(owner dep_path, target dep_path, name, workspace dir)`. Registry, git
+/// and tarball packages are excluded: they can live in the global virtual
+/// store, where a project-specific workspace directory must not be baked
+/// into an entry other projects share.
 fn workspace_sibling_edges<'a>(
     graph: &'a LockfileGraph,
     workspace_dirs: &'a BTreeMap<String, PathBuf>,
@@ -1762,7 +1774,13 @@ fn workspace_sibling_edges<'a>(
     graph
         .packages
         .iter()
-        .filter(|_| !workspace_dirs.is_empty())
+        .filter(|(_, pkg)| {
+            !workspace_dirs.is_empty()
+                && pkg
+                    .local_source
+                    .as_ref()
+                    .is_some_and(|local| !local.is_globally_shareable())
+        })
         .flat_map(move |(owner, pkg)| {
             pkg.dependencies.iter().filter_map(move |(name, tail)| {
                 let dir = workspace_dirs.get(name)?;

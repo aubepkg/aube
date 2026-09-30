@@ -2007,9 +2007,19 @@ fn visit_peer_context<'g>(
             hashed_suffixes,
         );
         // A peer provider with no `packages:` entry is a workspace
-        // package (the resolver only records a `DirectDep` for those);
-        // keep the edge so the linker can point it at the workspace
-        // directory.
+        // package (the resolver only records a `DirectDep` for those).
+        // Keep the edge for per-project local packages so the linker can
+        // point it at the workspace directory. Other packages may live in
+        // the shared global virtual store, where that project-specific
+        // link must not appear.
+        let keeps_workspace_peer = child_new.is_some()
+            || pkg
+                .local_source
+                .as_ref()
+                .is_some_and(|local| !local.is_globally_shareable());
+        if !keeps_workspace_peer {
+            continue;
+        }
         let new_tail = child_new
             .as_deref()
             .and_then(|new_dep_path| new_dep_path.strip_prefix(&format!("{peer_name}@")))
@@ -2238,6 +2248,44 @@ mod tests {
             md.dependencies.get("shared").map(String::as_str),
             Some("1.0.0"),
             "the edge must survive so the linker can point it at the workspace directory"
+        );
+    }
+
+    #[test]
+    fn registry_package_does_not_keep_workspace_peer_edge() {
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            "apps/app".to_string(),
+            vec![
+                DirectDep {
+                    name: "plugin".to_string(),
+                    dep_path: "plugin@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                },
+                DirectDep {
+                    name: "shared".to_string(),
+                    dep_path: "shared@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("workspace:*".to_string()),
+                },
+            ],
+        );
+        let mut plugin = locked("plugin", &[]);
+        plugin
+            .peer_dependencies
+            .insert("shared".to_string(), "*".to_string());
+        g.packages.insert(plugin.dep_path.clone(), plugin);
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        let plugin = out
+            .packages
+            .get("plugin@1.0.0(shared@1.0.0)")
+            .expect("the peer still contextualizes the package");
+        assert!(
+            !plugin.dependencies.contains_key("shared"),
+            "a package that may sit in the shared virtual store must not link a project-specific workspace directory"
         );
     }
 }
