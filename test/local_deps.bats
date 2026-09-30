@@ -316,6 +316,57 @@ EOF
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
 }
 
+@test "aube install reads and writes a member's link: relative to the member, like pnpm" {
+	# pnpm records a member's own `link:` relative to the member and
+	# normalized (`link:./vendor/x` as `link:vendor/x`). aube used to read
+	# that against the root and write root-relative paths pnpm misreads.
+	mkdir -p pkg-a/vendor/x libs/y
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"link:./vendor/x","y":"link:../libs/y"}}
+JSON
+	echo '{"name":"x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"y","version":"2.0.0"}' >libs/y/package.json
+	cat >pnpm-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  pkg-a:
+    dependencies:
+      x:
+        specifier: link:./vendor/x
+        version: link:vendor/x
+      y:
+        specifier: link:../libs/y
+        version: link:../libs/y
+YAML
+
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json pkg-a/node_modules/y/package.json
+	assert_output --partial '"name":"x"'
+	assert_output --partial '"name":"y"'
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run cat pnpm-lock.yaml
+	assert_output --partial "version: link:vendor/x"
+	assert_output --partial "version: link:../libs/y"
+}
+
 @test "aube install preserves pnpm workspace link targets in hoisted mode" {
 	mkdir -p pkg-a gems/pkg-b-parent/pkg-b
 	cat >package.json <<'EOF'
@@ -440,6 +491,13 @@ EOF
 	run cat aube-lock.yaml
 	assert_output --partial 'version: link:./libs/bar'
 	refute_output --partial 'libs/foo/libs/bar'
+
+	# Reading it back keeps the override root-relative too.
+	rm -rf node_modules libs/foo/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat libs/foo/node_modules/@company/bar/package.json
+	assert_output --partial '"version":"9.9.9"'
 }
 
 @test "aube install: pnpm.overrides redirects a registry parent's transitive to link: (GVS)" {

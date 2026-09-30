@@ -193,6 +193,16 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         true
     };
 
+    // `link:` values from `overrides`: an importer whose specifier is one of
+    // these got it from the override, which is root-relative.
+    let link_overrides: BTreeSet<String> = raw
+        .overrides
+        .iter()
+        .flatten()
+        .map(|(_, value)| value)
+        .filter(|value| value.starts_with("link:"))
+        .cloned()
+        .collect();
     let mut push_direct = |deps: &mut Vec<DirectDep>,
                            alias_remaps: &mut Vec<(String, String, String, String)>,
                            importer_path: &str,
@@ -244,10 +254,24 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             let snapshot_key = format!("{name}@{}", local.specifier());
             let should_rebase = importer_path != "."
                 && (info.specifier == classify_version || info.specifier.starts_with("workspace:"));
-            let local = if should_rebase {
-                rebase_importer_local(local, importer_path)
-            } else {
-                local
+            let local = match LocalSource::parse(&info.specifier, Path::new("")) {
+                // A member's `link:` specifier settles its target, whatever
+                // form the version took: pnpm records it relative to the
+                // member and normalized (`link:./x` as `link:x`), which the
+                // equality check above misses, and older aube wrote it
+                // root-relative. A specifier taken from a `link:` override
+                // is root-relative.
+                Some(spec @ LocalSource::Link(_))
+                    if importer_path != "." && matches!(local, LocalSource::Link(_)) =>
+                {
+                    if link_overrides.contains(&info.specifier) {
+                        spec
+                    } else {
+                        rebase_importer_local(spec, importer_path)
+                    }
+                }
+                _ if should_rebase => rebase_importer_local(local, importer_path),
+                _ => local,
             };
             let dep_path = local.dep_path(name);
             deps.push(DirectDep {

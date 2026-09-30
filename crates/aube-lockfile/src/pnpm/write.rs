@@ -89,9 +89,43 @@ fn with_patch_hash(value: &str, hash: Option<&str>) -> String {
     )
 }
 
+/// Root-relative `path` re-expressed relative to workspace member
+/// `importer`, both root-relative, in forward-slash form. An absolute path
+/// means the same thing from anywhere and is kept.
+fn relative_to_importer(path: &Path, importer: &str) -> String {
+    if path.is_absolute() {
+        return path.to_string_lossy().replace('\\', "/");
+    }
+    let target = aube_util::path::normalize_lexical(path);
+    let base = aube_util::path::normalize_lexical(Path::new(importer));
+    let target: Vec<_> = target.components().collect();
+    let base: Vec<_> = base.components().collect();
+    let shared = target.iter().zip(&base).take_while(|(t, b)| t == b).count();
+    let mut parts: Vec<String> = Vec::new();
+    for component in &base[shared..] {
+        // Climbing out of `..` would need names above the root that a
+        // relative path can't express; keep the root-relative path then.
+        if matches!(component, Component::ParentDir) {
+            return path.to_string_lossy().replace('\\', "/");
+        }
+        parts.push("..".to_string());
+    }
+    parts.extend(
+        target[shared..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
+    );
+    if parts.is_empty() {
+        ".".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::with_patch_hash;
+    use super::{relative_to_importer, with_patch_hash};
+    use std::path::Path;
 
     #[test]
     fn replaces_every_stale_patch_hash_suffix() {
@@ -100,6 +134,15 @@ mod tests {
             with_patch_hash(value, Some("current")),
             "1.0.0(patch_hash=current)(react@19)"
         );
+    }
+
+    #[test]
+    fn member_link_paths_become_member_relative() {
+        let rel = |path: &str, importer: &str| relative_to_importer(Path::new(path), importer);
+        assert_eq!(rel("packages/a/vendor/x", "packages/a"), "vendor/x");
+        assert_eq!(rel("libs/y", "packages/a"), "../../libs/y");
+        assert_eq!(rel("../outside", "packages/a"), "../../../outside");
+        assert_eq!(rel("packages/a", "packages/a"), ".");
     }
 }
 
@@ -202,7 +245,20 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 .get(&dep.dep_path)
                 .and_then(|p| p.local_source.as_ref())
             {
-                local.specifier()
+                match local {
+                    // pnpm records a member's own `link:` relative to the
+                    // member; the graph keeps it relative to the root. A
+                    // specifier taken from a `link:` override stays
+                    // root-relative, as the reader expects.
+                    LocalSource::Link(path)
+                        if importer_path != "."
+                            && specifier.starts_with("link:")
+                            && !graph.overrides.values().any(|value| value == specifier) =>
+                    {
+                        format!("link:{}", relative_to_importer(path, importer_path))
+                    }
+                    _ => local.specifier(),
+                }
             } else if native_pnpm_aliases
                 && let Some(pkg) = graph.packages.get(&dep.dep_path)
                 && let Some(real_name) = pkg.alias_of.as_deref()
