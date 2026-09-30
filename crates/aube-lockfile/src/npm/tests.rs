@@ -2420,6 +2420,92 @@ fn workspace_member_required_peers_are_direct_deps() {
     assert!(written["packages"][""].get("dependencies").is_none());
 }
 
+/// npm records the target of every `file:` dep as an importer, including
+/// ones a workspace member declares. Those are not stale workspace
+/// projects, but a member that is gone from the workspace still is.
+#[test]
+fn test_drift_accepts_file_dep_importers_of_workspace_members() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    // What npm 11 writes for a member depending on `file:./vendor/x`,
+    // which in turn depends on `file:../y`.
+    std::fs::write(
+        tmp.path(),
+        r#"
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/app": {
+      "resolved": "packages/app",
+      "link": true
+    },
+    "node_modules/x": {
+      "resolved": "packages/app/vendor/x",
+      "link": true
+    },
+    "node_modules/y": {
+      "resolved": "packages/app/vendor/y",
+      "link": true
+    },
+    "packages/app": {
+      "version": "1.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x"
+      }
+    },
+    "packages/app/vendor/x": {
+      "version": "1.0.0",
+      "dependencies": {
+        "y": "file:../y"
+      }
+    },
+    "packages/app/vendor/y": {
+      "version": "1.0.0"
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root: aube_manifest::PackageJson =
+        serde_json::from_str(r#"{"name":"root","private":true,"workspaces":["packages/*"]}"#)
+            .unwrap();
+    let app: aube_manifest::PackageJson = serde_json::from_str(
+        r#"{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}"#,
+    )
+    .unwrap();
+    let check = |manifests: &[(String, aube_manifest::PackageJson)]| {
+        graph.check_drift_workspace_for_kind(
+            manifests,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+
+    assert_eq!(
+        check(&[
+            (".".to_string(), root.clone()),
+            ("packages/app".to_string(), app)
+        ]),
+        DriftStatus::Fresh
+    );
+    assert!(matches!(
+        check(&[(".".to_string(), root)]),
+        DriftStatus::Stale { reason } if reason.contains("packages/app ")
+    ));
+}
+
 /// npm writes a workspace member without a `version` in its package.json
 /// as an empty entry. Reading it must not fail.
 #[test]

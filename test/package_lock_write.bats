@@ -149,6 +149,50 @@ teardown() {
 	assert_success
 }
 
+@test "aube install --frozen-lockfile accepts a file: dep of an npm workspace member" {
+	mkdir -p packages/app/vendor/x
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}' >packages/app/package.json
+	echo '{"name":"x","version":"1.2.3"}' >packages/app/vendor/x/package.json
+	# What npm 11 writes for this workspace.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/app": {
+      "resolved": "packages/app",
+      "link": true
+    },
+    "node_modules/x": {
+      "resolved": "packages/app/vendor/x",
+      "link": true
+    },
+    "packages/app": {
+      "version": "1.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x"
+      }
+    },
+    "packages/app/vendor/x": {
+      "version": "1.2.3"
+    }
+  }
+}
+EOF
+
+	run aube install --frozen-lockfile
+	assert_success
+	assert_file_exists packages/app/node_modules/x/package.json
+}
+
 @test "aube install keeps npm workspace members in package-lock.json on re-resolve" {
 	mkdir -p packages/a packages/b
 	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
