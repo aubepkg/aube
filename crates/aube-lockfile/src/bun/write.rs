@@ -485,6 +485,24 @@ pub fn write(
         };
         package_entries.push((key, entry));
     }
+    // A freshly resolved graph has no `link:` package for a member that
+    // nothing depends on, or whose dependents reach it by version. bun
+    // still lists every member; without the entry the reader can't wire
+    // workspace deps, and installs from the lockfile skip those links.
+    for (importer_path, pj) in &workspace_manifests {
+        let Some(name) = pj.name.as_deref() else {
+            continue;
+        };
+        if !emitted_workspace_keys.insert(name.to_string()) {
+            continue;
+        }
+        package_entries.push((
+            name.to_string(),
+            Value::Array(vec![Value::String(format!(
+                "{name}@workspace:{importer_path}"
+            ))]),
+        ));
+    }
     package_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Echo back the parsed `configVersion` (default 1 for older v1.1

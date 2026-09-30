@@ -153,6 +153,52 @@ EOF
 	assert_success
 }
 
+@test "aube install keeps bun workspace members in bun.lock on re-resolve" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}' >packages/a/package.json
+	echo '{"name":"b","version":"1.0.0"}' >packages/b/package.json
+	# What bun 1.4 writes for this workspace.
+	cat >bun.lock <<'EOF'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "workspace:*",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "b": ["b@workspace:packages/b"],
+  }
+}
+EOF
+	cp bun.lock bun.lock.orig
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run diff bun.lock.orig bun.lock
+	assert_success
+
+	rm -rf node_modules packages/*/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_link_exists packages/a/node_modules/b
+}
+
 @test "aube install preserves pnpm-lock.yaml format on re-resolve (does not create aube-lock.yaml)" {
 	cp "$PROJECT_ROOT/fixtures/basic/package.json" .
 	cp "$PROJECT_ROOT/fixtures/basic/pnpm-lock.yaml" .

@@ -2056,3 +2056,53 @@ fn test_parse_fills_local_versions_and_writes_bun_lock_back_unchanged() {
     assert_eq!(version_of("b"), Some("2.0.0"));
     assert_eq!(version_of("lib"), Some("3.1.4"));
 }
+
+/// A fresh resolve reaches a sibling workspace by version, so the graph
+/// has no `link:` package for any member. The writer must still list
+/// every member, or installs from the lockfile skip workspace links.
+#[test]
+fn test_write_lists_workspace_members_without_link_packages() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (dir, manifest) in [
+        (
+            "packages/a",
+            r#"{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}"#,
+        ),
+        ("packages/b", r#"{"name":"b","version":"1.0.0"}"#),
+    ] {
+        std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+        std::fs::write(tmp.path().join(dir).join("package.json"), manifest).unwrap();
+    }
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(".".to_string(), Vec::new());
+    graph.importers.insert(
+        "packages/a".to_string(),
+        vec![DirectDep {
+            name: "b".to_string(),
+            dep_path: "b@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("workspace:*".to_string()),
+        }],
+    );
+    graph.importers.insert("packages/b".to_string(), Vec::new());
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        ..Default::default()
+    };
+    let path = tmp.path().join("bun.lock");
+    write(&path, &graph, &manifest).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(r#""a": ["a@workspace:packages/a"]"#),
+        "{written}"
+    );
+    assert!(
+        written.contains(r#""b": ["b@workspace:packages/b"]"#),
+        "{written}"
+    );
+
+    let reparsed = parse(&path).unwrap();
+    let a_deps = &reparsed.importers["packages/a"];
+    assert!(a_deps.iter().any(|dep| dep.name == "b"), "{a_deps:?}");
+}
