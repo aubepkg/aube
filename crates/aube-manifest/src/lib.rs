@@ -342,7 +342,7 @@ pub enum Workspaces {
         // includes `packages`, so this doesn't lock out the catalog use
         // case.
         packages: Vec<String>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         nohoist: Vec<String>,
         /// Bun-style default catalog nested under `workspaces.catalog`.
         /// Aube reads it in addition to `pnpm-workspace.yaml`'s `catalog:`

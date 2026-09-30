@@ -66,6 +66,10 @@ struct WriteNpmPackage<'a> {
     libc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     funding: Option<WriteNpmFunding<'a>>,
+    /// The root manifest's `workspaces` field, copied verbatim as npm
+    /// does, so npm and aube rewrites don't flip it back and forth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspaces: Option<&'a aube_manifest::Workspaces>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     link: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -192,48 +196,81 @@ pub fn write(
             dev_dependencies: borrow_map(&manifest.dev_dependencies),
             optional_dependencies: borrow_map(&manifest.optional_dependencies),
             peer_dependencies: borrow_map(&manifest.peer_dependencies),
+            workspaces: manifest.workspaces.as_ref(),
             ..Default::default()
         },
     );
 
+    // A freshly resolved graph has no `link:` package for a member that
+    // nothing depends on, so read those members' own package.json, as
+    // the bun writer does.
+    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let member_manifests: BTreeMap<&str, aube_manifest::PackageJson> = graph
+        .importers
+        .keys()
+        .filter(|importer| {
+            *importer != "." && workspace_package_for_importer(graph, importer).is_none()
+        })
+        .filter_map(|importer| {
+            let manifest_path = project_dir.join(importer).join("package.json");
+            let manifest = aube_manifest::PackageJson::from_path(&manifest_path).ok()?;
+            Some((importer.as_str(), manifest))
+        })
+        .collect();
+
     for (importer_path, importer_roots) in graph.importers.iter().filter(|(path, _)| *path != ".") {
-        let Some(workspace_pkg) = workspace_package_for_importer(graph, importer_path) else {
-            continue;
-        };
+        let (name, version, peer_dependencies, declared) =
+            if let Some(pkg) = workspace_package_for_importer(graph, importer_path) {
+                (
+                    pkg.name.as_str(),
+                    Some(pkg.version.as_str()),
+                    &pkg.peer_dependencies,
+                    &pkg.declared_dependencies,
+                )
+            } else if let Some(manifest) = member_manifests.get(importer_path.as_str()) {
+                // npm links a nameless member under its folder name.
+                let Some(name) = manifest.name.as_deref().or_else(|| {
+                    importer_path
+                        .rsplit('/')
+                        .next()
+                        .filter(|segment| !segment.is_empty() && *segment != "..")
+                }) else {
+                    continue;
+                };
+                (
+                    name,
+                    manifest.version.as_deref(),
+                    &manifest.peer_dependencies,
+                    &manifest.dependencies,
+                )
+            } else {
+                continue;
+            };
         let (mut dependencies, dev_dependencies, optional_dependencies) =
             dep_sections_from_direct_deps(importer_roots);
         // Required importer peers become production direct deps (both on
         // resolve under autoInstallPeers and on npm read), but npm keeps
         // a peer-only declaration in `peerDependencies` alone. A matching
         // peer spec marks the peer-derived entry, unless the workspace's
-        // recorded `declared_dependencies` show it also owns that name.
-        let declared = &workspace_pkg.declared_dependencies;
+        // declared dependencies show it also owns that name.
         dependencies.retain(|name, spec| {
             declared.get(*name).map(String::as_str) == Some(*spec)
-                || workspace_pkg
-                    .peer_dependencies
-                    .get(*name)
-                    .map(String::as_str)
-                    != Some(*spec)
+                || peer_dependencies.get(*name).map(String::as_str) != Some(*spec)
         });
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
-                name: Some(workspace_pkg.name.as_str()),
-                version: Some(workspace_pkg.version.as_str()),
+                name: Some(name),
+                version,
                 dependencies,
                 dev_dependencies,
                 optional_dependencies,
-                peer_dependencies: workspace_pkg
-                    .peer_dependencies
-                    .iter()
-                    .map(|(n, v)| (n.as_str(), v.as_str()))
-                    .collect(),
+                peer_dependencies: borrow_map(peer_dependencies),
                 ..Default::default()
             },
         );
         packages.insert(
-            format!("node_modules/{}", workspace_pkg.name),
+            format!("node_modules/{name}"),
             WriteNpmPackage {
                 resolved: Some(importer_path.clone()),
                 link: true,
