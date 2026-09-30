@@ -253,7 +253,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     LocalSource::Link(path)
                         if importer_path != "."
                             && specifier.starts_with("link:")
-                            && !super::override_sets(&graph.overrides, &dep.name, specifier) =>
+                            && !super::override_sets_direct_dep(
+                                &graph.overrides,
+                                &dep.name,
+                                specifier,
+                            ) =>
                     {
                         format!("link:{}", relative_to_importer(path, importer_path))
                     }

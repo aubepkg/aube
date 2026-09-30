@@ -4813,24 +4813,20 @@ snapshots:
 }
 
 #[test]
-fn override_sets_matches_the_selector_target_not_just_the_value() {
+fn override_sets_direct_dep_needs_a_parentless_selector_for_the_dep() {
     let overrides = BTreeMap::from([
         ("foo".to_string(), "link:./vendor/x".to_string()),
         ("@scope/bar@^1".to_string(), "link:./libs/bar".to_string()),
-        ("parent>baz@>=2".to_string(), "link:./libs/baz".to_string()),
+        ("baz@>=2".to_string(), "link:./libs/baz".to_string()),
+        ("parent>qux".to_string(), "link:./libs/qux".to_string()),
     ]);
-    assert!(super::override_sets(&overrides, "foo", "link:./vendor/x"));
-    assert!(super::override_sets(
-        &overrides,
-        "@scope/bar",
-        "link:./libs/bar"
-    ));
-    assert!(super::override_sets(&overrides, "baz", "link:./libs/baz"));
+    let sets =
+        |name: &str, specifier: &str| super::override_sets_direct_dep(&overrides, name, specifier);
+    assert!(sets("foo", "link:./vendor/x"));
+    assert!(sets("@scope/bar", "link:./libs/bar"));
+    assert!(sets("baz", "link:./libs/baz"));
     // Same value, but the override is for another package.
-    assert!(!super::override_sets(&overrides, "x", "link:./vendor/x"));
-    assert!(!super::override_sets(
-        &overrides,
-        "parent",
-        "link:./libs/baz"
-    ));
+    assert!(!sets("x", "link:./vendor/x"));
+    // A parent-qualified override never applies to a direct dependency.
+    assert!(!sets("qux", "link:./libs/qux"));
 }

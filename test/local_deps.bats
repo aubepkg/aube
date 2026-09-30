@@ -367,13 +367,14 @@ YAML
 	assert_output --partial "version: link:../libs/y"
 }
 
-@test "aube install keeps a member's link: member-relative when an override for another package has the same value" {
-	# An override for `foo` shares the value `link:./vendor/x` with pkg-a's
-	# own `x`. That doesn't make `x` override-derived, so it still resolves
-	# from pkg-a, not from the root's `vendor/x`.
+@test "aube install keeps a member's link: member-relative when an override that doesn't apply to it has the same value" {
+	# Overrides for `foo` and for `x` under `parent` share the value
+	# `link:./vendor/x` with pkg-a's own `x`. Neither applies to a direct
+	# dependency of pkg-a, so `x` still resolves from pkg-a, not from the
+	# root's `vendor/x`.
 	mkdir -p pkg-a/vendor/x vendor/x
 	cat >package.json <<'JSON'
-{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"foo":"link:./vendor/x"}}}
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"foo":"link:./vendor/x","parent>x":"link:./vendor/x"}}}
 JSON
 	cat >pnpm-workspace.yaml <<'YAML'
 packages:
@@ -393,6 +394,7 @@ settings:
 
 overrides:
   foo: link:./vendor/x
+  parent>x: link:./vendor/x
 
 importers:
 

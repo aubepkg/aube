@@ -256,7 +256,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 Some(spec @ LocalSource::Link(_))
                     if importer_path != "." && matches!(local, LocalSource::Link(_)) =>
                 {
-                    if super::override_sets(&overrides, name, &info.specifier) {
+                    if super::override_sets_direct_dep(&overrides, name, &info.specifier) {
                         spec
                     } else {
                         rebase_importer_local(spec, importer_path)
