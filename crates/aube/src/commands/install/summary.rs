@@ -98,10 +98,7 @@ fn print_direct_dependency_section(
     let label = aube_lockfile::dep_type_label(dep_type);
     eprintln!("{}{}", style::ebold(label), style::edim(":"));
     for dep in deps {
-        let version = graph
-            .get_package(&dep.dep_path)
-            .map(|pkg| pkg.version.as_str())
-            .unwrap_or("?");
+        let version = graph.direct_dep_version(dep).unwrap_or("?");
         let badges = render_direct_dep_badges(direct_dep_info.get(&dep.dep_path));
         eprintln!(
             "{} {}{}{}",

@@ -793,6 +793,20 @@ impl LockfileGraph {
         self.packages.get(dep_path)
     }
 
+    /// The version a direct dep resolved to. A workspace dep has no
+    /// package entry, only a `name@version` dep_path naming the member's
+    /// version, so fall back to that.
+    pub fn direct_dep_version<'a>(&'a self, dep: &'a DirectDep) -> Option<&'a str> {
+        match self.get_package(&dep.dep_path) {
+            Some(pkg) => Some(pkg.version.as_str()),
+            None => dep
+                .dep_path
+                .strip_prefix(dep.name.as_str())
+                .and_then(|rest| rest.strip_prefix('@'))
+                .filter(|version| !version.is_empty()),
+        }
+    }
+
     /// Replace the `local_source` of every package for which `rebase`
     /// (given the package's dep_path and source) returns a new one. A
     /// package keyed by the dep_path its old source hashes to is re-keyed
@@ -1097,5 +1111,40 @@ impl LockfileGraph {
         if self.workspace_extra_fields.is_empty() {
             self.workspace_extra_fields = prior.workspace_extra_fields.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_dep_version_tests {
+    use super::*;
+
+    fn direct(name: &str, dep_path: &str) -> DirectDep {
+        DirectDep {
+            name: name.to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }
+    }
+
+    #[test]
+    fn direct_dep_version_reads_the_package_or_a_workspace_dep_path() {
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "@scope/pkg@2.0.0(peer@1.0.0)".to_string(),
+            LockedPackage {
+                name: "@scope/pkg".to_string(),
+                version: "2.0.0".to_string(),
+                dep_path: "@scope/pkg@2.0.0(peer@1.0.0)".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let registry = direct("@scope/pkg", "@scope/pkg@2.0.0(peer@1.0.0)");
+        assert_eq!(graph.direct_dep_version(&registry), Some("2.0.0"));
+        let workspace = direct("@scope/lib", "@scope/lib@1.4.0");
+        assert_eq!(graph.direct_dep_version(&workspace), Some("1.4.0"));
+        let malformed = direct("lib", "other@1.0.0");
+        assert_eq!(graph.direct_dep_version(&malformed), None);
     }
 }
