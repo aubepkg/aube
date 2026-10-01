@@ -244,17 +244,18 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             let snapshot_key = format!("{name}@{}", local.specifier());
             let should_rebase = importer_path != "."
                 && (info.specifier == classify_version || info.specifier.starts_with("workspace:"));
-            let local = match LocalSource::parse(&info.specifier, Path::new("")) {
-                // A member's `link:` version is relative to the member, as
-                // pnpm writes it (normalized, `link:./x` as `link:x`), which
-                // the equality check above misses. That holds for a target
-                // an override set too, so the version, not the specifier,
-                // settles the target. Older aube wrote a member's own link
-                // root-relative: a version equal to the specifier resolved
-                // from the member.
-                Some(spec @ LocalSource::Link(_))
-                    if importer_path != "." && matches!(local, LocalSource::Link(_)) =>
-                {
+            // A member's `link:` version is relative to the member, as pnpm
+            // writes it (normalized, `link:./x` as `link:x`), which the
+            // equality check above misses. That holds for a target an
+            // override set too, so the version, not the specifier, settles
+            // the target. Older aube wrote a member's own link root-relative:
+            // a version equal to the specifier resolved from the member.
+            let member_link_spec = (importer_path != "." && matches!(local, LocalSource::Link(_)))
+                .then(|| LocalSource::parse(&info.specifier, Path::new("")))
+                .flatten()
+                .filter(|spec| matches!(spec, LocalSource::Link(_)));
+            let local = match member_link_spec {
+                Some(spec) => {
                     let own = rebase_importer_local(spec, importer_path);
                     let root_relative = matches!(
                         (&own, &local),
@@ -267,8 +268,8 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                         rebase_importer_local(local, importer_path)
                     }
                 }
-                _ if should_rebase => rebase_importer_local(local, importer_path),
-                _ => local,
+                None if should_rebase => rebase_importer_local(local, importer_path),
+                None => local,
             };
             let dep_path = local.dep_path(name);
             deps.push(DirectDep {

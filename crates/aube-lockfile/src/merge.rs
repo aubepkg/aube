@@ -104,7 +104,7 @@ pub fn merge_branch_lockfiles_as(
 
     // Write out the combined graph as `aube-lock.yaml` (plain filename,
     // not branch-scoped).
-    pnpm::write(&base_path, &merged, manifest)?;
+    pnpm::write(&base_path, project_dir, &merged, manifest)?;
 
     for path in &report.merged_files {
         if let Err(err) = std::fs::remove_file(path) {
@@ -508,12 +508,14 @@ mod tests {
         );
         pnpm::write(
             &dir.path().join("pnpm-lock.feature.yaml"),
+            dir.path(),
             &graph,
             &manifest,
         )
         .unwrap();
         pnpm::write(
             &dir.path().join("aube-lock.feature.yaml"),
+            dir.path(),
             &LockfileGraph::default(),
             &manifest,
         )

@@ -481,7 +481,13 @@ fn write_renders_link_dependency_edges_as_link_specifiers() {
     let graph = parse(&source_path).unwrap();
 
     let out_path = dir.path().join("out-lock.yaml");
-    write(&out_path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &out_path,
+        out_path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
 
     let written = std::fs::read_to_string(&out_path).unwrap();
     assert!(
@@ -825,7 +831,7 @@ snapshots:
         ..PackageJson::default()
     };
     let out_path = dir.path().join("round-trip.yaml");
-    write(&out_path, &graph, &manifest).unwrap();
+    write(&out_path, out_path.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&out_path).unwrap();
     assert!(
             written.contains("node-expat@https://codeload.github.com/astro/node-expat/tar.gz/78e559baa908942097330f7967dfbf623ebc2529:"),
@@ -1041,7 +1047,13 @@ fn fresh_resolved_codeload_tarball_writes_pnpm_version_and_resolution() {
         ..PackageJson::default()
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let written = std::fs::read_to_string(&lockfile_path).unwrap();
 
     // Keyed by the bare codeload URL (pnpm parity), never the hashed
@@ -1181,7 +1193,13 @@ fn git_tarball_peer_suffix_renders_as_spec_and_round_trips() {
         ..PackageJson::default()
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let written = std::fs::read_to_string(&lockfile_path).unwrap();
 
     // Snapshot keys + embedded dep values render the suffix as the spec.
@@ -1371,7 +1389,13 @@ fn test_write_and_reparse_roundtrip() {
         extra: BTreeMap::new(),
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     // Re-parse and verify
     let reparsed = parse(&lockfile_path).unwrap();
@@ -1441,7 +1465,7 @@ fn engines_star_values_are_dropped_like_pnpm() {
 
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("pnpm-lock.yaml");
-    write(&out, &graph, &manifest).unwrap();
+    write(&out, out.parent().unwrap(), &graph, &manifest).unwrap();
     let yaml = std::fs::read_to_string(&out).unwrap();
 
     // `{node: '*'}` collapses to nothing → exactly three engines lines
@@ -1550,7 +1574,7 @@ snapshots:
         ..Default::default()
     };
     let out = dir.path().join("out.yaml");
-    write(&out, &graph, &manifest).unwrap();
+    write(&out, out.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&out).unwrap();
 
     assert!(
@@ -1640,7 +1664,13 @@ fn test_write_prunes_time_to_direct_importer_deps() {
         ..Default::default()
     };
 
-    write(&lockfile_path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let written = std::fs::read_to_string(&lockfile_path).unwrap();
 
     assert!(written.contains("\n  foo@1.0.0: 2026-01-01T00:00:00.000Z\n"));
@@ -1686,7 +1716,13 @@ fn test_write_preserves_real_name_time_for_aube_aliases() {
         ..Default::default()
     };
 
-    write(&lockfile_path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let written = std::fs::read_to_string(&lockfile_path).unwrap();
 
     assert!(written.contains("\n  alias-pkg@1.0.0: 2026-01-01T00:00:00.000Z\n"));
@@ -1753,7 +1789,13 @@ fn writer_preserves_workspace_importer_specifiers() {
         extra: BTreeMap::new(),
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     let reparsed = parse(&lockfile_path).unwrap();
     let workspace_deps = reparsed
@@ -1795,7 +1837,13 @@ fn overrides_round_trip_through_pnpm_lock_yaml() {
         extra: BTreeMap::new(),
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     // The serialized YAML must contain an `overrides:` block — guard
     // against a future serde change silently dropping the field.
@@ -1857,7 +1905,13 @@ fn catalogs_overrides_patched_dependencies_match_pnpm_order() {
         ..Default::default()
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
 
     let catalogs_at = yaml.find("catalogs:").expect("catalogs:");
@@ -1894,7 +1948,13 @@ fn empty_overrides_block_omitted_from_yaml() {
         bundled_dependencies: None,
         extra: BTreeMap::new(),
     };
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         !yaml.contains("overrides:"),
@@ -1931,7 +1991,13 @@ fn config_checksums_round_trip_in_pnpm_order() {
         ..Default::default()
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
 
     // Exact lines pnpm emits (unquoted scalars, `sha256-` prefix kept).
@@ -1997,7 +2063,13 @@ fn absent_config_checksums_are_omitted_from_yaml() {
         version: Some("0.0.0".to_string()),
         ..Default::default()
     };
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         !yaml.contains("packageExtensionsChecksum:"),
@@ -2083,7 +2155,13 @@ fn test_write_dev_and_optional_deps() {
         extra: BTreeMap::new(),
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     let reparsed = parse(&lockfile_path).unwrap();
     let root_deps = reparsed.importers.get(".").unwrap();
@@ -2121,7 +2199,13 @@ fn test_catalogs_roundtrip() {
         version: Some("0.0.0".to_string()),
         ..Default::default()
     };
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
@@ -2169,7 +2253,13 @@ fn ignored_optional_dependencies_section_matches_pnpm_order() {
         version: Some("0.0.0".to_string()),
         ..Default::default()
     };
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     let catalogs = yaml.find("\ncatalogs:").expect("missing catalogs");
@@ -2269,7 +2359,13 @@ fn exclude_links_from_lockfile_drops_link_deps_from_importer() {
         extra: BTreeMap::new(),
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
 
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
@@ -2290,7 +2386,13 @@ fn exclude_links_from_lockfile_drops_link_deps_from_importer() {
         settings: LockfileSettings::default(),
         ..graph
     };
-    write(&lockfile_path, &graph_off, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph_off,
+        &manifest,
+    )
+    .unwrap();
     let yaml_off = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         yaml_off.contains("sibling:"),
@@ -2360,7 +2462,13 @@ fn writer_uses_pnpm_resolution_types_for_portal_and_exec() {
         ..Default::default()
     };
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
 
     assert!(
@@ -2656,7 +2764,7 @@ fn test_write_byte_identical_to_native_pnpm() {
 
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("pnpm-lock.yaml");
-    write(&out, &graph, &manifest).unwrap();
+    write(&out, out.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&out).unwrap();
 
     if written != original {
@@ -2870,7 +2978,7 @@ snapshots:
         ..Default::default()
     };
     let out_path = dir.path().join("out.yaml");
-    write(&out_path, &graph, &manifest).unwrap();
+    write(&out_path, out_path.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&out_path).unwrap();
 
     assert!(
@@ -3101,7 +3209,7 @@ snapshots:
         ..Default::default()
     };
     let out = dir.path().join("out.yaml");
-    write(&out, &graph, &manifest).unwrap();
+    write(&out, out.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&out).unwrap();
 
     for needle in [
@@ -3229,7 +3337,13 @@ snapshots:
         "is-odd@3.0.1".to_string(),
         "patches/is-odd@3.0.1.patch".to_string(),
     );
-    write(&lockfile_path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let written = std::fs::read_to_string(&lockfile_path).unwrap();
     let hash = "2751a3a2f303ad21752038085e2b8c5f98ecff61a2e4ebbd43506a941725be80";
 
@@ -3246,7 +3360,13 @@ snapshots:
 
     let reparsed = parse(&lockfile_path).unwrap();
     std::fs::remove_file(dir.path().join("patches/is-odd@3.0.1.patch")).unwrap();
-    write(&lockfile_path, &reparsed, &PackageJson::default()).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &reparsed,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let rewritten = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         rewritten.contains(&format!("is-odd@3.0.1: {hash}")),
@@ -3317,7 +3437,7 @@ fn write_pnpm_lockfile_uses_native_alias_shape() {
         ..Default::default()
     };
 
-    write(&path, &graph, &manifest).unwrap();
+    write(&path, path.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.contains("version: is-odd@3.0.1"), "{written}");
     assert!(written.contains("is-odd@3.0.1:"), "{written}");
@@ -3747,7 +3867,13 @@ fn git_resolution_integrity_roundtrips() {
     };
     let dir = tempfile::tempdir().unwrap();
     let lockfile_path = dir.path().join("pnpm-lock.yaml");
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(yaml.contains("type: git"));
     assert!(yaml.contains(&format!("integrity: {integrity}")));
@@ -3801,7 +3927,13 @@ fn writer_emits_git_hosted_for_hosted_git_resolution() {
         .dependencies
         .insert("demo".to_string(), "github:acme/demo".to_string());
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(yaml.contains("gitHosted: true"), "{yaml}");
     assert!(yaml.contains("integrity: sha512-hosted"), "{yaml}");
@@ -3854,7 +3986,13 @@ snapshots:
     assert!(git.url.contains("/acme/demo.git"), "{git:?}");
     assert_eq!(git.resolved, "abcdef0123456789abcdef0123456789abcdef01");
 
-    write(&path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&path).unwrap();
     assert!(
         yaml.contains("repo: git+ssh://git@github.com/acme/demo.git"),
@@ -3975,7 +4113,13 @@ snapshots:
     };
     assert_eq!(source.integrity, "sha512-demo");
 
-    write(&path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&path).unwrap();
     assert!(yaml.contains("integrity: sha512-demo"), "{yaml}");
     assert!(
@@ -4129,7 +4273,13 @@ fn writer_preserves_non_derivable_registry_tarball_url_by_default() {
         .dependencies
         .insert("@scope/pkg".to_string(), "1.0.0".to_string());
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         yaml.contains("tarball: https://npm.pkg.github.com/download/@scope/pkg/1.0.0/deadbeef"),
@@ -4177,7 +4327,13 @@ snapshots:
         Some("https://npm.pkg.github.com/download/demo/1.0.0/deadbeef")
     );
 
-    write(&path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&path).unwrap();
     assert!(yaml.contains("gitHosted: true"), "{yaml}");
     assert!(
@@ -4219,7 +4375,13 @@ fn writer_preserves_non_derivable_registry_tarball_url_without_integrity() {
         .dependencies
         .insert("@scope/pkg".to_string(), "1.0.0".to_string());
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         yaml.contains("tarball: https://npm.pkg.github.com/download/@scope/pkg/1.0.0/deadbeef"),
@@ -4263,7 +4425,13 @@ fn writer_omits_derivable_registry_tarball_url_with_query() {
         .dependencies
         .insert("@scope/pkg".to_string(), "1.0.0".to_string());
 
-    write(&lockfile_path, &graph, &manifest).unwrap();
+    write(
+        &lockfile_path,
+        lockfile_path.parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(!yaml.contains("tarball:"), "{yaml}");
     assert!(yaml.contains("integrity: sha512-private"), "{yaml}");
@@ -4310,7 +4478,13 @@ snapshots:
     };
     assert!(source.git_hosted);
 
-    write(&path, &graph, &PackageJson::default()).unwrap();
+    write(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(&path).unwrap();
     assert!(yaml.contains("gitHosted: true"), "{yaml}");
 }
@@ -4467,7 +4641,7 @@ fn runtime_pin_round_trips_through_write() {
 
     let manifest = PackageJson::default();
     let out_path = dir.path().join("aube-lock.yaml");
-    write(&out_path, &graph, &manifest).unwrap();
+    write(&out_path, out_path.parent().unwrap(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(&out_path).unwrap();
 
     assert!(
@@ -4550,12 +4724,14 @@ fn runtime_pin_merge_unions_variants() {
     let manifest = PackageJson::default();
     write(
         &dir.path().join("aube-lock.yaml"),
+        dir.path(),
         &graph_with_pin("darwin"),
         &manifest,
     )
     .unwrap();
     write(
         &dir.path().join("aube-lock.feature.yaml"),
+        dir.path(),
         &graph_with_pin("linux"),
         &manifest,
     )
@@ -4841,4 +5017,43 @@ fn member_link_version_settles_the_target() {
             "version {version}"
         );
     }
+}
+
+#[test]
+fn member_link_target_ignores_a_packages_entry() {
+    // pnpm normalizes the version (`link:vendor/x` for `link:./vendor/x`).
+    // A `packages:` entry under that key must not move the member's link:
+    // its target comes from the version, relative to the member.
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &lockfile_path,
+        r#"
+lockfileVersion: '9.0'
+
+importers:
+  .: {}
+
+  pkg-a:
+    dependencies:
+      x:
+        specifier: link:./vendor/x
+        version: link:vendor/x
+
+packages:
+  x@link:vendor/x:
+    resolution: {directory: vendor/x, type: directory}
+
+snapshots:
+  x@link:vendor/x: {}
+"#,
+    )
+    .unwrap();
+
+    let graph = parse(&lockfile_path).unwrap();
+    let dep = &graph.importers["pkg-a"][0];
+    assert_eq!(
+        graph.packages[&dep.dep_path].local_source,
+        Some(LocalSource::Link("pkg-a/vendor/x".into()))
+    );
 }

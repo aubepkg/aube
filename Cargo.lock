@@ -352,6 +352,7 @@ dependencies = [
  "memchr",
  "miette",
  "node-semver",
+ "pathdiff",
  "proptest",
  "serde",
  "serde_json",

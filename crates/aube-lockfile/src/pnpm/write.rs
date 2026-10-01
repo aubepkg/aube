@@ -91,36 +91,21 @@ fn with_patch_hash(value: &str, hash: Option<&str>) -> String {
 
 /// Root-relative `path` re-expressed relative to workspace member
 /// `importer`, both root-relative, in forward-slash form. Both are anchored
-/// at `root`, the project root, so an importer outside it (`../sibling`)
-/// gets a path back through the root's own directory name. An absolute
-/// path means the same thing from anywhere and is kept.
+/// at `root`, the absolute project root, so an importer outside it
+/// (`../sibling`) gets a path back through the root's own directory name,
+/// as pnpm writes it. An absolute path means the same thing from anywhere
+/// and is kept, as is a path with no relative form from the importer.
 fn relative_to_importer(path: &Path, importer: &str, root: &Path) -> String {
+    let forward = |p: &Path| p.to_string_lossy().replace('\\', "/");
     if path.is_absolute() {
-        return path.to_string_lossy().replace('\\', "/");
+        return forward(path);
     }
     let target = aube_util::path::normalize_lexical(&root.join(path));
     let base = aube_util::path::normalize_lexical(&root.join(importer));
-    let target: Vec<_> = target.components().collect();
-    let base: Vec<_> = base.components().collect();
-    let shared = target.iter().zip(&base).take_while(|(t, b)| t == b).count();
-    let mut parts: Vec<String> = Vec::new();
-    for component in &base[shared..] {
-        // Climbing out of `..` would need names above `root` that a
-        // relative `root` can't supply; keep the root-relative path then.
-        if matches!(component, Component::ParentDir) {
-            return path.to_string_lossy().replace('\\', "/");
-        }
-        parts.push("..".to_string());
-    }
-    parts.extend(
-        target[shared..]
-            .iter()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
-    );
-    if parts.is_empty() {
-        ".".to_string()
-    } else {
-        parts.join("/")
+    match pathdiff::diff_paths(&target, &base) {
+        Some(rel) if rel.as_os_str().is_empty() => ".".to_string(),
+        Some(rel) => forward(&rel),
+        None => forward(path),
     }
 }
 
@@ -154,20 +139,11 @@ mod tests {
     }
 }
 
-/// Write a LockfileGraph as pnpm-lock.yaml v9 format. The graph's importer
-/// keys and local paths are relative to the lockfile's directory.
-pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Result<(), Error> {
-    let lockfile_dir = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    write_with_project_root(path, lockfile_dir, graph, manifest)
-}
-
-/// [`write`] for a graph whose importer keys and local paths are relative
-/// to `project_root` rather than to the lockfile's directory, as in a copy
-/// kept under `node_modules`.
-pub fn write_with_project_root(
+/// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`.
+/// `project_root` is the directory the graph's importer keys and local
+/// paths are relative to: the lockfile's own directory for a project
+/// lockfile, but not for a copy kept under `node_modules`.
+pub fn write(
     path: &Path,
     project_root: &Path,
     graph: &LockfileGraph,
