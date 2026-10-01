@@ -92,6 +92,18 @@ impl NpmConfig {
             .and_then(|auth| auth.auth_token.as_deref())
     }
 
+    /// Check authentication without constructing HTTP clients or loading TLS
+    /// material. A configured token helper is executed, just as for a request;
+    /// a missing, failing, or empty helper does not count as resolved auth.
+    pub fn has_resolved_auth_for(&self, registry_url: &str) -> bool {
+        self.auth_token_for(registry_url).is_some()
+            || self
+                .token_helper_for(registry_url)
+                .and_then(super::token::run_token_helper)
+                .is_some()
+            || self.basic_auth_for(registry_url).is_some()
+    }
+
     /// Get the auth token for a package request, preferring
     /// scope-specific credentials when `.npmrc` configured
     /// `//registry/:@scope:_authToken=...`.

@@ -39,6 +39,7 @@ pub const ERR_AUBE_TRUST_MISSING_TIME: &str = "ERR_AUBE_TRUST_MISSING_TIME";
 pub const ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED: &str = "ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED";
 
 // ── registry / network ──────────────────────────────────────────────
+pub const ERR_AUBE_INVALID_CAFILE: &str = "ERR_AUBE_INVALID_CAFILE";
 pub const ERR_AUBE_PACKAGE_NOT_FOUND: &str = "ERR_AUBE_PACKAGE_NOT_FOUND";
 pub const ERR_AUBE_ACCESS_ENTITY_NOT_FOUND: &str = "ERR_AUBE_ACCESS_ENTITY_NOT_FOUND";
 pub const ERR_AUBE_VERSION_NOT_FOUND: &str = "ERR_AUBE_VERSION_NOT_FOUND";
@@ -341,6 +342,12 @@ pub const ALL: &[CodeMeta] = &[
         exit_code: None,
     },
     // Registry / network
+    CodeMeta {
+        name: ERR_AUBE_INVALID_CAFILE,
+        category: category::REGISTRY_NETWORK,
+        description: "A configured CA file is unreadable, empty, or not a usable PEM certificate bundle (reported by `aube doctor`).",
+        exit_code: None,
+    },
     CodeMeta {
         name: ERR_AUBE_PACKAGE_NOT_FOUND,
         category: category::REGISTRY_NETWORK,

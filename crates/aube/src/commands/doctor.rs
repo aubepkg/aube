@@ -122,7 +122,8 @@ fn build_report(anchor: &Path, in_project: bool) -> miette::Result<Report> {
         report.sections.push(s);
     }
 
-    report.sections.push(registry_section(anchor));
+    let registry = registry_section(anchor, &mut report.errors);
+    report.sections.push(registry);
 
     Ok(report)
 }
@@ -303,7 +304,8 @@ fn project_section(anchor: &Path, report: &mut Report) -> Section {
     s
 }
 
-fn registry_section(anchor: &Path) -> Section {
+/// Build registry diagnostics and append local CA-file validation errors.
+fn registry_section(anchor: &Path, errors: &mut Vec<String>) -> Section {
     let mut s = Section::new("registry");
     let config = super::load_npm_config(anchor);
     s.push("default", &config.registry);
@@ -316,14 +318,58 @@ fn registry_section(anchor: &Path) -> Section {
             .join(", ");
         s.push("scoped", scoped);
     }
-    let client = super::make_client(anchor);
-    let auth_state = if client.has_resolved_auth_for(&config.registry) {
+    s.push("connectivity", "not tested (local checks only)");
+    let mut cafiles = std::collections::BTreeSet::new();
+    if let Some(path) = &config.cafile {
+        cafiles.insert(path.clone());
+    }
+    for auth in config
+        .auth_by_uri
+        .values()
+        .chain(config.scoped_auth_by_uri.values().flat_map(|v| v.values()))
+    {
+        if let Some(path) = &auth.tls.cafile {
+            cafiles.insert(path.clone());
+        }
+    }
+    if let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS").filter(|p| !p.is_empty()) {
+        cafiles.insert(PathBuf::from(path));
+    }
+    for path in cafiles {
+        if let Err(reason) = check_ca_file(&path) {
+            errors.push(format!(
+                "{}: CA file {}: {reason}",
+                aube_codes::errors::ERR_AUBE_INVALID_CAFILE,
+                display_path_owned(&path),
+            ));
+        }
+    }
+    let auth_state = if config.has_resolved_auth_for(&config.registry) {
         "configured"
     } else {
         "(none)"
     };
     s.push("auth", auth_state);
     s
+}
+
+/// Check the same PEM bundle shape used by registry clients without making
+/// a request. Parsing an empty bundle succeeds in reqwest, but adds no roots.
+fn check_ca_file(path: &Path) -> Result<(), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read file: {e}"))?;
+    let certs = reqwest::Certificate::from_pem_bundle(&bytes)
+        .map_err(|e| format!("invalid PEM certificate bundle: {e}"))?;
+    if certs.is_empty() {
+        return Err("contains no PEM certificates".into());
+    }
+    let mut builder = reqwest::Client::builder().use_rustls_tls();
+    for cert in certs {
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+        .build()
+        .map(|_| ())
+        .map_err(|e| format!("invalid CA certificate: {e}"))
 }
 
 fn check_install_state(anchor: &Path, report: &mut Report) {
@@ -483,6 +529,33 @@ fn print_json(report: &Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reject unreadable, empty, malformed PEM, and invalid DER bundles.
+    #[test]
+    fn ca_file_check_rejects_missing_empty_and_invalid_bundles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ca.pem");
+        assert!(check_ca_file(&path).unwrap_err().contains("cannot read"));
+        for bytes in [
+            "",
+            "not a certificate",
+            "-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----",
+            "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----",
+        ] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(check_ca_file(&path).is_err(), "accepted {bytes:?}");
+        }
+    }
+
+    /// Accept a CA bundle containing more than one valid certificate.
+    #[test]
+    fn ca_file_check_accepts_multiple_certificates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ca.pem");
+        let cert = include_str!("../../../aube-registry/tests/fixtures/test-ca.pem");
+        std::fs::write(&path, format!("{cert}\n{cert}")).unwrap();
+        check_ca_file(&path).unwrap();
+    }
 
     #[test]
     fn doctor_runs_outside_a_project() {

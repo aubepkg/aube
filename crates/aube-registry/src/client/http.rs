@@ -371,7 +371,7 @@ pub(super) fn force_full_packument() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_http_client, load_node_extra_ca_certs};
+    use super::{build_http_client, build_http_tarball_client, load_node_extra_ca_certs};
     use crate::config::{FetchPolicy, NpmConfig};
     use rcgen::{
         BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
@@ -687,5 +687,116 @@ mod tests {
                 assert_eq!(response.status(), reqwest::StatusCode::OK, "{name}");
             }
         });
+    }
+
+    /// Verify npmrc CA bundles authenticate direct and proxied TLS requests.
+    #[tokio::test]
+    async fn npmrc_cafile_trusts_private_registry_directly_and_through_proxy() {
+        let server = PrivateCaServer::start().await;
+        let project = tempfile::tempdir().unwrap();
+        let policy = FetchPolicy::default();
+
+        // An HTTP CONNECT proxy tunnels TLS to the private registry. This
+        // tests both trust propagation and the explicit HTTPS proxy path.
+        let proxy = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+        let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accepted = connections.clone();
+        let target = reqwest::Url::parse(&server.url).unwrap();
+        let port = target.port().unwrap();
+        let proxy_task = tokio::spawn(async move {
+            loop {
+                let (mut inbound, _) = proxy.accept().await.unwrap();
+                accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        request.push(inbound.read_u8().await.unwrap());
+                        assert!(request.len() < 8192);
+                    }
+                    assert!(request.starts_with(b"CONNECT localhost:"));
+                    let mut upstream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                        .await
+                        .unwrap();
+                    inbound
+                        .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                        .await
+                        .unwrap();
+                    // A rejected TLS handshake closes the tunnel too.
+                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut upstream).await;
+                });
+            }
+        });
+
+        for proxy in [None, Some(&proxy_url)] {
+            let proxy_setting = proxy
+                .map(|url| format!("https-proxy={url}\n"))
+                .unwrap_or_default();
+            for scoped in [false, true] {
+                let key = if scoped {
+                    format!("//localhost:{port}/:cafile")
+                } else {
+                    "cafile".to_string()
+                };
+                std::fs::write(
+                    project.path().join(".npmrc"),
+                    format!("registry={}\nstrict-ssl=true\n{proxy_setting}", server.url),
+                )
+                .unwrap();
+                let config = NpmConfig::load_isolated(project.path());
+                let client = build_http_client(&config, None, &policy, &[]);
+                let error = client.get(&server.url).send().await.unwrap_err();
+                let message = crate::Error::Http(error).to_string();
+                assert!(message.to_lowercase().contains("certificate"), "{message}");
+
+                std::fs::write(
+                    project.path().join(".npmrc"),
+                    format!(
+                        "registry={}\nstrict-ssl=true\n{proxy_setting}{key}={}\n",
+                        server.url,
+                        server.ca_bundle.display()
+                    ),
+                )
+                .unwrap();
+                let config = NpmConfig::load_isolated(project.path());
+                let auth = config.registry_config_for(&server.url);
+                for client in [
+                    build_http_client(&config, auth, &policy, &[]),
+                    build_http_tarball_client(&config, auth, &policy, &[]),
+                ] {
+                    assert_eq!(
+                        client.get(&server.url).send().await.unwrap().status(),
+                        reqwest::StatusCode::OK
+                    );
+                }
+            }
+        }
+        assert_eq!(connections.load(std::sync::atomic::Ordering::Relaxed), 6);
+        proxy_task.abort();
+    }
+
+    /// Keep the TLS cause while masking URL userinfo and signed query values.
+    #[tokio::test]
+    async fn transport_error_display_keeps_the_cause_and_redacts_url_credentials() {
+        let server = PrivateCaServer::start().await;
+        let url = server
+            .url
+            .replace("https://", "https://test-user:test-password@")
+            + "?token=test-secret&X-Amz-Signature=signed-secret&sig=azure-secret";
+        let client = build_http_client(&NpmConfig::default(), None, &FetchPolicy::default(), &[]);
+        let error = client.get(url).send().await.unwrap_err();
+        let message = crate::Error::Http(error).to_string();
+        assert!(message.to_lowercase().contains("certificate"), "{message}");
+        for secret in [
+            "test-user",
+            "test-password",
+            "test-secret",
+            "signed-secret",
+            "azure-secret",
+        ] {
+            assert!(!message.contains(secret), "{message}");
+        }
     }
 }

@@ -907,7 +907,7 @@ impl<'de> Deserialize<'de> for FundingArrayEntry {
 
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum Error {
-    #[error("HTTP error: {0}")]
+    #[error("HTTP error: {}", format_http_error(.0))]
     Http(#[from] reqwest::Error),
     #[error("package not found: {0}")]
     #[diagnostic(code(ERR_AUBE_PACKAGE_NOT_FOUND))]
@@ -943,6 +943,25 @@ pub enum Error {
     #[error("invalid package name: {0:?}")]
     #[diagnostic(code(ERR_AUBE_INVALID_PACKAGE_NAME))]
     InvalidName(String),
+}
+
+/// Keep the transport cause when callers render a registry error as text.
+/// reqwest's Display stops at the request URL; DNS, proxy and TLS failures
+/// otherwise all look like the same "error sending request" message.
+pub(crate) fn format_http_error(error: &reqwest::Error) -> String {
+    use std::error::Error as _;
+    use std::fmt::Write as _;
+
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let _ = write!(message, ": {cause}");
+        source = cause.source();
+    }
+    if let Some(url) = error.url() {
+        message = message.replace(url.as_str(), &aube_util::url::redact_url(url.as_str()));
+    }
+    message
 }
 
 impl Error {

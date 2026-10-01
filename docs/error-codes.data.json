@@ -181,6 +181,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_INVALID_CAFILE",
+      "category": "Registry / network",
+      "description": "A configured CA file is unreadable, empty, or not a usable PEM certificate bundle (reported by `aube doctor`).",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_PACKAGE_NOT_FOUND",
       "category": "Registry / network",
       "description": "Registry returned 404 for the package name.",
