@@ -12,7 +12,7 @@ setup() {
 	export GITHUB_OUTPUT="$TEST_TEMP_DIR/output"
 	: >"$GITHUB_OUTPUT"
 	git init -q repo
-	cd repo
+	cd repo || exit 1
 	echo base >README.md
 	git add -A
 	git commit -q -m base
@@ -104,7 +104,6 @@ _pr_outputs() {
 	echo embed >crates/aube/src/embed.rs
 	git add -A
 	git commit -q -m embed
-	BASE_SHA="$(git rev-parse HEAD)"
 	mkdir -p docs
 	git mv crates/aube/src/embed.rs docs/embed.rs
 	git commit -q -m move
@@ -198,6 +197,8 @@ JSON
 	_final skipped skipped "" "" failure
 	assert_failure
 	assert_output --partial "changes: failure"
+	refute_output --partial "ffi:"
+	refute_output --partial "node-addon:"
 }
 
 @test "final: fails when the main ci workflow fails or is skipped" {

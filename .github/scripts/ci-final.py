@@ -20,7 +20,10 @@ def main() -> int:
     for name, data in sorted(needs.items()):
         result = data.get("result", "unknown")
         expected = "success"
-        if name in CONDITIONAL and changes["result"] == "success":
+        if name in CONDITIONAL:
+            if changes["result"] != "success":
+                # Never decided whether this should run; `changes` reports the failure.
+                continue
             value = changes.get("outputs", {}).get(CONDITIONAL[name])
             if value not in ("true", "false"):
                 print(f"::error::changes output {CONDITIONAL[name]!r} is {value!r}")
