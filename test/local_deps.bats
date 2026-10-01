@@ -486,6 +486,40 @@ JSON
 	assert_output --partial '"name":"root-x"'
 }
 
+@test "aube install and a frozen reinstall link a root override target from an importer outside the root" {
+	# `../sibling` reaches the root's `vendor/x` through the root's own
+	# directory name. Without it the frozen reinstall resolved the target
+	# under the sibling instead.
+	mkdir -p proj/vendor/x sibling/other sibling/vendor/x
+	cd proj
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "../sibling"
+YAML
+	cat >../sibling/package.json <<'JSON'
+{"name":"sibling","version":"0.0.0","dependencies":{"x":"link:./other"}}
+JSON
+	echo '{"name":"other","version":"1.0.0"}' >../sibling/other/package.json
+	echo '{"name":"sibling-x","version":"1.0.0"}' >../sibling/vendor/x/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+
+	run aube install
+	assert_success
+	run cat ../sibling/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+	run cat aube-lock.yaml
+	assert_output --partial 'version: link:../proj/vendor/x'
+
+	rm -rf node_modules ../sibling/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat ../sibling/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+}
+
 @test "aube install preserves pnpm workspace link targets in hoisted mode" {
 	mkdir -p pkg-a gems/pkg-b-parent/pkg-b
 	cat >package.json <<'EOF'

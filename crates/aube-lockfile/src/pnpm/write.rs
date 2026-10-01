@@ -90,21 +90,23 @@ fn with_patch_hash(value: &str, hash: Option<&str>) -> String {
 }
 
 /// Root-relative `path` re-expressed relative to workspace member
-/// `importer`, both root-relative, in forward-slash form. An absolute path
-/// means the same thing from anywhere and is kept.
-fn relative_to_importer(path: &Path, importer: &str) -> String {
+/// `importer`, both root-relative, in forward-slash form. Both are anchored
+/// at `root`, the project root, so an importer outside it (`../sibling`)
+/// gets a path back through the root's own directory name. An absolute
+/// path means the same thing from anywhere and is kept.
+fn relative_to_importer(path: &Path, importer: &str, root: &Path) -> String {
     if path.is_absolute() {
         return path.to_string_lossy().replace('\\', "/");
     }
-    let target = aube_util::path::normalize_lexical(path);
-    let base = aube_util::path::normalize_lexical(Path::new(importer));
+    let target = aube_util::path::normalize_lexical(&root.join(path));
+    let base = aube_util::path::normalize_lexical(&root.join(importer));
     let target: Vec<_> = target.components().collect();
     let base: Vec<_> = base.components().collect();
     let shared = target.iter().zip(&base).take_while(|(t, b)| t == b).count();
     let mut parts: Vec<String> = Vec::new();
     for component in &base[shared..] {
-        // Climbing out of `..` would need names above the root that a
-        // relative path can't express; keep the root-relative path then.
+        // Climbing out of `..` would need names above `root` that a
+        // relative `root` can't supply; keep the root-relative path then.
         if matches!(component, Component::ParentDir) {
             return path.to_string_lossy().replace('\\', "/");
         }
@@ -138,11 +140,17 @@ mod tests {
 
     #[test]
     fn member_link_paths_become_member_relative() {
-        let rel = |path: &str, importer: &str| relative_to_importer(Path::new(path), importer);
+        let root = Path::new("/ws/proj");
+        let rel =
+            |path: &str, importer: &str| relative_to_importer(Path::new(path), importer, root);
         assert_eq!(rel("packages/a/vendor/x", "packages/a"), "vendor/x");
         assert_eq!(rel("libs/y", "packages/a"), "../../libs/y");
         assert_eq!(rel("../outside", "packages/a"), "../../../outside");
         assert_eq!(rel("packages/a", "packages/a"), ".");
+        // An importer outside the root reaches a root target through the
+        // root's directory name.
+        assert_eq!(rel("vendor/x", "../sibling"), "../proj/vendor/x");
+        assert_eq!(rel("../sibling/vendor/x", "../sibling"), "vendor/x");
     }
 }
 
@@ -157,6 +165,15 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
     // package serializes differently depending on whether the graph
     // came from a parse or a fresh resolve.
     let patch_hashes = pnpm_patch_hashes(path, &graph.patched_dependencies)?;
+    // Member `link:` versions are written relative to the member; anchoring
+    // both at the absolute project root lets an importer outside it reach
+    // a target inside it.
+    let lockfile_dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let project_root =
+        std::path::absolute(lockfile_dir).unwrap_or_else(|_| lockfile_dir.to_path_buf());
     let patch_hash_for = |pkg: &crate::LockedPackage| -> Option<&str> {
         patch_hashes
             .get(&pkg.spec_key())
@@ -252,7 +269,10 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     LocalSource::Link(path)
                         if importer_path != "." && specifier.starts_with("link:") =>
                     {
-                        format!("link:{}", relative_to_importer(path, importer_path))
+                        format!(
+                            "link:{}",
+                            relative_to_importer(path, importer_path, &project_root)
+                        )
                     }
                     _ => local.specifier(),
                 }
