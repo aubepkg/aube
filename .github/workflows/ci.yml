@@ -41,33 +41,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
-        run: |
-          shared='crates/aube/src/(lib|embed)\.rs|crates/aube/src/commands/add/mod\.rs|crates/aube/src/commands/install/(control|dep_selection|frozen)\.rs|crates/aube-util/src/(identity|lib)\.rs|Cargo\.(toml|lock)'
-          ffi_paths="crates/aube-ffi/.*|crates/aube-codes/.*|\.github/workflows/ffi(-impl)?\.yml|$shared"
-          node_paths="crates/aube-node/.*|crates/aube-codes/.*|crates/aube-registry/src/config/.*|crates/aube-registry/src/lib\.rs|\.github/workflows/node-addon(-impl)?\.yml|$shared"
-
-          # Anything we can't diff reliably builds everything.
-          files=""
-          all=true
-          if [[ "$EVENT_NAME" == pull_request ]]; then
-            # The checkout is the PR's merge commit; its first parent is the
-            # base tip, so this is exactly what the PR changes.
-            files=$(git diff --name-only HEAD^1 HEAD) && all=false
-          elif [[ "$EVENT_NAME" == push ]]; then
-            files=$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA") && all=false
-          fi
-
-          touched() {
-            [[ "$all" == true ]] && return 0
-            grep -Ev '^crates/aube-codes/CHANGELOG\.md$' <<< "$files" | grep -Eq "^($1)\$"
-          }
-          for pair in "ffi:$ffi_paths" "node_addon:$node_paths"; do
-            if touched "${pair#*:}"; then
-              echo "${pair%%:*}=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "${pair%%:*}=false" >> "$GITHUB_OUTPUT"
-            fi
-          done
+        run: .github/scripts/ci-changes.sh
 
   ffi:
     needs: changes
@@ -92,36 +66,17 @@ jobs:
   final:
     name: final
     if: ${{ !cancelled() }}
-    permissions: {}
+    permissions:
+      contents: read
     needs: [ci, zizmor, changes, ffi, node-addon]
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 2
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
       - name: Check CI results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import sys
-
-          needs = json.loads(os.environ["NEEDS_JSON"])
-          # Jobs that only run when `changes` says their paths were touched.
-          conditional = {"ffi": "ffi", "node-addon": "node_addon"}
-          changes = needs["changes"]
-          failed = False
-          for name, data in sorted(needs.items()):
-              result = data.get("result", "unknown")
-              if name in conditional and changes["result"] == "success":
-                  wanted = changes["outputs"].get(conditional[name]) == "true"
-                  expected = "success" if wanted else "skipped"
-              else:
-                  expected = "success"
-              if result == expected:
-                  print(f"::notice::{name}: {result}")
-              else:
-                  print(f"::error::{name}: {result} (expected {expected})")
-                  failed = True
-          sys.exit(1 if failed else 0)
-          PY
+        run: .github/scripts/ci-final.py
