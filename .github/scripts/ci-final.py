@@ -21,8 +21,12 @@ def main() -> int:
         result = data.get("result", "unknown")
         expected = "success"
         if name in CONDITIONAL and changes["result"] == "success":
-            wanted = changes["outputs"].get(CONDITIONAL[name]) == "true"
-            expected = "success" if wanted else "skipped"
+            value = changes.get("outputs", {}).get(CONDITIONAL[name])
+            if value not in ("true", "false"):
+                print(f"::error::changes output {CONDITIONAL[name]!r} is {value!r}")
+                failed = True
+                continue
+            expected = "success" if value == "true" else "skipped"
         if result == expected:
             print(f"::notice::{name}: {result}")
         else:

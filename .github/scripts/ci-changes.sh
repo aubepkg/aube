@@ -4,7 +4,8 @@
 #
 # Env: EVENT_NAME, BEFORE_SHA (push only), HEAD_SHA (push only).
 # Pull requests diff the merge commit against its first parent (the base tip);
-# anything that can't be diffed reliably builds everything.
+# anything that can't be diffed reliably builds everything. Renames are
+# reported as a delete plus an add so the source path is filtered too.
 set -euo pipefail
 
 shared='crates/aube/src/(lib|embed)\.rs|crates/aube/src/commands/add/mod\.rs|crates/aube/src/commands/install/(control|dep_selection|frozen)\.rs|crates/aube-util/src/(identity|lib)\.rs|Cargo\.(toml|lock)'
@@ -14,14 +15,16 @@ node_paths="crates/aube-node/.*|crates/aube-codes/.*|crates/aube-registry/src/co
 files=""
 all=true
 if [[ "$EVENT_NAME" == pull_request ]]; then
-	files=$(git diff --name-only HEAD^1 HEAD) && all=false
+	files=$(git diff --name-only --no-renames HEAD^1 HEAD) && all=false
 elif [[ "$EVENT_NAME" == push ]]; then
-	files=$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA") && all=false
+	files=$(git diff --name-only --no-renames "$BEFORE_SHA" "$HEAD_SHA") && all=false
 fi
 
 touched() {
 	[[ "$all" == true ]] && return 0
-	grep -Ev '^crates/aube-codes/CHANGELOG\.md$' <<<"$files" | grep -Eq "^($1)\$"
+	# No `grep -q`: an early exit would SIGPIPE the first grep on a long list,
+	# and pipefail would then report a match as no match.
+	grep -Ev '^crates/aube-codes/CHANGELOG\.md$' <<<"$files" | grep -E "^($1)\$" >/dev/null
 }
 
 for pair in "ffi:$ffi_paths" "node_addon:$node_paths"; do

@@ -99,6 +99,37 @@ _pr_outputs() {
 	assert_line "node_addon=false"
 }
 
+@test "changes: moving a shared input away still builds both packages" {
+	mkdir -p crates/aube/src
+	echo embed >crates/aube/src/embed.rs
+	git add -A
+	git commit -q -m embed
+	BASE_SHA="$(git rev-parse HEAD)"
+	mkdir -p docs
+	git mv crates/aube/src/embed.rs docs/embed.rs
+	git commit -q -m move
+	EVENT_NAME=pull_request run "$CHANGES"
+	assert_success
+	run cat "$GITHUB_OUTPUT"
+	assert_line "ffi=true"
+	assert_line "node_addon=true"
+}
+
+@test "changes: an early match in a very long file list is still a match" {
+	mkdir -p crates/aube-ffi/src docs/bulk
+	echo x >crates/aube-ffi/src/lib.rs
+	local i
+	for i in $(seq 1 4000); do
+		echo x >"docs/bulk/file-with-a-fairly-long-name-to-fill-the-pipe-$i.md"
+	done
+	git add -A
+	git commit -q -m bulk
+	EVENT_NAME=pull_request run "$CHANGES"
+	assert_success
+	run cat "$GITHUB_OUTPUT"
+	assert_line "ffi=true"
+}
+
 @test "changes: push diffs against the previous commit" {
 	_commit_paths crates/aube-ffi/src/lib.rs
 	EVENT_NAME=push BEFORE_SHA="$BASE_SHA" HEAD_SHA="$(git rev-parse HEAD)" run "$CHANGES"
@@ -175,4 +206,13 @@ JSON
 	assert_output --partial "ci: failure"
 	_final skipped skipped false false success skipped
 	assert_failure
+}
+
+@test "final: fails when a changes output is missing or malformed" {
+	_final skipped skipped "" false
+	assert_failure
+	assert_output --partial "changes output 'ffi' is ''"
+	_final skipped skipped false maybe
+	assert_failure
+	assert_output --partial "changes output 'node_addon' is 'maybe'"
 }
