@@ -140,9 +140,13 @@ mod tests {
 }
 
 /// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`, taking
-/// the lockfile's own directory as the project root. Kept for API
-/// compatibility; prefer [`write_with_project_root`], which takes that
-/// directory explicitly. Slated for removal in v3 (see `V3.md`).
+/// the lockfile's own directory as the project root. Only correct when the
+/// graph's importer keys and local paths are relative to that directory,
+/// as in a project lockfile. A copy written elsewhere, such as under
+/// `node_modules`, must use [`write_with_project_root`] with the real
+/// project root, or a member's `link:` versions point at the wrong
+/// directory. Kept for API compatibility; slated for removal in v3 (see
+/// `V3.md`).
 pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Result<(), Error> {
     let lockfile_dir = path
         .parent()
