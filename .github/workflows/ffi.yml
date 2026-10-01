@@ -1,41 +1,6 @@
 name: ffi
 
 on:
-  pull_request:
-    paths:
-      - "crates/aube-ffi/**"
-      - "crates/aube-codes/**"
-      - "!crates/aube-codes/CHANGELOG.md"
-      - "crates/aube/src/lib.rs"
-      - "crates/aube/src/embed.rs"
-      - "crates/aube/src/commands/add/mod.rs"
-      - "crates/aube/src/commands/install/control.rs"
-      - "crates/aube/src/commands/install/dep_selection.rs"
-      - "crates/aube/src/commands/install/frozen.rs"
-      - "crates/aube-util/src/identity.rs"
-      - "crates/aube-util/src/lib.rs"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/ffi.yml"
-      - ".github/workflows/ffi-impl.yml"
-  push:
-    branches: [main]
-    paths:
-      - "crates/aube-ffi/**"
-      - "crates/aube-codes/**"
-      - "!crates/aube-codes/CHANGELOG.md"
-      - "crates/aube/src/lib.rs"
-      - "crates/aube/src/embed.rs"
-      - "crates/aube/src/commands/add/mod.rs"
-      - "crates/aube/src/commands/install/control.rs"
-      - "crates/aube/src/commands/install/dep_selection.rs"
-      - "crates/aube/src/commands/install/frozen.rs"
-      - "crates/aube-util/src/identity.rs"
-      - "crates/aube-util/src/lib.rs"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/ffi.yml"
-      - ".github/workflows/ffi-impl.yml"
   release:
     types: [published]
   workflow_call:
