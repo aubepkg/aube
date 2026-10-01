@@ -139,11 +139,23 @@ mod tests {
     }
 }
 
+/// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`, taking
+/// the lockfile's own directory as the project root. Kept for API
+/// compatibility; prefer [`write_with_project_root`], which takes that
+/// directory explicitly. Slated for removal in v3 (see `V3.md`).
+pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Result<(), Error> {
+    let lockfile_dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    write_with_project_root(path, lockfile_dir, graph, manifest)
+}
+
 /// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`.
 /// `project_root` is the directory the graph's importer keys and local
 /// paths are relative to: the lockfile's own directory for a project
 /// lockfile, but not for a copy kept under `node_modules`.
-pub fn write(
+pub fn write_with_project_root(
     path: &Path,
     project_root: &Path,
     graph: &LockfileGraph,

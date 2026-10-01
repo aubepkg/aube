@@ -150,7 +150,7 @@ pub fn write_lockfile_as(
     let path = project_dir.join(&filename);
     match kind {
         LockfileKind::Aube | LockfileKind::Pnpm => {
-            pnpm::write(&path, project_dir, graph, manifest)?
+            pnpm::write_with_project_root(&path, project_dir, graph, manifest)?
         }
         LockfileKind::Npm | LockfileKind::NpmShrinkwrap => npm::write(&path, graph, manifest)?,
         LockfileKind::Yarn => yarn::write_classic(&path, graph, manifest)?,

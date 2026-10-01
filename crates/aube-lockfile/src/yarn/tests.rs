@@ -108,7 +108,13 @@ fn classic_import_preserves_custom_registry_tarball_url() {
     );
 
     let out = tempfile::NamedTempFile::new().unwrap();
-    crate::pnpm::write(out.path(), out.path().parent().unwrap(), &graph, &manifest).unwrap();
+    crate::pnpm::write_with_project_root(
+        out.path(),
+        out.path().parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(out.path()).unwrap();
     assert!(
         yaml.contains("tarball: https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz"),
@@ -117,7 +123,7 @@ fn classic_import_preserves_custom_registry_tarball_url() {
 
     let round_trip_graph = crate::pnpm::parse(out.path()).unwrap();
     let second_out = tempfile::NamedTempFile::new().unwrap();
-    crate::pnpm::write(
+    crate::pnpm::write_with_project_root(
         second_out.path(),
         second_out.path().parent().unwrap(),
         &round_trip_graph,

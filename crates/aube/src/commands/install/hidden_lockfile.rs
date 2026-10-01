@@ -75,7 +75,7 @@ pub(super) fn write(
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .map_err(|e| aube_lockfile::Error::Io(path.to_path_buf(), e))
-        .and_then(|()| aube_lockfile::pnpm::write(path, cwd, graph, manifest));
+        .and_then(|()| aube_lockfile::pnpm::write_with_project_root(path, cwd, graph, manifest));
     if let Err(e) = result {
         tracing::debug!("failed to write hidden lockfile {}: {e}", path.display());
         remove(path);
