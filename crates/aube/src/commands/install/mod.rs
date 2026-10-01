@@ -1001,8 +1001,9 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 ) {
                     let hidden_graph = graph.clone();
                     let hidden_manifest = manifest.clone();
+                    let hidden_cwd = cwd.clone();
                     hidden_lockfile_write_handle = Some(tokio::task::spawn_blocking(move || {
-                        hidden_lockfile::write(&path, &hidden_graph, &hidden_manifest);
+                        hidden_lockfile::write(&path, &hidden_cwd, &hidden_graph, &hidden_manifest);
                     }));
                 } else {
                     hidden_lockfile::remove(&path);
@@ -2265,7 +2266,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                             .into_diagnostic()
                             .wrap_err("failed to write lockfile with computed integrity")?;
                             if let Some(path) = &hidden_lockfile_path {
-                                hidden_lockfile::write(path, lock_graph, &manifest);
+                                hidden_lockfile::write(path, &cwd, lock_graph, &manifest);
                             }
                         } else {
                             write_per_project_lockfiles(

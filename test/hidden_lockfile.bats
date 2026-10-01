@@ -205,3 +205,37 @@ _install_pinned_then_widen() {
 	assert_success
 	assert_dir_exists packages/b/node_modules/is-odd
 }
+
+@test "hidden lockfile seed links a root override target for an importer outside the root" {
+	# The hidden copy lives in node_modules, but its paths are relative to
+	# the project root. Writing them against node_modules sent `../sibling`
+	# to `../node_modules/vendor/x`, outside the project.
+	mkdir -p proj/vendor/x sibling/other sibling/vendor/x
+	cd proj
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "../sibling"
+YAML
+	cat >../sibling/package.json <<'JSON'
+{"name":"sibling","version":"0.0.0","dependencies":{"x":"link:./other"}}
+JSON
+	echo '{"name":"other","version":"1.0.0"}' >../sibling/other/package.json
+	echo '{"name":"sibling-x","version":"1.0.0"}' >../sibling/vendor/x/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+
+	run aube install
+	assert_success
+	run cmp aube-lock.yaml node_modules/.aube-lock.yaml
+	assert_success
+
+	rm aube-lock.yaml
+	rm -rf ../sibling/node_modules
+	AUBE_LOG=debug run aube install
+	assert_success
+	assert_output --partial "seeding install from hidden lockfile"
+	run cat ../sibling/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+}

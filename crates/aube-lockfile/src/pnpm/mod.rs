@@ -11,7 +11,7 @@ mod tests;
 
 pub use checksum::{package_extensions_checksum, pnpmfile_checksum};
 pub use read::{parse, parse_with_options};
-pub use write::{registry_tarball_url_is_not_derivable, write};
+pub use write::{registry_tarball_url_is_not_derivable, write, write_with_project_root};
 
 /// Benchmark-only shims comparing the byte-cursor subset parser against
 /// the general `yaml_serde` parser on raw `pnpm-lock.yaml` content.

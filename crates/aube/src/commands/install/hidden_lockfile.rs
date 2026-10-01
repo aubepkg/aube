@@ -63,13 +63,19 @@ pub(super) fn read(path: &Path, options: aube_lockfile::ParseOptions) -> Option<
 /// Write `graph` to the hidden lockfile (atomic tempfile + rename via
 /// the lockfile writer). Best-effort: the hidden lockfile is only an
 /// accelerator, so a failure drops any stale copy and never fails the
-/// install.
-pub(super) fn write(path: &Path, graph: &LockfileGraph, manifest: &aube_manifest::PackageJson) {
+/// install. The graph's paths are relative to `cwd`, the project root,
+/// not to the modules dir the copy lives in.
+pub(super) fn write(
+    path: &Path,
+    cwd: &Path,
+    graph: &LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
+) {
     let result = path
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .map_err(|e| aube_lockfile::Error::Io(path.to_path_buf(), e))
-        .and_then(|()| aube_lockfile::pnpm::write(path, graph, manifest));
+        .and_then(|()| aube_lockfile::pnpm::write_with_project_root(path, cwd, graph, manifest));
     if let Err(e) = result {
         tracing::debug!("failed to write hidden lockfile {}: {e}", path.display());
         remove(path);
@@ -134,6 +140,7 @@ mod tests {
         // The modules dir doesn't exist yet: write creates it.
         write(
             &path,
+            dir.path(),
             &graph_with("is-odd", "3.0.1"),
             &manifest_with("is-odd", "^3.0.1"),
         );
@@ -176,6 +183,7 @@ mod tests {
         let path = path(dir.path(), "node_modules");
         write(
             &path,
+            dir.path(),
             &graph_with("is-odd", "3.0.1"),
             &manifest_with("is-odd", "^3.0.1"),
         );

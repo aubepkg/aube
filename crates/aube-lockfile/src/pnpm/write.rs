@@ -154,8 +154,25 @@ mod tests {
     }
 }
 
-/// Write a LockfileGraph as pnpm-lock.yaml v9 format.
+/// Write a LockfileGraph as pnpm-lock.yaml v9 format. The graph's importer
+/// keys and local paths are relative to the lockfile's directory.
 pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Result<(), Error> {
+    let lockfile_dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    write_with_project_root(path, lockfile_dir, graph, manifest)
+}
+
+/// [`write`] for a graph whose importer keys and local paths are relative
+/// to `project_root` rather than to the lockfile's directory, as in a copy
+/// kept under `node_modules`.
+pub fn write_with_project_root(
+    path: &Path,
+    project_root: &Path,
+    graph: &LockfileGraph,
+    manifest: &PackageJson,
+) -> Result<(), Error> {
     let native_pnpm_aliases = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -168,12 +185,8 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
     // Member `link:` versions are written relative to the member; anchoring
     // both at the absolute project root lets an importer outside it reach
     // a target inside it.
-    let lockfile_dir = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
     let project_root =
-        std::path::absolute(lockfile_dir).unwrap_or_else(|_| lockfile_dir.to_path_buf());
+        std::path::absolute(project_root).unwrap_or_else(|_| project_root.to_path_buf());
     let patch_hash_for = |pkg: &crate::LockedPackage| -> Option<&str> {
         patch_hashes
             .get(&pkg.spec_key())
