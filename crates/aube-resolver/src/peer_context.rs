@@ -415,8 +415,11 @@ pub fn apply_peer_contexts(
     // Remembers what each `(<short-hash>)` suffix stands for so the
     // cycle breaker can still see through it on later iterations.
     let mut hashed_suffixes = HashedSuffixes::default();
+    // Snapshot before pass 1 wires borrowed peers into `dependencies`.
+    let own_deps = own_dependency_names(&current);
     for i in 0..iteration_limit {
-        let after_once = apply_peer_contexts_once(current, options, &mut hashed_suffixes);
+        let after_once =
+            apply_peer_contexts_once(current, options, &own_deps, &mut hashed_suffixes);
         let next = if dedupe {
             dedupe_peer_variants(after_once)
         } else {
@@ -692,6 +695,7 @@ pub(crate) fn dedupe_peer_variants(graph: LockfileGraph) -> LockfileGraph {
 fn apply_peer_contexts_once(
     canonical: LockfileGraph,
     options: &PeerContextOptions,
+    own_deps: &OwnDependencyNames,
     hashed_suffixes: &mut HashedSuffixes,
 ) -> LockfileGraph {
     let mut out_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
@@ -720,8 +724,12 @@ fn apply_peer_contexts_once(
     let root_scope: FxHashMap<String, PeerProvider> = canonical
         .importers
         .get(".")
-        .map(|deps| scope_map_from_deps(&canonical, deps))
+        .map(|deps| scope_map_from_deps(&canonical, deps, 0))
         .unwrap_or_default();
+    // Keep provider-owning scopes on the DFS stack. Scope zero is the
+    // workspace root; inherited providers retain their original index
+    // when a descendant overlays its own dependencies.
+    let mut scopes = vec![root_scope];
 
     for (importer_path, direct_deps) in &canonical.importers {
         // An importer's own direct deps are in scope for its children's
@@ -734,7 +742,13 @@ fn apply_peer_contexts_once(
         // it's already contextualized, and passing the plain version
         // would make descendants look up keys that don't exist in the
         // (now-nested) graph.
-        let importer_scope = scope_map_from_deps(&canonical, direct_deps);
+        //
+        // The root importer reuses scope zero, which already holds its deps.
+        let is_root = importer_path == ".";
+        let importer_scope = if is_root { 0 } else { scopes.len() };
+        if !is_root {
+            scopes.push(scope_map_from_deps(&canonical, direct_deps, importer_scope));
+        }
 
         let mut new_deps = Vec::with_capacity(direct_deps.len());
         for dep in direct_deps {
@@ -756,10 +770,11 @@ fn apply_peer_contexts_once(
                 &dep.dep_path,
                 &canonical,
                 &name_index,
-                &importer_scope,
-                &root_scope,
+                importer_scope,
+                &mut scopes,
                 &mut out_packages,
                 &mut visiting,
+                own_deps,
                 options,
                 hashed_suffixes,
             )
@@ -772,6 +787,9 @@ fn apply_peer_contexts_once(
             });
         }
         new_importers.insert(importer_path.clone(), new_deps);
+        if !is_root {
+            scopes.pop();
+        }
     }
 
     // Any canonical package that was never reached by the DFS (orphaned
@@ -827,9 +845,38 @@ struct PeerProvider {
     target_tail: String,
     /// Tail used for semver checks and the consumer's peer suffix.
     context_tail: String,
+    /// Index into the DFS scope stack where this provider is installed.
+    /// An inherited peer resolves its own peers there, not under the
+    /// consumer's dependencies.
+    scope_index: usize,
 }
 
-fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerProvider {
+/// Dependency names each package had before the first peer-context
+/// pass, keyed by canonical `name@version`.
+///
+/// Every pass writes resolved peers into `dependencies`, so on later
+/// passes a peer borrowed from an ancestor or the workspace root looks
+/// like the package's own auto-installed copy. Only names listed here
+/// are genuinely local. Keying by the canonical base keeps the record
+/// stable across dedupe collapses and suffix renames.
+type OwnDependencyNames = FxHashMap<String, FxHashSet<String>>;
+
+fn own_dependency_names(graph: &LockfileGraph) -> OwnDependencyNames {
+    let mut out = OwnDependencyNames::default();
+    for (key, pkg) in &graph.packages {
+        out.entry(canonical_tail(key).to_string())
+            .or_default()
+            .extend(pkg.dependencies.keys().cloned());
+    }
+    out
+}
+
+fn peer_provider(
+    graph: &LockfileGraph,
+    name: &str,
+    target_tail: &str,
+    scope_index: usize,
+) -> PeerProvider {
     let context_tail =
         aube_lockfile::resolve_dep_edge(name, target_tail, |key| graph.packages.contains_key(key))
             .and_then(|key| graph.packages.get(&key))
@@ -844,6 +891,7 @@ fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerPr
     PeerProvider {
         target_tail: target_tail.to_string(),
         context_tail,
+        scope_index,
     }
 }
 
@@ -854,6 +902,7 @@ fn peer_provider(graph: &LockfileGraph, name: &str, target_tail: &str) -> PeerPr
 fn scope_map_from_deps(
     graph: &LockfileGraph,
     deps: &[DirectDep],
+    scope_index: usize,
 ) -> FxHashMap<String, PeerProvider> {
     let mut out = FxHashMap::with_capacity_and_hasher(deps.len(), Default::default());
     for d in deps {
@@ -866,7 +915,10 @@ fn scope_map_from_deps(
         } else {
             d.dep_path.clone()
         };
-        out.insert(d.name.clone(), peer_provider(graph, &d.name, &tail));
+        out.insert(
+            d.name.clone(),
+            peer_provider(graph, &d.name, &tail, scope_index),
+        );
     }
     out
 }
@@ -1674,14 +1726,19 @@ fn visit_peer_context<'g>(
     input_dep_path: &str,
     graph: &'g LockfileGraph,
     name_index: &FxHashMap<&'g str, Vec<&'g LockedPackage>>,
-    ancestor_scope: &FxHashMap<String, PeerProvider>,
-    root_scope: &FxHashMap<String, PeerProvider>,
+    scope_index: usize,
+    scopes: &mut Vec<FxHashMap<String, PeerProvider>>,
     out_packages: &mut BTreeMap<String, LockedPackage>,
     visiting: &mut FxHashSet<String>,
+    own_deps: &OwnDependencyNames,
     options: &PeerContextOptions,
     hashed_suffixes: &mut HashedSuffixes,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
+    let ancestor_scope = &scopes[scope_index];
+    let root_scope = &scopes[0];
+    // Nothing is pushed before P's own child scope, so this is its index.
+    let child_scope_index = scopes.len();
 
     // The input key may already carry a peer suffix (fixed-point loop
     // Pass 2+). Drop it before we build a new one — otherwise we'd
@@ -1695,6 +1752,8 @@ fn visit_peer_context<'g>(
     // pass would re-hash the already-hashed key and grow it (covered
     // by the `peer_suffix_is_hashed_when_exceeding_cap` unit test).
     let canonical_base = canonical_tail(input_dep_path).to_string();
+    // A package missing from the snapshot treats every edge as its own.
+    let own_dep_names = own_deps.get(&canonical_base);
 
     // Compute peer context: walk declared peers, resolve from ancestors
     // (nearest wins — the scope is rebuilt as we recurse) or from the
@@ -1770,15 +1829,18 @@ fn visit_peer_context<'g>(
             .cloned();
         let from_ancestor_incompatible = ancestor_scope.get(peer_name).cloned();
 
-        let from_pkg_deps = pkg
-            .dependencies
-            .get(peer_name)
-            .map(|tail| peer_provider(graph, peer_name, tail))
-            .filter(|provider| satisfies_declared(provider));
+        // An edge a previous pass wired for a borrowed peer is not a
+        // local copy. Resolving it as one would re-root the peer in P's
+        // own scope and split a borrowed instance on pass 2+.
         let from_pkg_deps_incompatible = pkg
             .dependencies
             .get(peer_name)
-            .map(|tail| peer_provider(graph, peer_name, tail));
+            .filter(|_| own_dep_names.is_none_or(|names| names.contains(peer_name)))
+            .map(|tail| peer_provider(graph, peer_name, tail, child_scope_index));
+        let from_pkg_deps = from_pkg_deps_incompatible
+            .as_ref()
+            .filter(|provider| satisfies_declared(provider))
+            .cloned();
 
         // `resolve-peers-from-workspace-root`: fall back to the root
         // importer's direct deps before the graph-wide scan. Common in
@@ -1824,7 +1886,7 @@ fn visit_peer_context<'g>(
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| p.version.clone());
                     node_semver::Version::parse(&p.version).ok().map(|ver| {
-                        let provider = peer_provider(graph, peer_name, &tail);
+                        let provider = peer_provider(graph, peer_name, &tail, child_scope_index);
                         (ver, provider)
                     })
                 })
@@ -1932,11 +1994,15 @@ fn visit_peer_context<'g>(
     // nested form pnpm writes.
     let mut child_scope = ancestor_scope.clone();
     for (name, tail) in &pkg.dependencies {
-        child_scope.insert(name.clone(), peer_provider(graph, name, tail));
+        child_scope.insert(
+            name.clone(),
+            peer_provider(graph, name, tail, child_scope_index),
+        );
     }
     for (name, provider) in &peer_context {
         child_scope.insert(name.clone(), provider.clone());
     }
+    scopes.push(child_scope);
 
     // Recurse into each child, rewriting its dependency map entry to
     // point at the contextualized dep_path's tail. A child whose visit
@@ -1959,19 +2025,20 @@ fn visit_peer_context<'g>(
         // If this child is a declared peer, its tail comes from the
         // peer context (which may be nested). Otherwise we use the
         // tail we already have — also possibly nested on a 2nd pass.
-        let lookup_tail = match peer_context_versions.get(child_name) {
-            Some(provider) => provider.target_tail.clone(),
-            None => child_version_tail.clone(),
+        let (lookup_tail, provider_scope) = match peer_context_versions.get(child_name) {
+            Some(provider) => (provider.target_tail.clone(), provider.scope_index),
+            None => (child_version_tail.clone(), child_scope_index),
         };
         let child_canonical_dep_path = format!("{child_name}@{lookup_tail}");
         let child_new = visit_peer_context(
             &child_canonical_dep_path,
             graph,
             name_index,
-            &child_scope,
-            root_scope,
+            provider_scope,
+            scopes,
             out_packages,
             visiting,
+            own_deps,
             options,
             hashed_suffixes,
         );
@@ -1999,10 +2066,11 @@ fn visit_peer_context<'g>(
             &child_canonical_dep_path,
             graph,
             name_index,
-            &child_scope,
-            root_scope,
+            provider.scope_index,
+            scopes,
             out_packages,
             visiting,
+            own_deps,
             options,
             hashed_suffixes,
         );
@@ -2027,6 +2095,7 @@ fn visit_peer_context<'g>(
         new_dependencies.insert(peer_name.clone(), new_tail);
     }
 
+    scopes.pop();
     visiting.remove(&contextualized);
     let new_optional_dependencies: BTreeMap<String, String> = pkg
         .optional_dependencies
