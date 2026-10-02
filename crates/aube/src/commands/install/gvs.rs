@@ -3,6 +3,7 @@ use miette::miette;
 use std::path::{Path, PathBuf};
 
 pub(super) fn resolve_global_virtual_store_override(
+    cwd: &Path,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
     manifests: &[(String, aube_manifest::PackageJson)],
     env_snapshot: &[(String, String)],
@@ -32,10 +33,123 @@ pub(super) fn resolve_global_virtual_store_override(
                  Details: https://aube.sh/package-manager/global-virtual-store"
             );
             Some(false)
+        } else if !ci_mode
+            && !virtual_store_only_setting
+            && let Some(package) = msix_redirecting_package(
+                &crate::commands::global_virtual_store_dir_with_ctx(cwd, settings_ctx),
+            )
+        {
+            tracing::warn!(
+                code = aube_codes::warnings::WARN_AUBE_GVS_REDIRECTED,
+                "the global virtual store would be redirected into the private \
+                 storage of the packaged app `{package}` (MSIX file system \
+                 virtualization), where Node can't follow its links and other \
+                 programs can't see it — installing per-project instead. To keep \
+                 the global virtual store, set `globalVirtualStoreDir` to a \
+                 directory outside AppData; to silence this warning, run `aube \
+                 config set enableGlobalVirtualStore false --location project`. \
+                 Details: https://aube.sh/package-manager/global-virtual-store"
+            );
+            Some(false)
         } else {
             None
         }
     })
+}
+
+/// Whether an install here would leave the global virtual store because
+/// MSIX redirects it, as [`resolve_global_virtual_store_override`] decides
+/// when `enableGlobalVirtualStore` isn't set. The warm path checks this so
+/// a store an earlier install put there is replaced, not reported current.
+pub(super) fn redirects_implicit_global_virtual_store(
+    cwd: &Path,
+    settings_ctx: &aube_settings::ResolveCtx<'_>,
+    env_snapshot: &[(String, String)],
+) -> bool {
+    aube_settings::resolved::enable_global_virtual_store(settings_ctx).is_none()
+        && !env_snapshot.iter().any(|(k, _)| k == "CI")
+        && !aube_settings::resolved::virtual_store_only(settings_ctx)
+        && msix_redirecting_package(&crate::commands::global_virtual_store_dir_with_ctx(
+            cwd,
+            settings_ctx,
+        ))
+        .is_some()
+}
+
+/// The MSIX package (such as the Claude desktop app) whose private
+/// `LocalCache` a directory newly created at `dir` would be redirected into.
+/// Processes launched from such an app get directories they newly create
+/// anywhere under `AppData` (`Local`, `Roaming`, or beside them) moved to the
+/// same relative path under `%LOCALAPPDATA%\Packages\<package>\LocalCache`,
+/// where Node can't traverse the store's junctions and processes outside the
+/// app never see them. The processes carry no package identity
+/// (`GetCurrentPackageFullName` reports none), so this creates a probe
+/// directory where the store's next directory would be created and looks
+/// for it in each package's `LocalCache`.
+#[cfg(windows)]
+fn msix_redirecting_package(dir: &Path) -> Option<String> {
+    let local = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    let appdata = local.parent()?;
+    // Only directories created where none exist yet get redirected: a store
+    // an unpackaged process already made under the real AppData stays
+    // usable, and new entries inside it land there too. So probe in the
+    // deepest existing ancestor of the store (the store itself, once made).
+    let anchor = dir
+        .ancestors()
+        .take_while(|ancestor| strip_prefix_ignoring_case(ancestor, appdata).is_some())
+        .find(|ancestor| ancestor.is_dir())?;
+    let mirrored = strip_prefix_ignoring_case(anchor, appdata)?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let probe = format!(".aube-redirect-probe-{}-{nanos}", std::process::id());
+    let probe_dir = anchor.join(&probe);
+    std::fs::create_dir(&probe_dir).ok()?;
+    let package = find_redirecting_package(&local.join("Packages"), mirrored, &probe);
+    if let Err(err) = std::fs::remove_dir(&probe_dir) {
+        tracing::debug!("failed to remove {}: {err}", probe_dir.display());
+    }
+    package
+}
+
+#[cfg(not(windows))]
+fn msix_redirecting_package(_dir: &Path) -> Option<String> {
+    None
+}
+
+/// `path` with the leading `base` removed, comparing components the way
+/// Windows does, without regard to case: `Path::strip_prefix` would miss a
+/// `globalVirtualStoreDir` spelled `c:\users\…` under `C:\Users\…`.
+#[cfg(any(windows, test))]
+fn strip_prefix_ignoring_case<'a>(path: &'a Path, base: &Path) -> Option<&'a Path> {
+    let mut rest = path.components();
+    for expected in base.components() {
+        let actual = rest.next()?;
+        let same = actual.as_os_str().to_string_lossy().to_uppercase()
+            == expected.as_os_str().to_string_lossy().to_uppercase();
+        if !same {
+            return None;
+        }
+    }
+    Some(rest.as_path())
+}
+
+/// The package under `packages_dir` whose `LocalCache\<mirrored>` holds
+/// `probe` (`mirrored` is e.g. `Local\aube\virtual-store`).
+#[cfg(any(windows, test))]
+fn find_redirecting_package(packages_dir: &Path, mirrored: &Path, probe: &str) -> Option<String> {
+    std::fs::read_dir(packages_dir)
+        .ok()?
+        .flatten()
+        .find(|package| {
+            package
+                .path()
+                .join("LocalCache")
+                .join(mirrored)
+                .join(probe)
+                .is_dir()
+        })
+        .map(|package| package.file_name().to_string_lossy().into_owned())
 }
 
 pub(super) fn planned_global_virtual_store(
@@ -554,6 +668,59 @@ fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use aube_lockfile::{DepType, DirectDep, LockedPackage};
+
+    #[test]
+    fn strips_the_appdata_prefix_whatever_its_case() {
+        let appdata = Path::new("/Users/Jam/AppData");
+        assert_eq!(
+            strip_prefix_ignoring_case(Path::new("/users/jam/appdata/Local/aube/vs"), appdata),
+            Some(Path::new("Local/aube/vs"))
+        );
+        assert_eq!(
+            strip_prefix_ignoring_case(Path::new("/Users/Jam/AppData"), appdata),
+            Some(Path::new(""))
+        );
+        assert_eq!(
+            strip_prefix_ignoring_case(Path::new("/Users/Jam/Documents/vs"), appdata),
+            None
+        );
+        assert_eq!(
+            strip_prefix_ignoring_case(Path::new("/Users/Jam"), appdata),
+            None
+        );
+    }
+
+    #[test]
+    fn finds_the_package_whose_local_cache_holds_the_probe() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let packages = tmp.path().join("Packages");
+        std::fs::create_dir_all(packages.join("Other_1234").join("LocalCache").join("Local"))
+            .expect("unrelated package should be created");
+        let local = Path::new("Local");
+        let nested = local.join("aube").join("virtual-store");
+        let redirected = packages.join("Claude_pzs8sxrjxfjjc").join("LocalCache");
+        std::fs::create_dir_all(redirected.join(local).join(".probe"))
+            .expect("redirected probe should be created");
+        std::fs::create_dir_all(redirected.join(&nested).join(".nested-probe"))
+            .expect("nested redirected probe should be created");
+        assert_eq!(
+            find_redirecting_package(&packages, local, ".probe").as_deref(),
+            Some("Claude_pzs8sxrjxfjjc")
+        );
+        assert_eq!(
+            find_redirecting_package(&packages, &nested, ".nested-probe").as_deref(),
+            Some("Claude_pzs8sxrjxfjjc")
+        );
+        assert_eq!(
+            find_redirecting_package(&packages, Path::new("Roaming"), ".probe"),
+            None
+        );
+        assert_eq!(find_redirecting_package(&packages, local, ".other"), None);
+        assert_eq!(
+            find_redirecting_package(&tmp.path().join("missing"), local, ".probe"),
+            None
+        );
+    }
 
     #[test]
     fn writes_vite_metadata_for_each_importer_and_preserves_unknown_keys() {

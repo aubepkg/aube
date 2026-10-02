@@ -717,6 +717,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_GVS_REDIRECTED",
+      "category": "Install lifecycle",
+      "description": "On Windows, the global virtual store would land in a packaged (MSIX) app's redirected AppData, where Node can't follow its links; installed per-project instead.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED",
       "category": "Store maintenance",
       "description": "A global virtual-store entry disappeared while a prune plan was being built; the preview skipped it.",

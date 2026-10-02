@@ -100,6 +100,17 @@ pub(super) fn try_install_fast_path(
     let Some(fast_path_snapshot) = fast_path_snapshot else {
         return Ok(None);
     };
+    // An install into a global virtual store that MSIX now redirects must
+    // switch to per-project, which only the full pipeline does.
+    if fast_path_snapshot
+        .layout
+        .as_ref()
+        .is_some_and(|layout| layout.gvs_nested_links.is_some())
+        && super::gvs::redirects_implicit_global_virtual_store(cwd, &ctx, &opts.env_snapshot)
+    {
+        tracing::debug!("install warm path skipped: the global virtual store is redirected");
+        return Ok(None);
+    }
     opts.control.check_cancelled()?;
     // The eligibility check already parsed the state file once for the
     // layout check; reuse that same parse for the package count
