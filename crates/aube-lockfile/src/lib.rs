@@ -15,11 +15,11 @@ pub use io::{
     Error, LockfileKind, ParseOptions, active_lockfile_has_conflict_markers,
     active_lockfile_has_conflict_markers_selecting, active_lockfile_path_selecting,
     aube_lock_filename, build_canonical_map, detect_existing_lockfile_kind,
-    detect_existing_lockfile_kind_selecting, parse_for_import, parse_json, parse_lockfile,
-    parse_lockfile_selecting, parse_lockfile_with_kind, parse_lockfile_with_kind_and_options,
-    parse_lockfile_with_kind_and_options_selecting, parse_lockfile_with_kind_selecting,
-    pnpm_lock_filename, read_lockfile, write_lockfile, write_lockfile_as,
-    write_lockfile_preserving_existing,
+    detect_existing_lockfile_kind_selecting, fill_local_package_versions, parse_for_import,
+    parse_json, parse_lockfile, parse_lockfile_selecting, parse_lockfile_with_kind,
+    parse_lockfile_with_kind_and_options, parse_lockfile_with_kind_and_options_selecting,
+    parse_lockfile_with_kind_selecting, pnpm_lock_filename, read_lockfile, write_lockfile,
+    write_lockfile_as, write_lockfile_preserving_existing,
 };
 pub(crate) use io::{atomic_write_lockfile, current_git_branch};
 pub use merge::{MergeReport, merge_branch_lockfiles};

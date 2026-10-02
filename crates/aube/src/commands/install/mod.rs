@@ -773,7 +773,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             if source_kind_before.is_none()
                 && hidden_lockfile::seed_allowed(mode, opts.strict_no_lockfile) =>
         {
-            lockfile_pre_parse = hidden_lockfile::read(path, lockfile_parse_options)
+            lockfile_pre_parse = hidden_lockfile::read(path, &cwd, lockfile_parse_options)
                 .map(|graph| (graph, aube_lockfile::LockfileKind::Aube));
             lockfile_pre_parse.is_some()
         }

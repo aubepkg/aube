@@ -96,6 +96,42 @@ EOF
 	assert_output --partial '"version":"2.0.1"'
 }
 
+@test "installs from the lockfile report the real versions of local deps" {
+	# pnpm lockfiles record no version for file:/link: packages; a
+	# frozen or filtered install and `aube list` must still show the
+	# version from the package's own package.json, not 0.0.0.
+	_make_local_pkg vendor-dir vendor-dir 1.2.3
+	_make_local_pkg vendor-link vendor-link 4.5.6
+	mkdir -p app
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"1.0.0","dependencies":{"vendor-dir":"file:../vendor-dir","vendor-link":"link:../vendor-link"}}
+EOF
+	run aube install
+	assert_success
+
+	rm -rf node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_output --partial "vendor-dir@1.2.3"
+	assert_output --partial "vendor-link@4.5.6"
+
+	run aube list
+	assert_success
+	assert_output --partial "vendor-dir 1.2.3"
+	assert_output --partial "vendor-link 4.5.6"
+	refute_output --partial "0.0.0"
+
+	# Without the project lockfile, install seeds from the hidden copy
+	# under node_modules, whose local paths are project-relative.
+	rm aube-lock.yaml
+	run aube install
+	assert_success
+	assert_output --partial "vendor-dir@1.2.3"
+	assert_output --partial "vendor-link@4.5.6"
+	refute_output --partial "0.0.0"
+}
+
 @test "aube install handles file: tarball dep" {
 	# BSD tar (macOS) has no --transform, so stage the files under an
 	# actual `package/` directory before archiving.
