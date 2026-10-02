@@ -104,6 +104,17 @@ pub fn is_physical_importer(importer_path: &str) -> bool {
     importer_path == "." || !importer_path.contains("/node_modules/")
 }
 
+/// Whether Node, resolving from workspace member `importer_path`, walks up
+/// into the root's `node_modules`. Only then can `dedupeDirectDeps` leave
+/// out the member's own link to a dependency the root links identically;
+/// a member outside the root (`../sibling`) never reaches it.
+pub fn importer_resolves_through_root(importer_path: &str) -> bool {
+    importer_path != "."
+        && !Path::new(importer_path)
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
 /// Wipe `path` when it looks like a linker-managed `.aube/node_modules`
 /// tree. If a previously-tampered install (or attacker) replaced the
 /// tree with a symlink / junction pointing elsewhere on disk, refuse
@@ -465,7 +476,15 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::is_physical_importer;
+    use super::{importer_resolves_through_root, is_physical_importer};
+
+    #[test]
+    fn only_members_inside_the_root_resolve_through_it() {
+        assert!(importer_resolves_through_root("packages/app"));
+        assert!(!importer_resolves_through_root("."));
+        assert!(!importer_resolves_through_root("../sibling"));
+        assert!(!importer_resolves_through_root("packages/../../elsewhere"));
+    }
 
     #[test]
     fn root_is_physical() {

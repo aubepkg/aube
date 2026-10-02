@@ -1314,12 +1314,28 @@ impl Linker {
 
                     // `dedupeDirectDeps`: non-root importer dep
                     // already covered by the root symlink +
-                    // parent-directory walk.
+                    // parent-directory walk. A link the member kept
+                    // from an earlier, different version would shadow
+                    // the root's, so clear it.
                     if self.dedupe_direct_deps
-                        && *importer_path != "."
+                        && crate::importer_resolves_through_root(importer_path)
                         && let Some(root_dep) = root_deps_by_name.get(dep.name.as_str())
                         && root_dep.dep_path == dep.dep_path
                     {
+                        crate::validate_package_link_name(&dep.name)?;
+                        let link_path = nm.join(&dep.name);
+                        try_remove_entry(&link_path);
+                        // Nothing recreates it, and install state tracks
+                        // only the root's link, so a survivor would go
+                        // unnoticed.
+                        if link_path.symlink_metadata().is_ok() {
+                            return Err(Error::Io(
+                                link_path,
+                                std::io::Error::other(
+                                    "failed to remove a dependency link that dedupeDirectDeps replaces with the root's",
+                                ),
+                            ));
+                        }
                         return Ok(false);
                     }
 

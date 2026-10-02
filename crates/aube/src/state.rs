@@ -735,6 +735,10 @@ pub struct WriteStateLayout<'a> {
     pub virtual_store_dir_max_length: usize,
     pub placements: Option<&'a aube_linker::HoistedPlacements>,
     pub use_global_virtual_store: bool,
+    /// `dedupeDirectDeps`: the isolated linker skips a workspace member's
+    /// link to a dependency the root links identically, leaving Node to
+    /// find the root's.
+    pub dedupe_direct_deps: bool,
     /// The linker's record of each global virtual-store entry's dependency
     /// links (`LinkStats::gvs_dep_link_targets`). Entries found here are
     /// recorded without reading their links back; anything missing, or
@@ -1313,6 +1317,18 @@ impl InstallLayoutState {
                 aube_linker::HoistingLimits::Workspaces => InstallHoistingLimits::Workspaces,
                 aube_linker::HoistingLimits::Dependencies => InstallHoistingLimits::Dependencies,
             });
+        let deduped_root_deps: BTreeMap<&str, &str> = if layout.dedupe_direct_deps
+            && matches!(layout.node_linker, aube_linker::NodeLinker::Isolated)
+        {
+            layout
+                .graph
+                .root_deps()
+                .iter()
+                .map(|dep| (dep.name.as_str(), dep.dep_path.as_str()))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
         // Record each importer's direct-dependency symlinks — the root
         // (`.`) *and* every workspace member — relative to `project_dir`.
         // `verify_install_layout` walks these, so tracking members means a
@@ -1330,6 +1346,15 @@ impl InstallLayoutState {
             let entries = deps
                 .iter()
                 .map(|dep| {
+                    // Deduped by the linker: Node finds the root's link.
+                    if aube_linker::importer_resolves_through_root(importer)
+                        && deduped_root_deps.get(dep.name.as_str()) == Some(&dep.dep_path.as_str())
+                    {
+                        return relative_path_or_original(
+                            &project_dir.join(layout.modules_dir_name).join(&dep.name),
+                            project_dir,
+                        );
+                    }
                     let importer_entry = importer_dir.join(layout.modules_dir_name).join(&dep.name);
                     // A workspace-wide hoist may satisfy this direct edge from
                     // an ancestor node_modules. Record the first placement Node
@@ -2031,6 +2056,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: None,
                 use_global_virtual_store: false,
+                dedupe_direct_deps: false,
                 gvs_dep_link_targets: None,
             },
         )
@@ -2050,6 +2076,72 @@ mod tests {
         assert_eq!(
             layout.direct_entries.get("packages/svc"),
             Some(&vec!["packages/svc/node_modules/zod".to_string()])
+        );
+    }
+
+    #[test]
+    fn from_graph_records_the_root_link_for_a_deduped_member_dep() {
+        let project_dir = temp_project_dir("layout-dedupe-direct-deps");
+        let aube_dir = project_dir.join("node_modules/.aube");
+        let dep = |name: &str, dep_path: &str| aube_lockfile::DirectDep {
+            name: name.to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: aube_lockfile::DepType::Production,
+            specifier: None,
+        };
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![dep("is-odd", "is-odd@3.0.1"), dep("zod", "zod@3.23.8")],
+        );
+        importers.insert(
+            "packages/svc".to_string(),
+            vec![dep("is-odd", "is-odd@3.0.1"), dep("zod", "zod@3.22.0")],
+        );
+        importers.insert(
+            "../sibling".to_string(),
+            vec![dep("is-odd", "is-odd@3.0.1")],
+        );
+        let graph = aube_lockfile::LockfileGraph {
+            importers,
+            ..Default::default()
+        };
+
+        let layout = InstallLayoutState::from_graph(
+            &project_dir,
+            &WriteStateLayout {
+                graph: &graph,
+                node_linker: aube_linker::NodeLinker::Isolated,
+                hoisting_limits: aube_linker::HoistingLimits::None,
+                modules_dir_name: "node_modules",
+                aube_dir: &aube_dir,
+                virtual_store_dir_max_length: 120,
+                placements: None,
+                use_global_virtual_store: false,
+                dedupe_direct_deps: true,
+                gvs_dep_link_targets: None,
+            },
+        )
+        .expect("layout should build");
+
+        // The linker leaves out the member's `is-odd` link, which matches
+        // the root's, so the root's is the one to verify. `zod` differs
+        // from the root's, so the member keeps its own link.
+        assert_eq!(
+            layout.direct_entries.get("packages/svc"),
+            Some(&vec![
+                "node_modules/is-odd".to_string(),
+                "packages/svc/node_modules/zod".to_string(),
+            ])
+        );
+        // Node never walks from a member outside the root into the root's
+        // `node_modules`, so that member keeps its own link.
+        let sibling = &layout.direct_entries["../sibling"];
+        assert_eq!(sibling.len(), 1);
+        assert!(
+            sibling[0]
+                .replace('\\', "/")
+                .ends_with("sibling/node_modules/is-odd")
         );
     }
 
@@ -2098,6 +2190,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: None,
                 use_global_virtual_store: true,
+                dedupe_direct_deps: false,
                 gvs_dep_link_targets: None,
             },
         )
@@ -2152,6 +2245,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: None,
                 use_global_virtual_store: true,
+                dedupe_direct_deps: false,
                 gvs_dep_link_targets: None,
             },
         )
@@ -2193,6 +2287,7 @@ mod tests {
                 virtual_store_dir_max_length: 120,
                 placements: Some(&placements),
                 use_global_virtual_store: false,
+                dedupe_direct_deps: false,
                 gvs_dep_link_targets: None,
             },
         )
