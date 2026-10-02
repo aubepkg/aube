@@ -717,6 +717,12 @@
       "exit_code": null
     },
     {
+      "name": "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE",
+      "category": "Install lifecycle",
+      "description": "A `link:` dependency's `package.json` couldn't be read or parsed, so install skipped linking its bins into `node_modules/.bin`.",
+      "exit_code": null
+    },
+    {
       "name": "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED",
       "category": "Store maintenance",
       "description": "A global virtual-store entry disappeared while a prune plan was being built; the preview skipped it.",
