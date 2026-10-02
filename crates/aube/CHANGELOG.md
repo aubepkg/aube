@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.2](https://github.com/aubepkg/aube/compare/v2.6.1...v2.6.2) - 2026-10-02
+
+### Fixed
+
+- *(lockfile)* read and write workspace members' link: deps relative to the member ([#1680](https://github.com/aubepkg/aube/pull/1680))
+- *(registry)* expose transport causes and validate CA files ([#1681](https://github.com/aubepkg/aube/pull/1681))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+- *(install)* remove stale .bin shims for dependencies dropped from the graph ([#1673](https://github.com/aubepkg/aube/pull/1673))
+
+### Other
+
+- *(run)* guard synchronized incremental script picker redraws ([#1682](https://github.com/aubepkg/aube/pull/1682))
+- run clippy on Windows and fix the warnings only it finds ([#1640](https://github.com/aubepkg/aube/pull/1640))
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/v2.6.0...v2.6.1) - 2026-09-29
 
 ### Fixed
