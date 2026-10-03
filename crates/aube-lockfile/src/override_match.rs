@@ -67,6 +67,9 @@ pub(crate) fn apply<'a>(
     name: &str,
     spec: &str,
 ) -> Option<&'a str> {
+    // An `npm:`/`jsr:` alias is matched on its trailing version range,
+    // as the resolver does.
+    let spec = strip_alias_prefix(spec);
     rules.iter().find_map(|rule| {
         if rule.name != name {
             return None;
@@ -77,6 +80,62 @@ pub(crate) fn apply<'a>(
             _ => None,
         }
     })
+}
+
+/// The importer specifier pnpm records for an applied `link:`/`file:`
+/// override: the override's root-relative path re-expressed relative to
+/// `importer` (a root-relative importer path, `.` for the root), in
+/// forward-slash form. `link:./vendor/x` becomes `link:../vendor/x` for
+/// importer `pkg-a` and `link:vendor/x` for the root.
+///
+/// `None` when the value isn't a relative `link:`/`file:` path (absolute
+/// and `~` paths name the same place from anywhere) or the importer lies
+/// outside the root, where the relative path would have to name the
+/// root's own directory.
+pub fn importer_relative_override(spec: &str, importer: &str) -> Option<String> {
+    let (protocol, path) = ["link:", "file:"]
+        .into_iter()
+        .find_map(|protocol| spec.strip_prefix(protocol).map(|path| (protocol, path)))?;
+    // A leading separator is absolute on every platform, as Node's
+    // `path.isAbsolute` reads it on Windows too.
+    if path.is_empty()
+        || std::path::Path::new(path).is_absolute()
+        || path.starts_with(['/', '\\'])
+        || path.starts_with("~/")
+        || path.starts_with("~\\")
+    {
+        return None;
+    }
+    let base = aube_util::path::normalize_lexical(std::path::Path::new(importer));
+    if base
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    let target = aube_util::path::normalize_lexical(std::path::Path::new(path));
+    let relative = pathdiff::diff_paths(&target, &base)?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    Some(if relative.is_empty() {
+        format!("{protocol}.")
+    } else {
+        format!("{protocol}{relative}")
+    })
+}
+
+/// The version range of an `npm:`/`jsr:` alias spec (`npm:foo@^1` →
+/// `^1`), or `spec` itself. Mirrors `aube-resolver`'s helper of the same
+/// name.
+fn strip_alias_prefix(spec: &str) -> &str {
+    for prefix in ["npm:", "jsr:"] {
+        if let Some(rest) = spec.strip_prefix(prefix) {
+            return match rest.rfind('@') {
+                Some(at) if at > 0 => &rest[at + 1..],
+                _ => rest,
+            };
+        }
+    }
+    spec
 }
 
 /// Extract the final package target from any supported pnpm/yarn override key.
@@ -209,8 +268,11 @@ fn parse_segment(seg: &str) -> Option<(String, Option<String>)> {
 
 /// Lower-bound probe. Mirrors `aube-resolver::override_rule::range_could_satisfy`
 /// without the cross-crate dep. A range whose extractable lower bound
-/// satisfies the req counts as a hit. Ranges we can't parse fall through
-/// to "probably matches" so a user override is never silently dropped.
+/// satisfies the req counts as a hit. A spec that isn't a semver range
+/// (`link:`, `file:`, a git URL, a dist-tag) matches only a req spelled
+/// the same, as in pnpm. Semver ranges we can't take a lower bound from
+/// fall through to "probably matches" so a user override is never
+/// silently dropped.
 ///
 /// Exclusive `>X.Y.Z` is special-cased: trimming the prefix yields the
 /// boundary itself, which fails any `<X.Y.Z` req and would otherwise
@@ -218,6 +280,10 @@ fn parse_segment(seg: &str) -> Option<(String, Option<String>)> {
 /// for two ranges with empty intersection. The caller signals the
 /// exclusive form via a separate try with `bumped_lower_bound` first.
 fn range_could_satisfy(task_range: &str, req: &str) -> bool {
+    let declared = task_range.trim();
+    if !declared.is_empty() && node_semver::Range::parse(declared).is_err() {
+        return declared == req.trim();
+    }
     let Ok(r) = node_semver::Range::parse(req) else {
         return true;
     };
@@ -379,5 +445,48 @@ mod tests {
         assert!(!range_could_satisfy(">3.0.5", "<3.0.5"));
         // Sanity: the inclusive case still doesn't overlap.
         assert!(range_could_satisfy(">3.0.5", ">=3.0.5"));
+    }
+
+    #[test]
+    fn range_rule_skips_non_semver_specs_like_the_resolver() {
+        let rules = compile(&map(&[("x@^1", "link:./vendor/x")]));
+        assert_eq!(apply(&rules, "x", "link:./other"), None);
+        assert_eq!(apply(&rules, "x", "latest"), None);
+        assert_eq!(apply(&rules, "x", "^1.2.0"), Some("link:./vendor/x"));
+        // An alias is matched on its version range.
+        assert_eq!(apply(&rules, "x", "npm:y@^1.0.0"), Some("link:./vendor/x"));
+        assert_eq!(apply(&rules, "x", "npm:y@^2.0.0"), None);
+    }
+
+    #[test]
+    fn importer_relative_override_matches_pnpm() {
+        let rel = importer_relative_override;
+        assert_eq!(
+            rel("link:./vendor/x", "pkg-a").as_deref(),
+            Some("link:../vendor/x")
+        );
+        assert_eq!(
+            rel("link:./vendor/x", "packages/a").as_deref(),
+            Some("link:../../vendor/x")
+        );
+        assert_eq!(
+            rel("link:./vendor/x", ".").as_deref(),
+            Some("link:vendor/x")
+        );
+        assert_eq!(
+            rel("file:./vendor/x", "pkg-a").as_deref(),
+            Some("file:../vendor/x")
+        );
+        assert_eq!(rel("link:./pkg-a", "pkg-a").as_deref(), Some("link:."));
+        assert_eq!(
+            rel("link:../outside", "pkg-a").as_deref(),
+            Some("link:../../outside")
+        );
+        // Not re-anchored: an absolute or `~` path, a non-local value, or an
+        // importer outside the root.
+        assert_eq!(rel("link:/abs/x", "pkg-a"), None);
+        assert_eq!(rel("link:~/x", "pkg-a"), None);
+        assert_eq!(rel("^1.0.0", "pkg-a"), None);
+        assert_eq!(rel("link:./vendor/x", "../sibling"), None);
     }
 }

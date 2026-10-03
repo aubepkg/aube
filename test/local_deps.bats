@@ -772,11 +772,12 @@ YAML
 	refute_output --partial "version: link:pkg-a/vendor/x"
 }
 
-@test "aube install and a frozen reinstall link a member's own link: when a root override has the same value" {
-	# Neither root override rewrites pkg-a's declarations, so the resolver
-	# keeps them member-relative: `parent@^1/x` targets `x` under `parent`,
-	# and `x` already declares the override's value. The frozen reinstall
-	# must link the same member packages, not the root's.
+@test "aube install and a frozen reinstall agree when root overrides share the value of a member's link: deps" {
+	# `parent@^1/x` targets `x` under `parent`, so it doesn't apply to
+	# pkg-a's own `parent`, which stays member-relative. The `x` override
+	# applies even though its value equals pkg-a's declaration, so, as in
+	# pnpm, `x` resolves from the root. The frozen reinstall must link the
+	# same packages as the fresh install.
 	mkdir -p pkg-a/vendor/p pkg-a/vendor/x vendor/p vendor/x
 	cat >package.json <<'JSON'
 {"name":"root","version":"0.0.0","private":true,"resolutions":{"parent@^1/x":"link:./vendor/p"},"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
@@ -797,15 +798,16 @@ JSON
 	assert_success
 	run cat pkg-a/node_modules/parent/package.json pkg-a/node_modules/x/package.json
 	assert_output --partial '"name":"member-p"'
-	assert_output --partial '"name":"member-x"'
+	assert_output --partial '"name":"root-x"'
 
 	rm -rf node_modules pkg-a/node_modules
 	run aube install --frozen-lockfile
 	assert_success
 	run cat pkg-a/node_modules/parent/package.json pkg-a/node_modules/x/package.json
 	assert_output --partial '"name":"member-p"'
-	assert_output --partial '"name":"member-x"'
-	refute_output --partial '"name":"root-'
+	assert_output --partial '"name":"root-x"'
+	refute_output --partial '"name":"root-p"'
+	refute_output --partial '"name":"member-x"'
 }
 
 @test "aube install and a frozen reinstall link a root override target from a member" {

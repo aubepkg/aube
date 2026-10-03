@@ -315,10 +315,16 @@ fn version_in_req(version: &str, req: &str) -> bool {
 /// can see why the selector didn't fire and reach for a broader
 /// range or an exact version override.
 ///
-/// For oddball ranges we can't extract a lower bound from, we
-/// return `true` (overridden too aggressively beats silently
-/// ignoring) so users at least see the override take effect.
+/// A declaration that isn't a semver range at all (`link:`, `file:`, a
+/// git URL, a dist-tag) matches only a selector range spelled the same,
+/// as pnpm's `isIntersectingRange` decides: `x@^1` doesn't apply to
+/// `x: link:./vendor/x`. For a semver range we can't extract a lower
+/// bound from, we return `true` (overridden too aggressively beats
+/// silently ignoring) so users at least see the override take effect.
 fn range_could_satisfy(task_range: &str, req: &str) -> bool {
+    if !is_semver_range(task_range) {
+        return task_range.trim() == req.trim();
+    }
     let Ok(r) = node_semver::Range::parse(req) else {
         return true;
     };
@@ -343,6 +349,13 @@ fn range_could_satisfy(task_range: &str, req: &str) -> bool {
     }
     // We couldn't make sense of task_range. Don't block the override.
     true
+}
+
+/// Whether `range` is a semver range, as npm reads one: an empty range
+/// means `*`.
+fn is_semver_range(range: &str) -> bool {
+    let range = range.trim();
+    range.is_empty() || node_semver::Range::parse(range).is_ok()
 }
 
 /// Best-effort extraction of a concrete lower-bound version from a
@@ -591,5 +604,29 @@ mod tests {
         assert_eq!(lower_bound_version("1.2.3").as_deref(), Some("1.2.3"));
         assert_eq!(lower_bound_version("v1.2.3").as_deref(), Some("1.2.3"));
         assert_eq!(lower_bound_version("<2").as_deref(), None);
+    }
+
+    #[test]
+    fn range_selector_matches_a_non_semver_declaration_only_when_spelled_the_same() {
+        // pnpm's `isIntersectingRange`: `x@^1` doesn't apply to a `link:`,
+        // git, or dist-tag declaration.
+        let r = rule("x@^1", "link:./vendor/x");
+        assert!(!matches(&r, "x", "link:./vendor/x", &[]));
+        assert!(!matches(&r, "x", "link:./other", &[]));
+        assert!(!matches(&r, "x", "github:org/x", &[]));
+        assert!(!matches(&r, "x", "latest", &[]));
+        assert!(matches(&rule("x@latest", "1.0.0"), "x", "latest", &[]));
+        // Semver declarations keep the lower-bound probe; an empty range
+        // means `*`.
+        assert!(matches(&r, "x", "^1.2.0", &[]));
+        assert!(!matches(&r, "x", "^2.0.0", &[]));
+        assert!(matches(&r, "x", "", &[]));
+        // A selector without a range still applies to any declaration.
+        assert!(matches(
+            &rule("x", "link:./vendor/x"),
+            "x",
+            "link:./other",
+            &[]
+        ));
     }
 }

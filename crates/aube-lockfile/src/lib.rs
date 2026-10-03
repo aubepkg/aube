@@ -23,6 +23,7 @@ pub use io::{
 };
 pub(crate) use io::{atomic_write_lockfile, current_git_branch};
 pub use merge::{MergeReport, merge_branch_lockfiles};
+pub use override_match::importer_relative_override;
 pub(crate) use source::normalize_git_fragment;
 pub use source::{
     GitSource, HostedGit, HostedGitHost, LocalSource, RemoteTarballSource, git_commits_match,

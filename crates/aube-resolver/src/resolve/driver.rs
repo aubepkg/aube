@@ -1943,8 +1943,22 @@ impl<'a> ResolveDriver<'a> {
                 // importer dependencies. Keep ordinary `catalog:` dependencies
                 // verbatim, but once an override fires use its effective value
                 // (including catalog expansion) in the lockfile importer.
+                // A `link:`/`file:` override is recorded relative to the
+                // importer, as pnpm records it.
                 if task.is_root {
-                    task.lockfile_override_specifier = Some(effective_spec.clone());
+                    task.lockfile_override_specifier = Some(
+                        aube_lockfile::importer_relative_override(&effective_spec, &task.importer)
+                            .unwrap_or_else(|| effective_spec.clone()),
+                    );
+                }
+                // Overrides are declared at the project root, so a
+                // substituted `link:`/`file:` path is project-root-relative
+                // — mark the task so the local-source branch anchors it
+                // correctly. That holds even when the override's value
+                // equals the declaration: pnpm applies the override then
+                // too, and resolves the path from the root.
+                if is_non_registry_specifier(&effective_spec) {
+                    task.range_from_override = true;
                 }
                 if task.range != effective_spec {
                     if let Some((catalog_name, real_range)) = pending_pick {
@@ -1959,13 +1973,6 @@ impl<'a> ResolveDriver<'a> {
                         task.range,
                         effective_spec
                     );
-                    // Overrides are declared at the project root, so
-                    // a substituted `link:`/`file:` path is
-                    // project-root-relative — mark the task so the
-                    // local-source branch anchors it correctly.
-                    if is_non_registry_specifier(&effective_spec) {
-                        task.range_from_override = true;
-                    }
                     task.range = effective_spec;
                     // If the override replaced the spec with a bare
                     // range (not itself an `npm:`/`jsr:` alias), it's

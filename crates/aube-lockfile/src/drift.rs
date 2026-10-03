@@ -541,9 +541,18 @@ impl LockfileGraph {
                     // resolves to the lockfile's recorded spec —
                     // otherwise any pnpm-written lockfile with
                     // overrides reads stale on every frozen install.
+                    // pnpm also re-anchors an applied `link:`/`file:` override's
+                    // root-relative path at the importer (`link:./vendor/x` is
+                    // recorded as `link:../vendor/x` for `pkg-a`); aube writes
+                    // that form too, and older aube wrote the value as is.
                     if let Some(override_spec) =
                         override_match::apply(&override_rules, name.as_str(), spec)
-                        && override_spec == *locked_spec
+                        && (override_spec == *locked_spec
+                            || override_match::importer_relative_override(
+                                override_spec,
+                                importer_path,
+                            )
+                            .is_some_and(|relative| relative == *locked_spec))
                     {
                         continue;
                     }
