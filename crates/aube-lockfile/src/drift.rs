@@ -361,8 +361,11 @@ impl LockfileGraph {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        // Skip the check entirely if no DirectDep has a specifier (non-pnpm format).
-        if importer_deps.iter().all(|d| d.specifier.is_none()) {
+        // Skip the check entirely if no DirectDep has a specifier (non-pnpm
+        // format). An importer with no deps at all says nothing about the
+        // format: it's what a lockfile written before the manifest gained
+        // its first dependency records, so compare the manifest against it.
+        if !importer_deps.is_empty() && importer_deps.iter().all(|d| d.specifier.is_none()) {
             return DriftStatus::Fresh;
         }
         let lockfile_specs: BTreeMap<&str, &str> = importer_deps
@@ -920,6 +923,32 @@ mod drift_tests {
             DriftStatus::Stale { reason } => assert!(reason.contains("express")),
             DriftStatus::Fresh => panic!("expected Stale"),
         }
+    }
+
+    #[test]
+    fn stale_when_manifest_adds_first_dep() {
+        // A lockfile written while the project had no deps records an
+        // empty importer (or none). Its deps can't vouch for a format
+        // without specifiers, so the first added dep must still read stale.
+        let manifest = make_manifest(&[("tool", "link:./tool")]);
+        for graph in [make_graph(&[]), LockfileGraph::default()] {
+            match graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()) {
+                DriftStatus::Stale { reason } => {
+                    assert!(reason.contains("manifest adds tool"), "reason: {reason}")
+                }
+                DriftStatus::Fresh => panic!("expected Stale"),
+            }
+        }
+        // With no deps on either side it's still fresh.
+        assert_eq!(
+            make_graph(&[]).check_drift(
+                &make_manifest(&[]),
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new()
+            ),
+            DriftStatus::Fresh
+        );
     }
 
     #[test]
