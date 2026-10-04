@@ -63,14 +63,30 @@ fn pnpm_patch_hashes(
 }
 
 fn strip_patch_hash_suffix(value: &str) -> String {
-    let mut out = value.to_string();
-    while let Some(start) = out.find("(patch_hash=") {
-        let Some(rel_end) = out[start..].find(')') else {
-            break;
-        };
-        let end = start + rel_end + 1;
-        out.replace_range(start..end, "");
+    let mut out = String::with_capacity(value.len());
+    let mut depth = 0usize;
+    let mut copied = 0;
+    let mut i = 0;
+    let bytes = value.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'('
+            && depth == 0
+            && value[i..].starts_with("(patch_hash=")
+            && let Some(end) = value[i..].find(')')
+        {
+            out.push_str(&value[copied..i]);
+            i += end + 1;
+            copied = i;
+            continue;
+        }
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i += 1;
     }
+    out.push_str(&value[copied..]);
     out
 }
 
@@ -112,6 +128,7 @@ fn relative_to_importer(path: &Path, importer: &str, root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{relative_to_importer, with_patch_hash};
+    use proptest::prelude::*;
     use std::path::Path;
 
     #[test]
@@ -121,6 +138,22 @@ mod tests {
             with_patch_hash(value, Some("current")),
             "1.0.0(patch_hash=current)(react@19)"
         );
+    }
+
+    proptest! {
+        #[test]
+        fn replacing_own_patch_hash_preserves_nested_peer_hashes(
+            version in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+            own_hash in "[a-f0-9]{64}",
+            peer_hash in "[a-f0-9]{64}",
+        ) {
+            let suffix = format!("(@scope/peer@{version}(patch_hash={peer_hash})(nested@1.0.0))");
+            let bare = format!("{version}{suffix}");
+            let patched = with_patch_hash(&bare, Some(&own_hash));
+            prop_assert_eq!(&patched, &format!("{version}(patch_hash={own_hash}){suffix}"));
+            prop_assert_eq!(with_patch_hash(&patched, Some(&own_hash)), patched.clone());
+            prop_assert_eq!(with_patch_hash(&patched, None), bare);
+        }
     }
 
     #[test]
@@ -189,29 +222,40 @@ pub fn write_with_project_root(
             })
             .map(String::as_str)
     };
-    let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
-        pkg.map(|pkg| with_patch_hash(value, patch_hash_for(pkg)))
-            .unwrap_or_else(|| value.to_string())
-    };
-    // Translate a *flat* peer reference from aube's internal FS-safe
+    // Translate a peer reference from aube's internal FS-safe
     // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
     // resolved spec pnpm writes inside a peer suffix
     // (`request@https://codeload.…/tar.gz/<sha>`). The reference is itself a
     // package key, so a direct lookup yields the target's source. Registry
-    // peers aren't in the table under their suffix head (or carry no
-    // `local_source`) and return `None`, leaving `react@18.2.0` untouched.
+    // peers use the declared patch hash, including peers with nested contexts.
     // Restricted to git / remote-tarball so it stays the exact inverse of
     // the reader's `shared_local_dep_path` pass (which only re-derives those
     // two kinds); `file:` / `link:` peers never occur in practice and a
     // one-sided translation would break the round-trip.
-    let peer_suffix_to_spec = |head: &str| -> Option<String> {
-        let pkg = graph.packages.get(head)?;
-        match pkg.local_source.as_ref()? {
-            local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_)) => {
-                Some(format!("{}@{}", pkg.name, local.specifier()))
+    let peer_reference_to_spec = |reference: &str| -> Option<String> {
+        let head = reference.split('(').next().unwrap_or(reference);
+        let pkg = graph
+            .packages
+            .get(reference)
+            .or_else(|| graph.packages.get(head));
+        let translated = match pkg.and_then(|pkg| pkg.local_source.as_ref()) {
+            Some(local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_))) => {
+                let (name, _) = parse_dep_path(head)?;
+                let suffix = reference.find('(').map_or("", |i| &reference[i..]);
+                format!("{name}@{}{suffix}", local.specifier())
             }
-            _ => None,
-        }
+            _ => reference.to_string(),
+        };
+        let hash = patch_hashes
+            .get(head)
+            .map(String::as_str)
+            .or_else(|| pkg.and_then(patch_hash_for));
+        Some(with_patch_hash(&translated, hash))
+    };
+    let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
+        let rewritten = rewrite_peer_suffix(value, &peer_reference_to_spec);
+        pkg.map(|pkg| with_patch_hash(&rewritten, patch_hash_for(pkg)))
+            .unwrap_or(rewritten)
     };
     let mut importers = BTreeMap::new();
     let exclude_links = graph.settings.exclude_links_from_lockfile;
@@ -287,14 +331,10 @@ pub fn write_with_project_root(
             {
                 format!("{real_name}@{}", dep_path_tail(&dep.dep_path, &dep.name))
             } else {
-                // Registry dep: the tail may carry a `(git/tarball@hash)`
-                // peer suffix that must render as the resolved spec.
-                rewrite_peer_suffix(
-                    dep.dep_path
-                        .strip_prefix(&format!("{}@", dep.name))
-                        .unwrap_or(&dep.dep_path),
-                    &peer_suffix_to_spec,
-                )
+                dep.dep_path
+                    .strip_prefix(&format!("{}@", dep.name))
+                    .unwrap_or(&dep.dep_path)
+                    .to_string()
             };
             let target = graph
                 .packages
@@ -738,10 +778,7 @@ pub fn write_with_project_root(
                 {
                     format!("{real_name}@{value}")
                 } else {
-                    // Registry dep whose value may carry a
-                    // `(git/tarball@hash)` peer suffix — render the suffix
-                    // as the resolved spec (`1.1.4(request@https://…)`).
-                    rewrite_peer_suffix(&value, &peer_suffix_to_spec)
+                    value
                 };
                 let rewritten = decorate_patch_hash(&rewritten, target);
                 (name, rewritten)
@@ -762,10 +799,7 @@ pub fn write_with_project_root(
                 if native_pnpm_aliases && let Some(real_name) = pkg.alias_of.as_deref() {
                     format!("{real_name}@{}", dep_path_tail(dep_path, &pkg.name))
                 } else {
-                    // Registry snapshot key whose `(git/tarball@hash)` peer
-                    // suffix must render as the resolved spec to match pnpm
-                    // (`request-promise-core@1.1.4(request@https://…)`).
-                    rewrite_peer_suffix(dep_path, &peer_suffix_to_spec)
+                    dep_path.clone()
                 }
             }
         };

@@ -914,9 +914,11 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     //      hashed→spec pass. Without it a registry package that peers with
     //      a git/tarball dep would re-key on the next install, busting the
     //      warm path (and emitting a churned lockfile).
-    let spec_peer_to_hashed = |head: &str| -> Option<String> {
-        let (name, value) = parse_dep_path(head)?;
-        crate::shared_local_dep_path(&name, &value)
+    let spec_peer_to_hashed = |reference: &str| -> Option<String> {
+        let (name, value) = parse_dep_path(reference)?;
+        let head = crate::shared_local_dep_path(&name, &value)?;
+        let suffix = reference.find('(').map_or("", |i| &reference[i..]);
+        Some(format!("{head}{suffix}"))
     };
     // Canonicalize a git/remote-tarball package's own `name@<url>` head to
     // the hashed form, preserving any peer suffix verbatim (URLs aube keys
