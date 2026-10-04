@@ -222,6 +222,14 @@ pub fn write_with_project_root(
             })
             .map(String::as_str)
     };
+    // Nested peers are translated before their parent. Index unchanged heads
+    // so an inner URL/patch rewrite cannot hide a contextualized parent's
+    // source or registry alias when no peer-free package entry exists.
+    let peer_packages: BTreeMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|(key, pkg)| (key.split('(').next().unwrap_or(key), pkg))
+        .collect();
     // Translate a peer reference from aube's internal FS-safe
     // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
     // resolved spec pnpm writes inside a peer suffix
@@ -237,7 +245,7 @@ pub fn write_with_project_root(
         let pkg = graph
             .packages
             .get(reference)
-            .or_else(|| graph.packages.get(head));
+            .or_else(|| peer_packages.get(head).copied());
         let translated = match pkg.and_then(|pkg| pkg.local_source.as_ref()) {
             Some(local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_))) => {
                 let (name, _) = parse_dep_path(head)?;
