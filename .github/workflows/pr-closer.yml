@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: pr-closer
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   pr-closer:
@@ -18,4 +18,4 @@ jobs:
       checks: read
       statuses: read
     steps:
-      - uses: jdx/pr-closer@9e82f2808d88b029f0a980696725d7d6d62f3c6f # v1.2.0
+      - uses: jdx/pr-closer@389c3b65873b020f75418c44ccca9987717eaf2f # PR #12 merge
