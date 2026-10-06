@@ -22,8 +22,10 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
-# MPL-2.0 is file-level copyleft; an unmodified dependency adds no obligations
-# beyond keeping its notice. Pulled in by sigstore-trust-root via directories.
+# MPL-2.0 is file-level copyleft. Distributing an executable that contains
+# option-ext, even unmodified, requires making its source available and telling
+# recipients how to obtain it (MPL-2.0 section 3.2); crates.io plus Cargo.lock
+# satisfies that. Pulled in by sigstore-trust-root via directories.
 exceptions = [{ allow = ["MPL-2.0"], crate = "option-ext" }]
 
 [bans]
