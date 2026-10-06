@@ -25,6 +25,9 @@ pkl = "latest"
 rush = "latest"
 shellcheck = "latest"
 shfmt = "latest"
+# Installed on first use (`mise x -- cargo-deny ...`) rather than by a bare
+# `mise install`; CI runs it for the supply-chain checks.
+"cargo:cargo-deny" = { version = "0.20.2", lazy = true, lazy_bins = ["cargo-deny"] }
 
 [wrappers.cargo]
 command = "mbx"

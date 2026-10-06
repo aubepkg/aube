@@ -80,9 +80,6 @@ version = "0.20.2"
 backend = "cargo:cargo-deny"
 specifiers = ["0.20.2"]
 
-[tools."cargo:cargo-deny".options]
-bin = "cargo-deny"
-
 [[tools."cargo:cargo-machete"]]
 version = "0.9.1"
 backend = "cargo:cargo-machete"
