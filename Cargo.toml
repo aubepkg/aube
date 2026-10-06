@@ -144,9 +144,9 @@ smallvec = { version = "1", features = ["serde"] }
 base64 = "0.23"
 
 # Sigstore (provenance attestation on `publish`)
-sigstore-sign = "0.13"
-sigstore-oidc = "0.13"
-sigstore-types = "0.13"
+sigstore-sign = "0.14"
+sigstore-oidc = "0.14"
+sigstore-types = "0.14"
 # Pinned to an exact `0.0.x` because the crate is pre-1.0 and the `0.0`
 # series carries no SemVer compat guarantees — a silent break in OIDC
 # detection would disable provenance on every supported CI.

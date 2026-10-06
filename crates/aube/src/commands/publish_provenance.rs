@@ -58,14 +58,10 @@ pub async fn probe_oidc_available() -> miette::Result<()> {
 /// base64-encoded into the npm publish body.
 ///
 fn tarball_subject(tarball_bytes: &[u8], package_name: &str, package_version: &str) -> Subject {
-    Subject {
-        name: npm_purl(package_name, package_version),
-        digest: Digest {
-            sha256: None,
-            sha512: Some(Sha512Hash::from_bytes(Sha512::digest(tarball_bytes).into())),
-            other: Default::default(),
-        },
-    }
+    Subject::new(
+        npm_purl(package_name, package_version),
+        Digest::sha512(Sha512Hash::new(Sha512::digest(tarball_bytes).into())),
+    )
 }
 
 /// The in-toto subject mirrors what `libnpmpublish` produces so npm's
@@ -83,20 +79,22 @@ pub async fn generate(
     let token = detect_oidc_token().await?;
     let predicate = build_slsa_predicate()?;
 
-    let statement = Statement {
-        type_: "https://in-toto.io/Statement/v1".to_string(),
-        subject: vec![tarball_subject(
+    let statement = Statement::new(
+        vec![tarball_subject(
             tarball_bytes,
             package_name,
             package_version,
         )],
-        predicate_type: SLSA_V1_PREDICATE_TYPE.to_string(),
+        SLSA_V1_PREDICATE_TYPE,
         predicate,
-    };
+    );
     let statement_json = serde_json::to_vec(&statement)
         .map_err(|e| miette!("failed to serialize in-toto statement: {e}"))?;
 
-    let signer = SigningContext::production().signer(token);
+    let signer = SigningContext::production()
+        .await
+        .map_err(|e| miette!("failed to initialize sigstore signing context: {e}"))?
+        .signer(token);
     let bundle = signer
         .sign_raw_statement(&statement_json)
         .await
