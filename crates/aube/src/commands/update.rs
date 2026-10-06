@@ -1237,18 +1237,7 @@ async fn pick_update_interactively(
         }
     }
 
-    // Name the project so a recursive run over many workspace packages
-    // shows which one the picker is acting on. Discussion #1687.
-    let project_label = project_name
-        .map(str::to_string)
-        .or_else(|| cwd.file_name().map(|n| n.to_string_lossy().into_owned()));
-    let title = match project_label {
-        Some(label) => format!(
-            "Choose which dependencies to update in {}",
-            aube_util::terminal::sanitize_inline(&label)
-        ),
-        None => "Choose which dependencies to update".to_string(),
-    };
+    let title = picker_title(project_name, cwd);
     let mut picker = demand::GridSelect::new(title)
         .columns(["Current", "Range", "Latest"])
         .filterable(true);
@@ -1383,6 +1372,22 @@ async fn pick_update_interactively(
         })
         .collect();
     Ok(Some(InteractiveSelection { selected, shown }))
+}
+
+/// Picker title naming the project, so a recursive run over many
+/// workspace packages shows which one it is acting on (discussion #1687).
+/// Falls back to the directory name when `package.json` has no `name`.
+fn picker_title(project_name: Option<&str>, cwd: &std::path::Path) -> String {
+    let label = project_name
+        .map(str::to_string)
+        .or_else(|| cwd.file_name().map(|n| n.to_string_lossy().into_owned()));
+    match label {
+        Some(label) => format!(
+            "Choose which dependencies to update in {}",
+            aube_util::terminal::sanitize_inline(&label)
+        ),
+        None => "Choose which dependencies to update".to_string(),
+    }
 }
 
 fn real_name_from_spec(manifest_key: &str, specifier: Option<&String>) -> String {
@@ -2201,6 +2206,20 @@ fn exact_semver_pin(spec: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_title_names_project_or_falls_back_to_directory() {
+        let dir = std::path::Path::new("/ws/packages/web");
+        assert_eq!(
+            picker_title(Some("@acme/web"), dir),
+            "Choose which dependencies to update in @acme/web"
+        );
+        assert_eq!(
+            picker_title(None, dir),
+            "Choose which dependencies to update in web"
+        );
+        assert!(!picker_title(Some("a\x1b[31mb"), dir).contains('\x1b'));
+    }
 
     #[tokio::test]
     async fn filtered_workspace_update_merges_selected_member_lockfile() {
