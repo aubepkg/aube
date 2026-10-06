@@ -217,6 +217,92 @@ EOF
 	assert_output "linked-tool ran"
 }
 
+@test "aube install removes the bin of a removed link: dep with node-linker=hoisted" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	# Hoisted installs symlink bins. A link: dep's bin goes through its
+	# node_modules entry, so it dangles once the dep is gone and is swept.
+	mkdir -p linked-tool kept-tool app
+	for tool in linked-tool kept-tool; do
+		echo "{\"name\":\"$tool\",\"version\":\"1.0.0\",\"bin\":{\"$tool\":\"cli.js\"}}" >"$tool/package.json"
+		printf '#!/usr/bin/env node\nconsole.log("ran");\n' >"$tool/cli.js"
+	done
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","kept-tool":"link:../kept-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/linked-tool ]
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"kept-tool":"link:../kept-tool"}}
+EOF
+	run aube install
+	assert_success
+	run test -L node_modules/.bin/linked-tool
+	assert_failure
+	[ -e node_modules/.bin/kept-tool ]
+}
+
+@test "aube install removes a symlinked bin a link: dep no longer declares" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/old-cmd ]
+
+	cat >../linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}
+EOF
+	# Change the manifest too, so the install relinks.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/new-cmd ]
+	run test -L node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	echo '{"name":"root","private":true}' >package.json
+	echo 'node-linker=hoisted' >.npmrc
+	cat >packages/tool/package.json <<'EOF'
+{"name":"tool","version":"1.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	cat >packages/app/package.json <<'EOF'
+{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}
+EOF
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/tool ]
+
+	echo '{"name":"app","version":"1.0.0"}' >packages/app/package.json
+	run aube install
+	assert_success
+	run test -L packages/app/node_modules/.bin/tool
+	assert_failure
+}
+
 @test "aube rebuild relinks the bins of a link: dep" {
 	mkdir -p linked-tool app
 	cat >linked-tool/package.json <<'EOF'
