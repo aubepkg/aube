@@ -57,6 +57,17 @@ pub async fn probe_oidc_available() -> miette::Result<()> {
 /// the current CI run. Returns the serialized bundle JSON, ready to be
 /// base64-encoded into the npm publish body.
 ///
+fn tarball_subject(tarball_bytes: &[u8], package_name: &str, package_version: &str) -> Subject {
+    Subject {
+        name: npm_purl(package_name, package_version),
+        digest: Digest {
+            sha256: None,
+            sha512: Some(Sha512Hash::from_bytes(Sha512::digest(tarball_bytes).into())),
+            other: Default::default(),
+        },
+    }
+}
+
 /// The in-toto subject mirrors what `libnpmpublish` produces so npm's
 /// server-side verification accepts it:
 ///   - `name`: a `pkg:npm/<name>@<version>` purl, with `@` in scoped names
@@ -72,18 +83,13 @@ pub async fn generate(
     let token = detect_oidc_token().await?;
     let predicate = build_slsa_predicate()?;
 
-    let sha512 = Sha512Hash::from_bytes(Sha512::digest(tarball_bytes).into());
-
     let statement = Statement {
         type_: "https://in-toto.io/Statement/v1".to_string(),
-        subject: vec![Subject {
-            name: npm_purl(package_name, package_version),
-            digest: Digest {
-                sha256: None,
-                sha512: Some(sha512),
-                other: Default::default(),
-            },
-        }],
+        subject: vec![tarball_subject(
+            tarball_bytes,
+            package_name,
+            package_version,
+        )],
         predicate_type: SLSA_V1_PREDICATE_TYPE.to_string(),
         predicate,
     };
@@ -283,6 +289,20 @@ fn generic_predicate() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subject_digest_is_lowercase_hex_sha512_only() {
+        let subject = tarball_subject(b"abc", "@scope/foo", "1.0.0");
+        assert_eq!(
+            serde_json::to_value(&subject).unwrap(),
+            serde_json::json!({
+                "name": "pkg:npm/%40scope/foo@1.0.0",
+                "digest": {
+                    "sha512": "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+                }
+            })
+        );
+    }
 
     #[test]
     fn purl_plain_package() {
