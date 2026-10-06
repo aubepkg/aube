@@ -22,6 +22,9 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
+# MPL-2.0 is file-level copyleft; an unmodified dependency adds no obligations
+# beyond keeping its notice. Pulled in by sigstore-trust-root via directories.
+exceptions = [{ allow = ["MPL-2.0"], crate = "option-ext" }]
 
 [bans]
 multiple-versions = "allow"
