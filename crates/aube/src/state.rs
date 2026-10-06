@@ -568,6 +568,10 @@ fn check_needs_install_compute(
     None
 }
 
+/// Stored in `package_json_hashes` for a `link:` target that had no
+/// `package.json` at install time.
+const ABSENT_PACKAGE_JSON_HASH: &str = "absent";
+
 fn package_jsons_stale(
     project_dir: &Path,
     state: &FreshnessState,
@@ -579,6 +583,12 @@ fn package_jsons_stale(
         } else {
             project_dir.join(rel)
         };
+        if stored_hash == ABSENT_PACKAGE_JSON_HASH {
+            if path.exists() {
+                return Some(format!("{rel} has appeared"));
+            }
+            continue;
+        }
         if !path.exists() {
             return Some(format!("{rel} is missing"));
         }
@@ -849,7 +859,7 @@ pub struct WriteStateInput<'a> {
 pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(), std::io::Error> {
     let WriteStateInput {
         section_filtered,
-        package_json_hashes,
+        mut package_json_hashes,
         cli_flags,
         package_content_hashes,
         graph_lthash,
@@ -872,6 +882,24 @@ pub fn write_state(project_dir: &Path, input: WriteStateInput<'_>) -> Result<(),
         snapshot_active_lockfile(project_dir, &state_path)?;
     let settings_hash = hash_settings(project_dir, cli_flags);
     let install_layout = InstallLayoutState::from_graph(project_dir, &layout)?;
+    // A `link:` dep's manifest names the commands install links into its
+    // dependents' `.bin`, so an edit to its install shape busts the warm
+    // path like a workspace member's would. A target with no manifest yet
+    // is recorded as absent, so one created later busts it too.
+    for pkg in layout.graph.packages.values() {
+        if let Some(aube_lockfile::LocalSource::Link(rel)) = pkg.local_source.as_ref() {
+            let pkg_json = project_dir.join(rel).join("package.json");
+            package_json_hashes
+                .entry(relative_path_or_original(&pkg_json, project_dir))
+                .or_insert_with(|| {
+                    if pkg_json.is_file() {
+                        hash_file(&pkg_json)
+                    } else {
+                        ABSENT_PACKAGE_JSON_HASH.to_string()
+                    }
+                });
+        }
+    }
 
     let package_json_shape_digests: BTreeMap<String, String> = package_json_hashes
         .keys()
