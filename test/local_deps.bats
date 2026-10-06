@@ -465,6 +465,47 @@ EOF
 	assert_failure
 }
 
+@test "a dependency's build can run the bin of a link: dep it declares" {
+	# The dep's own .bin, which its lifecycle scripts get on PATH, held
+	# the bins of its registry and file: deps but skipped its link: ones.
+	mkdir -p app/vendor/builder app/vendor/linked-tool
+	cat >app/vendor/linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nrequire("fs").writeFileSync("linked-tool-ran", "");\n' >app/vendor/linked-tool/cli.js
+	cat >app/vendor/builder/package.json <<'EOF'
+{"name":"builder","version":"1.0.0","dependencies":{"linked-tool":"link:../linked-tool"},"scripts":{"postinstall":"linked-tool"}}
+EOF
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"builder":"file:./vendor/builder"},"pnpm":{"allowBuilds":{"builder@file:./vendor/builder":true}}}
+EOF
+
+	run aube install
+	assert_success
+	run find node_modules/.aube -name linked-tool-ran
+	assert_output --partial "linked-tool-ran"
+}
+
+@test "a dependency's build can run the bin of a link: dep it declares (hoisted)" {
+	mkdir -p app/vendor/builder app/vendor/linked-tool
+	cat >app/vendor/linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nrequire("fs").writeFileSync("linked-tool-ran", "");\n' >app/vendor/linked-tool/cli.js
+	cat >app/vendor/builder/package.json <<'EOF'
+{"name":"builder","version":"1.0.0","dependencies":{"linked-tool":"link:../linked-tool"},"scripts":{"postinstall":"linked-tool"}}
+EOF
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"builder":"file:./vendor/builder"},"pnpm":{"allowBuilds":{"builder@file:./vendor/builder":true}}}
+EOF
+
+	run aube install --node-linker=hoisted
+	assert_success
+	assert_file_exist node_modules/builder/linked-tool-ran
+}
+
 @test "aube rebuild relinks the bins of a link: dep" {
 	mkdir -p linked-tool app
 	cat >linked-tool/package.json <<'EOF'

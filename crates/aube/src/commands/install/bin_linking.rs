@@ -528,6 +528,7 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
             preserved,
         );
     }
+    let mut link_cache = DirPkgJsonCache::new();
     for (dep_path, pkg) in &graph.packages {
         if pkg.dependencies.is_empty() {
             continue;
@@ -560,6 +561,20 @@ pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
             // dep_path is a graph artefact, not a real edge.
             let child_dep_path = format!("{child_name}@{child_version}");
             if child_dep_path == *dep_path && child_name == &pkg.name {
+                continue;
+            }
+            // A `link:` child isn't in the virtual store, so its bins come
+            // from its target, as for an importer's own `link:` deps.
+            if let Some((dir, on_error)) =
+                unmaterialized_bin_source(graph, &child_dep_path, child_name, project_dir, None)
+            {
+                if let Some(pkg_json) =
+                    read_bin_manifest(&mut link_cache, &dir, child_name, on_error)?
+                {
+                    link_bins_from_dir(
+                        &bin_dir, &dir, child_name, &pkg_json, shim_opts, managed, preserved,
+                    )?;
+                }
                 continue;
             }
             // The sibling may have been filtered (optional on another
