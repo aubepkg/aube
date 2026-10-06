@@ -33,8 +33,8 @@ pub use patches::Patches;
 pub(crate) use patches::apply_multi_file_patch;
 pub use pool::default_linker_parallelism;
 pub use sweep::{
-    dedupe_skips_member_link, is_physical_importer, mkdirp, remove_dir_all_with_retry,
-    sweep_stale_tmp_dirs,
+    dedupe_skips_member_link, is_physical_importer, mkdirp, relocated_importer_dir,
+    remove_dir_all_with_retry, sweep_stale_tmp_dirs,
 };
 pub(crate) use sweep::{sweep_stale_top_level_entries, try_remove_entry};
 pub use sys::{

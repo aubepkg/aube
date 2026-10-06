@@ -1,7 +1,7 @@
 use crate::Error;
 use aube_lockfile::DirectDep;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Sweep orphan `.tmp-<pid>-*` directories in the virtual store.
 ///
@@ -104,6 +104,28 @@ pub fn remove_dir_all_with_retry(path: &Path) -> std::io::Result<()> {
 /// importer's task, producing EEXIST races on large monorepos.
 pub fn is_physical_importer(importer_path: &str) -> bool {
     importer_path == "." || !importer_path.contains("/node_modules/")
+}
+
+/// Where workspace member `importer_path` really is when that differs
+/// from the path the workspace names it by, because the member, or a
+/// directory between it and `root_dir`, is a symlink. Node resolves a
+/// member's dependencies from this real location, so links in its
+/// `node_modules` have to be relative to it, and it never walks up into
+/// the root's `node_modules` unless that location is inside the root.
+///
+/// The result has no Windows `\\?\` prefix, so it compares with, and
+/// round-trips through state like, the paths the rest of an install uses.
+pub fn relocated_importer_dir(root_dir: &Path, importer_path: &str) -> Option<PathBuf> {
+    if importer_path == "." {
+        return None;
+    }
+    let canonicalize = |path: &Path| {
+        std::fs::canonicalize(path).map(|p| aube_util::path::strip_verbatim_prefix(&p))
+    };
+    let real = canonicalize(&root_dir.join(importer_path)).ok()?;
+    let named =
+        aube_util::path::normalize_lexical(&canonicalize(root_dir).ok()?.join(importer_path));
+    (real != named).then_some(real)
 }
 
 /// Whether `dedupeDirectDeps` leaves out workspace member `importer_path`'s
@@ -666,6 +688,26 @@ mod tests {
             dep_type: DepType::Production,
             specifier: None,
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_member_behind_a_symlink_is_relocated_to_its_real_dir() {
+        use super::relocated_importer_dir;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("ws");
+        let outside = dir.path().join("outside/app");
+        std::fs::create_dir_all(root.join("packages/inside")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink("../../outside/app", root.join("packages/app")).unwrap();
+
+        assert_eq!(
+            relocated_importer_dir(&root, "packages/app"),
+            Some(std::fs::canonicalize(&outside).unwrap())
+        );
+        assert_eq!(relocated_importer_dir(&root, "packages/inside"), None);
+        assert_eq!(relocated_importer_dir(&root, "."), None);
+        assert_eq!(relocated_importer_dir(&root, "packages/missing"), None);
     }
 
     #[test]

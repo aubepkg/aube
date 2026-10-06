@@ -89,7 +89,9 @@ impl HoistedPlacements {
             let importer_dir = if importer_path == "." {
                 root_dir.to_path_buf()
             } else {
-                aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                crate::relocated_importer_dir(root_dir, importer_path).unwrap_or_else(|| {
+                    aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                })
             };
             importers.push(HoistedWorkspaceImporter {
                 modules_dir: importer_dir.join(modules_dir_name),
@@ -599,9 +601,11 @@ fn complete_plan(
         if matches!(pkg.local_source.as_ref(), Some(LocalSource::Link(_))) {
             continue;
         }
+        // Under `hoistingLimits=none` an importer's floor is already the
+        // workspace root when Node can walk up to it. A member outside
+        // the root keeps its own floor, which its transitives inherit.
         let child_floor = match hoisting_limits {
-            HoistingLimits::None => plan.root_idx,
-            HoistingLimits::Workspaces => floor,
+            HoistingLimits::None | HoistingLimits::Workspaces => floor,
             HoistingLimits::Dependencies => outcome.node_idx,
         };
         for (dep_name, dep_tail) in &pkg.dependencies {
@@ -910,6 +914,31 @@ mod tests {
                 PathBuf::from("/project/packages/app/node_modules/shared"),
                 PathBuf::from("/project/packages/lib/node_modules/shared"),
             ]
+        );
+    }
+
+    #[test]
+    fn a_member_outside_the_root_keeps_its_transitives_under_hoisting_limits_none() {
+        // Node never walks from `/sibling` into `/project/node_modules`, so
+        // the member's whole subtree has to land in its own `node_modules`.
+        let root_nm = PathBuf::from("/project/node_modules");
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "parent@1.0.0".into(),
+            pkg("parent", "1.0.0", &[("child", "1.0.0")]),
+        );
+        graph
+            .packages
+            .insert("child@1.0.0".into(), pkg("child", "1.0.0", &[]));
+        let importers = vec![HoistedWorkspaceImporter {
+            modules_dir: PathBuf::from("/sibling/node_modules"),
+            dependencies: vec![dep("parent", "parent@1.0.0")],
+        }];
+
+        let plan = plan_workspace(&root_nm, &importers, &graph, HoistingLimits::None).unwrap();
+        assert_eq!(
+            package_dirs(&plan, "child@1.0.0"),
+            vec![PathBuf::from("/sibling/node_modules/child")]
         );
     }
 

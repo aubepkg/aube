@@ -2251,3 +2251,113 @@ fn test_recorded_gvs_dep_link_targets_match_disk() {
         std::fs::remove_dir_all(project_dir.join("node_modules")).unwrap();
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_relative_root_links_a_member_behind_a_symlink_from_where_it_really_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("ws");
+    std::fs::create_dir_all(project_dir.join("packages")).unwrap();
+    std::fs::create_dir_all(dir.path().join("outside/app")).unwrap();
+    std::os::unix::fs::symlink("../../outside/app", project_dir.join("packages/app")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let cwd = std::env::current_dir().unwrap();
+    let relative_root = pathdiff::diff_paths(&project_dir, &cwd).unwrap();
+    assert!(relative_root.is_relative());
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_workspace(&relative_root, &graph, &indices, &BTreeMap::new())
+        .unwrap();
+
+    assert!(
+        dir.path()
+            .join("outside/app/node_modules/foo/index.js")
+            .exists()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_verbatim_root_links_a_member_behind_a_junction_from_where_it_really_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("ws");
+    std::fs::create_dir_all(project_dir.join("packages")).unwrap();
+    std::fs::create_dir_all(dir.path().join("outside/app")).unwrap();
+    junction::create(
+        dir.path().join("outside/app"),
+        project_dir.join("packages/app"),
+    )
+    .unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    // `std::fs::canonicalize` returns a `\?\` path, the same form as
+    // the member's real location.
+    let verbatim_root = std::fs::canonicalize(&project_dir).unwrap();
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_workspace(&verbatim_root, &graph, &indices, &BTreeMap::new())
+        .unwrap();
+
+    assert!(
+        dir.path()
+            .join("outside/app/node_modules/foo/index.js")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn relative_workspace_dirs_link_a_member_behind_a_symlink_to_its_sibling() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("ws");
+    std::fs::create_dir_all(project_dir.join("packages/sib")).unwrap();
+    std::fs::write(project_dir.join("packages/sib/package.json"), b"{}").unwrap();
+    std::fs::create_dir_all(dir.path().join("outside/app")).unwrap();
+    std::os::unix::fs::symlink("../../outside/app", project_dir.join("packages/app")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "sib".to_string(),
+            dep_path: "sib@link:../sib".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let cwd = std::env::current_dir().unwrap();
+    let relative_root = pathdiff::diff_paths(&project_dir, &cwd).unwrap();
+    let workspace_dirs = BTreeMap::from([("sib".to_string(), relative_root.join("packages/sib"))]);
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_workspace(&relative_root, &graph, &indices, &workspace_dirs)
+        .unwrap();
+
+    assert!(
+        dir.path()
+            .join("outside/app/node_modules/sib/package.json")
+            .exists()
+    );
+}
