@@ -28,7 +28,7 @@ use miette::{IntoDiagnostic, miette};
 use sha2::{Digest as _, Sha512};
 use sigstore_oidc::IdentityToken;
 use sigstore_sign::SigningContext;
-use sigstore_types::{Digest, Statement, Subject};
+use sigstore_types::{Digest, Sha512Hash, Statement, Subject};
 
 /// Predicate type for SLSA v1 provenance. The Sigstore bundle the registry
 /// surfaces in the npm UI only lights up as "provenance" when this exact URI
@@ -72,7 +72,7 @@ pub async fn generate(
     let token = detect_oidc_token().await?;
     let predicate = build_slsa_predicate()?;
 
-    let sha512_hex = hex::encode(Sha512::digest(tarball_bytes));
+    let sha512 = Sha512Hash::from_bytes(Sha512::digest(tarball_bytes).into());
 
     let statement = Statement {
         type_: "https://in-toto.io/Statement/v1".to_string(),
@@ -80,7 +80,8 @@ pub async fn generate(
             name: npm_purl(package_name, package_version),
             digest: Digest {
                 sha256: None,
-                sha512: Some(sha512_hex),
+                sha512: Some(sha512),
+                other: Default::default(),
             },
         }],
         predicate_type: SLSA_V1_PREDICATE_TYPE.to_string(),
