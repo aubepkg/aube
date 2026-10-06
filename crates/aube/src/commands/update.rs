@@ -519,6 +519,7 @@ async fn run_inner(
                 &existing_importers,
                 &preserve_pin,
                 &cwd,
+                manifest.name.as_deref(),
                 &latest_keys,
                 no_save,
                 args.exact,
@@ -1147,6 +1148,7 @@ async fn pick_update_interactively(
     existing_importers: &[&str],
     preserve_pin: &BTreeSet<String>,
     cwd: &std::path::Path,
+    project_name: Option<&str>,
     latest_keys: &BTreeSet<String>,
     no_save: bool,
     exact: bool,
@@ -1235,7 +1237,19 @@ async fn pick_update_interactively(
         }
     }
 
-    let mut picker = demand::GridSelect::new("Choose which dependencies to update")
+    // Name the project so a recursive run over many workspace packages
+    // shows which one the picker is acting on. Discussion #1687.
+    let project_label = project_name
+        .map(str::to_string)
+        .or_else(|| cwd.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let title = match project_label {
+        Some(label) => format!(
+            "Choose which dependencies to update in {}",
+            aube_util::terminal::sanitize_inline(&label)
+        ),
+        None => "Choose which dependencies to update".to_string(),
+    };
+    let mut picker = demand::GridSelect::new(title)
         .columns(["Current", "Range", "Latest"])
         .filterable(true);
     let mut shown = BTreeSet::new();
