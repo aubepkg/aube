@@ -270,9 +270,9 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "sigstore-oidc",
+ "sigstore-oidc 0.11.0",
  "sigstore-sign",
- "sigstore-types",
+ "sigstore-types 0.11.0",
  "spdx",
  "strum",
  "tar",
@@ -935,18 +935,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmpv2"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "961b955a666e25ee5a1091d219128d6e6401e3dab84efb1a2bf6b4035d797b39"
-dependencies = [
- "crmf",
- "der",
- "spki",
- "x509-cert",
-]
-
-[[package]]
 name = "cms"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1141,18 +1129,6 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
-
-[[package]]
-name = "crmf"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36fe21b96d5b87f5de4b5b7202ec41c00110ac817ce6728fe75fb2fe5962ed92"
-dependencies = [
- "cms",
- "der",
- "spki",
- "x509-cert",
-]
 
 [[package]]
 name = "crossbeam-channel"
@@ -1565,7 +1541,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2513,7 +2489,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "160f2eade097f30263b548aae5deb12ad349c909baa710fa24b92c9090b2e006"
 dependencies = [
  "scopeguard",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2931,7 +2907,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3044,7 +3020,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3402,7 +3378,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3819,7 +3795,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3877,7 +3853,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4216,18 +4192,13 @@ dependencies = [
 
 [[package]]
 name = "sigstore-bundle"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5948e95f63e900fa92936ecf72c7f2251f83d27560a35a4aae560cc745f8b687"
+checksum = "fdfc7d1d7153a66aa44e4186b94a5b885e913f1272f9f71f113650a3716db48c"
 dependencies = [
- "base64 0.22.1",
- "hex",
- "serde",
+ "jiff",
  "serde_json",
- "sigstore-crypto",
- "sigstore-rekor",
- "sigstore-tsa",
- "sigstore-types",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
 ]
 
@@ -4246,7 +4217,7 @@ dependencies = [
  "rand_core 0.9.5",
  "sha2 0.10.9",
  "signature",
- "sigstore-types",
+ "sigstore-types 0.11.0",
  "spki",
  "thiserror 2.0.20",
  "tracing",
@@ -4254,32 +4225,47 @@ dependencies = [
 ]
 
 [[package]]
-name = "sigstore-fulcio"
-version = "0.11.0"
+name = "sigstore-crypto"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "823d3f43c29500feb1ccacec68552f8e2bcecd62ec99c5284570a623bcf0c921"
+checksum = "3bb8229862d1cc4e986eb51ee9054e7fe5bceb2dd0638da7f6d1ef87a73a3b66"
 dependencies = [
+ "aws-lc-rs",
  "base64 0.22.1",
+ "const-oid 0.9.6",
+ "der",
+ "futures-io",
+ "jiff",
+ "sigstore-types 0.13.0",
+ "spki",
+ "thiserror 2.0.20",
+ "x509-cert",
+]
+
+[[package]]
+name = "sigstore-fulcio"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbf313520b129050f61801284600d938c7ac34ce280d596816e832cadc3f5ab6"
+dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sigstore-crypto",
- "sigstore-oidc",
- "sigstore-types",
+ "sigstore-crypto 0.13.0",
+ "sigstore-oidc 0.13.0",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
- "url",
 ]
 
 [[package]]
 name = "sigstore-merkle"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ee85fd9fb550efd7c8a59447cb0ef4eb02f1258f3ffa80c88d38427c3930af3"
+checksum = "f6744fa0877cd2263da94bcb7bf379f9ea2b70d9c3c3807acfae21a00567d544"
 dependencies = [
  "base64 0.22.1",
- "hex",
- "sigstore-crypto",
- "sigstore-types",
+ "sigstore-crypto 0.13.0",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
 ]
 
@@ -4296,8 +4282,27 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sigstore-crypto",
- "sigstore-types",
+ "sigstore-crypto 0.11.0",
+ "sigstore-types 0.11.0",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "sigstore-oidc"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b8c0e5af46a82056e2e0f5a7fee895291389e60711fb2e11fd9e3bd74c03756"
+dependencies = [
+ "ambient-id",
+ "base64 0.22.1",
+ "open",
+ "rand 0.9.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sigstore-crypto 0.13.0",
  "thiserror 2.0.20",
  "tokio",
  "url",
@@ -4305,47 +4310,45 @@ dependencies = [
 
 [[package]]
 name = "sigstore-rekor"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b97c5a866f849a9445ae657bef0caa2db053a82827e6dae3a2b3de9c15a6a1a"
+checksum = "f78b0e9b0c2fe6b7f4d8002aaad4e9584e1ed355ac25392262b5d66d0005a7f2"
 dependencies = [
  "base64 0.22.1",
- "hex",
+ "jiff",
  "reqwest",
  "serde",
  "serde_json",
- "sigstore-crypto",
  "sigstore-merkle",
- "sigstore-types",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
- "url",
 ]
 
 [[package]]
 name = "sigstore-sign"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df33672126088b7fa9d5827e79fe0cd87eda607efa0d28c1366e61bbb47f423a"
+checksum = "a8b86931cb5d0e2a6a7511ec874116cf46ca9771bb23d6e53df5928249661af7"
 dependencies = [
  "base64 0.22.1",
+ "futures-io",
  "serde_json",
  "sigstore-bundle",
- "sigstore-crypto",
+ "sigstore-crypto 0.13.0",
  "sigstore-fulcio",
- "sigstore-oidc",
+ "sigstore-oidc 0.13.0",
  "sigstore-rekor",
  "sigstore-trust-root",
  "sigstore-tsa",
- "sigstore-types",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
- "x509-cert",
 ]
 
 [[package]]
 name = "sigstore-trust-root"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389b54d1b8ace20ba86fdf90e5e655495f65f1abbc7d5d0eb7494defa9ad32f0"
+checksum = "4f9a9ca6e6d9bcd9f404c3df7d51011aff2e09dae4db6833ed0ecaaabfa2c449"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -4353,22 +4356,20 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
- "sigstore-crypto",
+ "sigstore-crypto 0.13.0",
  "sigstore-tuf",
- "sigstore-types",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
- "x509-cert",
 ]
 
 [[package]]
 name = "sigstore-tsa"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b58fe92d4d8cf4b7215b927b70bc1245b6e0d70d801febdfe0cd265ad97ebf8b"
+checksum = "d3dc4eb40be935c5085da92104935a1771106a7f65235512293ed3de39c1e9e4"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
- "cmpv2",
  "cms",
  "const-oid 0.9.6",
  "der",
@@ -4378,32 +4379,30 @@ dependencies = [
  "reqwest",
  "rustls-pki-types",
  "rustls-webpki",
- "sigstore-crypto",
- "sigstore-types",
+ "sigstore-crypto 0.13.0",
+ "sigstore-types 0.13.0",
  "thiserror 2.0.20",
  "tracing",
  "x509-cert",
- "x509-tsp",
 ]
 
 [[package]]
 name = "sigstore-tuf"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eedac50883a917b7b434db22e2e6e853ace8c00f4a9c27f53e1e9c87e6d89fe4"
+checksum = "2902a77bd12df5e0469636fbccb3f50eb0bf511bd9b57014c7fe051a13bd7199"
 dependencies = [
- "globset",
+ "glob",
  "hex",
  "jiff",
  "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "sigstore-crypto",
- "sigstore-types",
+ "sigstore-crypto 0.13.0",
+ "sigstore-types 0.13.0",
  "tempfile",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "url",
 ]
@@ -4416,6 +4415,21 @@ checksum = "236474c535a3157839926a0ae18f9c0c22b151e49634da6e5b18ad7cac8a3b69"
 dependencies = [
  "base64 0.22.1",
  "hex",
+ "pem",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "sigstore-types"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d7923fbebe27bf733e5cc2d08e677a006790bd58fdaaa1e063bae9542078008"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "jiff",
  "pem",
  "serde",
  "serde_json",
@@ -4697,10 +4711,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4728,7 +4742,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5504,7 +5518,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5962,17 +5976,6 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.20",
  "time",
-]
-
-[[package]]
-name = "x509-tsp"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5ceece934a21607055b7ac5c25adb56a2ff559804b10705dc674d1d838c15e1"
-dependencies = [
- "cmpv2",
- "cms",
- "der",
 ]
 
 [[package]]
