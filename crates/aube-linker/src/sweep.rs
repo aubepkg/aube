@@ -1,4 +1,6 @@
 use crate::Error;
+use aube_lockfile::DirectDep;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Sweep orphan `.tmp-<pid>-*` directories in the virtual store.
@@ -102,6 +104,43 @@ pub fn remove_dir_all_with_retry(path: &Path) -> std::io::Result<()> {
 /// importer's task, producing EEXIST races on large monorepos.
 pub fn is_physical_importer(importer_path: &str) -> bool {
     importer_path == "." || !importer_path.contains("/node_modules/")
+}
+
+/// Whether `dedupeDirectDeps` leaves out workspace member `importer_path`'s
+/// link to `dep`, because Node walking up from the member reaches the
+/// root's identical link first. That holds only for a member inside the
+/// root (Node never walks from `../sibling` into the root's
+/// `node_modules`) and when no importer in between links a different
+/// version of `dep`, which Node would find before the root's.
+pub fn dedupe_skips_member_link(
+    importers: &BTreeMap<String, Vec<DirectDep>>,
+    importer_path: &str,
+    dep: &DirectDep,
+) -> bool {
+    let declares_other_version = |importer: &str| {
+        importers.get(importer).is_some_and(|deps| {
+            deps.iter()
+                .any(|d| d.name == dep.name && d.dep_path != dep.dep_path)
+        })
+    };
+    importer_resolves_through_root(importer_path)
+        && importers.get(".").is_some_and(|root| {
+            root.iter()
+                .any(|d| d.name == dep.name && d.dep_path == dep.dep_path)
+        })
+        && !Path::new(importer_path)
+            .ancestors()
+            .skip(1)
+            .filter_map(Path::to_str)
+            .filter(|ancestor| !ancestor.is_empty())
+            .any(declares_other_version)
+}
+
+fn importer_resolves_through_root(importer_path: &str) -> bool {
+    importer_path != "."
+        && !Path::new(importer_path)
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
 }
 
 /// Wipe `path` when it looks like a linker-managed `.aube/node_modules`
@@ -465,7 +504,54 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::is_physical_importer;
+    use super::{dedupe_skips_member_link, importer_resolves_through_root, is_physical_importer};
+    use aube_lockfile::{DepType, DirectDep};
+    use std::collections::BTreeMap;
+
+    fn dep(dep_path: &str) -> DirectDep {
+        DirectDep {
+            name: "is-odd".to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }
+    }
+
+    #[test]
+    fn only_members_inside_the_root_resolve_through_it() {
+        assert!(importer_resolves_through_root("packages/app"));
+        assert!(!importer_resolves_through_root("."));
+        assert!(!importer_resolves_through_root("../sibling"));
+        assert!(!importer_resolves_through_root("packages/../../elsewhere"));
+    }
+
+    #[test]
+    fn dedupe_keeps_a_member_link_an_importer_in_between_would_shadow() {
+        let importers = BTreeMap::from([
+            (".".to_string(), vec![dep("is-odd@3.0.1")]),
+            ("packages/outer".to_string(), vec![dep("is-odd@3.0.0")]),
+            (
+                "packages/outer/inner".to_string(),
+                vec![dep("is-odd@3.0.1")],
+            ),
+            ("packages/other".to_string(), vec![dep("is-odd@3.0.1")]),
+            (
+                "packages/other/inner".to_string(),
+                vec![dep("is-odd@3.0.1")],
+            ),
+        ]);
+        let skips = |importer: &str, dep_path: &str| {
+            dedupe_skips_member_link(&importers, importer, &dep(dep_path))
+        };
+        // `packages/outer` links 3.0.0, which Node would find first.
+        assert!(!skips("packages/outer/inner", "is-odd@3.0.1"));
+        assert!(!skips("packages/outer", "is-odd@3.0.0"));
+        // An importer in between with the root's version links nothing
+        // that differs from it.
+        assert!(skips("packages/other/inner", "is-odd@3.0.1"));
+        assert!(skips("packages/other", "is-odd@3.0.1"));
+        assert!(!skips(".", "is-odd@3.0.1"));
+    }
 
     #[test]
     fn root_is_physical() {

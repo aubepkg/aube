@@ -1186,24 +1186,6 @@ impl Linker {
             return Ok(stats);
         }
 
-        // Precompute root importer's direct deps keyed by name so the
-        // per-importer loop below can short-circuit on `dedupeDirectDeps`
-        // without walking the root's dep list for every child entry.
-        // Empty when the root has no direct deps (lockfile-only workspaces)
-        // or when `dedupeDirectDeps=false` — skipping the build on the
-        // common path avoids an allocation the per-dep check would
-        // never consult.
-        let root_deps_by_name: std::collections::HashMap<&str, &aube_lockfile::DirectDep> =
-            if self.dedupe_direct_deps {
-                graph
-                    .importers
-                    .get(".")
-                    .map(|deps| deps.iter().map(|d| (d.name.as_str(), d)).collect())
-                    .unwrap_or_default()
-            } else {
-                std::collections::HashMap::new()
-            };
-
         // Step 2a: Per-importer setup — ensure each importer's
         // `node_modules/` exists and sweep entries no longer in that
         // importer's direct deps. Cheap serial work (workspace
@@ -1314,12 +1296,26 @@ impl Linker {
 
                     // `dedupeDirectDeps`: non-root importer dep
                     // already covered by the root symlink +
-                    // parent-directory walk.
+                    // parent-directory walk. A link the member kept
+                    // from an earlier, different version would shadow
+                    // the root's, so clear it.
                     if self.dedupe_direct_deps
-                        && *importer_path != "."
-                        && let Some(root_dep) = root_deps_by_name.get(dep.name.as_str())
-                        && root_dep.dep_path == dep.dep_path
+                        && crate::dedupe_skips_member_link(&graph.importers, importer_path, dep)
                     {
+                        crate::validate_package_link_name(&dep.name)?;
+                        let link_path = nm.join(&dep.name);
+                        try_remove_entry(&link_path);
+                        // Nothing recreates it, and install state tracks
+                        // only the root's link, so a survivor would go
+                        // unnoticed.
+                        if link_path.symlink_metadata().is_ok() {
+                            return Err(Error::Io(
+                                link_path,
+                                std::io::Error::other(
+                                    "failed to remove a dependency link that dedupeDirectDeps replaces with the root's",
+                                ),
+                            ));
+                        }
                         return Ok(false);
                     }
 
