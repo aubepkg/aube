@@ -92,9 +92,9 @@ specifiers = ["0.19.3"]
 bin = "cargo-msrv"
 
 [[tools."cargo:cargo-semver-checks"]]
-version = "0.49.0"
+version = "0.51.0"
 backend = "cargo:cargo-semver-checks"
-specifiers = ["0.49.0"]
+specifiers = ["0.51.0"]
 
 [tools."cargo:cargo-semver-checks".options]
 bin = "cargo-semver-checks"
