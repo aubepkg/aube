@@ -180,21 +180,22 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             Err(_) => true,
         }
         && matches!(
-            parsed,
-            Ok((g, k))
-                if matches!(
-                    g.check_drift_workspace_for_kind(
-                        &with_npm_local_importer_manifests(g, k, lockfile_dir, manifests, is_workspace_project),
-                        &ws_config.overrides,
-                        &ws_config.ignored_optional_dependencies,
-                        workspace_catalogs,
-                        is_workspace_project,
-                        k,
-                    ),
-                    DriftStatus::Fresh,
-                )
-                    && matches!(g.check_catalogs_drift(workspace_catalogs), DriftStatus::Fresh)
-        );
+                    parsed,
+                    Ok((g, k))
+                        if matches!(
+                            g.check_drift_workspace_with_local_targets_for_kind(
+        manifests,
+        &npm_local_target_manifests(g, k, lockfile_dir, manifests, is_workspace_project),
+                                &ws_config.overrides,
+                                &ws_config.ignored_optional_dependencies,
+                                workspace_catalogs,
+                                is_workspace_project,
+                                k,
+                            ),
+                            DriftStatus::Fresh,
+                        )
+                            && matches!(g.check_catalogs_drift(workspace_catalogs), DriftStatus::Fresh)
+                );
     if fresh {
         tracing::debug!("--lockfile-only: lockfile already up to date");
         if let Some(p) = prog_ref {
@@ -471,20 +472,23 @@ pub(super) fn select_lockfile_result(
                          help: run without --frozen-lockfile to update the lockfile"
                     ));
                 }
-                if let DriftStatus::Stale { reason } = graph.check_drift_workspace_for_kind(
-                    &with_npm_local_importer_manifests(
-                        graph,
-                        kind,
-                        lockfile_dir,
+                if let DriftStatus::Stale { reason } = graph
+                    .check_drift_workspace_with_local_targets_for_kind(
                         manifests,
+                        &npm_local_target_manifests(
+                            graph,
+                            kind,
+                            lockfile_dir,
+                            manifests,
+                            is_workspace_project,
+                        ),
+                        &ws_config.overrides,
+                        &ws_config.ignored_optional_dependencies,
+                        workspace_catalogs,
                         is_workspace_project,
-                    ),
-                    &ws_config.overrides,
-                    &ws_config.ignored_optional_dependencies,
-                    workspace_catalogs,
-                    is_workspace_project,
-                    kind,
-                ) {
+                        kind,
+                    )
+                {
                     return Err(miette!(
                         "lockfile is out of date with package.json: {reason}\n\
                          help: run without --frozen-lockfile to update the lockfile, \
@@ -519,8 +523,9 @@ pub(super) fn select_lockfile_result(
                         );
                         Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
                     } else {
-                        match graph.check_drift_workspace_for_kind(
-                            &with_npm_local_importer_manifests(
+                        match graph.check_drift_workspace_with_local_targets_for_kind(
+                            manifests,
+                            &npm_local_target_manifests(
                                 graph,
                                 *kind,
                                 lockfile_dir,
@@ -547,36 +552,34 @@ pub(super) fn select_lockfile_result(
     }
 }
 
-/// `manifests` plus, for an npm lockfile in a workspace, the `package.json`
-/// of each `file:`/`link:` target the lockfile records as an importer
-/// under a project, so the drift check treats those importers as part of
-/// the workspace and compares their dependencies too, as `npm ci` does.
-/// A target whose `package.json` can't be read is left out, and so
+/// For an npm lockfile in a workspace, the `package.json` of each
+/// `file:`/`link:` target the lockfile records as an importer under a
+/// project, so the drift check treats those importers as part of the
+/// workspace and compares their dependencies too, as `npm ci` does. A
+/// target whose `package.json` can't be read is left out, and so
 /// reported as no longer in the workspace.
-fn with_npm_local_importer_manifests<'a>(
+fn npm_local_target_manifests(
     graph: &LockfileGraph,
     kind: LockfileKind,
     lockfile_dir: &Path,
-    manifests: &'a [(String, aube_manifest::PackageJson)],
+    manifests: &[(String, aube_manifest::PackageJson)],
     is_workspace_project: bool,
-) -> std::borrow::Cow<'a, [(String, aube_manifest::PackageJson)]> {
+) -> Vec<(String, aube_manifest::PackageJson)> {
     if !is_workspace_project || !matches!(kind, LockfileKind::Npm | LockfileKind::NpmShrinkwrap) {
-        return std::borrow::Cow::Borrowed(manifests);
+        return Vec::new();
     }
     let projects: Vec<&str> = manifests.iter().map(|(path, _)| path.as_str()).collect();
-    let targets = graph.npm_local_importers(&projects);
-    if targets.is_empty() {
-        return std::borrow::Cow::Borrowed(manifests);
-    }
-    let mut all = manifests.to_vec();
-    all.extend(targets.into_iter().filter_map(|importer| {
-        let manifest = aube_manifest::PackageJson::from_path(
-            &lockfile_dir.join(&importer).join("package.json"),
-        )
-        .ok()?;
-        Some((importer, manifest))
-    }));
-    std::borrow::Cow::Owned(all)
+    graph
+        .npm_local_importers(&projects)
+        .into_iter()
+        .filter_map(|importer| {
+            let manifest = aube_manifest::PackageJson::from_path(
+                &lockfile_dir.join(&importer).join("package.json"),
+            )
+            .ok()?;
+            Some((importer, manifest))
+        })
+        .collect()
 }
 
 pub(crate) fn check_patch_drift(

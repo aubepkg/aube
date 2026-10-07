@@ -2483,9 +2483,11 @@ fn test_drift_checks_file_dep_importers_of_workspace_members() {
         r#"{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}"#,
     )
     .unwrap();
-    let check = |manifests: &[(String, aube_manifest::PackageJson)]| {
-        graph.check_drift_workspace_for_kind(
-            manifests,
+    let members = [(".".to_string(), root), ("packages/app".to_string(), app)];
+    let check = |targets: &[(String, aube_manifest::PackageJson)]| {
+        graph.check_drift_workspace_with_local_targets_for_kind(
+            &members,
+            targets,
             &BTreeMap::new(),
             &[],
             &BTreeMap::new(),
@@ -2494,8 +2496,7 @@ fn test_drift_checks_file_dep_importers_of_workspace_members() {
         )
     };
 
-    // The caller adds the reachable `file:` targets' manifests, as it reads
-    // them from disk.
+    // The install reads the reachable `file:` targets' manifests from disk.
     assert_eq!(
         graph.npm_local_importers(&[".", "packages/app"]),
         ["packages/app/vendor/x", "packages/app/vendor/y"]
@@ -2503,35 +2504,31 @@ fn test_drift_checks_file_dep_importers_of_workspace_members() {
             .map(str::to_string)
             .collect()
     );
-    let x = |deps: &str| -> aube_manifest::PackageJson {
-        serde_json::from_str(&format!(
-            r#"{{"name":"x","version":"1.0.0","dependencies":{deps}}}"#
-        ))
-        .unwrap()
-    };
-    let y: aube_manifest::PackageJson =
-        serde_json::from_str(r#"{"name":"y","version":"1.0.0"}"#).unwrap();
-    let workspace = |x: aube_manifest::PackageJson| {
+    let targets = |x_deps: &str| {
         vec![
-            (".".to_string(), root.clone()),
-            ("packages/app".to_string(), app.clone()),
-            ("packages/app/vendor/x".to_string(), x),
-            ("packages/app/vendor/y".to_string(), y.clone()),
+            (
+                "packages/app/vendor/x".to_string(),
+                serde_json::from_str(&format!(
+                    r#"{{"name":"x","version":"1.0.0","dependencies":{x_deps}}}"#
+                ))
+                .unwrap(),
+            ),
+            (
+                "packages/app/vendor/y".to_string(),
+                serde_json::from_str(r#"{"name":"y","version":"1.0.0"}"#).unwrap(),
+            ),
         ]
     };
 
-    assert_eq!(
-        check(&workspace(x(r#"{"y":"file:../y"}"#))),
-        DriftStatus::Fresh
-    );
+    assert_eq!(check(&targets(r#"{"y":"file:../y"}"#)), DriftStatus::Fresh);
     // A dependency added to a `file:` target is drift, as `npm ci` reports.
     assert!(matches!(
-        check(&workspace(x(r#"{"y":"file:../y","z":"^1.0.0"}"#))),
+        check(&targets(r#"{"y":"file:../y","z":"^1.0.0"}"#)),
         DriftStatus::Stale { reason } if reason.contains("packages/app/vendor/x")
     ));
     // Without the targets' manifests they read as projects that left.
     assert!(matches!(
-        check(&[(".".to_string(), root.clone()), ("packages/app".to_string(), app)]),
+        check(&[]),
         DriftStatus::Stale { reason } if reason.contains("packages/app/vendor/")
     ));
     assert_eq!(graph.npm_local_importers(&["."]), BTreeSet::new());

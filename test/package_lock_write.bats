@@ -215,6 +215,54 @@ EOF
 	assert_output --partial "packages/app/vendor/x: manifest"
 }
 
+@test "aube install --frozen-lockfile reports a root file: dep removed while a member keeps it" {
+	mkdir -p packages/app/vendor/x
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}' >packages/app/package.json
+	echo '{"name":"x","version":"1.2.3"}' >packages/app/vendor/x/package.json
+	# What npm 11 writes while the root still depends on `x` too.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ],
+      "dependencies": {
+        "x": "file:./packages/app/vendor/x"
+      }
+    },
+    "node_modules/app": {
+      "resolved": "packages/app",
+      "link": true
+    },
+    "node_modules/x": {
+      "resolved": "packages/app/vendor/x",
+      "link": true
+    },
+    "packages/app": {
+      "version": "1.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x"
+      }
+    },
+    "packages/app/vendor/x": {
+      "version": "1.2.3"
+    }
+  }
+}
+EOF
+
+	# `x` is a file: target, not a workspace member the root links.
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "manifest removed x"
+}
+
 @test "aube install keeps npm workspace members in package-lock.json on re-resolve" {
 	mkdir -p packages/a packages/b
 	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
