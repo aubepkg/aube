@@ -111,36 +111,37 @@ Each candidate artifact carries zero or more predicates:
 Rules:
 
 - Predicates within a candidate are **conjunctive**; array values within one predicate are **disjunctive**. An omitted predicate matches anything. Value semantics for `os`/`cpu`/`libc` are identical to the existing manifest fields of the same names (including npm ≥ 10.4's `libc` handling), so one set of semantics covers both.
+- `package` is candidate metadata, not a predicate. In v1 it is the only top-level candidate key with that role; every other key is interpreted as a predicate. Unknown keys therefore make the candidate non-matching. A future revision that adds candidate metadata must put it under a dedicated `metadata` object so it cannot be confused with a predicate.
 - **`napi` is evaluated against the target tuple's `nodeVersion`, never against the package manager's own runtime.** N-API versions map to Node.js releases, so the value is derivable without executing the target Node. Comparing against the installing runtime is the install-machine-vs-run-machine trap in miniature: an artifact selected under install-time Node 22 must not fail on the project's Node 18 runtime.
 - **Unknown predicate keys cause the candidate to be treated as non-matching.** This is the forward-compatibility rule: when a future revision adds (say) `cpuFeatures`, an older conforming package manager skips those candidates and falls through to broader ones or to the fallback tier — degrading to a safe choice instead of selecting an artifact whose constraint it cannot check.
 - **First match wins, in author order.** There is no specificity scoring. Scoring would require five independent implementations to reproduce a ranking function bit-for-bit forever; author order moves the judgment to the publisher, who knows that the AVX-tuned build should be listed before the baseline build and native before WASM.
 - **CPU micro-architecture features (AVX2, NEON, …) are deliberately excluded from v1.** The install machine is not the run machine (an image built on an AVX-512 CI host may deploy anywhere); install-time selection on CPU features produces `SIGILL` in production. Feature dispatch belongs inside the artifact at runtime. The key `cpuFeatures` is reserved, and the unknown-key rule above means a future revision introducing it degrades safely on v1 implementations.
 - **The v1 predicate set is the intersection all five package managers can check today.** The known demands beyond it — OpenSSL/TLS-library variants (Prisma's `rhel-openssl-1.0.x` targets), ARM sub-architecture (`armv6`/`armv7`), minimum OS or kernel version, minimum glibc version, alternate runtimes (Electron, NW.js) — are all expressible as future predicate keys, and the unknown-key rule means each degrades safely on older implementations the day it ships. They are deferred rather than rejected: every added key multiplies the conformance matrix five implementations must agree on, and several are open design questions in their own right (see *Unresolved Questions*).
-- A predicate-free candidate is a catch-all: it always matches, so anything after it is unreachable. Listed last, it **is** the fallback tier (WASM or pure JS) — there is no separate fallback construct. A slot without a catch-all simply selects nothing on unmatched platforms, leaving the legacy surface in charge.
+- A candidate with no parent predicates is eligible for every target, subject to the artifact package's own `os`/`cpu`/`libc` constraints. Listed last, a compatible candidate **is** the fallback tier (WASM or pure JS) — there is no separate fallback construct. If its manifest constraints reject a target, selection warns and continues, so even a final fallback can produce a miss. A slot without a compatible catch-all selects nothing on unmatched platforms, leaving the legacy surface in charge.
 
 #### Selection algorithm (normative sketch)
 
-```
+```text
 select(candidates, target):
   for candidate in candidates:              # author order
     if candidate has any predicate key this implementation
        does not recognize:                   continue
-    if os      present and target.os  ∉ listify(candidate.os):   continue
-    if cpu     present and target.cpu ∉ listify(candidate.cpu):  continue
+    if os      present and not manifest_field_matches(target.os, candidate.os): continue
+    if cpu     present and not manifest_field_matches(target.cpu, candidate.cpu): continue
     if libc    present and (target.os ≠ "linux"
                             or target.libc ≠ candidate.libc):    continue
     if napi    present and
        napi_version(target.nodeVersion) < candidate.napi:        continue
     if engines.node present and
        not semver_satisfies(target.nodeVersion, range):          continue
-    if candidate manifest os/cpu/libc rejects target:            continue
+    if candidate manifest os/cpu/libc rejects target: warn; continue
     return candidate                        # first match wins
   return NONE                               # → legacy surface (see onMissing)
 ```
 
 Selection never requires downloading a non-selected artifact: predicates live in the parent's manifest, and the artifact's standard `os`/`cpu`/`libc` fields are registry metadata already read while resolving and locking every candidate. Lockfiles must retain those fields so frozen installs can repeat the same validation without fetching tarballs.
 
-An artifact whose own manifest `os`/`cpu`/`libc` fields reject the target is treated as non-matching with a skew warning, and selection continues with the next candidate. Only a candidate that passes both the parent's predicates and its own manifest constraints counts as selected. If none passes, the slot is a miss: `onMissing` applies, no alias or artifact bin is linked, and `supersedesScripts` does not suppress the legacy script. This required validation prevents copy-paste errors and name confusion without stranding users between the artifact and legacy surfaces.
+`manifest_field_matches` uses the existing package.json `os` and `cpu` rules, including leading `!` exclusion entries; for example, `os: ["!win32"]` matches Linux. The same matcher validates the artifact package's manifest fields. An artifact whose own manifest `os`/`cpu`/`libc` fields reject the target is treated as non-matching with a skew warning, and selection continues with the next candidate. Only a candidate that passes both the parent's predicates and its own manifest constraints counts as selected. If none passes, the slot is a miss: `onMissing` applies, no alias or artifact bin is linked, and `supersedesScripts` does not suppress the legacy script. This required validation prevents copy-paste errors and name confusion without stranding users between the artifact and legacy surfaces.
 
 ### The `artifacts` field
 
@@ -177,8 +178,8 @@ Field rules:
 - **Slot names** match `[a-z0-9-]+` and derive the alias `_<slot>`.
 - **Candidate versions**: a bare `package` name takes its exact version from the parent's own `optionalDependencies` (or `dependencies`) entry, which **must** exist and **must** be exact. The `name@version` inline form pins candidates deliberately *not* listed in `optionalDependencies`, so legacy package managers never download them (see the Prisma example below). Ranges are a manifest error in either form.
 - **Candidate names should be scoped** (see *Security considerations*).
-- **There is no separate fallback construct.** A predicate-free candidate listed last is the fallback tier; omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
-- **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). Unreachable when the slot ends in a predicate-free candidate.
+- **There is no separate fallback construct.** A compatible predicate-free candidate listed last is the fallback tier; its own platform fields must also accept the target. Omitting one means the slot selects nothing on unmatched platforms and the parent's own JS/bin remains authoritative.
+- **`onMissing`** governs behavior when no candidate matches: `"warn"` (default), `"error"` (for packages with no working legacy surface), or `"ignore"` (the miss is expected and the parent handles it — see the Prisma example). A miss remains possible when a candidate's own platform fields disagree with its parent predicates.
 - **`supersedesScripts`** (optional) lists parent lifecycle events (`preinstall`, `install`, `postinstall`) that exist only as this slot's legacy fallback. When the slot selects and validates a candidate, a conforming package manager **must not** execute them (see *Lifecycle-script supersession*).
 - **The parent's top-level `bin` is the command-name authority.** Executable names declared by artifacts (see *The `artifact` field*) are linked only when they appear in the parent's top-level `bin`: legacy installs always have the command, and no platform grows phantom commands.
 
@@ -189,6 +190,11 @@ CLI example:
   "name": "esbuild",
   "version": "0.25.0",
   "bin": { "esbuild": "bin/esbuild" },                // legacy JS shim, and the command-name authority
+  "optionalDependencies": {
+    "@esbuild/linux-x64": "0.25.0",
+    "@esbuild/darwin-arm64": "0.25.0",
+    "@esbuild/win32-x64": "0.25.0"
+  },
   "artifacts": {
     "cli": {
       "candidates": [
@@ -266,15 +272,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 function hasPackageAlias(name) {
-  return (require.resolve.paths(name) ?? []).some((nodeModules) => {
-    try {
-      fs.lstatSync(path.join(nodeModules, name));
-      return true;
-    } catch (error) {
-      if (error?.code === 'ENOENT') return false;
-      throw error;
-    }
-  });
+  if (process.versions.pnp) {
+    const pnp = require('pnpapi');
+    const locator = pnp.findPackageLocator(__filename);
+    const packageInfo = locator && pnp.getPackageInformation(locator);
+    const reference = packageInfo?.packageDependencies.get(name);
+    return reference !== null && reference !== undefined;
+  }
+
+  // Check only this package's dependency realm; an ancestor alias is unrelated.
+  const aliasPath = path.join(__dirname, 'node_modules', name);
+  try {
+    fs.lstatSync(aliasPath);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 const native = hasPackageAlias('_addon')
@@ -282,7 +296,7 @@ const native = hasPackageAlias('_addon')
   : legacyRequireChain();           // alias absent: use today's fallback
 ```
 
-The guard tests the `_slot` directory entry itself rather than catching resolution errors. A dangling alias or an artifact with a missing `main`, invalid `exports`, initialization failure, or missing transitive dependency therefore takes the artifact branch and fails visibly; only an actually absent alias activates the legacy loader.
+The filesystem check inspects only the parent's own nested `node_modules` entry; searching ancestor paths could mistake an unrelated package's `_addon` for this package's alias. Under Yarn Plug'n'Play, the check reads the current package's dependency map through `pnpapi`, because PnP aliases exist only in that resolver table. In either layout, the presence check does not load the artifact. Once present, `require('#addon')` runs outside any fallback catch, so invalid exports, initialization failures, and missing transitive dependencies propagate. Only an actually absent dependency edge selects the legacy loader.
 
 `imports: { "#addon": "_addon" }` is **recommended sugar, not a requirement**: it gives parent code and bundlers a single static `#`-namespaced specifier, is inert in the published tarball, and behaves identically under all package managers. A parent may `require('_addon')` directly.
 
