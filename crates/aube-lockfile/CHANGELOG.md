@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.6.1...aube-lockfile-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(lockfile)* report the real version of file: and link: deps ([#1645](https://github.com/aubepkg/aube/pull/1645))
+- *(install)* notice the first dependency added after a lockfile with no deps ([#1707](https://github.com/aubepkg/aube/pull/1707))
+- *(install)* keep local deps installable from a relocated lockfile ([#1703](https://github.com/aubepkg/aube/pull/1703))
+- *(lockfile)* preserve patch hashes in peer references ([#1685](https://github.com/aubepkg/aube/pull/1685))
+- *(lockfile)* read and write workspace members' link: deps relative to the member ([#1680](https://github.com/aubepkg/aube/pull/1680))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.6.0...aube-lockfile-v2.6.1) - 2026-09-29
 
 ### Fixed

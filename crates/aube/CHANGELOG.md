@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0](https://github.com/aubepkg/aube/compare/v2.6.1...v2.7.0) - 2026-10-07
+
+### Added
+
+- *(update)* show project name in interactive picker title ([#1702](https://github.com/aubepkg/aube/pull/1702))
+
+### Fixed
+
+- *(lockfile)* report the real version of file: and link: deps ([#1645](https://github.com/aubepkg/aube/pull/1645))
+- *(dlx)* resolve relative file: specs from the invoking directory ([#1708](https://github.com/aubepkg/aube/pull/1708))
+- *(install)* keep local deps installable from a relocated lockfile ([#1703](https://github.com/aubepkg/aube/pull/1703))
+- *(dlx)* accept Windows paths in file: package specs ([#1642](https://github.com/aubepkg/aube/pull/1642))
+- *(install)* keep the warm path when dedupe-direct-deps skips a member link ([#1688](https://github.com/aubepkg/aube/pull/1688))
+- *(install)* link the bins of link: dependencies ([#1684](https://github.com/aubepkg/aube/pull/1684))
+- *(lockfile)* read and write workspace members' link: deps relative to the member ([#1680](https://github.com/aubepkg/aube/pull/1680))
+- *(registry)* expose transport causes and validate CA files ([#1681](https://github.com/aubepkg/aube/pull/1681))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+- *(install)* remove stale .bin shims for dependencies dropped from the graph ([#1673](https://github.com/aubepkg/aube/pull/1673))
+
+### Other
+
+- *(deps)* bump sigstore crates to 0.14 and adapt provenance signing ([#1706](https://github.com/aubepkg/aube/pull/1706))
+- *(deps)* bump sigstore crates and adapt provenance digest to 0.13 ([#1705](https://github.com/aubepkg/aube/pull/1705))
+- *(run)* guard synchronized incremental script picker redraws ([#1682](https://github.com/aubepkg/aube/pull/1682))
+- run clippy on Windows and fix the warnings only it finds ([#1640](https://github.com/aubepkg/aube/pull/1640))
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/v2.6.0...v2.6.1) - 2026-09-29
 
 ### Fixed

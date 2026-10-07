@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-codes-v2.6.1...aube-codes-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(install)* link the bins of link: dependencies ([#1684](https://github.com/aubepkg/aube/pull/1684))
+- *(registry)* expose transport causes and validate CA files ([#1681](https://github.com/aubepkg/aube/pull/1681))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/aube-codes-v2.6.0...aube-codes-v2.6.1) - 2026-09-29
 
 ### Other
