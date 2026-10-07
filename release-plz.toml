@@ -11,6 +11,8 @@
 # finishes — see the `publish-release` job in `release-plz.yml`.
 
 [workspace]
+# Label the release PR so it is easy to find and filter.
+pr_labels = ["release"]
 # The whole workspace shares one version (`version.workspace = true`),
 # so we only want ONE GitHub release and ONE tag per cut — the crate
 # ("aube") that owns the binary. Every other crate publishes to
