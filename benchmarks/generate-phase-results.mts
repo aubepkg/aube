@@ -22,6 +22,7 @@ if (!input || !outputFile) {
 const labels: Record<string, string> = {
   'gvs-warm': 'Fresh install (warm cache)',
   'gvs-cold': 'Fresh install (cold cache)',
+  'pull-update': 'Dependency update after git pull',
 }
 
 const phaseOrder: string[] = [

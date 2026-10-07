@@ -1,3 +1,11 @@
+# RustSec advisories. CI runs this instead of `cargo audit --deny warnings`,
+# so these match its strictness: every vulnerability, notice, unmaintained,
+# or unsound advisory anywhere in the graph and every yanked crate is an error.
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+
 [graph]
 all-features = true
 
@@ -14,6 +22,11 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
+# MPL-2.0 is file-level copyleft. Distributing an executable that contains
+# option-ext, even unmodified, requires making its source available and telling
+# recipients how to obtain it (MPL-2.0 section 3.2); crates.io plus Cargo.lock
+# satisfies that. Pulled in by sigstore-trust-root via directories.
+exceptions = [{ allow = ["MPL-2.0"], crate = "option-ext" }]
 
 [bans]
 multiple-versions = "allow"
@@ -23,6 +36,7 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Git sources are blocked intentionally. Temporary [patch] git deps must
-# update this policy explicitly and be removed once the fix reaches crates.io.
-allow-git = []
+# Git sources are blocked intentionally. The usage 6.x migration PR is an
+# explicit pre-release experiment and removes this exception when it switches
+# back to the published crates.
+allow-git = ["https://github.com/jdx/usage"]

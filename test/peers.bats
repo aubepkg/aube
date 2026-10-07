@@ -189,14 +189,15 @@ JSON
 	run grep -E "use-sync-external-store@1\.2\.0\(react@17\.0\.2\)" aube-lock.yaml
 	assert_success
 
-	# Flip the setting, blow away the lockfile so the resolver
-	# re-computes suffixes from scratch (an existing lockfile with the
-	# canonical suffixes would otherwise reuse them verbatim).
+	# Flip the setting, blow away the lockfile and its hidden copy in
+	# node_modules so the resolver re-computes suffixes from scratch
+	# (an existing lockfile with the canonical suffixes would otherwise
+	# reuse them verbatim).
 	cat >.npmrc <<EOF
 registry=${AUBE_TEST_REGISTRY}
 dedupePeers=true
 EOF
-	rm -f aube-lock.yaml
+	rm -f aube-lock.yaml node_modules/.aube-lock.yaml
 	run aube install
 	assert_success
 	run grep -E "use-sync-external-store@1\.2\.0\(17\.0\.2\)" aube-lock.yaml

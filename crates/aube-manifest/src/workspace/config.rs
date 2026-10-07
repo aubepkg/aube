@@ -200,6 +200,11 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub lockfile: Option<bool>,
 
+    /// Format to create when no supported lockfile exists: "aube" or
+    /// "pnpm". Existing lockfiles still take precedence.
+    #[serde(default)]
+    pub default_lockfile_format: Option<String>,
+
     /// Directory the lockfile is written to and read from. When unset
     /// or equal to the project root, behaves as before. When set to a
     /// different directory, the project becomes an importer keyed by
@@ -352,6 +357,12 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub block_exotic_subdeps: Option<bool>,
 
+    /// Package names exempt from `block_exotic_subdeps`, so one
+    /// dependency without a usable registry release doesn't force the
+    /// gate off for the whole graph.
+    #[serde(default)]
+    pub block_exotic_subdeps_exclude: Option<Vec<String>>,
+
     // -- Build Settings --
     /// Whether to ignore all lifecycle scripts (default: false).
     #[serde(default)]
@@ -379,8 +390,8 @@ pub struct WorkspaceConfig {
     /// Per-package allowlist for dependency lifecycle scripts. Keys are
     /// pnpm-style patterns (`name`, `name@version`, `name@v1 || v2`);
     /// values are `true` to allow or `false` to deny. Merged with
-    /// `package.json`'s `pnpm.allowBuilds` — workspace-level entries
-    /// take precedence for the same key.
+    /// `package.json`'s `pnpm.allowBuilds`; an explicit denial from
+    /// either source takes precedence for the same key.
     #[serde(default)]
     pub allow_builds: BTreeMap<String, yaml_serde::Value>,
 
@@ -413,8 +424,8 @@ pub struct WorkspaceConfig {
     #[serde(default, rename = "childConcurrency")]
     pub child_concurrency: Option<u64>,
 
-    /// Cap concurrent tarball downloads. When unset, aube uses an
-    /// auto-scaled worker count x3 default, clamped to 16-64. Same
+    /// Seed the adaptive tarball-download concurrency. When unset,
+    /// aube auto-scales worker count x3, clamped to 16-128. Same
     /// typed/raw duality as `child_concurrency`.
     #[serde(default, rename = "networkConcurrency")]
     pub network_concurrency: Option<u64>,
@@ -467,9 +478,13 @@ pub struct WorkspaceConfig {
 
     // -- Catalog Settings --
     /// Drop catalog entries that no importer references after resolve.
-    /// Wired through `aube_settings::resolved::cleanup_unused_catalogs`;
+    /// Wired through `aube_settings::resolved::catalog_prune`;
     /// the typed field exists only so `meta::workspace_yaml_keys_...`
     /// sees the key as a real field and doesn't fall through to `extra`.
+    #[serde(default)]
+    pub catalog_prune: Option<bool>,
+
+    /// Deprecated pre-pnpm-11.22 alias for `catalogPrune`.
     #[serde(default)]
     pub cleanup_unused_catalogs: Option<bool>,
 

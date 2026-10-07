@@ -23,6 +23,7 @@ pub(super) fn pre_parse_lockfile(
     lockfile_importer_key: &str,
     manifest: &aube_manifest::PackageJson,
     parse_options: aube_lockfile::ParseOptions,
+    selected: Option<LockfileKind>,
 ) -> miette::Result<ParsedLockfile> {
     if !lockfile_enabled || !matches!(mode, FrozenMode::Fix | FrozenMode::Prefer) {
         return Ok(None);
@@ -32,10 +33,11 @@ pub(super) fn pre_parse_lockfile(
         lockfile_importer_key,
         manifest,
         parse_options,
+        selected,
     ) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(aube_lockfile::Error::NotFound(_)) => Ok(None),
-        Err(e) if active_lockfile_has_conflict_markers(lockfile_dir) => {
+        Err(e) if active_lockfile_has_conflict_markers(lockfile_dir, selected) => {
             warn_lockfile_conflict_markers(lockfile_dir, &e);
             Ok(None)
         }
@@ -59,7 +61,7 @@ pub(super) struct LockfileOnlyInput<'a> {
     pub lockfile_pre_parse: Option<&'a (LockfileGraph, LockfileKind)>,
     pub lockfile_conflict_marker_warning_emitted: bool,
     pub existing_for_resolver: Option<&'a LockfileGraph>,
-    pub source_kind_before: Option<LockfileKind>,
+    pub write_kind: LockfileKind,
     pub lockfile_enabled: bool,
     pub lockfile_include_tarball_url: bool,
     pub shared_workspace_lockfile: bool,
@@ -93,7 +95,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         lockfile_pre_parse,
         lockfile_conflict_marker_warning_emitted,
         existing_for_resolver,
-        source_kind_before,
+        write_kind,
         lockfile_enabled,
         lockfile_include_tarball_url,
         shared_workspace_lockfile,
@@ -109,6 +111,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         write_lockfile,
         prog_ref,
     } = input;
+    let selected = crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?;
 
     // `--no-frozen-lockfile` means "always re-resolve", so skip the
     // freshness check entirely in that mode. Otherwise (Prefer, Fix,
@@ -130,6 +133,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                 lockfile_importer_key,
                 manifest,
                 parse_options,
+                selected,
             );
             match &parsed_owned {
                 Ok((g, k)) => Ok((g, *k)),
@@ -139,7 +143,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     if let Err(e) = parsed
         && !matches!(e, aube_lockfile::Error::NotFound(_))
     {
-        if active_lockfile_has_conflict_markers(lockfile_dir) {
+        if active_lockfile_has_conflict_markers(lockfile_dir, selected) {
             if !lockfile_conflict_marker_warning_emitted {
                 warn_lockfile_conflict_markers(lockfile_dir, e);
             }
@@ -156,6 +160,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                 lockfile_importer_key,
                 manifest,
                 parse_options,
+                selected,
             ) {
                 Ok(_) => {
                     // Race: second parse succeeded while first failed.
@@ -170,6 +175,10 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
         }
     }
     let fresh = !force_resolve
+        && match parsed {
+            Ok((g, k)) => matches!(check_patch_drift(cwd, g, k)?, DriftStatus::Fresh),
+            Err(_) => true,
+        }
         && matches!(
             parsed,
             Ok((g, k))
@@ -245,12 +254,10 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             // `lockfile=false` collapses to `None` so the resolver
             // doesn't waste a fetch widening a lockfile that will
             // never be written. With lockfiles enabled, a missing
-            // `source_kind_before` means "we'll create the default
-            // aube-lock.yaml", so the aube-native wide default
-            // applies.
-            target_lockfile_kind: lockfile_enabled
-                .then(|| source_kind_before.unwrap_or(LockfileKind::Aube)),
-            dependency_policy: Some(dependency_policy.clone()),
+            // With lockfiles enabled, `write_kind` is either the existing
+            // format or the configured creation default.
+            target_lockfile_kind: lockfile_enabled.then_some(write_kind),
+            dependency_policy: dependency_policy.clone(),
             cache_full_packuments: true,
             ignore_scripts,
         },
@@ -294,7 +301,10 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
             }
         }
     }
-    let lo_write_kind = source_kind_before.unwrap_or(LockfileKind::Aube);
+    let lo_write_kind = write_kind;
+    if matches!(lo_write_kind, LockfileKind::Pnpm | LockfileKind::Aube) {
+        graph.patched_dependencies = crate::patches::read_patched_dependency_hashes(cwd)?;
+    }
     // Same runtime-pin recording as the main install path.
     crate::runtime::refresh_lockfile_pin(
         &mut graph,
@@ -390,6 +400,7 @@ pub(super) struct SelectLockfileInput<'a> {
     pub lockfile_importer_key: &'a str,
     pub manifest: &'a aube_manifest::PackageJson,
     pub parse_options: aube_lockfile::ParseOptions,
+    pub selected: Option<LockfileKind>,
     pub manifests: &'a [(String, aube_manifest::PackageJson)],
     pub ws_config: &'a aube_manifest::workspace::WorkspaceConfig,
     pub workspace_catalogs: &'a crate::commands::CatalogMap,
@@ -408,6 +419,7 @@ pub(super) fn select_lockfile_result(
         lockfile_importer_key,
         manifest,
         parse_options,
+        selected,
         manifests,
         ws_config,
         workspace_catalogs,
@@ -433,6 +445,7 @@ pub(super) fn select_lockfile_result(
                 lockfile_importer_key,
                 manifest,
                 parse_options,
+                selected,
             );
             if let Ok((ref graph, kind)) = parsed {
                 if let DriftStatus::Stale { reason } =
@@ -440,6 +453,21 @@ pub(super) fn select_lockfile_result(
                 {
                     return Err(miette!(
                         "lockfile is out of date with pnpm-workspace.yaml: {reason}\n\
+                         help: run without --frozen-lockfile to update the lockfile"
+                    ));
+                }
+                // aube-lock.yaml files written before aube recorded patch
+                // hashes have no patchedDependencies block. Accept them
+                // here so upgrading doesn't fail frozen CI installs; the
+                // next non-frozen install records the hashes.
+                let legacy_aube_lock =
+                    kind == LockfileKind::Aube && graph.patched_dependencies.is_empty();
+                if !legacy_aube_lock
+                    && let DriftStatus::Stale { reason } = check_patch_drift(cwd, graph, kind)?
+                {
+                    return Err(miette!(
+                        code = aube_codes::errors::ERR_AUBE_LOCKFILE_CONFIG_MISMATCH,
+                        "lockfile is out of date with patchedDependencies: {reason}\n\
                          help: run without --frozen-lockfile to update the lockfile"
                     ));
                 }
@@ -477,6 +505,13 @@ pub(super) fn select_lockfile_result(
                             "Lockfile out of date with workspace catalogs ({reason}), re-resolving..."
                         );
                         Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
+                    } else if let DriftStatus::Stale { reason } =
+                        check_patch_drift(cwd, graph, *kind)?
+                    {
+                        tracing::debug!(
+                            "Lockfile out of date with patchedDependencies ({reason}), re-resolving..."
+                        );
+                        Ok(Err(aube_lockfile::Error::NotFound(cwd.to_path_buf())))
                     } else {
                         match graph.check_drift_workspace_for_kind(
                             manifests,
@@ -500,8 +535,27 @@ pub(super) fn select_lockfile_result(
     }
 }
 
-fn active_lockfile_has_conflict_markers(lockfile_dir: &Path) -> bool {
-    aube_lockfile::active_lockfile_has_conflict_markers(lockfile_dir)
+pub(crate) fn check_patch_drift(
+    cwd: &Path,
+    graph: &LockfileGraph,
+    kind: LockfileKind,
+) -> miette::Result<DriftStatus> {
+    if !matches!(kind, LockfileKind::Pnpm | LockfileKind::Aube) {
+        return Ok(DriftStatus::Fresh);
+    }
+    Ok(
+        match crate::patches::pnpm_patch_hash_drift(cwd, &graph.patched_dependencies)? {
+            Some(reason) => DriftStatus::Stale { reason },
+            None => DriftStatus::Fresh,
+        },
+    )
+}
+
+fn active_lockfile_has_conflict_markers(
+    lockfile_dir: &Path,
+    selected: Option<LockfileKind>,
+) -> bool {
+    aube_lockfile::active_lockfile_has_conflict_markers_selecting(lockfile_dir, selected)
 }
 
 fn warn_lockfile_conflict_markers(lockfile_dir: &Path, err: &aube_lockfile::Error) {
@@ -569,10 +623,7 @@ pub(super) fn apply_lockfile_graph_platform_rules(
     // so without the hoist running first it prunes every
     // peer-only package as unreachable — and a post-prune hoist
     // has nothing left to promote.
-    let needs_peer_pass = matches!(
-        kind,
-        LockfileKind::Npm | LockfileKind::NpmShrinkwrap | LockfileKind::Bun
-    );
+    let needs_peer_pass = lockfile_needs_peer_pass(kind);
     // Time the hoist on its own, then `filter_graph` runs untimed
     // (it's not part of the peer pass), then apply is timed below.
     // Snapshotting `pkgs_before` after `filter_graph` keeps the
@@ -590,14 +641,7 @@ pub(super) fn apply_lockfile_graph_platform_rules(
         &ignored_optional_deps,
     );
     if let Some(hoist_elapsed) = hoist_elapsed {
-        let peer_options = aube_resolver::PeerContextOptions {
-            dedupe_peer_dependents: super::settings::resolve_dedupe_peer_dependents(settings_ctx),
-            dedupe_peers: super::settings::resolve_dedupe_peers(settings_ctx),
-            resolve_from_workspace_root: super::settings::resolve_peers_from_workspace_root(
-                settings_ctx,
-            ),
-            peers_suffix_max_length: super::settings::resolve_peers_suffix_max_length(settings_ctx),
-        };
+        let peer_options = lockfile_peer_context_options(settings_ctx);
         let pkgs_before = graph.packages.len();
         let apply_start = std::time::Instant::now();
         graph = aube_resolver::apply_peer_contexts(graph, &peer_options)
@@ -611,6 +655,31 @@ pub(super) fn apply_lockfile_graph_platform_rules(
         );
     }
     Ok(graph)
+}
+
+/// Whether a graph read from a lockfile of this kind still needs the
+/// `hoist_auto_installed_peers` + `apply_peer_contexts` passes. npm and bun
+/// lockfiles record no peer context; aube and pnpm lockfiles already carry
+/// peer suffixes, so re-running the pass would double-suffix every key.
+pub(crate) fn lockfile_needs_peer_pass(kind: LockfileKind) -> bool {
+    matches!(
+        kind,
+        LockfileKind::Npm | LockfileKind::NpmShrinkwrap | LockfileKind::Bun
+    )
+}
+
+/// Peer-context settings for contextualizing a lockfile-sourced graph.
+pub(crate) fn lockfile_peer_context_options(
+    settings_ctx: &aube_settings::ResolveCtx<'_>,
+) -> aube_resolver::PeerContextOptions {
+    aube_resolver::PeerContextOptions {
+        dedupe_peer_dependents: super::settings::resolve_dedupe_peer_dependents(settings_ctx),
+        dedupe_peers: super::settings::resolve_dedupe_peers(settings_ctx),
+        resolve_from_workspace_root: super::settings::resolve_peers_from_workspace_root(
+            settings_ctx,
+        ),
+        peers_suffix_max_length: super::settings::resolve_peers_suffix_max_length(settings_ctx),
+    }
 }
 
 pub(super) fn lockfile_source_label(kind: LockfileKind) -> &'static str {

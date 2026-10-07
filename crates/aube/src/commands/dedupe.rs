@@ -6,22 +6,21 @@
 //! naturally collapses duplicates left over from past adds/removes/updates.
 
 use super::install;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct DedupeArgs {
     /// Check whether dedupe would change the lockfile; don't write anything.
     ///
     /// Exits non-zero when dedupe would make changes — useful in CI.
-    #[arg(long)]
+    #[usage(long)]
     pub check: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 
@@ -37,7 +36,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
     // Read the existing lockfile purely for the diff. We do NOT pass it to
     // the resolver — passing `None` is what makes this "dedupe" instead of
     // "install": the resolver won't reuse stale pinned versions.
-    let existing = aube_lockfile::parse_lockfile(&cwd, &manifest).ok();
+    let existing = crate::commands::parse_lockfile(&cwd, &manifest).ok();
 
     // Discover workspace packages so we resolve every importer, not just
     // the root package.json. Without this, dedupe would produce a graph
@@ -74,7 +73,7 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
     }
 
     let workspace_catalogs = super::load_workspace_catalogs(&cwd)?;
-    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs);
+    let mut resolver = super::build_resolver(&cwd, &manifest, workspace_catalogs)?;
     let mut graph = resolver
         .resolve_workspace(&manifests, None, &ws_package_versions)
         .await

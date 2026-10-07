@@ -26,8 +26,10 @@
 
 mod ci;
 mod render;
+mod terminal_restore;
 
 pub(crate) use render::format_bytes;
+pub(crate) use terminal_restore::restore_now as restore_terminal_now;
 
 use crate::commands::install::{
     InstallEvent, InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallReporter,
@@ -144,6 +146,11 @@ pub struct InstallProgress {
     /// is fine: the streaming pass is the only writer and the
     /// reconcile reads once at the phase boundary.
     unpacked_sizes: Arc<Mutex<HashMap<String, u64>>>,
+    /// Whether this handle is the one `try_new` built, as opposed to a
+    /// clone handed to a spawned task. Only the original tears the TTY
+    /// display down in `Drop` (see the `Drop` impl for why a refcount
+    /// can't decide that here).
+    owns_display: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -263,6 +270,9 @@ impl Clone for InstallProgress {
     /// `Arc::strong_count`, because the heartbeat thread owns an `Arc<CiState>`
     /// for the entire run and would otherwise pin `strong_count ≥ 2` — defeating
     /// the `== 1` shutdown check in `Drop`.
+    ///
+    /// TTY mode doesn't count at all: a clone is never the display owner, so
+    /// tearing the renderer down stays the original handle's job.
     fn clone(&self) -> Self {
         if let Mode::Ci(s) = &self.mode {
             s.alive.fetch_add(1, Ordering::Relaxed);
@@ -270,7 +280,34 @@ impl Clone for InstallProgress {
         Self {
             mode: self.mode.clone(),
             unpacked_sizes: self.unpacked_sizes.clone(),
+            owns_display: false,
         }
+    }
+}
+
+/// Holds the terminal-restore duties for one TTY display and hands them back
+/// when it drops.
+///
+/// The hold belongs to the *display*, not to a handle on it: `new_tty` takes
+/// one, and exactly one release follows it — from whichever of `finish` or the
+/// owning handle's `Drop` runs first. The shared `finished` flag is what makes
+/// those mutually exclusive, so a clone calling `finish` releases the
+/// display's own hold rather than one it never took, and the owner's later
+/// `Drop` sees the flag set and does nothing. `Drop` checks `owns_display` for
+/// an unrelated reason: clones drop routinely while the install is still
+/// running, and only the owner's drop means the display is over.
+///
+/// The hand-back has to survive an unwind, not just a normal return: the
+/// repaint and clx teardown that precede it can panic, and `aube-ffi` /
+/// `aube-node` build with `panic = "unwind"` and catch at their boundary, so
+/// the host keeps running. Releasing from a `Drop` means such a host doesn't
+/// keep aube's signal handlers — or a stuck holder count — for the rest of
+/// its life.
+struct TerminalRestoreHold;
+
+impl Drop for TerminalRestoreHold {
+    fn drop(&mut self) {
+        terminal_restore::disarm();
     }
 }
 
@@ -295,6 +332,7 @@ impl InstallProgress {
                         estimated_bytes: AtomicU64::new(0),
                     })),
                     unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
+                    owns_display: true,
                 });
             }
             InstallOutputMode::Silent => return None,
@@ -340,6 +378,18 @@ impl InstallProgress {
         // `progress_total` is held at `TTY_BAR_SCALE` to encode the
         // unified-progress fraction in the bar, which would otherwise
         // leak into the label as the scaled denominator.
+        // Ctrl-C (or a SIGTERM from a supervisor) kills aube outright, so the
+        // renderer's own teardown never runs and the terminal keeps the
+        // hidden cursor and the taskbar indicator the bar set. Armed for as
+        // long as the bar owns the terminal, disarmed by `finish` / `Drop`.
+        terminal_restore::arm();
+        // Nothing below is expected to panic — it is clx builder calls and
+        // allocations — but if it did there would be no `InstallProgress` for
+        // `finish` or `Drop` to release the hold through, and an embedding
+        // host that caught the unwind would keep aube's handlers for good.
+        // The guard covers that; `forget` defuses it once the value exists
+        // and owns the hold itself.
+        let hold = TerminalRestoreHold;
         let root = ProgressJobBuilder::new()
             .body(
                 "{{aube}}{{phase}}  {{progress_bar(flex=true)}} {{count}}{{bytes}}{{rate}}{{eta}}",
@@ -355,7 +405,7 @@ impl InstallProgress {
             .progress_total(TTY_BAR_SCALE)
             .on_done(ProgressJobDoneBehavior::Collapse)
             .start();
-        Self {
+        let display = Self {
             mode: Mode::Tty {
                 root,
                 finished: Arc::new(AtomicBool::new(false)),
@@ -375,7 +425,10 @@ impl InstallProgress {
                 })),
             },
             unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
-        }
+            owns_display: true,
+        };
+        std::mem::forget(hold);
+        display
     }
 
     fn new_ci() -> Self {
@@ -389,6 +442,7 @@ impl InstallProgress {
         Self {
             mode: Mode::Ci(state),
             unpacked_sizes: Arc::new(Mutex::new(HashMap::new())),
+            owns_display: true,
         }
     }
 
@@ -1003,6 +1057,20 @@ impl InstallProgress {
                 phase_num,
                 ..
             } => {
+                // The doc promise of idempotence has to hold here, not just
+                // for the repaint (`AcqRel` so a concurrent `Drop` on another
+                // thread cannot also win this): `disarm` gives up this
+                // display's hold on
+                // the terminal-restore handlers, and a second `finish` would
+                // give up one it no longer has — retiring the handlers out
+                // from under a concurrent embedded install whose bar is still
+                // painting. Whoever calls `finish` first retires the display,
+                // clone or owner alike, which is why the hold below is not
+                // gated on `owns_display` (see [`TerminalRestoreHold`]).
+                if finished.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                let _hold = TerminalRestoreHold;
                 // Promote to the "done" phase and repaint at 100%
                 // before retiring the display. The mid-work 95% cap
                 // is about not lying while linking is in flight; at
@@ -1021,7 +1089,6 @@ impl InstallProgress {
                     phase_num,
                 );
                 root.set_status(ProgressStatus::Done);
-                finished.store(true, Ordering::Relaxed);
                 match tty_behavior {
                     TtyFinishBehavior::Preserve => clx::progress::stop(),
                     TtyFinishBehavior::Clear => clx::progress::stop_clear(),
@@ -1166,22 +1233,47 @@ fn refresh_tty_bar_from_atomics(
 
 impl Drop for InstallProgress {
     /// Safety net: if `install::run` bails through `?` without reaching
-    /// `finish()` (flaky network, lockfile parse error, linker failure, …)
-    /// the renderer would otherwise be left running. We only tear down
-    /// when *this* instance is the last live clone, not when an earlier
-    /// clone (e.g. the one handed to the fresh-resolve fetch coordinator)
-    /// drops while the install is still in flight.
+    /// `finish()` (flaky network, lockfile parse error, trust-policy
+    /// rejection, linker failure, …) the renderer would otherwise be left
+    /// running — and since every TTY frame ends with the cursor hidden,
+    /// the shell prompt comes back invisible
+    /// (<https://github.com/aubepkg/aube/discussions/1557>).
     ///
-    /// CI mode can't use `Arc::strong_count` for this check because the
-    /// heartbeat thread holds its own clone of `Arc<CiState>` for the
-    /// entire run. Instead, it tracks the live-clone count in a separate
-    /// `CiState::alive` atomic, incremented in `Clone` and decremented
-    /// here. Error paths drop without printing the `Done in Xs` summary
-    /// — the heartbeat still gets joined so no stray tick escapes.
+    /// TTY mode keys the teardown on `owns_display` rather than a
+    /// refcount. `Arc::strong_count(root) == 1` looks like the natural
+    /// check but can never hold: `ProgressJobBuilder::start` pushes a
+    /// clone of the root job into clx's process-global `JOBS` registry
+    /// and nothing ever drains it, so the count is pinned at ≥ 2 for the
+    /// life of the process. The owner is the handle `install::run` holds,
+    /// which drops on the main task as the error propagates — before the
+    /// diagnostic is rendered — so the bar is cleared exactly once.
+    ///
+    /// A clone abandoned in an aborted task (the fresh-resolve fetch
+    /// coordinator) can outlive that drop: `JoinSet::abort` only takes
+    /// effect at the task's next await point, so it may still open a fetch
+    /// row afterwards. That can't repaint over the error report, because
+    /// `stop_clear` latches clx's `STOPPING` flag — past that point
+    /// `ProgressJob::update` and `notify` return without rendering and the
+    /// refresh thread exits. `clear_jobs` is the only thing that unlatches
+    /// it, and aube never calls it.
+    ///
+    /// CI mode has the same refcount problem — the heartbeat thread holds
+    /// its own clone of `Arc<CiState>` for the entire run — and solves it
+    /// with the `CiState::alive` counter, incremented in `Clone` and
+    /// decremented here, because its heartbeat has to be joined by
+    /// whichever clone goes last. Error paths drop without printing the
+    /// `Done in Xs` summary — the heartbeat still gets joined so no stray
+    /// tick escapes.
     fn drop(&mut self) {
         match &self.mode {
             Mode::Tty { root, finished, .. } => {
-                if Arc::strong_count(root) == 1 && !finished.load(Ordering::Relaxed) {
+                // A swap, not a load: this and `finish` race for the right
+                // to retire the display, and only a read-modify-write on the
+                // one flag settles that. Two threads both reading `false`
+                // would each release the display's hold, taking the handlers
+                // out from under a concurrent embedded install.
+                if self.owns_display && !finished.swap(true, Ordering::AcqRel) {
+                    let _hold = TerminalRestoreHold;
                     root.set_status(ProgressStatus::Done);
                     clx::progress::stop_clear();
                 }
@@ -1573,5 +1665,45 @@ mod tests {
         clamp_reused_to(&reused, &downloaded, 100);
         assert_eq!(reused.load(Ordering::Relaxed), 0);
         assert_eq!(downloaded.load(Ordering::Relaxed), 110);
+    }
+
+    /// Restores clx's process-global output mode when the test that
+    /// changed it ends, including on an assertion panic, so a test binary
+    /// running these in one process can't leak a render mode into whatever
+    /// runs next.
+    struct OutputModeGuard(ProgressOutput);
+
+    impl Drop for OutputModeGuard {
+        fn drop(&mut self) {
+            clx::progress::set_output(self.0);
+        }
+    }
+
+    #[test]
+    fn only_the_original_tty_handle_owns_the_display() {
+        // Quiet keeps the job under test from painting into the test
+        // harness's captured stderr. The ownership bookkeeping asserted
+        // here doesn't depend on the render mode.
+        let _output_mode = OutputModeGuard(clx::progress::output());
+        clx::progress::set_output(ProgressOutput::Quiet);
+        let prog = InstallProgress::new_tty();
+        let clone = prog.clone();
+        assert!(prog.owns_display, "try_new's handle owns the display");
+        assert!(!clone.owns_display, "a clone never tears the display down");
+        drop(clone);
+
+        // Why `owns_display` exists: `Arc::strong_count(root) == 1` was the
+        // original Drop guard and could never fire, because
+        // `ProgressJobBuilder::start` parks a clone of the root job in
+        // clx's process-global registry for the life of the process. With
+        // the clone above gone, this is the original handle plus that
+        // registry entry.
+        let Mode::Tty { root, .. } = &prog.mode else {
+            panic!("new_tty built a non-TTY mode");
+        };
+        assert!(
+            Arc::strong_count(root) > 1,
+            "clx pins a strong ref to every started job",
+        );
     }
 }

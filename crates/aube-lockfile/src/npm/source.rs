@@ -49,6 +49,7 @@ pub(super) fn npm_resolved_field(pkg: &LockedPackage) -> Option<String> {
                 None => Some(format!("{url}#{}", git.resolved)),
             }
         }
+        Some(LocalSource::RemoteTarball(tarball)) => Some(tarball.url.clone()),
         _ => None,
     })
 }

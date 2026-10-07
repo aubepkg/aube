@@ -185,6 +185,21 @@ impl LockfileGraph {
             .filter_map(|(_, manifest)| manifest.name.as_deref())
             .collect();
         for (importer_path, manifest) in manifests {
+            // pnpm-format lockfiles record every workspace project that
+            // declares deps. A missing importer means the lockfile was
+            // written without that project (the per-importer check below
+            // treats an absent entry as "no specifiers" and says fresh).
+            if check_resolution_metadata
+                && is_workspace_install
+                && !self.importers.contains_key(importer_path)
+                && manifest_declares_deps(manifest, self.settings.auto_install_peers)
+            {
+                return DriftStatus::Stale {
+                    reason: format!(
+                        "workspace importer {importer_path} is missing from the lockfile"
+                    ),
+                };
+            }
             match self.check_drift_for_importer_with_workspace_links(
                 importer_path,
                 manifest,
@@ -346,8 +361,11 @@ impl LockfileGraph {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        // Skip the check entirely if no DirectDep has a specifier (non-pnpm format).
-        if importer_deps.iter().all(|d| d.specifier.is_none()) {
+        // Skip the check entirely if no DirectDep has a specifier (non-pnpm
+        // format). An importer with no deps at all says nothing about the
+        // format: it's what a lockfile written before the manifest gained
+        // its first dependency records, so compare the manifest against it.
+        if !importer_deps.is_empty() && importer_deps.iter().all(|d| d.specifier.is_none()) {
             return DriftStatus::Fresh;
         }
         let lockfile_specs: BTreeMap<&str, &str> = importer_deps
@@ -393,6 +411,20 @@ impl LockfileGraph {
                     .iter()
                     .filter(|(name, _)| !ignored.contains(name.as_str()))
                     .map(|(k, v)| (k, v, true)),
+            )
+            .chain(
+                self.settings
+                    .auto_install_peers
+                    .then_some(&manifest.peer_dependencies)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(name, _)| !manifest.peer_dependency_is_optional(name))
+                    .filter(|(name, _)| {
+                        !manifest.dependencies.contains_key(*name)
+                            && !manifest.dev_dependencies.contains_key(*name)
+                            && !manifest.optional_dependencies.contains_key(*name)
+                    })
+                    .map(|(k, v)| (k, v, false)),
             );
 
         for (name, spec, is_optional) in manifest_deps {
@@ -422,6 +454,12 @@ impl LockfileGraph {
                     };
                 }
                 Some(locked_spec) if *locked_spec != spec => {
+                    let importer_peer_only = !manifest.dependencies.contains_key(name)
+                        && !manifest.dev_dependencies.contains_key(name)
+                        && !manifest.optional_dependencies.contains_key(name);
+                    if importer_peer_only && retained_peer_spec_is_compatible(spec, locked_spec) {
+                        continue;
+                    }
                     // pnpm rewrites the importer specifier to the
                     // override-applied value when an override fires on
                     // a direct dep, so a pnpm-generated lockfile shows
@@ -499,6 +537,16 @@ impl LockfileGraph {
                 .entry(name.as_str())
                 .or_insert(DepType::Optional);
         }
+        if self.settings.auto_install_peers {
+            for name in manifest.peer_dependencies.keys() {
+                if manifest.peer_dependency_is_optional(name) {
+                    continue;
+                }
+                manifest_dep_types
+                    .entry(name.as_str())
+                    .or_insert(DepType::Production);
+            }
+        }
         for dep in importer_deps {
             let Some(expected) = manifest_dep_types.get(dep.name.as_str()) else {
                 continue;
@@ -515,26 +563,11 @@ impl LockfileGraph {
             }
         }
 
-        // Anything in the lockfile but missing from the manifest is stale
-        // — UNLESS it was auto-hoisted as a peer by the resolver. pnpm-style
-        // `auto-install-peers=true` puts peers into the importer's
-        // `dependencies` without the user having written them in
-        // `package.json`, so we have to recognize those as derived state
-        // rather than user intent.
-        //
-        // Critically, we identify an auto-hoisted entry by matching its
-        // *recorded specifier* against peer ranges declared in the graph,
-        // not just by name. A name-only check would silently exempt a
-        // user-pinned `react` that the user later removed (if any package
-        // anywhere in the graph peer-declares react, the name match would
-        // fire and we'd report Fresh forever — defeating the drift check).
-        //
-        // The rule: a lockfile entry whose (name, specifier) pair exactly
-        // matches some package's declared (peer_name, peer_range) is
-        // auto-hoisted. If the user had pinned react with a different
-        // specifier string and then removed it, the (name, specifier)
-        // pair no longer matches any peer range, and drift correctly
-        // fires so the resolver re-runs and rewrites the lockfile.
+        // Anything in the lockfile but missing from the manifest's owned
+        // dependency sections is stale unless it is retained for an
+        // importer-owned peer. Required importer peers are included in
+        // `manifest_names` when autoInstallPeers is enabled; otherwise a
+        // retained exact version must satisfy the declared peer range.
         let manifest_names: std::collections::HashSet<&str> = manifest
             .dependencies
             .keys()
@@ -545,22 +578,32 @@ impl LockfileGraph {
                     .keys()
                     .filter(|name| !ignored.contains(name.as_str())),
             )
+            .chain(
+                self.settings
+                    .auto_install_peers
+                    .then_some(&manifest.peer_dependencies)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(name, _)| !manifest.peer_dependency_is_optional(name))
+                    .map(|(name, _)| name),
+            )
             .map(|s| s.as_str())
-            .collect();
-        let auto_hoisted_peer_specs: std::collections::HashSet<(&str, &str)> = self
-            .packages
-            .values()
-            .flat_map(|p| {
-                p.peer_dependencies
-                    .iter()
-                    .map(|(name, range)| (name.as_str(), range.as_str()))
-            })
             .collect();
         for (locked_name, locked_spec) in &lockfile_specs {
             if manifest_names.contains(locked_name) {
                 continue;
             }
-            if auto_hoisted_peer_specs.contains(&(*locked_name, *locked_spec)) {
+            // pnpm retains importer entries when an owned dependency is
+            // removed but a peer declaration for the same package remains.
+            // It may preserve the old exact dependency specifier (for
+            // example `5.3.4` for a `^5` peer), so accept either an exact
+            // peer-spec match or an exact locked version satisfying the
+            // importer's declared peer range.
+            if manifest
+                .peer_dependencies
+                .get(*locked_name)
+                .is_some_and(|peer_range| retained_peer_spec_is_compatible(peer_range, locked_spec))
+            {
                 continue;
             }
             let workspace_link = importer_path == "."
@@ -580,6 +623,21 @@ impl LockfileGraph {
 
         DriftStatus::Fresh
     }
+}
+
+fn retained_peer_spec_is_compatible(peer_range: &str, locked_spec: &str) -> bool {
+    if peer_range == locked_spec {
+        return true;
+    }
+    let normalized_range = if peer_range.trim().is_empty() {
+        "*"
+    } else {
+        peer_range
+    };
+    node_semver::Version::parse(locked_spec)
+        .ok()
+        .zip(node_semver::Range::parse(normalized_range).ok())
+        .is_some_and(|(version, range)| version.satisfies(&range))
 }
 
 /// Merge `pnpm-workspace.yaml` overrides on top of the manifest's
@@ -618,33 +676,15 @@ fn resolve_catalog_refs_in_overrides(
                 .strip_prefix("catalog:")
                 .map(|tail| if tail.is_empty() { "default" } else { tail })
                 .and_then(|cat_name| workspace_catalogs.get(cat_name))
-                .and_then(|cat| cat.get(override_key_package_name(k)))
+                .and_then(|cat| {
+                    override_match::target_package_name(k)
+                        .and_then(|package_name| cat.get(&package_name))
+                })
                 .cloned()
                 .unwrap_or_else(|| v.clone());
             (k.clone(), resolved)
         })
         .collect()
-}
-
-/// Extract the package name from an override selector key so the catalog
-/// can be looked up by pkg name. Handles bare (`lodash`), scoped
-/// (`@babel/core`), ranged (`lodash@<5`), ancestor-chained
-/// (`parent>lodash`), and combinations. Unparseable keys return the
-/// input unchanged; the catalog lookup will then miss and leave the
-/// value as-is.
-fn override_key_package_name(key: &str) -> &str {
-    let last = key.rsplit('>').next().unwrap_or(key);
-    if let Some(after_scope) = last.strip_prefix('@') {
-        match after_scope.find('@') {
-            Some(idx) => &last[..idx + 1],
-            None => last,
-        }
-    } else {
-        match last.find('@') {
-            Some(idx) => &last[..idx],
-            None => last,
-        }
-    }
 }
 
 /// Compare two override maps and return a human-readable reason
@@ -746,6 +786,17 @@ pub enum DriftStatus {
     Fresh,
     /// The lockfile is out of date. The reason describes the first mismatch found.
     Stale { reason: String },
+}
+
+fn manifest_declares_deps(manifest: &aube_manifest::PackageJson, auto_install_peers: bool) -> bool {
+    !manifest.dependencies.is_empty()
+        || !manifest.dev_dependencies.is_empty()
+        || !manifest.optional_dependencies.is_empty()
+        || (auto_install_peers
+            && manifest
+                .peer_dependencies
+                .keys()
+                .any(|name| !manifest.peer_dependency_is_optional(name)))
 }
 
 fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {
@@ -875,6 +926,32 @@ mod drift_tests {
     }
 
     #[test]
+    fn stale_when_manifest_adds_first_dep() {
+        // A lockfile written while the project had no deps records an
+        // empty importer (or none). Its deps can't vouch for a format
+        // without specifiers, so the first added dep must still read stale.
+        let manifest = make_manifest(&[("tool", "link:./tool")]);
+        for graph in [make_graph(&[]), LockfileGraph::default()] {
+            match graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()) {
+                DriftStatus::Stale { reason } => {
+                    assert!(reason.contains("manifest adds tool"), "reason: {reason}")
+                }
+                DriftStatus::Fresh => panic!("expected Stale"),
+            }
+        }
+        // With no deps on either side it's still fresh.
+        assert_eq!(
+            make_graph(&[]).check_drift(
+                &make_manifest(&[]),
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new()
+            ),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
     fn stale_when_manifest_removes_dep() {
         let manifest = make_manifest(&[("lodash", "^4.17.0")]);
         let graph = make_graph(&[
@@ -948,12 +1025,11 @@ mod drift_tests {
         ));
     }
 
-    // Regression guard for #42: the drift check must recognize
-    // auto-hoisted peers as derived state, not as "manifest removed X".
-    // Without this, every project that has any peer dep would trigger
-    // a full re-resolve on every install, defeating lockfile caching.
+    // Dependency peers belong to the package's peer context, not the
+    // importer. A legacy aube lockfile containing the synthetic importer
+    // row must re-resolve so it converges on pnpm's shape.
     #[test]
-    fn fresh_when_lockfile_has_auto_hoisted_peer() {
+    fn stale_when_dependency_peer_was_hoisted_into_importer() {
         let manifest = make_manifest(&[("use-sync-external-store", "1.2.0")]);
         let mut graph = make_graph(&[
             (
@@ -961,12 +1037,10 @@ mod drift_tests {
                 "1.2.0",
                 "use-sync-external-store@1.2.0",
             ),
-            // Hoisted peer — in the lockfile importers but not in the
-            // user's package.json.
+            // Incorrectly hoisted peer — in the lockfile importer but not
+            // in the user's package.json.
             ("react", "^16.8.0 || ^17.0.0 || ^18.0.0", "react@18.3.1"),
         ]);
-        // The declaring package must list react as a peer for the
-        // drift check to recognize the hoist. We add that here.
         let mut declaring_pkg = LockedPackage {
             name: "use-sync-external-store".into(),
             version: "1.2.0".into(),
@@ -980,10 +1054,86 @@ mod drift_tests {
             .packages
             .insert("use-sync-external-store@1.2.0".into(), declaring_pkg);
 
+        match graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()) {
+            DriftStatus::Stale { reason } => assert!(reason.contains("react")),
+            DriftStatus::Fresh => panic!("dependency peer must not remain in the importer"),
+        }
+    }
+
+    #[test]
+    fn fresh_when_importers_own_peer_is_auto_installed() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("react".into(), "19.2.0".into());
+        let graph = make_graph(&[("react", "19.2.0", "react@19.2.0")]);
+
         assert_eq!(
             graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
             DriftStatus::Fresh
         );
+    }
+
+    #[test]
+    fn fresh_when_lockfile_retains_importer_peer_with_matching_range() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("@tanstack/react-table".into(), "^8".into());
+        let graph = make_graph(&[(
+            "@tanstack/react-table",
+            "^8",
+            "@tanstack/react-table@8.21.3",
+        )]);
+
+        assert_eq!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn fresh_when_lockfile_retains_importer_peer_with_satisfying_exact_version() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("react-router-dom".into(), "^5".into());
+        let graph = make_graph(&[("react-router-dom", "5.3.4", "react-router-dom@5.3.4")]);
+
+        assert_eq!(
+            graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn fresh_when_retained_importer_peer_range_is_empty() {
+        for peer_range in ["", "  \t"] {
+            let mut manifest = make_manifest(&[]);
+            manifest
+                .peer_dependencies
+                .insert("react-router-dom".into(), peer_range.into());
+            let graph = make_graph(&[("react-router-dom", "5.3.4", "react-router-dom@5.3.4")]);
+
+            assert_eq!(
+                graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()),
+                DriftStatus::Fresh
+            );
+        }
+    }
+
+    #[test]
+    fn stale_when_retained_importer_peer_version_does_not_satisfy_range() {
+        let mut manifest = make_manifest(&[]);
+        manifest
+            .peer_dependencies
+            .insert("react-router-dom".into(), "^6".into());
+        let graph = make_graph(&[("react-router-dom", "5.3.4", "react-router-dom@5.3.4")]);
+
+        match graph.check_drift(&manifest, &BTreeMap::new(), &[], &BTreeMap::new()) {
+            DriftStatus::Stale { reason } => assert!(reason.contains("react-router-dom")),
+            DriftStatus::Fresh => panic!("an incompatible retained peer must be stale"),
+        }
     }
 
     // Regression: when a user explicitly pinned a dep that also happens
@@ -1329,6 +1479,54 @@ mod drift_tests {
         assert_eq!(
             graph.check_drift(&manifest, &ws_overrides, &[], &catalogs),
             DriftStatus::Fresh,
+        );
+    }
+
+    #[test]
+    fn fresh_when_yarn_ancestor_override_catalog_ref_matches_lockfile() {
+        let manifest = make_manifest(&[("lodash", "^4.17.0")]);
+        let mut graph = make_graph(&[("lodash", "^4.17.0", "lodash@4.17.21")]);
+        graph
+            .overrides
+            .insert("parent/lodash".into(), "4.17.21".into());
+        let ws_overrides = BTreeMap::from([("parent/lodash".to_string(), "catalog:".to_string())]);
+        let catalogs = BTreeMap::from([(
+            "default".to_string(),
+            BTreeMap::from([("lodash".to_string(), "4.17.21".to_string())]),
+        )]);
+
+        assert_eq!(
+            graph.check_drift(&manifest, &ws_overrides, &[], &catalogs),
+            DriftStatus::Fresh,
+        );
+    }
+
+    #[test]
+    fn catalog_overrides_resolve_slash_targets_with_comparators() {
+        let overrides = BTreeMap::from([
+            ("parent/lodash@>=4.0.0".to_string(), "catalog:".to_string()),
+            (
+                "parent/@scope/pkg@>1.0.0".to_string(),
+                "catalog:".to_string(),
+            ),
+            ("parent@^1>123numeric".to_string(), "catalog:".to_string()),
+        ]);
+        let catalogs = BTreeMap::from([(
+            "default".to_string(),
+            BTreeMap::from([
+                ("lodash".to_string(), "4.17.21".to_string()),
+                ("@scope/pkg".to_string(), "2.0.0".to_string()),
+                ("123numeric".to_string(), "1.0.0".to_string()),
+            ]),
+        )]);
+
+        assert_eq!(
+            resolve_catalog_refs_in_overrides(&overrides, &catalogs),
+            BTreeMap::from([
+                ("parent/lodash@>=4.0.0".to_string(), "4.17.21".to_string(),),
+                ("parent/@scope/pkg@>1.0.0".to_string(), "2.0.0".to_string(),),
+                ("parent@^1>123numeric".to_string(), "1.0.0".to_string()),
+            ])
         );
     }
 
@@ -2021,6 +2219,93 @@ mod drift_tests {
         assert_eq!(
             graph.check_drift_workspace(
                 &workspace_manifests,
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new(),
+                true,
+            ),
+            DriftStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn workspace_drift_stale_when_member_importer_is_missing() {
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "lodash".into(),
+                dep_path: "lodash@4.17.21".into(),
+                dep_type: DepType::Production,
+                specifier: Some("^4.17.0".into()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            ..Default::default()
+        };
+        let workspace_manifests = vec![
+            (".".to_string(), make_manifest(&[("lodash", "^4.17.0")])),
+            (
+                "packages/app".to_string(),
+                make_manifest(&[("express", "^4.18.0")]),
+            ),
+            ("packages/empty".to_string(), make_manifest(&[])),
+        ];
+        match graph.check_drift_workspace(
+            &workspace_manifests,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+        ) {
+            DriftStatus::Stale { reason } => assert!(
+                reason.contains("packages/app is missing"),
+                "unexpected reason: {reason}"
+            ),
+            DriftStatus::Fresh => panic!("missing member importer should be stale"),
+        }
+
+        // A required peer counts when peers are auto-installed.
+        let mut peer_only = make_manifest(&[]);
+        peer_only
+            .peer_dependencies
+            .insert("react".into(), "^18.0.0".into());
+        let peer_manifests = vec![
+            (".".to_string(), make_manifest(&[("lodash", "^4.17.0")])),
+            ("packages/peer".to_string(), peer_only),
+        ];
+        assert!(matches!(
+            graph.check_drift_workspace(
+                &peer_manifests,
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new(),
+                true,
+            ),
+            DriftStatus::Stale { .. }
+        ));
+        let mut no_auto_peers = graph.clone();
+        no_auto_peers.settings.auto_install_peers = false;
+        assert_eq!(
+            no_auto_peers.check_drift_workspace(
+                &peer_manifests,
+                &BTreeMap::new(),
+                &[],
+                &BTreeMap::new(),
+                true,
+            ),
+            DriftStatus::Fresh
+        );
+
+        // A member without deps has nothing to lock.
+        assert_eq!(
+            graph.check_drift_workspace(
+                &workspace_manifests[..1]
+                    .iter()
+                    .chain(&workspace_manifests[2..])
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 &BTreeMap::new(),
                 &[],
                 &BTreeMap::new(),

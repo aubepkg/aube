@@ -287,6 +287,38 @@ JSON
 	assert_dir_exists node_modules
 }
 
+@test "aube install picks up the first dependency added after a lockfile with no deps" {
+	# A lockfile written while the project had no dependencies has an empty
+	# importer. That used to read as up to date, so the new dependency was
+	# never installed, even with node_modules removed.
+	mkdir -p tool
+	echo '{"name":"tool","version":"1.0.0"}' >tool/package.json
+	echo '{"name":"app","version":"0.0.0"}' >package.json
+	# As pnpm 12.8.1 writes it for this project.
+	cat >pnpm-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+YAML
+	echo '{"name":"app","version":"0.0.0","dependencies":{"tool":"link:./tool"}}' >package.json
+
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "manifest adds tool@link:./tool"
+
+	run aube install
+	assert_success
+	assert_file_exists node_modules/tool/package.json
+	run cat pnpm-lock.yaml
+	assert_output --partial "specifier: link:./tool"
+}
+
 @test "aube install --frozen-lockfile errors when no lockfile is present" {
 	# pnpm parity: explicit --frozen-lockfile is ERR_PNPM_NO_LOCKFILE
 	# when the lockfile is absent. The auto-CI default (see next test)
@@ -1316,7 +1348,7 @@ JSON
 }
 
 @test "aube install self-heals when a CAS shard goes missing under a cached index" {
-	# Regression for the BuildKit cache-mount class (jdx/aube#345):
+	# Regression for the BuildKit cache-mount class (aubepkg/aube#345):
 	# a stale cached package index points at a CAS shard that's been
 	# pruned out from under it (foreign sync tool, partial wipe, a
 	# cache-mount that only covered part of the store, etc.). The fast

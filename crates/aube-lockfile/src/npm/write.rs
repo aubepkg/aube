@@ -3,6 +3,8 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
+use super::raw::RawNpmLockfile;
+
 #[derive(Debug, Serialize)]
 struct WriteNpmLockfile<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,6 +66,10 @@ struct WriteNpmPackage<'a> {
     libc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     funding: Option<WriteNpmFunding<'a>>,
+    /// The root manifest's `workspaces` field, copied verbatim as npm
+    /// does, so npm and aube rewrites don't flip it back and forth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspaces: Option<&'a aube_manifest::Workspaces>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     link: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -122,8 +128,9 @@ struct WriteNpmPeerDepMeta {
 ///  - Registry `resolved` tarball URLs are emitted when they were
 ///    present in the parsed graph. Graphs synthesized without
 ///    `tarball_url` fall back to npm's tolerated no-`resolved` form.
-///  - Non-git local source entries (`file:`, URL tarballs) aren't
-///    emitted yet. Git sources emit their pinned `resolved:` URL.
+///  - Path-backed local source entries (`file:`, `link:`) aren't
+///    emitted yet. Git and remote-tarball sources emit their pinned
+///    `resolved:` URL.
 ///    Workspace `link:` packages are emitted as importer entries plus
 ///    a root `node_modules/<name>` link record.
 pub fn write(
@@ -135,11 +142,12 @@ pub fn write(
     // lookups from parent deps resolve to one canonical entry even if
     // the graph has several contextualized variants.
     let mut canonical = crate::build_canonical_map(graph);
-    for pkg in graph
-        .packages
-        .values()
-        .filter(|pkg| matches!(pkg.local_source, Some(LocalSource::Git(_))))
-    {
+    for pkg in graph.packages.values().filter(|pkg| {
+        matches!(
+            pkg.local_source,
+            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+        )
+    }) {
         canonical
             .entry(super::canonical_key_from_dep_path(&pkg.dep_path))
             .or_insert(pkg);
@@ -165,7 +173,8 @@ pub fn write(
     // `["foo", "bar"]` for `node_modules/foo/node_modules/bar`. Shared
     // with bun (which renders the same segment list as `foo/bar`).
     let root_tree_roots = non_link_roots(graph, &roots);
-    let tree = super::build_hoist_tree(&canonical, &root_tree_roots);
+    let preferred_roots = preferred_root_placements(path, &canonical);
+    let tree = super::build_hoist_tree(&canonical, &root_tree_roots, Some(&preferred_roots));
     // For the npm writer, re-key the tree by install_path strings.
     let mut placed: BTreeMap<String, String> = tree
         .into_iter()
@@ -187,34 +196,101 @@ pub fn write(
             dev_dependencies: borrow_map(&manifest.dev_dependencies),
             optional_dependencies: borrow_map(&manifest.optional_dependencies),
             peer_dependencies: borrow_map(&manifest.peer_dependencies),
+            workspaces: manifest.workspaces.as_ref(),
             ..Default::default()
         },
     );
 
+    // A freshly resolved graph has no `link:` package for a member that
+    // nothing depends on, so read the members' own package.json, as the
+    // bun writer does. It also says whether a member has a version, which
+    // a `link:` package read from npm's lockfile records as `0.0.0`.
+    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let member_manifests: BTreeMap<&str, aube_manifest::PackageJson> = graph
+        .importers
+        .keys()
+        .filter(|importer| *importer != ".")
+        .filter_map(|importer| {
+            let manifest_path = project_dir.join(importer).join("package.json");
+            let manifest = aube_manifest::PackageJson::from_path(&manifest_path).ok()?;
+            Some((importer.as_str(), manifest))
+        })
+        .collect();
+
     for (importer_path, importer_roots) in graph.importers.iter().filter(|(path, _)| *path != ".") {
-        let Some(workspace_pkg) = workspace_package_for_importer(graph, importer_path) else {
-            continue;
-        };
-        let (dependencies, dev_dependencies, optional_dependencies) =
+        let (name, version, peer_dependencies, peer_dependencies_meta, declared) =
+            if let Some(pkg) = workspace_package_for_importer(graph, importer_path) {
+                (
+                    pkg.name.as_str(),
+                    member_manifests
+                        .get(importer_path.as_str())
+                        .map_or(Some(pkg.version.as_str()), |manifest| {
+                            manifest.version.as_deref()
+                        }),
+                    &pkg.peer_dependencies,
+                    optional_peers_meta(
+                        pkg.peer_dependencies_meta
+                            .iter()
+                            .filter(|(_, meta)| meta.optional)
+                            .map(|(name, _)| name.as_str()),
+                    ),
+                    &pkg.declared_dependencies,
+                )
+            } else if let Some(manifest) = member_manifests.get(importer_path.as_str()) {
+                // npm links a nameless member under its folder name.
+                let Some(name) = manifest.name.as_deref().or_else(|| {
+                    importer_path
+                        .rsplit('/')
+                        .next()
+                        .filter(|segment| !segment.is_empty() && *segment != "..")
+                }) else {
+                    continue;
+                };
+                (
+                    name,
+                    manifest.version.as_deref(),
+                    &manifest.peer_dependencies,
+                    optional_peers_meta(
+                        manifest
+                            .extra
+                            .get("peerDependenciesMeta")
+                            .and_then(serde_json::Value::as_object)
+                            .into_iter()
+                            .flat_map(|meta| meta.keys())
+                            .map(String::as_str)
+                            .filter(|peer| manifest.peer_dependency_is_optional(peer)),
+                    ),
+                    &manifest.dependencies,
+                )
+            } else {
+                continue;
+            };
+        let (mut dependencies, dev_dependencies, optional_dependencies) =
             dep_sections_from_direct_deps(importer_roots);
+        // Required importer peers become production direct deps (both on
+        // resolve under autoInstallPeers and on npm read), but npm keeps
+        // a peer-only declaration in `peerDependencies` alone. A matching
+        // peer spec marks the peer-derived entry, unless the workspace's
+        // declared dependencies show it also owns that name.
+        dependencies.retain(|name, spec| {
+            declared.get(*name).map(String::as_str) == Some(*spec)
+                || peer_dependencies.get(*name).map(String::as_str) != Some(*spec)
+        });
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
-                name: Some(workspace_pkg.name.as_str()),
-                version: Some(workspace_pkg.version.as_str()),
+                name: Some(name),
+                version,
                 dependencies,
                 dev_dependencies,
                 optional_dependencies,
-                peer_dependencies: workspace_pkg
-                    .peer_dependencies
-                    .iter()
-                    .map(|(n, v)| (n.as_str(), v.as_str()))
-                    .collect(),
+                peer_dependencies: borrow_map(peer_dependencies),
+                peer_dependencies_meta,
                 ..Default::default()
             },
         );
         packages.insert(
-            format!("node_modules/{}", workspace_pkg.name),
+            format!("node_modules/{name}"),
             WriteNpmPackage {
                 resolved: Some(importer_path.clone()),
                 link: true,
@@ -223,7 +299,7 @@ pub fn write(
         );
 
         let workspace_tree_roots = non_link_roots(graph, importer_roots);
-        let workspace_tree = super::build_hoist_tree(&canonical, &workspace_tree_roots);
+        let workspace_tree = super::build_hoist_tree(&canonical, &workspace_tree_roots, None);
         // Skip subtrees whose top-level segment is already hoisted to
         // `node_modules/<name>` at the same canonical version: Node's
         // upward `node_modules` walk from `<importer>/...` resolves to
@@ -416,6 +492,45 @@ pub fn write(
     Ok(())
 }
 
+/// Read npm's existing top-level install choices before replacing the file.
+/// This is best-effort: new destinations and malformed files have no layout
+/// preference, while the caller's normal parse path remains responsible for
+/// surfacing errors from an existing project lockfile.
+fn preferred_root_placements(
+    path: &Path,
+    canonical: &BTreeMap<String, &LockedPackage>,
+) -> BTreeMap<String, String> {
+    let Ok(content) = crate::read_lockfile(path) else {
+        return BTreeMap::new();
+    };
+    let Ok(raw) = crate::parse_json::<RawNpmLockfile>(path, content) else {
+        return BTreeMap::new();
+    };
+    let mut preferred = BTreeMap::new();
+    for (install_path, entry) in raw.packages {
+        if entry.link {
+            continue;
+        }
+        let Some(rest) = install_path.strip_prefix("node_modules/") else {
+            continue;
+        };
+        if rest.contains("/node_modules/") {
+            continue;
+        }
+        let Some(name) = super::layout::package_name_from_install_path(&install_path) else {
+            continue;
+        };
+        let Some(version) = entry.version else {
+            continue;
+        };
+        let key = format!("{name}@{version}");
+        if canonical.contains_key(&key) {
+            preferred.insert(name, key);
+        }
+    }
+    preferred
+}
+
 fn workspace_package_for_importer<'a>(
     graph: &'a LockfileGraph,
     importer_path: &str,
@@ -504,6 +619,16 @@ fn reachable_from(
     }
     out
 }
+/// `peerDependenciesMeta` for a workspace member's optional peers. Without
+/// it, rereading the lockfile turns those peers into required ones.
+fn optional_peers_meta<'a>(
+    optional_peers: impl Iterator<Item = &'a str>,
+) -> BTreeMap<&'a str, WriteNpmPeerDepMeta> {
+    optional_peers
+        .map(|peer| (peer, WriteNpmPeerDepMeta { optional: true }))
+        .collect()
+}
+
 fn borrow_map(m: &BTreeMap<String, String>) -> BTreeMap<&str, &str> {
     m.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
 }

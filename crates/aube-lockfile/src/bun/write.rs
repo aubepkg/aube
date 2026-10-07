@@ -76,7 +76,7 @@ pub fn write(
             all_roots.push(d.clone());
         }
     }
-    let tree = crate::npm::build_hoist_tree(&canonical, &all_roots);
+    let tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None);
 
     // Non-root workspaces are read fresh from disk because the caller
     // doesn't thread them through — the root manifest is the only one
@@ -459,6 +459,23 @@ pub fn write(
     // lockfiles that predate the field) so a bun-bumped value round-
     // trips instead of silently downgrading on re-emit.
     let config_version = graph.bun_config_version.unwrap_or(1);
+    let (overrides_block, scoped_overrides) = super::overrides::write(&graph.overrides);
+    // Stamp the version the way bun does: v3 while scoped override
+    // groups exist, whatever version was loaded. Otherwise keep the
+    // loaded v1 or v2, walking a v3 lockfile whose scoped rules are gone
+    // down to v2. A fresh lockfile, or one from another format, is v1.
+    let loaded_version = graph
+        .extra_fields
+        .get(super::LOCKFILE_VERSION_KEY)
+        .and_then(Value::as_u64);
+    let lockfile_version = if scoped_overrides {
+        3
+    } else {
+        match loaded_version {
+            Some(2 | 3) => 2,
+            _ => 1,
+        }
+    };
 
     // Collect top-level blocks bun understands natively. Overrides /
     // catalog / catalogs / patchedDependencies / trustedDependencies
@@ -466,11 +483,7 @@ pub fn write(
     // lockfile carried drops through `graph.extra_fields`.
     let mut top_level_extras: Vec<(String, Value)> = Vec::new();
     if !graph.overrides.is_empty() {
-        let mut obj = serde_json::Map::new();
-        for (k, v) in &graph.overrides {
-            obj.insert(k.clone(), Value::String(v.clone()));
-        }
-        top_level_extras.push(("overrides".to_string(), Value::Object(obj)));
+        top_level_extras.push(("overrides".to_string(), overrides_block));
     }
     if !graph.patched_dependencies.is_empty() {
         let mut obj = serde_json::Map::new();
@@ -535,6 +548,7 @@ pub fn write(
     let body = format_bun_lockfile(
         &workspace_pairs,
         &package_entries,
+        lockfile_version,
         config_version,
         &top_level_extras,
     );
@@ -559,17 +573,18 @@ pub fn write(
 /// map in BTreeMap order — each is rendered as a single-line
 /// `[ident, "", {meta}, integrity]` array.
 ///
-/// `config_version` is echoed back into the output as bun itself does —
-/// hardcoding would silently downgrade the field when bun bumps it.
+/// `lockfile_version` and `config_version` are echoed back into the
+/// output as bun itself does — hardcoding would silently downgrade them.
 fn format_bun_lockfile(
     workspaces: &[(String, Vec<(String, serde_json::Value)>)],
     package_entries: &[(String, serde_json::Value)],
+    lockfile_version: u32,
     config_version: u32,
     top_level_extras: &[(String, serde_json::Value)],
 ) -> String {
     let mut out = String::with_capacity(8192);
     out.push_str("{\n");
-    out.push_str("  \"lockfileVersion\": 1,\n");
+    out.push_str(&format!("  \"lockfileVersion\": {lockfile_version},\n"));
     out.push_str(&format!("  \"configVersion\": {config_version},\n"));
 
     // Workspaces block. Emits root (`""`) first, then each non-root
@@ -630,11 +645,25 @@ fn format_bun_lockfile(
             serde_json::Value::Object(map) if !map.is_empty() => {
                 out.push_str(&format!("  {key_str}: {{\n"));
                 for (dk, dv) in map {
-                    out.push_str(&format!(
-                        "    {}: {},\n",
-                        serde_json::to_string(dk).unwrap(),
-                        inline_json(dv, 0)
-                    ));
+                    let dk_str = serde_json::to_string(dk).unwrap();
+                    match dv {
+                        // bun writes each scoped override group across
+                        // lines, with a trailing comma on every row.
+                        serde_json::Value::Object(group) if k == "overrides" => {
+                            out.push_str(&format!("    {dk_str}: {{\n"));
+                            for (gk, gv) in group {
+                                out.push_str(&format!(
+                                    "      {}: {},\n",
+                                    serde_json::to_string(gk).unwrap(),
+                                    inline_json(gv, 0)
+                                ));
+                            }
+                            out.push_str("    },\n");
+                        }
+                        _ => {
+                            out.push_str(&format!("    {dk_str}: {},\n", inline_json(dv, 0)));
+                        }
+                    }
                 }
                 out.push_str("  },\n");
             }

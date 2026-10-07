@@ -63,14 +63,30 @@ fn pnpm_patch_hashes(
 }
 
 fn strip_patch_hash_suffix(value: &str) -> String {
-    let mut out = value.to_string();
-    while let Some(start) = out.find("(patch_hash=") {
-        let Some(rel_end) = out[start..].find(')') else {
-            break;
-        };
-        let end = start + rel_end + 1;
-        out.replace_range(start..end, "");
+    let mut out = String::with_capacity(value.len());
+    let mut depth = 0usize;
+    let mut copied = 0;
+    let mut i = 0;
+    let bytes = value.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'('
+            && depth == 0
+            && value[i..].starts_with("(patch_hash=")
+            && let Some(end) = value[i..].find(')')
+        {
+            out.push_str(&value[copied..i]);
+            i += end + 1;
+            copied = i;
+            continue;
+        }
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i += 1;
     }
+    out.push_str(&value[copied..]);
     out
 }
 
@@ -89,9 +105,31 @@ fn with_patch_hash(value: &str, hash: Option<&str>) -> String {
     )
 }
 
+/// Root-relative `path` re-expressed relative to workspace member
+/// `importer`, both root-relative, in forward-slash form. Both are anchored
+/// at `root`, the absolute project root, so an importer outside it
+/// (`../sibling`) gets a path back through the root's own directory name,
+/// as pnpm writes it. An absolute path means the same thing from anywhere
+/// and is kept, as is a path with no relative form from the importer.
+fn relative_to_importer(path: &Path, importer: &str, root: &Path) -> String {
+    let forward = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    if path.is_absolute() {
+        return forward(path);
+    }
+    let target = aube_util::path::normalize_lexical(&root.join(path));
+    let base = aube_util::path::normalize_lexical(&root.join(importer));
+    match pathdiff::diff_paths(&target, &base) {
+        Some(rel) if rel.as_os_str().is_empty() => ".".to_string(),
+        Some(rel) => forward(&rel),
+        None => forward(path),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::with_patch_hash;
+    use super::{relative_to_importer, with_patch_hash};
+    use proptest::prelude::*;
+    use std::path::Path;
 
     #[test]
     fn replaces_every_stale_patch_hash_suffix() {
@@ -101,19 +139,79 @@ mod tests {
             "1.0.0(patch_hash=current)(react@19)"
         );
     }
+
+    proptest! {
+        #[test]
+        fn replacing_own_patch_hash_preserves_nested_peer_hashes(
+            version in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+            own_hash in "[a-f0-9]{64}",
+            peer_hash in "[a-f0-9]{64}",
+        ) {
+            let suffix = format!("(@scope/peer@{version}(patch_hash={peer_hash})(nested@1.0.0))");
+            let bare = format!("{version}{suffix}");
+            let patched = with_patch_hash(&bare, Some(&own_hash));
+            prop_assert_eq!(&patched, &format!("{version}(patch_hash={own_hash}){suffix}"));
+            prop_assert_eq!(with_patch_hash(&patched, Some(&own_hash)), patched.clone());
+            prop_assert_eq!(with_patch_hash(&patched, None), bare);
+        }
+    }
+
+    #[test]
+    fn member_link_paths_become_member_relative() {
+        let root = Path::new("/ws/proj");
+        let rel =
+            |path: &str, importer: &str| relative_to_importer(Path::new(path), importer, root);
+        assert_eq!(rel("packages/a/vendor/x", "packages/a"), "vendor/x");
+        assert_eq!(rel("libs/y", "packages/a"), "../../libs/y");
+        assert_eq!(rel("../outside", "packages/a"), "../../../outside");
+        assert_eq!(rel("packages/a", "packages/a"), ".");
+        // An importer outside the root reaches a root target through the
+        // root's directory name.
+        assert_eq!(rel("vendor/x", "../sibling"), "../proj/vendor/x");
+        assert_eq!(rel("../sibling/vendor/x", "../sibling"), "vendor/x");
+    }
 }
 
-/// Write a LockfileGraph as pnpm-lock.yaml v9 format.
+/// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`, taking
+/// the lockfile's own directory as the project root. Only correct when the
+/// graph's importer keys and local paths are relative to that directory,
+/// as in a project lockfile. A copy written elsewhere, such as under
+/// `node_modules`, must use [`write_with_project_root`] with the real
+/// project root, or a member's `link:` versions point at the wrong
+/// directory. Kept for API compatibility; slated for removal in v3 (see
+/// `V3.md`).
 pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Result<(), Error> {
+    let lockfile_dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    write_with_project_root(path, lockfile_dir, graph, manifest)
+}
+
+/// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`.
+/// `project_root` is the directory the graph's importer keys and local
+/// paths are relative to: the lockfile's own directory for a project
+/// lockfile, but not for a copy kept under `node_modules`.
+pub fn write_with_project_root(
+    path: &Path,
+    project_root: &Path,
+    graph: &LockfileGraph,
+    manifest: &PackageJson,
+) -> Result<(), Error> {
     let native_pnpm_aliases = path
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "pnpm-lock.yaml");
-    let patch_hashes = if native_pnpm_aliases {
-        pnpm_patch_hashes(path, &graph.patched_dependencies)?
-    } else {
-        BTreeMap::new()
-    };
+    // Patch identities are part of the pnpm v9 format itself, so
+    // aube-lock.yaml records them too; otherwise the same patched
+    // package serializes differently depending on whether the graph
+    // came from a parse or a fresh resolve.
+    let patch_hashes = pnpm_patch_hashes(path, &graph.patched_dependencies)?;
+    // Member `link:` versions are written relative to the member; anchoring
+    // both at the absolute project root lets an importer outside it reach
+    // a target inside it.
+    let project_root =
+        std::path::absolute(project_root).unwrap_or_else(|_| project_root.to_path_buf());
     let patch_hash_for = |pkg: &crate::LockedPackage| -> Option<&str> {
         patch_hashes
             .get(&pkg.spec_key())
@@ -124,33 +222,48 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
             })
             .map(String::as_str)
     };
-    let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
-        if native_pnpm_aliases {
-            pkg.map(|pkg| with_patch_hash(value, patch_hash_for(pkg)))
-                .unwrap_or_else(|| value.to_string())
-        } else {
-            value.to_string()
-        }
-    };
-    // Translate a *flat* peer reference from aube's internal FS-safe
+    // Nested peers are translated before their parent. Index unchanged heads
+    // so an inner URL/patch rewrite cannot hide a contextualized parent's
+    // source or registry alias when no peer-free package entry exists.
+    let peer_packages: BTreeMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|(key, pkg)| (key.split('(').next().unwrap_or(key), pkg))
+        .collect();
+    // Translate a peer reference from aube's internal FS-safe
     // hashed dep_path (`request@url+<hash>` / `request@git+<hash>`) to the
     // resolved spec pnpm writes inside a peer suffix
     // (`request@https://codeload.…/tar.gz/<sha>`). The reference is itself a
     // package key, so a direct lookup yields the target's source. Registry
-    // peers aren't in the table under their suffix head (or carry no
-    // `local_source`) and return `None`, leaving `react@18.2.0` untouched.
+    // peers use the declared patch hash, including peers with nested contexts.
     // Restricted to git / remote-tarball so it stays the exact inverse of
     // the reader's `shared_local_dep_path` pass (which only re-derives those
     // two kinds); `file:` / `link:` peers never occur in practice and a
     // one-sided translation would break the round-trip.
-    let peer_suffix_to_spec = |head: &str| -> Option<String> {
-        let pkg = graph.packages.get(head)?;
-        match pkg.local_source.as_ref()? {
-            local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_)) => {
-                Some(format!("{}@{}", pkg.name, local.specifier()))
+    let peer_reference_to_spec = |reference: &str| -> Option<String> {
+        let head = reference.split('(').next().unwrap_or(reference);
+        let pkg = graph
+            .packages
+            .get(reference)
+            .or_else(|| peer_packages.get(head).copied());
+        let translated = match pkg.and_then(|pkg| pkg.local_source.as_ref()) {
+            Some(local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_))) => {
+                let (name, _) = parse_dep_path(head)?;
+                let suffix = reference.find('(').map_or("", |i| &reference[i..]);
+                format!("{name}@{}{suffix}", local.specifier())
             }
-            _ => None,
-        }
+            _ => reference.to_string(),
+        };
+        let hash = patch_hashes
+            .get(head)
+            .map(String::as_str)
+            .or_else(|| pkg.and_then(patch_hash_for));
+        Some(with_patch_hash(&translated, hash))
+    };
+    let decorate_patch_hash = |value: &str, pkg: Option<&crate::LockedPackage>| -> String {
+        let rewritten = rewrite_peer_suffix(value, &peer_reference_to_spec);
+        pkg.map(|pkg| with_patch_hash(&rewritten, patch_hash_for(pkg)))
+            .unwrap_or(rewritten)
     };
     let mut importers = BTreeMap::new();
     let exclude_links = graph.settings.exclude_links_from_lockfile;
@@ -206,21 +319,30 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 .get(&dep.dep_path)
                 .and_then(|p| p.local_source.as_ref())
             {
-                local.specifier()
+                match local {
+                    // pnpm records a member's `link:` relative to the
+                    // member, a target an override set included; the graph
+                    // keeps it relative to the root.
+                    LocalSource::Link(path)
+                        if importer_path != "." && specifier.starts_with("link:") =>
+                    {
+                        format!(
+                            "link:{}",
+                            relative_to_importer(path, importer_path, &project_root)
+                        )
+                    }
+                    _ => local.specifier(),
+                }
             } else if native_pnpm_aliases
                 && let Some(pkg) = graph.packages.get(&dep.dep_path)
                 && let Some(real_name) = pkg.alias_of.as_deref()
             {
                 format!("{real_name}@{}", dep_path_tail(&dep.dep_path, &dep.name))
             } else {
-                // Registry dep: the tail may carry a `(git/tarball@hash)`
-                // peer suffix that must render as the resolved spec.
-                rewrite_peer_suffix(
-                    dep.dep_path
-                        .strip_prefix(&format!("{}@", dep.name))
-                        .unwrap_or(&dep.dep_path),
-                    &peer_suffix_to_spec,
-                )
+                dep.dep_path
+                    .strip_prefix(&format!("{}@", dep.name))
+                    .unwrap_or(&dep.dep_path)
+                    .to_string()
             };
             let target = graph
                 .packages
@@ -656,7 +778,6 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                     .or_else(|| graph.packages.get(&peerless_dep_path(&name, &value)));
                 let rewritten = if let Some(target) = target
                     && let Some(ref local) = target.local_source
-                    && !matches!(local, LocalSource::Link(_))
                 {
                     local.specifier()
                 } else if native_pnpm_aliases
@@ -665,10 +786,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 {
                     format!("{real_name}@{value}")
                 } else {
-                    // Registry dep whose value may carry a
-                    // `(git/tarball@hash)` peer suffix — render the suffix
-                    // as the resolved spec (`1.1.4(request@https://…)`).
-                    rewrite_peer_suffix(&value, &peer_suffix_to_spec)
+                    value
                 };
                 let rewritten = decorate_patch_hash(&rewritten, target);
                 (name, rewritten)
@@ -689,10 +807,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
                 if native_pnpm_aliases && let Some(real_name) = pkg.alias_of.as_deref() {
                     format!("{real_name}@{}", dep_path_tail(dep_path, &pkg.name))
                 } else {
-                    // Registry snapshot key whose `(git/tarball@hash)` peer
-                    // suffix must render as the resolved spec to match pnpm
-                    // (`request-promise-core@1.1.4(request@https://…)`).
-                    rewrite_peer_suffix(dep_path, &peer_suffix_to_spec)
+                    dep_path.clone()
                 }
             }
         };
@@ -805,13 +920,7 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
         },
         // pnpm v11 stores selector -> normalized patch-content SHA-256.
         // Skipped when empty to keep parity with no-patch installs.
-        patched_dependencies: if graph.patched_dependencies.is_empty() {
-            None
-        } else if native_pnpm_aliases {
-            Some(patch_hashes)
-        } else {
-            Some(graph.patched_dependencies.clone())
-        },
+        patched_dependencies: (!patch_hashes.is_empty()).then_some(patch_hashes),
         time,
         importers,
         packages,
@@ -829,7 +938,11 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
     Ok(())
 }
 
-fn registry_tarball_url_is_not_derivable(
+/// Whether `tarball_url` differs from the standard
+/// `<registry>/<name>/-/<basename>-<version>.tgz` layout, i.e. whether
+/// the lockfile has to record it because it can't be re-derived on
+/// read. A missing URL is derivable.
+pub fn registry_tarball_url_is_not_derivable(
     name: &str,
     version: &str,
     tarball_url: Option<&str>,

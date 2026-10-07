@@ -1,14 +1,108 @@
 use aube_lockfile::dep_path_filename::dep_path_to_filename;
 use miette::{Context, IntoDiagnostic, miette};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) type PkgJsonCache = BTreeMap<String, Option<serde_json::Value>>;
 
-/// Per-install cache of workspace-package `package.json` reads. Keyed
-/// by the workspace dir on disk so a popular tooling package consumed
-/// by many importers gets read and parsed once, not once per consumer.
-pub(crate) type WsPkgJsonCache = BTreeMap<PathBuf, Option<serde_json::Value>>;
+/// Per-install cache of the `package.json` in each directory bins are read
+/// from outside the virtual store (workspace packages and `link:` targets),
+/// so a package many importers depend on is read and parsed once. Holds
+/// the parsed manifest, `None` when there is none, or why it couldn't be
+/// used.
+pub(crate) type DirPkgJsonCache =
+    BTreeMap<PathBuf, Result<Option<serde_json::Value>, ManifestFailure>>;
+
+/// Why a directory's `package.json` couldn't be used.
+#[derive(Debug)]
+pub(crate) struct ManifestFailure {
+    /// Shown in a `WarnAndSkip` warning.
+    message: String,
+    /// The typed parse error, kept so a `Fail` reader reports it with its
+    /// code (`ERR_AUBE_MANIFEST_PARSE`). `None` for a read failure, and
+    /// after a `Fail` reader has taken it.
+    parse_error: Option<aube_manifest::Error>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ManagedBinEntry {
+    File(Vec<u8>),
+    Symlink(PathBuf),
+    Other,
+}
+
+/// What a linking pass does when the command name it is about to write
+/// is already present in the target `.bin/`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BinConflict {
+    /// Write the shim unconditionally. Used by the passes whose entries
+    /// are authoritative for a `.bin/`: the importer's direct deps, the
+    /// importer's own `bin`, and the isolated per-dep pass.
+    Overwrite,
+    /// Yield to a command another package claimed earlier *in this run*,
+    /// so a deep dependency can't shadow one of the importer's own.
+    ///
+    /// A shim left behind by an earlier install is deliberately *not* a
+    /// claim. `.bin/` is never pruned, so treating on-disk state as
+    /// ownership would let a command whose owner was removed or replaced
+    /// keep pointing at the old package forever. Overwriting it is how
+    /// an incremental install reconciles the directory.
+    YieldToClaimed,
+}
+
+/// Exact shim files created during the pre-lifecycle linking pass, keyed by
+/// their `.bin` directory and command name. Snapshots distinguish unchanged
+/// Aube output from lifecycle-produced replacements on every platform.
+#[derive(Debug, Default)]
+pub(crate) struct ManagedBinLinks {
+    entries: BTreeMap<PathBuf, BTreeMap<String, BTreeMap<PathBuf, ManagedBinEntry>>>,
+    seen: BTreeMap<PathBuf, BTreeSet<String>>,
+    capture: bool,
+}
+
+impl ManagedBinLinks {
+    pub(crate) fn capturing() -> Self {
+        Self {
+            capture: true,
+            ..Default::default()
+        }
+    }
+}
+pub(crate) type PreservedBinLinks = BTreeMap<PathBuf, BTreeSet<String>>;
+
+pub(crate) struct LinkDepBinsInput<'a> {
+    pub(crate) aube_dir: &'a Path,
+    /// Workspace root on disk. With `modules_dir_name` this locates each
+    /// importer's own `.bin/`, which is what scopes direct-dependency
+    /// precedence to the importer that declared the dependency.
+    pub(crate) project_dir: &'a Path,
+    pub(crate) modules_dir_name: &'a str,
+    pub(crate) graph: &'a aube_lockfile::LockfileGraph,
+    pub(crate) virtual_store_dir_max_length: usize,
+    pub(crate) placements: Option<&'a aube_linker::HoistedPlacements>,
+    pub(crate) shim_opts: aube_linker::BinShimOptions<'a>,
+    pub(crate) cache: &'a mut PkgJsonCache,
+    pub(crate) managed: &'a mut ManagedBinLinks,
+    pub(crate) preserved: Option<&'a PreservedBinLinks>,
+}
+
+pub(crate) struct LinkAllBinsInput<'a> {
+    pub(crate) project_dir: &'a Path,
+    pub(crate) settings_ctx: &'a aube_settings::ResolveCtx<'a>,
+    pub(crate) modules_dir_name: &'a str,
+    pub(crate) aube_dir: &'a Path,
+    pub(crate) graph: &'a aube_lockfile::LockfileGraph,
+    pub(crate) virtual_store_dir_max_length: usize,
+    pub(crate) placements: Option<&'a aube_linker::HoistedPlacements>,
+    pub(crate) ws_dirs: &'a BTreeMap<String, PathBuf>,
+    pub(crate) manifests: &'a [(String, aube_manifest::PackageJson)],
+    pub(crate) manifest: &'a aube_manifest::PackageJson,
+    pub(crate) node_linker: aube_linker::NodeLinker,
+    pub(crate) has_workspace: bool,
+    pub(crate) link_dependency_bins: bool,
+    pub(crate) capture_managed: bool,
+    pub(crate) preserved: Option<&'a PreservedBinLinks>,
+}
 
 /// Link bin entries from packages to node_modules/.bin/
 /// Compute the on-disk directory a dep's materialized package lives
@@ -54,7 +148,7 @@ pub(crate) fn materialized_pkg_dir(
 /// packages (`@scope/name`) `package_dir` is two levels below that
 /// `node_modules/`, so we strip the extra `@scope` hop. Used to
 /// locate the per-dep `.bin/` for transitive lifecycle-script bins.
-pub(super) fn dep_modules_dir_for(package_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+pub(crate) fn dep_modules_dir_for(package_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     if name.starts_with('@') {
         package_dir
             .parent()
@@ -160,6 +254,8 @@ pub(super) fn link_bins_for_dep(
     virtual_store_dir_max_length: usize,
     placements: Option<&aube_linker::HoistedPlacements>,
     shim_opts: aube_linker::BinShimOptions,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     let pkg_dir = materialized_pkg_dir(
         aube_dir,
@@ -177,9 +273,28 @@ pub(super) fn link_bins_for_dep(
         placements,
     )? && let Some(bin) = pkg_json.get("bin")
     {
-        link_bin_entries(bin_dir, &pkg_dir, Some(name), bin, shim_opts)?;
+        link_bin_entries(
+            bin_dir,
+            &pkg_dir,
+            Some(name),
+            bin,
+            shim_opts,
+            managed,
+            preserved,
+            BinConflict::Overwrite,
+        )?;
     }
-    link_bundled_bins(bin_dir, &pkg_dir, graph, dep_path, shim_opts)?;
+    link_bundled_bins(
+        bin_dir,
+        &pkg_dir,
+        graph,
+        dep_path,
+        shim_opts,
+        managed,
+        preserved,
+        BinConflict::Overwrite,
+        None,
+    )?;
     Ok(())
 }
 
@@ -194,14 +309,22 @@ pub(super) fn link_bins(
     shim_opts: aube_linker::BinShimOptions,
     cache: &mut PkgJsonCache,
     ws_dirs: Option<&BTreeMap<String, PathBuf>>,
-    ws_cache: &mut WsPkgJsonCache,
+    ws_cache: &mut DirPkgJsonCache,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     let bin_dir = project_dir.join(modules_dir_name).join(".bin");
     std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
 
     for dep in graph.root_deps() {
-        if let Some(ws_dir) = ws_dirs.and_then(|m| m.get(&dep.name)) {
-            link_bins_for_workspace_dep(ws_cache, &bin_dir, ws_dir, &dep.name, shim_opts)?;
+        if let Some((dir, on_error)) =
+            unmaterialized_bin_source(graph, &dep.dep_path, &dep.name, project_dir, ws_dirs)
+        {
+            if let Some(pkg_json) = read_bin_manifest(ws_cache, &dir, &dep.name, on_error)? {
+                link_bins_from_dir(
+                    &bin_dir, &dir, &dep.name, &pkg_json, shim_opts, managed, preserved,
+                )?;
+            }
         } else {
             link_bins_for_dep(
                 cache,
@@ -213,6 +336,8 @@ pub(super) fn link_bins(
                 virtual_store_dir_max_length,
                 placements,
                 shim_opts,
+                managed,
+                preserved,
             )?;
         }
     }
@@ -220,51 +345,127 @@ pub(super) fn link_bins(
     Ok(())
 }
 
-/// Link bins declared by a `workspace:` dep into the importer's
-/// `.bin/`. Workspace deps don't get a `.aube/<dep_path>/` materialization
-/// (the linker symlinks them straight into the importer's `node_modules/`),
-/// so `link_bins_for_dep` finds nothing on disk and silently skips. Read
-/// the workspace package's own `package.json` and shim each bin entry,
-/// matching pnpm's behavior of exposing workspace bins to dependent
-/// packages' npm scripts.
+/// Where to read a direct dep's bins from when the linker doesn't
+/// materialize it in the virtual store, and how to treat a manifest there
+/// that can't be read or parsed. `None` for a dep the virtual store holds.
 ///
-/// `cache` deduplicates the read+parse across importers — without it,
-/// a popular tooling package consumed by N workspace members gets its
-/// `package.json` read N times during a single install.
-pub(super) fn link_bins_for_workspace_dep(
-    cache: &mut WsPkgJsonCache,
-    bin_dir: &Path,
-    ws_dir: &Path,
+/// A `link:` dep is read from its target, whose path the graph keeps
+/// relative to `project_dir`: the linker only symlinks
+/// `<modules_dir>/<name>` at it, and a workspace member's own symlink may
+/// be missing when `dedupe-direct-deps` leaves only the root's. An explicit
+/// `link:` wins over a workspace package of the same name, as
+/// `<modules_dir>/<name>` points at the link target. A workspace dep is
+/// read from the workspace package's directory.
+fn unmaterialized_bin_source(
+    graph: &aube_lockfile::LockfileGraph,
+    dep_path: &str,
     name: &str,
-    shim_opts: aube_linker::BinShimOptions,
-) -> miette::Result<()> {
-    let pkg_json = if let Some(cached) = cache.get(ws_dir) {
-        cached.clone()
-    } else {
-        let pkg_json_path = ws_dir.join("package.json");
-        let parsed = match std::fs::read_to_string(&pkg_json_path) {
-            Ok(content) => Some(
-                aube_manifest::parse_json::<serde_json::Value>(&pkg_json_path, content)
-                    .map_err(miette::Report::new)
-                    .wrap_err_with(|| {
-                        format!("failed to parse package.json for workspace dep {name}")
-                    })?,
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                return Err(miette!(
-                    "failed to read package.json for workspace dep {name} at {}: {e}",
-                    pkg_json_path.display()
-                ));
-            }
-        };
-        cache.insert(ws_dir.to_path_buf(), parsed.clone());
-        parsed
-    };
-    if let Some(pkg_json) = pkg_json
-        && let Some(bin) = pkg_json.get("bin")
+    project_dir: &Path,
+    ws_dirs: Option<&BTreeMap<String, PathBuf>>,
+) -> Option<(PathBuf, ManifestErrors)> {
+    if let Some(aube_lockfile::LocalSource::Link(path)) = graph
+        .packages
+        .get(dep_path)
+        .and_then(|pkg| pkg.local_source.as_ref())
     {
-        link_bin_entries(bin_dir, ws_dir, Some(name), bin, shim_opts)?;
+        let dir = aube_util::path::normalize_lexical(&project_dir.join(path));
+        return Some((dir, ManifestErrors::WarnAndSkip));
+    }
+    ws_dirs?
+        .get(name)
+        .map(|dir| (dir.clone(), ManifestErrors::Fail))
+}
+
+/// How to treat a `package.json` that [`read_bin_manifest`] can't read or
+/// parse.
+#[derive(Clone, Copy)]
+enum ManifestErrors {
+    /// Fail the install: a workspace package's manifest is part of the
+    /// workspace itself.
+    Fail,
+    /// Warn and link no bins: the resolver accepts a `link:` target
+    /// without a usable manifest, so its bins alone mustn't fail install.
+    WarnAndSkip,
+}
+
+/// The `package.json` in `dir`, read once per install through `cache`,
+/// with `on_error` applied to a read or parse failure on every call, so
+/// each importer gets its own warning or error whatever order importers
+/// come in.
+///
+/// A missing `package.json` is not an error: the dep has no bins, and,
+/// like pnpm, install says nothing about it.
+fn read_bin_manifest(
+    cache: &mut DirPkgJsonCache,
+    dir: &Path,
+    name: &str,
+    on_error: ManifestErrors,
+) -> miette::Result<Option<serde_json::Value>> {
+    let loaded = cache.entry(dir.to_path_buf()).or_insert_with(|| {
+        let pkg_json_path = dir.join("package.json");
+        match std::fs::read_to_string(&pkg_json_path) {
+            Ok(content) => aube_manifest::parse_json(&pkg_json_path, content)
+                .map(Some)
+                .map_err(|e| ManifestFailure {
+                    // The parse error already names the file.
+                    message: e.to_string(),
+                    parse_error: Some(e),
+                }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(ManifestFailure {
+                message: format!("failed to read {}: {e}", pkg_json_path.display()),
+                parse_error: None,
+            }),
+        }
+    });
+    match (loaded, on_error) {
+        (Ok(pkg_json), _) => Ok(pkg_json.clone()),
+        (Err(failure), ManifestErrors::WarnAndSkip) => {
+            tracing::warn!(
+                code = aube_codes::warnings::WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE,
+                "skipping bins of link: dep {name}: {}",
+                failure.message
+            );
+            Ok(None)
+        }
+        (Err(failure), ManifestErrors::Fail) => {
+            match failure.parse_error.take() {
+                Some(e) => Err(miette::Report::new(e)
+                    .wrap_err(format!("failed to parse package.json for {name}"))),
+                None => Err(miette!(
+                    "failed to load package.json for {name}: {}",
+                    failure.message
+                )),
+            }
+        }
+    }
+}
+
+/// Link the bins that `pkg_json`, the manifest in `dir`, declares into
+/// `bin_dir`. Used for deps the virtual store doesn't hold (workspace and
+/// `link:` deps, see [`unmaterialized_bin_source`]), where
+/// `link_bins_for_dep` would find no `package.json` and skip them. pnpm
+/// exposes these bins to the importer's scripts the same way.
+fn link_bins_from_dir(
+    bin_dir: &Path,
+    dir: &Path,
+    name: &str,
+    pkg_json: &serde_json::Value,
+    shim_opts: aube_linker::BinShimOptions,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+) -> miette::Result<()> {
+    if let Some(bin) = pkg_json.get("bin") {
+        link_bin_entries(
+            bin_dir,
+            dir,
+            Some(name),
+            bin,
+            shim_opts,
+            managed,
+            preserved,
+            BinConflict::Overwrite,
+        )?;
     }
     Ok(())
 }
@@ -280,21 +481,34 @@ pub(super) fn link_bins_for_workspace_dep(
 /// dep-local `.bin` (via `dep_modules_dir_for`) before the
 /// project-level one so the dep's own transitive bins always win.
 ///
-/// Isolated mode only. Hoisted mode materializes deps at the project
-/// root's `node_modules/` and generally relies on the single top-level
-/// `.bin`; nested transitive bins under hoisted are a known rough edge
-/// and out of scope here.
-pub(crate) fn link_dep_bins(
-    aube_dir: &std::path::Path,
-    graph: &aube_lockfile::LockfileGraph,
-    virtual_store_dir_max_length: usize,
-    placements: Option<&aube_linker::HoistedPlacements>,
-    shim_opts: aube_linker::BinShimOptions,
-    cache: &mut PkgJsonCache,
-) -> miette::Result<()> {
-    if placements.is_some() {
-        // Hoisted — skip. See function doc.
-        return Ok(());
+/// Hoisted trees have no per-dep `node_modules/` to hang shims off, so
+/// they take the `link_hoisted_dep_bins` path instead.
+pub(crate) fn link_dep_bins(input: LinkDepBinsInput<'_>) -> miette::Result<()> {
+    let LinkDepBinsInput {
+        aube_dir,
+        project_dir,
+        modules_dir_name,
+        graph,
+        virtual_store_dir_max_length,
+        placements,
+        shim_opts,
+        cache,
+        managed,
+        preserved,
+    } = input;
+    if let Some(placements) = placements {
+        return link_hoisted_dep_bins(
+            aube_dir,
+            project_dir,
+            modules_dir_name,
+            graph,
+            virtual_store_dir_max_length,
+            placements,
+            shim_opts,
+            cache,
+            managed,
+            preserved,
+        );
     }
     for (dep_path, pkg) in &graph.packages {
         if pkg.dependencies.is_empty() {
@@ -343,10 +557,744 @@ pub(crate) fn link_dep_bins(
                 virtual_store_dir_max_length,
                 placements,
                 shim_opts,
+                managed,
+                preserved,
             )?;
         }
     }
     Ok(())
+}
+
+/// Hoisted counterpart of [`link_dep_bins`].
+///
+/// The hoisted layout writes real package directories into
+/// `node_modules/`, nesting only where a version conflict forces it, so
+/// there is no `.aube/<dep_path>/node_modules/.bin/` to hang per-dep
+/// shims off. npm solves the same problem by linking each package's
+/// *own* bins into the `.bin/` of the `node_modules/` directory that
+/// package sits in — which is exactly the directory `run_dep_hook`
+/// prepends to `PATH` (see `dep_modules_dir_for`). This pass does the
+/// same, for every placement site of every package in the tree.
+///
+/// Without it only the importers' *direct* deps reached `node_modules/.bin`,
+/// so a dep whose install script shells out to one of its own dependencies
+/// died with `command not found` — `bcrypt` calling `node-pre-gyp` from
+/// `@mapbox/node-pre-gyp` is the reported case (Discussion #1543), and
+/// `prebuild-install` / `napi-postinstall` fail the same way.
+///
+/// On a collision the command stays with whoever claimed it first: the
+/// importer passes run before this one and use `BinConflict::Overwrite`,
+/// so a direct dependency always beats a transitive package shipping the
+/// same name, and among transitives the graph order decides. A shim left
+/// over from an earlier install is not an owner — `.bin/` is never
+/// pruned, so rewriting it is what keeps a command pointing at the
+/// package that owns it today. See [`BinConflict`] for the `rebuild`
+/// variant, which has no importer pass to defer to.
+#[allow(clippy::too_many_arguments)]
+fn link_hoisted_dep_bins(
+    aube_dir: &Path,
+    project_dir: &Path,
+    modules_dir_name: &str,
+    graph: &aube_lockfile::LockfileGraph,
+    virtual_store_dir_max_length: usize,
+    placements: &aube_linker::HoistedPlacements,
+    shim_opts: aube_linker::BinShimOptions,
+    cache: &mut PkgJsonCache,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+) -> miette::Result<()> {
+    // Precedence comes from the graph, not from what happens to be on
+    // disk: a package an importer depends on directly goes first, so a
+    // transitive package can never take a command that importer
+    // declares. `install` has already claimed those via `link_bins`,
+    // which makes this pass a no-op for them; `rebuild` doesn't relink
+    // importer bins, so here is where the claim gets established.
+    //
+    // Scoped per importer, not global. A workspace member's `.bin/` is
+    // its own: being a direct dependency of a *different* member is no
+    // reason to win a command in this one, and with version conflicts
+    // nesting packages under the member that forced them, a package can
+    // be placed inside a subtree it has no relationship to.
+    let rules = importer_bin_rules(graph, project_dir, modules_dir_name);
+    for prioritized_pass in [true, false] {
+        for (dep_path, pkg) in &graph.packages {
+            link_hoisted_pkg_bins(
+                aube_dir,
+                graph,
+                virtual_store_dir_max_length,
+                placements,
+                shim_opts,
+                cache,
+                managed,
+                preserved,
+                dep_path,
+                pkg,
+                &rules,
+                prioritized_pass,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Map each importer's own `.bin/` to the dep_paths that importer
+/// depends on directly. Those outrank anything else placed in that same
+/// directory. A `.bin/` belonging to no importer (one nested under a
+/// package) gets no entry, and ordering there falls back to graph order.
+/// Per-importer bin rules, both keyed by the importer's own `.bin/`.
+struct ImporterBinRules<'a> {
+    /// dep_paths the importer depends on directly. They outrank anything
+    /// else placed in that same `.bin/`.
+    direct: BTreeMap<PathBuf, BTreeSet<&'a str>>,
+    /// Command names the importer declares in its *own* `bin`. Nothing a
+    /// dependency ships may take one.
+    reserved: BTreeMap<PathBuf, BTreeSet<String>>,
+}
+
+impl ImporterBinRules<'_> {
+    fn is_direct(&self, bin_dir: &Path, dep_path: &str) -> bool {
+        self.direct
+            .get(bin_dir)
+            .is_some_and(|direct| direct.contains(dep_path))
+    }
+
+    fn reserved_in(&self, bin_dir: &Path) -> Option<&BTreeSet<String>> {
+        self.reserved.get(bin_dir)
+    }
+}
+
+/// Derive both rules from the graph and the importers' own manifests.
+///
+/// The `reserved` half is why the manifests get read here rather than
+/// taken from the caller: `install` links an importer's own `bin` before
+/// the hoisted pass runs (see `link_all_bins`), so those commands are
+/// already claimed, but `aube rebuild` never runs that step and only
+/// holds the root manifest — not a workspace member's. Reading each
+/// importer's `package.json` keeps the rule identical for both callers
+/// and for every member. Importers are few, unlike packages.
+fn importer_bin_rules<'a>(
+    graph: &'a aube_lockfile::LockfileGraph,
+    project_dir: &Path,
+    modules_dir_name: &str,
+) -> ImporterBinRules<'a> {
+    let mut rules = ImporterBinRules {
+        direct: BTreeMap::new(),
+        reserved: BTreeMap::new(),
+    };
+    for (importer_path, deps) in &graph.importers {
+        if !aube_linker::is_physical_importer(importer_path) {
+            continue;
+        }
+        let importer_dir = if importer_path == "." {
+            project_dir.to_path_buf()
+        } else {
+            project_dir.join(importer_path)
+        };
+        // Normalized because the probe side is too: a placement restored
+        // from the state sidecar is a recorded *relative* path re-joined
+        // onto `project_dir`, so `..` survives into the path whenever
+        // `project_dir` has any. Lookup only — the paths this pass links
+        // against stay verbatim, since collapsing `..` lexically is not
+        // sound across a symlinked parent.
+        let bin_dir =
+            aube_util::path::normalize_lexical(&importer_dir.join(modules_dir_name).join(".bin"));
+        rules
+            .direct
+            .entry(bin_dir.clone())
+            .or_default()
+            .extend(deps.iter().map(|dep| dep.dep_path.as_str()));
+
+        // A missing or unparseable importer manifest reserves nothing.
+        // The caller that cares about it has already failed on it — this
+        // pass must not be the thing that turns it into an install error.
+        let manifest_path = importer_dir.join("package.json");
+        let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = aube_manifest::parse_json::<serde_json::Value>(&manifest_path, content)
+        else {
+            continue;
+        };
+        if let Some(bin) = manifest.get("bin") {
+            let own_name = manifest.get("name").and_then(serde_json::Value::as_str);
+            let names = bin_command_names(bin, own_name);
+            if !names.is_empty() {
+                rules.reserved.entry(bin_dir).or_default().extend(names);
+            }
+        }
+    }
+    rules
+}
+
+/// Command names a `bin` field exposes. Mirrors how `link_bin_entries`
+/// derives them: a string `bin` is published under the package's own
+/// (unscoped) name, a map under its keys.
+fn bin_command_names(bin: &serde_json::Value, pkg_name: Option<&str>) -> Vec<String> {
+    match bin {
+        serde_json::Value::String(_) => pkg_name
+            .map(|name| vec![name.split('/').next_back().unwrap_or(name).to_string()])
+            .unwrap_or_default(),
+        serde_json::Value::Object(bins) => bins.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Drop the entries of a `bin` field whose command name is reserved.
+/// Returns `None` when nothing is reserved, so the common path clones
+/// nothing.
+fn without_reserved_bins(
+    bin: &serde_json::Value,
+    pkg_name: &str,
+    reserved: &BTreeSet<String>,
+) -> Option<serde_json::Value> {
+    match bin {
+        serde_json::Value::String(_) => {
+            let command = pkg_name.split('/').next_back().unwrap_or(pkg_name);
+            // Nothing left to link once the only command is reserved;
+            // `link_bin_entries` ignores a non-string, non-map `bin`.
+            reserved
+                .contains(command)
+                .then_some(serde_json::Value::Null)
+        }
+        serde_json::Value::Object(bins) => {
+            if !bins.keys().any(|name| reserved.contains(name)) {
+                return None;
+            }
+            Some(serde_json::Value::Object(
+                bins.iter()
+                    .filter(|(name, _)| !reserved.contains(*name))
+                    .map(|(name, path)| (name.clone(), path.clone()))
+                    .collect(),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Link one package's bins into the `.bin/` beside each of its
+/// placements. Split out of [`link_hoisted_dep_bins`] so that pass can
+/// walk `graph.packages` twice in precedence order.
+#[allow(clippy::too_many_arguments)]
+fn link_hoisted_pkg_bins(
+    aube_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    virtual_store_dir_max_length: usize,
+    placements: &aube_linker::HoistedPlacements,
+    shim_opts: aube_linker::BinShimOptions,
+    cache: &mut PkgJsonCache,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+    dep_path: &str,
+    pkg: &aube_lockfile::LockedPackage,
+    rules: &ImporterBinRules<'_>,
+    prioritized_pass: bool,
+) -> miette::Result<()> {
+    // Every copy of a package gets its own `.bin/` entry: a name
+    // conflict duplicates the package under the dependents that forced
+    // the nesting, and each copy is reachable only from its own subtree.
+    let placed_dirs = placements.all_package_dirs(dep_path);
+    if placed_dirs.is_empty() {
+        // Filtered by `--prod` / `--no-optional` / a platform guard, so
+        // nothing was materialized to link against.
+        return Ok(());
+    }
+    // All copies share one set of bytes, so read and parse the
+    // `package.json` once per dep_path rather than once per site.
+    let pkg_json = read_materialized_pkg_json_cached(
+        cache,
+        aube_dir,
+        dep_path,
+        &pkg.name,
+        virtual_store_dir_max_length,
+        Some(placements),
+    )?;
+    for pkg_dir in placed_dirs {
+        let bin_dir = dep_modules_dir_for(pkg_dir, &pkg.name).join(".bin");
+        // Each placement is ranked against the `.bin/` it lands in, so
+        // the same package can be a direct dep here and an incidental
+        // nested copy there. Probe with the normalized form to match how
+        // `importer_bin_rules` keys its maps.
+        let lookup_dir = aube_util::path::normalize_lexical(&bin_dir);
+        if rules.is_direct(&lookup_dir, dep_path) != prioritized_pass {
+            continue;
+        }
+        let reserved = rules.reserved_in(&lookup_dir);
+        if let Some(pkg_json) = &pkg_json
+            && let Some(bin) = pkg_json.get("bin")
+        {
+            // An importer's own `bin` wins over anything its deps ship,
+            // the same way `link_all_bins` re-links it over them during
+            // install.
+            let filtered =
+                reserved.and_then(|reserved| without_reserved_bins(bin, &pkg.name, reserved));
+            link_bin_entries(
+                &bin_dir,
+                pkg_dir,
+                Some(&pkg.name),
+                filtered.as_ref().unwrap_or(bin),
+                shim_opts,
+                managed,
+                preserved,
+                BinConflict::YieldToClaimed,
+            )?;
+        }
+        // A bundled dep lives at `<pkg_dir>/node_modules/<name>`, which
+        // no `.bin/` on the lifecycle `PATH` covers. Expose it alongside
+        // its host so the host's own install script can still invoke it,
+        // matching what the isolated pass does for a bundling child.
+        link_bundled_bins(
+            &bin_dir,
+            pkg_dir,
+            graph,
+            dep_path,
+            shim_opts,
+            managed,
+            preserved,
+            BinConflict::YieldToClaimed,
+            reserved,
+        )?;
+    }
+    Ok(())
+}
+
+/// Link every bin surface exposed by an install.
+///
+/// This runs before dependency lifecycle scripts so builds can invoke their
+/// dependencies, then again after approved builds. The second pass refreshes
+/// packages whose lifecycle replaces a bin target.
+pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<ManagedBinLinks> {
+    let LinkAllBinsInput {
+        project_dir,
+        settings_ctx,
+        modules_dir_name,
+        aube_dir,
+        graph,
+        virtual_store_dir_max_length,
+        placements,
+        ws_dirs,
+        manifests,
+        manifest,
+        node_linker,
+        has_workspace,
+        link_dependency_bins,
+        capture_managed,
+        preserved,
+    } = input;
+
+    let extend_node_path = aube_settings::resolved::extend_node_path(settings_ctx);
+    let isolated = !matches!(node_linker, aube_linker::NodeLinker::Hoisted);
+    let prefer_symlinked_executables =
+        aube_settings::resolved::prefer_symlinked_executables(settings_ctx)
+            .or(isolated.then_some(false));
+    let hidden_modules_dir = aube_dir.join("node_modules");
+    let shim_opts = aube_linker::BinShimOptions {
+        extend_node_path,
+        prefer_symlinked_executables,
+        hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
+    };
+
+    let mut pkg_json_cache = PkgJsonCache::new();
+    let mut ws_pkg_json_cache = DirPkgJsonCache::new();
+    let mut managed = if capture_managed {
+        ManagedBinLinks::capturing()
+    } else {
+        ManagedBinLinks::default()
+    };
+    let ws_dirs_for_bins = has_workspace.then_some(ws_dirs);
+    link_bins(
+        project_dir,
+        modules_dir_name,
+        aube_dir,
+        graph,
+        virtual_store_dir_max_length,
+        placements,
+        shim_opts,
+        &mut pkg_json_cache,
+        ws_dirs_for_bins,
+        &mut ws_pkg_json_cache,
+        &mut managed,
+        preserved,
+    )?;
+
+    // Root self-bins override dependency bins with the same name. Force a
+    // wrapper because generated output may not exist yet or be executable.
+    if let Some(bin) = manifest.extra.get("bin") {
+        let root_bin_dir = project_dir.join(modules_dir_name).join(".bin");
+        let self_shim_opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..shim_opts
+        };
+        link_bin_entries(
+            &root_bin_dir,
+            project_dir,
+            manifest.name.as_deref(),
+            bin,
+            self_shim_opts,
+            &mut managed,
+            preserved,
+            BinConflict::Overwrite,
+        )?;
+    }
+
+    if has_workspace {
+        for (importer_path, deps) in &graph.importers {
+            if importer_path == "." || !aube_linker::is_physical_importer(importer_path) {
+                continue;
+            }
+            let pkg_dir = project_dir.join(importer_path);
+            let bin_dir = pkg_dir.join(modules_dir_name).join(".bin");
+            std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
+            for dep in deps {
+                if let Some((dir, on_error)) = unmaterialized_bin_source(
+                    graph,
+                    &dep.dep_path,
+                    &dep.name,
+                    project_dir,
+                    Some(ws_dirs),
+                ) {
+                    if let Some(pkg_json) =
+                        read_bin_manifest(&mut ws_pkg_json_cache, &dir, &dep.name, on_error)?
+                    {
+                        link_bins_from_dir(
+                            &bin_dir,
+                            &dir,
+                            &dep.name,
+                            &pkg_json,
+                            shim_opts,
+                            &mut managed,
+                            preserved,
+                        )?;
+                    }
+                } else {
+                    link_bins_for_dep(
+                        &mut pkg_json_cache,
+                        aube_dir,
+                        &bin_dir,
+                        graph,
+                        &dep.dep_path,
+                        &dep.name,
+                        virtual_store_dir_max_length,
+                        placements,
+                        shim_opts,
+                        &mut managed,
+                        preserved,
+                    )?;
+                }
+            }
+            if let Some((_, member_manifest)) =
+                manifests.iter().find(|(path, _)| path == importer_path)
+                && let Some(bin) = member_manifest.extra.get("bin")
+            {
+                let self_shim_opts = aube_linker::BinShimOptions {
+                    prefer_symlinked_executables: Some(false),
+                    ..shim_opts
+                };
+                link_bin_entries(
+                    &bin_dir,
+                    &pkg_dir,
+                    member_manifest.name.as_deref(),
+                    bin,
+                    self_shim_opts,
+                    &mut managed,
+                    preserved,
+                    BinConflict::Overwrite,
+                )?;
+            }
+        }
+    }
+
+    if link_dependency_bins {
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir,
+            project_dir,
+            modules_dir_name,
+            graph,
+            virtual_store_dir_max_length,
+            placements,
+            shim_opts,
+            cache: &mut pkg_json_cache,
+            managed: &mut managed,
+            preserved,
+        })?;
+    }
+    Ok(managed)
+}
+
+/// Remove shims aube wrote for commands the current graph no longer claims.
+///
+/// `.bin/` is otherwise append-only, so a dependency removed from the
+/// manifest keeps its shim, which then points at a package that is gone
+/// (or about to be swept from the virtual store) and shadows any
+/// same-named executable further down `PATH`. Only aube-authored
+/// launchers are touched; files a lifecycle script or the user put there
+/// are left alone. Must run after a full linking pass so `managed.seen`
+/// holds every command this install claims.
+pub(crate) fn remove_unclaimed_bin_links(
+    project_dir: &Path,
+    modules_dir_name: &str,
+    aube_dir: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+    managed: &ManagedBinLinks,
+) -> miette::Result<()> {
+    let aube_dir = aube_util::path::normalize_lexical(aube_dir);
+    let mut bin_dirs = BTreeSet::from([project_dir.join(modules_dir_name).join(".bin")]);
+    // A workspace dependency's native executable is linked from its own
+    // package directory, outside the virtual store and `node_modules`.
+    let mut workspace_dirs = Vec::new();
+    for importer_path in graph.importers.keys() {
+        if importer_path != "." && aube_linker::is_physical_importer(importer_path) {
+            workspace_dirs.push(aube_util::path::normalize_lexical(
+                &project_dir.join(importer_path),
+            ));
+            bin_dirs.insert(
+                project_dir
+                    .join(importer_path)
+                    .join(modules_dir_name)
+                    .join(".bin"),
+            );
+        }
+    }
+    for bin_dir in bin_dirs {
+        let claimed = managed.seen.get(&bin_dir);
+        let modules_dir = aube_util::path::normalize_lexical(bin_dir.parent().unwrap_or(&bin_dir));
+        let launcher_roots: Vec<&Path> = [aube_dir.as_path(), modules_dir.as_path()]
+            .into_iter()
+            .chain(workspace_dirs.iter().map(PathBuf::as_path))
+            .collect();
+        let mut stale = Vec::new();
+        for (path, name) in list_bin_entries(&bin_dir)? {
+            if is_unclaimed_aube_bin_link(
+                &path,
+                &name,
+                claimed,
+                (&aube_dir, &modules_dir),
+                &launcher_roots,
+            ) {
+                stale.push(path);
+            }
+        }
+        for path in stale {
+            tracing::debug!("removing unclaimed bin shim {}", path.display());
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(e).into_diagnostic().wrap_err_with(|| {
+                        format!("failed to remove stale bin shim {}", path.display())
+                    });
+                }
+            }
+            if let Some(parent) = path.parent()
+                && parent != bin_dir
+            {
+                // Best effort: only succeeds once the scope directory is empty.
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every command launcher directly in `bin_dir`, plus one level under
+/// `@scope/` directories, as `(path, command name)`. Scope directories are
+/// only descended when they are real directories: a symlinked `@scope` is
+/// not aube's to walk.
+fn list_bin_entries(bin_dir: &Path) -> miette::Result<Vec<(PathBuf, String)>> {
+    let entries = match std::fs::read_dir(bin_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(e)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("failed to read {}", bin_dir.display()));
+        }
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.into_diagnostic()?;
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry.file_type().into_diagnostic()?;
+        let is_real_dir = file_type.is_dir();
+        // A symlinked `@scope` is a directory link, not a command, and
+        // removing it would take every command beneath it away.
+        // A bare `@tool` command can be a symlink too, so only skip links
+        // that actually resolve to a directory.
+        if file_name.starts_with('@') && file_type.is_symlink() && entry.path().is_dir() {
+            continue;
+        }
+        if file_name.starts_with('@') && is_real_dir {
+            let scope_dir = entry.path();
+            for inner in std::fs::read_dir(&scope_dir)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("failed to read {}", scope_dir.display()))?
+            {
+                let inner = inner.into_diagnostic()?;
+                let name = format!("{file_name}/{}", inner.file_name().to_string_lossy());
+                out.push((inner.path(), name));
+            }
+        } else {
+            out.push((entry.path(), file_name));
+        }
+    }
+    Ok(out)
+}
+
+/// The command a Windows `.cmd` / `.ps1` launcher belongs to.
+fn windows_launcher_stem(file_name: &str) -> Option<&str> {
+    if !cfg!(windows) {
+        return None;
+    }
+    file_name
+        .strip_suffix(".cmd")
+        .or_else(|| file_name.strip_suffix(".ps1"))
+}
+
+fn is_unclaimed_aube_bin_link(
+    path: &Path,
+    name: &str,
+    claimed: Option<&BTreeSet<String>>,
+    (aube_dir, modules_dir): (&Path, &Path),
+    launcher_roots: &[&Path],
+) -> bool {
+    // A command literally named `foo.cmd` is recorded under that name, so
+    // check the file's own name before falling back to its command stem.
+    if claimed.is_some_and(|names| {
+        names.contains(name) || windows_launcher_stem(name).is_some_and(|s| names.contains(s))
+    }) {
+        return false;
+    }
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() {
+        let Ok(target) = std::fs::read_link(path) else {
+            return false;
+        };
+        let resolved = aube_util::path::normalize_lexical(
+            &path.parent().unwrap_or(Path::new("")).join(target),
+        );
+        // A live link into the virtual store is aube's private layout. A
+        // dangling link is also ours when it points into the importer's
+        // `node_modules`, where hoisted installs link bins and the
+        // package has since been swept. Anything else, or a live link
+        // someone aimed at a file under `node_modules`, is not aube's.
+        return resolved.starts_with(aube_dir)
+            || (resolved.starts_with(modules_dir) && !path.exists());
+    }
+    if cfg!(windows) {
+        return aube_linker::sys::is_generated_windows_launcher(path, launcher_roots)
+            .unwrap_or(false);
+    }
+    matches!(aube_linker::sys::resolve_bin_shim(path), Ok(Some(_)))
+}
+
+/// Remove only shims that still match entries created by the pre-build pass.
+/// Lifecycle-produced files or retargeted symlinks are left untouched.
+pub(crate) fn remove_managed_bin_links(
+    managed: &ManagedBinLinks,
+) -> miette::Result<PreservedBinLinks> {
+    let mut preserved = PreservedBinLinks::new();
+    for (bin_dir, entries) in &managed.entries {
+        for (name, expected_files) in entries {
+            let mut matching = Vec::new();
+            let mut replaced = false;
+            for (path, expected) in expected_files {
+                match read_managed_bin_entry(path)? {
+                    Some(current) if current == *expected => matching.push(path),
+                    Some(_) | None => replaced = true,
+                }
+            }
+            if replaced {
+                preserved
+                    .entry(bin_dir.clone())
+                    .or_default()
+                    .insert(name.clone());
+            } else {
+                // A command can be a family of launchers on Windows
+                // (`name`, `name.cmd`, and `name.ps1`). If a lifecycle
+                // script replaces any member, keep the unchanged siblings
+                // too: the relink pass preserves the whole command, and
+                // deleting only its matching members would make it
+                // unavailable from some shells.
+                for path in matching {
+                    std::fs::remove_file(path).into_diagnostic()?;
+                }
+            }
+        }
+    }
+    Ok(preserved)
+}
+
+/// Remove preserved command families that are no longer declared by the
+/// post-lifecycle package manifests. Commands encountered by the relink pass
+/// stay preserved, including any intentionally replaced or deleted launcher.
+pub(crate) fn remove_unclaimed_preserved_bin_links(
+    managed: &ManagedBinLinks,
+    preserved: &PreservedBinLinks,
+    relinked: &ManagedBinLinks,
+) -> miette::Result<()> {
+    for (bin_dir, names) in preserved {
+        for name in names {
+            if relinked
+                .seen
+                .get(bin_dir)
+                .is_some_and(|seen| seen.contains(name))
+            {
+                continue;
+            }
+            let Some(expected_files) = managed
+                .entries
+                .get(bin_dir)
+                .and_then(|entries| entries.get(name))
+            else {
+                continue;
+            };
+            for path in expected_files.keys() {
+                match std::fs::symlink_metadata(path) {
+                    Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                        std::fs::remove_dir_all(path).into_diagnostic()?;
+                    }
+                    Ok(_) => std::fs::remove_file(path).into_diagnostic()?,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e).into_diagnostic(),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_managed_bin_entry(path: &Path) -> miette::Result<Option<ManagedBinEntry>> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).into_diagnostic(),
+    };
+    if metadata.file_type().is_symlink() {
+        return std::fs::read_link(path)
+            .map(ManagedBinEntry::Symlink)
+            .map(Some)
+            .into_diagnostic();
+    }
+    if metadata.is_file() {
+        return std::fs::read(path)
+            .map(ManagedBinEntry::File)
+            .map(Some)
+            .into_diagnostic();
+    }
+    Ok(Some(ManagedBinEntry::Other))
+}
+
+fn bin_link_paths(bin_dir: &Path, name: &str) -> Vec<PathBuf> {
+    let link = bin_dir.join(name);
+    #[cfg(windows)]
+    return vec![
+        link,
+        bin_dir.join(format!("{name}.cmd")),
+        bin_dir.join(format!("{name}.ps1")),
+    ];
+    #[cfg(not(windows))]
+    vec![link]
 }
 
 /// Hoist bins declared by a package's `bundledDependencies` into
@@ -358,12 +1306,17 @@ pub(crate) fn link_dep_bins(
 /// Used by both the root importer (`link_bins`) and the per-workspace
 /// loop so a workspace package depending on a parent with bundled deps
 /// sees the children's bins in its own `node_modules/.bin`.
+#[allow(clippy::too_many_arguments)]
 fn link_bundled_bins(
     bin_dir: &std::path::Path,
     pkg_dir: &std::path::Path,
     graph: &aube_lockfile::LockfileGraph,
     dep_path: &str,
     shim_opts: aube_linker::BinShimOptions,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+    conflict: BinConflict,
+    reserved: Option<&BTreeSet<String>>,
 ) -> miette::Result<()> {
     let Some(locked) = graph.get_package(dep_path) else {
         return Ok(());
@@ -380,7 +1333,17 @@ fn link_bundled_bins(
         let Some(bin) = bundled_pkg_json.get("bin") else {
             continue;
         };
-        link_bin_entries(bin_dir, &bundled_dir, Some(bundled), bin, shim_opts)?;
+        let filtered = reserved.and_then(|reserved| without_reserved_bins(bin, bundled, reserved));
+        link_bin_entries(
+            bin_dir,
+            &bundled_dir,
+            Some(bundled),
+            filtered.as_ref().unwrap_or(bin),
+            shim_opts,
+            managed,
+            preserved,
+            conflict,
+        )?;
     }
     Ok(())
 }
@@ -398,12 +1361,16 @@ fn link_bundled_bins(
 /// [`aube_linker::validate_bin_name`] / [`aube_linker::validate_bin_target`]
 /// are dropped without error, matching the pnpm/npm "silently ignore
 /// invalid bin" behavior.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn link_bin_entries(
     bin_dir: &std::path::Path,
     pkg_dir: &std::path::Path,
     pkg_name: Option<&str>,
     bin: &serde_json::Value,
     shim_opts: aube_linker::BinShimOptions,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+    conflict: BinConflict,
 ) -> miette::Result<()> {
     match bin {
         serde_json::Value::String(bin_path) => {
@@ -414,7 +1381,15 @@ pub(super) fn link_bin_entries(
             if aube_linker::validate_bin_name(bin_name).is_ok()
                 && aube_linker::validate_bin_target(bin_path).is_ok()
             {
-                create_bin_link(bin_dir, bin_name, &pkg_dir.join(bin_path), shim_opts)?;
+                create_bin_link(
+                    bin_dir,
+                    bin_name,
+                    &pkg_dir.join(bin_path),
+                    shim_opts,
+                    managed,
+                    preserved,
+                    conflict,
+                )?;
             }
         }
         serde_json::Value::Object(bins) => {
@@ -423,7 +1398,15 @@ pub(super) fn link_bin_entries(
                     && aube_linker::validate_bin_name(bin_name).is_ok()
                     && aube_linker::validate_bin_target(path_str).is_ok()
                 {
-                    create_bin_link(bin_dir, bin_name, &pkg_dir.join(path_str), shim_opts)?;
+                    create_bin_link(
+                        bin_dir,
+                        bin_name,
+                        &pkg_dir.join(path_str),
+                        shim_opts,
+                        managed,
+                        preserved,
+                        conflict,
+                    )?;
                 }
             }
         }
@@ -437,7 +1420,36 @@ fn create_bin_link(
     name: &str,
     target: &std::path::Path,
     shim_opts: aube_linker::BinShimOptions,
+    managed: &mut ManagedBinLinks,
+    preserved: Option<&PreservedBinLinks>,
+    conflict: BinConflict,
 ) -> miette::Result<()> {
+    // Whether an earlier pass in this run already put this command here.
+    // Read before the insert below, which would otherwise make every
+    // command look self-claimed.
+    let already_claimed = managed
+        .seen
+        .get(bin_dir)
+        .is_some_and(|names| names.contains(name));
+    // Record the command before any early return: the relink pass uses
+    // `seen` to tell "still claimed by some package" from "the package
+    // that owned this went away", and a command we deliberately leave
+    // alone is still claimed.
+    managed
+        .seen
+        .entry(bin_dir.to_path_buf())
+        .or_default()
+        .insert(name.to_string());
+    if let Some(preserved) = preserved
+        && preserved
+            .get(bin_dir)
+            .is_some_and(|names| names.contains(name))
+    {
+        return Ok(());
+    }
+    if conflict == BinConflict::YieldToClaimed && already_claimed {
+        return Ok(());
+    }
     // `link_dep_bins` skips eager `create_dir_all` on per-dep `.bin/`.
     // Deps whose children ship no bins stay empty on disk. First shim
     // write materializes the dir on demand.
@@ -491,15 +1503,34 @@ fn create_bin_link(
                 .wrap_err_with(|| format!("failed to create bin directory {}", bin_dir.display()));
         }
     }
-    aube_linker::create_bin_shim(bin_dir, name, target, shim_opts)
-        .into_diagnostic()
-        .wrap_err_with(|| {
-            format!(
-                "failed to link bin `{name}` at {} -> {}",
-                bin_dir.join(name).display(),
-                target.display()
-            )
-        })?;
+    match crate::runtime::bin_node_executable() {
+        Some(node) => {
+            aube_linker::sys::create_bin_shim_with_node(bin_dir, name, target, shim_opts, &node)
+        }
+        None => aube_linker::create_bin_shim(bin_dir, name, target, shim_opts),
+    }
+    .into_diagnostic()
+    .wrap_err_with(|| {
+        format!(
+            "failed to link bin `{name}` at {} -> {}",
+            bin_dir.join(name).display(),
+            target.display()
+        )
+    })?;
+    if !managed.capture {
+        return Ok(());
+    }
+    let mut files = BTreeMap::new();
+    for path in bin_link_paths(bin_dir, name) {
+        if let Some(entry) = read_managed_bin_entry(&path)? {
+            files.insert(path, entry);
+        }
+    }
+    managed
+        .entries
+        .entry(bin_dir.to_path_buf())
+        .or_default()
+        .insert(name.to_string(), files);
     Ok(())
 }
 
@@ -516,6 +1547,952 @@ mod tests {
             bin,
             ..Default::default()
         }
+    }
+
+    /// A shim left behind by a removed dependency must go, while shims the
+    /// current install claims and files aube did not write stay put.
+    #[test]
+    fn remove_unclaimed_bin_links_drops_only_stale_aube_shims() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let aube_dir = project.join("node_modules/.aube");
+        let bin_dir = project.join("node_modules/.bin");
+        let pkg_dir = aube_dir.join("gone@1.0.0/node_modules/gone");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let tool = pkg_dir.join("tool.js");
+        std::fs::write(&tool, "#!/usr/bin/env node\n").unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        let mut previous = ManagedBinLinks::default();
+        for name in ["gone", "kept"] {
+            create_bin_link(
+                &bin_dir,
+                name,
+                &tool,
+                opts,
+                &mut previous,
+                None,
+                BinConflict::Overwrite,
+            )
+            .unwrap();
+        }
+        std::fs::write(bin_dir.join("foreign"), "#!/bin/sh\necho hi\n").unwrap();
+
+        let mut current = ManagedBinLinks::default();
+        current
+            .seen
+            .entry(bin_dir.clone())
+            .or_default()
+            .insert("kept".to_string());
+        let graph = LockfileGraph::default();
+        remove_unclaimed_bin_links(project, "node_modules", &aube_dir, &graph, &current).unwrap();
+
+        assert!(!bin_dir.join("gone").exists(), "stale shim is removed");
+        assert!(bin_dir.join("kept").exists(), "claimed shim stays");
+        assert!(
+            bin_dir.join("foreign").exists(),
+            "a file aube did not write stays"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_unclaimed_bin_links_drops_dangling_and_virtual_store_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let aube_dir = project.join("node_modules/.aube");
+        let bin_dir = project.join("node_modules/.bin");
+        let live = aube_dir.join("gone@1.0.0/node_modules/gone/tool.js");
+        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+        std::fs::write(&live, "").unwrap();
+        let outside = project.join("outside.js");
+        std::fs::write(&outside, "").unwrap();
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::os::unix::fs::symlink(
+            "../.aube/gone@1.0.0/node_modules/gone/tool.js",
+            bin_dir.join("gone"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "../.aube/gone@1.0.0/node_modules/gone/tool.js",
+            bin_dir.join("@tool"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("../hoisted/x.js", bin_dir.join("dangling")).unwrap();
+        std::os::unix::fs::symlink("../../outside.js", bin_dir.join("user")).unwrap();
+        std::os::unix::fs::symlink("../../missing.js", bin_dir.join("foreign_dangling")).unwrap();
+
+        remove_unclaimed_bin_links(
+            project,
+            "node_modules",
+            &aube_dir,
+            &LockfileGraph::default(),
+            &ManagedBinLinks::default(),
+        )
+        .unwrap();
+
+        assert!(bin_dir.join("gone").symlink_metadata().is_err());
+        assert!(
+            bin_dir.join("@tool").symlink_metadata().is_err(),
+            "a bare `@`-prefixed command is not a scope directory"
+        );
+        assert!(bin_dir.join("dangling").symlink_metadata().is_err());
+        assert!(bin_dir.join("user").symlink_metadata().is_ok());
+        assert!(
+            bin_dir.join("foreign_dangling").symlink_metadata().is_ok(),
+            "a dangling symlink aube did not point into node_modules is not ours"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_unclaimed_bin_links_does_not_walk_a_symlinked_scope_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let aube_dir = project.join("node_modules/.aube");
+        let bin_dir = project.join("node_modules/.bin");
+        let elsewhere = project.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::os::unix::fs::symlink("../.aube/gone/x.js", elsewhere.join("tool")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, bin_dir.join("@scope")).unwrap();
+        std::fs::create_dir_all(aube_dir.join("@vs")).unwrap();
+        std::os::unix::fs::symlink("../.aube/@vs", bin_dir.join("@inside")).unwrap();
+
+        remove_unclaimed_bin_links(
+            project,
+            "node_modules",
+            &aube_dir,
+            &LockfileGraph::default(),
+            &ManagedBinLinks::default(),
+        )
+        .unwrap();
+
+        assert!(elsewhere.join("tool").symlink_metadata().is_ok());
+        assert!(
+            bin_dir.join("@inside").symlink_metadata().is_ok(),
+            "a scope link into the virtual store is not a stale command"
+        );
+    }
+
+    /// The hoisted transitive pass links every package's bins into the
+    /// `.bin/` next to it, including the project root's. A transitive
+    /// package that happens to ship a command an importer's direct
+    /// dependency already claimed must not take it over, so that pass
+    /// yields instead of overwriting (Discussion #1543).
+    #[test]
+    fn create_bin_link_yield_leaves_a_claimed_command_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let direct = pkg_dir.join("direct.js");
+        let transitive = pkg_dir.join("transitive.js");
+        std::fs::write(&direct, "#!/usr/bin/env node\nconsole.log('direct')\n").unwrap();
+        std::fs::write(
+            &transitive,
+            "#!/usr/bin/env node\nconsole.log('transitive')\n",
+        )
+        .unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        let mut managed = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &direct,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+        let claimed = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
+
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &transitive,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(bin_dir.join("tool")).unwrap(),
+            claimed,
+            "a transitive package must not retarget a command the direct dep claimed"
+        );
+
+        // A command nobody claimed yet still gets linked.
+        create_bin_link(
+            &bin_dir,
+            "other",
+            &transitive,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        assert!(bin_dir.join("other").exists());
+
+        // And the authoritative passes still overwrite.
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &transitive,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+        assert_ne!(
+            std::fs::read_to_string(bin_dir.join("tool")).unwrap(),
+            claimed
+        );
+    }
+
+    /// A yielding pass returns early, but the command is still claimed by
+    /// a package in the tree. The relink cleanup keys off `seen` to
+    /// decide whether a *preserved* command (one a lifecycle script
+    /// replaced) still has an owner, so the early return has to record
+    /// the command first or the refresh pass would delete a shim the
+    /// build deliberately produced.
+    #[test]
+    fn create_bin_link_yield_still_claims_a_preserved_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let target = pkg_dir.join("cli.js");
+        std::fs::write(&target, "#!/usr/bin/env node\n").unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        let mut managed = ManagedBinLinks::capturing();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &target,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+
+        // A lifecycle script swaps the shim for a native launcher.
+        let shim = bin_dir.join("tool");
+        std::fs::write(&shim, "#!/bin/sh\nexec ./tool.real\n").unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+        assert!(
+            shim.exists(),
+            "a replaced launcher is preserved, not removed"
+        );
+
+        let mut relinked = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &target,
+            opts,
+            &mut relinked,
+            Some(&preserved),
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
+
+        assert!(
+            shim.exists(),
+            "the lifecycle-produced launcher must survive the refresh pass"
+        );
+    }
+
+    /// `rebuild` re-emits dependency shims against an already-linked
+    /// tree without relinking the importers' `.bin/`, so it can't lean
+    /// on an earlier pass having claimed their commands. Precedence
+    /// therefore comes from the graph: the hoisted pass walks the
+    /// importers' direct deps first. Reading it off disk instead would
+    /// let a wrapper script left by a package that has since left the
+    /// tree keep the command (wrapper launchers are always used on
+    /// Windows, and on POSIX under `preferSymlinkedExecutables=false`).
+    #[test]
+    fn hoisted_dep_bins_give_a_direct_dep_the_command_over_a_transitive() {
+        let dir = tempfile::tempdir().unwrap();
+        let modules = dir.path().join("node_modules");
+        let direct_dir = modules.join("z-direct");
+        let transitive_dir = modules.join("a-transitive");
+        for (pkg_dir, bin_name) in [
+            (&direct_dir, "direct.js"),
+            (&transitive_dir, "transitive.js"),
+        ] {
+            std::fs::create_dir_all(pkg_dir).unwrap();
+            std::fs::write(pkg_dir.join(bin_name), "#!/usr/bin/env node\n").unwrap();
+        }
+        std::fs::write(
+            direct_dir.join("package.json"),
+            r#"{"name":"z-direct","version":"1.0.0","bin":{"tool":"direct.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            transitive_dir.join("package.json"),
+            r#"{"name":"a-transitive","version":"1.0.0","bin":{"tool":"transitive.js"}}"#,
+        )
+        .unwrap();
+
+        // A launcher the previous tree left behind, pointing at a package
+        // that is gone. As a wrapper file it still "exists" on disk.
+        let bin_dir = modules.join(".bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("tool"), "#!/bin/sh\nexec ../gone/cli.js\n").unwrap();
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "z-direct@1.0.0".to_string(),
+            locked("z-direct", "1.0.0", BTreeMap::new()),
+        );
+        packages.insert(
+            "a-transitive@1.0.0".to_string(),
+            locked("a-transitive", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "z-direct".to_string(),
+                dep_path: "z-direct@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            ("z-direct@1.0.0".to_string(), vec![direct_dir.clone()]),
+            (
+                "a-transitive@1.0.0".to_string(),
+                vec![transitive_dir.clone()],
+            ),
+        ]));
+
+        // No importer pass ran first — this is the `rebuild` shape.
+        // `a-transitive` sorts before `z-direct` in `graph.packages`, so
+        // a plain walk would hand it the command.
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &dir.path().join("node_modules/.aube"),
+            project_dir: dir.path(),
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        let shim = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
+        assert!(
+            shim.contains("direct.js"),
+            "the direct dep owns `tool`; got:\n{shim}"
+        );
+    }
+
+    /// Direct-dependency precedence is scoped to the importer whose
+    /// `.bin/` is being filled. A version conflict nests the losing copy
+    /// under the member that forced it, so a package can land inside a
+    /// workspace member it has no relationship to — being member A's
+    /// direct dependency must not win it a command in member B's
+    /// `node_modules/.bin`, which B's own lifecycle scripts resolve
+    /// against.
+    #[test]
+    fn hoisted_dep_bins_scope_direct_priority_to_the_owning_importer() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // `a-tool@1` is a direct dep of member `a` and hoists to the
+        // root; `a-tool@2` is the copy nested under member `b` because
+        // of the conflict. `b-tool` is `b`'s own direct dep, placed
+        // alongside it. Both declare the command `tool`.
+        let a_tool_root = root.join("node_modules/a-tool");
+        let a_tool_nested = root.join("packages/b/node_modules/a-tool");
+        let b_tool = root.join("packages/b/node_modules/b-tool");
+        for (pkg_dir, name) in [
+            (&a_tool_root, "a-tool"),
+            (&a_tool_nested, "a-tool"),
+            (&b_tool, "b-tool"),
+        ] {
+            std::fs::create_dir_all(pkg_dir).unwrap();
+            std::fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+            std::fs::write(
+                pkg_dir.join("package.json"),
+                format!(r#"{{"name":"{name}","version":"1.0.0","bin":{{"tool":"cli.js"}}}}"#),
+            )
+            .unwrap();
+        }
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "a-tool@1.0.0".to_string(),
+            locked("a-tool", "1.0.0", BTreeMap::new()),
+        );
+        packages.insert(
+            "b-tool@1.0.0".to_string(),
+            locked("b-tool", "1.0.0", BTreeMap::new()),
+        );
+        let direct = |name: &str, dep_path: &str| DirectDep {
+            name: name.to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".to_string()),
+        };
+        let mut importers = BTreeMap::new();
+        importers.insert(".".to_string(), vec![]);
+        importers.insert(
+            "packages/a".to_string(),
+            vec![direct("a-tool", "a-tool@1.0.0")],
+        );
+        importers.insert(
+            "packages/b".to_string(),
+            vec![direct("b-tool", "b-tool@1.0.0")],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        // `a-tool` is placed both at the root and, thanks to the
+        // conflict, inside member `b`.
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            (
+                "a-tool@1.0.0".to_string(),
+                vec![a_tool_root.clone(), a_tool_nested.clone()],
+            ),
+            ("b-tool@1.0.0".to_string(), vec![b_tool.clone()]),
+        ]));
+
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &root.join("node_modules/.aube"),
+            project_dir: root,
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        // `a-tool` sorts first, so only the importer-scoped ranking can
+        // hand `tool` to `b-tool` inside member `b`.
+        let b_shim =
+            std::fs::read_to_string(root.join("packages/b/node_modules/.bin/tool")).unwrap();
+        assert!(
+            b_shim.contains("b-tool"),
+            "member b's own dependency owns `tool` in its `.bin/`; got:\n{b_shim}"
+        );
+        // The root `.bin/` belongs to no importer that declares `tool`,
+        // so the hoisted copy still lands there.
+        let root_shim = std::fs::read_to_string(root.join("node_modules/.bin/tool")).unwrap();
+        assert!(
+            root_shim.contains("a-tool"),
+            "the hoisted copy still fills the root `.bin/`; got:\n{root_shim}"
+        );
+    }
+
+    /// `read_hoisted_placements` rebuilds placement paths by re-joining
+    /// the recorded *relative* path onto `project_dir`, so any `..` in
+    /// `project_dir` survives into every placement. The priority lookup
+    /// has to normalize both sides or the importer scoping silently
+    /// stops applying on a `rebuild` in such a directory.
+    #[test]
+    fn hoisted_dep_bins_scope_priority_through_an_unnormalized_project_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // Same directory reached with a `..` hop, as a placement restored
+        // from the state sidecar would express it.
+        std::fs::create_dir_all(dir.path().join("sibling")).unwrap();
+        let root = dir.path().join("workspace");
+        let unnormalized = dir.path().join("sibling/../workspace");
+
+        let direct_dir = root.join("node_modules/z-direct");
+        let transitive_dir = root.join("node_modules/a-transitive");
+        for (pkg_dir, name) in [(&direct_dir, "z-direct"), (&transitive_dir, "a-transitive")] {
+            std::fs::create_dir_all(pkg_dir).unwrap();
+            std::fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+            std::fs::write(
+                pkg_dir.join("package.json"),
+                format!(r#"{{"name":"{name}","version":"1.0.0","bin":{{"tool":"cli.js"}}}}"#),
+            )
+            .unwrap();
+        }
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "z-direct@1.0.0".to_string(),
+            locked("z-direct", "1.0.0", BTreeMap::new()),
+        );
+        packages.insert(
+            "a-transitive@1.0.0".to_string(),
+            locked("a-transitive", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "z-direct".to_string(),
+                dep_path: "z-direct@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([
+            (
+                "z-direct@1.0.0".to_string(),
+                vec![unnormalized.join("node_modules/z-direct")],
+            ),
+            (
+                "a-transitive@1.0.0".to_string(),
+                vec![unnormalized.join("node_modules/a-transitive")],
+            ),
+        ]));
+
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &unnormalized.join("node_modules/.aube"),
+            project_dir: &unnormalized,
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        let shim = std::fs::read_to_string(root.join("node_modules/.bin/tool")).unwrap();
+        assert!(
+            shim.contains("z-direct"),
+            "the direct dep owns `tool` even though the paths carry a `..`; got:\n{shim}"
+        );
+    }
+
+    /// An importer's own `bin` outranks anything its dependencies ship.
+    /// `install` gets this from `link_all_bins`, which re-links the
+    /// importer's own `bin` over the dependency pass — but `aube rebuild`
+    /// calls the dependency pass on its own, so the rule has to come from
+    /// the importer's manifest.
+    #[test]
+    fn hoisted_dep_bins_never_take_a_command_the_importer_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"the-project","version":"1.0.0","bin":{"tool":"cli.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+        // The project's own launcher, as the install's self-bin pass left it.
+        let bin_dir = root.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("tool"), "#!/bin/sh\nexec ../../cli.js\n").unwrap();
+
+        // A dependency that also ships `tool`, plus one that ships a
+        // command nobody reserved.
+        let dep_dir = root.join("node_modules/dep");
+        std::fs::create_dir_all(&dep_dir).unwrap();
+        std::fs::write(dep_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            dep_dir.join("package.json"),
+            r#"{"name":"dep","version":"1.0.0","bin":{"tool":"cli.js","dep-only":"cli.js"}}"#,
+        )
+        .unwrap();
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "dep@1.0.0".to_string(),
+            locked("dep", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "dep".to_string(),
+                dep_path: "dep@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([(
+            "dep@1.0.0".to_string(),
+            vec![dep_dir.clone()],
+        )]));
+
+        // The `rebuild` shape: no self-bin pass ran first.
+        link_dep_bins(LinkDepBinsInput {
+            aube_dir: &root.join("node_modules/.aube"),
+            project_dir: root,
+            modules_dir_name: "node_modules",
+            graph: &graph,
+            virtual_store_dir_max_length: 120,
+            placements: Some(&placements),
+            shim_opts: aube_linker::BinShimOptions {
+                prefer_symlinked_executables: Some(false),
+                ..Default::default()
+            },
+            cache: &mut PkgJsonCache::new(),
+            managed: &mut ManagedBinLinks::default(),
+            preserved: None,
+        })
+        .unwrap();
+
+        let tool = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
+        assert!(
+            tool.contains("../../cli.js"),
+            "the project's own `tool` must survive; got:\n{tool}"
+        );
+        // Reserving one command must not drop the dep's others.
+        assert!(
+            bin_dir.join("dep-only").exists(),
+            "the dep's unreserved commands are still linked"
+        );
+    }
+
+    /// A launcher left by an earlier run is not a claim. `.bin/` is
+    /// never pruned, so treating one as ownership would pin a command to
+    /// a package that may since have been removed or replaced.
+    #[test]
+    fn yield_to_claimed_ignores_shims_from_a_previous_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let stale = pkg_dir.join("stale.js");
+        let current = pkg_dir.join("current.js");
+        std::fs::write(&stale, "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(&current, "#!/usr/bin/env node\n").unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        // A previous run left a launcher behind; this run has not
+        // claimed the command.
+        let mut previous_run = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &stale,
+            opts,
+            &mut previous_run,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+        let stale_shim = std::fs::read_to_string(bin_dir.join("tool")).unwrap();
+
+        let mut this_run = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &current,
+            opts,
+            &mut this_run,
+            None,
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        assert_ne!(
+            std::fs::read_to_string(bin_dir.join("tool")).unwrap(),
+            stale_shim,
+            "an unclaimed command is reconciled to the current owner"
+        );
+
+        // Claimed this run by an importer's direct dep: the transitive
+        // pass leaves it alone.
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            &stale,
+            opts,
+            &mut this_run,
+            None,
+            BinConflict::YieldToClaimed,
+        )
+        .unwrap();
+        assert!(
+            std::fs::read_to_string(bin_dir.join("tool"))
+                .unwrap()
+                .contains("current.js"),
+            "a command claimed this run must survive the transitive pass"
+        );
+    }
+
+    #[test]
+    fn managed_bin_cleanup_removes_owned_shims_and_preserves_replacements() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        let pkg_dir = dir.path().join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let removed_target = pkg_dir.join("removed.js");
+        let replaced_target = pkg_dir.join("replaced.js");
+        std::fs::write(&removed_target, "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(&replaced_target, "#!/usr/bin/env node\n").unwrap();
+
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        let mut managed = ManagedBinLinks::capturing();
+        create_bin_link(
+            &bin_dir,
+            "removed",
+            &removed_target,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+        create_bin_link(
+            &bin_dir,
+            "replaced",
+            &replaced_target,
+            opts,
+            &mut managed,
+            None,
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+
+        std::fs::write(bin_dir.join("replaced"), "#!/bin/sh\necho custom\n").unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+        create_bin_link(
+            &bin_dir,
+            "replaced",
+            &replaced_target,
+            opts,
+            &mut ManagedBinLinks::default(),
+            Some(&preserved),
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+
+        assert!(!bin_dir.join("removed").exists());
+        assert_eq!(
+            std::fs::read_to_string(bin_dir.join("replaced")).unwrap(),
+            "#!/bin/sh\necho custom\n"
+        );
+    }
+
+    #[test]
+    fn managed_bin_cleanup_preserves_siblings_of_a_replaced_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let launcher = bin_dir.join("tool");
+        let sibling = bin_dir.join("tool.cmd");
+        std::fs::write(&launcher, "generated launcher\n").unwrap();
+        std::fs::write(&sibling, "generated sibling\n").unwrap();
+
+        let mut expected_files = BTreeMap::new();
+        expected_files.insert(
+            launcher.clone(),
+            read_managed_bin_entry(&launcher).unwrap().unwrap(),
+        );
+        expected_files.insert(
+            sibling.clone(),
+            read_managed_bin_entry(&sibling).unwrap().unwrap(),
+        );
+        let mut commands = BTreeMap::new();
+        commands.insert("tool".to_string(), expected_files);
+        let mut managed = ManagedBinLinks::capturing();
+        managed.entries.insert(bin_dir.clone(), commands);
+
+        std::fs::write(&launcher, "lifecycle replacement\n").unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+
+        assert!(preserved[&bin_dir].contains("tool"));
+        assert_eq!(
+            std::fs::read_to_string(launcher).unwrap(),
+            "lifecycle replacement\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sibling).unwrap(),
+            "generated sibling\n"
+        );
+    }
+
+    #[test]
+    fn managed_bin_cleanup_preserves_siblings_of_a_deleted_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let launcher = bin_dir.join("tool");
+        let sibling = bin_dir.join("tool.cmd");
+        std::fs::write(&launcher, "generated launcher\n").unwrap();
+        std::fs::write(&sibling, "generated sibling\n").unwrap();
+
+        let mut expected_files = BTreeMap::new();
+        expected_files.insert(
+            launcher.clone(),
+            read_managed_bin_entry(&launcher).unwrap().unwrap(),
+        );
+        expected_files.insert(
+            sibling.clone(),
+            read_managed_bin_entry(&sibling).unwrap().unwrap(),
+        );
+        let mut commands = BTreeMap::new();
+        commands.insert("tool".to_string(), expected_files);
+        let mut managed = ManagedBinLinks::capturing();
+        managed.entries.insert(bin_dir.clone(), commands);
+
+        std::fs::remove_file(&launcher).unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+        let mut relinked = ManagedBinLinks::default();
+        create_bin_link(
+            &bin_dir,
+            "tool",
+            dir.path().join("target.js").as_path(),
+            Default::default(),
+            &mut relinked,
+            Some(&preserved),
+            BinConflict::Overwrite,
+        )
+        .unwrap();
+        remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
+
+        assert!(preserved[&bin_dir].contains("tool"));
+        assert!(!launcher.exists());
+        assert_eq!(
+            std::fs::read_to_string(sibling).unwrap(),
+            "generated sibling\n"
+        );
+    }
+
+    #[test]
+    fn post_lifecycle_relink_removes_deleted_bin_declaration() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path();
+        let aube_dir = project_dir.join("node_modules/.aube");
+        let dep_path = "removes-bin@1.0.0";
+        let pkg_dir = materialized_pkg_dir(&aube_dir, dep_path, "removes-bin", 120, None);
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"removes-bin","version":"1.0.0","bin":{"removed-bin":"cli.js"}}"#,
+        )
+        .unwrap();
+
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            dep_path.to_string(),
+            locked("removes-bin", "1.0.0", BTreeMap::new()),
+        );
+        let mut importers = BTreeMap::new();
+        importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "removes-bin".to_string(),
+                dep_path: dep_path.to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let graph = LockfileGraph {
+            importers,
+            packages,
+            ..Default::default()
+        };
+        let opts = aube_linker::BinShimOptions {
+            prefer_symlinked_executables: Some(false),
+            ..Default::default()
+        };
+        let mut managed = ManagedBinLinks::capturing();
+        link_bins(
+            project_dir,
+            "node_modules",
+            &aube_dir,
+            &graph,
+            120,
+            None,
+            opts,
+            &mut PkgJsonCache::new(),
+            None,
+            &mut DirPkgJsonCache::new(),
+            &mut managed,
+            None,
+        )
+        .unwrap();
+        let shim = project_dir.join("node_modules/.bin/removed-bin");
+        assert!(shim.exists());
+
+        // Simulate an approved dependency lifecycle script removing its bin
+        // declaration before the post-build refresh.
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"removes-bin","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(&shim).unwrap();
+        let preserved = remove_managed_bin_links(&managed).unwrap();
+        let mut relinked = ManagedBinLinks::default();
+        link_bins(
+            project_dir,
+            "node_modules",
+            &aube_dir,
+            &graph,
+            120,
+            None,
+            opts,
+            &mut PkgJsonCache::new(),
+            None,
+            &mut DirPkgJsonCache::new(),
+            &mut relinked,
+            Some(&preserved),
+        )
+        .unwrap();
+        remove_unclaimed_preserved_bin_links(&managed, &preserved, &relinked).unwrap();
+
+        assert!(!shim.exists());
     }
 
     #[test]
@@ -573,7 +2550,9 @@ mod tests {
             aube_linker::BinShimOptions::default(),
             &mut PkgJsonCache::new(),
             None,
-            &mut WsPkgJsonCache::new(),
+            &mut DirPkgJsonCache::new(),
+            &mut ManagedBinLinks::default(),
+            None,
         )
         .unwrap();
 
@@ -631,6 +2610,9 @@ mod tests {
             "prebuild-install",
             &target,
             aube_linker::BinShimOptions::default(),
+            &mut ManagedBinLinks::default(),
+            None,
+            BinConflict::Overwrite,
         )
         .unwrap();
 
@@ -697,6 +2679,9 @@ mod tests {
             "@scope/tool",
             &target,
             aube_linker::BinShimOptions::default(),
+            &mut ManagedBinLinks::default(),
+            None,
+            BinConflict::Overwrite,
         )
         .unwrap();
 
@@ -719,5 +2704,29 @@ mod tests {
             !cmd.contains(r"..\..\..\..\..\"),
             ".cmd shim should not climb above the `.aube/` root; got:\n{cmd}"
         );
+    }
+
+    #[test]
+    fn read_bin_manifest_applies_each_callers_policy_to_a_cached_failure() {
+        // The cache records why a manifest failed, not just "no manifest",
+        // so a later `Fail` reader still fails after a `WarnAndSkip` one.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{not json").unwrap();
+        let mut cache = DirPkgJsonCache::new();
+        let skipped = read_bin_manifest(&mut cache, dir.path(), "pkg", ManifestErrors::WarnAndSkip);
+        assert!(matches!(skipped, Ok(None)));
+        let failed = read_bin_manifest(&mut cache, dir.path(), "pkg", ManifestErrors::Fail)
+            .expect_err("a Fail reader fails on a cached parse error");
+        // The typed parse error survives the cache, so the exit code does.
+        assert_eq!(
+            failed.code().map(|code| code.to_string()).as_deref(),
+            Some(aube_codes::errors::ERR_AUBE_MANIFEST_PARSE)
+        );
+        // A missing manifest is "no bins" under either policy.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            read_bin_manifest(&mut cache, empty.path(), "pkg", ManifestErrors::Fail),
+            Ok(None)
+        ));
     }
 }

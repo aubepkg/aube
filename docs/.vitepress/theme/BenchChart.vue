@@ -25,12 +25,31 @@ const COLORS: Record<string, string> = {
   // from the brand kit reads better next to the other tools' chips.
   deno: "#70c7a9",
   vlt: "#5b4eef",
-  aube: "#7c3aed",
+  aube: "var(--aube-accent)",
+  // The same tool in a different layout, so the same hue, darker.
+  "aube-nogvs": "var(--aube-accent-3)",
 };
+
+// Subjects that are a configuration of a tool rather than a tool of their
+// own. aube-nogvs runs aube with the global virtual store off, the layout aube
+// uses under CI.
+const LABELS: Record<string, string> = {
+  "aube-nogvs": "aube (no GVS)",
+};
+
+function label(pm: string): string {
+  return LABELS[pm] ?? pm;
+}
+
+// Size the name column to the longest label in this chart so aube-nogvs's
+// label fits while the usual short names keep the bars wide.
+const nameWidth = computed(
+  () => `${Math.max(4, ...props.managers.map((pm) => label(pm).length))}ch`,
+);
 
 function legendLabel(pm: string): string {
   const v = props.versions?.[pm];
-  return v ? `${pm} ${v}` : pm;
+  return v ? `${label(pm)} ${v}` : label(pm);
 }
 
 const nodeVersion = computed(() => props.versions?.node ?? "");
@@ -64,27 +83,32 @@ function winner(row: Row): string | null {
 </script>
 
 <template>
-  <div class="bench-chart">
+  <div class="bench-chart" :style="{ '--bench-name-width': nameWidth }">
     <div class="legend">
       <span v-for="pm in managers" :key="pm" class="legend-item">
-        <span class="swatch" :style="{ background: COLORS[pm] || '#888' }"></span>
+        <span
+          class="swatch"
+          :style="{ background: COLORS[pm] || '#888' }"
+        ></span>
         {{ legendLabel(pm) }}
       </span>
-      <span v-if="nodeVersion" class="legend-runtime">node {{ nodeVersion }}</span>
+      <span v-if="nodeVersion" class="legend-runtime"
+        >node {{ nodeVersion }}</span
+      >
     </div>
     <div v-for="row in rows" :key="row.label" class="scenario">
       <div class="scenario-label">{{ row.label }}</div>
       <div class="bars">
         <template v-for="pm in managers" :key="pm">
           <div class="bar-row">
-            <div class="bar-name">{{ pm }}</div>
-            <div class="bar-track">
+            <div class="bar-name">{{ label(pm) }}</div>
+            <div class="bar-track" aria-hidden="true">
               <div
                 v-if="row.values[pm] != null"
                 class="bar"
                 :class="{ winner: winner(row) === pm }"
                 :style="{
-                  width: ((row.values[pm]! / rowMax(row)) * 100) + '%',
+                  width: (row.values[pm]! / rowMax(row)) * 100 + '%',
                   background: COLORS[pm] || '#888',
                 }"
               ></div>
@@ -145,13 +169,16 @@ function winner(row: Row): string | null {
 }
 .bar-row {
   display: grid;
-  grid-template-columns: 52px 1fr 64px;
+  grid-template-columns: minmax(52px, var(--bench-name-width, 52px)) 1fr 64px;
   align-items: center;
   gap: 0.5rem;
 }
 .bar-name {
   color: var(--vp-c-text-2);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bar-track {
   position: relative;

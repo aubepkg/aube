@@ -12,13 +12,11 @@
 //! - `aube store add <pkg>…` — resolve each spec against the registry, fetch
 //!   the tarball, and import it into the global CAS. Pre-warms the store
 //!   without touching any project's `node_modules/`.
-//! - `aube store prune` — remove files from the store that have no remaining
-//!   hardlink references. This is a best-effort heuristic (the same one
-//!   pnpm uses on hardlink filesystems): on APFS/btrfs reflinks produce
-//!   independent inodes so the nlink count is always 1 and pruning there
-//!   can't safely tell referenced from unreferenced files; in that case we
-//!   fall back to removing only files that no cached package index in
-//!   `<store>/v1/index/` points at.
+//! - `aube store prune` — mark global virtual-store entries reachable from
+//!   registered projects, remove the rest, then remove unreferenced CAS files.
+//!   CAS pruning uses hardlink counts where available and cached package
+//!   indexes on reflink filesystems. `--dry-run` reports the same totals
+//!   without deleting anything.
 //! - `aube store status` — verify every file referenced by a cached package
 //!   index still exists in the store and its BLAKE3 hash matches. Exits 0
 //!   when everything is consistent, 1 when any corruption is found.
@@ -28,17 +26,19 @@
 //! auto-install check.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
-use clap::{Args, Subcommand};
 use miette::{IntoDiagnostic, miette};
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct StoreArgs {
-    #[command(subcommand)]
+    #[usage(subcommand)]
     pub command: StoreCommand,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum StoreCommand {
     /// Add one or more packages to the global store without linking them
     /// into any project.
@@ -47,7 +47,7 @@ pub enum StoreCommand {
     /// `react@next`, or `express@^4`.
     Add {
         /// Package specs to fetch into the store.
-        #[arg(required = true)]
+        #[usage(arg, required)]
         packages: Vec<String>,
     },
     /// Show the store path.
@@ -57,12 +57,15 @@ pub enum StoreCommand {
     /// Operates on the store printed by `aube store path`; it does not touch
     /// project node_modules directories, manifests, or lockfiles.
     ///
-    /// It keeps files referenced by cached package indexes and, on hardlink
-    /// filesystems, files that still have project hardlink references.
+    /// It removes global virtual-store graph entries not referenced by any
+    /// registered project. Entries from older aube releases live outside the
+    /// registry-managed versioned namespace and are not touched. It then prunes
+    /// content-store files.
     ///
     /// On reflink filesystems such as APFS or btrfs, link counts cannot prove
-    /// project reachability, so pruning relies on cached package indexes.
-    Prune,
+    /// project reachability, so content-store pruning relies on cached package
+    /// indexes. Global virtual-store reachability comes from project links.
+    Prune(PruneCliArgs),
     /// Verify the store against cached package indexes.
     ///
     /// Confirms every file referenced by a cached package index is
@@ -71,11 +74,94 @@ pub enum StoreCommand {
     Status,
 }
 
+// `PruneArgs` is part of the published Rust API, so keep its original
+// constructible shape while exposing JSON as CLI-only state.
+static PRUNE_JSON_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, usage_rs::Args)]
+pub struct PruneCliArgs {
+    /// Do not actually delete anything; report what would be pruned.
+    #[usage(long)]
+    dry_run: bool,
+    /// Emit the dry-run plan as one machine-readable JSON document.
+    #[usage(long, requires = "--dry-run")]
+    json: bool,
+}
+
+#[derive(Debug)]
+pub struct PruneArgs {
+    /// Do not actually delete anything; report what would be pruned.
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PruneReport {
+    schema_version: u32,
+    dry_run: bool,
+    mutation_roots: Vec<MutationRoot>,
+    actions: Vec<PlannedAction>,
+    global_virtual_store: GvsStats,
+    content_store: CasStats,
+    reclaimable_bytes_upper_bound: u64,
+    warnings: Vec<StructuredWarning>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MutationRoot {
+    kind: &'static str,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlannedAction {
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to: Option<String>,
+    count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GvsStats {
+    entries: usize,
+    bytes_upper_bound: u64,
+    stale_project_records: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CasStats {
+    files: usize,
+    bytes_upper_bound: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct StructuredWarning {
+    code: &'static str,
+    message: String,
+}
+
+#[derive(Debug, Default)]
+struct CasPrunePlan {
+    paths: Vec<std::path::PathBuf>,
+    files: Vec<super::gvs_registry::CandidateFile>,
+}
+
 pub async fn run(args: StoreArgs) -> miette::Result<()> {
     match args.command {
         StoreCommand::Add { packages } => add(packages).await,
         StoreCommand::Path => path(),
-        StoreCommand::Prune => prune(),
+        StoreCommand::Prune(a) => {
+            PRUNE_JSON_REQUESTED.store(a.json, Ordering::Relaxed);
+            prune(PruneArgs { dry_run: a.dry_run })
+        }
         StoreCommand::Status => status(),
     }
 }
@@ -85,8 +171,13 @@ fn open_store() -> miette::Result<aube_store::Store> {
     crate::commands::open_store(&cwd)
 }
 
+fn open_store_for_maintenance() -> miette::Result<aube_store::Store> {
+    let cwd = crate::dirs::project_root_or_cwd().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    crate::commands::open_store_for_maintenance(&cwd)
+}
+
 fn path() -> miette::Result<()> {
-    let store = open_store()?;
+    let store = open_store_for_maintenance()?;
     println!("{}", store.store_v1_dir().display());
     Ok(())
 }
@@ -166,154 +257,457 @@ async fn add(specs: Vec<String>) -> miette::Result<()> {
     Ok(())
 }
 
-/// Collect the set of hex hashes referenced by any cached package index
-/// under `<store>/v1/index/`. Integrity-keyed entries live under
-/// `<16 hex>/<name>@<version>.json` subdirs; integrity-less entries
-/// live at the root as `<name>@<version>.json`. Walk both. Used as
-/// the "known-referenced" set for `store prune` and `store status`.
-fn referenced_hashes(store: &aube_store::Store) -> std::collections::HashSet<String> {
+/// Collect the set of hex hashes referenced by every cached package index.
+/// Pruning must fail closed if this scan is incomplete: a skipped index would
+/// otherwise make its live CAS files look unreferenced.
+fn referenced_hashes(index_dir: &Path) -> miette::Result<std::collections::HashSet<String>> {
     let mut seen = std::collections::HashSet::new();
-    let index_dir = store.index_dir();
-    collect_hashes_from_dir(&index_dir, &mut seen);
-    let Ok(entries) = std::fs::read_dir(&index_dir) else {
-        return seen;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_hashes_from_dir(&path, &mut seen);
-        }
-    }
-    seen
-}
-
-fn collect_hashes_from_dir(dir: &std::path::Path, seen: &mut std::collections::HashSet<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(index): Result<aube_store::PackageIndex, _> = serde_json::from_str(&content) else {
-            continue;
-        };
+    visit_cached_indices_at(index_dir, |_, index| {
         for stored in index.values() {
             seen.insert(stored.hex_hash.clone());
         }
-    }
+    })?;
+    Ok(seen)
 }
 
-fn prune() -> miette::Result<()> {
-    let store = open_store()?;
-    let root = store.root().to_path_buf();
-    if !root.exists() {
-        eprintln!("Store is empty: nothing to prune");
+/// Visit every JSON index at the root and in integrity-keyed subdirectories.
+/// A missing index root is an empty cache; every other scan failure is fatal.
+fn visit_cached_indices(
+    store: &aube_store::Store,
+    visit: impl FnMut(&Path, aube_store::PackageIndex),
+) -> miette::Result<()> {
+    visit_cached_indices_at(&store.index_dir(), visit)
+}
+
+fn visit_cached_indices_at(
+    index_dir: &Path,
+    mut visit: impl FnMut(&Path, aube_store::PackageIndex),
+) -> miette::Result<()> {
+    if !index_dir.try_exists().map_err(|e| {
+        miette!(
+            code = aube_codes::errors::ERR_AUBE_STORE_INDEX_SCAN_FAILED,
+            "failed to inspect store index directory {}: {e}",
+            index_dir.display()
+        )
+    })? {
+        return Ok(());
+    }
+    visit_indices_in_dir(index_dir, true, &mut visit)
+}
+
+fn visit_indices_in_dir(
+    dir: &Path,
+    visit_subdirs: bool,
+    visit: &mut impl FnMut(&Path, aube_store::PackageIndex),
+) -> miette::Result<()> {
+    let entries = std::fs::read_dir(dir).map_err(|e| {
+        miette!(
+            code = aube_codes::errors::ERR_AUBE_STORE_INDEX_SCAN_FAILED,
+            "failed to list store index directory {}: {e}",
+            dir.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_STORE_INDEX_SCAN_FAILED,
+                "failed to read an entry in store index directory {}: {e}",
+                dir.display()
+            )
+        })?;
+        let path = entry.path();
+        let metadata = entry.metadata().map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_STORE_INDEX_SCAN_FAILED,
+                "failed to inspect store index path {}: {e}",
+                path.display()
+            )
+        })?;
+        if metadata.is_dir() {
+            if visit_subdirs {
+                visit_indices_in_dir(&path, false, visit)?;
+            }
+            continue;
+        }
+        if !metadata.is_file() || path.extension() != Some(std::ffi::OsStr::new("json")) {
+            continue;
+        }
+        let content = std::fs::read(&path).map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_STORE_INDEX_SCAN_FAILED,
+                "failed to read store index {}: {e}",
+                path.display()
+            )
+        })?;
+        let index = serde_json::from_slice(&content).map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_STORE_INDEX_SCAN_FAILED,
+                "failed to parse store index {}: {e}",
+                path.display()
+            )
+        })?;
+        visit(&path, index);
+    }
+    Ok(())
+}
+
+fn prune(args: PruneArgs) -> miette::Result<()> {
+    let json = PRUNE_JSON_REQUESTED.swap(false, Ordering::Relaxed);
+    let store = open_store_for_maintenance()?;
+    let maintenance_lock = store
+        .lock_for_maintenance()
+        .into_diagnostic()
+        .map_err(|e| {
+            miette!(
+                code = aube_codes::errors::ERR_AUBE_STORE_PRUNE_LOCK_FAILED,
+                "failed to lock the store for pruning: {e}"
+            )
+        })?;
+    let _gvs_lock = super::gvs_registry::lock_for_prune(&store.virtual_store_dir(), json)?;
+    let gvs_plan = super::gvs_registry::plan_prune(&store.virtual_store_dir())?;
+    let current_index_dir = store.index_dir();
+    let legacy_index_dir = store.legacy_index_dir();
+    let mut referenced = referenced_hashes(&current_index_dir)?;
+    if legacy_index_dir != current_index_dir {
+        referenced.extend(referenced_hashes(&legacy_index_dir)?);
+    }
+    let cas_plan = plan_cas_prune(store.root(), &referenced, &gvs_plan)?;
+    let report = build_prune_report(&store, &gvs_plan, &cas_plan);
+
+    if json {
+        let output = serde_json::to_string_pretty(&report).into_diagnostic()?;
+        println!("{output}");
         return Ok(());
     }
 
-    let referenced = referenced_hashes(&store);
-    let mut removed_files = 0u64;
-    let mut removed_bytes = 0u64;
-
-    // Walk every 2-char shard directory. Store layout is
-    // <root>/<shard>/<rest-of-hash>[-exec].
-    for shard in std::fs::read_dir(&root).into_diagnostic()?.flatten() {
-        let shard_path = shard.path();
-        if !shard_path.is_dir() {
-            continue;
+    if !args.dry_run {
+        if store.legacy_index_migration_needed() {
+            store.migrate_legacy_index_for_maintenance(&maintenance_lock);
         }
-        let shard_name = match shard_path.file_name().and_then(|s| s.to_str()) {
-            Some(s) if s.len() == 2 => s.to_string(),
-            _ => continue,
-        };
-        for file in std::fs::read_dir(&shard_path).into_diagnostic()?.flatten() {
-            let file_path = file.path();
-            let Some(fname) = file_path.file_name().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            // Skip the `-exec` marker; it gets removed alongside its target.
-            let is_exec_marker = fname.ends_with("-exec");
-            let base = fname.strip_suffix("-exec").unwrap_or(fname);
-            let hex = format!("{shard_name}{base}");
-
-            if referenced.contains(&hex) {
-                continue;
-            }
-
-            // On hardlink filesystems, files with nlink > 1 are referenced
-            // by at least one virtual-store entry — don't touch them. Exec
-            // markers are never hardlinked, so we can't check them directly;
-            // instead we delete a marker only when its companion content
-            // file is *also* going away, otherwise we'd silently strip the
-            // executable bit from a file pnpm still references.
-            let content_len = match file.metadata() {
-                Ok(meta) => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::MetadataExt;
-                        if is_exec_marker {
-                            let content_path = shard_path.join(base);
-                            if let Ok(content_meta) = std::fs::metadata(&content_path)
-                                && content_meta.nlink() > 1
-                            {
-                                continue;
-                            }
-                        } else if meta.nlink() > 1 {
-                            continue;
-                        }
-                    }
-                    meta.len()
-                }
-                Err(_) => 0,
-            };
-
-            // Only credit the byte counter after the unlink actually
-            // succeeds, otherwise a permission-denied failure would
-            // inflate the "freed" number in the summary.
-            if std::fs::remove_file(&file_path).is_ok() && !is_exec_marker {
-                removed_files += 1;
-                removed_bytes += content_len;
-            }
+        super::gvs_registry::apply_prune(&store.virtual_store_dir(), &gvs_plan)?;
+        for path in &cas_plan.paths {
+            std::fs::remove_file(path).map_err(|e| {
+                miette!(
+                    code = aube_codes::errors::ERR_AUBE_STORE_PRUNE_FAILED,
+                    "failed to prune store file {}: {e}",
+                    path.display()
+                )
+            })?;
         }
     }
 
-    eprintln!(
-        "Pruned {} ({:.1} MB) from the store",
-        pluralizer::pluralize("file", removed_files as isize, true),
-        removed_bytes as f64 / 1_048_576.0
-    );
+    let verb = if args.dry_run {
+        "Would prune"
+    } else {
+        "Pruned"
+    };
+    if !gvs_plan.entries.is_empty() {
+        eprintln!(
+            "{verb} {} ({:.1} MB) from the global virtual store",
+            pluralizer::pluralize("package", gvs_plan.entries.len() as isize, true),
+            gvs_plan.bytes() as f64 / 1_048_576.0
+        );
+    }
+    if !gvs_plan.stale_records.is_empty() {
+        eprintln!(
+            "{verb} {} from the global virtual store registry",
+            pluralizer::pluralize(
+                "stale project record",
+                gvs_plan.stale_records.len() as isize,
+                true
+            )
+        );
+    }
+    if !cas_plan.files.is_empty() {
+        let size_prefix = if args.dry_run { "up to " } else { "" };
+        eprintln!(
+            "{verb} {} ({size_prefix}{:.1} MB) from the store",
+            pluralizer::pluralize("file", cas_plan.files.len() as isize, true),
+            candidate_bytes(&cas_plan.files) as f64 / 1_048_576.0
+        );
+    }
+    if gvs_plan.entries.is_empty() && gvs_plan.stale_records.is_empty() && cas_plan.files.is_empty()
+    {
+        eprintln!("Nothing to prune");
+    }
+    for path in &gvs_plan.vanished_files {
+        tracing::warn!(
+            code = aube_codes::warnings::WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED,
+            path = %path.display(),
+            "global virtual-store file disappeared while building the prune plan"
+        );
+    }
     Ok(())
+}
+
+fn plan_cas_prune(
+    root: &Path,
+    referenced: &HashSet<String>,
+    gvs_plan: &super::gvs_registry::GvsPrunePlan,
+) -> miette::Result<CasPrunePlan> {
+    if !root.try_exists().into_diagnostic()? {
+        return Ok(CasPrunePlan::default());
+    }
+    let mut removed_gvs_links: HashMap<super::gvs_registry::FileIdentity, u64> = HashMap::new();
+    for file in &gvs_plan.files {
+        *removed_gvs_links.entry(file.identity.clone()).or_default() += 1;
+    }
+    let mut plan = CasPrunePlan::default();
+    let mut content_paths = HashSet::new();
+    let mut markers = Vec::new();
+    let root_entries = read_dir_complete(root)?;
+    for entry in &root_entries {
+        let path = entry.path();
+        let is_stream_temp = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".aube-stream-"));
+        if !is_stream_temp {
+            continue;
+        }
+        let metadata = entry.metadata().into_diagnostic()?;
+        if metadata.is_file() {
+            plan.paths.push(path.clone());
+            plan.files.push(super::gvs_registry::CandidateFile {
+                identity: candidate_identity(&path, &metadata),
+                bytes: metadata.len(),
+            });
+        }
+    }
+    // Walk every 2-char shard directory. Store layout is
+    // <root>/<shard>/<rest-of-hash>[-exec].
+    for shard in root_entries {
+        let shard_path = shard.path();
+        if !shard.file_type().into_diagnostic()?.is_dir() {
+            continue;
+        }
+        let Some(shard_name) = shard_path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if shard_name.len() != 2 {
+            continue;
+        }
+        for file in read_dir_complete(&shard_path)? {
+            let file_path = file.path();
+            let metadata = file.metadata().into_diagnostic()?;
+            if !metadata.is_file() {
+                continue;
+            }
+            let Some(fname) = file_path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if let Some(base) = fname.strip_suffix("-exec") {
+                let content_path = shard_path.join(base);
+                markers.push((file_path, content_path));
+                continue;
+            }
+            let hex = format!("{shard_name}{fname}");
+            if referenced.contains(&hex) {
+                continue;
+            }
+            let identity = candidate_identity(&file_path, &metadata);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let removed_links = removed_gvs_links.get(&identity).copied().unwrap_or(0);
+                if metadata.nlink() > removed_links + 1 {
+                    continue;
+                }
+            }
+            content_paths.insert(file_path.clone());
+            plan.paths.push(file_path);
+            plan.files.push(super::gvs_registry::CandidateFile {
+                identity,
+                bytes: metadata.len(),
+            });
+        }
+    }
+    for (marker, content) in markers {
+        if content_paths.contains(&content) {
+            plan.paths.push(marker);
+        }
+    }
+    Ok(plan)
+}
+
+fn candidate_identity(
+    _path: &Path,
+    metadata: &std::fs::Metadata,
+) -> super::gvs_registry::FileIdentity {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        super::gvs_registry::FileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        super::gvs_registry::FileIdentity::Path(_path.to_path_buf())
+    }
+}
+
+fn read_dir_complete(path: &Path) -> miette::Result<Vec<std::fs::DirEntry>> {
+    std::fs::read_dir(path)
+        .into_diagnostic()?
+        .collect::<Result<Vec<_>, _>>()
+        .into_diagnostic()
+}
+
+fn build_prune_report(
+    store: &aube_store::Store,
+    gvs_plan: &super::gvs_registry::GvsPrunePlan,
+    cas_plan: &CasPrunePlan,
+) -> PruneReport {
+    let mut mutation_roots = vec![
+        mutation_root("store", store.store_v1_dir()),
+        mutation_root("contentStore", store.root().to_path_buf()),
+        mutation_root("packageIndex", store.index_dir()),
+        mutation_root("globalVirtualStore", store.virtual_store_dir()),
+        mutation_root(
+            "projectRegistry",
+            store
+                .virtual_store_dir()
+                .join(super::gvs_registry::PROJECTS_DIR),
+        ),
+        mutation_root("maintenanceLock", store.maintenance_lock_path()),
+        mutation_root(
+            "globalVirtualStoreLock",
+            store
+                .virtual_store_dir()
+                .join(super::gvs_registry::LOCK_FILE),
+        ),
+    ];
+    let mut actions = Vec::new();
+    if store.legacy_index_migration_needed() {
+        mutation_roots.push(mutation_root(
+            "legacyPackageIndex",
+            store.legacy_index_dir(),
+        ));
+        actions.push(PlannedAction {
+            kind: "migrateLegacyPackageIndex",
+            from: Some(json_path(store.legacy_index_dir())),
+            to: Some(json_path(store.index_dir())),
+            count: 1,
+        });
+    }
+    actions.extend([
+        PlannedAction {
+            kind: "pruneGlobalVirtualStoreEntries",
+            from: None,
+            to: None,
+            count: gvs_plan.entries.len(),
+        },
+        PlannedAction {
+            kind: "removeStaleProjectRecords",
+            from: None,
+            to: None,
+            count: gvs_plan.stale_records.len(),
+        },
+        PlannedAction {
+            kind: "pruneContentStoreFiles",
+            from: None,
+            to: None,
+            count: cas_plan.files.len(),
+        },
+    ]);
+    let mut unique = HashMap::new();
+    for file in gvs_plan.files.iter().chain(&cas_plan.files) {
+        unique.entry(file.identity.clone()).or_insert(file.bytes);
+    }
+    PruneReport {
+        schema_version: 1,
+        dry_run: true,
+        mutation_roots,
+        actions,
+        global_virtual_store: GvsStats {
+            entries: gvs_plan.entries.len(),
+            bytes_upper_bound: gvs_plan.bytes(),
+            stale_project_records: gvs_plan.stale_records.len(),
+        },
+        content_store: CasStats {
+            files: cas_plan.files.len(),
+            bytes_upper_bound: candidate_bytes(&cas_plan.files),
+        },
+        reclaimable_bytes_upper_bound: unique.into_values().sum(),
+        warnings: gvs_plan
+            .vanished_files
+            .iter()
+            .map(|path| StructuredWarning {
+                code: aube_codes::warnings::WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED,
+                message: format!(
+                    "global virtual-store file {} disappeared while building the prune plan",
+                    path.display()
+                ),
+            })
+            .collect(),
+    }
+}
+
+fn candidate_bytes(files: &[super::gvs_registry::CandidateFile]) -> u64 {
+    let mut identities = HashSet::new();
+    files
+        .iter()
+        .filter(|file| identities.insert(file.identity.clone()))
+        .map(|file| file.bytes)
+        .sum()
+}
+
+fn mutation_root(kind: &'static str, path: std::path::PathBuf) -> MutationRoot {
+    let resolved = resolve_physical_path(&path);
+    let resolved_path = resolved.filter(|resolved| resolved != &path).map(json_path);
+    MutationRoot {
+        kind,
+        path: json_path(path),
+        resolved_path,
+    }
+}
+
+fn resolve_physical_path(path: &Path) -> Option<std::path::PathBuf> {
+    let mut existing = path;
+    let mut tail = Vec::new();
+    while !existing.exists() {
+        tail.push(existing.file_name()?.to_os_string());
+        existing = existing.parent()?;
+    }
+    let mut resolved = std::fs::canonicalize(existing).ok()?;
+    for component in tail.into_iter().rev() {
+        resolved.push(component);
+    }
+    Some(resolved)
+}
+
+fn json_path(path: std::path::PathBuf) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 fn status() -> miette::Result<()> {
     let store = open_store()?;
-    let index_dir = store.index_dir();
-    if !index_dir.exists() {
-        eprintln!("Store is consistent (no cached indices found)");
-        return Ok(());
-    }
-
     let mut checked = 0usize;
     let mut broken: Vec<String> = Vec::new();
-
-    // Walk the index root (integrity-less entries) and every
-    // `<16 hex>/` subdir (integrity-keyed entries). Flat filenames at
-    // the root are the integrity-less variants; files one level
-    // deep are the integrity-keyed variants — both need verifying.
-    verify_indices_in_dir(&index_dir, &mut checked, &mut broken).into_diagnostic()?;
-    for entry in std::fs::read_dir(&index_dir).into_diagnostic()?.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            verify_indices_in_dir(&path, &mut checked, &mut broken).into_diagnostic()?;
+    visit_cached_indices(&store, |path, index| {
+        checked += 1;
+        let pkg_label = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().replace("__", "/"))
+            .unwrap_or_else(|| path.display().to_string());
+        let mut pkg_ok = true;
+        for (rel, stored) in &index {
+            if !verify_stored_file(&stored.store_path, &stored.hex_hash) {
+                broken.push(format!("{pkg_label}: {rel}"));
+                pkg_ok = false;
+            }
         }
+        if pkg_ok {
+            tracing::debug!("store ok: {pkg_label}");
+        }
+    })?;
+
+    if checked == 0 {
+        eprintln!("Store is consistent (no cached indices found)");
+        return Ok(());
     }
 
     if broken.is_empty() {
@@ -335,51 +729,6 @@ fn status() -> miette::Result<()> {
             pluralizer::pluralize("file", broken.len() as isize, false)
         ))
     }
-}
-
-/// Verify every `*.json` cached index directly inside `dir` (no
-/// recursion). Callers walk the layout hierarchy and call this on
-/// each directory that can hold index files. Keeps the BLAKE3 hot
-/// loop in one place.
-fn verify_indices_in_dir(
-    dir: &Path,
-    checked: &mut usize,
-    broken: &mut Vec<String>,
-) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        // `@scope/name@version.json` gets stored as `@scope__name@version.json`.
-        let pkg_label = stem.replace("__", "/");
-
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(index): Result<aube_store::PackageIndex, _> = serde_json::from_str(&content) else {
-            continue;
-        };
-
-        *checked += 1;
-        let mut pkg_ok = true;
-        for (rel, stored) in &index {
-            if !verify_stored_file(&stored.store_path, &stored.hex_hash) {
-                broken.push(format!("{pkg_label}: {rel}"));
-                pkg_ok = false;
-            }
-        }
-        if pkg_ok {
-            tracing::debug!("store ok: {pkg_label}");
-        }
-    }
-    Ok(())
 }
 
 /// Stream the file at `path` through BLAKE3 and compare to the expected

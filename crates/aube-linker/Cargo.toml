@@ -18,6 +18,7 @@ aube-util = { workspace = true }
 miette = { workspace = true }
 xx = { workspace = true }
 tracing = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 reflink-copy = { workspace = true }
 thiserror = { workspace = true }
@@ -30,6 +31,7 @@ diffy = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tempfile = "3"
+libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }

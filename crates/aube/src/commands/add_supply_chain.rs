@@ -49,7 +49,10 @@ use aube_registry::supply_chain::{
 use aube_settings::resolved::{AdvisoryBloomCheck, AdvisoryCheck, AdvisoryCheckOnInstall};
 use miette::miette;
 use std::io::{BufRead, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const OSV_NEGATIVE_CACHE_MS: u64 = 30_000;
 
 #[derive(Clone)]
 pub(crate) struct ReputationPolicy<'a> {
@@ -209,8 +212,8 @@ async fn package_age_gate(
         if !confirm_new_package(prompt, name, &created, minimum_age_minutes).await? {
             return Err(miette!(
                 code = ERR_AUBE_NEW_PACKAGE_NAME,
-                "user aborted `{} {name}`",
-                aube_util::cmd("add")
+                "{}",
+                user_declined_to_add(name)
             ));
         }
     }
@@ -252,7 +255,10 @@ fn is_new_package_name(created: &str, cutoff: &str) -> bool {
 ///
 /// Decision table:
 /// - `fresh_resolution || osv_transitive_check || advisory_check_every_install`
-///   → live OSV API (`run_transitive_osv_gate`)
+///   → default fresh installs use a bloom prefilter for more than 10 pairs;
+///   explicit add/update/dlx, required policy, and every-install checks stay live
+/// - otherwise, when `advisory_bloom_check != Off`
+///   → optional bloom gate (`run_transitive_osv_gate_via_bloom`)
 /// - otherwise, when `advisory_check_on_install != Off`
 ///   → local mirror (`run_transitive_osv_gate_via_mirror`)
 /// - otherwise → no OSV check
@@ -272,10 +278,16 @@ pub async fn run_post_resolve_osv_routing(
     advisory_bloom_check: AdvisoryBloomCheck,
     advisory_check_every_install: bool,
 ) -> miette::Result<()> {
-    let needs_live_api = osv_transitive_check || advisory_check_every_install || fresh_resolution;
-    if needs_live_api {
-        if !matches!(advisory_check, AdvisoryCheck::Off) {
-            run_transitive_osv_gate(cwd, graph, advisory_check).await?;
+    if let Some(route) = fresh_osv_route(
+        fresh_resolution,
+        osv_transitive_check,
+        advisory_check,
+        advisory_check_every_install,
+    ) {
+        match route {
+            FreshOsvRoute::Bloom => run_fresh_resolution_osv_gate(cwd, graph).await?,
+            FreshOsvRoute::Live => run_transitive_osv_gate(cwd, graph, advisory_check).await?,
+            FreshOsvRoute::Off => return Ok(()),
         }
     } else if !matches!(advisory_bloom_check, AdvisoryBloomCheck::Off) {
         // Bloom preferred over the local-mirror fallback when both
@@ -289,6 +301,31 @@ pub async fn run_post_resolve_osv_routing(
         run_transitive_osv_gate_via_mirror(cwd, graph, advisory_check_on_install).await?;
     }
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FreshOsvRoute {
+    Bloom,
+    Live,
+    Off,
+}
+
+fn fresh_osv_route(
+    fresh_resolution: bool,
+    explicit: bool,
+    policy: AdvisoryCheck,
+    every_install: bool,
+) -> Option<FreshOsvRoute> {
+    if !fresh_resolution && !explicit && !every_install {
+        return None;
+    }
+    Some(match policy {
+        AdvisoryCheck::Off => FreshOsvRoute::Off,
+        AdvisoryCheck::On if fresh_resolution && !explicit && !every_install => {
+            FreshOsvRoute::Bloom
+        }
+        _ => FreshOsvRoute::Live,
+    })
 }
 
 /// Live-API transitive OSV `MAL-*` check.
@@ -320,6 +357,165 @@ pub async fn run_transitive_osv_gate(
     if pairs.is_empty() {
         return Ok(());
     }
+    run_versioned_osv_gate(&pairs, policy, None).await
+}
+
+fn unix_time_ms() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|time| time.as_millis().try_into().ok())
+}
+
+fn osv_negative_cache_key(
+    cache_dir: &Path,
+    bloom_snapshot: &[u8],
+    pairs: &[(String, String)],
+) -> (PathBuf, String) {
+    let mut sorted: Vec<_> = pairs.iter().collect();
+    sorted.sort_unstable();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"aube-osv-negative-v1\0");
+    hasher.update(bloom_snapshot);
+    for (name, version) in sorted {
+        hasher.update(name.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(version.as_bytes());
+        hasher.update(&[0]);
+    }
+    let key = hasher.finalize().to_hex().to_string();
+    // Fixed 256-file upper bound. A collision in this first-byte slot is a
+    // cache miss because the file still carries the complete key.
+    let path = cache_dir
+        .join("osv-bloom/negative-v1")
+        .join(format!("{}.txt", &key[..2]));
+    (path, key)
+}
+
+fn osv_negative_cache_is_fresh(path: &Path, key: &str, now_ms: u64) -> bool {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let mut words = contents.split_whitespace();
+    let Some(cached_key) = words.next() else {
+        return false;
+    };
+    let Some(checked_at) = words.next().and_then(|word| word.parse::<u64>().ok()) else {
+        return false;
+    };
+    cached_key == key
+        && words.next().is_none()
+        && now_ms
+            .checked_sub(checked_at)
+            .is_some_and(|age| age < OSV_NEGATIVE_CACHE_MS)
+}
+
+/// Explicit add/update/dlx checks keep the live gate; bulk ordinary fresh installs
+/// can use a recent, validated bloom to avoid querying unaffected packages.
+async fn run_fresh_resolution_osv_gate(
+    cwd: &Path,
+    graph: &aube_lockfile::LockfileGraph,
+) -> miette::Result<()> {
+    let pairs = transitive_registry_pairs(cwd, graph);
+    let cache_dir = aube_store::dirs::cache_dir();
+    let probe = async {
+        let cache_dir = cache_dir.as_ref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "OSV bloom cache directory unavailable",
+            )
+        })?;
+        let bloom = OsvBloomClient::open(cache_dir);
+        let http = OsvBloomClient::build_client()?;
+        bloom.refresh_if_stale_default(&http).await?;
+        bloom.probe_lockfile_with_identity(&pairs)
+    };
+    run_fresh_resolution_osv_gate_with(
+        &pairs,
+        cache_dir.as_deref(),
+        probe,
+        |queries, cache| async move {
+            run_versioned_osv_gate(
+                &queries,
+                AdvisoryCheck::On,
+                cache
+                    .as_ref()
+                    .map(|(path, key)| (path.as_path(), key.as_str())),
+            )
+            .await
+        },
+    )
+    .await
+}
+
+async fn run_fresh_resolution_osv_gate_with<Fut>(
+    pairs: &[(String, String)],
+    cache_dir: Option<&Path>,
+    probe: impl std::future::Future<
+        Output = Result<
+            aube_registry::osv_bloom_client::BloomProbe,
+            aube_registry::osv_bloom_client::BloomError,
+        >,
+    >,
+    live_check: impl FnOnce(Vec<(String, String)>, Option<(PathBuf, String)>) -> Fut,
+) -> miette::Result<()>
+where
+    Fut: std::future::Future<Output = miette::Result<()>>,
+{
+    let (queries, bloom_identity) = fresh_osv_queries(pairs, probe).await;
+    // A failed Bloom refresh falls back to live validation without using a
+    // cached answer. Key by the exact filter used for the probe so a
+    // concurrent process refreshing the on-disk files cannot change it.
+    let negative_cache = if !queries.is_empty() {
+        cache_dir
+            .zip(bloom_identity)
+            .map(|(dir, identity)| osv_negative_cache_key(dir, &identity, &queries))
+    } else {
+        None
+    };
+    if let Some((path, key)) = &negative_cache
+        && let Some(now_ms) = unix_time_ms()
+        && osv_negative_cache_is_fresh(path, key, now_ms)
+    {
+        return Ok(());
+    }
+    live_check(queries, negative_cache).await
+}
+
+async fn fresh_osv_queries(
+    pairs: &[(String, String)],
+    probe: impl std::future::Future<
+        Output = Result<
+            aube_registry::osv_bloom_client::BloomProbe,
+            aube_registry::osv_bloom_client::BloomError,
+        >,
+    >,
+) -> (Vec<(String, String)>, Option<[u8; 32]>) {
+    // For a handful of packages, prefer the freshest answer without depending
+    // on a locally cached filter. The probe future is lazy and never polled.
+    if pairs.len() <= 10 {
+        return (pairs.to_vec(), None);
+    }
+    let _diag =
+        aube_util::diag::Span::new(aube_util::diag::Category::Registry, "osv_bloom_prefilter");
+    match probe.await {
+        Ok((hits, identity)) => (hits, Some(identity)),
+        Err(error) => {
+            tracing::debug!(%error, "OSV bloom unavailable; checking the full graph live");
+            (pairs.to_vec(), None)
+        }
+    }
+}
+
+async fn run_versioned_osv_gate(
+    pairs: &[(String, String)],
+    policy: AdvisoryCheck,
+    negative_cache: Option<(&Path, &str)>,
+) -> miette::Result<()> {
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    let _diag = aube_util::diag::Span::new(aube_util::diag::Category::Registry, "osv_live_check");
     let client = match aube_registry::supply_chain::build_probe_client() {
         Ok(c) => c,
         Err(e) => {
@@ -336,13 +532,24 @@ pub async fn run_transitive_osv_gate(
             return Ok(());
         }
     };
-    osv_gate_versioned(
-        &client,
-        &pairs,
+    let result = fetch_malicious_advisories_versioned(&client, pairs).await;
+    let confirmed_clean = matches!(&result, Ok(hits) if hits.is_empty());
+    handle_osv_result(
+        result,
         policy,
         "refusing to install malicious package(s):",
-    )
-    .await
+        "advisoryCheck",
+    )?;
+    if confirmed_clean
+        && let Some((path, key)) = negative_cache
+        && let Some(now_ms) = unix_time_ms()
+    {
+        let value = format!("{key} {now_ms}\n");
+        if let Err(error) = aube_util::fs_atomic::atomic_write(path, value.as_bytes()) {
+            tracing::debug!(%error, "could not cache clean OSV confirmation");
+        }
+    }
+    Ok(())
 }
 
 /// Mirror-backed transitive OSV `MAL-*` check for plain reinstalls.
@@ -599,8 +806,8 @@ pub async fn run_transitive_osv_gate_via_bloom(
 /// True when the resolved graph contains at least one
 /// `(registry_name, version)` pair the pre-existing lockfile
 /// didn't already pin — meaning the resolver did fresh work and
-/// the result deserves a live-API OSV pass rather than the
-/// mirror-backed fallback. A missing pre-existing lockfile
+/// the result deserves the fresh-resolution OSV gate rather than the
+/// lockfile-driven fallback. A missing pre-existing lockfile
 /// (`None`) is treated as drift by definition: nothing on disk
 /// vouched for what just got resolved.
 ///
@@ -828,8 +1035,8 @@ async fn similar_name_gate(names: &[String], prompt: &LowDownloadPrompt) -> miet
         if !confirm_similar_package(prompt, name, &suggestion).await? {
             return Err(miette!(
                 code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
-                "user aborted `{} {name}`",
-                aube_util::cmd("add")
+                "{}",
+                user_declined_to_add(name)
             ));
         }
     }
@@ -840,7 +1047,11 @@ fn find_similar_package_name(name: &str, corpus: &str) -> Option<PackageNameSugg
     let mut best: Option<PackageNameSuggestion> = None;
     for (index, candidate) in corpus.lines().enumerate() {
         if name == candidate {
-            continue;
+            // A name in the popularity corpus is established in its own
+            // right. Do not flag it because it also resembles a lower-ranked
+            // package (for example, esbuild -> msbuild or @types/node ->
+            // @types/code).
+            return None;
         }
         let Some((requested_part, candidate_part)) = comparable_name_parts(name, candidate) else {
             continue;
@@ -938,7 +1149,8 @@ async fn confirm_similar_package(
     let refusal = || {
         miette!(
             code = ERR_AUBE_SIMILAR_PACKAGE_NAME,
-            "refusing to add {name}: did you mean {} (top-100,000 rank #{}, edit distance {})? Pass --allow-low-downloads after verifying the package name.",
+            help = "pass --allow-low-downloads after verifying the package name",
+            "refusing to add {name}: did you mean {} (top-100,000 rank #{}, edit distance {})?",
             suggestion.name,
             suggestion.rank,
             suggestion.distance
@@ -951,7 +1163,7 @@ async fn confirm_similar_package(
             prompt_similar_package(name, suggestion)
         }
         LowDownloadPrompt::Terminal => Err(refusal()),
-        LowDownloadPrompt::Host(control) => control
+        LowDownloadPrompt::Host(control) => match control
             .confirm(
                 crate::commands::install::InstallPrompt::SimilarPackageName {
                     package: name.to_string(),
@@ -961,7 +1173,12 @@ async fn confirm_similar_package(
                 },
             )
             .await
-            .unwrap_or_else(|| Err(refusal())),
+            .unwrap_or_else(|| Err(refusal()))?
+        {
+            crate::commands::install::InstallPromptDecision::Accept => Ok(true),
+            crate::commands::install::InstallPromptDecision::Decline => Ok(false),
+            crate::commands::install::InstallPromptDecision::Unavailable => Err(refusal()),
+        },
     }
 }
 
@@ -1053,8 +1270,8 @@ async fn downloads_gate(
         if !confirm_low_download(prompt, name, weekly, threshold).await? {
             return Err(miette!(
                 code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
-                "user aborted `{} {name}`",
-                aube_util::cmd("add")
+                "{}",
+                user_declined_to_add(name)
             ));
         }
     }
@@ -1070,7 +1287,8 @@ async fn confirm_low_download(
     let refusal = || {
         miette!(
             code = ERR_AUBE_LOW_DOWNLOAD_PACKAGE,
-            "refusing to add {name}: only {weekly} weekly downloads (threshold: {threshold}). Pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`."
+            help = "pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`",
+            "refusing to add {name}: only {weekly} weekly downloads (threshold: {threshold})"
         )
     };
     match prompt {
@@ -1080,7 +1298,7 @@ async fn confirm_low_download(
             prompt_continue(name, weekly, threshold)
         }
         LowDownloadPrompt::Terminal => Err(refusal()),
-        LowDownloadPrompt::Host(control) => control
+        LowDownloadPrompt::Host(control) => match control
             .confirm(
                 crate::commands::install::InstallPrompt::LowDownloadPackage {
                     package: name.to_string(),
@@ -1089,8 +1307,17 @@ async fn confirm_low_download(
                 },
             )
             .await
-            .unwrap_or_else(|| Err(refusal())),
+            .unwrap_or_else(|| Err(refusal()))?
+        {
+            crate::commands::install::InstallPromptDecision::Accept => Ok(true),
+            crate::commands::install::InstallPromptDecision::Decline => Ok(false),
+            crate::commands::install::InstallPromptDecision::Unavailable => Err(refusal()),
+        },
     }
+}
+
+fn user_declined_to_add(name: &str) -> String {
+    format!("user declined to add {name}")
 }
 
 fn prompt_continue(name: &str, weekly: u64, threshold: u64) -> miette::Result<bool> {
@@ -1125,7 +1352,8 @@ async fn confirm_new_package(
     let refusal = || {
         miette!(
             code = ERR_AUBE_NEW_PACKAGE_NAME,
-            "refusing to add {name}: the package name was first published at {created}, within the configured `minimumPackageAge` of {minimum_age_minutes} minutes. Pass --allow-low-downloads to approve this new name explicitly."
+            help = "pass --allow-low-downloads to approve this new name explicitly",
+            "refusing to add {name}: the package name was first published at {created}, within the configured `minimumPackageAge` of {minimum_age_minutes} minutes"
         )
     };
     match prompt {
@@ -1135,14 +1363,19 @@ async fn confirm_new_package(
             prompt_new_package(name, created, minimum_age_minutes)
         }
         LowDownloadPrompt::Terminal => Err(refusal()),
-        LowDownloadPrompt::Host(control) => control
+        LowDownloadPrompt::Host(control) => match control
             .confirm(crate::commands::install::InstallPrompt::NewPackageName {
                 package: name.to_string(),
                 created_at: created.to_string(),
                 minimum_age_minutes,
             })
             .await
-            .unwrap_or_else(|| Err(refusal())),
+            .unwrap_or_else(|| Err(refusal()))?
+        {
+            crate::commands::install::InstallPromptDecision::Accept => Ok(true),
+            crate::commands::install::InstallPromptDecision::Decline => Ok(false),
+            crate::commands::install::InstallPromptDecision::Unavailable => Err(refusal()),
+        },
     }
 }
 
@@ -1170,7 +1403,8 @@ fn prompt_new_package(name: &str, created: &str, minimum_age_minutes: u64) -> mi
 mod tests {
     use super::*;
     use crate::commands::install::{
-        InstallControl, InstallPrompt, InstallPromptFuture, InstallPromptHandler,
+        InstallControl, InstallPrompt, InstallPromptDecision, InstallPromptDecisionFuture,
+        InstallPromptDecisionHandler, InstallPromptFuture, InstallPromptHandler,
     };
     use std::sync::{Arc, Mutex};
 
@@ -1183,6 +1417,16 @@ mod tests {
         fn confirm(&self, prompt: InstallPrompt) -> InstallPromptFuture<'_> {
             self.prompts.lock().unwrap().push(prompt);
             Box::pin(async move { Ok(self.answer) })
+        }
+    }
+
+    struct DecisionPromptHandler {
+        decision: InstallPromptDecision,
+    }
+
+    impl InstallPromptDecisionHandler for DecisionPromptHandler {
+        fn decide(&self, _prompt: InstallPrompt) -> InstallPromptDecisionFuture<'_> {
+            Box::pin(async move { Ok(self.decision) })
         }
     }
 
@@ -1261,6 +1505,50 @@ mod tests {
             error.code().map(|code| code.to_string()).as_deref(),
             Some(ERR_AUBE_LOW_DOWNLOAD_PACKAGE)
         );
+        assert!(error.to_string().contains("only 12 weekly downloads"));
+        assert!(!error.to_string().contains("user"));
+    }
+
+    #[tokio::test]
+    async fn unavailable_embedded_confirmation_returns_the_gate_refusal() {
+        let handler = Arc::new(DecisionPromptHandler {
+            decision: InstallPromptDecision::Unavailable,
+        });
+        let prompt =
+            LowDownloadPrompt::Host(InstallControl::silent().with_prompt_decision_handler(handler));
+
+        let error = confirm_low_download(&prompt, "tiny", 12, 1000)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()).as_deref(),
+            Some(ERR_AUBE_LOW_DOWNLOAD_PACKAGE)
+        );
+        assert!(error.to_string().contains("only 12 weekly downloads"));
+        assert_eq!(
+            error.help().map(|help| help.to_string()).as_deref(),
+            Some("pass --allow-low-downloads to bypass, or set `lowDownloadThreshold = 0`")
+        );
+        assert!(!error.to_string().contains("user"));
+    }
+
+    #[tokio::test]
+    async fn declined_embedded_confirmation_does_not_invent_a_host_command() {
+        let handler = Arc::new(DecisionPromptHandler {
+            decision: InstallPromptDecision::Decline,
+        });
+        let prompt =
+            LowDownloadPrompt::Host(InstallControl::silent().with_prompt_decision_handler(handler));
+
+        let decision = confirm_low_download(&prompt, "tiny", 12, 1000)
+            .await
+            .unwrap();
+
+        assert!(!decision);
+        let message = user_declined_to_add("tiny");
+        assert_eq!(message, "user declined to add tiny");
+        assert!(!message.contains("mise add"));
     }
 
     #[tokio::test]
@@ -1395,6 +1683,18 @@ mod tests {
     fn similar_name_skips_exact_and_distant_names() {
         assert_eq!(
             find_similar_package_name("lodash", "lodash\nexpress\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn popular_package_is_not_flagged_by_a_lower_ranked_similar_name() {
+        assert_eq!(
+            find_similar_package_name("esbuild", "esbuild\nmsbuild\n"),
+            None
+        );
+        assert_eq!(
+            find_similar_package_name("@types/node", "@types/node\n@types/code\n"),
             None
         );
     }
@@ -1818,5 +2118,272 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn fresh_osv_routing_preserves_explicit_and_required_live_checks() {
+        for fresh in [false, true] {
+            for policy in [AdvisoryCheck::On, AdvisoryCheck::Required] {
+                assert_eq!(
+                    fresh_osv_route(fresh, true, policy, false),
+                    Some(FreshOsvRoute::Live)
+                );
+                assert_eq!(
+                    fresh_osv_route(fresh, false, policy, true),
+                    Some(FreshOsvRoute::Live)
+                );
+                assert_eq!(
+                    fresh_osv_route(fresh, true, policy, true),
+                    Some(FreshOsvRoute::Live)
+                );
+            }
+        }
+        assert_eq!(
+            fresh_osv_route(true, false, AdvisoryCheck::On, false),
+            Some(FreshOsvRoute::Bloom)
+        );
+        assert_eq!(
+            fresh_osv_route(true, false, AdvisoryCheck::Required, false),
+            Some(FreshOsvRoute::Live)
+        );
+        for fresh in [false, true] {
+            for explicit in [false, true] {
+                for every in [false, true] {
+                    let expected = if fresh || explicit || every {
+                        Some(FreshOsvRoute::Off)
+                    } else {
+                        None
+                    };
+                    assert_eq!(
+                        fresh_osv_route(fresh, explicit, AdvisoryCheck::Off, every),
+                        expected
+                    );
+                }
+            }
+        }
+        for policy in [
+            AdvisoryCheck::Off,
+            AdvisoryCheck::On,
+            AdvisoryCheck::Required,
+        ] {
+            assert_eq!(fresh_osv_route(false, false, policy, false), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_small_sets_do_not_load_the_bloom() {
+        for count in [0, 1, 10] {
+            let pairs: Vec<_> = (0..count)
+                .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
+                .collect();
+            let (queries, bloom_identity) = fresh_osv_queries(&pairs, async {
+                panic!("small checks must go directly to the live API")
+            })
+            .await;
+            assert_eq!(queries, pairs);
+            assert!(bloom_identity.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_large_sets_only_query_exact_bloom_hits() {
+        let pairs: Vec<_> = (0..11)
+            .map(|i| (format!("package-{i}"), format!("1.0.{i}")))
+            .collect();
+        let hits = vec![pairs[2].clone(), pairs[7].clone()];
+        let identity = [7u8; 32];
+        let (queries, bloom_identity) =
+            fresh_osv_queries(&pairs, async { Ok((hits.clone(), identity)) }).await;
+        assert_eq!(queries, hits);
+        assert_eq!(bloom_identity, Some(identity));
+        let (queries, bloom_identity) =
+            fresh_osv_queries(&pairs, async { Ok((Vec::new(), identity)) }).await;
+        assert!(
+            queries.is_empty(),
+            "a clean validated filter needs no live queries"
+        );
+        assert_eq!(bloom_identity, Some(identity));
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_failed_bloom_keeps_every_package_for_live_validation() {
+        use aube_registry::osv_bloom_client::BloomError;
+        let pairs: Vec<_> = (0..11)
+            .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
+            .collect();
+        for error in [
+            BloomError::NotInitialized,
+            BloomError::BadFormat("corrupt cache"),
+            BloomError::Integrity {
+                expected: "a".into(),
+                actual: "b".into(),
+                origin: "on-disk cache",
+            },
+            BloomError::Io(std::io::Error::other("refresh failed")),
+        ] {
+            let (queries, bloom_identity) = fresh_osv_queries(&pairs, async { Err(error) }).await;
+            assert_eq!(queries, pairs);
+            assert!(bloom_identity.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_osv_gate_reuses_only_a_current_clean_confirmation() {
+        use aube_registry::osv_bloom_client::BloomError;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pairs: Vec<_> = (0..11)
+            .map(|i| (format!("package-{i}"), "1.0.0".to_string()))
+            .collect();
+        let hits = vec![pairs[2].clone()];
+        let identity = [7u8; 32];
+        let calls = AtomicUsize::new(0);
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), identity)) },
+            |queries, cache| {
+                let calls = &calls;
+                let hits = &hits;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, hits);
+                    let (path, key) = cache.expect("validated Bloom result has a cache key");
+                    let now = unix_time_ms().expect("current timestamp");
+                    aube_util::fs_atomic::atomic_write(&path, format!("{key} {now}\n").as_bytes())
+                        .expect("cache clean confirmation");
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("first live confirmation");
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), identity)) },
+            |_, _| async { panic!("current clean confirmation must skip the live check") },
+        )
+        .await
+        .expect("cached repeat");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), [8u8; 32])) },
+            |queries, cache| {
+                let calls = &calls;
+                let hits = &hits;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, hits);
+                    assert!(cache.is_some());
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("changed Bloom filter calls OSV");
+
+        let (path, key) = osv_negative_cache_key(tmp.path(), &identity, &hits);
+        aube_util::fs_atomic::atomic_write(&path, format!("{key} 0\n").as_bytes())
+            .expect("expire cache");
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Ok((hits.clone(), identity)) },
+            |queries, cache| {
+                let calls = &calls;
+                let hits = &hits;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, hits);
+                    assert!(cache.is_some());
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("expired confirmation calls OSV");
+
+        run_fresh_resolution_osv_gate_with(
+            &pairs,
+            Some(tmp.path()),
+            async { Err(BloomError::NotInitialized) },
+            |queries, cache| {
+                let calls = &calls;
+                let pairs = &pairs;
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    assert_eq!(&queries, pairs);
+                    assert!(cache.is_none());
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("failed Bloom probe calls OSV with the full graph");
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn osv_negative_cache_requires_the_same_bloom_and_exact_versions() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pairs = vec![
+            ("svelte".to_string(), "5.0.0".to_string()),
+            ("vite".to_string(), "6.0.0".to_string()),
+        ];
+        let (path, key) = osv_negative_cache_key(tmp.path(), b"bloom-a", &pairs);
+        let mut reversed = pairs.clone();
+        reversed.reverse();
+        assert_eq!(
+            (path.clone(), key.clone()),
+            osv_negative_cache_key(tmp.path(), b"bloom-a", &reversed)
+        );
+        aube_util::fs_atomic::atomic_write(&path, format!("{key} 1000000\n").as_bytes())
+            .expect("write cache");
+        assert!(osv_negative_cache_is_fresh(&path, &key, 1_029_999));
+        assert!(!osv_negative_cache_is_fresh(&path, &key, 1_030_000));
+        assert!(!osv_negative_cache_is_fresh(&path, &key, 999_999));
+
+        for (snapshot, pairs) in [
+            (b"bloom-b".as_slice(), pairs.clone()),
+            (
+                b"bloom-a".as_slice(),
+                vec![
+                    ("svelte".to_string(), "5.0.1".to_string()),
+                    ("vite".to_string(), "6.0.0".to_string()),
+                ],
+            ),
+        ] {
+            let (other_path, other_key) = osv_negative_cache_key(tmp.path(), snapshot, &pairs);
+            assert!(!osv_negative_cache_is_fresh(
+                &other_path,
+                &other_key,
+                1_010_000
+            ));
+        }
+    }
+
+    #[test]
+    fn osv_negative_cache_rejects_corrupt_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (path, key) = osv_negative_cache_key(
+            tmp.path(),
+            b"bloom",
+            &[("svelte".to_string(), "5.0.0".to_string())],
+        );
+        for bytes in [
+            b"".as_slice(),
+            b"not-a-cache".as_slice(),
+            b"wrong 1000\n".as_slice(),
+        ] {
+            aube_util::fs_atomic::atomic_write(&path, bytes).expect("write cache");
+            assert!(!osv_negative_cache_is_fresh(&path, &key, 1_000));
+        }
     }
 }

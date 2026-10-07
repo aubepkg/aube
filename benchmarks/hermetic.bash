@@ -59,7 +59,9 @@ BENCH_PROXY_PORT="${BENCH_PROXY_PORT:-4875}"
 HERMETIC_STORAGE="$BENCH_HERMETIC_CACHE/storage"
 # Sentinel name carries a generation tag so adding/removing PMs in the
 # default warm set automatically invalidates an existing warmed cache.
-# Bump when the default BENCH_TOOLS set changes.
+# Bump when the default BENCH_TOOLS set changes. aube-nogvs needs no bump:
+# it installs aube's lockfile, so aube's warm pass already fetched its
+# tarballs.
 HERMETIC_WARMED_SENTINEL="$BENCH_HERMETIC_CACHE/.warmed.v3"
 HERMETIC_LOG="$BENCH_HERMETIC_CACHE/verdaccio.log"
 HERMETIC_CONFIG_WARM="$HERMETIC_DIR/registry/config.warm.yaml"
@@ -148,7 +150,7 @@ _hermetic_warm() {
 	# the default warm pass (e.g. re-enabling vlt), so don't fall back
 	# to it.
 	local warm_sentinel="$HERMETIC_WARMED_SENTINEL"
-	if [ "${BENCH_TOOLS:-aube,bun,pnpm,npm,yarn,deno}" != "aube,bun,pnpm,npm,yarn,deno" ]; then
+	if [ "${BENCH_TOOLS:-aube,aube-nogvs,bun,pnpm,npm,yarn,deno}" != "aube,aube-nogvs,bun,pnpm,npm,yarn,deno" ]; then
 		warm_sentinel="$HERMETIC_STORAGE/.warmed.${BENCH_TOOLS//[^A-Za-z0-9_.-]/_}"
 	fi
 
@@ -172,8 +174,9 @@ _hermetic_warm() {
 	_warm_one() {
 		local pm=$1 bin=$2
 		shift 2
+		# aube-nogvs is aube with another layout; aube's pass warms it.
 		case ",${BENCH_TOOLS:-}," in
-		,, | *,"$pm",*) ;;
+		,, | *,"$pm",* | *,"$pm"-nogvs,*) ;;
 		*) return 0 ;;
 		esac
 		if [ -z "$bin" ] || { [ ! -x "$bin" ] && ! command -v "$bin" >/dev/null 2>&1; }; then

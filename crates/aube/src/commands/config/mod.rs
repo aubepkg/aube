@@ -21,33 +21,32 @@ mod tui;
 
 use crate::commands::npmrc::{NpmrcEdit, user_npmrc_path};
 use aube_settings::meta as settings_meta;
-use clap::{Args, Subcommand, ValueEnum};
 use miette::miette;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ConfigArgs {
-    #[command(flatten)]
+    #[usage(flatten)]
     pub list: list::ListArgs,
 
-    #[command(subcommand)]
+    #[usage(subcommand)]
     pub command: Option<ConfigCommand>,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, usage_rs::Subcommands)]
 pub enum ConfigCommand {
     /// Delete a key from aube config or the selected `.npmrc` file
-    #[command(visible_aliases = ["rm", "remove", "unset"])]
+    #[usage(alias("rm", "remove", "unset"))]
     Delete(delete::DeleteArgs),
     /// Explain a known setting, including defaults and supported config sources
     Explain(explain::ExplainArgs),
     /// Search known settings by name, source key, or description
-    #[command(visible_alias = "search")]
+    #[usage(alias = "search")]
     Find(find::FindArgs),
     /// Print the effective value of a key
     Get(GetArgs),
     /// Print every key/value from aube config and selected `.npmrc` file(s)
-    #[command(visible_alias = "ls")]
+    #[usage(alias = "ls")]
     List(list::ListArgs),
     /// Write a key=value pair to aube config or the selected `.npmrc` file
     Set(SetArgs),
@@ -55,7 +54,7 @@ pub enum ConfigCommand {
     Tui,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct KeyArgs {
     /// The setting key.
     ///
@@ -64,7 +63,7 @@ pub struct KeyArgs {
     pub key: String,
 
     /// Shortcut for `--location project`.
-    #[arg(long, conflicts_with = "location")]
+    #[usage(long, conflicts = "--location")]
     pub local: bool,
 
     /// Which config location to act on.
@@ -74,7 +73,7 @@ pub struct KeyArgs {
     /// `<cwd>/.config/aube/config.toml` at project-scope) and the
     /// matching `.npmrc`, so the call works regardless of which file
     /// the value was originally written to.
-    #[arg(long, value_enum, default_value_t = Location::User)]
+    #[usage(long, value_enum, default_value_t = Location::User, default = "user")]
     pub location: Location,
 }
 
@@ -88,7 +87,8 @@ impl KeyArgs {
     }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_rs::ValueEnum, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Location {
     /// User config (`~/.config/aube/config.toml` for known aube
     /// settings, `~/.npmrc` for registry/auth and unknown keys)
@@ -99,7 +99,8 @@ pub enum Location {
     Global,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, usage_rs::ValueEnum, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ListLocation {
     /// Merge `~/.npmrc`, user aube config, and project `.npmrc`,
     /// last-write-wins (same precedence install uses).
@@ -248,6 +249,38 @@ pub(super) fn is_npm_shared_key(key: &str) -> bool {
         return true;
     }
     setting_for_key(key).is_some_and(|meta| meta.npm_shared)
+}
+
+/// Redact credentials before config values cross the command-output boundary.
+///
+/// This follows npm's deliberately broad treatment of underscore-prefixed
+/// authentication fields and also covers the inline TLS private-key spelling
+/// accepted by aube's registry configuration. Non-secret URLs still pass
+/// through [`aube_util::url::redact_url`] so embedded userinfo is not echoed.
+pub(super) fn display_config_value(key: &str, value: &str) -> String {
+    let lower = key.to_ascii_lowercase();
+    let suffix = lower.rsplit_once(':').map_or(lower.as_str(), |(_, v)| v);
+    let is_protected_name = |name| {
+        matches!(
+            name,
+            "auth"
+                | "authtoken"
+                | "certfile"
+                | "email"
+                | "key"
+                | "keyfile"
+                | "password"
+                | "username"
+        )
+    };
+    if lower.starts_with('_')
+        || is_protected_name(&lower)
+        || (lower.starts_with("//") && (suffix.starts_with('_') || is_protected_name(suffix)))
+    {
+        "(protected)".to_string()
+    } else {
+        aube_util::url::redact_url(value)
+    }
 }
 
 pub(super) fn setting_for_key(key: &str) -> Option<&'static settings_meta::SettingMeta> {
@@ -441,6 +474,28 @@ mod tests {
         assert_eq!(
             list::canonical_list_key("//registry.example.com/:_authToken"),
             "//registry.example.com/:_authToken"
+        );
+    }
+
+    #[test]
+    fn display_config_value_protects_credentials_and_redacts_urls() {
+        for key in [
+            "_authToken",
+            "//registry.example.com/:_authToken",
+            "//registry.example.com/:username",
+            "//registry.example.com/:_password",
+            "//registry.example.com/:key",
+            "email",
+        ] {
+            assert_eq!(display_config_value(key, "secret"), "(protected)");
+        }
+        assert_eq!(
+            display_config_value("registry", "https://example.com"),
+            "https://example.com"
+        );
+        assert_eq!(
+            display_config_value("proxy", "https://user:secret@example.com"),
+            "https://***@example.com"
         );
     }
 

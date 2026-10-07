@@ -73,6 +73,30 @@ pub fn evidence_for(meta: &VersionMetadata) -> Option<TrustEvidence> {
     None
 }
 
+fn compact_evidence_for(meta: &aube_registry::VersionTrustMetadata) -> Option<TrustEvidence> {
+    if meta.approver.as_ref().is_some_and(is_approver) {
+        return Some(TrustEvidence::StagedPublish);
+    }
+    if meta
+        .npm_user
+        .as_ref()
+        .and_then(|user| user.trusted_publisher.as_ref())
+        .is_some_and(is_trusted_publisher)
+    {
+        return Some(TrustEvidence::TrustedPublisher);
+    }
+    if meta
+        .dist
+        .as_ref()
+        .and_then(|dist| dist.attestations.as_ref())
+        .and_then(|attestations| attestations.provenance.as_ref())
+        .is_some_and(is_provenance)
+    {
+        return Some(TrustEvidence::Provenance);
+    }
+    None
+}
+
 fn is_approver(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Null => false,
@@ -271,6 +295,179 @@ pub fn check_no_downgrade(
     Ok(())
 }
 
+/// Trust-policy check using the compact history fetched for an exact
+/// dependency. The selected release remains full [`VersionMetadata`]; only
+/// historical releases use the evidence-only representation.
+#[cfg(test)]
+fn check_no_downgrade_compact(
+    packument: &Packument,
+    picked_version: &str,
+    picked_meta: &VersionMetadata,
+    history: &std::collections::BTreeMap<String, aube_registry::VersionTrustMetadata>,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    check_no_downgrade_over_history(
+        &packument.name,
+        &packument.time,
+        picked_version,
+        evidence_for(picked_meta),
+        history,
+        exclude,
+        ignore_after_minutes,
+    )
+}
+
+/// Trust-policy check over a standalone compact trust history — no full
+/// [`Packument`] or [`VersionMetadata`] in hand. Used by the lockfile
+/// validator, which fetches [`aube_registry::PackumentTrustHistory`]
+/// per name; `history.versions` here *includes* the picked version
+/// (the shared loop skips it when ranking prior evidence).
+pub fn check_no_downgrade_history(
+    name: &str,
+    history: &aube_registry::PackumentTrustHistory,
+    picked_version: &str,
+    picked_meta: &aube_registry::VersionTrustMetadata,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    check_no_downgrade_over_history(
+        name,
+        &history.time,
+        picked_version,
+        compact_evidence_for(picked_meta),
+        &history.versions,
+        exclude,
+        ignore_after_minutes,
+    )
+}
+
+/// Enforce the same policy over deferred metadata or a newer exact history.
+pub(crate) fn check_no_downgrade_resolution(
+    packument: &aube_registry::ResolutionPackument,
+    picked: &VersionMetadata,
+    exact_history: Option<&std::collections::BTreeMap<String, aube_registry::VersionTrustMetadata>>,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    if let Some(history) = exact_history {
+        return check_no_downgrade_over_history(
+            &packument.name,
+            &packument.time,
+            &picked.version,
+            evidence_for(picked),
+            history,
+            exclude,
+            ignore_after_minutes,
+        );
+    }
+    check_no_downgrade_over_history(
+        &packument.name,
+        &packument.time,
+        &picked.version,
+        evidence_for(picked),
+        packument
+            .versions
+            .iter()
+            .map(|(version, metadata)| (version, metadata.trust_metadata())),
+        exclude,
+        ignore_after_minutes,
+    )
+}
+
+/// Shared core for the compact-history trust checks: rank the strongest
+/// prior evidence in `history` and reject a picked version that weakens
+/// it. `history` may or may not contain `picked_version` itself — the
+/// ranking loop always skips it.
+fn check_no_downgrade_over_history<'a>(
+    name: &str,
+    time: &std::collections::BTreeMap<String, String>,
+    picked_version: &str,
+    picked_evidence: Option<TrustEvidence>,
+    history: impl IntoIterator<Item = (&'a String, &'a aube_registry::VersionTrustMetadata)>,
+    exclude: &TrustExcludeRules,
+    ignore_after_minutes: Option<u64>,
+) -> Result<(), TrustCheckError> {
+    let picked_parsed = node_semver::Version::parse(picked_version).ok();
+    if let Some(ref version) = picked_parsed {
+        if exclude.matches(name, version) {
+            return Ok(());
+        }
+    } else if exclude.matches_name_only(name) {
+        return Ok(());
+    }
+    if time.is_empty() {
+        return Ok(());
+    }
+    let Some(picked_time) = time.get(picked_version) else {
+        return Err(TrustCheckError::MissingTime(MissingTimeDetails {
+            name: name.to_string(),
+            version: picked_version.to_string(),
+        }));
+    };
+    if let Some(minutes) = ignore_after_minutes
+        && minutes > 0
+        && let Some(cutoff) = cutoff_iso8601(minutes)
+        && picked_time.as_str() < cutoff.as_str()
+    {
+        return Ok(());
+    }
+
+    let exclude_prereleases = picked_parsed
+        .as_ref()
+        .map(|version| version.pre_release.is_empty())
+        .unwrap_or(false);
+    let mut strongest: Option<PriorTrustEvidence> = None;
+    for (version, meta) in history {
+        if version == picked_version {
+            continue;
+        }
+        let Some(published_at) = time.get(version) else {
+            continue;
+        };
+        if published_at >= picked_time {
+            continue;
+        }
+        if exclude_prereleases
+            && let Ok(parsed) = node_semver::Version::parse(version)
+            && !parsed.pre_release.is_empty()
+        {
+            continue;
+        }
+        let Some(evidence) = compact_evidence_for(meta) else {
+            continue;
+        };
+        if strongest
+            .as_ref()
+            .is_none_or(|current| evidence.rank() > current.evidence.rank())
+        {
+            strongest = Some(PriorTrustEvidence {
+                version: version.clone(),
+                evidence,
+            });
+        }
+        if strongest
+            .as_ref()
+            .is_some_and(|prior| prior.evidence == TrustEvidence::StagedPublish)
+        {
+            break;
+        }
+    }
+    let Some(prior) = strongest else {
+        return Ok(());
+    };
+    if picked_evidence.map_or(0, TrustEvidence::rank) < prior.evidence.rank() {
+        return Err(TrustCheckError::Downgrade(TrustDowngradeDetails {
+            name: name.to_string(),
+            picked_version: picked_version.to_string(),
+            current_evidence: picked_evidence,
+            prior_evidence: prior.evidence,
+            prior_version: prior.version,
+        }));
+    }
+    Ok(())
+}
+
 fn cutoff_iso8601(minutes_ago: u64) -> Option<String> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
     let cutoff_secs = now.saturating_sub(minutes_ago * 60);
@@ -292,6 +489,15 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     // attestation after the trusted 2.0.10 release (2026-07-15). Trusted
     // publishing resumed with 1.19.17, so keep the exception version-scoped.
     "@hono/node-server@1.19.15",
+    // webpack-dev-middleware@7.4.6 (2026-09-03) is a hand-published backport
+    // on the 7.x maintenance line, released after the trusted 8.0.0 by the
+    // same maintainer who published every earlier 7.x release. It is what
+    // webpack-dev-server@5's `^7.4.2` range selects, so keep it version-scoped.
+    "webpack-dev-middleware@7.4.6",
+    // why-is-node-running@3.2.2 (2025-01-08) was published by the same npm
+    // account as the attested 3.2.0 release, but without provenance metadata.
+    // Keep the exception version-scoped so later releases remain protected.
+    "why-is-node-running@3.2.2",
     "chokidar",
     "eslint-config-prettier",
     "eslint-import-resolver-typescript",
@@ -479,6 +685,119 @@ impl TrustExcludeRules {
         self.rules
             .iter()
             .any(|r| r.version_ranges.is_none() && r.name_matcher.matches(name))
+    }
+}
+
+/// Package names exempt from the `blockExoticSubdeps` gate.
+///
+/// Deliberately *not* a [`PackageVersionPolicy`]: that type matches
+/// `name@<semver-range>`, and an exotic dependency is identified by a URL
+/// or a path rather than a registry version, so a range has nothing to
+/// test against. Accepting `xlsx@^0.20` here would compile to a rule that
+/// never fires, silently dropping the exemption the user asked for — the
+/// same failure mode [`TrustExcludeRules::default`] documents. So the
+/// parser rejects version selectors instead.
+#[derive(Debug, Clone, Default)]
+pub struct ExoticSubdepAllowlist {
+    matchers: Vec<NameMatcher>,
+}
+
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+pub enum ExoticSubdepAllowlistParseError {
+    #[error(
+        "invalid blockExoticSubdepsExclude entry `{pattern}`: expected a package name or `*` glob, not a version selector — an exotic dependency is identified by its URL or path, so there is no version to match"
+    )]
+    #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_HAS_VERSION))]
+    HasVersionSelector { pattern: String },
+    #[error(
+        "invalid blockExoticSubdepsExclude entry `{pattern}`: not a package name — a scoped name needs both parts (`@scope/name`, or `@scope/*` to match the scope)"
+    )]
+    #[diagnostic(code(ERR_AUBE_EXOTIC_SUBDEP_EXCLUDE_INVALID_NAME))]
+    InvalidPackageName { pattern: String },
+}
+
+/// Reject entries [`NameMatcher::compile`] would turn into a matcher that
+/// cannot match any real package name — `@scope` with no second half,
+/// `foo/bar` unscoped, `@scope/pkg/extra`. Each compiles to a matcher for a
+/// string no dependency can be called, so the entry silently exempts
+/// nothing; warning makes the mistake visible instead of leaving a dead
+/// exemption in place.
+///
+/// This checks *shape* — where slashes may appear — and deliberately stops
+/// there rather than reimplementing npm's name grammar. Over-rejecting is
+/// the worse error here: it breaks an allowlist that works, whereas an
+/// entry that merely fails to match leaves the install blocked with the
+/// original error, which is visible. Notably, uppercase is invalid for new
+/// npm packages but plenty of real ones predate that rule (`JSONStream`),
+/// so case is not policed.
+fn exotic_name_is_well_formed(name: &str) -> bool {
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return false;
+    }
+    match name.strip_prefix('@') {
+        // Scoped: exactly one `/`, with both halves non-empty. Either half
+        // may be a glob (`@myorg/*`, `@*/pkg`).
+        Some(rest) => match rest.split_once('/') {
+            Some((scope, package)) => {
+                !scope.is_empty() && !package.is_empty() && !package.contains('/')
+            }
+            None => false,
+        },
+        // Unscoped names cannot contain a path separator at all.
+        None => !name.contains('/'),
+    }
+}
+
+impl ExoticSubdepAllowlist {
+    /// An allowlist that matches nothing — the default, so the gate stays
+    /// whole until someone names a package.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.matchers.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.matchers.len()
+    }
+
+    /// Whether `name` may be resolved from a non-registry source.
+    pub fn allows(&self, name: &str) -> bool {
+        self.matchers.iter().any(|m| m.matches(name))
+    }
+
+    /// Parse a list of patterns, keeping every entry that succeeds and
+    /// returning the per-entry errors for the rest. Same reasoning as
+    /// [`TrustExcludeRules::parse_lossy`]: one typo must not drop the
+    /// entries that did parse, because here that would fail an install
+    /// the user had already approved rather than fail open.
+    pub fn parse_lossy<I, S>(patterns: I) -> (Self, Vec<ExoticSubdepAllowlistParseError>)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut matchers = Vec::new();
+        let mut errors = Vec::new();
+        for pattern in patterns {
+            let pattern = pattern.as_ref();
+            if pattern.is_empty() {
+                continue;
+            }
+            match split_name_and_versions(pattern) {
+                (_, Some(_)) => errors.push(ExoticSubdepAllowlistParseError::HasVersionSelector {
+                    pattern: pattern.to_string(),
+                }),
+                (name, None) if !exotic_name_is_well_formed(name) => {
+                    errors.push(ExoticSubdepAllowlistParseError::InvalidPackageName {
+                        pattern: pattern.to_string(),
+                    })
+                }
+                (name, None) => matchers.push(NameMatcher::compile(name)),
+            }
+        }
+        (Self { matchers }, errors)
     }
 }
 
@@ -875,6 +1194,118 @@ mod tests {
     }
 
     #[test]
+    fn compact_history_preserves_downgrade_detection() {
+        let p = packument(
+            "foo",
+            vec![("3.0.0", "2025-03-01T00:00:00.000Z", version("foo", "3.0.0"))],
+        );
+        let history = BTreeMap::from([
+            (
+                "2.0.0".to_string(),
+                aube_registry::VersionTrustMetadata {
+                    approver: None,
+                    npm_user: None,
+                    dist: Some(aube_registry::VersionTrustDist {
+                        attestations: Some(Attestations {
+                            provenance: Some(serde_json::json!({
+                                "predicateType": "https://slsa.dev/provenance/v1"
+                            })),
+                        }),
+                    }),
+                },
+            ),
+            (
+                "3.0.0".to_string(),
+                aube_registry::VersionTrustMetadata {
+                    approver: None,
+                    npm_user: None,
+                    dist: None,
+                },
+            ),
+        ]);
+        let mut p = p;
+        p.time
+            .insert("2.0.0".to_string(), "2025-02-01T00:00:00.000Z".to_string());
+        let picked = &p.versions["3.0.0"];
+
+        let err = check_no_downgrade_compact(
+            &p,
+            "3.0.0",
+            picked,
+            &history,
+            &TrustExcludeRules::default(),
+            None,
+        )
+        .expect_err("compact prior provenance must still block a downgrade");
+        let TrustCheckError::Downgrade(details) = err else {
+            panic!("expected Downgrade");
+        };
+        assert_eq!(details.prior_version, "2.0.0");
+        assert_eq!(details.prior_evidence, TrustEvidence::Provenance);
+    }
+
+    #[test]
+    fn standalone_history_detects_downgrade_and_skips_picked_version() {
+        let trust_meta =
+            |dist: Option<aube_registry::VersionTrustDist>| aube_registry::VersionTrustMetadata {
+                approver: None,
+                npm_user: None,
+                dist,
+            };
+        let provenance_dist = aube_registry::VersionTrustDist {
+            attestations: Some(Attestations {
+                provenance: Some(serde_json::json!({
+                    "predicateType": "https://slsa.dev/provenance/v1"
+                })),
+            }),
+        };
+        // Unlike the compact map, the standalone history includes the
+        // picked version itself — the ranking loop must skip it even
+        // when it carries evidence.
+        let history = aube_registry::PackumentTrustHistory {
+            time: BTreeMap::from([
+                ("2.0.0".to_string(), "2025-02-01T00:00:00.000Z".to_string()),
+                ("3.0.0".to_string(), "2025-03-01T00:00:00.000Z".to_string()),
+            ]),
+            versions: BTreeMap::from([
+                ("2.0.0".to_string(), trust_meta(Some(provenance_dist))),
+                ("3.0.0".to_string(), trust_meta(None)),
+            ]),
+        };
+
+        let picked = &history.versions["3.0.0"];
+        let err = check_no_downgrade_history(
+            "foo",
+            &history,
+            "3.0.0",
+            picked,
+            &TrustExcludeRules::default(),
+            None,
+        )
+        .expect_err("prior provenance must block a downgrade");
+        let TrustCheckError::Downgrade(details) = err else {
+            panic!("expected Downgrade");
+        };
+        assert_eq!(details.name, "foo");
+        assert_eq!(details.prior_version, "2.0.0");
+        assert_eq!(details.prior_evidence, TrustEvidence::Provenance);
+        assert_eq!(details.current_evidence, None);
+
+        // Same history, but picking the version that carries the
+        // evidence: no prior outranks it, so the check passes.
+        let picked = &history.versions["2.0.0"];
+        check_no_downgrade_history(
+            "foo",
+            &history,
+            "2.0.0",
+            picked,
+            &TrustExcludeRules::default(),
+            None,
+        )
+        .expect("strongest evidence so far must pass");
+    }
+
+    #[test]
     fn downgrade_trusted_publisher_to_provenance_fails() {
         let p = packument(
             "foo",
@@ -1225,6 +1656,38 @@ mod tests {
             &node_semver::Version::parse("2.0.10").unwrap()
         ));
         assert!(!r.matches("hono", &node_semver::Version::parse("1.19.15").unwrap()));
+    }
+
+    #[test]
+    fn default_excludes_webpack_dev_middleware_backport() {
+        // Regression: 7.4.6 was hand-published on the 7.x line after the
+        // attested 8.0.0 release; later releases stay protected.
+        let r = TrustExcludeRules::default();
+        assert!(r.matches(
+            "webpack-dev-middleware",
+            &node_semver::Version::parse("7.4.6").unwrap()
+        ));
+        assert!(!r.matches(
+            "webpack-dev-middleware",
+            &node_semver::Version::parse("7.4.7").unwrap()
+        ));
+        assert!(!r.matches(
+            "webpack-dev-middleware",
+            &node_semver::Version::parse("8.3.0").unwrap()
+        ));
+    }
+
+    #[test]
+    fn default_excludes_why_is_node_running_3_2_2_only() {
+        let r = TrustExcludeRules::default();
+        assert!(r.matches(
+            "why-is-node-running",
+            &node_semver::Version::parse("3.2.2").unwrap()
+        ));
+        assert!(!r.matches(
+            "why-is-node-running",
+            &node_semver::Version::parse("3.2.3").unwrap()
+        ));
     }
 
     #[test]

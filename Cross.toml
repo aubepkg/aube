@@ -9,4 +9,6 @@ passthrough = [
     # `release` profile; we override LTO to match `release-pgo`.
     "RUSTFLAGS",
     "CARGO_PROFILE_RELEASE_LTO",
+    # build.rs links the Linux GNU release executables non-PIE when set.
+    "AUBE_NO_PIE",
 ]

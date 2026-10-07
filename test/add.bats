@@ -326,9 +326,10 @@ EOF
 	refute_output --partial '"dependencies"'
 }
 
-@test "aube add --save-peer writes only peerDependencies and does not install" {
-	# `--save-peer` alone is a metadata-only declaration. pnpm treats
-	# this as "consumers need X" and does not install it locally.
+@test "aube add --save-peer writes only peerDependencies and auto-installs the peer" {
+	# `--save-peer` keeps the declaration in peerDependencies only. With
+	# auto-install-peers enabled, the required importer peer is still linked
+	# locally so the package can use it during development.
 	cat >package.json <<'EOF'
 {
   "name": "test-save-peer-only",
@@ -346,9 +347,9 @@ EOF
 	refute_output --partial '"dependencies"'
 	refute_output --partial '"devDependencies"'
 
-	# And no top-level node_modules entry — the peer isn't installed.
-	run test -e node_modules/is-odd
-	assert_failure
+	# The required importer peer is auto-installed without adding a second
+	# manifest declaration.
+	assert_file_exists node_modules/is-odd/index.js
 }
 
 @test "aube add --save-peer --save-dev writes to both sections and installs" {
@@ -392,6 +393,54 @@ EOF
 	refute_output --partial '"peerDependencies"'
 	refute_output --partial '"devDependencies"'
 	refute_output --partial 'is-odd'
+}
+
+@test "aube remove drops the removed dependency's .bin shim" {
+	# A leftover shim would outlive the package it launches and shadow a
+	# same-named command further down PATH.
+	cat >package.json <<'EOF'
+{
+  "name": "test-remove-bin",
+  "version": "0.0.0"
+}
+EOF
+
+	run aube add semver@7.7.4
+	assert_success
+	assert_file_exists node_modules/.bin/semver
+
+	run aube remove semver
+	assert_success
+	[ ! -e node_modules/.bin/semver ]
+	[ ! -L node_modules/.bin/semver ]
+}
+
+@test "aube install drops the .bin shim of a dependency deleted from the manifest" {
+	cat >package.json <<'EOF'
+{
+  "name": "test-install-stale-bin",
+  "version": "0.0.0",
+  "dependencies": {
+    "semver": "7.7.4"
+  }
+}
+EOF
+
+	run aube install
+	assert_success
+	assert_file_exists node_modules/.bin/semver
+
+	cat >package.json <<'EOF'
+{
+  "name": "test-install-stale-bin",
+  "version": "0.0.0"
+}
+EOF
+
+	run aube install
+	assert_success
+	[ ! -e node_modules/.bin/semver ]
+	[ ! -L node_modules/.bin/semver ]
 }
 
 @test "aube add: refuses to add to workspace root without -W" {

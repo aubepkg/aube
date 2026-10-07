@@ -1,5 +1,8 @@
 use super::critical_path::is_likely_native_build;
 use super::git_prepare::{prepare_scratch_copy, run_git_dep_prepare};
+#[cfg(test)]
+use super::index_remap::remap_indices_to_contextualized;
+use super::index_remap::strip_peer_context_suffix;
 use super::lifecycle::run_import_on_blocking;
 use super::settings::{
     default_lockfile_network_concurrency, resolve_network_concurrency,
@@ -13,7 +16,7 @@ use crate::progress::InstallProgress;
 use aube_lockfile::dep_path_filename::dep_path_to_filename;
 use miette::{Context, IntoDiagnostic, miette};
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Materialize a local-source package into the store.
 ///
@@ -389,8 +392,8 @@ pub(in crate::commands) async fn fetch_packages(
 ) -> miette::Result<(BTreeMap<String, aube_store::PackageIndex>, usize, usize)> {
     // Eager-client caller (`aube fetch`): the command only exists to
     // download tarballs, so there's no point deferring construction.
-    // `skip_already_linked_shortcut=true` because `aube fetch`'s entire
-    // job is to verify/populate the global store — it must not be
+    // No already-linked shortcut because `aube fetch`'s entire job is
+    // to verify/populate the global store — it must not be
     // short-circuited by a stale `node_modules/.aube/<dep>` from a
     // prior install, which could leave the store empty on a setup
     // that wipes the global aube store but not `node_modules/` (e.g.
@@ -424,8 +427,9 @@ pub(in crate::commands) async fn fetch_packages(
         progress,
         &cwd,
         &aube_dir,
+        &packument_cache_dir(),
         /*materialize_tx=*/ None,
-        /*skip_already_linked_shortcut=*/ true,
+        /*already_linked_shortcut=*/ None,
         /*force_index_dep_paths=*/ &std::collections::BTreeSet::new(),
         virtual_store_dir_max_length,
         ignore_scripts,
@@ -460,29 +464,28 @@ pub(super) async fn fetch_packages_with_root<F>(
     progress: Option<&InstallProgress>,
     project_root: &std::path::Path,
     aube_dir: &std::path::Path,
+    packument_cache_dir: &std::path::Path,
     // Some streams every successful (dep_path, index) so a concurrent
     // GVS-prewarm materializer can start reflinks before the full
     // batch finishes. None keeps batch-then-return for `aube fetch`.
     // Sender drops on function exit so consumer sees channel close.
     materialize_tx: Option<tokio::sync::mpsc::Sender<(String, aube_store::PackageIndex)>>,
-    // When true, every package classifies as `Cached` or `NeedsFetch`
-    // based on `store.load_index`, regardless of whether
-    // `.aube/<dep>` already exists on disk. Callers pass true when
-    // either:
+    // The virtual-store layout the linker will produce, when the
+    // already-linked shortcut is in play. `Some` lets a package whose
+    // `.aube/<dep>` entry already matches what the linker expects skip
+    // the store index entirely; `None` disables the shortcut, so every
+    // package classifies as `Cached` or `NeedsFetch` through
+    // `store.load_index_verified` regardless of what is on disk.
     //
-    //   - the linker will wipe `node_modules/` before running
-    //     (`link_workspace`), so the `AlreadyLinked` classification
-    //     would be immediately invalidated; or
-    //   - the caller needs `load_index` to actually run as its store
-    //     verification step (`aube fetch`, which treats the act of
-    //     walking the store-file existence check as the operation's
-    //     primary side effect).
+    // Callers pass `None` when either:
     //
-    // Both cases share the same implementation: skip the `.aube/`
-    // existence check entirely so every package goes through
-    // `store.load_index` → either `Cached` (store has it) or
-    // `NeedsFetch` (store is missing the file, download fresh).
-    skip_already_linked_shortcut: bool,
+    //   - the install pins an explicit store directory (`--store-dir` or
+    //     an embedder override); or
+    //   - the caller needs the verified index load to actually run as
+    //     its store verification step (`aube fetch`, which treats the
+    //     act of walking the store-file existence check as the
+    //     operation's primary side effect).
+    already_linked_shortcut: Option<&super::materialize::VirtualStorePlan>,
     // Packages selected for project-local compatibility materialization
     // need an index even when their prior GVS entry still exists.
     force_index_dep_paths: &std::collections::BTreeSet<String>,
@@ -504,9 +507,10 @@ pub(super) async fn fetch_packages_with_root<F>(
 where
     F: FnOnce() -> std::sync::Arc<aube_registry::client::RegistryClient>,
 {
+    let packument_cache_dir = packument_cache_dir.to_path_buf();
     // No-op fast path: for every package whose per-project
-    // `node_modules/.aube/<dep_path>` entry already resolves to an
-    // existing target, skip the package-index load entirely. The
+    // `node_modules/.aube/<dep_path>` entry is already the one the
+    // linker will accept, skip the package-index load entirely. The
     // linker's only consumer of a `PackageIndex` is
     // `materialize_into` — if the package is already materialized
     // (either as a real directory here in per-project mode, or as a
@@ -517,35 +521,27 @@ where
     // fixture drops from ~38 ms of parallel index reads to a handful
     // of `stat(2)`s.
     //
-    // Two call sites disable the fast path entirely via
-    // `skip_already_linked_shortcut=true`:
+    // "The one the linker will accept" is what
+    // `VirtualStorePlan::entry_is_current` decides, and it is stricter
+    // than mere resolvability. Under the global virtual store the
+    // local `.aube/<dep_path>` name is keyed by dep_path alone while
+    // the shared subdir folds in graph hashes (`aube_dir_entry_name`
+    // vs `virtual_store_subdir`), so a build-state change moves the
+    // expected target while the entry keeps resolving to the old one.
+    // A shortcut keyed on resolvability alone would classify that
+    // package `AlreadyLinked`; `classify_entry_state` would then report
+    // `Stale`, the linker would need an index it was never handed, and
+    // its fallback is the *unverified* `store.load_index` — which
+    // happily returns a stale index whose CAS shards are gone, failing
+    // the link instead of re-fetching. Comparing against the expected
+    // subdir keeps that case self-healing: it misses the shortcut,
+    // takes the verified index load below, and a stale index drops to
+    // `NeedsFetch` so the tarball is re-downloaded while the network is
+    // still available. The linker has no such option — only fetch can
+    // re-download, which is why the check belongs here.
     //
-    //   - **Workspace installs.** `link_workspace` unconditionally
-    //     wipes `node_modules/` (including `.aube/`) before
-    //     rebuilding, so every `AlreadyLinked` classification would
-    //     be invalidated by the time the linker runs. With the fast
-    //     path enabled, the linker would then fall back to
-    //     `self.store.load_index` *serially* inside `link_workspace`'s
-    //     for-loop, which is strictly slower than loading them here
-    //     in parallel via rayon.
-    //
-    //   - **`aube fetch`.** The command exists to populate the
-    //     global store (typical use: Docker layer caching, warming
-    //     a CI mirror, or recovering from a wiped aube store).
-    //     If `node_modules/.aube/<dep>` happens to exist from a
-    //     previous install, the `AlreadyLinked` shortcut would skip
-    //     both `load_index` and the tarball fetch — which silently
-    //     leaves the store empty even though the user explicitly
-    //     asked for it to be repopulated. Disabling the shortcut
-    //     makes every package flow through `store.load_index`,
-    //     which does a first-file existence check on the CAS and
-    //     correctly downgrades to `NeedsFetch` when the store entry
-    //     has been wiped.
-    //
-    // `Path::exists` follows symlinks, so a per-project entry pointing
-    // at a global virtual-store target that no longer exists correctly
-    // falls through to the slow path. The linker re-derives the entry
-    // name through `aube_dir_entry_name(dep_path)`, which is just
+    // The linker re-derives the entry name through
+    // `aube_dir_entry_name(dep_path)`, which is just
     // `dep_path_to_filename(dep_path, max_length)` — we take the max
     // length as a parameter (instead of reaching for
     // `DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH`) so the fast path checks
@@ -571,16 +567,65 @@ where
         NeedsFetch,
     }
 
-    // Parallel index check (rayon)
-    let check_results: Vec<_> = packages
-        .par_iter()
-        .filter(|(_, pkg)| pkg.local_source.is_none())
+    let packages_refs: Vec<(&String, &aube_lockfile::LockedPackage)> = packages.iter().collect();
+
+    // Verify each distinct store entry once, before the per-dep_path
+    // check. Peer placements re-enter the same (registry name, version,
+    // integrity) once per dep_path, and every verified load stats one
+    // file per index entry; grouping the loads means the stat-per-file
+    // verification runs a single time no matter how many placements
+    // share the package. Packages that will take the already-linked
+    // shortcut never needed a load, so they are excluded here to keep
+    // the shortcut's zero-read behavior.
+    let needs_check: Vec<bool> = packages
+        .iter()
         .map(|(dep_path, pkg)| {
-            if !skip_already_linked_shortcut && !force_index_dep_paths.contains(dep_path) {
-                let entry_name = dep_path_to_filename(dep_path, virtual_store_dir_max_length);
-                if aube_dir.join(&entry_name).exists() {
-                    return (dep_path.clone(), pkg, CheckResult::AlreadyLinked);
+            if pkg.local_source.is_some() {
+                return false;
+            }
+            match already_linked_shortcut {
+                Some(plan) if !force_index_dep_paths.contains(dep_path) => {
+                    let entry_name = dep_path_to_filename(dep_path, virtual_store_dir_max_length);
+                    let entry = aube_dir.join(&entry_name);
+                    !plan.entry_is_current(&entry, dep_path, virtual_store_dir_max_length)
                 }
+                _ => true,
+            }
+        })
+        .collect();
+    let mut store_keys: Vec<(&str, &str, Option<&str>)> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<(&str, &str, Option<&str>)> =
+        std::collections::HashSet::new();
+    for ((_, pkg), needs) in packages.iter().zip(&needs_check) {
+        if !needs {
+            continue;
+        }
+        let key = (
+            pkg.registry_name(),
+            pkg.version.as_str(),
+            pkg.integrity.as_deref(),
+        );
+        if seen_keys.insert(key) {
+            store_keys.push(key);
+        }
+    }
+    let verified: HashMap<(&str, &str, Option<&str>), Option<aube_store::PackageIndex>> =
+        store_keys
+            .par_iter()
+            .map(|key| (*key, store.load_index_verified(key.0, key.1, key.2)))
+            .collect();
+
+    // Parallel index check (rayon). Local sources are imported
+    // separately below, so they stay filtered out like before; the
+    // remaining packages either take the already-linked shortcut
+    // (needs_check is false) or read their group's verified snapshot.
+    let check_results: Vec<_> = packages_refs
+        .par_iter()
+        .enumerate()
+        .filter(|(_, (_, pkg))| pkg.local_source.is_none())
+        .map(|(i, (dep_path, pkg))| {
+            if !needs_check[i] {
+                return (dep_path.to_string(), pkg, CheckResult::AlreadyLinked);
             }
             // Keyed by registry name so two npm-aliases of the same
             // real package share one store index entry instead of
@@ -599,14 +644,18 @@ where
             // a stale index drops here and falls through to `NeedsFetch`,
             // which re-fetches the tarball cleanly — the alternative is
             // the materializer dying mid-link with `ERR_AUBE_MISSING_STORE_FILE`,
-            // forcing the user to retry the whole install.
-            match store.load_index_verified(
+            // forcing the user to retry the whole install. The grouped
+            // verification above keeps the staleness window the same
+            // size as a single pass: every dep_path of one store entry
+            // now sees the same verified snapshot.
+            let key = (
                 pkg.registry_name(),
-                &pkg.version,
+                pkg.version.as_str(),
                 pkg.integrity.as_deref(),
-            ) {
-                Some(index) => (dep_path.clone(), pkg, CheckResult::Cached(index)),
-                None => (dep_path.clone(), pkg, CheckResult::NeedsFetch),
+            );
+            match verified.get(&key).cloned().flatten() {
+                Some(index) => (dep_path.to_string(), pkg, CheckResult::Cached(index)),
+                None => (dep_path.to_string(), pkg, CheckResult::NeedsFetch),
             }
         })
         .collect();
@@ -788,6 +837,7 @@ where
             let sem = semaphore.clone();
             let store = store.clone();
             let client = client.clone();
+            let packument_cache_dir = packument_cache_dir.clone();
             let row = progress.map(|p| p.start_fetch(&display_name, &version));
             let bytes_progress = progress.cloned();
 
@@ -805,8 +855,14 @@ where
                     .clone()
                     .unwrap_or_else(|| client.tarball_url(&registry_name, &version));
                 if let Some(lockfile_url) = tarball_url_override.as_deref() {
-                    verify_lockfile_tarball_url(&client, &registry_name, &version, lockfile_url)
-                        .await?;
+                    verify_lockfile_tarball_url(
+                        &client,
+                        &registry_name,
+                        &version,
+                        lockfile_url,
+                        &packument_cache_dir,
+                    )
+                    .await?;
                 }
 
                 let dl_start = std::time::Instant::now();
@@ -1018,9 +1074,10 @@ async fn verify_lockfile_tarball_url(
     registry_name: &str,
     version: &str,
     lockfile_url: &str,
+    packument_cache_dir: &std::path::Path,
 ) -> miette::Result<()> {
     let packument = client
-        .fetch_packument_cached(registry_name, &packument_cache_dir())
+        .fetch_packument_cached(registry_name, packument_cache_dir)
         .await
         .map_err(|e| {
             miette!(
@@ -1093,60 +1150,6 @@ pub(super) fn version_from_dep_path(dep_path: &str, name: &str) -> String {
         .strip_prefix(&format!("{name}@"))
         .unwrap_or(dep_path);
     tail.split('(').next().unwrap_or(tail).to_string()
-}
-
-/// Re-key a canonical-indexed indices map to match the peer-contextualized
-/// dep_paths in `graph`. Each contextualized entry points at the same
-/// underlying files as its canonical name@version, so we look each graph
-/// entry up by canonical and clone the index — a no-op when canonical ==
-/// contextualized (i.e. the package has no peer deps).
-pub(super) fn remap_indices_to_contextualized(
-    canonical_indices: &BTreeMap<String, aube_store::PackageIndex>,
-    graph: &aube_lockfile::LockfileGraph,
-) -> BTreeMap<String, aube_store::PackageIndex> {
-    let mut out = BTreeMap::new();
-    for (dep_path, pkg) in &graph.packages {
-        let canonical_key = pkg.spec_key();
-        // The peer-context pass appends a `(peer@ver)` suffix (or a
-        // parenthesized `(<short-hash>)` when it exceeds the cap) onto a
-        // package's canonical dep_path. Source-backed deps (git /
-        // remote tarball / file) are streamed from the resolver — and
-        // therefore keyed in `canonical_indices` — under their
-        // *source-coordinate* dep_path (`name@git+<short>`), not their
-        // semver `spec_key()`. So once such a dep picks up a peer
-        // suffix, neither the contextualized `dep_path` (carries the
-        // suffix) nor `spec_key()` (semver, not the git coordinate)
-        // matches the streamed key, and the index would be silently
-        // dropped — later tripping `ERR_AUBE_MISSING_PACKAGE_INDEX` in
-        // the linker's global-virtual-store pass. Stripping the suffix
-        // recovers the exact canonical coordinate the index was stored
-        // under (the peer-context pass builds the key as
-        // `{canonical_base}{suffix}`, so this is its precise inverse).
-        let canonical_dep_path = strip_peer_context_suffix(dep_path);
-        if let Some(idx) = canonical_indices
-            .get(dep_path)
-            .or_else(|| canonical_indices.get(canonical_dep_path))
-            .or_else(|| canonical_indices.get(&canonical_key))
-        {
-            out.insert(dep_path.clone(), idx.clone());
-        }
-    }
-    out
-}
-
-/// Strip the peer-context suffix from a `dep_path`, recovering the
-/// canonical dep_path the resolver streamed it under (and that
-/// `canonical_indices` is keyed by). The peer-context pass in
-/// `aube-resolver` appends either a parenthesized `(peer@ver)…` tail
-/// or, when the suffix body exceeds the length cap, a single
-/// parenthesized short hash `(<short-hash>)` (pnpm's
-/// `createPeerDepGraphHash`). Both forms begin at the first `(`, so
-/// cutting there is the exact inverse and recovers the canonical
-/// coordinate. A `dep_path` with no suffix is returned unchanged — a
-/// bare `_<hex>` tail belongs to a `git+`/`url+`/`file+` source
-/// coordinate and is never a peer marker, so it is preserved.
-pub(super) fn strip_peer_context_suffix(dep_path: &str) -> &str {
-    dep_path.split('(').next().unwrap_or(dep_path)
 }
 
 #[cfg(test)]
@@ -1276,7 +1279,7 @@ mod tests {
             .packages
             .insert(contextualized.clone(), git_pkg(&contextualized));
 
-        let out = super::remap_indices_to_contextualized(&canonical_indices, &graph);
+        let out = super::remap_indices_to_contextualized(canonical_indices, &graph);
         assert!(
             out.contains_key(&contextualized),
             "git dep with peer suffix should recover its canonical index; got {:?}",
@@ -1300,7 +1303,7 @@ mod tests {
             .packages
             .insert(contextualized.clone(), git_pkg(&contextualized));
 
-        let out = super::remap_indices_to_contextualized(&canonical_indices, &graph);
+        let out = super::remap_indices_to_contextualized(canonical_indices, &graph);
         assert!(
             out.contains_key(&contextualized),
             "git dep with hashed peer suffix should recover its canonical index; got {:?}",
@@ -1322,7 +1325,7 @@ mod tests {
             .packages
             .insert(canonical.to_string(), git_pkg(canonical));
 
-        let out = super::remap_indices_to_contextualized(&canonical_indices, &graph);
+        let out = super::remap_indices_to_contextualized(canonical_indices, &graph);
         assert!(out.contains_key(canonical));
     }
 }

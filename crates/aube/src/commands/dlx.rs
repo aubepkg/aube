@@ -1,12 +1,11 @@
 use super::install::{FrozenMode, InstallOptions};
 use crate::commands::add::build_flags::parse_allow_build_value;
 use aube_manifest::AllowBuildRaw;
-use clap::{Args, CommandFactory};
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Default, usage_rs::Args)]
 // dlx forwards everything after `<command>` to the bin it runs, including
 // `--help` and `--version`. Let clap auto-inject its own `-h`/`--help` and
 // `--version` handlers and they'd silently swallow those flags before they
@@ -16,7 +15,6 @@ use std::sync::Arc;
 // `aube dlx --help` on its own (no command) still prints aube's dlx help:
 // `params` is optional and the handler intercepts a leading `--help` /
 // `-h` before treating anything as a command.
-#[command(disable_help_flag = true)]
 pub struct DlxArgs {
     /// Command (binary) to run, followed by arguments to pass through to
     /// it.
@@ -25,21 +23,21 @@ pub struct DlxArgs {
     /// verbatim to the binary. Without `--package`, a local
     /// `node_modules/.bin/<command>` wins when present; otherwise dlx
     /// installs into a throwaway project. Under `--shell-mode`/`-c` the
-    /// positionals are joined and evaluated by `sh -c` instead of
-    /// looked up directly.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    /// positionals are joined into a single command line instead of
+    /// being looked up directly.
+    #[usage(arg, double_dash = "automatic")]
     pub params: Vec<String>,
-    /// Run the assembled command line through `sh -c`.
+    /// Evaluate the assembled command line as a shell line.
     ///
     /// `<scratch>/node_modules/.bin` is prepended to `PATH`. Use this
     /// for pipelines, redirects, or env expansion (`aube dlx -p cowsay
     /// -c 'cowsay hello | tr a-z A-Z'`). Mirrors `pnpm dlx --shell-mode`.
-    #[arg(short = 'c', long)]
+    #[usage(short = 'c', long)]
     pub shell_mode: bool,
     /// Install a specific package (repeatable).
     ///
     /// Overrides inferring from the command.
-    #[arg(short = 'p', long = "package")]
+    #[usage(short = 'p', long = "package")]
     pub package: Vec<String>,
     /// Allow named packages to run lifecycle scripts during the
     /// transient install. Use `--allow-build=<pkg>`.
@@ -51,18 +49,19 @@ pub struct DlxArgs {
     /// Mirrors pnpm's `pnpm dlx --allow-build=<pkg>` compatibility
     /// surface while keeping dlx scripts skipped unless explicitly
     /// approved.
-    #[arg(
+    #[usage(
         long = "allow-build",
         value_name = "PKG",
         require_equals = true,
-        value_parser = parse_allow_build_value,
+        validate = "value != ''",
+        validate_error = "The --allow-build flag is missing a package name. Please specify the package name(s) that are allowed to run installation scripts."
     )]
     pub allow_build: Vec<String>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 
@@ -103,18 +102,16 @@ pub async fn run_in(
         network: _,
         virtual_store: _,
     } = args;
+    for value in &allow_build {
+        parse_allow_build_value(value).map_err(|error| miette!("{error}"))?;
+    }
 
     // Bare `aube dlx` or `aube dlx --help` / `-h` prints aube's dlx help.
     // Once a command is present, any further flags (including `--help`)
     // belong to the installed binary.
     let first = params.first().map(String::as_str);
     if matches!(first, None | Some("--help" | "-h")) && package.is_empty() {
-        crate::Cli::command()
-            .find_subcommand_mut("dlx")
-            .expect("dlx is a registered subcommand")
-            .print_help()
-            .map_err(|e| miette!("failed to render help: {e}"))?;
-        println!();
+        crate::print_subcommand_help("dlx")?;
         return Ok(None);
     }
 
@@ -154,8 +151,8 @@ pub async fn run_in(
     };
 
     // Bin name is only used in the non-shell path. Under shell-mode the
-    // user assembles their own line and we run it through `sh -c`, so any
-    // bin lookup is the shell's job.
+    // user assembles their own line, so aube never looks a bin name up for
+    // it.
     // Resolve the runtime from the *user's* project up front — before the
     // local-bin fast path and before switching into the scratch dir. A dlx
     // scratch project has no version config, and the OnceCell context is
@@ -163,8 +160,13 @@ pub async fn run_in(
     // local-bin bin and `aubx` honor the project's .nvmrc / devEngines. The
     // fast path replaces the image immediately, so this must run before it or
     // a local `dlx` bin would launch with the ambient runtime.
+    // An embedder's `base_dir` may be relative; anchor it to the process's
+    // live cwd now (`join` keeps an absolute one as is), because the install
+    // below switches into the scratch project and relative `file:` specs
+    // are resolved against this directory. Not the cached `dirs::cwd()`:
+    // a host process can change its cwd between calls.
     let initial_cwd = match base_dir {
-        Some(dir) => dir,
+        Some(dir) => std::env::current_dir().into_diagnostic()?.join(dir),
         None => crate::dirs::cwd()?,
     };
     crate::runtime::ensure_for_cwd(&initial_cwd).await?;
@@ -200,7 +202,7 @@ pub async fn run_in(
         .wrap_err("failed to create dlx scratch dir")?;
     let project_dir = tmp.path().to_path_buf();
 
-    let manifest = dlx_manifest(&install_specs, &allow_build);
+    let manifest = dlx_manifest(&install_specs, &allow_build, &initial_cwd)?;
     let manifest_bytes = serde_json::to_vec_pretty(&manifest).into_diagnostic()?;
     aube_util::fs_atomic::atomic_write(&project_dir.join("package.json"), &manifest_bytes)
         .into_diagnostic()
@@ -230,9 +232,9 @@ pub async fn run_in(
     // Run from the user's original cwd so the invoked tool sees their
     // project, not the scratch dir — this matches pnpm dlx.
     //
-    // Under `--shell-mode` we evaluate the joined positionals via `sh -c`
-    // with the scratch project's `node_modules/.bin` prepended to PATH,
-    // so pipelines/redirects work and the freshly installed bin
+    // Under `--shell-mode` we evaluate the joined positionals as a shell
+    // line with the scratch project's `node_modules/.bin` prepended to
+    // PATH, so pipelines/redirects work and the freshly installed bin
     // resolves first. Otherwise we exec the bin directly so its argv
     // round-trips bit-for-bit.
     let status = if shell_mode {
@@ -250,10 +252,24 @@ pub async fn run_in(
         // globally. Read the same setting here so the scratch bin dir
         // matches where the install actually wrote the bins.
         let bin_dir = super::project_modules_dir(&project_dir).join(".bin");
-        let mut path_dirs = vec![bin_dir];
-        path_dirs.extend(crate::runtime::path_entries());
+        let path_dirs = crate::runtime::path_entries_with_project_bins(vec![bin_dir]);
         let new_path = aube_scripts::prepend_paths(&path_dirs);
-        let mut cmd = aube_scripts::spawn_shell(&line);
+        // A line that is one plain command runs without a shell at all.
+        // `sh -c <cmd>` does not exec in place — dash stays resident as the
+        // command's parent — and a non-interactive `sh` waiting on a
+        // foreground child does not relay signals to it, so
+        // `process_guard`'s forward-to-the-child hop would stop at that
+        // shell and never reach the tool (discussion #1059). Dropping the
+        // shell makes the tool the direct child, which is what the
+        // forwarding was written against. `direct_argv` resolves against
+        // `new_path` (not the process PATH, which is what `execvp` would
+        // search) and declines for anything a shell might actually be
+        // interpreting — pipes, redirects, expansions — so the
+        // `--shell-mode` contract is unchanged.
+        let mut cmd = match aube_scripts::direct::direct_argv(&line, &new_path) {
+            Some((program, arg0, argv)) => aube_scripts::spawn_program(&program, arg0, argv),
+            None => aube_scripts::spawn_shell(&line),
+        };
         crate::runtime::apply_child_env(&mut cmd);
         cmd.env("PATH", &new_path)
             .current_dir(&prev_cwd)
@@ -309,12 +325,17 @@ pub async fn run_in(
     Ok(None)
 }
 
-fn dlx_manifest(install_specs: &[String], allow_build: &[String]) -> serde_json::Value {
+fn dlx_manifest(
+    install_specs: &[String],
+    allow_build: &[String],
+    invocation_dir: &std::path::Path,
+) -> miette::Result<serde_json::Value> {
     // Minimal package.json. Version specs and dist-tags pass through as-is
     // — the resolver handles them exactly as it would from a real manifest.
     let mut deps = serde_json::Map::new();
     for spec in install_specs {
         let (mut name, value) = synthesize_dlx_dep(spec);
+        let value = anchor_local_spec(&value, invocation_dir)?;
         if deps.contains_key(&name) {
             let mut suffix = 2usize;
             while deps.contains_key(&format!("{name}-{suffix}")) {
@@ -347,11 +368,14 @@ fn dlx_manifest(install_specs: &[String], allow_build: &[String]) -> serde_json:
             serde_json::json!({ "allowBuilds": allow_builds }),
         );
     }
-    serde_json::Value::Object(manifest)
+    Ok(serde_json::Value::Object(manifest))
 }
 
 fn dlx_install_options(allow_build: &[String]) -> InstallOptions {
     let mut opts = InstallOptions::with_mode(FrozenMode::No);
+    // Explicitly selected executables retain live checks even with a large
+    // transitive graph; the bloom optimization is for bulk project installs.
+    opts.osv_transitive_check = true;
     // `dlx` executes bins from a throwaway project and deletes that project
     // immediately. Keeping package materialization inside the scratch tree is
     // what lets Node walk through `node_modules/.aube/node_modules`, the
@@ -495,12 +519,42 @@ fn is_owner_repo_shorthand(s: &str) -> bool {
 fn derive_dlx_pkg_name(spec: &str) -> Option<String> {
     let body = spec.split('#').next().unwrap_or(spec);
     let after_colon = body.rsplit(':').next().unwrap_or(body);
-    let last = after_colon.rsplit('/').next().unwrap_or(after_colon);
+    // `\` too: a Windows `file:` path (`file:C:\tools\cli`) has no `/`.
+    let last = after_colon
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(after_colon);
     let trimmed = last.strip_suffix(".git").unwrap_or(last);
     if trimmed.is_empty() {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+/// A relative `file:` / `link:` spec made absolute against `invocation_dir`.
+/// The scratch project dlx installs into lives under TMPDIR, so a path the
+/// user wrote relative to where they ran `aube dlx` would otherwise resolve
+/// against that scratch dir and never be found — `npx -p file:./tool`
+/// resolves it from the invoking directory too. Every other spec passes
+/// through unchanged.
+fn anchor_local_spec(value: &str, invocation_dir: &std::path::Path) -> miette::Result<String> {
+    for prefix in ["file:", "link:"] {
+        if let Some(path) = value.strip_prefix(prefix)
+            && std::path::Path::new(path).is_relative()
+        {
+            // `package.json` holds UTF-8 strings, so a path that isn't
+            // valid UTF-8 can't be written there without changing it.
+            let anchored = invocation_dir.join(path);
+            let anchored = anchored.to_str().ok_or_else(|| {
+                miette!(
+                    "cannot resolve `{value}` from {}: the path is not valid UTF-8",
+                    invocation_dir.display()
+                )
+            })?;
+            return Ok(format!("{prefix}{anchored}"));
+        }
+    }
+    Ok(value.to_string())
 }
 
 fn synthesize_dlx_dep(spec: &str) -> (String, String) {
@@ -615,6 +669,7 @@ mod tests {
     #[test]
     fn dlx_install_disables_global_virtual_store() {
         let opts = dlx_install_options(&[]);
+        assert!(opts.osv_transitive_check);
         let empty_workspace = std::collections::BTreeMap::new();
         let empty_env = Vec::new();
         let ctx = aube_settings::ResolveCtx {
@@ -687,7 +742,8 @@ mod tests {
     fn dlx_manifest_records_allow_build_approvals() {
         let install_specs = vec!["vite".to_string()];
         let allow_build = vec!["esbuild".to_string()];
-        let manifest = dlx_manifest(&install_specs, &allow_build);
+        let manifest =
+            dlx_manifest(&install_specs, &allow_build, std::path::Path::new(".")).unwrap();
         assert_eq!(manifest["dependencies"]["vite"], "latest");
         assert_eq!(manifest["pnpm"]["allowBuilds"]["esbuild"], true);
     }
@@ -695,7 +751,7 @@ mod tests {
     #[test]
     fn dlx_manifest_omits_policy_when_no_builds_are_approved() {
         let install_specs = vec!["vite".to_string()];
-        let manifest = dlx_manifest(&install_specs, &[]);
+        let manifest = dlx_manifest(&install_specs, &[], std::path::Path::new(".")).unwrap();
         assert!(manifest.get("pnpm").is_none());
     }
 
@@ -793,6 +849,72 @@ mod tests {
         let (name, value) = synthesize_dlx_dep("github:user/repo#v1.2.3");
         assert_eq!(name, "repo");
         assert_eq!(value, "github:user/repo#v1.2.3");
+    }
+
+    #[test]
+    fn synthesize_dlx_dep_names_windows_file_paths_after_their_last_segment() {
+        let (name, value) = synthesize_dlx_dep(r"file:C:\Users\me\tools\printer");
+        assert_eq!(name, "printer");
+        assert_eq!(value, r"file:C:\Users\me\tools\printer");
+        let (name, _) = synthesize_dlx_dep(r"file:.\tools\printer");
+        assert_eq!(name, "printer");
+        assert_eq!(bin_name_for(r"file:C:\Users\me\tools\printer"), "printer");
+    }
+
+    #[test]
+    fn anchor_local_spec_rejects_an_invocation_dir_that_is_not_utf8() {
+        #[cfg(unix)]
+        let dir = {
+            use std::os::unix::ffi::OsStrExt;
+            std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"/work/\xff"))
+        };
+        #[cfg(windows)]
+        let dir = {
+            use std::os::windows::ffi::OsStringExt;
+            let mut wide: Vec<u16> = r"C:\work\".encode_utf16().collect();
+            wide.push(0xD800);
+            std::path::PathBuf::from(std::ffi::OsString::from_wide(&wide))
+        };
+        assert!(anchor_local_spec("file:./tool", &dir).is_err());
+        assert_eq!(
+            anchor_local_spec("^1.2.3", &dir).unwrap(),
+            "^1.2.3",
+            "specs that need no anchoring still pass through"
+        );
+    }
+
+    #[test]
+    fn anchor_local_spec_resolves_relative_paths_from_the_invocation_dir() {
+        let dir = std::path::Path::new("/work/app");
+        assert_eq!(
+            anchor_local_spec("file:../tools/printer", dir).unwrap(),
+            format!("file:{}", dir.join("../tools/printer").display())
+        );
+        assert_eq!(
+            anchor_local_spec("link:./tool", dir).unwrap(),
+            format!("link:{}", dir.join("./tool").display())
+        );
+        let absolute = std::env::temp_dir().join("tool");
+        let absolute_spec = format!("file:{}", absolute.display());
+        assert_eq!(
+            anchor_local_spec(&absolute_spec, dir).unwrap(),
+            absolute_spec
+        );
+        assert_eq!(
+            anchor_local_spec("github:user/repo", dir).unwrap(),
+            "github:user/repo"
+        );
+        assert_eq!(anchor_local_spec("^1.2.3", dir).unwrap(), "^1.2.3");
+    }
+
+    #[test]
+    fn dlx_manifest_anchors_named_local_specs() {
+        let dir = std::path::Path::new("/work/app");
+        let manifest = dlx_manifest(&["printer@file:./printer".to_string()], &[], dir).unwrap();
+        assert_eq!(
+            manifest["dependencies"]["printer"],
+            format!("file:{}", dir.join("./printer").display())
+        );
     }
 
     #[test]

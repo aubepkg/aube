@@ -1,12 +1,16 @@
+---
+description: Try aube in a pnpm project, preserve the lockfile, and understand differences in scripts, build approval, and runtime management.
+---
+
 # For pnpm users
 
-aube should be a drop-in replacement for pnpm projects. There are only
-minor differences in behavior.
+aube supports pnpm-style commands, configuration, and isolated dependencies.
+You can keep a supported `pnpm-lock.yaml` and an existing `pnpm-workspace.yaml`.
+Review the differences below before switching local scripts or CI.
 
 ## Behavior differences
 
-A handful of commands behave differently in a way that's worth knowing
-before you ship an aube-based workflow:
+Start with the behaviors that affect everyday commands:
 
 | Command | Difference |
 | --- | --- |
@@ -15,8 +19,22 @@ before you ship an aube-based workflow:
 | `aube exec <bin>` | **Auto-installs** on stale state before running. `pnpm exec` does not install. |
 | `aube install` (new project) | Creates `aube-lock.yaml` if there's no existing lockfile. pnpm creates `pnpm-lock.yaml`. In an existing pnpm project, aube reads and writes `pnpm-lock.yaml` in place. |
 
-Everything else — `add`, `remove`, `update`, `dlx`, `list`, `why`, `pack`,
-`publish`, `approve-builds` — matches pnpm's behavior.
+The familiar command names cover the common workflows, but compatibility is
+not complete. Some flags are accepted without implementing all pnpm behavior;
+the [CLI reference](/cli/) identifies these limits. For example, `aube dlx`
+prefers a matching local binary, and recursive `run --no-bail` still stops
+on the first failure in sequential mode.
+
+## Try it locally
+
+```sh
+aube install
+aube run --no-install test
+```
+
+Use a test script your project defines. Inspect the manifest, lockfile, and
+build-policy diff before committing. For a clean frozen install, see
+[CI and containers](/package-manager/ci).
 
 ## Command map
 
@@ -33,7 +51,7 @@ and install first only when needed. Use `aubx <pkg>` for one-off tools.
 | `pnpm run build` | `aube run build` | Runs scripts with an auto-install staleness check first. |
 | `pnpm test` | `aube test` | Shortcut for the `test` script; aube auto-installs first (equivalent to `pnpm install-test`). |
 | `pnpm exec vitest` | `aube exec vitest` | Runs local binaries with project `node_modules/.bin` on `PATH`. |
-| `pnpm dlx cowsay hi` | `aubx cowsay hi` | Installs into a throwaway environment and runs the binary. |
+| `pnpm dlx cowsay hi` | `aubx cowsay hi` | Uses a local binary if available; otherwise installs into a throwaway project. |
 | `pnpm list` | `aube list` | Supports depth, JSON, parseable, long, prod/dev, and global modes. |
 | `pnpm why debug` | `aube why debug` | Shows reverse dependency paths. |
 | `pnpm bin` | `aube bin` | Prints `node_modules/.bin`. Accepts `-g/--global` and `-w/--workspace-root` (workspace-root bin from a sub-package), matching pnpm. |
@@ -47,7 +65,7 @@ and install first only when needed. Use `aubx <pkg>` for one-off tools.
 | --- | --- | --- |
 | Default lockfile (new projects) | `pnpm-lock.yaml` | `aube-lock.yaml` |
 | Virtual store | `node_modules/.pnpm/` | `node_modules/.aube/` |
-| Global content-addressable store | `~/.pnpm-store/` | `$XDG_DATA_HOME/aube/store/v1/` (defaulting to `~/.local/share/aube/store/v1/`). Run `aube store path` to see the resolved location. |
+| Global content-addressable store | Run `pnpm store path` | `$XDG_DATA_HOME/aube/store/v1/` (defaulting to `~/.local/share/aube/store/v1/`). Run `aube store path` to see the resolved location. |
 | Install state | `node_modules/.modules.yaml` | `node_modules/.aube-state` |
 | Workspace manifest | `pnpm-workspace.yaml` | `aube-workspace.yaml` |
 
@@ -62,8 +80,9 @@ freshness and layout data remain in `node_modules/.aube-state`.
 Vite versions before 8.1 receive the equivalent lookup in a project-local copy,
 leaving the shared store immutable.
 
-aube never touches pnpm's `node_modules/.pnpm/` or `~/.pnpm-store/`. The two
-virtual stores can coexist under `node_modules`. For the lockfile and
+aube uses a separate content store and does not reuse pnpm's `.pnpm/` virtual
+store. Both virtual-store directories can exist under `node_modules`, but the
+package manager that installs last controls the project's top-level links. For the lockfile and
 workspace YAML, aube reads and writes whichever file already exists on disk
 — `pnpm-lock.yaml` keeps getting updates in place, and an existing
 `pnpm-workspace.yaml` is mutated in place (aube does not spawn a parallel
@@ -73,7 +92,7 @@ aube creates `aube-workspace.yaml`.
 ## What's different
 
 - **Separate install locations.** Installs go into `node_modules/.aube/` and
-  `$XDG_DATA_HOME/aube/store/` (defaulting to `~/.local/share/aube/store/`)
+  `$XDG_DATA_HOME/aube/store/v1/` (defaulting to `~/.local/share/aube/store/v1/`)
   instead of pnpm's `.pnpm/` and `~/.pnpm-store/`. If a project already has
   a pnpm-built `node_modules`, aube installs alongside — the two virtual
   stores live side by side.
@@ -96,9 +115,11 @@ aube creates `aube-workspace.yaml`.
 ## Supported pnpm lockfile versions
 
 aube reads and writes `pnpm-lock.yaml` at **lockfile version 9** — the
-format shipped by pnpm v9 and later. Older pnpm lockfiles (versions 5, 6,
-7, and 8, used by pnpm 7.x and 8.x) are not supported and will cause aube
-to refuse the install.
+format shipped by pnpm v9 and later. Older pnpm lockfiles (versions 5.x and
+6.0, used by pnpm 8.x and earlier) are not supported and will cause aube
+to refuse the install with
+[`ERR_AUBE_UNSUPPORTED_PNPM_LOCKFILE_VERSION`](/error-codes) (exit code
+`16`).
 
 To upgrade an older pnpm lockfile, run a modern pnpm once to convert it:
 
@@ -122,7 +143,7 @@ aube equivalent — use `aube runtime set`.
 Unlike pnpm, aube also reads `.nvmrc` / `.node-version`, and it
 delegates runtime installs to [mise](https://mise.jdx.dev) when mise is
 installed so you don't keep two copies of Node (see the
-[`runtimeInstaller`](/settings/#runtimeinstaller) setting).
+[`runtimeInstaller`](/settings/#setting-runtimeinstaller) setting).
 
 aube also manages its own version the way pnpm does
 (`managePackageManagerVersions`, on by default): a

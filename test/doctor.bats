@@ -68,10 +68,65 @@ JSON
   "name": "doctor-json",
   "version": "0.0.0"
 }
+
 JSON
 	run aube doctor --json
 	assert_success
 	assert_output --partial '"sections"'
 	assert_output --partial '"warnings"'
 	assert_output --partial '"errors"'
+}
+
+@test "doctor rejects unreadable top-level and per-registry CA files" {
+	printf 'cafile=%s/missing-root.pem\n//registry.example.test/:cafile=%s/missing-scoped.pem\n' "$PWD" "$PWD" >.npmrc
+	run aube doctor --json
+	assert_failure 1
+	assert_output --partial 'ERR_AUBE_INVALID_CAFILE'
+	assert_output --partial 'missing-root.pem'
+	assert_output --partial 'missing-scoped.pem'
+}
+
+@test "doctor rejects empty CA bundles and NODE_EXTRA_CA_CERTS" {
+	touch empty.pem
+	printf 'cafile=%s/empty.pem\n' "$PWD" >.npmrc
+	run env NODE_EXTRA_CA_CERTS="$PWD/missing-extra.pem" aube doctor --json
+	assert_failure 1
+	assert_output --partial 'ERR_AUBE_INVALID_CAFILE'
+	assert_output --partial 'contains no PEM certificates'
+	assert_output --partial 'missing-extra.pem'
+}
+
+@test "doctor accepts a readable CA bundle without claiming connectivity" {
+	printf 'cafile=%s/crates/aube-registry/tests/fixtures/test-ca.pem\n' "$PROJECT_ROOT" >.npmrc
+	run aube doctor --json
+	assert_success
+	assert_output --partial 'not tested (local checks only)'
+	refute_output --partial 'ERR_AUBE_INVALID_CAFILE'
+}
+
+@test "doctor reports default registry auth despite an unrelated malformed CA" {
+	printf '%s\n' '-----BEGIN CERTIFICATE-----' 'AAAA' '-----END CERTIFICATE-----' >bad-ca.pem
+	printf 'registry=https://registry.example.test/\n//registry.example.test/:_authToken=test-doctor-token\n//unrelated.example.test/:cafile=%s/bad-ca.pem\n' "$PWD" >.npmrc
+	run aube doctor --json
+	assert_failure 1
+	assert_output --partial 'ERR_AUBE_INVALID_CAFILE'
+	assert_output --partial '"auth": "configured"'
+	refute_output --partial 'test-doctor-token'
+}
+
+@test "doctor resolves a trusted token helper independently of CA failures" {
+	cat >token-helper <<'SH'
+#!/bin/sh
+echo test-helper-token
+SH
+	chmod +x token-helper
+	printf 'registry=https://registry.example.test/\n//registry.example.test/:tokenHelper=%s/token-helper\ncafile=%s/missing.pem\n' "$PWD" "$PWD" >"$HOME/.npmrc"
+	run aube doctor --json
+	assert_failure 1
+	assert_output --partial '"auth": "configured"'
+	refute_output --partial 'test-helper-token'
+	printf '#!/bin/sh\nexit 1\n' >token-helper
+	run aube doctor --json
+	assert_failure 1
+	assert_output --partial '"auth": "(none)"'
 }

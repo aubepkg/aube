@@ -1,5 +1,5 @@
 // Fetch the platform-matching @endevco/aube-<os>-<arch> sub-package at
-// install time and hardlink (or copy) its three binaries into ./bin so
+// install time and hardlink (or copy) its executable under three names into ./bin so
 // npm's `bin` wrapper resolves directly to the native executable. The root
 // package's bin targets are stable `./bin/<name>` paths so npm/npx can create
 // shims without reading a rewritten package.json. On Windows, npm's generated
@@ -20,10 +20,6 @@ function main() {
     var pjson = require('./package.json');
     var version = pjson.version;
 
-    // Nested `npm install` must stay local; otherwise it'd try to write
-    // into the global prefix when the user ran `npm i -g @endevco/aube`.
-    process.env.npm_config_global = 'false';
-
     var platform = process.platform; // darwin | linux | win32
     var arch = process.arch;         // arm64 | x64
     // On Linux, `process.report` exposes `glibcVersionRuntime` when the
@@ -43,7 +39,7 @@ function main() {
     // when the user installs the trusted root @endevco/aube.
     var args = ['install', '--no-save', '--no-package-lock', '--ignore-scripts', subpkgName + '@' + version];
 
-    var cp = spawn(npmCmd, args, { stdio: 'inherit', shell: true });
+    var cp = spawn(npmCmd, args, { stdio: 'inherit', shell: true, env: childNpmEnv(process.env) });
     cp.on('close', function(code, signal) {
         // `code` is null when the child was killed by a signal (e.g.
         // OOM). `process.exit(null)` coerces to 0, which would tell
@@ -65,6 +61,24 @@ function main() {
             process.exit(1);
         }
     });
+}
+
+function childNpmEnv(parentEnv) {
+    var env = Object.assign({}, parentEnv);
+    // npm 12 exports the outer global install's allowlist into lifecycle
+    // scripts. The nested project-scoped install rejects that global-only
+    // setting with EALLOWSCRIPTS even though it already uses --ignore-scripts.
+    Object.keys(env).forEach(function(key) {
+        var normalized = key.toLowerCase();
+        if (normalized === 'npm_config_allow_scripts' || normalized === 'npm_config_global') {
+            delete env[key];
+        }
+    });
+    // Nested `npm install` must stay local; otherwise it'd try to write
+    // into the global prefix when the user ran `npm i -g @endevco/aube`.
+    // Add one canonical key after removing case variants for Windows.
+    env.npm_config_global = 'false';
+    return env;
 }
 
 // Only these names are ever produced by aube's own build pipeline; ignore
@@ -92,28 +106,30 @@ function linkSubpkgBins(subpkgName, platform) {
     var subpkgRealDir = fs.realpathSync(subpkgDir);
 
     var subpkgBin = subpkg.bin || {};
+    var srcRel = subpkgBin.aube;
+    if (typeof srcRel !== 'string') {
+        throw new Error('platform package has no aube executable');
+    }
+
+    var src = path.resolve(subpkgDir, srcRel);
+    // String-only containment first: rejects `../` traversal before
+    // we ever touch the filesystem.
+    if (!isContained(subpkgDir, src)) {
+        throw new Error('platform package bin "aube" escapes its package directory');
+    }
+    // Then realpath the source so a symlink inside the package can't
+    // smuggle in an arbitrary on-disk file (e.g. `bin/aube -> ~/.ssh/id_rsa`).
+    // The subsequent hardlink/copy follows symlinks, so a bare string
+    // check would let `fs.copyFileSync` read straight through.
+    var srcReal;
+    try { srcReal = fs.realpathSync(src); } catch (e) {
+        throw new Error('platform package bin "aube" cannot be resolved: ' + (e && e.message ? e.message : e));
+    }
+    if (!isContained(subpkgRealDir, srcReal)) {
+        throw new Error('platform package bin "aube" resolves outside its package directory');
+    }
+
     ALLOWED_BINS.forEach(function(name) {
-        var srcRel = subpkgBin[name];
-        if (typeof srcRel !== 'string') return;
-
-        var src = path.resolve(subpkgDir, srcRel);
-        // String-only containment first: rejects `../` traversal before
-        // we ever touch the filesystem.
-        if (!isContained(subpkgDir, src)) {
-            throw new Error('platform package bin "' + name + '" escapes its package directory');
-        }
-        // Then realpath the source so a symlink inside the package can't
-        // smuggle in an arbitrary on-disk file (e.g. `bin/aube -> ~/.ssh/id_rsa`).
-        // The subsequent hardlink/copy follows symlinks, so a bare string
-        // check would let `fs.copyFileSync` read straight through.
-        var srcReal;
-        try { srcReal = fs.realpathSync(src); } catch (e) {
-            throw new Error('platform package bin "' + name + '" cannot be resolved: ' + (e && e.message ? e.message : e));
-        }
-        if (!isContained(subpkgRealDir, srcReal)) {
-            throw new Error('platform package bin "' + name + '" resolves outside its package directory');
-        }
-
         var destBasename = platform === 'win32' ? name + '.exe' : name;
         var dest = path.resolve(binDir, destBasename);
         // destBasename comes from our static allowlist, but guard anyway so
@@ -145,4 +161,6 @@ function linkSubpkgBins(subpkgName, platform) {
     });
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { childNpmEnv: childNpmEnv, linkSubpkgBins: linkSubpkgBins };

@@ -1,3 +1,7 @@
+use super::bin_linking::{
+    LinkAllBinsInput, ManagedBinLinks, link_all_bins, remove_managed_bin_links,
+    remove_unclaimed_preserved_bin_links,
+};
 use super::dep_selection::DepSelection;
 use super::lifecycle::{
     JailBuildPolicy, run_dep_lifecycle_scripts, run_root_lifecycle, unreviewed_dep_builds,
@@ -17,7 +21,9 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) store: &'a aube_store::Store,
     pub(super) graph: &'a aube_lockfile::LockfileGraph,
     pub(super) graph_for_link: &'a aube_lockfile::LockfileGraph,
+    pub(super) ws_dirs: &'a BTreeMap<String, std::path::PathBuf>,
     pub(super) manifests: &'a [(String, aube_manifest::PackageJson)],
+    pub(super) manifest: &'a aube_manifest::PackageJson,
     pub(super) lifecycle_manifests: &'a [(String, aube_manifest::PackageJson)],
     pub(super) direct_dep_info: &'a std::collections::HashMap<String, aube_resolver::DirectDepInfo>,
     pub(super) deprecations:
@@ -25,7 +31,13 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) build_policy: &'a aube_scripts::BuildPolicy,
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
+    pub(super) managed_bin_links: &'a ManagedBinLinks,
+    /// The linker's record of global virtual-store dependency links, used by
+    /// the state writer unless a lifecycle script ran and could have
+    /// changed them.
+    pub(super) gvs_dep_link_targets: Option<aube_linker::GvsDepLinkTargets>,
     pub(super) node_linker: aube_linker::NodeLinker,
+    pub(super) has_workspace: bool,
     pub(super) planned_gvs: bool,
     pub(super) virtual_store_only: bool,
     pub(super) current_leaf_hashes: Option<BTreeMap<String, String>>,
@@ -57,14 +69,19 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         store,
         graph,
         graph_for_link,
+        ws_dirs,
         manifests,
+        manifest,
         lifecycle_manifests,
         direct_dep_info,
         deprecations,
         build_policy,
         jail_policy,
         stats,
+        managed_bin_links,
+        mut gvs_dep_link_targets,
         node_linker,
+        has_workspace,
         planned_gvs,
         virtual_store_only,
         current_leaf_hashes,
@@ -178,13 +195,14 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 }
             })
             .unwrap_or(SideEffectsCacheConfig::Disabled);
-        let ran = run_dep_lifecycle_scripts(
+        let lifecycle_outcome = run_dep_lifecycle_scripts(
             cwd,
             modules_dir_name,
             aube_dir,
             graph_for_link,
             build_policy,
             virtual_store_dir_max_length,
+            cfg!(windows) && planned_gvs && node_linker == aube_linker::NodeLinker::Isolated,
             child_concurrency,
             placements_ref,
             side_effects_cache,
@@ -192,10 +210,47 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             None,
         )
         .await?;
-        if ran > 0 {
-            tracing::debug!("allowBuilds: ran {ran} dep lifecycle script(s)");
+        if lifecycle_outcome.scripts_run > 0 || lifecycle_outcome.package_contents_changed {
+            // A build may have rewritten links the linker recorded, so the
+            // state reads them back from disk.
+            gvs_dep_link_targets = None;
+        }
+        if lifecycle_outcome.scripts_run > 0 {
+            tracing::debug!(
+                "allowBuilds: ran {} dep lifecycle script(s)",
+                lifecycle_outcome.scripts_run
+            );
         }
         phase_timings.record("dep_lifecycle", phase_start.elapsed());
+
+        // Lifecycle scripts may replace a declared bin target with a native
+        // executable or rewrite package.json's bin map. Refresh every exposed
+        // shim after builds (including side-effects-cache restores) so launch
+        // metadata reflects the final package contents.
+        if lifecycle_outcome.package_contents_changed {
+            let phase_start = std::time::Instant::now();
+            let preserved = remove_managed_bin_links(managed_bin_links)?;
+            let relinked = link_all_bins(LinkAllBinsInput {
+                project_dir: cwd,
+                settings_ctx,
+                modules_dir_name,
+                aube_dir,
+                graph: graph_for_link,
+                virtual_store_dir_max_length,
+                placements: placements_ref,
+                ws_dirs,
+                manifests,
+                manifest,
+                node_linker,
+                has_workspace,
+                link_dependency_bins: true,
+                capture_managed: false,
+                preserved: Some(&preserved),
+            })?;
+            remove_unclaimed_preserved_bin_links(managed_bin_links, &preserved, &relinked)?;
+            tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
+            phase_timings.record("relink_bins", phase_start.elapsed());
+        }
     }
 
     // 7b. Post-link root lifecycle hooks: install → postinstall → prepare.
@@ -215,6 +270,9 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 aube_scripts::LifecycleHook::PostInstall,
                 aube_scripts::LifecycleHook::Prepare,
             ] {
+                if importer_manifest.scripts.contains_key(hook.script_name()) {
+                    gvs_dep_link_targets = None;
+                }
                 run_root_lifecycle(&project_dir, modules_dir_name, importer_manifest, hook).await?;
             }
         }
@@ -278,12 +336,21 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         });
         let graph_lthash = hex::encode(delta::lthash_of(&package_content_hashes).digest());
         let package_json_hashes = state::collect_package_json_hashes_from_manifests(cwd, manifests);
+        // One parse for every prior-install field this block consumes.
+        // The per-field accessors each re-parse the full O(graph) state
+        // file; on a large monorepo that was four parses of the same
+        // bytes.
+        let prior_state = state::read_state_delta_snapshot(cwd);
         // Diff against the previous install. Logs delta counts at
         // debug so `-v` installs surface what actually moved. A
         // later pass feeds the plan into fetch and link as a
         // pre-filter.
-        if let Some(prior) = state::read_state_package_content_hashes(cwd) {
-            let plan = delta::diff(&prior, &package_content_hashes);
+        if let Some(prior) = prior_state
+            .as_ref()
+            .map(|s| &s.package_content_hashes)
+            .filter(|prior| !prior.is_empty())
+        {
+            let plan = delta::diff(prior, &package_content_hashes);
             if !plan.is_empty() {
                 // Touched set built once. Doubles as a membership
                 // probe so future wiring exercises the same shape
@@ -305,11 +372,12 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             // Cheap sanity on the homomorphic add/remove ops. The
             // future causal scheduler needs these two to stay in
             // lockstep with the full recompute.
-            if let Some(prior_lthash_hex) = state::read_state_graph_lthash(cwd)
-                && let Ok(prior_bytes) = hex::decode(&prior_lthash_hex)
+            if let Some(prior_lthash_hex) =
+                prior_state.as_ref().and_then(|s| s.graph_lthash.as_deref())
+                && let Ok(prior_bytes) = hex::decode(prior_lthash_hex)
                 && prior_bytes.len() == 32
             {
-                let mut incr = delta::lthash_of(&prior);
+                let mut incr = delta::lthash_of(prior);
                 for dp in &plan.removed {
                     if let Some(fp) = prior.get(dp) {
                         incr.remove(fp);
@@ -342,7 +410,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // LtHash diagnostic. One 32-byte compare proves graph
         // equivalence with the last install. Beats the map diff
         // when both sides are known good.
-        if let Some(prior_lthash) = state::read_state_graph_lthash(cwd)
+        if let Some(prior_lthash) = prior_state.as_ref().and_then(|s| s.graph_lthash.as_deref())
             && prior_lthash != graph_lthash
         {
             tracing::debug!(
@@ -356,7 +424,11 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         // Merkle subtree diagnostic. How many subtree roots moved
         // vs how many leaves moved. Fewer roots means tighter
         // re-link scope once the delta linker lands.
-        if let Some(prior_subtrees) = state::read_state_subtree_hashes(cwd) {
+        if let Some(prior_subtrees) = prior_state
+            .as_ref()
+            .map(|s| &s.package_subtree_hashes)
+            .filter(|prior| !prior.is_empty())
+        {
             let changed_subtrees = package_subtree_hashes
                 .iter()
                 .filter(|(k, v)| prior_subtrees.get(*k).is_none_or(|old| old != *v))
@@ -391,10 +463,16 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 layout: state::WriteStateLayout {
                     graph: graph_for_link,
                     node_linker,
+                    hoisting_limits: crate::commands::settings_hoisting_limits_to_linker(
+                        aube_settings::resolved::hoisting_limits(settings_ctx),
+                    ),
                     modules_dir_name,
                     aube_dir,
                     virtual_store_dir_max_length,
                     placements: placements_ref,
+                    use_global_virtual_store: planned_gvs,
+                    dedupe_direct_deps: aube_settings::resolved::dedupe_direct_deps(settings_ctx),
+                    gvs_dep_link_targets: gvs_dep_link_targets.as_ref(),
                 },
                 unreviewed_builds: unreviewed_builds_for_state,
             },

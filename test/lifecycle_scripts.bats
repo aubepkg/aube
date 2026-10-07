@@ -465,6 +465,60 @@ JSON
 	assert_file_exists node_modules/is-odd/package.json
 }
 
+# `ignoreScripts` is a setting, not just a flag: it also resolves from the
+# env / `.npmrc` / workspace-yaml chain. The tests below pin each non-CLI
+# source, because the flag used to be the only one install read.
+
+_write_hook_project() {
+	cat >package.json <<'JSON'
+{
+  "name": "lifecycle-test",
+  "version": "1.0.0",
+  "scripts": {
+    "preinstall": "node -e 'require(\"fs\").writeFileSync(\"should-not-exist\", \"x\")'",
+    "postinstall": "node -e 'require(\"fs\").writeFileSync(\"should-not-exist\", \"x\")'"
+  },
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  }
+}
+JSON
+}
+
+@test "AUBE_IGNORE_SCRIPTS skips root lifecycle hooks" {
+	_write_hook_project
+	AUBE_IGNORE_SCRIPTS=true run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "npm_config_ignore_scripts skips root lifecycle hooks" {
+	_write_hook_project
+	npm_config_ignore_scripts=true run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "ignore-scripts in .npmrc skips root lifecycle hooks" {
+	_write_hook_project
+	echo 'ignore-scripts=true' >.npmrc
+	run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "ignoreScripts in the workspace yaml skips root lifecycle hooks" {
+	_write_hook_project
+	echo 'ignoreScripts: true' >aube-workspace.yaml
+	run aube install
+	assert_success
+	assert [ ! -e should-not-exist ]
+	assert_file_exists node_modules/is-odd/package.json
+}
+
 @test "root hooks can use binaries from node_modules/.bin via PATH" {
 	# Classic pnpm workflow: postinstall invokes a tool installed as a dep.
 	# Use is-odd's CLI? — it doesn't have one. Instead use `which` on a
@@ -549,6 +603,37 @@ JSON
 	run aube install
 	assert_success
 	assert_file_exists aube-transitive-bin-probe.txt
+}
+
+# Same fixture under `--node-linker=hoisted`, where the per-dep `.bin/`
+# doesn't exist: the hoisted tree puts packages straight into
+# `node_modules/`, so a package's bins belong in the `.bin/` of the
+# `node_modules/` it sits in — the directory already on the lifecycle
+# PATH. Before the fix only the root's *direct* deps were linked there,
+# so `bcrypt` calling `node-pre-gyp` (from its own
+# `@mapbox/node-pre-gyp` dependency) died with `command not found`
+# (Discussion #1543).
+@test "hoisted: dep postinstall can invoke a transitive-dep bin by bare name" {
+	cat >package.json <<'JSON'
+{
+  "name": "transitive-bin-test-hoisted",
+  "version": "1.0.0",
+  "dependencies": {
+    "aube-test-transitive-consumer": "^1.0.0"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "aube-test-transitive-consumer": true
+    }
+  }
+}
+JSON
+	run aube install --node-linker=hoisted
+	assert_success
+	assert_file_exists aube-transitive-bin-probe.txt
+	# The transitive package is hoisted to the root, so its command
+	# belongs in the root `.bin/` — matching npm's layout.
+	assert_file_exists node_modules/.bin/aube-transitive-bin-probe
 }
 
 # -- Ported from pnpm/test/install/lifecycleScripts.ts ------------------------
@@ -753,6 +838,37 @@ JSON
 	run aube update
 	assert_success
 	assert [ ! -e postinstall.marker ]
+}
+
+# `update` runs `pnpm:devPreinstall` itself, before it chains into the
+# installer, so the setting has to be resolved at that call site too —
+# resolving it only inside the installer left this hook executing project
+# code under `AUBE_IGNORE_SCRIPTS=true`.
+@test "AUBE_IGNORE_SCRIPTS skips the devPreinstall hook aube update runs" {
+	cat >package.json <<'JSON'
+{
+  "name": "update-dev-preinstall",
+  "version": "1.0.0",
+  "scripts": {
+    "pnpm:devPreinstall": "node -e 'require(\"fs\").writeFileSync(\"should-not-exist\", \"x\")'"
+  },
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  }
+}
+JSON
+	run aube install --ignore-scripts
+	assert_success
+	rm -f should-not-exist
+
+	AUBE_IGNORE_SCRIPTS=true run aube update
+	assert_success
+	assert [ ! -e should-not-exist ]
+
+	# ... and still fires when nothing asks for it to be skipped.
+	run aube update
+	assert_success
+	assert_file_exists should-not-exist
 }
 
 # -- Dep build-policy ports from pnpm/test/install/lifecycleScripts.ts --------

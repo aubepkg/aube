@@ -1,4 +1,6 @@
 use crate::Error;
+use aube_lockfile::DirectDep;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Sweep orphan `.tmp-<pid>-*` directories in the virtual store.
@@ -102,6 +104,43 @@ pub fn remove_dir_all_with_retry(path: &Path) -> std::io::Result<()> {
 /// importer's task, producing EEXIST races on large monorepos.
 pub fn is_physical_importer(importer_path: &str) -> bool {
     importer_path == "." || !importer_path.contains("/node_modules/")
+}
+
+/// Whether `dedupeDirectDeps` leaves out workspace member `importer_path`'s
+/// link to `dep`, because Node walking up from the member reaches the
+/// root's identical link first. That holds only for a member inside the
+/// root (Node never walks from `../sibling` into the root's
+/// `node_modules`) and when no importer in between links a different
+/// version of `dep`, which Node would find before the root's.
+pub fn dedupe_skips_member_link(
+    importers: &BTreeMap<String, Vec<DirectDep>>,
+    importer_path: &str,
+    dep: &DirectDep,
+) -> bool {
+    let declares_other_version = |importer: &str| {
+        importers.get(importer).is_some_and(|deps| {
+            deps.iter()
+                .any(|d| d.name == dep.name && d.dep_path != dep.dep_path)
+        })
+    };
+    importer_resolves_through_root(importer_path)
+        && importers.get(".").is_some_and(|root| {
+            root.iter()
+                .any(|d| d.name == dep.name && d.dep_path == dep.dep_path)
+        })
+        && !Path::new(importer_path)
+            .ancestors()
+            .skip(1)
+            .filter_map(Path::to_str)
+            .filter(|ancestor| !ancestor.is_empty())
+            .any(declares_other_version)
+}
+
+fn importer_resolves_through_root(importer_path: &str) -> bool {
+    importer_path != "."
+        && !Path::new(importer_path)
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
 }
 
 /// Wipe `path` when it looks like a linker-managed `.aube/node_modules`
@@ -213,6 +252,58 @@ pub(crate) fn sweep_stale_top_level_entries(
             continue;
         }
         try_remove_entry(&entry.path());
+    }
+}
+
+/// Reconcile the project-owned hidden hoist without rebuilding every link.
+/// Never descend through a scope symlink: the hidden tree may have been
+/// modified since the last install, and only real scope directories are ours
+/// to sweep. The caller checks each retained package link's target afterward.
+pub(crate) fn sweep_stale_hidden_hoist_entries(
+    hidden: &Path,
+    preserve: &rustc_hash::FxHashSet<&str>,
+) {
+    match std::fs::symlink_metadata(hidden) {
+        Ok(md) if md.file_type().is_symlink() => {
+            remove_hidden_hoist_tree(hidden);
+            return;
+        }
+        Ok(md) if !md.is_dir() => {
+            try_remove_entry(hidden);
+            return;
+        }
+        Ok(_) => {}
+        Err(_) => return,
+    }
+    let scopes: rustc_hash::FxHashSet<&str> = preserve
+        .iter()
+        .filter_map(|name| name.split_once('/').map(|(scope, _)| scope))
+        .collect();
+    let Ok(entries) = std::fs::read_dir(hidden) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let path = entry.path();
+        if scopes.contains(name.as_ref()) {
+            let is_real_dir = std::fs::symlink_metadata(&path)
+                .is_ok_and(|md| md.is_dir() && !md.file_type().is_symlink());
+            if !is_real_dir {
+                try_remove_entry(&path);
+                continue;
+            }
+            if let Ok(inner) = std::fs::read_dir(&path) {
+                for child in inner.flatten() {
+                    let full = format!("{name}/{}", child.file_name().to_string_lossy());
+                    if !preserve.contains(full.as_str()) {
+                        try_remove_entry(&child.path());
+                    }
+                }
+            }
+        } else if !preserve.contains(name.as_ref()) {
+            try_remove_entry(&path);
+        }
     }
 }
 
@@ -334,10 +425,284 @@ pub(crate) fn classify_local_entry_state(path: &Path) -> EntryState {
         Err(_) => EntryState::Stale,
     }
 }
+/// Create a directory link at `link_path`, tolerating a concurrent
+/// creator that already put the *expected* link there.
+///
+/// The top-level symlink pass runs over a rayon pool, so two tasks can
+/// target the same `node_modules/<name>` path — both see it missing,
+/// both create, and the loser gets `AlreadyExists`. That is benign
+/// when the winner stored the same target we were about to store, so
+/// re-check with `reconcile_dir_link` and only surface the error when
+/// the path holds something else. Without this a harmless race aborts
+/// the whole install with `File exists (os error 17)` partway through
+/// linking.
+pub(crate) fn create_dir_link_idempotent(target: &Path, link_path: &Path) -> Result<(), Error> {
+    if let Err(create_err) = crate::sys::create_dir_link(target, link_path) {
+        let won_race = create_err.kind() == std::io::ErrorKind::AlreadyExists
+            && reconcile_dir_link(link_path, target).unwrap_or(false);
+        if !won_race {
+            return Err(Error::Io(link_path.to_path_buf(), create_err));
+        }
+    }
+    Ok(())
+}
+
+/// Reconcile a directory link against its expected target.
+///
+/// Returns `Ok(true)` when the existing link stores the expected target.
+/// Missing, incorrectly-targeted, and non-link entries are removed and return
+/// `Ok(false)` so the caller can recreate the link. The target is not probed,
+/// so a dangling link that stores the expected target is considered current.
+pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Result<bool, Error> {
+    #[cfg(windows)]
+    {
+        // NTFS junctions store the normalized absolute target
+        // `create_dir_link` computed, sometimes read back with a `\\?\`
+        // prefix. Compare that stored target, as the Unix branch does, and
+        // not the canonical destination: with the global virtual store,
+        // `node_modules/<name>` reached through the old and the new
+        // `virtualStoreDir` canonicalizes to the same shared entry, which
+        // kept links into a relocated virtual store from being rewritten.
+        let expected = if expected_target.is_absolute() {
+            expected_target.to_path_buf()
+        } else {
+            link_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(expected_target)
+        };
+        // `Linker` accepts relative roots, so `link_path` (and thus
+        // `expected`) can be relative while the junction stores an absolute
+        // target. `absolute` resolves against the cwd without touching the
+        // filesystem, the same base `create_dir_link` resolved against.
+        let expected_abs = std::path::absolute(&expected).unwrap_or(expected);
+        // The link destination is mutable during reconciliation and shared
+        // installs can repair it concurrently, so it must never be cached.
+        if let Ok(existing) = std::fs::read_link(link_path)
+            && same_windows_path(&existing, &expected_abs)
+        {
+            return Ok(true);
+        }
+        if link_path.symlink_metadata().is_err() {
+            return Ok(false);
+        }
+        match std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path)) {
+            Ok(()) => Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(Error::Io(link_path.to_path_buf(), e)),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match std::fs::read_link(link_path) {
+            Ok(existing) if existing == expected_target => Ok(true),
+            Ok(_) => {
+                let _ = std::fs::remove_dir(link_path).or_else(|_| std::fs::remove_file(link_path));
+                Ok(false)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => {
+                let _ =
+                    std::fs::remove_dir_all(link_path).or_else(|_| std::fs::remove_file(link_path));
+                Ok(false)
+            }
+        }
+    }
+}
+
+/// Whether two Windows paths name the same location, ignoring a `\\?\`
+/// prefix and `.`/`..` segments. Paths that differ only in case usually
+/// do, but not inside a directory made case-sensitive (`fsutil file
+/// setCaseSensitiveInfo`), so the filesystem settles those. A dangling
+/// target can't be resolved, so the deepest existing ancestors are
+/// compared instead and the missing tail must match exactly: whether a
+/// name that doesn't exist yet matches case-insensitively is unknowable.
+#[cfg(windows)]
+fn same_windows_path(a: &Path, b: &Path) -> bool {
+    let plain = |p: &Path| {
+        let normalized = crate::sys::normalize_path(p);
+        let text = normalized.to_string_lossy();
+        std::path::PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
+    };
+    let (a, b) = (plain(a), plain(b));
+    if a == b {
+        return true;
+    }
+    if !a.as_os_str().eq_ignore_ascii_case(b.as_os_str()) {
+        return false;
+    }
+    // Differing only in case, the paths have the same components, so
+    // their ancestors line up.
+    a.ancestors()
+        .zip(b.ancestors())
+        .find_map(|(a_dir, b_dir)| {
+            match (std::fs::canonicalize(a_dir), std::fs::canonicalize(b_dir)) {
+                (Ok(a_real), Ok(b_real)) => Some(
+                    a_real == b_real && a.strip_prefix(a_dir).ok() == b.strip_prefix(b_dir).ok(),
+                ),
+                _ => None,
+            }
+        })
+        .unwrap_or(false)
+}
 
 #[cfg(test)]
 mod tests {
-    use super::is_physical_importer;
+    /// `Store\pkg` and `store\pkg` under `root`, with `node_modules\pkg`
+    /// linked to the former.
+    #[cfg(windows)]
+    fn link_into_case_variant_stores(root: &std::path::Path) -> std::path::PathBuf {
+        for store in ["Store", "store"] {
+            std::fs::create_dir_all(root.join(store).join("pkg")).unwrap();
+        }
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        let link = root.join("node_modules").join("pkg");
+        crate::sys::create_dir_link(&root.join("Store").join("pkg"), &link).unwrap();
+        link
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_junction_whose_target_differs_only_in_case() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = link_into_case_variant_stores(tmp.path());
+        // `store` is the same directory as `Store` here.
+        let expected = tmp.path().join("store").join("pkg");
+        assert!(super::reconcile_dir_link(&link, &expected).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_rewrites_a_junction_into_a_case_variant_of_a_case_sensitive_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let enabled = std::process::Command::new("fsutil")
+            .args(["file", "setCaseSensitiveInfo"])
+            .arg(tmp.path())
+            .arg("enable")
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if !enabled {
+            eprintln!("skipping: this system can't make a directory case-sensitive");
+            return;
+        }
+        let link = link_into_case_variant_stores(tmp.path());
+        let expected = tmp.path().join("store").join("pkg");
+        assert!(!super::reconcile_dir_link(&link, &expected).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_dangling_junction_whose_target_differs_only_in_case() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = link_into_case_variant_stores(tmp.path());
+        std::fs::remove_dir(tmp.path().join("Store").join("pkg")).unwrap();
+        let expected = tmp.path().join("store").join("pkg");
+        assert!(super::reconcile_dir_link(&link, &expected).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_rewrites_a_junction_into_another_store_with_the_same_destination() {
+        use super::reconcile_dir_link;
+        // `old/pkg` and `new/pkg` are both junctions into `shared`, like a
+        // global-virtual-store entry reached through two `virtualStoreDir`s.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("shared")).unwrap();
+        for store in ["old", "new"] {
+            std::fs::create_dir(root.join(store)).unwrap();
+            crate::sys::create_dir_link(&root.join("shared"), &root.join(store).join("pkg"))
+                .unwrap();
+        }
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        let link = root.join("node_modules").join("pkg");
+        crate::sys::create_dir_link(std::path::Path::new(r"..\old\pkg"), &link).unwrap();
+
+        assert!(reconcile_dir_link(&link, std::path::Path::new(r"..\old\pkg")).unwrap());
+        assert!(!reconcile_dir_link(&link, std::path::Path::new(r"..\new\pkg")).unwrap());
+        assert!(
+            link.symlink_metadata().is_err(),
+            "stale link should be removed"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_current_junction_given_a_relative_link_path() {
+        use super::reconcile_dir_link;
+        // `Linker` accepts relative roots, so `link_path` can be relative
+        // while the junction stores an absolute target.
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempfile::tempdir_in(&cwd).unwrap();
+        let root = tmp.path().strip_prefix(&cwd).unwrap();
+        std::fs::create_dir(root.join("target")).unwrap();
+        let link = root.join("link");
+        crate::sys::create_dir_link(std::path::Path::new("target"), &link).unwrap();
+        assert!(link.is_relative());
+        assert!(reconcile_dir_link(&link, std::path::Path::new("target")).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_dangling_junction_that_stores_the_expected_target() {
+        use super::reconcile_dir_link;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("target")).unwrap();
+        let link = root.join("link");
+        crate::sys::create_dir_link(std::path::Path::new("target"), &link).unwrap();
+        std::fs::remove_dir(root.join("target")).unwrap();
+        assert!(reconcile_dir_link(&link, std::path::Path::new("target")).unwrap());
+    }
+
+    use super::{dedupe_skips_member_link, importer_resolves_through_root, is_physical_importer};
+    use aube_lockfile::{DepType, DirectDep};
+    use std::collections::BTreeMap;
+
+    fn dep(dep_path: &str) -> DirectDep {
+        DirectDep {
+            name: "is-odd".to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }
+    }
+
+    #[test]
+    fn only_members_inside_the_root_resolve_through_it() {
+        assert!(importer_resolves_through_root("packages/app"));
+        assert!(!importer_resolves_through_root("."));
+        assert!(!importer_resolves_through_root("../sibling"));
+        assert!(!importer_resolves_through_root("packages/../../elsewhere"));
+    }
+
+    #[test]
+    fn dedupe_keeps_a_member_link_an_importer_in_between_would_shadow() {
+        let importers = BTreeMap::from([
+            (".".to_string(), vec![dep("is-odd@3.0.1")]),
+            ("packages/outer".to_string(), vec![dep("is-odd@3.0.0")]),
+            (
+                "packages/outer/inner".to_string(),
+                vec![dep("is-odd@3.0.1")],
+            ),
+            ("packages/other".to_string(), vec![dep("is-odd@3.0.1")]),
+            (
+                "packages/other/inner".to_string(),
+                vec![dep("is-odd@3.0.1")],
+            ),
+        ]);
+        let skips = |importer: &str, dep_path: &str| {
+            dedupe_skips_member_link(&importers, importer, &dep(dep_path))
+        };
+        // `packages/outer` links 3.0.0, which Node would find first.
+        assert!(!skips("packages/outer/inner", "is-odd@3.0.1"));
+        assert!(!skips("packages/outer", "is-odd@3.0.0"));
+        // An importer in between with the root's version links nothing
+        // that differs from it.
+        assert!(skips("packages/other/inner", "is-odd@3.0.1"));
+        assert!(skips("packages/other", "is-odd@3.0.1"));
+        assert!(!skips(".", "is-odd@3.0.1"));
+    }
 
     #[test]
     fn root_is_physical() {

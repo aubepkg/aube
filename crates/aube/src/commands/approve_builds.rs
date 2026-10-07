@@ -11,7 +11,6 @@
 //! package names so a future resolution of the same dep under a
 //! different version keeps working without re-prompting.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{IsTerminal, Write};
@@ -19,21 +18,21 @@ use std::path::Path;
 
 const INTERACTIVE_TTY_ERROR: &str = "approve-builds needs stdin and stderr to be TTYs for the interactive picker; pass `--all` or name packages positionally to approve non-interactively";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ApproveBuildsArgs {
     /// Approve every pending ignored build without prompting.
-    #[arg(long)]
+    #[usage(long)]
     pub all: bool,
 
     /// Operate on globally-installed packages instead of the current project.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 
     /// Packages to approve directly, skipping the picker.
     ///
     /// Each name must match a currently-ignored build. Unknown names
     /// are rejected so a typo cannot silently no-op.
-    #[arg(value_name = "PKG")]
+    #[usage(arg, name = "PKG")]
     pub packages: Vec<String>,
 }
 

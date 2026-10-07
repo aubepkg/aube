@@ -351,6 +351,83 @@ fn test_parse_file_resolved_without_link() {
 }
 
 #[test]
+fn test_parse_remote_tarball_from_declared_url() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let url = "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz";
+    let content = format!(
+        r#"{{
+            "lockfileVersion": 3,
+            "packages": {{
+                "": {{
+                    "dependencies": {{
+                        "xlsx": "{url}",
+                        "semver": "^7.7.0"
+                    }}
+                }},
+                "node_modules/xlsx": {{
+                    "version": "0.20.3",
+                    "resolved": "{url}",
+                    "integrity": "sha512-sheetjs"
+                }},
+                "node_modules/semver": {{
+                    "version": "7.7.2",
+                    "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.2.tgz",
+                    "integrity": "sha512-semver"
+                }}
+            }}
+        }}"#
+    );
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let graph = parse(tmp.path()).unwrap();
+    let direct = graph.importers["."]
+        .iter()
+        .find(|dep| dep.name == "xlsx")
+        .unwrap();
+    let pkg = &graph.packages[&direct.dep_path];
+
+    assert_eq!(pkg.version, "0.20.3");
+    assert!(pkg.tarball_url.is_none());
+    let Some(LocalSource::RemoteTarball(source)) = &pkg.local_source else {
+        panic!("expected remote tarball source, got {:?}", pkg.local_source);
+    };
+    assert_eq!(source.url, url);
+    assert_eq!(source.integrity, "sha512-sheetjs");
+    let registry_pkg = graph
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "semver")
+        .unwrap();
+    assert!(registry_pkg.local_source.is_none());
+
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [
+            ("xlsx".to_string(), url.to_string()),
+            ("semver".to_string(), "^7.7.0".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+    let reparsed = parse(out.path()).unwrap();
+    let reparsed_direct = reparsed.importers["."]
+        .iter()
+        .find(|dep| dep.name == "xlsx")
+        .unwrap();
+    let reparsed_pkg = &reparsed.packages[&reparsed_direct.dep_path];
+    let Some(LocalSource::RemoteTarball(reparsed_source)) = &reparsed_pkg.local_source else {
+        panic!(
+            "expected remote tarball source, got {:?}",
+            reparsed_pkg.local_source
+        );
+    };
+    assert_eq!(reparsed_source.url, url);
+    assert_eq!(reparsed_source.integrity, "sha512-sheetjs");
+}
+
+#[test]
 fn test_parse_scoped_package() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let content = r#"{
@@ -420,6 +497,69 @@ fn test_parse_multi_version_nested() {
     let root = graph.importers.get(".").unwrap();
     let root_bar = root.iter().find(|d| d.name == "bar").unwrap();
     assert_eq!(root_bar.dep_path, "bar@2.0.0");
+}
+
+#[test]
+fn test_write_preserves_reachable_existing_root_version() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+        "lockfileVersion": 3,
+        "packages": {
+            "": { "dependencies": { "app": "1.0.0" } },
+            "node_modules/app": {
+                "version": "1.0.0",
+                "dependencies": { "a-newer": "1.0.0", "z-older": "1.0.0" }
+            },
+            "node_modules/a-newer": {
+                "version": "1.0.0",
+                "dependencies": { "shared": "^2.0.0" }
+            },
+            "node_modules/a-newer/node_modules/shared": { "version": "2.0.0" },
+            "node_modules/shared": { "version": "1.0.0" },
+            "node_modules/z-older": {
+                "version": "1.0.0",
+                "dependencies": { "shared": "^1.0.0" }
+            }
+        }
+    }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let mut graph = parse(tmp.path()).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("app".to_string(), "1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    write(tmp.path(), &graph, &manifest).unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
+    assert_eq!(json["packages"]["node_modules/shared"]["version"], "1.0.0");
+    assert_eq!(
+        json["packages"]["node_modules/a-newer/node_modules/shared"]["version"],
+        "2.0.0"
+    );
+
+    // Once the last edge to the preferred version disappears, it must not be
+    // kept merely because the previous lockfile had hoisted it.
+    graph
+        .packages
+        .get_mut("app@1.0.0")
+        .unwrap()
+        .dependencies
+        .remove("z-older");
+    graph.packages.remove("z-older@1.0.0");
+    write(tmp.path(), &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
+    assert_eq!(json["packages"]["node_modules/shared"]["version"], "2.0.0");
+    assert!(
+        json["packages"]
+            .get("node_modules/a-newer/node_modules/shared")
+            .is_none(),
+        "the stale preferred root must be replaced instead of nested"
+    );
 }
 
 /// Regression: a package reachable from both a dev root and
@@ -1558,6 +1698,61 @@ fn test_write_npm_workspace_importers() {
     assert!(reparsed.importers.contains_key("web"));
 }
 
+/// A fresh resolve of an npm workspace whose root depends on no member
+/// has no `link:` package for them. The writer still has to emit each
+/// member, reading its name and version from its own package.json.
+#[test]
+fn test_write_npm_workspace_members_nothing_depends_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("packages/a")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("packages/unnamed")).unwrap();
+    std::fs::write(
+        tmp.path().join("packages/a/package.json"),
+        r#"{"name":"a","version":"1.0.0","peerDependencies":{"p":"^1"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("packages/unnamed/package.json"),
+        r#"{"version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(".".to_string(), Vec::new());
+    graph.importers.insert("packages/a".to_string(), Vec::new());
+    graph
+        .importers
+        .insert("packages/unnamed".to_string(), Vec::new());
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        workspaces: Some(aube_manifest::Workspaces::Array(vec![
+            "packages/*".to_string(),
+        ])),
+        ..Default::default()
+    };
+    let path = tmp.path().join("package-lock.json");
+    write(&path, &graph, &manifest).unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let packages = &json["packages"];
+    assert_eq!(
+        packages[""]["workspaces"],
+        serde_json::json!(["packages/*"])
+    );
+    assert_eq!(packages["node_modules/a"]["resolved"], "packages/a");
+    assert_eq!(packages["node_modules/a"]["link"], true);
+    assert_eq!(packages["packages/a"]["version"], "1.0.0");
+    assert_eq!(packages["packages/a"]["peerDependencies"]["p"], "^1");
+    assert_eq!(
+        packages["node_modules/unnamed"]["resolved"],
+        "packages/unnamed"
+    );
+
+    let reparsed = parse(&path).unwrap();
+    assert!(reparsed.importers.contains_key("packages/a"));
+    assert!(reparsed.importers.contains_key("packages/unnamed"));
+}
+
 /// When the root tree already hoists a package to
 /// `node_modules/<name>`, the workspace tree must NOT emit a
 /// redundant `<workspace>/node_modules/<name>` for the same
@@ -1902,7 +2097,7 @@ fn test_parse_funding_all_shapes() {
 /// object / array-of-objects shapes for `license:` (npm copies
 /// whatever's in the package's `package.json` verbatim, and older
 /// packages like `tv4` still ship the deprecated forms). Regression
-/// guard for https://github.com/jdx/aube/discussions/510.
+/// guard for https://github.com/aubepkg/aube/discussions/510.
 #[test]
 fn test_parse_license_all_shapes() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -1979,4 +2174,362 @@ fn test_parse_license_all_shapes() {
         Some("MIT"),
     );
     assert!(graph.packages["no-license@1.0.0"].license.is_none());
+}
+
+/// A package declared in both `devDependencies` and
+/// `optionalDependencies` must yield exactly one root `DirectDep`.
+/// npm records such a declaration as a plain `dev: true` entry, so dev
+/// wins — matching `seed_direct_deps` in aube-resolver. Emitting a
+/// second `DirectDep` made `--frozen-lockfile` reject an untouched
+/// npm-generated lockfile as section drift, and made the linker create
+/// the root symlink twice. See discussion #1544.
+#[test]
+fn dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+        "name": "test",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "packages": {
+            "": {
+                "name": "test",
+                "version": "1.0.0",
+                "devDependencies": { "foo": "1.2.3" },
+                "optionalDependencies": { "foo": "1.2.3" }
+            },
+            "node_modules/foo": {
+                "version": "1.2.3",
+                "resolved": "https://registry.npmjs.org/foo/-/foo-1.2.3.tgz",
+                "integrity": "sha512-aaa",
+                "dev": true
+            }
+        }
+    }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
+
+/// The overlap guard keys on the *declared* name, so two npm aliases of
+/// the same underlying package remain separate direct deps.
+#[test]
+fn distinct_aliases_of_one_package_stay_separate_direct_deps() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+        "name": "test",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "packages": {
+            "": {
+                "name": "test",
+                "version": "1.0.0",
+                "dependencies": { "foo-v1": "npm:foo@1.2.3", "foo-v2": "npm:foo@2.0.0" }
+            },
+            "node_modules/foo-v1": {
+                "name": "foo",
+                "version": "1.2.3",
+                "resolved": "https://registry.npmjs.org/foo/-/foo-1.2.3.tgz",
+                "integrity": "sha512-aaa"
+            },
+            "node_modules/foo-v2": {
+                "name": "foo",
+                "version": "2.0.0",
+                "resolved": "https://registry.npmjs.org/foo/-/foo-2.0.0.tgz",
+                "integrity": "sha512-bbb"
+            }
+        }
+    }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 2, "both aliases must survive, got {root:?}");
+}
+
+/// The overlap guard applies per importer, not just to the root: a
+/// workspace member declaring the same package in two sections must
+/// also yield a single `DirectDep`. The drift validator resolves one
+/// expected section per name for every importer.
+#[test]
+fn workspace_member_dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "workspace-root",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {
+                    "name": "workspace-root",
+                    "version": "1.0.0",
+                    "workspaces": ["packages/app"]
+                },
+                "node_modules/@scope/app": {
+                    "resolved": "packages/app",
+                    "link": true
+                },
+                "node_modules/chalk": {
+                    "version": "5.4.1",
+                    "integrity": "sha512-chalk"
+                },
+                "packages/app": {
+                    "name": "@scope/app",
+                    "version": "0.68.1",
+                    "devDependencies": { "chalk": "^5.4.1" },
+                    "optionalDependencies": { "chalk": "^5.4.1" }
+                }
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let member = graph.importers.get("packages/app").unwrap();
+    let chalk: Vec<_> = member.iter().filter(|d| d.name == "chalk").collect();
+    assert_eq!(chalk.len(), 1, "expected one direct dep, got {chalk:?}");
+    assert_eq!(chalk[0].dep_type, DepType::Dev);
+}
+
+/// npm installs an importer's required peers and records them only in
+/// the importer's `peerDependencies`. The reader must surface them as
+/// direct deps so a frozen install doesn't read the peer-only
+/// declaration as "manifest adds". Optional peers stay out, and an
+/// owned section wins over a peer declaration of the same name.
+#[test]
+fn workspace_member_required_peers_are_direct_deps() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "workspace-root",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {
+                    "name": "workspace-root",
+                    "version": "1.0.0",
+                    "workspaces": ["packages/*"],
+                    "devDependencies": { "is-number": "7.0.0" },
+                    "peerDependencies": { "kind-of": "^6.0.0" }
+                },
+                "node_modules/is-number": {
+                    "version": "7.0.0",
+                    "integrity": "sha512-isnumber"
+                },
+                "node_modules/is-odd": {
+                    "version": "3.0.1",
+                    "integrity": "sha512-isodd"
+                },
+                "node_modules/is-even": {
+                    "version": "1.0.0",
+                    "integrity": "sha512-iseven"
+                },
+                "node_modules/kind-of": {
+                    "version": "6.0.3",
+                    "integrity": "sha512-kindof"
+                },
+                "node_modules/peer-consumer": {
+                    "resolved": "packages/consumer",
+                    "link": true
+                },
+                "packages/consumer": {
+                    "name": "peer-consumer",
+                    "version": "1.0.0",
+                    "dependencies": { "is-even": "1.0.0", "is-odd": "3.0.1" },
+                    "peerDependencies": {
+                        "is-even": "1.0.0",
+                        "is-number": "7.0.0",
+                        "is-odd": "^3.0.0",
+                        "kind-of": "^6.0.0"
+                    },
+                    "peerDependenciesMeta": { "kind-of": { "optional": true } }
+                }
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+
+    let root = &graph.importers["."];
+    let kind_of = root.iter().find(|d| d.name == "kind-of").unwrap();
+    assert_eq!(kind_of.dep_type, DepType::Production);
+    assert_eq!(kind_of.specifier.as_deref(), Some("^6.0.0"));
+
+    let member = &graph.importers["packages/consumer"];
+    let is_number = member.iter().find(|d| d.name == "is-number").unwrap();
+    assert_eq!(is_number.dep_type, DepType::Production);
+    assert_eq!(is_number.specifier.as_deref(), Some("7.0.0"));
+    let is_odd: Vec<_> = member.iter().filter(|d| d.name == "is-odd").collect();
+    assert_eq!(is_odd.len(), 1);
+    assert_eq!(is_odd[0].specifier.as_deref(), Some("3.0.1"));
+    assert!(!member.iter().any(|d| d.name == "kind-of"));
+
+    let root_manifest: aube_manifest::PackageJson = serde_json::from_str(
+        r#"{
+            "name": "workspace-root",
+            "version": "1.0.0",
+            "workspaces": ["packages/*"],
+            "devDependencies": { "is-number": "7.0.0" },
+            "peerDependencies": { "kind-of": "^6.0.0" }
+        }"#,
+    )
+    .unwrap();
+    let member_manifest: aube_manifest::PackageJson = serde_json::from_str(
+        r#"{
+            "name": "peer-consumer",
+            "version": "1.0.0",
+            "dependencies": { "is-even": "1.0.0", "is-odd": "3.0.1" },
+            "peerDependencies": {
+                "is-even": "1.0.0",
+                "is-number": "7.0.0",
+                "is-odd": "^3.0.0",
+                "kind-of": "^6.0.0"
+            },
+            "peerDependenciesMeta": { "kind-of": { "optional": true } }
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root_manifest.clone()),
+                ("packages/consumer".to_string(), member_manifest),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        ),
+        DriftStatus::Fresh
+    );
+
+    // Write-back keeps the peer-only declaration out of `dependencies`
+    // while owned deps stay, including one whose spec equals its peer's.
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &root_manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    let consumer = &written["packages"]["packages/consumer"];
+    assert_eq!(
+        consumer["dependencies"],
+        serde_json::json!({ "is-even": "1.0.0", "is-odd": "3.0.1" })
+    );
+    assert_eq!(consumer["peerDependencies"]["is-number"], "7.0.0");
+    assert_eq!(consumer["peerDependencies"]["is-even"], "1.0.0");
+    assert_eq!(
+        written["packages"][""]["peerDependencies"],
+        serde_json::json!({ "kind-of": "^6.0.0" })
+    );
+    assert!(written["packages"][""].get("dependencies").is_none());
+}
+
+/// npm writes a workspace member without a `version` in its package.json
+/// as an empty entry. Reading it must not fail.
+#[test]
+fn test_parse_workspace_member_without_version() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "root",
+            "lockfileVersion": 3,
+            "requires": true,
+            "packages": {
+                "": {
+                    "name": "root",
+                    "workspaces": ["packages/*"]
+                },
+                "node_modules/app": {
+                    "resolved": "packages/app",
+                    "link": true
+                },
+                "packages/app": {}
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let graph = parse(tmp.path()).unwrap();
+    let dep_path = LocalSource::Link(PathBuf::from("packages/app")).dep_path("app");
+    assert_eq!(graph.packages[&dep_path].version, "0.0.0");
+    assert!(graph.importers.contains_key("packages/app"));
+}
+
+/// A member nothing depends on is written from its package.json: one
+/// without a version stays versionless, as npm writes it, and its
+/// optional peers keep `peerDependenciesMeta`, so reading the lockfile
+/// back keeps them out of its required deps.
+#[test]
+fn test_write_npm_workspace_member_versionless_and_optional_peers_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (dir, manifest) in [
+        (
+            "packages/a",
+            r#"{"name":"a","version":"1.0.0","peerDependencies":{"p":"^1"},"peerDependenciesMeta":{"p":{"optional":true}}}"#,
+        ),
+        ("packages/b", r#"{"name":"b"}"#),
+    ] {
+        std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+        std::fs::write(tmp.path().join(dir).join("package.json"), manifest).unwrap();
+    }
+    let mut graph = LockfileGraph::default();
+    for importer in [".", "packages/a", "packages/b"] {
+        graph.importers.insert(importer.to_string(), Vec::new());
+    }
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        ..Default::default()
+    };
+    let path = tmp.path().join("package-lock.json");
+    write(&path, &graph, &manifest).unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let packages = &json["packages"];
+    assert_eq!(
+        packages["packages/a"]["peerDependenciesMeta"]["p"]["optional"],
+        true
+    );
+    assert!(packages["packages/b"].get("version").is_none());
+
+    let reparsed = parse(&path).unwrap();
+    assert!(
+        reparsed.importers["packages/a"]
+            .iter()
+            .all(|dep| dep.name != "p"),
+        "an optional peer must not become a required dep"
+    );
+    let b = LocalSource::Link(PathBuf::from("packages/b")).dep_path("b");
+    assert_eq!(reparsed.packages[&b].version, "0.0.0");
+
+    // Rewriting the reread graph keeps `b` versionless.
+    write(&path, &reparsed, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(json["packages"]["packages/b"].get("version").is_none());
+}
+
+/// npm copies an object-form `workspaces` field as declared: an absent
+/// `nohoist` stays absent and a declared one is kept.
+#[test]
+fn test_write_npm_object_form_workspaces_as_declared() {
+    for (nohoist, expected) in [
+        (Vec::new(), serde_json::json!({"packages": ["packages/*"]})),
+        (
+            vec!["**/x".to_string()],
+            serde_json::json!({"packages": ["packages/*"], "nohoist": ["**/x"]}),
+        ),
+    ] {
+        let manifest = aube_manifest::PackageJson {
+            name: Some("root".to_string()),
+            workspaces: Some(aube_manifest::Workspaces::Object {
+                packages: vec!["packages/*".to_string()],
+                nohoist,
+                catalog: BTreeMap::new(),
+                catalogs: BTreeMap::new(),
+            }),
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("package-lock.json");
+        write(&path, &LockfileGraph::default(), &manifest).unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["packages"][""]["workspaces"], expected);
+    }
 }

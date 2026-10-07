@@ -129,17 +129,27 @@ fn read_tarball_package_json(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Read the `package.json` of a `file:` / `link:` target to discover
-/// the real package name, version, and production dependencies.
+/// the real package name, version, production dependencies, and optional
+/// dependencies.
 ///
 /// For `LocalSource::Directory`, `LocalSource::Link`, and
 /// `LocalSource::Portal` we read the target dir's `package.json`
 /// directly. For `LocalSource::Tarball` we open the `.tgz`, find the
 /// first `*/package.json` entry, and parse its contents without
 /// extracting the rest of the archive.
+pub(crate) struct LocalManifest {
+    pub name: String,
+    pub version: String,
+    pub dependencies: BTreeMap<String, String>,
+    pub optional_dependencies: BTreeMap<String, String>,
+    pub peer_dependencies: BTreeMap<String, String>,
+    pub peer_dependencies_meta: BTreeMap<String, aube_lockfile::PeerDepMeta>,
+}
+
 pub(crate) fn read_local_manifest(
     local: &LocalSource,
     importer_root: &Path,
-) -> Result<(String, String, BTreeMap<String, String>), Error> {
+) -> Result<LocalManifest, Error> {
     let Some(local_path) = local.path() else {
         return Err(Error::Registry(
             local.specifier(),
@@ -169,11 +179,48 @@ pub(crate) fn read_local_manifest(
     let pj: aube_manifest::PackageJson = sonic_rs::from_slice(&content)
         .or_else(|_| serde_json::from_slice(&content))
         .map_err(|e| Error::Registry(local.specifier(), e.to_string()))?;
-    Ok((
-        pj.name.unwrap_or_default(),
-        pj.version.unwrap_or_else(|| "0.0.0".to_string()),
-        pj.dependencies,
-    ))
+    // A peer declared only in `peerDependenciesMeta` still counts as a
+    // peer (range `*`), matching how registry packuments are read.
+    let peer_dependencies_meta: BTreeMap<String, aube_lockfile::PeerDepMeta> = pj
+        .extra
+        .get("peerDependenciesMeta")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|meta| meta.keys())
+        .map(|name| {
+            let optional = pj.peer_dependency_is_optional(name);
+            (name.clone(), aube_lockfile::PeerDepMeta { optional })
+        })
+        .collect();
+    let mut peer_dependencies = pj.peer_dependencies.clone();
+    for name in peer_dependencies_meta.keys() {
+        peer_dependencies
+            .entry(name.clone())
+            .or_insert_with(|| "*".to_string());
+    }
+    Ok(LocalManifest {
+        name: pj.name.unwrap_or_default(),
+        version: pj.version.unwrap_or_else(|| "0.0.0".to_string()),
+        dependencies: pj.dependencies,
+        optional_dependencies: pj.optional_dependencies,
+        peer_dependencies,
+        peer_dependencies_meta,
+    })
+}
+
+/// Read the declared package name from a local source before adding it to a
+/// manifest. Package-manager downloads commonly use generic filenames such as
+/// `package.tgz`; the archive manifest, rather than that filename, identifies
+/// the dependency key.
+pub fn read_local_package_name(local: &LocalSource, importer_root: &Path) -> Result<String, Error> {
+    let name = read_local_manifest(local, importer_root)?.name;
+    if name.is_empty() {
+        return Err(Error::Registry(
+            local.specifier(),
+            "local package manifest has no name".to_string(),
+        ));
+    }
+    Ok(name)
 }
 
 pub(crate) async fn resolve_exec_manifest(

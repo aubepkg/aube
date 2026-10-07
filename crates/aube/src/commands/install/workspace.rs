@@ -3,7 +3,7 @@ use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-pub(super) struct WorkspaceInstallPlan {
+pub(crate) struct WorkspaceInstallPlan {
     pub workspace_packages: Vec<PathBuf>,
     pub has_workspace: bool,
     pub is_workspace_project: bool,
@@ -14,7 +14,34 @@ pub(super) struct WorkspaceInstallPlan {
     pub lifecycle_manifests: Vec<(String, aube_manifest::PackageJson)>,
 }
 
-pub(super) fn discover_workspace_plan(
+impl WorkspaceInstallPlan {
+    /// The plan for a project considered on its own: the root importer,
+    /// no members. `rebuild` falls back to this when the workspace
+    /// layout can't be read, so a single unreadable member manifest
+    /// can't take down a repair command.
+    pub(crate) fn root_only(cwd: &Path, root_manifest: &aube_manifest::PackageJson) -> Self {
+        let mut ws_dirs = BTreeMap::new();
+        let mut ws_package_versions = HashMap::new();
+        if let Some(ref name) = root_manifest.name {
+            let version = root_manifest.version.as_deref().unwrap_or("0.0.0");
+            ws_package_versions.insert(name.clone(), version.to_string());
+            ws_dirs.insert(name.clone(), cwd.to_path_buf());
+        }
+        let manifests = vec![(".".to_string(), root_manifest.clone())];
+        Self {
+            workspace_packages: Vec::new(),
+            has_workspace: false,
+            is_workspace_project: false,
+            link_all_workspace_importers: false,
+            lifecycle_manifests: manifests.clone(),
+            manifests,
+            ws_package_versions,
+            ws_dirs,
+        }
+    }
+}
+
+pub(crate) fn discover_workspace_plan(
     cwd: &Path,
     root_manifest: &aube_manifest::PackageJson,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
@@ -229,13 +256,19 @@ pub(super) fn merge_member_lockfile_graphs(
     workspace_root: &std::path::Path,
     graph: &mut aube_lockfile::LockfileGraph,
     manifests: &[(String, aube_manifest::PackageJson)],
-) {
+) -> Result<(), aube_lockfile::Error> {
+    let root_selected = crate::commands::selected_lockfile_kind(workspace_root)?;
     for (importer_path, manifest) in manifests {
         if importer_path == "." || graph.importers.contains_key(importer_path) {
             continue;
         }
         let member_dir = importer_project_dir(workspace_root, importer_path);
-        let member_graph = match aube_lockfile::parse_lockfile(&member_dir, manifest) {
+        let selected = crate::commands::selected_lockfile_kind(&member_dir)?.or(root_selected);
+        let member_graph = match aube_lockfile::parse_lockfile_selecting(
+            &member_dir,
+            manifest,
+            selected,
+        ) {
             Ok(member_graph) => member_graph,
             Err(e) => {
                 tracing::debug!(
@@ -251,6 +284,7 @@ pub(super) fn merge_member_lockfile_graphs(
             graph.packages.entry(dep_path).or_insert(pkg);
         }
     }
+    Ok(())
 }
 
 pub(super) fn order_lifecycle_manifests(
@@ -355,7 +389,7 @@ pub(super) fn order_lifecycle_manifests(
 /// already ships a `pnpm-lock.yaml` (or any other supported lockfile)
 /// keeps getting that file rewritten in place instead of gaining a
 /// surprise `aube-lock.yaml` next to it. This mirrors the single-project
-/// write path ([`aube_lockfile::write_lockfile_preserving_existing`]) and
+/// write path ([`aube_lockfile::write_lockfile_as`]) and
 /// pnpm's own `sharedWorkspaceLockfile=false` behavior, where each
 /// member keeps its own `pnpm-lock.yaml`. `fallback_kind` is only used
 /// for projects (root or member) that have no lockfile yet (the
@@ -379,6 +413,7 @@ pub(super) fn write_per_project_lockfiles(
     write_selection: Option<&std::collections::BTreeSet<String>>,
 ) -> miette::Result<()> {
     use miette::IntoDiagnostic;
+    let root_selected = crate::commands::selected_lockfile_kind(workspace_root)?;
     for (importer_path, pkg_manifest) in workspace_manifests {
         // Filtered install: only (re)write the selected importers'
         // lockfiles. Without this an `aube install --filter <member>`
@@ -423,8 +458,14 @@ pub(super) fn write_per_project_lockfiles(
         // without one fall back to the workspace default. Without this,
         // a `pnpm-lock.yaml`-based member gets a redundant `aube-lock.yaml`
         // written alongside its (preserved) pnpm lockfile.
-        let write_kind =
-            aube_lockfile::detect_existing_lockfile_kind(&pkg_dir).unwrap_or(fallback_kind);
+        let selected = crate::commands::selected_lockfile_kind(&pkg_dir)?.or(root_selected);
+        let write_kind = match selected {
+            Some(kind) => {
+                aube_lockfile::detect_existing_lockfile_kind_selecting(&pkg_dir, Some(kind))
+                    .unwrap_or(kind)
+            }
+            None => aube_lockfile::detect_existing_lockfile_kind(&pkg_dir).unwrap_or(fallback_kind),
+        };
         let written = aube_lockfile::write_lockfile_as(&pkg_dir, &subset, pkg_manifest, write_kind)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to write per-project lockfile at {importer_path}"))?;
@@ -796,7 +837,7 @@ mod member_graph_merge_tests {
             importers: BTreeMap::from([(".".to_string(), Vec::new())]),
             ..Default::default()
         };
-        merge_member_lockfile_graphs(root.path(), &mut root_only, &manifests);
+        merge_member_lockfile_graphs(root.path(), &mut root_only, &manifests).unwrap();
 
         let app_deps = root_only
             .importers
@@ -828,7 +869,7 @@ mod member_graph_merge_tests {
             (".".to_string(), manifest("root")),
             ("packages/app".to_string(), manifest("@test/app")),
         ];
-        merge_member_lockfile_graphs(root.path(), &mut graph, &manifests);
+        merge_member_lockfile_graphs(root.path(), &mut graph, &manifests).unwrap();
         assert_eq!(graph.importers.len(), before);
     }
 }

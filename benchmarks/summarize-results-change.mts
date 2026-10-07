@@ -24,8 +24,10 @@ const after: Results = JSON.parse(readFileSync(afterPath, 'utf8'))
 
 const beforeRows = new Map(before.rows.map((row) => [row.key, row]))
 const afterRows = new Map(after.rows.map((row) => [row.key, row]))
-const tools = (after.managers || ['aube', 'bun', 'pnpm'])
-  .filter((tool) => before.managers?.includes(tool) !== false)
+const tools = after.managers || ['aube', 'bun', 'pnpm']
+// A tool the previous results did not measure (a newly added subject such as
+// aube-nogvs) is shown as new rather than as a change from n/a.
+const newTools = new Set(tools.filter((tool) => before.managers?.includes(tool) === false))
 
 function ms(value: number | null | undefined): string {
   if (value == null) return 'n/a'
@@ -70,7 +72,11 @@ for (const row of after.rows) {
 
   table.push(
     `| ${row.label} | ${tools
-      .map((tool) => `${ms(oldRow.values[tool])} -> ${ms(row.values[tool])} (${pct(oldRow.values[tool], row.values[tool])})`)
+      .map((tool) =>
+        newTools.has(tool)
+          ? `new ${ms(row.values[tool])}`
+          : `${ms(oldRow.values[tool])} -> ${ms(row.values[tool])} (${pct(oldRow.values[tool], row.values[tool])})`,
+      )
       .join(' | ')} |`,
   )
 }

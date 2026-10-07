@@ -1,3 +1,7 @@
+---
+description: Use the aube C ABI with asynchronous handles, explicit memory ownership, callbacks, or polled events.
+---
+
 # C ABI
 
 `@jdxcode/aube-ffi` exposes aube through a stable C ABI for Bun FFI, Deno FFI,
@@ -23,7 +27,7 @@ for non-npm consumers. Package versions track the aube workspace version.
 
 ## Header and operation model
 
-The hand-written [`aube.h`](https://github.com/jdx/aube/blob/main/crates/aube-ffi/include/aube.h)
+The hand-written [`aube.h`](https://github.com/aubepkg/aube/blob/main/crates/aube-ffi/include/aube.h)
 declares these operations:
 
 ```c
@@ -39,6 +43,7 @@ uint64_t aube_add(
     void *ctx);
 char *aube_wait(uint64_t handle);
 int32_t aube_cancel(uint64_t handle);
+char *aube_events_next(uint64_t handle);
 void aube_string_free(char *value);
 ```
 
@@ -134,6 +139,9 @@ Codes follow the published [error-code stability policy](/error-codes).
 
 ## Polled events
 
+The following fragment uses `library`, `c`, `ptr`, and `CString` from the
+[Bun FFI setup](#bun-ffi) below.
+
 Hosts that cannot receive callbacks on foreign threads (Bun FFI, some ctypes
 setups) can poll instead. Start the operation with `bufferEvents: true` and
 drain the queue from any host thread:
@@ -160,7 +168,10 @@ while (!terminal) {
 }
 // The terminal event arrived, so aube_wait returns immediately and
 // releases the handle.
-const result = library.symbols.aube_wait(handle)
+const resultPointer = library.symbols.aube_wait(handle)
+if (!resultPointer) throw new Error("aube_wait returned null")
+const result = JSON.parse(new CString(resultPointer).toString())
+library.symbols.aube_string_free(resultPointer)
 ```
 
 The terminal event is the `complete` phase on success or the `error` output a

@@ -13,12 +13,23 @@ _common_setup() {
 	# uploads `target/debug/aube` as an artifact; the bats shards then
 	# download just that one file. Materialize the shims as hardlinks to
 	# the shared `aube` inode so the argv[0] dispatch in `main.rs` resolves
-	# correctly. `ln -f` is idempotent — it refreshes if `aube` was rebuilt
-	# and is a no-op if the hardlinks already point at the same inode.
+	# correctly. Refreshed on every setup so a rebuilt `aube` is picked up.
+	#
+	# Link to a unique name and rename over the shim rather than `ln -f`:
+	# `ln -f` unlinks its target before linking, and every test in a parallel
+	# run does this to the same two paths, so a test invoking `aubr` during
+	# another's window saw "No such file or directory". Rename is atomic, so
+	# the path is always either the old link or the new one.
 	local _aube_bin="$PROJECT_ROOT/target/debug/aube"
 	if [ -x "$_aube_bin" ]; then
-		ln -f "$_aube_bin" "$PROJECT_ROOT/target/debug/aubr" 2>/dev/null || true
-		ln -f "$_aube_bin" "$PROJECT_ROOT/target/debug/aubx" 2>/dev/null || true
+		local _shim _staged
+		for _shim in aubr aubx; do
+			_staged="$PROJECT_ROOT/target/debug/.$_shim.$$.$RANDOM"
+			if ln "$_aube_bin" "$_staged" 2>/dev/null; then
+				mv -f "$_staged" "$PROJECT_ROOT/target/debug/$_shim" 2>/dev/null ||
+					rm -f "$_staged"
+			fi
+		done
 	fi
 
 	TEST_TEMP_DIR="$(temp_make)"
@@ -46,7 +57,7 @@ _common_setup() {
 	unset AUBE_TRACE
 
 	# Keep the update notifier (install.rs:… -> update_check.rs) from
-	# hitting aube.jdx.dev during BATS. Unsetting CI re-enables it by
+	# hitting aube.sh during BATS. Unsetting CI re-enables it by
 	# default, so we suppress it explicitly here — otherwise every
 	# `aube install` / `add` / `update` test would spend ~1.5s on a
 	# DNS/timeout round-trip for no benefit.
@@ -81,6 +92,44 @@ _common_setup() {
 
 _common_teardown() {
 	temp_del "$TEST_TEMP_DIR"
+}
+
+# Assert that the directory link `$1` targets `$2`, a path relative to the
+# link's parent. Unix symlinks store that relative path; Windows junctions
+# store an absolute one, so there check that both name the same directory.
+_assert_link_target() {
+	local link="$1" expected="$2"
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT)
+		local link_path expected_path
+		link_path="$(cd "$link" && pwd -P)" || return 1
+		expected_path="$(cd "$(dirname "$link")/$expected" && pwd -P)" || return 1
+		assert_equal "$link_path" "$expected_path"
+		;;
+	*)
+		run readlink "$link"
+		assert_output "$expected"
+		;;
+	esac
+}
+
+# Print `$1` in the form a native program reports and reads. On Windows,
+# Git Bash paths such as `/tmp/x` mean `C:\tmp\x` to aube (and Node), so
+# convert them with `cygpath`; elsewhere the path is already native.
+_native_path() {
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT) cygpath -w "$1" ;;
+	*) printf '%s\n' "$1" ;;
+	esac
+}
+
+# Skip the current test on Windows. Git Bash, MSYS2, and Cygwin report
+# `MINGW64_NT-…` / `MSYS_NT-…` / `CYGWIN_NT-…` from `uname -s`, never
+# `Windows_NT` (that is `$OS`), so match all of them.
+_skip_on_windows() {
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT) skip "$1" ;;
+	esac
 }
 
 # Create a minimal package.json + aube-lock.yaml fixture in cwd.

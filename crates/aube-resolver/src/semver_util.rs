@@ -1,6 +1,6 @@
 use aube_registry::Packument;
 
-/// Outcome of [`pick_version`]. Distinguishes "nothing in the range
+/// Outcome of `pick_version`. Distinguishes "nothing in the range
 /// at all" from "the cutoff filtered every otherwise-satisfying
 /// version" so the caller can surface a meaningful strict-mode error
 /// instead of pretending the range itself was wrong.
@@ -26,7 +26,7 @@ impl<'a> PickResult<'a> {
 
 /// Single-package version pick for `aube add`'s manifest step, honoring
 /// `minimumReleaseAge` with the same dist-tag preference, exemption, and
-/// strict/lenient fallback semantics [`pick_version`] applies inside full
+/// strict/lenient fallback semantics `pick_version` applies inside full
 /// resolution. Without it, `add` writes the freshly published version into
 /// the manifest as a pinned spec, which the resolver's lenient fallback then
 /// honors — bypassing the very gate `minimumReleaseAge` exists to provide.
@@ -37,7 +37,7 @@ impl<'a> PickResult<'a> {
 /// then highest satisfying).
 ///
 /// A gated `latest` range is normalized to `*` here, at the API boundary,
-/// so no caller can reintroduce the bypass: [`pick_version`]'s internal
+/// so no caller can reintroduce the bypass: `pick_version`'s internal
 /// dist-tag fallback turns `latest` into the tagged version's exact range,
 /// whose lenient fallback would admit a fresh publish — the very thing the
 /// gate exists to block. `*` keeps the dist-tag preference for a mature
@@ -49,7 +49,56 @@ pub fn pick_version_for_add<'a>(
     range: &str,
     minimum_release_age: Option<&crate::MinimumReleaseAge>,
 ) -> PickResult<'a> {
+    match pick_key_for_add(
+        VersionIndex {
+            versions: &packument.versions,
+            dist_tags: &packument.dist_tags,
+            time: &packument.time,
+        },
+        registry_name,
+        range,
+        minimum_release_age,
+    ) {
+        VersionPick::Found(key) => packument
+            .versions
+            .get(key)
+            .map(PickResult::Found)
+            .unwrap_or(PickResult::NoMatch),
+        VersionPick::NoMatch => PickResult::NoMatch,
+        VersionPick::AgeGated => PickResult::AgeGated,
+    }
+}
+
+/// Apply the same add/report age policy to deferred release metadata.
+pub(crate) fn pick_resolution_for_add<'a>(
+    p: &'a aube_registry::ResolutionPackument,
+    registry_name: &str,
+    range: &str,
+    minimum_release_age: Option<&crate::MinimumReleaseAge>,
+) -> Result<PickResult<'a>, crate::Error> {
+    resolution_pick(
+        p,
+        pick_key_for_add(
+            VersionIndex {
+                versions: &p.versions,
+                dist_tags: &p.dist_tags,
+                time: &p.time,
+            },
+            registry_name,
+            range,
+            minimum_release_age,
+        ),
+    )
+}
+
+fn pick_key_for_add<'a, V: VersionCandidate>(
+    packument: VersionIndex<'a, V>,
+    registry_name: &str,
+    range: &str,
+    minimum_release_age: Option<&crate::MinimumReleaseAge>,
+) -> VersionPick<'a> {
     let cutoff = minimum_release_age.and_then(|m| m.cutoff());
+    let range = registry_alias_range(range);
     let range = if range == "latest" && cutoff.is_some() {
         "*"
     } else {
@@ -66,7 +115,7 @@ pub fn pick_version_for_add<'a>(
             },
         })
     };
-    pick_version(
+    pick_version_key(
         packument,
         range,
         None,
@@ -76,6 +125,20 @@ pub fn pick_version_for_add<'a>(
         strict,
         is_age_exempt,
     )
+}
+
+/// Return the version tail from an `npm:` alias spec. Resolution preprocesses
+/// this protocol before picking; report-only callers use this entry point
+/// directly, so normalize it here as well.
+fn registry_alias_range(range: &str) -> &str {
+    if let Some(rest) = range.strip_prefix("npm:") {
+        match rest.rfind('@') {
+            Some(at) if at > 0 => &rest[at + 1..],
+            _ => "latest",
+        }
+    } else {
+        range
+    }
 }
 
 /// Pick the best version from a packument that satisfies the given range.
@@ -114,6 +177,7 @@ pub fn pick_version_for_add<'a>(
 /// non-deprecated one in the same range — see [`outranks`].
 #[inline]
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn pick_version<'a>(
     packument: &'a Packument,
     range_str: &str,
@@ -124,6 +188,118 @@ pub(crate) fn pick_version<'a>(
     strict: bool,
     is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
 ) -> PickResult<'a> {
+    match pick_version_key(
+        VersionIndex {
+            versions: &packument.versions,
+            dist_tags: &packument.dist_tags,
+            time: &packument.time,
+        },
+        range_str,
+        locked,
+        pick_lowest,
+        cutoff,
+        exempt_cutoff,
+        strict,
+        is_age_exempt,
+    ) {
+        VersionPick::Found(key) => match packument.versions.get(key) {
+            Some(metadata) => PickResult::Found(metadata),
+            None => PickResult::NoMatch,
+        },
+        VersionPick::NoMatch => PickResult::NoMatch,
+        VersionPick::AgeGated => PickResult::AgeGated,
+    }
+}
+
+/// Information needed to rank releases, without their dependency metadata.
+pub(crate) trait VersionCandidate {
+    fn is_deprecated(&self) -> bool;
+}
+
+impl VersionCandidate for aube_registry::ResolutionVersion {
+    fn is_deprecated(&self) -> bool {
+        self.is_deprecated()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pick_resolution_version<'a>(
+    p: &'a aube_registry::ResolutionPackument,
+    range: &str,
+    locked: Option<&str>,
+    lowest: bool,
+    cutoff: Option<&str>,
+    wall: Option<&str>,
+    strict: bool,
+    exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
+) -> Result<PickResult<'a>, crate::Error> {
+    resolution_pick(
+        p,
+        pick_version_key(
+            VersionIndex {
+                versions: &p.versions,
+                dist_tags: &p.dist_tags,
+                time: &p.time,
+            },
+            range,
+            locked,
+            lowest,
+            cutoff,
+            wall,
+            strict,
+            exempt,
+        ),
+    )
+}
+
+fn resolution_pick<'a>(
+    p: &'a aube_registry::ResolutionPackument,
+    pick: VersionPick<'_>,
+) -> Result<PickResult<'a>, crate::Error> {
+    match pick {
+        VersionPick::Found(key) => match p.versions.get(key) {
+            Some(v) => v
+                .metadata()
+                .map(PickResult::Found)
+                .map_err(|e| crate::Error::Registry(p.name.clone(), e.to_string())),
+            None => Ok(PickResult::NoMatch),
+        },
+        VersionPick::NoMatch => Ok(PickResult::NoMatch),
+        VersionPick::AgeGated => Ok(PickResult::AgeGated),
+    }
+}
+
+impl VersionCandidate for aube_registry::VersionMetadata {
+    fn is_deprecated(&self) -> bool {
+        self.deprecated.is_some()
+    }
+}
+
+pub(crate) struct VersionIndex<'a, V> {
+    pub(crate) versions: &'a std::collections::BTreeMap<String, V>,
+    pub(crate) dist_tags: &'a std::collections::BTreeMap<String, String>,
+    pub(crate) time: &'a std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum VersionPick<'a> {
+    Found(&'a str),
+    NoMatch,
+    AgeGated,
+}
+
+/// Select a registry map key before loading full metadata for that release.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pick_version_key<'a, V: VersionCandidate>(
+    packument: VersionIndex<'a, V>,
+    range_str: &str,
+    locked: Option<&str>,
+    pick_lowest: bool,
+    cutoff: Option<&str>,
+    exempt_cutoff: Option<&str>,
+    strict: bool,
+    is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
+) -> VersionPick<'a> {
     // Handle dist-tag references. If the requested range is a tag
     // name and the packument has that tag, use the tagged version
     // as the effective range. Special case `latest`: some registries
@@ -147,21 +323,21 @@ pub(crate) fn pick_version<'a>(
             // own dist-tag rules forbid colon in tag names but the
             // registry does not enforce that.
             if looks_like_protocol_range(range_str) {
-                return PickResult::NoMatch;
+                return VersionPick::NoMatch;
             }
             let effective_range = if let Some(tagged_version) = packument.dist_tags.get(range_str) {
                 tagged_version.clone()
             } else if range_str == "latest" {
-                match highest_stable_version(packument) {
+                match highest_stable_key(packument.versions.keys()) {
                     Some(v) => v,
-                    None => return PickResult::NoMatch,
+                    None => return VersionPick::NoMatch,
                 }
             } else {
-                return PickResult::NoMatch;
+                return VersionPick::NoMatch;
             };
             match node_semver::Range::parse(normalize_range(&effective_range)) {
                 Ok(r) => r,
-                Err(_) => return PickResult::NoMatch,
+                Err(_) => return VersionPick::NoMatch,
             }
         }
     };
@@ -195,9 +371,9 @@ pub(crate) fn pick_version<'a>(
         && let Ok(v) = node_semver::Version::parse(locked_ver)
         && v.satisfies(&range)
         && passes_cutoff(locked_ver, Some(&v))
-        && let Some(meta) = packument.versions.get(locked_ver)
+        && let Some((key, _)) = packument.versions.get_key_value(locked_ver)
     {
-        return PickResult::Found(meta);
+        return VersionPick::Found(key);
     }
 
     // If `dist-tags.latest` satisfies the range, prefer it over the
@@ -213,9 +389,9 @@ pub(crate) fn pick_version<'a>(
         && let Ok(v) = node_semver::Version::parse(latest_ver)
         && v.satisfies(&range)
         && passes_cutoff(latest_ver, Some(&v))
-        && let Some(meta) = packument.versions.get(latest_ver)
+        && let Some((key, _)) = packument.versions.get_key_value(latest_ver)
     {
-        return PickResult::Found(meta);
+        return VersionPick::Found(key);
     }
 
     // Track whether *any* version satisfied the range — if so but
@@ -223,11 +399,10 @@ pub(crate) fn pick_version<'a>(
     // related, not a real "no match in range".
     let mut had_satisfying_but_age_gated = false;
 
-    let mut best: Option<(node_semver::Version, &'a aube_registry::VersionMetadata)> = None;
-    let mut fallback_lowest: Option<(node_semver::Version, &'a aube_registry::VersionMetadata)> =
-        None;
+    let mut best: Option<(node_semver::Version, (&'a str, bool))> = None;
+    let mut fallback_lowest: Option<(node_semver::Version, (&'a str, bool))> = None;
 
-    for (ver_str, meta) in &packument.versions {
+    for (ver_str, meta) in packument.versions {
         let Ok(v) = node_semver::Version::parse(ver_str) else {
             continue;
         };
@@ -235,27 +410,39 @@ pub(crate) fn pick_version<'a>(
             continue;
         }
 
+        let candidate = (ver_str.as_str(), meta.is_deprecated());
+
         // The lenient fallback drops the minimumReleaseAge gate but never
         // the time-based hard wall, so only versions that clear
         // `exempt_cutoff` are eligible (a no-op `None` when time-based
         // mode is off).
         if passes_effective_cutoff(ver_str, exempt_cutoff)
-            && outranks(&v, meta, fallback_lowest.as_ref(), true)
+            && outranks_status(
+                &v,
+                candidate.1,
+                fallback_lowest.as_ref().map(|(v, m)| (v, m.1)),
+                true,
+            )
         {
-            fallback_lowest = Some((v.clone(), meta));
+            fallback_lowest = Some((v.clone(), candidate));
         }
 
         if passes_cutoff(ver_str, Some(&v)) {
-            if outranks(&v, meta, best.as_ref(), pick_lowest) {
-                best = Some((v, meta));
+            if outranks_status(
+                &v,
+                candidate.1,
+                best.as_ref().map(|(v, m)| (v, m.1)),
+                pick_lowest,
+            ) {
+                best = Some((v, candidate));
             }
         } else {
             had_satisfying_but_age_gated = true;
         }
     }
 
-    if let Some((_, meta)) = best {
-        return PickResult::Found(meta);
+    if let Some((_, (key, _))) = best {
+        return VersionPick::Found(key);
     }
 
     // Strict mode (or no cutoff active): give up. Distinguish age-gate
@@ -263,9 +450,9 @@ pub(crate) fn pick_version<'a>(
     // pretending the range itself was wrong.
     if strict || cutoff.is_none() {
         return if had_satisfying_but_age_gated {
-            PickResult::AgeGated
+            VersionPick::AgeGated
         } else {
-            PickResult::NoMatch
+            VersionPick::NoMatch
         };
     }
 
@@ -273,17 +460,17 @@ pub(crate) fn pick_version<'a>(
     // the minimumReleaseAge gate and picks the *lowest* satisfying
     // version (lowest non-deprecated, per `outranks`) — the candidate
     // already cleared the time-based wall above.
-    if let Some((_, meta)) = fallback_lowest {
-        return PickResult::Found(meta);
+    if let Some((_, (key, _))) = fallback_lowest {
+        return VersionPick::Found(key);
     }
     // Nothing left: either the range was unsatisfiable, or the
     // time-based wall excluded every satisfying version. Report the age
     // gate in the latter case so the caller surfaces a meaningful error
     // rather than a bogus "no matching version".
     if had_satisfying_but_age_gated {
-        PickResult::AgeGated
+        VersionPick::AgeGated
     } else {
-        PickResult::NoMatch
+        VersionPick::NoMatch
     }
 }
 
@@ -312,12 +499,27 @@ pub(crate) fn outranks(
     incumbent: Option<&(node_semver::Version, &aube_registry::VersionMetadata)>,
     lowest: bool,
 ) -> bool {
-    let Some((cur_v, cur_meta)) = incumbent else {
+    outranks_status(
+        v,
+        meta.deprecated.is_some(),
+        incumbent.map(|(version, metadata)| (version, metadata.deprecated.is_some())),
+        lowest,
+    )
+}
+
+/// Compare release status first, then semver in the requested direction.
+#[inline]
+fn outranks_status(
+    v: &node_semver::Version,
+    deprecated: bool,
+    incumbent: Option<(&node_semver::Version, bool)>,
+    lowest: bool,
+) -> bool {
+    let Some((cur_v, cur_deprecated)) = incumbent else {
         return true;
     };
-    let live = meta.deprecated.is_none();
-    if live != cur_meta.deprecated.is_none() {
-        return live;
+    if deprecated != cur_deprecated {
+        return !deprecated;
     }
     if lowest { v < cur_v } else { v > cur_v }
 }
@@ -363,8 +565,12 @@ fn looks_like_protocol_range(range_str: &str) -> bool {
 
 #[inline]
 pub(crate) fn highest_stable_version(packument: &Packument) -> Option<String> {
+    highest_stable_key(packument.versions.keys())
+}
+
+fn highest_stable_key<'a>(keys: impl Iterator<Item = &'a String>) -> Option<String> {
     let mut best: Option<(node_semver::Version, String)> = None;
-    for key in packument.versions.keys() {
+    for key in keys {
         let Ok(v) = node_semver::Version::parse(key) else {
             continue;
         };
@@ -466,4 +672,162 @@ fn with_cached_version<R>(version: &str, f: impl FnOnce(Option<&node_semver::Ver
         }
         f(map.get(version).and_then(Option::as_ref))
     })
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    struct Candidate {
+        deprecated: bool,
+    }
+    impl VersionCandidate for Candidate {
+        fn is_deprecated(&self) -> bool {
+            self.deprecated
+        }
+    }
+
+    #[test]
+    fn compact_candidates_preserve_selection_policies_without_dependency_metadata() {
+        let versions: BTreeMap<_, _> = [
+            ("1.0.0".to_owned(), Candidate { deprecated: true }),
+            ("1.1.0".to_owned(), Candidate { deprecated: false }),
+            ("2.0.0".to_owned(), Candidate { deprecated: false }),
+            ("3.0.0-beta.1".to_owned(), Candidate { deprecated: false }),
+        ]
+        .into();
+        let mut tags: BTreeMap<String, String> = [
+            ("latest".into(), "2.0.0".into()),
+            ("beta".into(), "3.0.0-beta.1".into()),
+            ("workspace:*".into(), "1.1.0".into()),
+        ]
+        .into();
+        let times: BTreeMap<String, String> = [
+            ("1.0.0".into(), "2026-01-01".into()),
+            ("1.1.0".into(), "2026-02-01".into()),
+            ("2.0.0".into(), "2026-09-01".into()),
+        ]
+        .into();
+        let pick = |range, locked, lowest, cutoff, wall, strict, exempt| {
+            pick_version_key(
+                VersionIndex {
+                    versions: &versions,
+                    dist_tags: &tags,
+                    time: &times,
+                },
+                range,
+                locked,
+                lowest,
+                cutoff,
+                wall,
+                strict,
+                |v, _| exempt && v == "2.0.0",
+            )
+        };
+        assert_eq!(
+            pick("*", None, false, None, None, true, false),
+            VersionPick::Found("2.0.0")
+        );
+        assert_eq!(
+            pick("*", Some("1.0.0"), false, None, None, true, false),
+            VersionPick::Found("1.0.0")
+        );
+        assert_eq!(
+            pick("*", None, true, None, None, true, false),
+            VersionPick::Found("1.1.0")
+        );
+        assert_eq!(
+            pick("beta", None, false, None, None, true, false),
+            VersionPick::Found("3.0.0-beta.1")
+        );
+        assert_eq!(
+            pick("workspace:*", None, false, None, None, true, false),
+            VersionPick::NoMatch
+        );
+        assert_eq!(
+            pick("^4", None, false, None, None, true, false),
+            VersionPick::NoMatch
+        );
+        assert_eq!(
+            pick("*", None, false, Some("2026-06-01"), None, true, false),
+            VersionPick::Found("1.1.0")
+        );
+        assert_eq!(
+            pick("*", None, false, Some("2026-06-01"), None, true, true),
+            VersionPick::Found("2.0.0")
+        );
+        assert_eq!(
+            pick(
+                "*",
+                None,
+                false,
+                Some("2026-06-01"),
+                Some("2026-03-01"),
+                true,
+                true
+            ),
+            VersionPick::Found("1.1.0")
+        );
+        assert_eq!(
+            pick("*", None, false, Some("2025-01-01"), None, true, false),
+            VersionPick::AgeGated
+        );
+        assert_eq!(
+            pick("*", None, false, Some("2025-01-01"), None, false, false),
+            VersionPick::Found("1.1.0")
+        );
+        assert_eq!(
+            pick(
+                "*",
+                None,
+                false,
+                Some("2025-01-01"),
+                Some("2025-01-01"),
+                false,
+                false
+            ),
+            VersionPick::AgeGated
+        );
+        tags.remove("latest");
+        assert_eq!(
+            pick_version_key(
+                VersionIndex {
+                    versions: &versions,
+                    dist_tags: &tags,
+                    time: &times
+                },
+                "latest",
+                None,
+                false,
+                None,
+                None,
+                true,
+                |_, _| false
+            ),
+            VersionPick::Found("2.0.0")
+        );
+    }
+
+    #[test]
+    fn metadata_lookup_uses_registry_key_when_embedded_version_differs() {
+        let full: Packument = serde_json::from_value(serde_json::json!({
+            "name": "sample",
+            "versions": {
+                "1.0.0": {
+                    "name": "sample",
+                    "version": "different",
+                    "dependencies": { "kept": "^2" }
+                }
+            }
+        }))
+        .unwrap();
+        let PickResult::Found(metadata) =
+            pick_version(&full, "1.0.0", None, false, None, None, true, |_, _| false)
+        else {
+            panic!("expected the registry key to match")
+        };
+        assert_eq!(metadata.version, "different");
+        assert_eq!(metadata.dependencies["kept"], "^2");
+    }
 }

@@ -1,3 +1,7 @@
+---
+description: Find stable aube error and warning identifiers, diagnostic fields, and process exit codes.
+---
+
 # Error and warning codes
 
 <script setup>
@@ -12,15 +16,25 @@ structured field — no regex on stderr required.
 Use the search box and category chips below to filter the list
 directly from the registry.
 
+`aube doctor` reports `ERR_AUBE_INVALID_CAFILE` (exit 1) for configured CA
+files that cannot be read or contain no usable PEM certificates. It checks
+top-level and per-registry `cafile` settings and `NODE_EXTRA_CA_CERTS` locally;
+a successful check does not establish registry connectivity or server trust.
+
 ## How to read codes
 
 **Default text output**: errors include the code in their
 miette-rendered output, e.g. `× foo (ERR_AUBE_NO_LOCKFILE)`. Warnings
 include the code as a structured field after the message.
 
-**ndjson output** (`aube --reporter ndjson <cmd>`): every record carries
-a `code` field. Branch on `code == "ERR_AUBE_..."` instead of
-substring-matching the human message.
+**ndjson output** (`aube --reporter ndjson <cmd>`): diagnostic events include
+a `code` field. Progress and other informational events may not have one.
+Read the structured code when present instead of matching the human message.
+The reporter writes to stderr; for example:
+
+```sh
+aube --reporter ndjson install 2> aube-events.ndjson
+```
 
 ```jsonc
 {
@@ -60,7 +74,7 @@ is grouped by category — see [`crates/aube-codes/src/exit.rs`][exit-src]
 for the full layout — but consumers should branch on the exit *value*,
 not the category, since categories are documentation, not API.
 
-[exit-src]: https://github.com/jdx/aube/blob/main/crates/aube-codes/src/exit.rs
+[exit-src]: https://github.com/aubepkg/aube/blob/main/crates/aube-codes/src/exit.rs
 
 ## Errors
 

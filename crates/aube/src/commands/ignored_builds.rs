@@ -9,7 +9,6 @@
 //!
 //! Pure read — no network, no writes, no project lock.
 
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use std::collections::BTreeSet;
 
@@ -29,10 +28,10 @@ Examples:
   $ aube approve-builds
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct IgnoredBuildsArgs {
     /// Operate on globally-installed packages instead of the current project.
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 }
 
@@ -133,7 +132,7 @@ pub(super) struct IgnoredEntry {
 pub(super) fn collect_ignored(project_dir: &std::path::Path) -> miette::Result<Vec<IgnoredEntry>> {
     let manifest = super::load_manifest(&project_dir.join("package.json"))?;
 
-    let graph = match aube_lockfile::parse_lockfile(project_dir, &manifest) {
+    let graph = match crate::commands::parse_lockfile(project_dir, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => return Ok(Vec::new()),
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),

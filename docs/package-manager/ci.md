@@ -1,0 +1,181 @@
+---
+description: Use committed lockfiles, choose cache directories, and prepare production installs with aube in CI and containers.
+---
+
+# CI and containers
+
+Commit the project's lockfile and build approvals before adding aube to CI.
+A frozen install fails when the manifest and lockfile disagree, making the
+failure visible instead of updating dependency versions during a build.
+
+## Choose an install command
+
+| Command | Existing `node_modules` | Lockfile behavior |
+| --- | --- | --- |
+| `aube ci` | Removed before installation | Requires a fresh committed lockfile |
+| `aube install --frozen-lockfile` | Can reuse the current install | Requires a fresh committed lockfile |
+| `aube install --prod --frozen-lockfile` | Installs production dependencies | Requires a fresh committed lockfile |
+
+Use `aube ci` for a clean build. Use `--frozen-lockfile` when retaining an
+existing install is useful. Set the flag explicitly in scripts so the intent
+is clear outside CI too.
+
+## GitHub Actions
+
+The [aube setup action](https://github.com/jdx/aube-action) installs the native
+binary and can install Node.js in the same step:
+
+```yaml
+name: Test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/aube-action@v1
+        with:
+          node-version: "24"
+      - run: aube ci
+      - run: aube run --no-install test
+```
+
+Use the Node version required by your project. The final command skips the
+auto-install check because the preceding step already installed dependencies.
+See the action's README for version pins, inputs, and outputs.
+
+## Dependency builds
+
+CI cannot make an interactive build-approval decision. Review required scripts
+locally with `aube ignored-builds` and `aube approve-builds`, then commit the
+resulting workspace YAML. `strictDepBuilds: true` makes unreviewed dependency
+builds fail installation instead of being skipped.
+
+For stricter policy, see the [security settings](/security#the-paranoid-switch).
+If you enable jailed builds, check the runner's
+[platform requirements](/package-manager/jailed-builds#native-enforcement).
+
+## Cache choices
+
+`aube store path` prints the resolved content store, including its `v1/`
+directory. Registry metadata lives separately under the configured cache
+directory. `aube doctor` shows the resolved paths.
+
+The [global virtual store](/package-manager/global-virtual-store) is disabled
+in CI by default, so `node_modules` holds real package files and can be cached
+like any other directory. A frozen lockfile still controls which versions are
+installed. A cache is an optimization, not a replacement for the committed
+lockfile or build policy.
+
+To reuse installs across jobs, cache `node_modules` and run
+`aube install --frozen-lockfile`. A restored job reports "Already up to date"
+without downloading or linking anything. Don't pair the cache with `aube ci`:
+it deletes `node_modules` before installing, so the restored cache is thrown
+away.
+
+The [aube setup action](https://github.com/jdx/aube-action) does this with
+`cache: true`:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: jdx/aube-action@v1
+    with:
+      node-version: "24"
+      run-install: true
+      cache: true
+  - run: aube run --no-install test
+```
+
+With `cache: true`, `run-install` installs with
+`aube install --frozen-lockfile` instead of `aube ci` and saves `node_modules`
+right after an install that missed the cache. The key covers the runner OS and
+architecture, the Node.js and aube versions, the checkout path, every lockfile,
+`package.json`, and workspace or `.npmrc` configuration under
+`working-directory`, and the `install-args` input. In a workspace, list each
+package's `node_modules` in `cache-path`:
+
+```yaml
+- uses: jdx/aube-action@v1
+  with:
+    node-version: "24"
+    run-install: true
+    cache: true
+    cache-path: |
+      node_modules
+      packages/*/node_modules
+```
+
+### Caching without the action input
+
+To manage the cache yourself, for example with a different install step, use
+`actions/cache` directly:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: jdx/aube-action@v1
+    id: aube
+    with:
+      node-version: "24"
+  - uses: actions/cache@v6
+    with:
+      path: node_modules
+      key: aube-nm-${{ runner.os }}-${{ runner.arch }}-node${{ steps.aube.outputs.node-version }}-${{ hashFiles('**/aube-lock.yaml') }}
+  - run: aube install --frozen-lockfile
+  - run: aube run --no-install test
+```
+
+Include the Node.js version and runner architecture in the key. Dependency
+builds approved in `allowBuilds` can compile native addons for one Node.js ABI,
+and aube does not reinstall a restored `node_modules` when only the Node.js
+version changes. Don't add a `restore-keys` fallback for this cache: a partial
+match would be treated as the installed state. In a workspace, add each
+package's `node_modules` directory to `path`; the `**/aube-lock.yaml` pattern
+already covers member lockfiles when workspace packages keep their own. aube
+keeps an existing [lockfile format](/package-manager/lockfiles), so if the
+project uses `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`, or an npm lockfile,
+hash that file instead. If the repository also contains unrelated lockfiles,
+such as test fixtures, list only the project's lockfiles in `hashFiles` so
+changes to them don't invalidate the cache.
+
+Restore the cache at the same checkout path it was saved from. Windows
+junctions and transitive `link:` dependencies store absolute paths, so a tree
+restored under a different directory can report "Already up to date" while
+those links point at the old location. GitHub-hosted runners check out to the
+same path for a repository on each OS; if a job changes it (for example with
+`actions/checkout`'s `path` input), include that path in the key.
+
+## Container builds
+
+Install aube in the image using one of the [installation methods](/installation),
+then copy dependency inputs before application source when arranging cacheable
+layers. Include the lockfile, `package.json`, workspace manifests, patches, and
+configuration that affect resolution.
+
+```sh
+# Build stage: include development tools.
+aube install --frozen-lockfile
+aube run --no-install build
+
+# Runtime stage: install only runtime dependencies.
+aube install --prod --frozen-lockfile
+```
+
+Run the commands in their respective stages; they are not a complete Dockerfile.
+Root lifecycle scripts may require source files during installation. Copy those
+files before the install, or explicitly defer scripts if the project supports it.
+
+For a workspace package, [deploy](/cli/deploy) can prepare a target directory
+with publishable files and installed dependencies:
+
+```sh
+aube --filter @acme/api deploy dist/api
+```
+
+## When CI rejects the lockfile
+
+Reproduce the failure locally with `aube install --frozen-lockfile`. If the
+manifest change was intentional, run `aube install`, review the resulting diff,
+and commit the updated lockfile. See [troubleshooting](/troubleshooting#the-lockfile-is-out-of-sync)
+for repair options.

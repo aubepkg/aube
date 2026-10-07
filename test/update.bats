@@ -68,6 +68,24 @@ EOF
 	assert_file_exists node_modules/is-odd/index.js
 }
 
+@test "aube update warns when minimumReleaseAge hides a newer version" {
+	_setup_outdated_project
+	# Put the cutoff between is-odd@3.0.0 and 3.0.1.
+	age_minutes="$(node -e "console.log(Math.floor((Date.now() - Date.parse('2018-05-31T08:00:00.000Z')) / 60000))")"
+	cat >pnpm-workspace.yaml <<EOF
+packages:
+  - "."
+minimumReleaseAge: $age_minutes
+minimumReleaseAgeStrict: true
+EOF
+
+	run aube update --latest --lockfile-only is-odd
+	assert_success
+	assert_output --partial "updates hidden by minimumReleaseAge: is-odd@3.0.1"
+	run grep 'is-odd@3.0.0' aube-lock.yaml
+	assert_success
+}
+
 @test "aube update runs pnpm:devPreinstall before resolution" {
 	cat >package.json <<'EOF'
 {
@@ -314,7 +332,7 @@ EOF
 	assert_success
 	run grep -A4 '^catalogs:' aube-lock.yaml
 	assert_output --partial 'specifier: 0.1.2'
-	assert_output --partial 'version: 3.0.1'
+	assert_output --partial 'version: 0.1.2'
 }
 
 @test "aube update -r --latest updates a named catalog and preserves its prefix" {
@@ -506,6 +524,23 @@ EOF
 	# The lockfile picked up a newer version than 0.1.2 (the seed pin).
 	run grep -c 'is-odd@3' aube-lock.yaml
 	assert_success
+}
+
+@test "aube update --latest --no-save: does not resolve past the kept range" {
+	_setup_outdated_project
+	sed -i.bak 's/>=0.1.0/^0.1.0/g' package.json
+	rm package.json.bak
+
+	run aube update --latest --no-save is-odd --lockfile-only
+	assert_success
+
+	run grep '"is-odd": "^0.1.0"' package.json
+	assert_success
+	run grep -A3 'is-odd:' aube-lock.yaml
+	assert_output --partial 'specifier: ^0.1.0'
+	assert_output --partial 'version: 0.1.2'
+	run grep -c 'is-odd@3' aube-lock.yaml
+	assert_failure
 }
 
 @test "aube update --lockfile-only: refreshes lockfile without populating node_modules" {
@@ -713,5 +748,120 @@ EOF
 	run aube update
 	assert_success
 	run grep -E '^time:' aube-lock.yaml
+	assert_failure
+}
+
+_setup_root_and_member_workspace() {
+	cat >package.json <<'EOF2'
+{"name":"root","private":true,"dependencies":{"is-odd":"^3.0.1"}}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+EOF2
+	mkdir -p packages/app
+	cat >packages/app/package.json <<'EOF2'
+{"name":"app","version":"1.0.0","dependencies":{"is-even":"^1.0.0"}}
+EOF2
+}
+
+@test "aube update at the workspace root keeps member importers in the shared lockfile" {
+	_setup_root_and_member_workspace
+	run aube install
+	assert_success
+
+	# The root range is already current, so package.json stays untouched
+	# and the chained install can't paper over a root-only lockfile.
+	run aube update
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-even@1.0.0:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	assert_file_exists packages/app/node_modules/is-even/package.json
+}
+
+@test "aube install restores a member importer missing from the shared lockfile" {
+	_setup_root_and_member_workspace
+	cat >aube-lock.yaml <<'EOF2'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      is-odd:
+        specifier: ^3.0.1
+        version: 3.0.1
+
+packages:
+
+  is-number@6.0.0:
+    resolution: {integrity: sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==}
+    engines: {node: '>=0.10.0'}
+
+  is-odd@3.0.1:
+    resolution: {integrity: sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==}
+    engines: {node: '>=4'}
+
+snapshots:
+
+  is-number@6.0.0: {}
+
+  is-odd@3.0.1:
+    dependencies:
+      is-number: 6.0.0
+EOF2
+
+	run aube install
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-even@1.0.0:" aube-lock.yaml
+	assert_success
+	assert_file_exists packages/app/node_modules/is-even/package.json
+}
+
+@test "aube update at the workspace root re-resolves members sharing a changed catalog entry" {
+	cat >package.json <<'EOF2'
+{"name":"root","private":true,"dependencies":{"is-odd":"catalog:"}}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+catalog:
+  is-odd: ^0.1.2
+EOF2
+	mkdir -p packages/app
+	cat >packages/app/package.json <<'EOF2'
+{"name":"app","version":"1.0.0","dependencies":{"is-odd":"catalog:"}}
+EOF2
+	run aube install
+	assert_success
+	run grep "is-odd@0.1.2:" aube-lock.yaml
+	assert_success
+
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "packages/*"
+catalog:
+  is-odd: ^3.0.1
+EOF2
+	run aube update
+	assert_success
+
+	run grep "packages/app:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@3.0.1:" aube-lock.yaml
+	assert_success
+	run grep "is-odd@0.1.2" aube-lock.yaml
 	assert_failure
 }

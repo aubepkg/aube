@@ -164,6 +164,92 @@ teardown() {
 	# merge is a one-shot consolidation, not a permanent switch.
 }
 
+@test "branch merge keeps Aube behavior without defaultLockfile even when pnpm base exists" {
+	git init -q
+	git checkout -q -b main
+	cat >package.json <<-'EOF'
+		{"name":"test-merge-default","version":"1.0.0"}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		gitBranchLockfile: true
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	cp aube-lock.main.yaml pnpm-lock.yaml
+	mv aube-lock.main.yaml aube-lock.feature.yaml
+
+	run aube install --merge-git-branch-lockfiles --no-frozen-lockfile
+	assert_success
+	assert_file_exists aube-lock.yaml
+	assert_file_not_exists aube-lock.feature.yaml
+}
+
+@test "branch merge uses pnpm files when defaultLockfile selects pnpm" {
+	git init -q
+	git checkout -q -b main
+	cat >package.json <<-'EOF'
+		{"name":"test-merge-selected","version":"1.0.0"}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		gitBranchLockfile: true
+	EOF
+	cat >.npmrc <<-'EOF'
+		default-lockfile=pnpm-lock.yaml
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	cp pnpm-lock.main.yaml aube-lock.yaml
+	mv pnpm-lock.main.yaml pnpm-lock.feature.yaml
+
+	run aube install --merge-git-branch-lockfiles --no-frozen-lockfile
+	assert_success
+	assert_file_exists pnpm-lock.yaml
+	assert_file_not_exists pnpm-lock.feature.yaml
+}
+
+@test "branch merge includes pnpm files without defaultLockfile" {
+	git init -q
+	git checkout -q -b main
+	cat >package.json <<-'EOF'
+		{"name":"test-merge-implicit-pnpm","version":"1.0.0"}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		gitBranchLockfile: true
+	EOF
+	cat >.npmrc <<-'EOF'
+		default-lockfile-format=pnpm
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	mv pnpm-lock.main.yaml pnpm-lock.feature.yaml
+
+	run aube install --merge-git-branch-lockfiles --no-frozen-lockfile
+	assert_success
+	assert_file_exists pnpm-lock.yaml
+	assert_file_not_exists pnpm-lock.feature.yaml
+}
+
+@test "branch merge leaves inactive pnpm branch files untouched" {
+	git init -q
+	git checkout -q -b main
+	cat >package.json <<-'EOF'
+		{"name":"test-merge-one-format","version":"1.0.0"}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		gitBranchLockfile: true
+	EOF
+	run aube install --no-frozen-lockfile
+	assert_success
+	mv aube-lock.main.yaml aube-lock.feature.yaml
+	printf 'invalid: [\n' >pnpm-lock.feature.yaml
+
+	run aube install --merge-git-branch-lockfiles --no-frozen-lockfile
+	assert_success
+	assert_file_exists aube-lock.yaml
+	assert_file_exists pnpm-lock.feature.yaml
+	assert_file_not_exists pnpm-lock.yaml
+}
+
 @test "mergeGitBranchLockfilesBranchPattern auto-triggers merge on matching branch" {
 	git init -q
 	git config user.email "t@t"

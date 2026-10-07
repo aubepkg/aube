@@ -98,12 +98,14 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
 /// Promote direct dependencies' unmet peers to importer direct deps.
 ///
 /// Walks each importer's direct dependencies and hoists any peer they
-/// declare that isn't already a direct dep of the importer up to the
-/// importer's `dependencies` list — what pnpm's
-/// `auto-install-peers=true` produces in its v9 lockfile. Peers declared by
-/// transitive dependencies stay in the resolved graph for peer-context
-/// sibling wiring, but they are not surfaced as top-level
-/// `node_modules/<peer>` entries.
+/// declare that isn't already a direct dep of the importer into a synthetic
+/// importer entry. Aube uses that entry to create the top-level
+/// `node_modules/<peer>` symlink required by its isolated linker. The
+/// synthetic entry inherits the requiring package's dependency kind so
+/// section-filtered installs retain it only when they retain the package
+/// that needs it. Peers declared by transitive dependencies stay in the
+/// resolved graph for peer-context sibling wiring, but they are not surfaced
+/// as top-level entries.
 ///
 /// Public so lockfile-driven installs that need to re-derive peer
 /// wiring (npm/yarn/bun formats, which don't record peer contexts)
@@ -118,8 +120,9 @@ pub fn detect_unmet_peers(graph: &LockfileGraph) -> Vec<UnmetPeer> {
 ///   2. Visit only those direct dependency packages and examine their
 ///      `peer_dependencies` declarations. For each declared peer not
 ///      already satisfied by the importer, find a resolved version somewhere
-///      in the graph and synthesize a `DirectDep` entry. Mark it as
-///      satisfied so a second direct dep doesn't add a duplicate.
+///      in the graph and synthesize one `DirectDep` entry. If another direct
+///      dependency needs the same peer, promote the synthetic entry to the
+///      strongest section classification required by either package.
 ///   3. Stable: we walk in-order and take the first declared peer range
 ///      encountered per name as the specifier. Conflicting ranges across
 ///      the tree are not reconciled — first one wins. This matches pnpm
@@ -133,20 +136,53 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
         let Some(direct_deps) = graph.importers.get(&importer_path) else {
             continue;
         };
-        let mut satisfied: FxHashSet<String> = direct_deps.iter().map(|d| d.name.clone()).collect();
+        let satisfied: FxHashSet<String> = direct_deps.iter().map(|d| d.name.clone()).collect();
 
         // Additions are gathered into a separate vec so we don't mutate
         // the importer's direct-dep list while still borrowing from it.
         let mut additions: Vec<DirectDep> = Vec::new();
+        let mut additions_by_name: FxHashMap<String, usize> =
+            FxHashMap::with_capacity_and_hasher(direct_deps.len(), Default::default());
 
-        for dep_path in direct_deps.iter().map(|d| &d.dep_path) {
-            let Some(pkg) = graph.packages.get(dep_path) else {
+        for direct_dep in direct_deps {
+            let Some(pkg) = graph.packages.get(&direct_dep.dep_path) else {
                 continue;
             };
 
             // Collect unmet peer declarations from this package.
             for (peer_name, peer_range) in &pkg.peer_dependencies {
                 if satisfied.contains(peer_name) {
+                    continue;
+                }
+                // Optional peers (`peerDependenciesMeta.optional = true`)
+                // are opt-in integrations — pnpm's `auto-install-peers`
+                // only fills in *required* peers and never promotes an
+                // optional one to the importer, even when another
+                // dependency already pulled a matching version into the
+                // graph. Mirrors the enqueue-side skip in
+                // `resolve/driver.rs`. Skipped before the dep_type
+                // reconciliation below so an optional declaration can't
+                // reclassify an entry hoisted for a required peer.
+                let optional = pkg
+                    .peer_dependencies_meta
+                    .get(peer_name)
+                    .map(|m| m.optional)
+                    .unwrap_or(false);
+                if optional {
+                    continue;
+                }
+                if let Some(&idx) = additions_by_name.get(peer_name) {
+                    let current = additions[idx].dep_type;
+                    // A peer needed by roots from different sections cannot
+                    // safely inherit either narrower classification: the
+                    // other section's filter could then drop it while keeping
+                    // a requirer. Normalize mixed classifications to
+                    // Production, which survives both --production and
+                    // --no-optional. Matching classifications stay unchanged.
+                    additions[idx].dep_type = match (current, direct_dep.dep_type) {
+                        (left, right) if left == right => left,
+                        _ => DepType::Production,
+                    };
                     continue;
                 }
                 // Find any resolved version in the graph for this peer.
@@ -192,13 +228,11 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
                     // rather than writing a dangling DirectDep.
                     continue;
                 }
-                satisfied.insert(peer_name.clone());
+                additions_by_name.insert(peer_name.clone(), additions.len());
                 additions.push(DirectDep {
                     name: peer_name.clone(),
                     dep_path: synth_dep_path,
-                    // Peers auto-hoisted to the root are in the prod
-                    // graph by convention — matches what pnpm writes.
-                    dep_type: DepType::Production,
+                    dep_type: direct_dep.dep_type,
                     specifier: Some(peer_range.clone()),
                 });
             }
@@ -262,7 +296,9 @@ pub fn hoist_auto_installed_peers(mut graph: LockfileGraph) -> LockfileGraph {
 /// contextualized tails in every `pkg.dependencies` map, so when a
 /// descendant looks a peer up in ancestor scope it sees the full
 /// nested tail and serializes it as such. Most peer chains converge in
-/// 2–3 iterations; we cap at 16 as a safety belt.
+/// 2–3 iterations. The safety limit scales with the number of peer-bearing
+/// packages so deeper finite chains can converge, with a hard ceiling to
+/// bound work for pathological graphs.
 ///
 /// Limitations (documented as follow-ups in the README):
 ///   - No per-peer range satisfaction — we take whatever the ancestor has,
@@ -327,7 +363,20 @@ pub fn apply_peer_contexts(
     canonical: LockfileGraph,
     options: &PeerContextOptions,
 ) -> Result<LockfileGraph, crate::Error> {
-    const MAX_ITERATIONS: usize = 16;
+    const MIN_ITERATIONS: usize = 16;
+    const MAX_ITERATIONS: usize = 256;
+    // Each pass can propagate one more nested peer suffix through a chain.
+    // Allow one pass per peer-bearing package plus a final unchanged pass to
+    // confirm convergence. Keep the legacy 16-pass floor for small cyclic
+    // graphs, while retaining a hard ceiling for adversarial input.
+    let peer_package_count = canonical
+        .packages
+        .values()
+        .filter(|pkg| !pkg.peer_dependencies.is_empty())
+        .count();
+    let iteration_limit = peer_package_count
+        .saturating_add(1)
+        .clamp(MIN_ITERATIONS, MAX_ITERATIONS);
     let mut current = canonical;
     let mut converged = false;
     // Hash both keys and dependency tails. A peer-context iteration can
@@ -350,14 +399,25 @@ pub fn apply_peer_contexts(
         aube_util::hash::ordered_seq_hash(tokens.iter().copied())
     };
     // Carry the post-iteration hash forward as the next iteration's
-    // pre-hash. Saves one full graph walk per iteration (the loop runs
-    // up to 16 times; each `graph_hash` allocates a Vec<&str> sized
+    // pre-hash. Saves one full graph walk per iteration (each `graph_hash`
+    // allocates a Vec<&str> sized
     // to `pkgs * 3 + deps * 2` tokens — ~25k entries on a 1000-pkg
     // graph). One hash per iter instead of two.
     let mut before = graph_hash(&current);
-    for i in 0..MAX_ITERATIONS {
-        let after_once = apply_peer_contexts_once(current, options);
-        let next = if options.dedupe_peer_dependents {
+    // `dedupe-peer-dependents` collapses variants onto the smallest key,
+    // and hashed keys (`peersSuffixMaxLength`) are renamed whenever a
+    // tail they embed changes. On dense peer webs the two can undo each
+    // other forever, so a graph seen twice means the dedupe is
+    // ping-ponging. Stop deduping and let the plain contextualization
+    // settle; an undeduped graph is valid, just less compact.
+    let mut dedupe = options.dedupe_peer_dependents;
+    let mut seen_hashes: FxHashSet<u64> = FxHashSet::default();
+    // Remembers what each `(<short-hash>)` suffix stands for so the
+    // cycle breaker can still see through it on later iterations.
+    let mut hashed_suffixes = HashedSuffixes::default();
+    for i in 0..iteration_limit {
+        let after_once = apply_peer_contexts_once(current, options, &mut hashed_suffixes);
+        let next = if dedupe {
             dedupe_peer_variants(after_once)
         } else {
             after_once
@@ -369,6 +429,12 @@ pub fn apply_peer_contexts(
             converged = true;
             break;
         }
+        if dedupe && !seen_hashes.insert(after) {
+            tracing::debug!(
+                "peer-context variant dedupe oscillated at iteration {i}; continuing without it"
+            );
+            dedupe = false;
+        }
         current = next;
         before = after;
     }
@@ -377,10 +443,10 @@ pub fn apply_peer_contexts(
         // broken node_modules. Now fatal.
         tracing::error!(
             code = aube_codes::errors::ERR_AUBE_PEER_CONTEXT_NOT_CONVERGED,
-            max_iterations = MAX_ITERATIONS,
-            "peer-context hit MAX_ITERATIONS={MAX_ITERATIONS} without convergence"
+            max_iterations = iteration_limit,
+            "peer-context hit iteration limit={iteration_limit} without convergence"
         );
-        return Err(crate::Error::PeerContextDivergence(MAX_ITERATIONS));
+        return Err(crate::Error::PeerContextDivergence(iteration_limit));
     }
     // Propagate each package's peer-suffix segments up through its
     // non-peer-declaring ancestors so a parent that pulls in a peer-
@@ -626,6 +692,7 @@ pub(crate) fn dedupe_peer_variants(graph: LockfileGraph) -> LockfileGraph {
 fn apply_peer_contexts_once(
     canonical: LockfileGraph,
     options: &PeerContextOptions,
+    hashed_suffixes: &mut HashedSuffixes,
 ) -> LockfileGraph {
     let mut out_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
     let mut new_importers: BTreeMap<String, Vec<DirectDep>> = BTreeMap::new();
@@ -694,6 +761,7 @@ fn apply_peer_contexts_once(
                 &mut out_packages,
                 &mut visiting,
                 options,
+                hashed_suffixes,
             )
             .unwrap_or_else(|| dep.dep_path.clone());
             new_deps.push(DirectDep {
@@ -875,6 +943,41 @@ pub(crate) fn contains_canonical_back_ref(value: &str, canonical: &str) -> bool 
             }
         }
         i += 1;
+    }
+    false
+}
+
+/// Hashed peer suffix (`(<short-hash>)`) -> the `(name@version)…` suffix
+/// it was computed from.
+type HashedSuffixes = FxHashMap<String, String>;
+
+/// [`contains_canonical_back_ref`], also following `(<short-hash>)`
+/// segments recorded in `hashed`. Once a suffix crosses
+/// `peersSuffixMaxLength` its text is replaced by a hash, so a mutual
+/// peer cycle routed through a hashed tail would otherwise never be
+/// recognized and every pass would wrap the previous pass's hash in a
+/// new one.
+fn refers_back_through_hashes(value: &str, canonical: &str, hashed: &HashedSuffixes) -> bool {
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    let mut pending = vec![value];
+    while let Some(text) = pending.pop() {
+        if contains_canonical_back_ref(text, canonical) {
+            return true;
+        }
+        if hashed.is_empty() {
+            continue;
+        }
+        for (open, _) in text.match_indices('(') {
+            // `(` + 32 hex digits + `)`
+            let Some(segment) = text.get(open..open + 34) else {
+                continue;
+            };
+            if let Some((key, expanded)) = hashed.get_key_value(segment)
+                && seen.insert(key.as_str())
+            {
+                pending.push(expanded);
+            }
+        }
     }
     false
 }
@@ -1576,6 +1679,7 @@ fn visit_peer_context<'g>(
     out_packages: &mut BTreeMap<String, LockedPackage>,
     visiting: &mut FxHashSet<String>,
     options: &PeerContextOptions,
+    hashed_suffixes: &mut HashedSuffixes,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
 
@@ -1781,7 +1885,11 @@ fn visit_peer_context<'g>(
     let suffix: String = peer_context
         .iter()
         .map(|(n, provider)| {
-            let cycles_back = contains_canonical_back_ref(&provider.context_tail, &canonical_base);
+            let cycles_back = refers_back_through_hashes(
+                &provider.context_tail,
+                &canonical_base,
+                hashed_suffixes,
+            );
             let display_v = if cycles_back {
                 canonical_tail(&provider.context_tail).to_string()
             } else {
@@ -1795,6 +1903,9 @@ fn visit_peer_context<'g>(
     // parenthesized short hash `(<hash>)` so the lockfile key stays
     // bounded and byte-compatible with pnpm's `createPeerDepGraphHash`.
     let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
+    if effective_suffix != suffix {
+        hashed_suffixes.insert(effective_suffix.clone(), suffix);
+    }
     let contextualized = format!("{canonical_base}{effective_suffix}");
 
     if out_packages.contains_key(&contextualized) || visiting.contains(&contextualized) {
@@ -1862,6 +1973,7 @@ fn visit_peer_context<'g>(
             out_packages,
             visiting,
             options,
+            hashed_suffixes,
         );
         let new_tail = match child_new {
             Some(new_dep_path) => new_dep_path
@@ -1892,14 +2004,27 @@ fn visit_peer_context<'g>(
             out_packages,
             visiting,
             options,
+            hashed_suffixes,
         );
-        if let Some(new_dep_path) = child_new {
-            let new_tail = new_dep_path
-                .strip_prefix(&format!("{peer_name}@"))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| provider.target_tail.clone());
-            new_dependencies.insert(peer_name.clone(), new_tail);
+        // A peer provider with no `packages:` entry is a workspace
+        // package (the resolver only records a `DirectDep` for those).
+        // Keep the edge for per-project local packages so the linker can
+        // point it at the workspace directory. Other packages may live in
+        // the shared global virtual store, where that project-specific
+        // link must not appear.
+        let keeps_workspace_peer = child_new.is_some()
+            || pkg
+                .local_source
+                .as_ref()
+                .is_some_and(|local| !local.is_globally_shareable());
+        if !keeps_workspace_peer {
+            continue;
         }
+        let new_tail = child_new
+            .as_deref()
+            .and_then(|new_dep_path| new_dep_path.strip_prefix(&format!("{peer_name}@")))
+            .map_or_else(|| provider.target_tail.clone(), str::to_string);
+        new_dependencies.insert(peer_name.clone(), new_tail);
     }
 
     visiting.remove(&contextualized);
@@ -2083,6 +2208,84 @@ mod tests {
             plugin.dependencies.get("theme").map(String::as_str),
             Some("link+0123456789abcdef"),
             "the peer suffix uses the manifest version while the linker keeps the local target"
+        );
+    }
+
+    #[test]
+    fn workspace_package_peer_without_packages_entry_is_wired() {
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            "apps/app".to_string(),
+            vec![
+                DirectDep {
+                    name: "md".to_string(),
+                    dep_path: "md@file+0123456789abcdef".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("file:./modules/md".to_string()),
+                },
+                DirectDep {
+                    name: "shared".to_string(),
+                    dep_path: "shared@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("workspace:*".to_string()),
+                },
+            ],
+        );
+        let mut md = locked("md", &[]);
+        md.dep_path = "md@file+0123456789abcdef".to_string();
+        md.local_source = Some(LocalSource::Directory("apps/app/modules/md".into()));
+        md.peer_dependencies
+            .insert("shared".to_string(), "*".to_string());
+        g.packages.insert(md.dep_path.clone(), md);
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        let md = out
+            .packages
+            .get("md@file+0123456789abcdef(shared@1.0.0)")
+            .expect("workspace peer should contextualize the local package");
+        assert_eq!(
+            md.dependencies.get("shared").map(String::as_str),
+            Some("1.0.0"),
+            "the edge must survive so the linker can point it at the workspace directory"
+        );
+    }
+
+    #[test]
+    fn registry_package_does_not_keep_workspace_peer_edge() {
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            "apps/app".to_string(),
+            vec![
+                DirectDep {
+                    name: "plugin".to_string(),
+                    dep_path: "plugin@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                },
+                DirectDep {
+                    name: "shared".to_string(),
+                    dep_path: "shared@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("workspace:*".to_string()),
+                },
+            ],
+        );
+        let mut plugin = locked("plugin", &[]);
+        plugin
+            .peer_dependencies
+            .insert("shared".to_string(), "*".to_string());
+        g.packages.insert(plugin.dep_path.clone(), plugin);
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        let plugin = out
+            .packages
+            .get("plugin@1.0.0(shared@1.0.0)")
+            .expect("the peer still contextualizes the package");
+        assert!(
+            !plugin.dependencies.contains_key("shared"),
+            "a package that may sit in the shared virtual store must not link a project-specific workspace directory"
         );
     }
 }

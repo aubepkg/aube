@@ -34,35 +34,89 @@ pub(super) fn try_install_fast_path(
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
 ) -> miette::Result<Option<usize>> {
-    let dangerously_allow_all_builds = resolve_dangerously_allow_all_builds(cwd, opts);
-    if !install_fast_path_eligible(
+    let files = super::super::FileSources::load(cwd);
+    let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
+    let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    if aube_settings::resolved::advisory_check_every_install(&ctx)
+        && (aube_settings::resolved::paranoid(&ctx)
+            || !matches!(
+                aube_settings::resolved::advisory_check(&ctx),
+                aube_settings::resolved::AdvisoryCheck::Off
+            ))
+    {
+        return Ok(None);
+    }
+    // Local sources can include archives that freshness state does not track,
+    // including archives reached through a local directory dependency.
+    if opts.strict_no_lockfile {
+        let manifest = super::super::load_manifest_or_default(cwd)?;
+        if manifest
+            .all_dependencies()
+            .chain(
+                manifest
+                    .peer_dependencies
+                    .iter()
+                    .map(|(name, spec)| (name.as_str(), spec.as_str())),
+            )
+            .chain(
+                manifest
+                    .optional_dependencies
+                    .iter()
+                    .map(|(name, spec)| (name.as_str(), spec.as_str())),
+            )
+            .any(|(_, spec)| aube_lockfile::LocalSource::parse(spec, cwd).is_some())
+        {
+            return Ok(None);
+        }
+    }
+    // Strict frozen installs can reuse current state when their root lockfile
+    // exists and lifecycle scripts are disabled. Workspaces and declared
+    // patches retain the full pipeline until
+    // freshness tracks workspace membership and arbitrary patch paths. Keep
+    // missing/disabled and relocated lockfiles on the full validation path.
+    if opts.strict_no_lockfile
+        && ((!opts.ignore_scripts && !aube_settings::resolved::ignore_scripts(&ctx))
+            || !aube_settings::resolved::lockfile(&ctx)
+            || aube_settings::resolved::lockfile_dir(&ctx).is_some()
+            || aube_lockfile::detect_existing_lockfile_kind_selecting(
+                cwd,
+                crate::commands::selected_lockfile_kind_with_ctx(&ctx)?,
+            )
+            .is_none()
+            || aube_workspace::is_workspace_project_root(cwd)
+            || crate::patches::load_declared_patch_paths(cwd)
+                .map_or(true, |patches| !patches.is_empty()))
+    {
+        return Ok(None);
+    }
+    let dangerously_allow_all_builds = aube_settings::resolved::dangerously_allow_all_builds(&ctx);
+    let fast_path_snapshot = install_fast_path_eligible(
         cwd,
         opts,
         mode,
         modules_cache_sweep_default,
         dangerously_allow_all_builds,
-    ) {
+    );
+    let Some(fast_path_snapshot) = fast_path_snapshot else {
         return Ok(None);
-    }
+    };
     opts.control.check_cancelled()?;
-    emit_up_to_date(cwd);
-    let total = state::read_state_package_content_hashes(cwd)
-        .map(|packages| packages.len())
+    // The eligibility check already parsed the state file once for the
+    // layout check; reuse that same parse for the package count
+    // instead of reading the state file again. `package_count` is
+    // `None` in exactly the cases
+    // `read_state_package_content_hashes` returned `None`, so the
+    // lockfile fallback still applies unchanged.
+    let total = fast_path_snapshot
+        .package_count
         .or_else(|| {
             let manifest = super::super::load_manifest_or_default(cwd).ok()?;
-            aube_lockfile::parse_lockfile_with_kind(cwd, &manifest)
+            crate::commands::parse_lockfile_with_kind(cwd, &manifest)
                 .ok()
                 .map(|(graph, _)| graph.packages.len())
         })
         .unwrap_or_default();
     Ok(Some(total))
-}
-
-fn resolve_dangerously_allow_all_builds(cwd: &Path, opts: &InstallOptions) -> bool {
-    let files = super::super::FileSources::load(cwd);
-    let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
-    let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
-    aube_settings::resolved::dangerously_allow_all_builds(&ctx)
 }
 
 fn install_fast_path_eligible(
@@ -71,37 +125,50 @@ fn install_fast_path_eligible(
     mode: FrozenMode,
     modules_cache_sweep_default: bool,
     dangerously_allow_all_builds: bool,
-) -> bool {
+) -> Option<state::WarmStateSnapshot> {
     let preconditions_met = matches!(mode, FrozenMode::Frozen | FrozenMode::Prefer)
         && !opts.force
         && !opts.lockfile_only
         && !opts.dep_selection.is_filtered()
         && !opts.merge_git_branch_lockfiles
-        && !opts.strict_no_lockfile
         && !dangerously_allow_all_builds
         && opts.workspace_filter.is_empty()
         && modules_cache_sweep_default;
     if !preconditions_met {
-        return false;
+        return None;
     }
-    if trust_policy_requires_validation(cwd, opts) {
-        return false;
+    if paranoid_requires_full_pipeline(cwd, opts) {
+        return None;
     }
     // Surface *why* the warm path was missed at debug level — the state
     // freshness reason is otherwise discarded here (only `.is_none()` is
     // consulted), leaving `aube install -v` silent on repeat-install loops
     // that originate from state drift rather than lockfile drift.
-    match state::check_needs_install_with_flags(cwd, &opts.cli_flags) {
-        None => compatibility_metadata_is_current(cwd),
+    match state::check_needs_install_with_flags(cwd, &opts.cli_flags, opts.strict_no_lockfile) {
+        None => {
+            // One full state parse feeds both the layout check below
+            // and the caller's package count.
+            let snapshot = state::read_state_warm_snapshot(cwd);
+            let layout_current = compatibility_metadata_is_current(
+                cwd,
+                opts,
+                snapshot.as_ref().and_then(|snap| snap.layout.clone()),
+            );
+            layout_current.then_some(snapshot).flatten()
+        }
         Some(reason) => {
             tracing::debug!("install warm path skipped: {reason}");
-            false
+            None
         }
     }
 }
 
-fn compatibility_metadata_is_current(cwd: &Path) -> bool {
-    let Some(layout) = state::read_state_layout(cwd) else {
+fn compatibility_metadata_is_current(
+    cwd: &Path,
+    opts: &InstallOptions,
+    layout: Option<state::InstallLayoutState>,
+) -> bool {
+    let Some(layout) = layout else {
         return false;
     };
     let modules_dir_name = super::super::resolve_modules_dir_name_for_cwd(cwd);
@@ -110,7 +177,10 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
     let expected = match layout.linker {
         state::InstallLayoutMode::Hoisted => Some(aube_dir),
         state::InstallLayoutMode::Isolated => {
-            let global_virtual_store = super::super::global_virtual_store_dir(cwd);
+            let files = super::super::FileSources::load(cwd);
+            let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
+            let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+            let global_virtual_store = super::super::global_virtual_store_dir_with_ctx(cwd, &ctx);
             match super::gvs::detect_existing_global_virtual_store(
                 cwd,
                 &aube_dir,
@@ -120,6 +190,18 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
                 Some(true) => {
                     legacy_vite_patches_current =
                         super::gvs::legacy_vite_patches_are_current(&aube_dir);
+                    if layout.gvs_nested_links.is_none() {
+                        tracing::debug!(
+                            "install warm path skipped: install state predates global virtual store link tracking"
+                        );
+                        return false;
+                    }
+                    if !state::gvs_nested_links_are_current(cwd, &layout) {
+                        tracing::debug!(
+                            "install warm path skipped: global virtual store links are stale"
+                        );
+                        return false;
+                    }
                     Some(global_virtual_store)
                 }
                 Some(false) => Some(aube_dir),
@@ -148,21 +230,20 @@ fn compatibility_metadata_is_current(cwd: &Path) -> bool {
     metadata_current
 }
 
-fn trust_policy_requires_validation(cwd: &Path, opts: &InstallOptions) -> bool {
+fn paranoid_requires_full_pipeline(cwd: &Path, opts: &InstallOptions) -> bool {
     if opts.network_mode == aube_registry::NetworkMode::Offline {
         return false;
     }
     let files = crate::commands::FileSources::load(cwd);
     let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
     let ctx = files.ctx(&raw_workspace, &opts.env_snapshot, &opts.cli_flags);
+    // `paranoid` bundles strict advisory checks and store-integrity gates,
+    // so it always takes the full pipeline. A locked package is already a
+    // trust decision, so trustPolicy alone does not invalidate the fast path.
     aube_settings::resolved::paranoid(&ctx)
-        || matches!(
-            aube_settings::resolved::trust_policy(&ctx),
-            aube_settings::resolved::TrustPolicy::NoDowngrade
-        )
 }
 
-fn emit_up_to_date(cwd: &Path) {
+pub(super) fn emit_up_to_date(cwd: &Path) {
     super::unreviewed_builds::emit_warning(&super::unreviewed_builds::from_state(cwd));
     super::print_already_up_to_date();
 }
@@ -185,49 +266,47 @@ pub(super) fn merge_branch_lockfiles_if_needed(
         return Ok(());
     }
 
-    match aube_lockfile::merge_branch_lockfiles(cwd, manifest) {
-        Ok(report) => {
-            if !report.merged_files.is_empty() {
-                let filenames: Vec<String> = report
-                    .merged_files
-                    .iter()
-                    .filter_map(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
-                tracing::info!(
-                    "merged {} branch lockfile(s) into aube-lock.yaml: {}",
-                    report.merged_files.len(),
-                    filenames.join(", ")
-                );
-                if !report.conflicts.is_empty() {
-                    super::control::output(
-                        super::InstallOutputLevel::Warning,
-                        None,
-                        format!(
-                            "{} conflict(s) resolved during branch-lockfile merge:",
-                            report.conflicts.len()
-                        ),
-                    );
-                    for c in &report.conflicts {
-                        super::control::output(
-                            super::InstallOutputLevel::Warning,
-                            None,
-                            format!("  {c}"),
-                        );
-                    }
-                }
-            } else {
-                tracing::debug!(
-                    "branch-lockfile merge triggered but no aube-lock.*.yaml files were found"
-                );
+    let selected = crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?;
+    let kind =
+        selected.unwrap_or_else(|| aube_lockfile::merge::branch_lockfile_kind_for_merge(cwd));
+    let report = aube_lockfile::merge::merge_branch_lockfiles_as(cwd, manifest, kind)
+        .map_err(|err| miette!("failed to merge branch lockfiles: {err}"))?;
+    if !report.merged_files.is_empty() {
+        let filenames: Vec<String> = report
+            .merged_files
+            .iter()
+            .filter_map(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        tracing::info!(
+            "merged {} branch lockfile(s) into {}: {}",
+            report.merged_files.len(),
+            kind.filename(),
+            filenames.join(", ")
+        );
+        if !report.conflicts.is_empty() {
+            super::control::output(
+                super::InstallOutputLevel::Warning,
+                None,
+                format!(
+                    "{} conflict(s) resolved during branch-lockfile merge:",
+                    report.conflicts.len()
+                ),
+            );
+            for c in &report.conflicts {
+                super::control::output(super::InstallOutputLevel::Warning, None, format!("  {c}"));
             }
-            Ok(())
         }
-        Err(err) => Err(miette!("failed to merge branch lockfiles: {err}")),
+    } else {
+        tracing::debug!(
+            "branch-lockfile merge triggered but no {} branch files were found",
+            kind.filename()
+        );
     }
+    Ok(())
 }
 
 pub(super) fn warn_accepted_noop_install_settings(settings_ctx: &aube_settings::ResolveCtx<'_>) {

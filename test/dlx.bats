@@ -89,10 +89,11 @@ teardown() {
 @test "aube dlx -p installs a different package than the bin name" {
 	# The `which` npm package ships a binary named `node-which`, not `which`.
 	# Running `node-which node` prints the absolute path of the `node`
-	# executable on PATH, so we assert the output contains `/node`.
+	# executable on PATH, so we assert the output ends in it (`\node.EXE`
+	# on Windows).
 	run aube dlx --package which node-which node
 	assert_success
-	assert_output --partial "/node"
+	assert_output --regexp '[/\\]node(\.[eE][xX][eE])?$'
 }
 
 @test "aube dlx falls back to the package's single bin when names differ" {
@@ -103,7 +104,7 @@ teardown() {
 	# what `npx which node` does.
 	run aube dlx which node
 	assert_success
-	assert_output --partial "/node"
+	assert_output --regexp '[/\\]node(\.[eE][xX][eE])?$'
 }
 
 @test "aube dlx accepts an @version suffix on the command" {
@@ -156,6 +157,93 @@ teardown() {
 	run aube dlx --shell-mode -p semver 'semver 1.2.3 | tr 0-9 a-z'
 	assert_success
 	assert_line "b.c.d"
+}
+
+@test "aube dlx --shell-mode forwards a termination signal to the command" {
+	# `process_guard` forwards SIGTERM/SIGINT/SIGHUP/SIGQUIT to the child it
+	# spawned so that signalling aube tears the running tool down. A `sh -c`
+	# wrapper swallowed that hop: `sh` stays resident as the command's parent
+	# and a non-interactive shell does not relay a signal to the child it is
+	# waiting on, so the tool ran on and aube never exited. A line that is one
+	# plain command now skips the shell entirely, which puts the tool back
+	# where the forwarding expects it — as aube's direct child.
+	_skip_on_windows "signals are POSIX"
+	cat >dlx-signal-child.js <<-'JS'
+		process.on("SIGINT", () => {
+			console.log("CHILD GOT SIGINT")
+			process.exit(7)
+		})
+		console.log("CHILD READY")
+		setInterval(() => {}, 1000)
+	JS
+
+	# `set -m` puts the backgrounded dlx in its own process group, so the
+	# `kill -INT` reaches aube alone rather than this shell's whole group,
+	# and aube inherits SIGINT with the default disposition instead of the
+	# already-ignored one a background job would otherwise be handed.
+	cat >interrupt.sh <<-'SH'
+		#!/usr/bin/env bash
+		set -m
+		aube dlx -p is-odd -c "node dlx-signal-child.js" >child.out 2>&1 </dev/null &
+		pid=$!
+		for _ in $(seq 1 600); do
+			grep -aq "CHILD READY" child.out 2>/dev/null && break
+			sleep 0.1
+		done
+		kill -INT "$pid"
+		# Bounded wait, then reap. Unfixed, nothing reaches the child and both
+		# it and aube run forever while holding the fds bats captures output
+		# on — so tearing the tree down here is what turns the regression into
+		# a failed assertion instead of a wedged suite.
+		for _ in $(seq 1 100); do
+			kill -0 "$pid" 2>/dev/null || break
+			sleep 0.1
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -KILL "$pid" 2>/dev/null
+			pkill -f dlx-signal-child.js 2>/dev/null
+			echo "AUBE_EXIT=hung"
+		else
+			wait "$pid"
+			echo "AUBE_EXIT=$?"
+		fi
+	SH
+	chmod +x interrupt.sh
+
+	# `timeout(1)` is GNU coreutils — Linux ships it as `timeout`, macOS
+	# only as `gtimeout` after `brew install coreutils`, and not at all on
+	# a stock host. It is a backstop here rather than the mechanism:
+	# `interrupt.sh` bounds its own wait and reaps the tree either way, so
+	# running it bare when neither is on PATH still terminates.
+	local timeout_cmd=""
+	if command -v timeout >/dev/null 2>&1; then
+		timeout_cmd="timeout 120"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		timeout_cmd="gtimeout 120"
+	fi
+	# shellcheck disable=SC2086 # intentional word-split: empty -> no wrapper
+	run $timeout_cmd ./interrupt.sh
+	assert_success
+	# The child picked its own exit code inside its handler and aube reported
+	# it, which proves aube stayed bound to the tool rather than exiting out
+	# from under it.
+	assert_line "AUBE_EXIT=7"
+	assert_file_contains child.out "CHILD GOT SIGINT"
+}
+
+@test "aube dlx resolves a relative file: spec from the invoking directory" {
+	# dlx installs into a scratch dir under TMPDIR; a path the user wrote
+	# relative to where they ran dlx must not resolve against that dir.
+	mkdir -p tools/printer work
+	cat >tools/printer/package.json <<-'JSON'
+		{ "name": "np-printer", "version": "1.0.0", "bin": { "np-printer": "cli.js" } }
+	JSON
+	printf '#!/usr/bin/env node\nconsole.log("printer ran")\n' >tools/printer/cli.js
+	chmod +x tools/printer/cli.js
+	cd work
+	run aube dlx -p file:../tools/printer np-printer
+	assert_success
+	assert_line "printer ran"
 }
 
 @test "aube dlx -c infers the package from the first word when -p is omitted" {

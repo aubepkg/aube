@@ -20,9 +20,9 @@ mod semver_util;
 mod trust;
 mod types;
 
-pub use direct_dep_info::DirectDepInfo;
+pub use direct_dep_info::{AgeGatedUpdate, DirectDepInfo};
 pub use error::{AgeGateDetails, CatalogDetails, Error, ExoticSubdepDetails, NoMatchDetails};
-pub use local_source::resolve_exec_script_path;
+pub use local_source::{read_local_package_name, resolve_exec_script_path};
 pub use package_ext::is_deprecation_allowed;
 pub use peer_context::{
     PeerContextOptions, UnmetPeer, apply_peer_contexts, detect_unmet_peers,
@@ -34,10 +34,14 @@ pub use primer::{
 };
 pub use semver_util::{PickResult, pick_version_for_add};
 pub use trust::{
-    MissingTimeDetails as MissingTrustTimeDetails, PriorTrustEvidence, TrustCheckError,
-    TrustDowngradeDetails, check_no_downgrade, evidence_for, strongest_prior_evidence,
+    ExoticSubdepAllowlist, ExoticSubdepAllowlistParseError, PackageVersionPolicy, TrustEvidence,
+    TrustExcludeParseError, TrustExcludeRules,
 };
-pub use trust::{PackageVersionPolicy, TrustEvidence, TrustExcludeParseError, TrustExcludeRules};
+pub use trust::{
+    MissingTimeDetails as MissingTrustTimeDetails, PriorTrustEvidence, TrustCheckError,
+    TrustDowngradeDetails, check_no_downgrade, check_no_downgrade_history, evidence_for,
+    strongest_prior_evidence,
+};
 pub use types::{
     DependencyPolicy, MinimumReleaseAge, PackageExtension, ReadPackageHook, ResolutionMode,
     ResolvedPackage, TrustPolicy,
@@ -86,7 +90,6 @@ use semver_util::{pick_version, strip_alias_prefix};
 use types::format_iso8601_utc;
 
 use aube_lockfile::DepType;
-use aube_registry::Packument;
 use aube_registry::client::RegistryClient;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -101,7 +104,7 @@ pub(crate) use aube_util::collections::FxSet as FxHashSet;
 /// BFS dependency resolver.
 pub struct Resolver {
     client: Arc<RegistryClient>,
-    cache: FxHashMap<String, Packument>,
+    cache: FxHashMap<String, aube_registry::ResolutionPackument>,
     /// Optional channel to stream resolved packages as they're discovered.
     resolved_tx: Option<mpsc::Sender<ResolvedPackage>>,
     /// Optional disk cache directory for packuments (with ETag revalidation).
@@ -111,13 +114,11 @@ pub struct Resolver {
     /// map). Defaults to the sibling `packuments-full-v1/` directory
     /// next to `packument_cache_dir`.
     packument_full_cache_dir: Option<std::path::PathBuf>,
-    /// When true (pnpm's default), a package's declared `peerDependencies`
-    /// are enqueued like regular transitives and — if not already
-    /// satisfied by the importer — hoisted to the importer's direct deps.
-    /// When false, peers neither get auto-installed as transitives nor
-    /// hoisted; unmet peers still surface as warnings via
-    /// `detect_unmet_peers`, but the user is on the hook for adding them
-    /// explicitly to `package.json`.
+    /// When true (pnpm's default), required `peerDependencies` are enqueued
+    /// during resolution. An importer's own peers become direct dependencies;
+    /// dependency peers remain contextual to the packages that require them.
+    /// When false, peers are not auto-installed and unmet dependency peers
+    /// still surface through `detect_unmet_peers`.
     auto_install_peers: bool,
     /// pnpm's `exclude-links-from-lockfile`. Round-tripped through the
     /// lockfile's `settings:` header; when true, the pnpm writer omits
@@ -145,7 +146,7 @@ pub struct Resolver {
     /// dropped before enqueueing — the resolver never fetches or locks it.
     /// Mirrors pnpm's `createOptionalDependenciesRemover` read-package hook.
     ignored_optional_dependencies: BTreeSet<String>,
-    /// pnpm's `resolution-mode` — `Highest` (default) or `TimeBased`.
+    /// pnpm's `resolution-mode`.
     resolution_mode: ResolutionMode,
     /// Project root used to resolve `file:` / `link:` paths to the
     /// target directory. Defaults to the current working directory;
@@ -252,8 +253,13 @@ pub(crate) struct ResolveTask {
     pub(crate) importer: String,
     /// The original specifier from package.json before any rewrites
     /// (e.g. `"npm:real-pkg@^2.0.0"` for an alias, or `"^4.17.0"` for a normal range).
-    /// Only set for root deps; recorded into the lockfile for drift detection.
+    /// Only set for root deps; retained for diagnostics and skipped-optional
+    /// drift metadata even when an override changes the lockfile specifier.
     pub(crate) original_specifier: Option<String>,
+    /// Override-applied specifier pnpm records on a direct importer dependency.
+    /// `None` when no override fired, so ordinary catalog dependencies continue
+    /// to emit their raw `catalog:` manifest specifier.
+    lockfile_override_specifier: Option<String>,
     /// Real registry package name for npm-alias tasks.
     ///
     /// When a task arrives with `range` like `"npm:h3@2.0.1-rc.20"`,
@@ -302,6 +308,12 @@ impl ResolveTask {
         self.real_name.as_deref().unwrap_or(&self.name)
     }
 
+    fn lockfile_specifier(&self) -> Option<String> {
+        self.lockfile_override_specifier
+            .clone()
+            .or_else(|| self.original_specifier.clone())
+    }
+
     /// Construct a root-importer task for `(name, range)` under
     /// `importer`, with the appropriate `dep_type` and no parent/ancestry.
     /// Every root-dep enqueue site uses this shape; the factory keeps
@@ -317,6 +329,7 @@ impl ResolveTask {
             parent: None,
             importer,
             original_specifier: Some(original),
+            lockfile_override_specifier: None,
             real_name: None,
             ancestors: Arc::from([]),
             range_from_override: false,
@@ -342,6 +355,7 @@ impl ResolveTask {
             parent: Some(parent),
             importer,
             original_specifier: None,
+            lockfile_override_specifier: None,
             real_name: None,
             ancestors,
             range_from_override: false,

@@ -66,11 +66,11 @@ fn outer_paren_segments(s: &str) -> Vec<&str> {
 
 /// Rewrite the peer-suffix references of a dep_path (or a dep *value*,
 /// which is a headless `version{suffix}`) by passing each peer
-/// reference's flat `name@version` head through `translate`. The head
+/// reference through `translate` after rewriting its nested suffix. The head
 /// before the first `(` is left untouched — only the parenthesized peer
 /// references are rewritten, and nested suffixes recurse.
 ///
-/// `translate(head)` returns `Some(new_head)` to replace a *flat* peer
+/// `translate(reference)` returns `Some(new_reference)` to replace a peer
 /// reference, or `None` to keep it verbatim. The two boundary passes use
 /// it in opposite directions:
 ///
@@ -80,8 +80,7 @@ fn outer_paren_segments(s: &str) -> Vec<&str> {
 ///   keeping the in-memory graph FS-safe so a round-trip matches a fresh
 ///   resolve byte-for-byte.
 ///
-/// Registry peers (`react@18.2.0`) translate to `None` and pass through
-/// unchanged, so this is a no-op on graphs with no git / tarball peers.
+/// The writer also decorates registry peers with their patch identities.
 pub(super) fn rewrite_peer_suffix(s: &str, translate: &impl Fn(&str) -> Option<String>) -> String {
     let Some(head_end) = s.find('(') else {
         return s.to_string();
@@ -120,8 +119,8 @@ fn warn_unbalanced_peer_suffix(s: &str) {
 /// Rewrite a single peer reference (the contents between one pair of
 /// suffix parens). A flat reference (`request@url+<hash>`) is handed to
 /// `translate`; a reference that carries its own nested suffix
-/// (`request-promise@4.2.6(request@url+<hash>)`) keeps its head and
-/// recurses, so the nested git / tarball peer is still translated.
+/// (`request-promise@4.2.6(request@url+<hash>)`) recurses before translation,
+/// so both the outer peer's patch and the inner peer's source are handled.
 fn rewrite_peer_reference(inner: &str, translate: &impl Fn(&str) -> Option<String>) -> String {
     let Some(nested_start) = inner.find('(') else {
         return translate(inner).unwrap_or_else(|| inner.to_string());
@@ -138,7 +137,7 @@ fn rewrite_peer_reference(inner: &str, translate: &impl Fn(&str) -> Option<Strin
         out.push_str(&rewrite_peer_reference(&seg[1..seg.len() - 1], translate));
         out.push(')');
     }
-    out
+    translate(&out).unwrap_or(out)
 }
 
 pub(super) fn peerless_alias_target<'a>(
@@ -174,6 +173,40 @@ pub(super) fn parse_dep_path(dep_path: &str) -> Option<(String, String)> {
         .to_string();
 
     Some((name, version))
+}
+
+/// Return the registry alias from pnpm 11.20's registry-qualified
+/// `<alias>:<semver>` version slot. Reserved protocol prefixes retain
+/// their existing meaning and are not treated as registry aliases.
+pub(super) fn registry_name_from_qualified_version(version: &str) -> Option<&str> {
+    const RESERVED: &[&str] = &[
+        "bitbucket",
+        "catalog",
+        "custom",
+        "file",
+        "git",
+        "github",
+        "gitlab",
+        "http",
+        "https",
+        "jsr",
+        "link",
+        "npm",
+        "runtime",
+        "ssh",
+        "workspace",
+    ];
+
+    let (registry_name, qualified_version) = version.split_once(':')?;
+    let mut chars = registry_name.chars();
+    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        || !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+        || RESERVED.contains(&registry_name)
+        || node_semver::Version::parse(qualified_version).is_err()
+    {
+        return None;
+    }
+    Some(registry_name)
 }
 
 /// Detect npm-aliased entries inside a snapshot's `dependencies` /

@@ -24,7 +24,7 @@ pub(crate) fn load_graph(
     manifest: &aube_manifest::PackageJson,
     missing_hint: &str,
 ) -> miette::Result<aube_lockfile::LockfileGraph> {
-    match aube_lockfile::parse_lockfile(project_dir, manifest) {
+    match crate::commands::parse_lockfile(project_dir, manifest) {
         Ok(g) => Ok(g),
         Err(aube_lockfile::Error::NotFound(_)) => Err(miette!("{missing_hint}")),
         Err(e) => Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
@@ -58,7 +58,28 @@ pub(crate) fn collect_dep_closure(
         };
         out.insert(dep_path.clone(), pkg);
         for (name, version) in &pkg.dependencies {
-            stack.push(format!("{name}@{version}"));
+            // pnpm mirrors optional edges into `dependencies`; omit those
+            // mirrors when --no-optional is active.
+            if no_optional && pkg.optional_dependencies.contains_key(name) {
+                continue;
+            }
+            if let Some(child) = aube_lockfile::resolve_dep_edge(name, version, |key| {
+                graph.packages.contains_key(key)
+            }) {
+                stack.push(child);
+            }
+        }
+        if !no_optional {
+            // Yarn Berry records optional children only in this map, while
+            // pnpm's duplicate edges are harmless because `out` deduplicates
+            // the traversal by dep_path.
+            for (name, version) in &pkg.optional_dependencies {
+                if let Some(child) = aube_lockfile::resolve_dep_edge(name, version, |key| {
+                    graph.packages.contains_key(key)
+                }) {
+                    stack.push(child);
+                }
+            }
         }
     }
     out
@@ -98,13 +119,15 @@ pub(crate) fn prepare_resolved_graph_for_lockfile_write(graph: &mut aube_lockfil
     aube_resolver::platform::mark_transitive_peer_dependencies(graph);
 }
 
-/// Write lockfile preserving existing format and log the file name.
+/// Write a lockfile preserving an existing format, or using the configured
+/// creation default, and log the file name.
 pub(crate) fn write_and_log_lockfile(
     cwd: &Path,
     graph: &aube_lockfile::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
 ) -> miette::Result<PathBuf> {
-    let written_path = aube_lockfile::write_lockfile_preserving_existing(cwd, graph, manifest)
+    let kind = super::lockfile_kind_for_write(cwd)?;
+    let written_path = aube_lockfile::write_lockfile_as(cwd, graph, manifest, kind)
         .into_diagnostic()
         .wrap_err("failed to write lockfile")?;
     eprintln!(
@@ -176,5 +199,49 @@ pub(crate) fn workspace_importer_path(workspace_root: &Path, dir: &Path) -> miet
         Ok(".".to_string())
     } else {
         Ok(rel.to_string_lossy().replace('\\', "/"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dep_closure_follows_yarn_optional_only_edges() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![aube_lockfile::DirectDep {
+                name: "host".to_string(),
+                dep_path: "host@1.0.0".to_string(),
+                dep_type: aube_lockfile::DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        graph.packages.insert(
+            "host@1.0.0".to_string(),
+            aube_lockfile::LockedPackage {
+                name: "host".to_string(),
+                version: "1.0.0".to_string(),
+                dep_path: "host@1.0.0".to_string(),
+                optional_dependencies: [("native".to_string(), "1.0.0".to_string())].into(),
+                ..Default::default()
+            },
+        );
+        graph.packages.insert(
+            "native@1.0.0".to_string(),
+            aube_lockfile::LockedPackage {
+                name: "native".to_string(),
+                version: "1.0.0".to_string(),
+                dep_path: "native@1.0.0".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let closure = collect_dep_closure(&graph, DepFilter::All, false);
+        assert!(closure.contains_key("native@1.0.0"));
+
+        let closure = collect_dep_closure(&graph, DepFilter::All, true);
+        assert!(!closure.contains_key("native@1.0.0"));
     }
 }

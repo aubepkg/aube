@@ -8,10 +8,9 @@
 //!
 //! Pure read: no state changes, no `node_modules/` writes, no project lock.
 
-use super::{DepFilter, make_client, packument_cache_dir};
+use super::{DepFilter, make_client};
 use aube_lockfile::{DepType, DirectDep, dep_type_label};
 use aube_registry::Packument;
-use clap::Args;
 use miette::{Context, IntoDiagnostic};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -53,34 +52,29 @@ Examples:
   All dependencies up to date.
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct OutdatedArgs {
     /// Optional package name (prefix match) to filter the report
     pub pattern: Option<String>,
 
     /// Show only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Check globally-installed packages instead of the current project.
-    #[arg(short = 'g', long, conflicts_with = "workspace_root")]
+    #[usage(short = 'g', long, conflicts = "--workspace-root")]
     pub global: bool,
 
     /// Emit a JSON object keyed by package name instead of the default table
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Also show deps whose `wanted` version matches the installed version
-    #[arg(long)]
+    #[usage(long)]
     pub long: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
     /// Operate on the workspace root regardless of cwd.
     ///
@@ -88,9 +82,9 @@ pub struct OutdatedArgs {
     /// `aube outdated -w` reports the root manifest's deps instead
     /// of the sub-package's. No-op when paired with `-r` / `--filter`
     /// (those already drive workspace selection from the root).
-    #[arg(short = 'w', long = "workspace-root", visible_alias = "workspace")]
+    #[usage(short = 'w', long = "workspace-root", long = "workspace")]
     pub workspace_root: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 
@@ -176,7 +170,7 @@ async fn run_filtered(
 ) -> miette::Result<Option<i32>> {
     let (root, matched) = super::select_workspace_packages(cwd, filter, "outdated")?;
     let manifest = super::load_manifest(&root.join("package.json"))?;
-    let graph = match aube_lockfile::parse_lockfile(&root, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&root, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(
@@ -281,7 +275,7 @@ async fn run_global(args: OutdatedArgs) -> miette::Result<Option<i32>> {
         matched_install = true;
 
         let manifest = super::load_manifest(&info.install_dir.join("package.json"))?;
-        let graph = match aube_lockfile::parse_lockfile(&info.install_dir, &manifest) {
+        let graph = match crate::commands::parse_lockfile(&info.install_dir, &manifest) {
             Ok(g) => g,
             Err(aube_lockfile::Error::NotFound(_)) => {
                 skipped_lockfile = true;
@@ -349,7 +343,7 @@ async fn run_one(cwd: &Path, args: OutdatedArgs, importer: Option<String>) -> mi
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
     let ignored = super::update::ignored_update_dependencies(cwd, &manifest)?;
 
-    let graph = match aube_lockfile::parse_lockfile(cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(
@@ -445,7 +439,18 @@ async fn collect_rows(
     }
 
     let client = std::sync::Arc::new(make_client(cwd));
-    let cache_dir = packument_cache_dir();
+    let (minimum_release_age, registry_supports_time) = super::with_settings_ctx(cwd, |ctx| {
+        (
+            super::install::resolve_minimum_release_age(ctx, None),
+            aube_settings::resolved::registry_supports_time_field(ctx),
+        )
+    });
+    let needs_time = minimum_release_age.is_some() && !registry_supports_time;
+    let cache_dir = if needs_time {
+        super::packument_full_cache_dir_for_cwd(cwd)
+    } else {
+        super::packument_cache_dir_for_cwd(cwd)
+    };
 
     // Fetch every packument in parallel via a JoinSet. Failures are surfaced
     // per-row so a single missing package doesn't sink the whole report.
@@ -454,8 +459,20 @@ async fn collect_rows(
         let client = client.clone();
         let cache_dir = cache_dir.clone();
         let name = dep.name.clone();
+        let registry_name = graph
+            .get_package(&dep.dep_path)
+            .map(|pkg| pkg.registry_name().to_string())
+            .unwrap_or_else(|| name.clone());
         set.spawn(async move {
-            let result = client.fetch_packument_cached(&name, &cache_dir).await;
+            let result = if needs_time {
+                client
+                    .fetch_packument_with_time_cached(&registry_name, &cache_dir)
+                    .await
+            } else {
+                client
+                    .fetch_packument_cached(&registry_name, &cache_dir)
+                    .await
+            };
             (name, result)
         });
     }
@@ -467,12 +484,10 @@ async fn collect_rows(
     }
 
     let mut rows: Vec<Row> = Vec::new();
+    let mut blocked_updates = BTreeMap::new();
     for dep in &roots {
         let packument = packuments.remove(&dep.name);
-        let current = match graph.get_package(&dep.dep_path) {
-            Some(p) => p.version.clone(),
-            None => "(missing)".to_string(),
-        };
+        let current = graph.get_package(&dep.dep_path).map(|p| p.version.clone());
         let packument = match packument {
             Some(Ok(p)) => p,
             Some(Err(e)) => {
@@ -485,15 +500,36 @@ async fn collect_rows(
         // `latest` dist-tag (common on private registries) doesn't get
         // silently flagged as outdated. Drift detection treats an
         // unknown latest the same as "matches current".
-        let latest: Option<String> = packument.dist_tags.get("latest").cloned();
+        let latest_info = super::policy_version_info(
+            &packument,
+            &packument.name,
+            "latest",
+            minimum_release_age.as_ref(),
+            current.as_deref(),
+        );
+        if let Some(blocked) = latest_info.blocked {
+            super::record_age_gated_update(&mut blocked_updates, dep.name.clone(), blocked);
+        }
+        let latest = latest_info.selected;
 
-        // Wanted = highest version in the packument that still satisfies the
-        // manifest range. Fall back to `current` when the range is unparseable
-        // (workspace:/file: specifiers, git URLs, etc.) so we don't lie.
-        let wanted = dep
-            .specifier
-            .as_deref()
-            .and_then(|spec| super::wanted_version(&packument, spec))
+        // Wanted = the version an update would resolve inside the manifest
+        // range after applying minimumReleaseAge. Fall back to `current` when
+        // the range is unparseable so we don't lie.
+        let wanted_info = dep.specifier.as_deref().map(|spec| {
+            super::policy_version_info(
+                &packument,
+                &packument.name,
+                spec,
+                minimum_release_age.as_ref(),
+                current.as_deref(),
+            )
+        });
+        if let Some(blocked) = wanted_info.as_ref().and_then(|info| info.blocked.as_ref()) {
+            super::record_age_gated_update(&mut blocked_updates, dep.name.clone(), blocked.clone());
+        }
+        let current = current.unwrap_or_else(|| "(missing)".to_string());
+        let wanted = wanted_info
+            .and_then(|info| info.selected)
             .unwrap_or_else(|| current.clone());
 
         let latest_known = latest.is_some();
@@ -513,6 +549,7 @@ async fn collect_rows(
             });
         }
     }
+    super::warn_age_gated_updates(&blocked_updates);
 
     Ok((rows, true))
 }

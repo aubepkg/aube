@@ -12,7 +12,7 @@
 //! test `identity::tests::prog_and_cmd_render_aube_under_default_profile`,
 //! which runs under the default profile in a different binary.
 
-use aube_util::{Embedder, cmd, prog};
+use aube_util::{Embedder, cmd, is_embedded, prog};
 
 /// A nub-shaped embedder: its own brand name flows through the source-branding
 /// helpers.
@@ -56,4 +56,13 @@ fn prog_and_cmd_follow_the_embedder_brand() {
         !cmd("install").contains("aube"),
         "a user-facing command reference must carry the host brand, not aube"
     );
+}
+
+/// The same registration is what tells aube it is a guest: the running
+/// executable is the host's, so anything aube hands out as "the program that
+/// runs me" — `npm_execpath`, above all — must not name it.
+#[test]
+fn a_registered_host_profile_reads_as_embedded() {
+    aube_util::set_embedder(&NUBLIKE);
+    assert!(is_embedded());
 }

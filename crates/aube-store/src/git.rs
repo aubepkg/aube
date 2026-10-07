@@ -4,6 +4,16 @@ use crate::{
 };
 use aube_util::url::redact_url;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Construct a Git subprocess that disables Git's own terminal credential
+/// prompts. Credential helpers and configured tokens still work. SSH
+/// transports may still prompt independently through the user's SSH client.
+pub(crate) fn git_command() -> Command {
+    let mut command = Command::new("git");
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
 
 /// Render a git argv tail for error messages with any embedded
 /// userinfo stripped. A raw `{args:?}` would otherwise dump the
@@ -78,7 +88,7 @@ pub fn git_resolve_ref(url: &str, committish: Option<&str>) -> Result<String, Er
     // `--` terminates git's own option parsing so an attacker-supplied
     // url that slips a leading `-` past `validate_git_positional` (we
     // don't expect this, but defense in depth) can't land as an option.
-    let out = std::process::Command::new("git")
+    let out = git_command()
         .args(["ls-remote", "--", url])
         .output()
         .map_err(|e| Error::Git(format!("spawn git ls-remote {}: {e}", redact_url(url))))?;
@@ -255,7 +265,6 @@ pub fn git_shallow_clone(
     commit: &str,
     shallow: bool,
 ) -> Result<(PathBuf, String), Error> {
-    use std::process::Command;
     validate_git_positional(url, "git url")?;
     validate_git_positional(commit, "git commit")?;
     // Deterministic path keyed by url+commit so two callers in the
@@ -328,7 +337,7 @@ pub fn git_shallow_clone(
     // an older aube version — it'll get replaced by the atomic
     // rename below.
     if target.join(".git").is_dir()
-        && let Ok(out) = Command::new("git")
+        && let Ok(out) = git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&target)
             .output()
@@ -361,7 +370,7 @@ pub fn git_shallow_clone(
         .keep();
 
     let run_in = |dir: &Path, args: &[&str]| -> Result<(), Error> {
-        let out = Command::new("git")
+        let out = git_command()
             .args(args)
             .current_dir(dir)
             .output()
@@ -407,7 +416,7 @@ pub fn git_shallow_clone(
         // stale reflog) could still leave HEAD on something else —
         // mirrors the defensive check the reuse path at line 1260
         // already performs.
-        let out = Command::new("git")
+        let out = git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&scratch)
             .output()
@@ -447,7 +456,7 @@ pub fn git_shallow_clone(
         )),
         Err(_) => {
             if target.join(".git").is_dir()
-                && let Ok(out) = Command::new("git")
+                && let Ok(out) = git_command()
                     .args(["rev-parse", "HEAD"])
                     .current_dir(&target)
                     .output()

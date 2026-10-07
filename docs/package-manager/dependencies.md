@@ -1,3 +1,7 @@
+---
+description: Add, remove, inspect, update, deduplicate, and prune dependencies with aube.
+---
+
 # Manage dependencies
 
 Use `add`, `remove`, `update`, `dedupe`, and `prune` to change a project's
@@ -25,7 +29,7 @@ tarball URLs:
 aube add react@latest
 aube add alias-name@npm:actual-name@^1
 aube add jsr:@std/collections@^1.0.0
-aube add workspace:*
+aube add '@acme/ui@workspace:*'
 aube add file:../local-package
 aube add link:../linked-package
 aube add https://registry.example.test/pkg/-/pkg-1.0.0.tgz
@@ -36,6 +40,18 @@ aube add https://registry.example.test/pkg/-/pkg-1.0.0.tgz
 `.npmrc` setup is needed — the install fetches the package under its
 compat name (`@jsr/<scope>__<name>`) and writes `jsr:<range>` back to
 `package.json`.
+
+## Inspect before changing
+
+```sh
+aube outdated
+aube why react
+aube list --depth 0
+```
+
+Use `outdated` to compare installed and available versions, and `why` to find
+which dependency introduced a package. In a workspace, add
+`--filter @acme/app` to scope a supported command.
 
 ## Remove
 
@@ -56,6 +72,28 @@ aube update --latest react
 
 `--latest` updates past the current manifest range and rewrites the manifest
 specifier to the resolved version.
+
+`aube update --interactive` (`-i`) lists every dependency with a newer version
+and lets you choose, per package, between staying put, the newest version its
+range allows, and the registry's `latest`:
+
+```
+Choose which dependencies to update in my-app
+              Current     Range      Latest
+ > chalk      [•] ^4.1.2             [ ] ^6.0.0
+   is-number  [•] ^6.0.0             [ ] ^7.0.0
+   ms         [ ] 2.0.0   [•] 2.1.3
+   semver     [ ] 7.5.0   [•] 7.8.5
+↑/↓/k/j up/down • ←/→/h/l choose • / filter • enter confirm
+```
+
+The title names the project the picker is acting on: its `package.json` `name`,
+or the directory name when `name` is absent. With `-r`, this tells you which
+workspace package you are on.
+
+The manifest keeps each specifier's shape: `^4.1.2` becomes `^6.0.0`, and an
+exact pin such as `7.5.0` is offered the newest release its caret range allows,
+then stays an exact pin (`7.8.5`).
 
 ## Dedupe
 

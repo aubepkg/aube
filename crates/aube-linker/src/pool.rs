@@ -1,7 +1,17 @@
 use tracing::warn;
 
 pub fn default_linker_parallelism() -> usize {
-    let default_limit = if cfg!(target_os = "macos") { 4 } else { 16 };
+    // Linux: hardlinking a 1225-package tree into a per-project virtual
+    // store on 16 and 32 CPUs ran ~20% faster with 8 threads than 16, with
+    // ~40% less kernel time spent contending on shared directories. Other
+    // platforms keep 16 until they are measured.
+    let default_limit = if cfg!(target_os = "macos") {
+        4
+    } else if cfg!(target_os = "linux") {
+        8
+    } else {
+        16
+    };
 
     std::thread::available_parallelism()
         .map(|n| n.get())

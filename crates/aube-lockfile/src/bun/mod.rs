@@ -8,7 +8,7 @@
 //!
 //! ```jsonc
 //! {
-//!   "lockfileVersion": 1,
+//!   "lockfileVersion": 1, // or 2 (bun 1.4+); same content
 //!   "workspaces": {
 //!     "": {
 //!       "name": "my-app",
@@ -32,6 +32,7 @@
 //! to `serde_json`.
 
 mod jsonc;
+mod overrides;
 mod raw;
 mod read;
 mod source;
@@ -42,3 +43,14 @@ mod tests;
 
 pub use read::parse;
 pub use write::write;
+
+/// `lockfileVersion` values the parser reads. bun 1.4 writes v2, which has
+/// the same content as v1 and only makes bun's own parser stricter (npm
+/// tarballs outside the configured registry must carry an integrity hash,
+/// and git tags must be safe path components). v3 is v2 plus scoped
+/// `overrides` groups, and bun stamps it only while such rules exist.
+const SUPPORTED_LOCKFILE_VERSIONS: [u32; 3] = [1, 2, 3];
+
+/// `LockfileGraph::extra_fields` key carrying a non-default
+/// `lockfileVersion` from the parser to the writer.
+const LOCKFILE_VERSION_KEY: &str = "lockfileVersion";

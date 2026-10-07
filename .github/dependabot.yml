@@ -8,6 +8,12 @@ updates:
       default-days: 7
     exclude-paths:
       - "fixtures/**"
+    ignore:
+      - dependency-name: "yamlpath"
+    groups:
+      sigstore:
+        patterns:
+          - "sigstore-*"
 
   - package-ecosystem: "npm"
     directory: "/"

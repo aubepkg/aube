@@ -1,12 +1,11 @@
 use super::{
-    ListLocation, literal_aliases, read_merged, read_single, setting_default_value,
-    setting_for_key, settings_meta, user_npmrc_path,
+    ListLocation, display_config_value, literal_aliases, read_merged, read_single,
+    setting_default_value, setting_for_key, settings_meta, user_npmrc_path,
 };
 use aube_settings::meta::SettingMeta;
-use clap::Args;
 use miette::miette;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ListArgs {
     /// Also list settings that have no value set.
     ///
@@ -16,21 +15,21 @@ pub struct ListArgs {
     /// Only valid with `--location merged` (the default), since a
     /// per-file view can't distinguish "not set anywhere" from "set in
     /// the other file" and would render misleading defaults.
-    #[arg(long)]
+    #[usage(long)]
     pub all: bool,
 
     /// Emit all entries as a JSON object keyed by setting name.
     ///
     /// Matches `pnpm config list --json`. Honors `--all` and
     /// `--location` the same way the default text output does.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Shortcut for `--location project`.
     ///
     /// Conflicts with `--all` since `--all` only makes sense against
     /// the merged view — see the `--all` docs for why.
-    #[arg(long, conflicts_with_all = ["location", "all"])]
+    #[usage(long, conflicts("--location", "--all"))]
     pub local: bool,
 
     /// Which config location(s) to list.
@@ -38,7 +37,7 @@ pub struct ListArgs {
     /// `merged` (default) walks `~/.npmrc`, user aube config, then
     /// the project's `.npmrc` with last-write-wins precedence,
     /// matching how install reads config.
-    #[arg(long, value_enum)]
+    #[usage(long, value_enum)]
     pub location: Option<ListLocation>,
 }
 
@@ -138,13 +137,14 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
         let obj: serde_json::Map<String, serde_json::Value> = seen
             .into_iter()
             .map(|(k, v)| {
+                let display = display_config_value(&k, &v);
                 let value = if args.all {
                     serde_json::json!({
-                        "value": v,
+                        "value": display,
                         "default": defaults.contains(&k),
                     })
                 } else {
-                    serde_json::Value::String(v)
+                    serde_json::Value::String(display)
                 };
                 (k, value)
             })
@@ -154,10 +154,11 @@ pub fn run(args: ListArgs) -> miette::Result<()> {
         println!("{out}");
     } else {
         for (k, v) in &seen {
+            let display = display_config_value(k, v);
             if defaults.contains(k) {
-                println!("{k}={v} (default)");
+                println!("{k}={display} (default)");
             } else {
-                println!("{k}={v}");
+                println!("{k}={display}");
             }
         }
     }

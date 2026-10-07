@@ -3,8 +3,15 @@
 `@jdxcode/aube-node` embeds aube's installer in JavaScript hosts, including
 Node.js, Bun, Electron, and compiled Bun executables.
 
+```sh
+npm install @jdxcode/aube-node
+```
+
 ```ts
 import { install } from "@jdxcode/aube-node"
+
+const projectDirectory = process.cwd()
+const abortController = new AbortController()
 
 const result = await install(projectDirectory, {
   add: [
@@ -44,7 +51,7 @@ cooperatively cancels at a safe install boundary.
 
 Rejected promises are `AubeError` objects with a stable `code` and a
 human-readable `diagnostic`. Published `ERR_AUBE_*` values follow aube's
-[error-code stability policy](https://github.com/jdx/aube/blob/main/docs/error-codes.md).
+[error-code stability policy](https://github.com/aubepkg/aube/blob/main/docs/error-codes.md).
 
 ## Configuration
 
@@ -55,7 +62,7 @@ import { configure, install } from "@jdxcode/aube-node"
 
 configure({
   defaults: {
-    minimumReleaseAge: "259200", // seconds; 3-day cooldown for fresh releases
+    minimumReleaseAge: "4320", // minutes; 3-day minimum age for fresh releases
   },
 })
 ```
@@ -106,4 +113,4 @@ crates/aube-node/poc/run.sh
 
 CI also installs the generated npm tarballs in Node and Bun consumers and
 type-checks the public declarations. For support, use
-[GitHub Discussions](https://github.com/jdx/aube/discussions).
+[GitHub Discussions](https://github.com/aubepkg/aube/discussions).

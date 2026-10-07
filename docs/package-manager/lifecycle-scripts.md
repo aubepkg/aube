@@ -1,3 +1,7 @@
+---
+description: Review root and dependency lifecycle behavior, approve builds, and configure package-specific build policy.
+---
+
 # Lifecycle scripts
 
 Packages can define lifecycle scripts such as `preinstall`, `install`,
@@ -15,7 +19,10 @@ aube install --ignore-scripts
 ## Dependency scripts
 
 Dependency lifecycle scripts follow the pnpm v11 build approval model. Packages
-must be explicitly allowlisted before their install-time scripts run.
+must be allowlisted before their install-time scripts run. aube includes a
+built-in snapshot of pnpm's
+[maintained trusted-dependencies list](https://github.com/pnpm/plugin-trusted-deps);
+an explicit deny rule always overrides the built-in trust.
 
 ```sh
 aube ignored-builds

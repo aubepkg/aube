@@ -90,6 +90,35 @@ EOF
 	assert_file_not_exist packages/sentinel-ran
 }
 
+@test "aube exec -r finds binaries installed at the workspace root" {
+	# The hand-written `#!/bin/sh` bin can't be launched as a Win32 program.
+	_skip_on_windows "hand-written sh bin requires a Unix executable"
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	cat >package.json <<'EOF'
+{"name":"root","version":"0.0.0","private":true}
+EOF
+	mkdir -p packages/a node_modules/.bin
+	cat >packages/a/package.json <<'EOF'
+{"name":"a","version":"0.0.0"}
+EOF
+	cat >node_modules/.bin/root-tool <<'EOF'
+#!/bin/sh
+echo "root-tool:${PWD##*/}"
+EOF
+	chmod +x node_modules/.bin/root-tool
+
+	run aube -r exec --no-install root-tool
+	assert_success
+	assert_output "root-tool:a"
+
+	run aube -r exec --parallel --no-install root-tool
+	assert_success
+	assert_output --partial "root-tool:a"
+}
+
 # Regression: terminating the aube process must tear down the tool it
 # launched instead of orphaning it under init. See discussion #1059.
 #
@@ -139,21 +168,21 @@ EOF
 }
 
 @test "aube exec is not orphaned on SIGTERM (image replacement)" {
-	[ "$(uname -s)" != "Windows_NT" ] || skip "signals are POSIX"
+	_skip_on_windows "signals are POSIX"
 	_assert_not_orphaned exec TERM 987651
 }
 
 # Image replacement makes the tool inherit aube's pid, so SIGKILL teardown
 # works on every Unix here — no PDEATHSIG, no macOS gap for this path.
 @test "aube exec is not orphaned on SIGKILL (image replacement)" {
-	[ "$(uname -s)" != "Windows_NT" ] || skip "signals are POSIX"
+	_skip_on_windows "signals are POSIX"
 	_assert_not_orphaned exec KILL 987652
 }
 
 # `aube run <local-bin>` keeps the supervised-child path, so these cover
 # process_guard's signal forwarding and PDEATHSIG directly.
 @test "aube run forwards SIGTERM to the supervised tool" {
-	[ "$(uname -s)" != "Windows_NT" ] || skip "signals are POSIX"
+	_skip_on_windows "signals are POSIX"
 	_assert_not_orphaned run TERM 987654
 }
 
@@ -167,7 +196,7 @@ EOF
 # aube process is left behind. This is what makes a SIGKILL of that pid
 # hit the tool directly, closing the macOS gap for this path.
 @test "aube exec replaces its image with the tool (no separate aube process)" {
-	[ "$(uname -s)" != "Windows_NT" ] || skip "execvp is POSIX"
+	_skip_on_windows "execvp is POSIX"
 	dur=987653
 	cat >package.json <<'EOF'
 {"name":"t","version":"0.0.0"}

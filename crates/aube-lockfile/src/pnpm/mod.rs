@@ -11,7 +11,7 @@ mod tests;
 
 pub use checksum::{package_extensions_checksum, pnpmfile_checksum};
 pub use read::{parse, parse_with_options};
-pub use write::write;
+pub use write::{registry_tarball_url_is_not_derivable, write, write_with_project_root};
 
 /// Benchmark-only shims comparing the byte-cursor subset parser against
 /// the general `yaml_serde` parser on raw `pnpm-lock.yaml` content.
@@ -45,7 +45,9 @@ pub fn __bench_write_to(
     graph: &crate::LockfileGraph,
     manifest: &aube_manifest::PackageJson,
 ) {
-    write::write(path, graph, manifest).expect("bench write");
+    // The bench graph's paths are relative to the lockfile's directory.
+    let project_root = path.parent().unwrap_or(std::path::Path::new("."));
+    write::write_with_project_root(path, project_root, graph, manifest).expect("bench write");
 }
 
 pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {

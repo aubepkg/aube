@@ -1,9 +1,30 @@
+---
+description: Understand aube security defaults, build approvals, release-age and publishing-trust checks, integrity, and their limits.
+---
+
 # Security
 
-This page lists every security-relevant feature in aube, its default, and the
-one-line config to turn it on or off.
+aube applies checks while selecting, downloading, and building dependencies.
+The protections have different boundaries: some fail the install, some warn,
+and some require explicit configuration.
 
-To report a vulnerability, see the [security policy](https://github.com/jdx/aube/security/policy).
+## Defaults at a glance
+
+| Protection | Default | Boundary |
+| --- | --- | --- |
+| Dependency builds | Project allowlist plus built-in trusted packages | Explicit denies win; root scripts run normally |
+| Publishing trust | `no-downgrade` | Checks evidence during resolution; locked versions and exceptions are trusted |
+| New versions | 24-hour minimum age | Can fall back when no eligible version satisfies the range unless strict mode is enabled |
+| Known malicious packages | Live OSV checks on fresh resolution | Network failure warns by default; unchanged installs skip live checks |
+| Package reputation | Challenges new, unpopular, or similar names on add | Public npm packages; reviewed exceptions are supported |
+| Exotic transitive sources | Blocked | Direct dependencies explicitly declared by the project are allowed |
+| Build jail | Off | Optional native write/network restrictions on macOS and Linux; reads remain unrestricted |
+| Vulnerability audit | Explicit `aube audit` | Separate from the malicious-package check |
+
+YAML examples on this page belong in `aube-workspace.yaml` or an existing
+`pnpm-workspace.yaml`. Review exceptions alongside your dependency changes.
+
+To report a vulnerability, see the [security policy](https://github.com/aubepkg/aube/security/policy).
 
 ## The `paranoid` switch
 
@@ -30,14 +51,17 @@ configured individually:
   fail any live-API OSV check when OSV can't be reached, instead of warning
   and continuing
 
-Use it when you want maximum protection without listing each setting.
+Use this bundle when you want these stricter failure rules together. It does
+not enable a third-party scanner or live advisory checks on every unchanged
+install, and it does not expand the jail's platform capabilities.
 
 ## Default-deny lifecycle scripts
 
 Lifecycle scripts (`preinstall`, `install`, `postinstall`) run arbitrary code
 when a package is installed, which makes them a common attack vector. aube
-doesn't run dependency lifecycle scripts unless you've approved them
-explicitly:
+runs dependency lifecycle scripts only when project policy or its built-in
+trusted-dependencies list allows them. An explicit deny overrides built-in
+trust. Declare project approvals by package name:
 
 ```yaml
 # aube-workspace.yaml
@@ -70,8 +94,7 @@ if one already exists) as `false`; approving them flips the entry to `true`.
 
 ### Suspicious-script content sniff
 
-Before nudging you to run `aube approve-builds`, aube runs a small pattern
-matcher against each unreviewed dep's `preinstall` / `install` /
+Before suggesting `aube approve-builds`, aube checks each unreviewed dependency's `preinstall` / `install` /
 `postinstall` script bodies and surfaces a
 `WARN_AUBE_SUSPICIOUS_LIFECYCLE_SCRIPT` for any that match a known-dangerous
 shape:
@@ -94,16 +117,14 @@ deciding whether to approve a build. `aube approve-builds` repeats the same
 warnings inline next to each picker entry, and `aube ignored-builds` lists
 them under each `name@version` line.
 
-False positives are possible (an SDK that legitimately hits a Discord
-webhook from a `postinstall` would flag), but lifecycle script bodies are
-short and almost never contain a bare `curl … | sh` legitimately. Once
-you've inspected a flagged script and decided it's fine, add the package to
-`allowBuilds: true` — the warning has done its job.
+These patterns can produce false positives and do not detect every harmful
+script. After reviewing a flagged package, use `aube approve-builds` to record
+a package-specific approval. Keep `allowBuilds` as a map of names to booleans.
 
 ## Jailed lifecycle scripts
 
-When a dependency is approved to build, jailing keeps it from getting your
-full filesystem, network, and environment. On macOS aube wraps the script with
+For an approved dependency, jailing restricts filesystem writes, network
+access, and inherited environment variables. Filesystem reads remain unrestricted. On macOS aube wraps the script with
 a Seatbelt profile; on Linux it applies Landlock and seccomp before exec. Both
 deny network access and limit writes to package and jail-owned temporary
 directories. On Windows the env is scrubbed and `HOME` is redirected to a
@@ -145,6 +166,10 @@ structured metadata shapes npm emits after registry-side checks:
 
 This install-time policy validates the registry metadata shape; it does not
 cryptographically verify the attached attestation bundle.
+
+The policy runs when aube resolves a package version. Versions already present
+in the active lockfile are trusted, so frozen and repeat installs do not
+re-fetch publishing evidence for packages the project has already accepted.
 
 A trust downgrade may indicate a supply-chain incident: publisher account
 takeover, repository tampering, or a malicious co-maintainer publishing
@@ -302,29 +327,41 @@ Settings: [`advisoryCheck`](/settings/#setting-advisorycheck),
 
 ## Install-time OSV check
 
-After resolution, every install picks exactly one OSV `MAL-*` backend, so
-the freshest signal lands when it matters most without paying a per-install
-network round-trip when it doesn't:
+After resolution, aube chooses an OSV `MAL-*` check based on the operation
+and configured policy:
 
-| Install path                                   | Backend         | Setting                                   |
-| ---------------------------------------------- | --------------- | ----------------------------------------- |
-| `aube add`, `aube update`                      | Live API        | `advisoryCheck` (default `on`)            |
-| Missing lockfile / resolver picked new version | Live API        | `advisoryCheck` (default `on`)            |
-| `advisoryCheckEveryInstall = true`             | Live API        | `advisoryCheck` (default `on`)            |
-| Plain reinstall (lockfile authoritative)       | Bloom prefilter | `advisoryBloomCheck` (default `off`)      |
-| Plain reinstall, bloom disabled                | Local mirror    | `advisoryCheckOnInstall` (default `off`)  |
-| Plain reinstall, both disabled                 | No check        | —                                         |
+| Install path | Backend | Setting |
+| --- | --- | --- |
+| Explicit `aube add` / `aube update` checks and transient `aube dlx` installs | Full live API | `advisoryCheck` (default `on`) |
+| Ordinary fresh resolution, more than 10 public-npm package/version pairs | Bloom, then live confirmation of hits | `advisoryCheck: on` |
+| Ordinary fresh resolution, 10 pairs or fewer | Full live API | `advisoryCheck: on` |
+| Fresh resolution with `advisoryCheck: required` | Full live API | `advisoryCheck` |
+| `advisoryCheckEveryInstall: true` | Full live API | `advisoryCheck` |
+| Plain reinstall (lockfile authoritative) | Optional bloom prefilter | `advisoryBloomCheck` (default `off`) |
+| Plain reinstall, bloom disabled | Optional local mirror | `advisoryCheckOnInstall` (default `off`) |
+| Plain reinstall, both disabled | No check | — |
 
-The two local backends cover plain reinstalls without a live round-trip:
+**Bloom prefilter** downloads a compact filter built from OSV's
+malicious-package archive. The local cache is refreshed after 15 minutes;
+upstream normally rebuilds it every 10 minutes. Aube verifies the filter's
+SHA-256 against its manifest before using it. Probable hits are checked
+against the live API for exact `(name, version)` confirmation; a negative
+result avoids that API query. False positives only cause extra queries.
 
-**Bloom prefilter** (`advisoryBloomCheck`) downloads a ~380 KB bloom filter
-built from OSV's malicious-package archive (regenerated upstream every 10
-minutes), probes the resolved graph against it, and escalates only the hits
-(~0.1% false-positive rate) to the live API for exact `(name, version)`
-confirmation. A typical lockfile costs zero or one extra live-API round
-trip per install. When both local backends are enabled, the bloom wins —
-it's far cheaper on the wire and its confirmed hits go through the same
-live-API oracle.
+Large ordinary fresh-resolution installs use this prefilter by default,
+including installs without a lockfile. If the filter cannot be refreshed
+or validated, aube falls back to a live check of the full graph. Small
+checks and explicit add/update checks or transient dlx installs remain live.
+The dlx shortcut for an existing local binary does not install packages or
+perform an advisory check. `advisoryBloomCheck`
+continues to control the separate, optional check on lockfile-driven
+reinstalls; its default remains `off`.
+
+A bloom negative is only as current as the upstream snapshot plus the
+local cache. A newly published advisory may not appear until a refresh.
+Use `advisoryCheck: required` for full live checks that also fail on API
+errors, or `advisoryCheckEveryInstall: true` to query every install live
+under your chosen `advisoryCheck` failure policy.
 
 **Local mirror** (`advisoryCheckOnInstall`) keeps the bulk zip from
 `osv-vulnerabilities.storage.googleapis.com/npm/all.zip` (roughly tens of
@@ -332,14 +369,14 @@ MB) at `$XDG_CACHE_HOME/aube/osv/npm/`, lazily refreshed with an
 ETag-conditional GET every 24 hours. Lookups are sub-millisecond, but the
 index lags reality by up to ~24h — an advisory published in the last day
 won't be in it unless a refresh happens to fall after it. Fresh-resolution
-installs always go through the live API, so that lag never affects new
-picks.
+installs use the separate gate described above, so this 24-hour mirror
+cache does not affect new picks.
 
 Confirmed hits from any backend fail the install with the same
 `ERR_AUBE_MALICIOUS_PACKAGE` exit.
 
 ```yaml
-# Default: live API on aube add / update / fresh-resolution.
+# Default: live API on add/update and dlx installs; bloom first for large fresh installs.
 # Plain reinstalls skip OSV entirely.
 advisoryCheck: on
 advisoryBloomCheck: off
@@ -384,19 +421,37 @@ deps you pin yourself in `package.json` are still allowed.
 blockExoticSubdeps: true   # default
 ```
 
-Settings: [`blockExoticSubdeps`](/settings/#setting-blockexoticsubdeps).
+When one dependency genuinely has no registry release — a package the registry
+no longer carries a safe version of, say — name it instead of turning the gate
+off. Every other package in the graph stays protected:
+
+```yaml
+blockExoticSubdepsExclude:
+  - xlsx
+```
+
+Entries are bare package names or `*` name globs (`@myorg/*`). A version
+selector (`xlsx@^0.20`) is refused: an exotic dependency is identified by its
+URL or path, so a semver range has nothing to match. Check where the package is
+actually fetched from before listing it — the entry trusts whatever source the
+graph names, including after a future update changes it.
+
+Settings: [`blockExoticSubdeps`](/settings/#setting-blockexoticsubdeps),
+[`blockExoticSubdepsExclude`](/settings/#setting-blockexoticsubdepsexclude).
 
 ## Tarball integrity
 
-Every registry tarball is verified against the SHA-512 hash recorded in the
-packument's `dist.integrity` field before it is added to the store. Mismatches
-fail the install. The hash is preserved in the lockfile, so subsequent
-installs reverify on every fetch.
+With integrity verification enabled, aube checks fetched registry tarballs
+against their recorded integrity before importing them into the store. A
+mismatch fails the install. Missing integrity metadata warns by default;
+`strictStoreIntegrity: true` makes it an error. The lockfile preserves the
+integrity value for later fetches.
 
-The content-addressable store itself uses BLAKE3 for the on-disk index — fast
-to compute and immune to length-extension. Linked `node_modules` files are
-reflinks (APFS/btrfs), hardlinks (ext4), or copies; none of those paths can
-modify the canonical store entry.
+The content-addressable store uses BLAKE3 to identify files. This is separate
+from registry tarball integrity. Reflinks, hardlinks, and copies have different
+write semantics, so content addressing is not a sandbox for arbitrary edits
+to installed files. Use [`aube patch`](/cli/patch) to make reproducible changes
+and [`aube store status`](/cli/store/status) to check cached file integrity.
 
 ## Auth tokens
 
@@ -436,7 +491,7 @@ Full reference: [Security scanner](/package-manager/security-scanner).
 ## Auditing installed dependencies
 
 ```sh
-aube audit                # list known CVEs at moderate+ severity
+aube audit                # report advisories at the configured severity (default: low)
 aube audit --audit-level high
 aube audit --fix          # write package.json overrides to patched versions
 aube audit --json | jq    # machine-readable for CI
@@ -445,9 +500,9 @@ aube audit --json | jq    # machine-readable for CI
 Same advisory data source as `npm audit` and `pnpm audit`; same response
 schema.
 
-## Recommended baseline
+## Example strict policy
 
-For most projects, the following is a good starting point:
+For a project that has reviewed its dependency builds and can use the jail:
 
 ```yaml
 # aube-workspace.yaml
@@ -458,7 +513,7 @@ allowBuilds:
   # ...whatever your project actually needs to build
 ```
 
-`trustPolicy=no-downgrade` and `minimumReleaseAge: 1440` (24h) are already
+`trustPolicy: no-downgrade` and `minimumReleaseAge: 1440` (24h) are already
 default-on; `paranoid: true` adds the rest of the bundle on top. Pair this
 with `aube audit` in CI so a newly disclosed CVE fails the build instead of
 silently shipping.

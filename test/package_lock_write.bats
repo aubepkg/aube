@@ -149,6 +149,122 @@ teardown() {
 	assert_success
 }
 
+@test "aube install keeps npm workspace members in package-lock.json on re-resolve" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"1.0.0"}}' >packages/a/package.json
+	echo '{"name":"b","version":"1.0.0"}' >packages/b/package.json
+	# What npm 11 writes for this workspace. Nothing in the root depends
+	# on a member, so a fresh resolve has no link: package for them.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/a": {
+      "resolved": "packages/a",
+      "link": true
+    },
+    "node_modules/b": {
+      "resolved": "packages/b",
+      "link": true
+    },
+    "packages/a": {
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "1.0.0"
+      }
+    },
+    "packages/b": {
+      "version": "1.0.0"
+    }
+  }
+}
+EOF
+
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	run node -e '
+const p = require("./package-lock.json").packages;
+const ok = JSON.stringify(p[""].workspaces) === JSON.stringify(["packages/*"])
+  && p["node_modules/a"]?.resolved === "packages/a" && p["node_modules/a"].link
+  && p["node_modules/b"]?.resolved === "packages/b" && p["node_modules/b"].link
+  && p["packages/a"]?.version === "1.0.0" && p["packages/a"].dependencies?.b === "1.0.0"
+  && p["packages/b"]?.version === "1.0.0";
+if (!ok) { console.log(JSON.stringify(p, null, 2)); process.exit(1); }'
+	assert_success
+
+	rm -rf node_modules packages/*/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_link_exists packages/a/node_modules/b
+}
+
+@test "aube install keeps a versionless npm workspace member and optional peers across a rewrite" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"a","version":"1.0.0","peerDependencies":{"is-odd":"^3.0.0"},"peerDependenciesMeta":{"is-odd":{"optional":true}}}' >packages/a/package.json
+	echo '{"name":"b"}' >packages/b/package.json
+	echo 'strict-peer-dependencies=true' >.npmrc
+	# What npm 11 writes for this workspace.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/a": {
+      "resolved": "packages/a",
+      "link": true
+    },
+    "node_modules/b": {
+      "resolved": "packages/b",
+      "link": true
+    },
+    "packages/a": {
+      "version": "1.0.0",
+      "peerDependencies": {
+        "is-odd": "^3.0.0"
+      },
+      "peerDependenciesMeta": {
+        "is-odd": {
+          "optional": true
+        }
+      }
+    },
+    "packages/b": {}
+  }
+}
+EOF
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run node -e '
+const p = require("./package-lock.json").packages;
+const ok = p["packages/a"]?.peerDependenciesMeta?.["is-odd"]?.optional === true
+  && p["packages/b"] && !("version" in p["packages/b"]);
+if (!ok) { console.log(JSON.stringify(p, null, 2)); process.exit(1); }'
+	assert_success
+
+	rm -rf node_modules packages/*/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+}
+
 @test "aube add preserves existing pnpm-lock.yaml" {
 	cp "$PROJECT_ROOT/fixtures/basic/package.json" .
 	cp "$PROJECT_ROOT/fixtures/basic/pnpm-lock.yaml" .

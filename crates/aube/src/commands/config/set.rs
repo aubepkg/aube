@@ -1,10 +1,10 @@
 use super::{
-    Location, NpmrcEdit, aube_config, is_npm_shared_key, resolve_aliases, setting_for_key,
+    Location, NpmrcEdit, aube_config, display_config_value, is_npm_shared_key, resolve_aliases,
+    setting_for_key,
 };
-use clap::Args;
 use miette::miette;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct SetArgs {
     /// Setting key (canonical name or `.npmrc` alias).
     pub key: String,
@@ -13,7 +13,7 @@ pub struct SetArgs {
     pub value: String,
 
     /// Shortcut for `--location project`.
-    #[arg(long, conflicts_with = "location")]
+    #[usage(long, conflicts = "--location")]
     pub local: bool,
 
     /// Which config location to write to.
@@ -23,7 +23,7 @@ pub struct SetArgs {
     /// settings tagged `npmShared = true` in the settings registry
     /// (`registry`, `proxy` / `https-proxy`, `engine-strict`,
     /// `ignore-scripts`, etc.) — so npm and yarn read the same value.
-    /// Aube-only and pnpm-only settings, plus unknown keys, land in
+    /// aube-only and pnpm-only settings, plus unknown keys, land in
     /// aube's own config (`~/.config/aube/config.toml` at user scope,
     /// `<cwd>/.config/aube/config.toml` at project scope) where
     /// sibling tools don't see them.
@@ -35,7 +35,7 @@ pub struct SetArgs {
     /// `package.json#aube.<map>.<entry>` if no workspace yaml exists,
     /// the same place install reads from. User-scope dotted writes
     /// for these maps error: aube only reads them per project.
-    #[arg(long, value_enum, default_value_t = Location::User)]
+    #[usage(long, value_enum, default_value_t = Location::User, default = "user")]
     pub location: Location,
 }
 
@@ -98,7 +98,12 @@ pub(super) fn set_value(
         {
             aube_config::set_workspace_yaml_value(&path, meta, yaml_key, value)?;
             if report {
-                eprintln!("set {}={} ({})", yaml_key, value, path.display());
+                eprintln!(
+                    "set {}={} ({})",
+                    yaml_key,
+                    display_config_value(yaml_key, value),
+                    path.display()
+                );
             }
             return Ok(());
         }
@@ -106,7 +111,12 @@ pub(super) fn set_value(
         edit.set(meta, value)?;
         edit.save(&path)?;
         if report {
-            eprintln!("set {}={} ({})", meta.name, value, path.display());
+            eprintln!(
+                "set {}={} ({})",
+                meta.name,
+                display_config_value(meta.name, value),
+                path.display()
+            );
         }
         return Ok(());
     }
@@ -118,7 +128,12 @@ pub(super) fn set_value(
     edit.set_unknown(key, value);
     edit.save(&path)?;
     if report {
-        eprintln!("set {}={} ({})", key, value, path.display());
+        eprintln!(
+            "set {}={} ({})",
+            key,
+            display_config_value(key, value),
+            path.display()
+        );
     }
     Ok(())
 }
@@ -177,7 +192,12 @@ fn try_set_aube_map_entry(
         aube_manifest::workspace::upsert_map_entry(&cwd, meta.name, entry, yaml_value, json_value)
             .map_err(|e| miette!("failed to write {}.{entry}: {e}", meta.name))?;
     if report {
-        eprintln!("set {}.{entry}={value} ({})", meta.name, written.display());
+        let key = format!("{}.{entry}", meta.name);
+        eprintln!(
+            "set {key}={} ({})",
+            display_config_value(&key, value),
+            written.display()
+        );
     }
     Ok(Some(()))
 }
@@ -213,7 +233,12 @@ fn write_npmrc(key: &str, value: &str, location: Location, report: bool) -> miet
     edit.set(&write_key, value);
     edit.save(&path)?;
     if report {
-        eprintln!("set {}={} ({})", write_key, value, path.display());
+        eprintln!(
+            "set {}={} ({})",
+            write_key,
+            display_config_value(&write_key, value),
+            path.display()
+        );
     }
     sweep_stale_aube_config(key, &aliases, location)?;
     Ok(())

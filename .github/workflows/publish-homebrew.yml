@@ -20,7 +20,7 @@ concurrency:
 jobs:
   publish:
     name: Publish Homebrew formula
-    runs-on: namespace-profile-endev-linux-amd64
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -68,7 +68,7 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          curl -fsSL "https://github.com/jdx/aube/archive/refs/tags/${TAG}.tar.gz" -o source.tar.gz
+          curl -fsSL "https://github.com/aubepkg/aube/archive/refs/tags/${TAG}.tar.gz" -o source.tar.gz
           echo "sha256=$(sha256sum source.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Render formula

@@ -12,13 +12,13 @@
 //   {
 //     updated: string (ISO timestamp),
 //     unit: "ms",
-//     managers: string[],                      // e.g. ["pnpm", "aube"]
+//     managers: string[],                      // e.g. ["aube", "aube-nogvs", "pnpm"]
 //     rows: [
 //       {
 //         key: string,                         // stable identifier, matches bench.sh scenario names
 //         label: string,                       // human-readable column label
-//         values: { [manager]: number | null } // mean in `unit`
-//         stats?: { [manager]: { mean, stddev, min, max, text } | null }
+//         values: { [manager]: number | null } // median in `unit`
+//         stats?: { [manager]: { median, mean, stddev, min, max, text } | null }
 //       },
 //       ...
 //     ],

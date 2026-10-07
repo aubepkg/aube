@@ -16,9 +16,11 @@ pub(super) struct RawBunLockfile {
     #[serde(default)]
     pub(super) packages: BTreeMap<String, Vec<serde_json::Value>>,
     /// bun 1.1+ top-level `overrides:` block (mirrors the key under
-    /// the same name in package.json). Map of selector → version.
+    /// the same name in package.json). Values are version strings, or
+    /// selector-keyed groups for bun 1.4's scoped rules; see
+    /// `super::overrides`.
     #[serde(default)]
-    pub(super) overrides: BTreeMap<String, String>,
+    pub(super) overrides: BTreeMap<String, serde_json::Value>,
     /// bun 1.1+ top-level `patchedDependencies:` block. Map of
     /// `pkg@version` selector → relative patch file path.
     #[serde(default, rename = "patchedDependencies")]

@@ -2,17 +2,21 @@
  * Redact bearer credentials from a URL before it lands in error
  * messages, trace logs, or diagnostic output.
  *
- * Three credential shapes are scrubbed:
+ * Credential-bearing URL components are scrubbed:
  *   - `user:password@host` userinfo (Artifactory, Nexus, JFrog,
  *     GitHub Packages, scoped npm registries with embedded auth).
- *   - Sensitive query parameters (`token`, `auth`, `api_key`,
- *     `apikey`, `access_token`) — values are replaced with `***`.
+ *   - The entire query and fragment, including signed URLs and custom
+ *     credential parameters. An allowlist of token names cannot cover
+ *     every registry or object-storage provider.
  *   - Returns the input unchanged when no credential pattern is
  *     present.
  */
 pub fn redact_url(url: &str) -> String {
     let after_userinfo = redact_userinfo(url);
-    redact_query_tokens(&after_userinfo)
+    match after_userinfo.find(['?', '#']) {
+        Some(start) => format!("{}***", &after_userinfo[..start + 1]),
+        None => after_userinfo,
+    }
 }
 
 /**
@@ -33,54 +37,11 @@ fn redact_userinfo(url: &str) -> String {
     let Some(at) = tail.find('@') else {
         return url.to_string();
     };
-    let slash = tail.find('/').unwrap_or(tail.len());
-    if at >= slash {
+    let authority_end = tail.find(['/', '?', '#']).unwrap_or(tail.len());
+    if at >= authority_end {
         return url.to_string();
     }
     format!("{}***@{}", &url[..after], &tail[at + 1..])
-}
-
-/**
- * Replace the value of any well-known credential query parameter with
- * `***`. Matching is case-insensitive on the parameter name.
- */
-fn redact_query_tokens(url: &str) -> String {
-    let Some(qpos) = url.find('?') else {
-        return url.to_string();
-    };
-    let (head, query_full) = url.split_at(qpos);
-    let query = &query_full[1..];
-    // Keep the optional fragment intact.
-    let (query_only, fragment) = match query.find('#') {
-        Some(h) => (&query[..h], &query[h..]),
-        None => (query, ""),
-    };
-    const SENSITIVE: &[&str] = &["token", "auth", "api_key", "apikey", "access_token"];
-    let mut out = String::with_capacity(url.len());
-    out.push_str(head);
-    out.push('?');
-    let mut first = true;
-    for pair in query_only.split('&') {
-        if !first {
-            out.push('&');
-        }
-        first = false;
-        if let Some(eq) = pair.find('=') {
-            let (k, v) = pair.split_at(eq);
-            let lower = k.to_ascii_lowercase();
-            if SENSITIVE.iter().any(|s| lower == *s) {
-                out.push_str(k);
-                out.push_str("=***");
-                let _ = v;
-            } else {
-                out.push_str(pair);
-            }
-        } else {
-            out.push_str(pair);
-        }
-    }
-    out.push_str(fragment);
-    out
 }
 
 #[cfg(test)]
@@ -123,10 +84,26 @@ mod tests {
     }
 
     #[test]
+    fn query_at_sign_is_not_userinfo() {
+        assert_eq!(
+            redact_url("https://registry.example?token=user@secret"),
+            "https://registry.example?***"
+        );
+    }
+
+    #[test]
+    fn fragment_at_sign_is_not_userinfo() {
+        assert_eq!(
+            redact_url("https://registry.example#token=user@secret"),
+            "https://registry.example#***"
+        );
+    }
+
+    #[test]
     fn redacts_query_token() {
         assert_eq!(
             redact_url("https://reg.example.com/x?token=abc123&v=1"),
-            "https://reg.example.com/x?token=***&v=1"
+            "https://reg.example.com/x?***"
         );
     }
 
@@ -134,7 +111,7 @@ mod tests {
     fn redacts_query_auth_case_insensitive() {
         assert_eq!(
             redact_url("https://reg.example.com/x?Auth=secret"),
-            "https://reg.example.com/x?Auth=***"
+            "https://reg.example.com/x?***"
         );
     }
 
@@ -142,23 +119,38 @@ mod tests {
     fn redacts_query_apikey_alias() {
         assert_eq!(
             redact_url("https://reg.example.com/x?apikey=abc&api_key=def"),
-            "https://reg.example.com/x?apikey=***&api_key=***"
+            "https://reg.example.com/x?***"
         );
     }
 
     #[test]
-    fn preserves_fragment_when_redacting_query() {
+    fn redacts_fragment_along_with_query() {
         assert_eq!(
             redact_url("https://reg.example.com/x?token=abc#section"),
-            "https://reg.example.com/x?token=***#section"
+            "https://reg.example.com/x?***"
         );
     }
 
     #[test]
-    fn passthrough_when_query_has_no_sensitive_keys() {
+    fn redacts_unrecognized_query_parameters() {
         assert_eq!(
             redact_url("https://reg.example.com/x?foo=1&bar=2"),
-            "https://reg.example.com/x?foo=1&bar=2"
+            "https://reg.example.com/x?***"
         );
+    }
+
+    #[test]
+    fn redacts_signed_urls_and_fragment_credentials() {
+        for suffix in [
+            "?X-Amz-Signature=secret&X-Amz-Credential=key",
+            "?X-Goog-Signature=secret",
+            "?sig=secret&sv=2026-01-01",
+            "?custom-secret",
+            "?access%5ftoken=secret#secret",
+            "#access_token=secret",
+        ] {
+            let rendered = redact_url(&format!("https://registry.example/tarball{suffix}"));
+            assert!(!rendered.contains("secret"), "{rendered}");
+        }
     }
 }

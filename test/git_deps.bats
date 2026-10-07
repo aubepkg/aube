@@ -596,3 +596,85 @@ EOF
 	run cat node_modules/gitshallowempty/package.json
 	assert_output --partial '"version":"4.5.6"'
 }
+
+# Build a bare git repo whose package.json declares one dependency, so that
+# dependency is an *exotic transitive* of the git package rather than a root
+# dep the user wrote themselves.
+_make_git_repo_with_dep() {
+	local bare="$1" name="$2" version="$3" dep_name="$4" dep_spec="$5"
+	local work
+	work="$(temp_make)"
+	(
+		cd "$work" || exit 1
+		git init -q
+		git config commit.gpgsign false
+		cat >package.json <<EOF
+{"name":"$name","version":"$version","main":"index.js","dependencies":{"$dep_name":"$dep_spec"}}
+EOF
+		cat >index.js <<EOF
+module.exports = "from $name git";
+EOF
+		git add -A
+		git commit -q -m "init"
+	)
+	git init -q --bare "$bare"
+	(cd "$work" && git push -q "$bare" HEAD:refs/heads/main)
+	(cd "$work" && git rev-parse HEAD)
+}
+
+@test "blockExoticSubdepsExclude allows one package without opening the gate" {
+	conn_sha="$(_make_git_repo "$TEST_TEMP_DIR/excl-conn.git" extconn 2.0.0)"
+	_make_git_repo_with_dep "$TEST_TEMP_DIR/excl-host.git" exthost 1.0.0 \
+		extconn "git+file://$TEST_TEMP_DIR/excl-conn.git#$conn_sha" >/dev/null
+
+	mkdir -p app
+	cd app
+	cat >package.json <<EOF
+{"name":"app","version":"0.0.0","dependencies":{"exthost":"git+file://$TEST_TEMP_DIR/excl-host.git"}}
+EOF
+
+	# Default: the git transitive is blocked, and the error points at the
+	# narrow remedy rather than only at the all-or-nothing switch.
+	run aube install
+	assert_failure
+	assert_output --partial "blockExoticSubdepsExclude=extconn"
+
+	# An entry for a different package must not let this one through —
+	# otherwise the list would be a disguised `blockExoticSubdeps=false`.
+	cat >.npmrc <<EOF
+blockExoticSubdepsExclude=some-other-package
+EOF
+	run aube install
+	assert_failure
+	assert_output --partial "blocked exotic transitive dependency extconn"
+
+	# Naming the package allows exactly that package.
+	cat >.npmrc <<EOF
+blockExoticSubdepsExclude=extconn
+EOF
+	run aube install
+	assert_success
+	assert_file_exists node_modules/exthost/package.json
+}
+
+@test "blockExoticSubdepsExclude version selectors are rejected, gate stays whole" {
+	conn_sha="$(_make_git_repo "$TEST_TEMP_DIR/ver-conn.git" verconn 2.0.0)"
+	_make_git_repo_with_dep "$TEST_TEMP_DIR/ver-host.git" verhost 1.0.0 \
+		verconn "git+file://$TEST_TEMP_DIR/ver-conn.git#$conn_sha" >/dev/null
+
+	mkdir -p app
+	cd app
+	# A git/tarball dep has no registry version, so a semver selector can
+	# never match. The entry is refused rather than compiled into a rule
+	# that silently never fires.
+	cat >.npmrc <<EOF
+blockExoticSubdepsExclude=verconn@^2
+EOF
+	cat >package.json <<EOF
+{"name":"app","version":"0.0.0","dependencies":{"verhost":"git+file://$TEST_TEMP_DIR/ver-host.git"}}
+EOF
+
+	run aube install
+	assert_failure
+	assert_output --partial "blocked exotic transitive dependency verconn"
+}

@@ -1,308 +1,200 @@
 <p align="center">
-  <a href="https://aube.jdx.dev">
-    <img src="assets/logo.svg" alt="aube logo" width="140" height="140">
-  </a>
+  <a href="https://aube.sh"><img src="assets/logo.svg" alt="aube" width="120" height="120"></a>
 </p>
 
 <h1 align="center">aube</h1>
 
+<p align="center"><strong>Run your project. Dependencies take care of themselves.</strong></p>
+
 <p align="center">
-  <strong>Never forget to install.</strong>
+  A Node.js package manager written in Rust. Installs automatically before running
+  scripts, shares packages across projects, and updates your existing lockfile in place.
 </p>
 
 <p align="center">
-  Aube installs automatically when you run a script. The tightest security defaults of any Node.js package manager - and the only one with a lifecycle-script jail. Drops into existing projects using existing lockfiles.
+  <a href="https://aube.sh/getting-started">Get started</a> ·
+  <a href="https://aube.sh/guide">Documentation</a> ·
+  <a href="https://aube.sh/cli/">Commands</a> ·
+  <a href="https://aube.sh/benchmarks">Benchmarks</a>
 </p>
 
-<p align="center">
-  <strong>aube</strong> means dawn in French. Pronounced <code>/ob/</code>, like "ohb".
-</p>
+## Get started
 
-<p align="center">
-  <strong><a href="https://aube.jdx.dev">Read the docs</a></strong>
-</p>
-
-<p align="center">
-  Sponsored by <a href="https://entire.io">entire.io</a> and <a href="https://37signals.com">37signals</a>.<br>
-  <a href="https://jdx.dev/sponsors.html">View all sponsors</a>.
-</p>
-
-## Why Try It
-
-<!-- BENCH_RATIOS:START -->
-**[Fast installs](https://aube.jdx.dev/benchmarks).** Warm installs are about 6x faster than pnpm and about 3x faster than Bun in the current benchmarks. Repeat test commands run up to 51x faster than pnpm and up to 4x faster than Bun.
-<!-- BENCH_RATIOS:END -->
-
-**[Existing lockfiles](https://aube.jdx.dev/package-manager/lockfiles).** Reads and writes `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, and `bun.lock` in place.
-
-**[Cheap repeat commands](https://aube.jdx.dev/package-manager/scripts).** `aubr test`, `aube test`, and `aube exec vitest` auto-install when dependencies are stale, then skip that work when nothing changed. `aubx` uses a local binary when one is installed, or a throwaway environment for one-off tools.
-
-**[Less disk use](https://aube.jdx.dev/package-manager/node-modules).** A global content-addressable store lets projects share package files instead of keeping a full copy of the same dependencies in every checkout.
-
-**[Secure defaults](https://aube.jdx.dev/security).** Out of the box, exotic transitive deps are blocked, lifecycle scripts wait for approval, trust downgrades fail at resolve, and brand-new releases sit in a 24h cooling window. One `paranoid: true` line adds the build jail and turns the soft gates into hard fails.
-
-## Install
-
-The recommended path is mise:
+Install with [mise](https://mise.jdx.dev), then run a script in your project:
 
 ```sh
 mise use -g aube
-```
-
-aube switches [Node.js versions](https://aube.jdx.dev/package-manager/node-runtime)
-itself: if a project pins Node through `package.json`
-(`devEngines.runtime`), `.nvmrc`, or `.node-version`, every script and
-binary run through aube gets that version. If you want plain `node`,
-`pnpm`, `yarn`, and npm-family commands to go through the same resolver,
-opt into shell activation with `eval "$(aube activate zsh)"`,
-`eval "$(aube activate bash)"`, or `aube activate fish | source`.
-When a pinned version is missing, aube delegates the install to mise if
-you have it (one shared Node store on disk) and downloads from
-nodejs.org otherwise.
-
-Check that it is on your `PATH`:
-
-```sh
 aube --version
-```
-
-Inside a project, you can also pin aube with mise:
-
-```sh
-mise use aube
-```
-
-aube is also published on npm:
-
-```sh
-npm install -g --ignore-scripts=false @endevco/aube
-npx --ignore-scripts=false @endevco/aube --version
-```
-
-The npm package uses an install script to fetch native binaries for
-performance. The npm commands above include the flag that keeps that
-working even if your npm config disables scripts. We still recommend mise
-for the smoothest install and runtime management path.
-
-Homebrew installs come from the jdx tap:
-
-```sh
-brew install jdx/tap/aube
-```
-
-See [other install methods](https://aube.jdx.dev/installation).
-
-## First Run
-
-Run aube in an existing Node.js project:
-
-```sh
-aubr test
-```
-
-`aubr` is shorthand for `aube run`. Before it starts the script, aube checks
-whether `node_modules` is fresh for the current `package.json` and lockfile.
-If dependencies are missing or stale, it installs them first; otherwise it
-goes straight to the script.
-
-You usually do not need a separate `aube install` in day-to-day work. Run the
-script or binary you actually wanted:
-
-```sh
+cd your-project
 aubr build
-aube test
-aube exec vitest
-aubx cowsay hi
 ```
 
-Use `aube install` when the install itself is the task: first local setup
-without running a script, updating a lockfile, Docker layers, production-only
-installs, or CI flows.
+Use a script defined in your `package.json`. `aubr` is shorthand for `aube run`:
+when dependencies are missing or stale, it installs them before starting the
+script. Repeat runs skip the install when nothing has changed.
 
-If the project already has a supported lockfile, aube reads it and writes updates back to the same file. That makes it easy to try aube locally without forcing the rest of the team to switch package managers first.
+Prefer another installer? See [Homebrew, npm, Cargo, Linux packages, and source builds](https://aube.sh/installation).
+To pin aube for a project with mise, run `mise use aube` inside that project.
 
-For a new project with no lockfile, aube creates `aube-lock.yaml`.
+## Why aube
 
-## Daily Commands
+<!-- BENCH_RATIOS:START -->
+**[Fast installs](https://aube.sh/benchmarks).** Warm installs are about 2x faster than pnpm and about 2x faster than Bun in the current benchmarks. Repeat test commands run up to 4x faster than pnpm and up to 2x faster than Bun.
+<!-- BENCH_RATIOS:END -->
 
-```sh
-aube add react            # add a dependency
-aube add -D vitest        # add a dev dependency
-aube remove react         # remove a dependency
-aube update               # update dependencies within package.json ranges
-aubr build                # run a package.json script, auto-installing first if needed
-aube test                 # run the test script, auto-installing first if needed
-aube exec vitest          # run a local binary, auto-installing first if needed
-aubx cowsay hi            # run a local bin, or fetch one in a throwaway environment
-aube install              # install only, for setup or lockfile/install modes
-aube ci                   # clean, frozen install for CI
-```
+Those results describe the recorded fixtures and cache conditions. See the
+[methodology and all scenarios](https://aube.sh/benchmarks) for the comparison.
 
-You can also run scripts directly:
+- **Keep your lockfile.** Reads and writes pnpm, npm, Yarn, and Bun text lockfiles
+  in place. New projects default to `aube-lock.yaml`.
+- **Install as part of the work.** `aubr build`, `aube test`, and `aube exec vitest`
+  check dependency freshness before running. `aubx` runs one-off tools.
+- **Share package files.** A content-addressable store deduplicates files;
+  the global virtual store also reuses package directory trees across local projects.
+- **Review dependency code.** Dependency build scripts need an allow rule or
+  built-in trust. Explicit denies take precedence. Optional build jails restrict
+  approved scripts; release-age and publishing-trust checks run during resolution.
 
-```sh
-aube dev
-aube build
-aube lint
-```
+## Everyday commands
 
-If the script exists in `package.json`, aube treats that as `aube run <script>`.
+| Task | Command |
+| --- | --- |
+| Run a project script | `aubr build` |
+| Run the test script | `aube test` |
+| Run a local binary | `aube exec vitest` |
+| Run a one-off tool | `aubx cowsay hi` |
+| Add a dependency | `aube add react` |
+| Add a development dependency | `aube add -D vitest` |
+| Remove a dependency | `aube remove react` |
+| Update within manifest ranges | `aube update` |
+| Install without running a project script | `aube install` |
+| Clean install from a committed lockfile | `aube ci` |
 
-### Shortcuts: `aubr` and `aubx`
+`aubr <name>` prefers a package script, then a local binary. `aubx <name>`
+prefers a local binary, then installs the tool in a throwaway project. Use
+`aubx --package <package> <binary>` to request a separate tool installation.
+See [scripts and binaries](https://aube.sh/package-manager/scripts) for flags,
+argument forwarding, and workspace runs.
 
-`aubr` and `aubx` are multicall shims for `aube run` and `aube dlx`. They
-share a binary with `aube` and dispatch purely on `argv[0]`, so every flag
-that works on the full command also works on the shim:
+## Try it in an existing project
 
-```sh
-aubr build            # aube run build
-aubx cowsay hi        # aube dlx cowsay hi
-```
+| Existing lockfile | Supported format |
+| --- | --- |
+| `pnpm-lock.yaml` | Lockfile v9, written by pnpm 9–11 |
+| `package-lock.json` | v2 and v3 |
+| `npm-shrinkwrap.json` | npm shrinkwrap |
+| `yarn.lock` | Classic v1 and Berry v2+ |
+| `bun.lock` | Text format v1–v3 (Bun 1.4) |
 
-`aubr <name>` runs a package script first, then falls back to a matching
-local binary. `aubx <name>` prefers an installed local binary before fetching
-into a throwaway environment; pass `-p` / `--package` to force the package
-that should be installed for a one-off command.
+Run `aube install`, inspect the diff, and run your tests. You do not need to
+import or delete a supported lockfile. Upgrade older pnpm lockfiles with pnpm
+first; convert `bun.lockb` with Bun. Yarn PnP projects need a `node_modules`
+linker. Keeping the lockfile format does not guarantee identical behavior:
+aube uses isolated dependencies, its own stores, and its own security defaults.
 
-The release archives ship all three binaries side by side; no extra
-setup is needed when you install aube via mise or the tarball.
+Migration guides: [pnpm](https://aube.sh/pnpm-users) ·
+[npm](https://aube.sh/npm-users) · [Yarn](https://aube.sh/yarn-users) ·
+[Bun](https://aube.sh/bun-users).
 
-### Shell activation
+## Dependency builds and security
 
-`aube activate bash`, `aube activate zsh`, and `aube activate fish`
-create an aube-owned shim directory and print the shell code to put it
-on PATH. Activated shells route `node`, `npm`, `npx`, `pnpm`, `pnpx`,
-`yarn`, and `yarnpkg` through aube. `node` uses the resolved project
-runtime; package-manager shims route to aube commands so the existing
-project lockfile kind stays authoritative.
-
-## CI
-
-Use `aube ci` when the lockfile must be treated as the source of truth:
-
-```sh
-aube ci
-```
-
-It removes `node_modules`, verifies the lockfile is fresh for the current `package.json`, then installs.
-
-For Docker layers or workflows where you only want to update the lockfile:
-
-```sh
-aube install --lockfile-only
-```
-
-For production-only installs:
-
-```sh
-aube install --prod
-```
-
-## Workspaces
-
-aube supports workspace projects and the `workspace:` protocol.
-
-```sh
-aube install -r
-aube run test -r
-aube add zod --filter @acme/api
-```
-
-If a project already uses `pnpm-workspace.yaml`, aube can read and write it. New aube-first workspaces can use `aube-workspace.yaml`.
-
-## Lockfile Compatibility
-
-| File | Reads | Writes in place |
-| --- | --- | --- |
-| `aube-lock.yaml` | yes | yes |
-| `pnpm-lock.yaml` v9 (written by pnpm 9–11) | yes | yes |
-| `package-lock.json` v2/v3 | yes | yes |
-| `npm-shrinkwrap.json` | yes | yes |
-| `yarn.lock` (v1 classic + v2+ berry) | yes | yes |
-| `bun.lock` | yes | yes |
-
-aube is not compatible with every historical lockfile shape. Older pnpm v5/v6 lockfiles should be upgraded with pnpm before switching. Yarn PnP projects need to move to a `node_modules` linker first — aube writes `node_modules`, not `.pnp.cjs`.
-
-When more than one lockfile exists, prefer keeping one canonical lockfile for the project so teammates and CI do not fight over dependency state.
-
-## Dependency Scripts
-
-aube skips dependency lifecycle scripts by default. That protects installs from unexpected build steps in transitive packages.
-
-To allow packages that need build scripts:
-
-```sh
-aube approve-builds
-```
-
-You can inspect packages whose scripts were skipped:
+Root lifecycle scripts run during install unless `--ignore-scripts` is set.
+Dependency scripts run only when allowed by project policy or aube's built-in
+trusted-dependencies list. Review skipped builds with:
 
 ```sh
 aube ignored-builds
+aube approve-builds
+aube rebuild
 ```
 
-For approved packages, `jailBuilds: true` runs lifecycle scripts with a scrubbed env and temporary `HOME`. It defaults to `false` today and is planned to default to `true` in the next major version. Use package globs in `jailBuildPermissions` or `jailBuildExclusions` for packages that need specific env vars, paths, network, or a full opt-out.
+Commit the resulting `allowBuilds` policy so teammates and CI use the same
+approvals. To restrict approved dependency builds, set `jailBuilds: true` in
+`aube-workspace.yaml` or an existing `pnpm-workspace.yaml`.
 
-## Package Layout
+The jail's filesystem and network enforcement depends on the OS; filesystem
+reads are currently unrestricted. See [security defaults](https://aube.sh/security)
+and [jailed builds](https://aube.sh/package-manager/jailed-builds) for the exact
+boundaries and the optional `paranoid` bundle.
 
-aube uses an isolated `node_modules` layout. Packages are linked through `node_modules/.aube/`, and package files are stored once in `$XDG_DATA_HOME/aube/store/` (defaulting to `~/.local/share/aube/store/`).
-
-That means:
-
-- several projects with similar dependencies share package files and use less disk space;
-- dependencies stay isolated, so phantom dependencies are harder to rely on accidentally;
-- repeated installs can reuse package files already on disk.
-
-## Commands You May Recognize
-
-aube supports the common package-manager surface:
+## Workspaces and Node.js
 
 ```sh
-aube list
-aube why react
-aube outdated
-aube audit
-aube pack
-aube publish
-aube link
-aube unlink
-aube config get registry
-aube store path
-aube store prune
+aube -r run test
+aube --filter @acme/api add zod
+aube runtime set node 24 --save-exact
 ```
 
-aube also matches pnpm 11's runtime surface: `aube runtime set node <version>` pins a Node version in `devEngines.runtime` and the lockfile, and `aube runtime list` shows what a project resolves to. `aube node` runs Node through that resolver, and shell activation can expose compatible tool shims. Some pnpm commands are intentionally out of scope: `setup` and `self-update` belong in tools like mise, and registry account helpers such as `whoami`, `token`, `owner`, `search`, `pkg`, and `set-script` are compatibility stubs that point you to the npm command instead.
+aube reads an existing `pnpm-workspace.yaml` in place. New workspaces can use
+`aube-workspace.yaml`. Both support workspace packages, filters, and catalogs.
 
-## Learn More
+Commands run through aube use the project's Node pin from `devEngines.runtime`,
+`.node-version`, or `.nvmrc`. Optional shell activation also routes ordinary
+`node`, `npm`, `pnpm`, and `yarn` commands through aube.
+See [workspaces](https://aube.sh/package-manager/workspaces) and
+[Node runtime switching](https://aube.sh/package-manager/node-runtime).
 
-- [Documentation](https://aube.jdx.dev)
-- [Benchmarks](https://aube.jdx.dev/benchmarks)
-- [Lockfile compatibility](https://aube.jdx.dev/package-manager/lockfiles)
-- [Run scripts and binaries](https://aube.jdx.dev/package-manager/scripts)
+## Agent skill
 
-## CI
+The [aube skill](skills/aube/SKILL.md) helps coding agents manage dependencies,
+run scripts, and diagnose installs while preserving the project's lockfile and
+build approvals. Release Packslips pin the skill to the release's source commit.
+With a release that includes the skill active in mise, link it into your project:
 
-<p>
-  <a href="https://namespace.so">
-    <img src="assets/namespace-logo.svg" alt="Namespace" width="64">
+```sh
+mise skills sync --dir .agents/skills
+```
+
+See [mise's skills documentation](https://mise.jdx.dev/dev-tools/packslip-resources.html#skills)
+for discovery and automatic synchronization.
+
+## Find your next step
+
+- [CI and containers](https://aube.sh/package-manager/ci): frozen installs, production dependencies, and cache choices.
+- [Configuration](https://aube.sh/package-manager/configuration): project and user settings, registries, and policy.
+- [Troubleshooting](https://aube.sh/troubleshooting): diagnose installs, scripts, and tool compatibility.
+- [Embedding](https://aube.sh/embedding/): use aube from Rust, Node-API, or a C ABI host.
+- [Contributing](CONTRIBUTING.md): build, test, and improve aube.
+
+Report bugs in [GitHub Issues](https://github.com/aubepkg/aube/issues). Ask questions in [GitHub Discussions](https://github.com/aubepkg/aube/discussions).
+Report vulnerabilities through the [security policy](SECURITY.md).
+
+*aube* means dawn in French, pronounced `/ob/` ("ohb"). Built by [jdx](https://jdx.dev).
+
+## Sponsors
+
+<p align="center">
+  Sponsored by<br><br>
+  <a href="https://entire.io">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://jdx.dev/sponsors/entire-lockup.svg">
+      <img src="https://jdx.dev/sponsors/entire-lockup-on-light.svg" alt="Entire" height="36">
+    </picture>
   </a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://omarchy.org/patrons/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://jdx.dev/sponsors/omacom-foundation.svg">
+      <img src="https://jdx.dev/sponsors/omacom-foundation-on-light.svg" alt="Omacom Foundation" height="36">
+    </picture>
+  </a>
+  <br><br>
+  <a href="https://jdx.dev/sponsors.html">View all sponsors</a>
 </p>
-
-Thanks to [Namespace](https://namespace.so) for providing CI for aube.
 
 ## Star History
 
 <a href="https://www.star-history.com/?repos=jdx%2Faube&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=jdx/aube&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=jdx/aube&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jdx/aube&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&theme=dark&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=aubepkg/aube&type=date&legend=top-left&sealed_token=DittFna0Wy8uarlDVdMQmftPSDrk5iHeM_2M3W29oCIHgkBqNaXeWjnIPLZF985B9f4lmEGXoWpmfS7b4XyGnSJG9N3wY4gIl2jcX_F7ubwVv-aO9YDgVa76qt3ec9ObE2jVxQW9PklITRQf2Q_DCdKU5ZN5Dr489tSkLetEDtcrRIryb1NQH7xM_e3U" />
  </picture>
 </a>
 
 ## Contributors
 
-[![Contributors](https://contrib.rocks/image?repo=jdx/aube)](https://github.com/jdx/aube/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=aubepkg/aube)](https://github.com/aubepkg/aube/graphs/contributors)
 
 <p>
   <a href="https://jdx.dev">
@@ -315,4 +207,4 @@ Thanks to [Namespace](https://namespace.so) for providing CI for aube.
 
 ## License
 
-MIT
+[MIT](LICENSE)

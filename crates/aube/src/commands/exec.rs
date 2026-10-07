@@ -1,74 +1,73 @@
 use super::ensure_installed_in;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Default, usage_rs::Args)]
 pub struct ExecArgs {
     /// Binary name
     pub bin: String,
     /// Arguments to pass to the binary
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[usage(arg, double_dash = "automatic")]
     pub args: Vec<String>,
     /// Continue recursive execution after a command fails.
     ///
     /// Parsed for pnpm compatibility; aube currently stops on the
     /// first failure.
-    #[arg(long)]
+    #[usage(long)]
     pub no_bail: bool,
     /// Skip auto-install check
-    #[arg(long)]
+    #[usage(long)]
     pub no_install: bool,
     /// Disable topological sorting (default is on).
     ///
     /// Without this, recursive execs visit packages in a deps-first
     /// order. Pass this to fall back to raw workspace-listing order.
-    #[arg(long, overrides_with = "sort")]
+    #[usage(long, overrides = "--sort")]
     pub no_sort: bool,
     /// Run recursive workspace executions concurrently.
-    #[arg(long)]
+    #[usage(long)]
     pub parallel: bool,
     /// Write a recursive exec summary file.
     ///
     /// Parsed for pnpm compatibility.
-    #[arg(long)]
+    #[usage(long)]
     pub report_summary: bool,
     /// Hide the `<package>: ` label on parallel-exec output lines.
     ///
     /// Lines are still piped (clean line breaks even with concurrent
     /// children) but the source package isn't named on each line.
     /// Sequential execs ignore this flag.
-    #[arg(long)]
+    #[usage(long)]
     pub reporter_hide_prefix: bool,
     /// Resume recursive execution starting at this package name.
     ///
     /// Packages before the named one in the post-sort, post-reverse
     /// order are skipped. Errors if the name isn't in the matched set.
-    #[arg(long, value_name = "PACKAGE")]
+    #[usage(long, value_name = "PACKAGE")]
     pub resume_from: Option<String>,
     /// Reverse the recursive execution order (after topo sort).
-    #[arg(long)]
+    #[usage(long)]
     pub reverse: bool,
     /// Run the command through `sh -c`.
-    #[arg(short = 'c', long)]
+    #[usage(short = 'c', long)]
     pub shell_mode: bool,
     /// Sort recursive packages topologically (this is the default).
     ///
     /// Pass to override an earlier `--no-sort` on the same invocation.
-    #[arg(long, overrides_with = "no_sort")]
+    #[usage(long, overrides = "--no-sort")]
     pub sort: bool,
     /// Cap the number of recursive packages running at once.
     ///
     /// Setting this implicitly enables parallel mode at width `N`.
     /// `0` means "use the available CPU count". Without this flag,
     /// `--parallel` stays unbounded.
-    #[arg(long, value_name = "N")]
+    #[usage(long, value_name = "N")]
     pub workspace_concurrency: Option<usize>,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 
@@ -140,7 +139,7 @@ pub async fn run_in(
         return run_filtered(&cwd, &bin, &args, shell_mode, parallel, &filter, recursive).await;
     }
 
-    let bin_path = super::project_modules_dir(&cwd).join(".bin").join(&bin);
+    let bin_path = bin_path_for_project(&cwd, &bin);
     // Non-recursive `aube exec` is a terminal single-tool run with no
     // post-run work, so the standalone binary hands off via image
     // replacement; embedded hosts / Windows fall back to a supervised child.
@@ -175,7 +174,7 @@ async fn run_filtered(
     }
 
     for pkg in matched {
-        let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
+        let bin_path = bin_path_for_project(&pkg.dir, bin);
         // Sequential fanout bails on the first non-zero exit, matching the
         // previous behavior where the inner `exec` terminated the process.
         if let Some(code) = exec_bin(&pkg.dir, &bin_path, bin, args, shell_mode).await? {
@@ -200,7 +199,7 @@ async fn run_filtered_parallel(
 
     if !shell_mode {
         for pkg in &matched {
-            let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
+            let bin_path = bin_path_for_project(&pkg.dir, bin);
             if !bin_path.exists() {
                 let name = pkg
                     .name
@@ -249,7 +248,7 @@ async fn run_filtered_parallel(
         };
         let prereq_rxs = prereq_rxs_iter.next().expect("one rx vec per package");
         let done_tx = senders_iter.next().expect("one sender per package");
-        let bin_path = super::project_modules_dir(&pkg.dir).join(".bin").join(bin);
+        let bin_path = bin_path_for_project(&pkg.dir, bin);
         let dir = pkg.dir.clone();
         let bin = bin.to_string();
         let args = args.to_vec();
@@ -366,7 +365,7 @@ pub(crate) async fn exec_bin_terminal(
     shell_mode: bool,
 ) -> miette::Result<Option<i32>> {
     #[cfg(unix)]
-    if aube_util::embedder().name == aube_util::AUBE.name {
+    if !aube_util::is_embedded() {
         use std::os::unix::process::CommandExt;
         if !shell_mode && !bin_path.exists() {
             return Err(bin_not_found_error(bin));
@@ -391,6 +390,27 @@ fn bin_not_found_error(bin: &str) -> miette::Report {
     )
 }
 
+fn project_bin_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let local = super::project_modules_dir(cwd).join(".bin");
+    let mut dirs = vec![local.clone()];
+    if let Some(root) = crate::dirs::find_workspace_root(cwd) {
+        let root = super::project_modules_dir(&root).join(".bin");
+        if root != local {
+            dirs.push(root);
+        }
+    }
+    dirs
+}
+
+fn bin_path_for_project(cwd: &Path, bin: &str) -> PathBuf {
+    let local = super::project_modules_dir(cwd).join(".bin").join(bin);
+    let dirs = project_bin_dirs(cwd);
+    dirs.iter()
+        .map(|dir| dir.join(bin))
+        .find(|path| path.exists())
+        .unwrap_or(local)
+}
+
 /// Assemble the `tokio::process::Command` that runs `bin`, shared by the
 /// supervised (`spawn_and_wait`) and image-replacing (`exec_bin_terminal`)
 /// paths. Callers own the bin-exists check.
@@ -410,25 +430,15 @@ pub(crate) fn build_bin_command(
                 .chain(args.iter().map(|arg| aube_scripts::shell_quote_arg(arg)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let bin_dir = super::project_modules_dir(cwd).join(".bin");
-            let mut path_dirs = vec![bin_dir];
-            path_dirs.extend(crate::runtime::path_entries());
-            let new_path = aube_scripts::prepend_paths(&path_dirs);
-            let mut cmd = aube_scripts::spawn_shell(&line);
-            cmd.env("PATH", &new_path);
-            cmd
+            aube_scripts::spawn_shell(&line)
         } else {
             let exec_path = resolve_exec_shim(bin_path);
             let mut cmd = tokio::process::Command::new(exec_path);
             cmd.args(args);
-            // `#!/usr/bin/env node` shebangs resolve through the child's PATH
-            // so the generated shim must see the project's switched runtime.
-            let runtime_dirs = crate::runtime::path_entries();
-            if !runtime_dirs.is_empty() {
-                cmd.env("PATH", aube_scripts::prepend_paths(&runtime_dirs));
-            }
             cmd
         };
+    let path_dirs = crate::runtime::path_entries_with_project_bins(project_bin_dirs(cwd));
+    command.env("PATH", aube_scripts::prepend_paths(&path_dirs));
     crate::runtime::apply_child_env(&mut command);
     command
         .current_dir(cwd)
@@ -506,13 +516,17 @@ fn resolved_bin_command(
     if let Some(node_path) = target.node_path {
         cmd.env("NODE_PATH", node_path);
     }
-    cmd.args(node_args).arg(target.path).args(args);
+    cmd.args(target.node_args)
+        .args(node_args)
+        .arg(target.path)
+        .args(args);
     Some(cmd)
 }
 
 struct BinTarget {
     path: std::path::PathBuf,
     node: Option<std::path::PathBuf>,
+    node_args: Vec<String>,
     node_path: Option<std::ffi::OsString>,
 }
 
@@ -531,19 +545,24 @@ fn resolve_bin_target(bin_path: &Path) -> BinTarget {
         return BinTarget {
             path: target,
             node: None,
+            node_args: Vec::new(),
             node_path: None,
         };
     }
-    if let Ok(Some(shim)) = aube_linker::sys::resolve_bin_shim(&path) {
+    if let Ok(Some(shim)) = aube_linker::sys::resolve_bin_shim_with_node(&path) {
         return BinTarget {
-            path: shim.target,
-            node: path.parent().and_then(local_node_program),
-            node_path: shim.node_path,
+            path: shim.shim.target,
+            node: shim
+                .node
+                .or_else(|| path.parent().and_then(local_node_program)),
+            node_args: shim.node_args,
+            node_path: shim.shim.node_path,
         };
     }
     BinTarget {
         path,
         node: None,
+        node_args: Vec::new(),
         node_path: None,
     }
 }
@@ -582,25 +601,19 @@ fn is_native_executable(target: &Path) -> bool {
         }
     }
 
-    #[cfg(windows)]
-    {
-        // A shebang is stronger evidence than a Windows-looking suffix. This
-        // keeps intentionally interpreter-backed polyglot bins on their shim.
-        if header[..n].starts_with(b"#!") {
-            return false;
-        }
-        return target
+    // On Windows, trust a native suffix — unless a shebang, which is stronger
+    // evidence, keeps an intentionally interpreter-backed polyglot bin on
+    // its shim.
+    cfg!(windows)
+        && !header[..n].starts_with(b"#!")
+        && target
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| {
                 ["exe", "cmd", "bat", "com"]
                     .iter()
                     .any(|candidate| ext.eq_ignore_ascii_case(candidate))
-            });
-    }
-
-    #[cfg(not(windows))]
-    false
+            })
 }
 
 fn is_native_magic(magic: &[u8]) -> bool {
@@ -686,6 +699,42 @@ mod tests {
         resolve_exec_shim, resolved_bin_command,
     };
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn node_args_keep_the_installed_bin_runtime() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join("bound-node");
+        std::fs::write(&node, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let target = tmp.path().join("cli.js");
+        std::fs::write(&target, "#!/usr/bin/env -S node --no-warnings\n").unwrap();
+        let bin_dir = tmp.path().join("bin");
+        aube_linker::sys::create_bin_shim_with_node(
+            &bin_dir,
+            "cli",
+            &target,
+            aube_linker::BinShimOptions::default(),
+            &node,
+        )
+        .unwrap();
+        let mut command = super::resolved_bin_command(
+            &bin_dir.join("cli"),
+            &["argument".into()],
+            &["--expose-gc".into()],
+        )
+        .unwrap();
+        assert_eq!(command.as_std().get_program(), node);
+        let output = command.output().await.unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.starts_with("--no-warnings\n--expose-gc\n"),
+            "{stdout}"
+        );
+        assert!(stdout.ends_with("argument\n"), "{stdout}");
+    }
+
     #[test]
     fn resolve_exec_shim_returns_bare_path_when_no_sibling() {
         let tmp = tempfile::tempdir().unwrap();
@@ -768,7 +817,7 @@ mod tests {
         std::fs::write(
             &shim,
             "#!/bin/sh\n\
-             # aube-bin-shim v1 target=pkg/bin.js\n\
+             # aube-bin-shim v2 target=pkg/bin.js\n\
              basedir=$(dirname \"$0\")\n\
              export NODE_PATH=\"$basedir/node_modules\"\n\
              exec node \"$basedir/pkg/bin.js\" \"$@\"\n",

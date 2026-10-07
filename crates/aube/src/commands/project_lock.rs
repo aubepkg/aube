@@ -41,8 +41,10 @@ impl ProjectLock {
 /// pass the returned guard into the inner operation rather than attempting to
 /// acquire the same filesystem lock again.
 pub(crate) fn take_project_lock(cwd: &std::path::Path) -> miette::Result<ProjectLock> {
-    let project_dir = cwd
-        .canonicalize()
+    // Strip the Windows `\\?\` verbatim prefix: chained installs use this
+    // path as the install root, and lifecycle scripts that reach node
+    // through a `.bin` shim fail when node gets a verbatim entry path.
+    let project_dir = crate::dirs::canonicalize(cwd)
         .or_else(|_| std::path::absolute(cwd))
         .unwrap_or_else(|_| cwd.to_path_buf());
     if aube_no_lock_enabled(cwd) {
@@ -130,6 +132,24 @@ mod tests {
 
         let lock = take_install_project_lock(&member).unwrap();
 
-        assert_eq!(lock.project_dir(), workspace.path().canonicalize().unwrap());
+        assert_eq!(
+            lock.project_dir(),
+            crate::dirs::canonicalize(workspace.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn project_lock_dir_has_no_verbatim_prefix() {
+        let project = tempfile::tempdir().unwrap();
+
+        let lock = take_project_lock(project.path()).unwrap();
+
+        // `\\?\UNC\` share paths have no plain form and stay verbatim.
+        let dir = lock.project_dir().to_string_lossy();
+        assert!(
+            !dir.starts_with(r"\\?\") || dir.starts_with(r"\\?\UNC\"),
+            "verbatim project dir leaks into lifecycle script paths: {}",
+            lock.project_dir().display()
+        );
     }
 }

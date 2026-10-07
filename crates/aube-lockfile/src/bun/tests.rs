@@ -526,6 +526,182 @@ fn test_write_roundtrips_config_version() {
     );
 }
 
+/// bun 1.4 stamps `lockfileVersion: 2` on content identical to v1. The
+/// parser must read it, and re-saving must keep the 2 the way bun does
+/// rather than churn the file back to 1.
+#[test]
+fn test_parse_and_write_roundtrips_lockfile_version_2() {
+    let project = tempfile::TempDir::new().unwrap();
+    let pj = project.path().join("package.json");
+    std::fs::write(&pj, r#"{"name":"root","dependencies":{"foo":"^1.0.0"}}"#).unwrap();
+    let lock_path = project.path().join("bun.lock");
+    let integrity = fake_sri('a');
+    std::fs::write(
+        &lock_path,
+        format!(
+            r#"{{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {{
+    "": {{ "name": "root", "dependencies": {{ "foo": "^1.0.0" }} }}
+  }},
+  "packages": {{
+    "foo": ["foo@1.2.3", "", {{}}, "{integrity}"]
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&lock_path).unwrap();
+    assert!(graph.packages.contains_key("foo@1.2.3"));
+
+    let manifest = aube_manifest::PackageJson::from_path(&pj).unwrap();
+    write(&lock_path, &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        written.contains("\"lockfileVersion\": 2,"),
+        "lockfileVersion 2 must round-trip, got:\n{written}"
+    );
+    assert_eq!(
+        written.matches("lockfileVersion").count(),
+        1,
+        "lockfileVersion must be written once, got:\n{written}"
+    );
+}
+
+/// Write `graph` back to `lock_path` and return the text.
+fn rewrite(lock_path: &Path, pj: &Path, graph: &LockfileGraph) -> String {
+    let manifest = aube_manifest::PackageJson::from_path(pj).unwrap();
+    write(lock_path, graph, &manifest).unwrap();
+    std::fs::read_to_string(lock_path).unwrap()
+}
+
+fn write_project(lockfile: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let project = tempfile::TempDir::new().unwrap();
+    let pj = project.path().join("package.json");
+    std::fs::write(&pj, r#"{"name":"root","dependencies":{}}"#).unwrap();
+    let lock_path = project.path().join("bun.lock");
+    std::fs::write(&lock_path, lockfile).unwrap();
+    (project, pj, lock_path)
+}
+
+/// bun 1.4 writes v3 while scoped `overrides` exist: selector-keyed
+/// groups whose `"."` child targets the parent itself. The parser must
+/// read them as pnpm-style keys, and a re-save must write the same
+/// groups, in bun's layout, still stamped v3.
+#[test]
+fn test_parse_and_write_roundtrips_lockfile_version_3_scoped_overrides() {
+    let lockfile = r#"{
+  "lockfileVersion": 3,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+  },
+  "overrides": {
+    "flat": "1.0.0",
+    "foo": {
+      ".": "2.0.0",
+      "bar": "3.0.0",
+    },
+    "qux@^1": {
+      ".": "4.0.0",
+    },
+  },
+  "packages": {
+  }
+}
+"#;
+    let (_project, pj, lock_path) = write_project(lockfile);
+
+    let graph = parse(&lock_path).unwrap();
+    let expected: BTreeMap<String, String> = [
+        ("flat", "1.0.0"),
+        ("foo", "2.0.0"),
+        ("foo>bar", "3.0.0"),
+        ("qux@^1", "4.0.0"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    assert_eq!(graph.overrides, expected);
+
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(
+        written.contains("\"lockfileVersion\": 3,"),
+        "scoped overrides must keep v3, got:\n{written}"
+    );
+    assert!(
+        written.contains(
+            "  \"overrides\": {\n    \"flat\": \"1.0.0\",\n    \"foo\": {\n      \".\": \"2.0.0\",\n      \"bar\": \"3.0.0\",\n    },\n    \"qux@^1\": {\n      \".\": \"4.0.0\",\n    },\n  },\n"
+        ),
+        "override groups must be written in bun's layout, got:\n{written}"
+    );
+    assert_eq!(parse(&lock_path).unwrap().overrides, expected);
+}
+
+/// bun stamps v3 whenever scoped rules exist, even on a lockfile it
+/// loaded as v1, and walks a v3 lockfile whose scoped rules are gone
+/// back down to v2.
+#[test]
+fn test_write_stamps_lockfile_version_from_scoped_overrides() {
+    let (_project, pj, lock_path) = write_project(
+        r#"{ "lockfileVersion": 1, "workspaces": { "": { "name": "root" } }, "packages": {} }"#,
+    );
+    let mut graph = parse(&lock_path).unwrap();
+    graph
+        .overrides
+        .insert("parent>child".to_string(), "1.0.0".to_string());
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(written.contains("\"lockfileVersion\": 3,"), "{written}");
+    assert!(
+        written.contains("\"parent\": {\n      \"child\": \"1.0.0\",\n    },"),
+        "{written}"
+    );
+
+    let mut graph = parse(&lock_path).unwrap();
+    graph.overrides.clear();
+    graph
+        .overrides
+        .insert("plain".to_string(), "1.0.0".to_string());
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(written.contains("\"lockfileVersion\": 2,"), "{written}");
+    assert!(written.contains("\"plain\": \"1.0.0\","), "{written}");
+}
+
+#[test]
+fn test_parse_rejects_malformed_scoped_overrides() {
+    let (_project, _pj, lock_path) = write_project(
+        r#"{
+  "lockfileVersion": 3,
+  "workspaces": { "": { "name": "root" } },
+  "overrides": { "parent": { "child": { "deeper": "1.0.0" } } },
+  "packages": {}
+}"#,
+    );
+    let err = parse(&lock_path).unwrap_err().to_string();
+    assert!(err.contains("must be a string"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_parse_rejects_unknown_lockfile_version() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let lock_path = dir.path().join("bun.lock");
+    std::fs::write(
+        &lock_path,
+        r#"{ "lockfileVersion": 9, "workspaces": {}, "packages": {} }"#,
+    )
+    .unwrap();
+
+    let err = parse(&lock_path).unwrap_err().to_string();
+    assert!(
+        err.contains("lockfileVersion 9 is not supported (expected 1, 2, or 3)"),
+        "unexpected error: {err}"
+    );
+}
+
 /// Hand-authored bun.lock with two workspace entries (root and
 /// `packages/app`) round-trips through the parser with both
 /// importers populated, and the writer regenerates both
@@ -1564,4 +1740,37 @@ fn test_roundtrip_workspace_peer_dependencies() {
         written.contains("\"react\""),
         "workspace peerDependencies.react dropped on re-emit:\n{written}"
     );
+}
+
+/// A package declared in both `devDependencies` and
+/// `optionalDependencies` must yield exactly one root `DirectDep`,
+/// classified under the first declaring section. See discussion #1544.
+#[test]
+fn dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let sri_foo = fake_sri('a');
+    let content = r#"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test",
+      "devDependencies": {
+        "foo": "^1.0.0",
+      },
+      "optionalDependencies": {
+        "foo": "^1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "foo": ["foo@1.2.3", "", {}, "SRI_FOO"],
+  }
+}"#
+    .replace("SRI_FOO", &sri_foo);
+    std::fs::write(tmp.path(), &content).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
 }

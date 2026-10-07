@@ -28,13 +28,13 @@ on:
 permissions: {}
 
 env:
+  MBX_DISABLE: "1"
   DEBIAN_FRONTEND: noninteractive
 
 jobs:
   publish-ppa:
-    # github-hosted runner: namespace runners block outbound FTP (port 21)
-    # to ppa.launchpad.net, which is what dput needs to upload the source
-    # package. Ubuntu-hosted runners allow it.
+    # dput needs outbound FTP (port 21) to upload the source package to
+    # ppa.launchpad.net, which Ubuntu-hosted runners allow.
     runs-on: ubuntu-latest
     environment: ppa-publishing
     timeout-minutes: 45
@@ -240,8 +240,8 @@ jobs:
           Build-Depends: debhelper-compat (= 13), rustc (>= ${MSRV}), cargo, libssl-dev, pkgconf, cmake
           Standards-Version: 4.6.2
           Homepage: https://aube.jdx.dev
-          Vcs-Git: https://github.com/jdx/aube.git
-          Vcs-Browser: https://github.com/jdx/aube
+          Vcs-Git: https://github.com/aubepkg/aube.git
+          Vcs-Browser: https://github.com/aubepkg/aube
 
           Package: ${PACKAGE_NAME}
           Architecture: any
@@ -291,7 +291,7 @@ jobs:
           cat > debian/copyright << EOF
           Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
           Upstream-Name: ${PACKAGE_NAME}
-          Source: https://github.com/jdx/aube
+          Source: https://github.com/aubepkg/aube
 
           Files: *
           Copyright: 2025-2026 Jeff Dickey

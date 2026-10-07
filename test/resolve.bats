@@ -58,7 +58,9 @@ teardown() {
 	aube install
 	assert_file_exists aube-lock.yaml
 
-	rm aube-lock.yaml
+	# Also drop the hidden lockfile, which would otherwise seed the
+	# install (see hidden_lockfile.bats).
+	rm aube-lock.yaml node_modules/.aube-lock.yaml
 	run aube -v install
 	assert_success
 	assert_output --partial "No lockfile found"

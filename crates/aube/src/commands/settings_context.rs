@@ -17,6 +17,7 @@ use super::{CatalogMap, config, install};
 static GLOBAL_FROZEN: OnceLock<Option<install::FrozenOverride>> = OnceLock::new();
 static GLOBAL_VIRTUAL_STORE: OnceLock<install::GlobalVirtualStoreFlags> = OnceLock::new();
 static SKIP_AUTO_INSTALL_ON_PM_MISMATCH: AtomicBool = AtomicBool::new(false);
+pub(crate) const GVS_REGISTRY_NAMESPACE_VERSION: &str = "v1";
 
 /// Process-wide registry override from the top-level `--registry=<url>`
 /// flag. Applied in `make_client` (and any direct `NpmConfig::load`
@@ -39,6 +40,43 @@ pub(crate) struct GlobalOutputFlags {
 }
 
 static GLOBAL_OUTPUT: OnceLock<GlobalOutputFlags> = OnceLock::new();
+
+tokio::task_local! {
+    static EMBEDDER_INSTALL_OVERRIDES: install::EmbedderInstallOverrides;
+}
+
+/// Scope native storage paths to one embedded add/install invocation. Keeping
+/// them as `PathBuf`s avoids routing filesystem identity through UTF-8 setting
+/// strings while preserving task isolation between concurrent embedders.
+pub(crate) async fn scope_embedder_install_overrides<F: std::future::Future>(
+    overrides: install::EmbedderInstallOverrides,
+    future: F,
+) -> F::Output {
+    EMBEDDER_INSTALL_OVERRIDES.scope(overrides, future).await
+}
+
+pub(crate) fn has_embedder_store_override() -> bool {
+    EMBEDDER_INSTALL_OVERRIDES
+        .try_with(|overrides| overrides.store_dir.is_some())
+        .unwrap_or(false)
+}
+
+fn embedder_storage_path(
+    cwd: &std::path::Path,
+    select: impl FnOnce(&install::EmbedderInstallOverrides) -> Option<&std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    EMBEDDER_INSTALL_OVERRIDES
+        .try_with(|overrides| select(overrides).cloned())
+        .ok()
+        .flatten()
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        })
+}
 
 pub(crate) fn set_registry_override(url: Option<String>) {
     *REGISTRY_OVERRIDE.write().expect("registry lock poisoned") =
@@ -212,15 +250,53 @@ pub(crate) fn ensure_registry_auth_for_package(
 /// across versions of aube and never collides with a pnpm store rooted
 /// at the same path.
 pub(crate) fn open_store(cwd: &std::path::Path) -> miette::Result<aube_store::Store> {
-    let root = match resolved_store_dir(cwd) {
+    let store = with_settings_ctx(cwd, |ctx| open_store_for_maintenance_with_ctx(cwd, ctx))?;
+    store
+        .prepare_for_write()
+        .into_diagnostic()
+        .wrap_err("failed to prepare store for writing")?;
+    Ok(store)
+}
+
+/// Open the content store using an already-resolved invocation context.
+/// Embedded installs use this so their per-call overrides are not lost by a
+/// second file/environment-only settings load.
+pub(crate) fn open_store_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<aube_store::Store> {
+    let store = open_store_for_maintenance_with_ctx(cwd, ctx)?;
+    store
+        .prepare_for_write()
+        .into_diagnostic()
+        .wrap_err("failed to prepare store for writing")?;
+    Ok(store)
+}
+
+/// Resolve a Store without taking its writer lease or migrating legacy data.
+/// Store maintenance uses this constructor so dry-run can plan migrations
+/// without applying them before it acquires the exclusive maintenance lease.
+pub(crate) fn open_store_for_maintenance(
+    cwd: &std::path::Path,
+) -> miette::Result<aube_store::Store> {
+    with_settings_ctx(cwd, |ctx| open_store_for_maintenance_with_ctx(cwd, ctx))
+}
+
+fn open_store_for_maintenance_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> miette::Result<aube_store::Store> {
+    let root = match resolved_store_dir_with_ctx(cwd, ctx) {
         Some(custom) => custom.join("v1").join("files"),
         None => aube_store::dirs::store_dir()
             .ok_or(aube_store::Error::NoHome)
             .into_diagnostic()
             .wrap_err("failed to open store")?,
     };
-    Ok(aube_store::Store::with_dirs(root, resolved_cache_dir(cwd))
-        .with_virtual_store_dir(global_virtual_store_dir(cwd)))
+    Ok(
+        aube_store::Store::with_dirs(root, resolved_cache_dir_with_ctx(cwd, ctx))
+            .with_virtual_store_dir(global_virtual_store_dir_with_ctx(cwd, ctx)),
+    )
 }
 
 /// Resolve the configured `storeDir` for `cwd`, returning `None` if
@@ -231,10 +307,18 @@ pub(crate) fn open_store(cwd: &std::path::Path) -> miette::Result<aube_store::St
 /// `v3/files` schema suffix — callers append it where needed (see
 /// [`open_store`]).
 pub(crate) fn resolved_store_dir(cwd: &std::path::Path) -> Option<std::path::PathBuf> {
-    with_settings_ctx(cwd, |ctx| {
-        let raw = aube_settings::resolved::store_dir(ctx)?;
-        expand_setting_path(&raw, cwd)
-    })
+    with_settings_ctx(cwd, |ctx| resolved_store_dir_with_ctx(cwd, ctx))
+}
+
+pub(crate) fn resolved_store_dir_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> Option<std::path::PathBuf> {
+    if let Some(path) = embedder_storage_path(cwd, |overrides| overrides.store_dir.as_ref()) {
+        return Some(path);
+    }
+    let raw = aube_settings::resolved::store_dir(ctx)?;
+    expand_setting_path(&raw, cwd)
 }
 
 /// Expand a path-typed setting value. `~` -> home dir, relative ->
@@ -272,6 +356,14 @@ pub(crate) fn with_settings_ctx<T>(
     cwd: &std::path::Path,
     f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
 ) -> T {
+    with_settings_ctx_and_cli(cwd, &[], f)
+}
+
+pub(crate) fn with_settings_ctx_and_cli<T>(
+    cwd: &std::path::Path,
+    cli: &[(String, String)],
+    f: impl FnOnce(&aube_settings::ResolveCtx<'_>) -> T,
+) -> T {
     let files = FileSources::load(cwd);
     let raw_workspace = aube_manifest::workspace::load_raw(cwd).unwrap_or_default();
     // `process_env()` returns a `&'static` borrow of the once-captured
@@ -279,8 +371,89 @@ pub(crate) fn with_settings_ctx<T>(
     // builds a ResolveCtx (the typical path hits this 5+ times per
     // `aube run`).
     let env = aube_settings::values::process_env();
-    let ctx = files.ctx(&raw_workspace, env, &[]);
+    let ctx = files.ctx(&raw_workspace, env, cli);
     f(&ctx)
+}
+
+/// Resolve the format to create when a project has no supported lockfile.
+/// Existing lockfiles always win; this only replaces the historical Aube
+/// fallback for new or deliberately cleaned projects.
+pub(crate) fn default_lockfile_kind(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> aube_lockfile::LockfileKind {
+    match aube_settings::resolved::default_lockfile_format(ctx) {
+        aube_settings::resolved::DefaultLockfileFormat::Aube => aube_lockfile::LockfileKind::Aube,
+        aube_settings::resolved::DefaultLockfileFormat::Pnpm => aube_lockfile::LockfileKind::Pnpm,
+    }
+}
+
+pub(crate) fn selected_lockfile_kind_with_ctx(
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> Result<Option<aube_lockfile::LockfileKind>, aube_lockfile::Error> {
+    aube_settings::resolved::default_lockfile(ctx)
+        .map(|name| {
+            aube_lockfile::LockfileKind::from_filename(&name).ok_or_else(|| {
+                aube_lockfile::Error::UnsupportedFormat(format!(
+                    "defaultLockfile `{name}` is not a supported lockfile filename"
+                ))
+            })
+        })
+        .transpose()
+}
+
+pub(crate) fn selected_lockfile_kind(
+    cwd: &std::path::Path,
+) -> Result<Option<aube_lockfile::LockfileKind>, aube_lockfile::Error> {
+    with_settings_ctx(cwd, selected_lockfile_kind_with_ctx)
+}
+
+pub(crate) fn parse_lockfile(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+) -> Result<aube_lockfile::LockfileGraph, aube_lockfile::Error> {
+    aube_lockfile::parse_lockfile_selecting(cwd, manifest, selected_lockfile_kind(cwd)?)
+}
+
+pub(crate) fn parse_lockfile_with_kind(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+) -> Result<(aube_lockfile::LockfileGraph, aube_lockfile::LockfileKind), aube_lockfile::Error> {
+    aube_lockfile::parse_lockfile_with_kind_selecting(cwd, manifest, selected_lockfile_kind(cwd)?)
+}
+
+pub(crate) fn parse_lockfile_with_kind_and_options(
+    cwd: &std::path::Path,
+    manifest: &aube_manifest::PackageJson,
+    options: aube_lockfile::ParseOptions,
+) -> Result<(aube_lockfile::LockfileGraph, aube_lockfile::LockfileKind), aube_lockfile::Error> {
+    aube_lockfile::parse_lockfile_with_kind_and_options_selecting(
+        cwd,
+        manifest,
+        options,
+        selected_lockfile_kind(cwd)?,
+    )
+}
+
+/// Pick the lockfile format a mutating command should write: preserve an
+/// existing supported file, otherwise honor `defaultLockfileFormat`.
+pub(crate) fn lockfile_kind_for_write_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> Result<aube_lockfile::LockfileKind, aube_lockfile::Error> {
+    let selected = selected_lockfile_kind_with_ctx(ctx)?;
+    Ok(match selected {
+        Some(kind) => {
+            aube_lockfile::detect_existing_lockfile_kind_selecting(cwd, Some(kind)).unwrap_or(kind)
+        }
+        None => aube_lockfile::detect_existing_lockfile_kind(cwd)
+            .unwrap_or_else(|| default_lockfile_kind(ctx)),
+    })
+}
+
+pub(crate) fn lockfile_kind_for_write(
+    cwd: &std::path::Path,
+) -> Result<aube_lockfile::LockfileKind, aube_lockfile::Error> {
+    with_settings_ctx(cwd, |ctx| lockfile_kind_for_write_with_ctx(cwd, ctx))
 }
 
 /// Build a registry client configured from .npmrc files in the project directory.
@@ -370,7 +543,7 @@ pub(crate) fn build_resolver(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
     catalogs: CatalogMap,
-) -> aube_resolver::Resolver {
+) -> miette::Result<aube_resolver::Resolver> {
     let (ws_config, raw_workspace) = aube_manifest::workspace::load_both(cwd).unwrap_or_default();
     let files = FileSources::load(cwd);
     let env = aube_settings::values::process_env();
@@ -380,11 +553,9 @@ pub(crate) fn build_resolver(
     // cross-platform widening rules — native package-manager lockfiles
     // that record per-package platform metadata keep optional natives for
     // every platform, while formats without that metadata stay host-only.
-    let target_lockfile_kind = Some(
-        aube_lockfile::detect_existing_lockfile_kind(cwd)
-            .unwrap_or(aube_lockfile::LockfileKind::Aube),
-    );
-    install::configure_resolver(
+    let target_lockfile_kind = Some(lockfile_kind_for_write_with_ctx(cwd, &ctx)?);
+    let dependency_policy = install::resolve_dependency_policy(manifest, &ctx)?;
+    Ok(install::configure_resolver(
         aube_resolver::Resolver::new(std::sync::Arc::new(make_client(cwd))),
         cwd,
         manifest,
@@ -394,7 +565,7 @@ pub(crate) fn build_resolver(
             workspace_catalogs: &catalogs,
             minimum_release_age_override: None,
             target_lockfile_kind,
-            dependency_policy: None,
+            dependency_policy,
             // Update / add / dedupe / audit deliberately skip the
             // full-packument disk cache install populates: the cache's
             // freshness window can outlive a registry dist-tag bump,
@@ -406,7 +577,7 @@ pub(crate) fn build_resolver(
             ignore_scripts: false,
         },
         None,
-    )
+    ))
 }
 
 /// Resolve [`aube_registry::config::FetchPolicy`] from the same
@@ -442,21 +613,33 @@ pub(crate) fn resolve_fetch_policy(cwd: &std::path::Path) -> aube_registry::conf
 /// overrides it — the global virtual store hang off this path, so a
 /// user who moves the cache to another volume moves them together.
 pub(crate) fn resolved_cache_dir(cwd: &std::path::Path) -> std::path::PathBuf {
+    with_settings_ctx(cwd, |ctx| resolved_cache_dir_with_ctx(cwd, ctx))
+}
+
+pub(crate) fn resolved_cache_dir_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> std::path::PathBuf {
+    if let Some(path) = embedder_storage_path(cwd, |overrides| overrides.cache_dir.as_ref()) {
+        return path;
+    }
     let platform_default =
         || aube_store::dirs::cache_dir().unwrap_or_else(|| std::env::temp_dir().join("aube"));
-    with_settings_ctx(cwd, |ctx| match aube_settings::resolved::cache_dir(ctx) {
+    match aube_settings::resolved::cache_dir(ctx) {
         Some(raw) => expand_setting_path(&raw, cwd).unwrap_or_else(platform_default),
         None => platform_default(),
-    })
+    }
 }
 
 /// Absolute path of the global virtual store — the shared tree of
 /// materialized packages that project `node_modules/.aube/<dep_path>`
 /// entries symlink into.
 ///
-/// `globalVirtualStoreDir` wins when set and is used verbatim (no
-/// `virtual-store` suffix); otherwise the store lands under the
-/// resolved [`resolved_cache_dir`]. The dedicated setting exists
+/// `globalVirtualStoreDir` wins when set and is used as the store root (no
+/// `virtual-store` suffix); otherwise the root lands under the resolved
+/// [`resolved_cache_dir`]. Registry-aware entries live in a versioned child
+/// directory so older aube releases cannot create or reuse entries that the
+/// current project registry may later prune. The dedicated setting exists
 /// because this tree — unlike the rest of the cache — has to sit on
 /// the same volume as `storeDir` to be hardlinkable, which is not
 /// necessarily where the packument caches belong.
@@ -466,11 +649,19 @@ pub(crate) fn resolved_cache_dir(cwd: &std::path::Path) -> std::path::PathBuf {
 /// relocated store makes them look at an empty directory and silently
 /// re-materialize.
 pub(crate) fn global_virtual_store_dir(cwd: &std::path::Path) -> std::path::PathBuf {
-    let from_setting = with_settings_ctx(cwd, |ctx| {
-        let raw = aube_settings::resolved::global_virtual_store_dir(ctx)?;
-        expand_setting_path(&raw, cwd)
-    });
-    from_setting.unwrap_or_else(|| resolved_cache_dir(cwd).join(aube_store::VIRTUAL_STORE_SUBDIR))
+    with_settings_ctx(cwd, |ctx| global_virtual_store_dir_with_ctx(cwd, ctx))
+}
+
+pub(crate) fn global_virtual_store_dir_with_ctx(
+    cwd: &std::path::Path,
+    ctx: &aube_settings::ResolveCtx<'_>,
+) -> std::path::PathBuf {
+    let root = aube_settings::resolved::global_virtual_store_dir(ctx)
+        .and_then(|raw| expand_setting_path(&raw, cwd))
+        .unwrap_or_else(|| {
+            resolved_cache_dir_with_ctx(cwd, ctx).join(aube_store::VIRTUAL_STORE_SUBDIR)
+        });
+    root.join(GVS_REGISTRY_NAMESPACE_VERSION)
 }
 
 /// Resolve the `virtualStoreDirMaxLength` setting, falling back to the
@@ -583,8 +774,16 @@ pub(crate) fn resolve_virtual_store_dir_for_cwd(cwd: &std::path::Path) -> std::p
 
 /// Disk cache directory for packument metadata. Falls back to a tmp dir if
 /// the user cache dir can't be resolved (rare).
+pub(crate) fn metadata_cache_anchor() -> miette::Result<std::path::PathBuf> {
+    let initial_cwd = crate::dirs::cwd()?;
+    Ok(crate::dirs::find_workspace_root(&initial_cwd)
+        .or_else(|| crate::dirs::find_project_root(&initial_cwd))
+        .unwrap_or(initial_cwd))
+}
+
 pub(crate) fn packument_cache_dir() -> std::path::PathBuf {
-    let cwd = crate::dirs::cwd().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let cwd =
+        metadata_cache_anchor().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     packument_cache_dir_for_cwd(&cwd)
 }
 
@@ -598,7 +797,8 @@ pub(crate) fn packument_cache_dir_for_cwd(cwd: &std::path::Path) -> std::path::P
 /// human-facing commands like `aube view`. Separate from the corgi cache
 /// because the shapes differ.
 pub(crate) fn packument_full_cache_dir() -> std::path::PathBuf {
-    let cwd = crate::dirs::cwd().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let cwd =
+        metadata_cache_anchor().unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     resolved_cache_dir(&cwd).join("packuments-full-v1")
 }
 

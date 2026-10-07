@@ -196,6 +196,24 @@ pub struct PackageJson {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
+impl PackageJson {
+    /// Whether `peerDependenciesMeta.<name>.optional` is explicitly true.
+    ///
+    /// `peerDependenciesMeta` stays in [`PackageJson::extra`] for forward
+    /// compatibility, but resolver and lockfile code both need this common
+    /// interpretation when deciding whether a peer is auto-installable.
+    pub fn peer_dependency_is_optional(&self, name: &str) -> bool {
+        self.extra
+            .get("peerDependenciesMeta")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|meta| meta.get(name))
+            .and_then(serde_json::Value::as_object)
+            .and_then(|entry| entry.get("optional"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+}
+
 /// Deserialize-only mirror of [`PackageJson`] that splits the
 /// `bundled_dependencies` field into two name-distinct slots so a
 /// manifest carrying *both* `bundledDependencies` and `bundleDependencies`
@@ -266,11 +284,32 @@ impl From<PackageJsonRaw> for PackageJson {
 /// either an array of dep names or a boolean (`true` meaning "bundle
 /// everything in `dependencies`"). We preserve both so the resolver
 /// can compute the exact name set.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum BundledDependencies {
     List(Vec<String>),
     All(bool),
+}
+
+impl<'de> Deserialize<'de> for BundledDependencies {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(values) => Ok(Self::List(
+                values
+                    .into_iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect(),
+            )),
+            serde_json::Value::Bool(value) => Ok(Self::All(value)),
+            _ => Err(serde::de::Error::custom(
+                "expected a boolean or an array of dependency names",
+            )),
+        }
+    }
 }
 
 impl BundledDependencies {
@@ -303,7 +342,7 @@ pub enum Workspaces {
         // includes `packages`, so this doesn't lock out the catalog use
         // case.
         packages: Vec<String>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         nohoist: Vec<String>,
         /// Bun-style default catalog nested under `workspaces.catalog`.
         /// Aube reads it in addition to `pnpm-workspace.yaml`'s `catalog:`
@@ -697,6 +736,13 @@ impl PackageJson {
     /// round-trip as their raw selector strings: bare name (`foo`),
     /// parent-chain (`parent>foo`), version-suffixed (`foo@<2`,
     /// `parent@1>foo`), and yarn wildcards (`**/foo`, `parent/foo`).
+    ///
+    /// Top-level `overrides` may also nest one level the way npm and bun
+    /// write it: `{"parent@1": {".": "2.0.0", "child": "3.0.0"}}` reads as
+    /// `parent@1` and `parent@1>child`. Like bun, the child is scoped to
+    /// `parent` as its direct dependent; npm applies it anywhere below.
+    /// Entries nested deeper are skipped and listed by
+    /// [`Self::skipped_nested_overrides`].
     /// Structural validation lives in `aube_resolver::override_rule`;
     /// this layer just filters out malformed keys and non-string
     /// values. Workspace-level overrides from `pnpm-workspace.yaml`
@@ -729,9 +775,34 @@ impl PackageJson {
         // Top-level `overrides` (npm / pnpm) — highest priority
         if let Some(obj) = self.extra.get("overrides").and_then(|v| v.as_object()) {
             insert(&mut out, obj);
+            for (parent, child, value) in nested_override_entries(obj) {
+                if let NestedOverride::Rule(version) = value {
+                    let key = if child == "." {
+                        parent.to_string()
+                    } else {
+                        format!("{parent}>{child}")
+                    };
+                    out.insert(key, version.to_string());
+                }
+            }
         }
 
         out
+    }
+
+    /// Nested top-level `overrides` entries that [`Self::overrides_map`]
+    /// skips because they nest deeper than one level: a child that is
+    /// itself an object, a child key with its own `>` chain, or a group
+    /// whose parent key is already a chain. Returned as `parent > child`
+    /// paths so the caller can warn about each one.
+    pub fn skipped_nested_overrides(&self) -> Vec<String> {
+        let Some(obj) = self.extra.get("overrides").and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+        nested_override_entries(obj)
+            .filter(|(_, _, value)| matches!(value, NestedOverride::TooDeep))
+            .map(|(parent, child, _)| format!("{parent} > {child}"))
+            .collect()
     }
 
     /// Look up a package name in `dependencies`, then `devDependencies`,
@@ -775,27 +846,29 @@ impl PackageJson {
         unresolved
     }
 
+    /// Return every raw `packageExtensions` value in precedence order so
+    /// callers can validate the enclosing shape before object extraction.
+    pub fn package_extension_values(&self) -> Vec<&serde_json::Value> {
+        let mut out = self
+            .pnpm_aube_objects()
+            .filter_map(|ns| ns.get("packageExtensions"))
+            .collect::<Vec<_>>();
+        if let Some(value) = self.extra.get("packageExtensions") {
+            out.push(value);
+        }
+        out
+    }
+
     /// Extract `packageExtensions` from root package.json. Supports
     /// top-level `packageExtensions`, `pnpm.packageExtensions`, and
-    /// `aube.packageExtensions`. Precedence (low → high):
-    /// `pnpm.packageExtensions`, `aube.packageExtensions`, top-level
-    /// `packageExtensions` — later writes win for duplicate selectors.
+    /// `aube.packageExtensions`. Later values win for duplicate selectors.
     pub fn package_extensions(&self) -> BTreeMap<String, serde_json::Value> {
         let mut out = BTreeMap::new();
-        for ns in self.pnpm_aube_objects() {
-            if let Some(obj) = ns.get("packageExtensions").and_then(|v| v.as_object()) {
+        for value in self.package_extension_values() {
+            if let Some(obj) = value.as_object() {
                 for (k, v) in obj {
                     out.insert(k.clone(), v.clone());
                 }
-            }
-        }
-        if let Some(obj) = self
-            .extra
-            .get("packageExtensions")
-            .and_then(|v| v.as_object())
-        {
-            for (k, v) in obj {
-                out.insert(k.clone(), v.clone());
             }
         }
         out
@@ -964,6 +1037,45 @@ impl AllowBuildRaw {
 /// reaches the resolver unchanged.
 fn is_valid_selector_key(k: &str) -> bool {
     !k.is_empty()
+}
+
+enum NestedOverride<'a> {
+    Rule(&'a str),
+    TooDeep,
+}
+
+/// `(parent, child, value)` for every child of an object-valued top-level
+/// `overrides` entry. Non-string leaf values are dropped, as they are for
+/// flat entries.
+fn nested_override_entries(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> impl Iterator<Item = (&str, &str, NestedOverride<'_>)> {
+    obj.iter()
+        .filter(|(parent, _)| is_valid_selector_key(parent))
+        .filter_map(|(parent, value)| Some((parent, value.as_object()?)))
+        .flat_map(|(parent, children)| {
+            children.iter().filter_map(move |(child, value)| {
+                let too_deep = value.is_object()
+                    || has_parent_delimiter(parent)
+                    || (child != "." && has_parent_delimiter(child));
+                let entry = if too_deep {
+                    NestedOverride::TooDeep
+                } else if is_valid_selector_key(child) {
+                    NestedOverride::Rule(value.as_str()?)
+                } else {
+                    return None;
+                };
+                Some((parent.as_str(), child.as_str(), entry))
+            })
+        })
+}
+
+/// Whether an override selector already carries a pnpm `parent>child`
+/// delimiter: a `>` not preceded by a space, `|` or `@`, which would
+/// make it part of a range (`foo@>=1`).
+fn has_parent_delimiter(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    (1..bytes.len()).any(|i| bytes[i] == b'>' && !matches!(bytes[i - 1], b' ' | b'|' | b'@'))
 }
 
 /// Append the string entries of `arr` to `dst`, skipping duplicates
@@ -1308,6 +1420,7 @@ pub fn serialize_json_with_indent<T: serde::Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_detect_json_indent() {
@@ -1731,10 +1844,45 @@ mod tests {
     }
 
     #[test]
-    fn overrides_map_skips_object_values() {
-        // npm allows nested override objects; we don't support those yet,
-        // so they should be silently dropped rather than panicking.
-        let p = parse(r#"{"overrides": {"foo": {"bar": "1.0.0"}}}"#);
+    fn overrides_map_reads_one_level_of_nested_overrides() {
+        let p = parse(
+            r#"{"overrides": {
+                "foo": {".": "1.0.0", "bar": "2.0.0", "@s/baz@<2": "3.0.0"},
+                "qux@^1": {".": "4.0.0"},
+                "flat": "5.0.0"
+            }}"#,
+        );
+        let m = p.overrides_map();
+        assert_eq!(m.get("foo").map(String::as_str), Some("1.0.0"));
+        assert_eq!(m.get("foo>bar").map(String::as_str), Some("2.0.0"));
+        assert_eq!(m.get("foo>@s/baz@<2").map(String::as_str), Some("3.0.0"));
+        assert_eq!(m.get("qux@^1").map(String::as_str), Some("4.0.0"));
+        assert_eq!(m.get("flat").map(String::as_str), Some("5.0.0"));
+        assert_eq!(m.len(), 5);
+        assert!(p.skipped_nested_overrides().is_empty());
+    }
+
+    #[test]
+    fn overrides_map_skips_overrides_nested_deeper_than_one_level() {
+        let p = parse(
+            r#"{"overrides": {
+                "foo": {"bar": {"baz": "1.0.0"}, "a>b": "2.0.0", "ok@>=1": "3.0.0"},
+                "x>y": {"z": "4.0.0"}
+            }}"#,
+        );
+        let m = p.overrides_map();
+        assert_eq!(m.get("foo>ok@>=1").map(String::as_str), Some("3.0.0"));
+        assert_eq!(m.len(), 1);
+        assert_eq!(
+            p.skipped_nested_overrides(),
+            vec!["foo > bar", "foo > a>b", "x>y > z"]
+        );
+    }
+
+    #[test]
+    fn pnpm_overrides_do_not_read_nested_objects() {
+        // pnpm has no nested form; only top-level `overrides` does.
+        let p = parse(r#"{"pnpm": {"overrides": {"foo": {"bar": "1.0.0"}}}}"#);
         assert!(p.overrides_map().is_empty());
     }
 
@@ -1833,6 +1981,55 @@ mod tests {
             p.bundled_dependencies,
             Some(BundledDependencies::List(_))
         ));
+    }
+
+    /// Regression: `@lightdash/cli@0.103.0-alpha.9` published the
+    /// legacy field as `[true]`. npm left the malformed entry in the
+    /// registry even though bundle arrays contain dependency names.
+    /// Ignore non-string entries so one old version cannot make the
+    /// package's complete version history impossible to deserialize.
+    #[test]
+    fn bundle_dependencies_array_ignores_non_string_entries() {
+        let p = parse(r#"{"name":"x","bundleDependencies":[true,"foo",null,42,{"bar":"1"}]}"#);
+        let deps = BTreeMap::new();
+        let names = p.bundled_dependencies.as_ref().unwrap().names(&deps);
+        assert_eq!(names, vec!["foo"]);
+    }
+
+    proptest! {
+        #[test]
+        fn bundled_dependency_arrays_keep_only_names(
+            entries in proptest::collection::vec(
+                prop_oneof![
+                    "[a-z][a-z0-9-]{0,15}".prop_map(serde_json::Value::String),
+                    any::<bool>().prop_map(serde_json::Value::Bool),
+                    any::<i64>().prop_map(|value| serde_json::Value::Number(value.into())),
+                    Just(serde_json::Value::Null),
+                ],
+                0..32,
+            ),
+        ) {
+            let expected = entries
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let p: PackageJson = serde_json::from_value(serde_json::json!({
+                "name": "x",
+                "bundledDependencies": entries,
+            }))
+            .unwrap();
+            let deps = BTreeMap::new();
+            let names = p
+                .bundled_dependencies
+                .as_ref()
+                .unwrap()
+                .names(&deps)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            prop_assert_eq!(names, expected);
+        }
     }
 
     /// Regression: some publishes (e.g. `@lingui/message-utils@5.2.0`+)

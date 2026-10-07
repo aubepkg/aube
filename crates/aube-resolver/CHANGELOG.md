@@ -7,6 +7,186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.6.1...aube-resolver-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
+## [2.6.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.6.0...aube-resolver-v2.6.1) - 2026-09-29
+
+### Fixed
+
+- *(resolver)* converge peer-context pass on dense hashed peer webs ([#1669](https://github.com/aubepkg/aube/pull/1669))
+
+### Other
+
+- refresh benchmarks for v2.6.0 ([#1667](https://github.com/aubepkg/aube/pull/1667))
+
+## [2.6.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.5.1...aube-resolver-v2.6.0) - 2026-09-28
+
+### Added
+
+- publish an agent skill with release packslips ([#1644](https://github.com/aubepkg/aube/pull/1644))
+- support Bun 1.4 scoped overrides in bun.lock and package.json ([#1639](https://github.com/aubepkg/aube/pull/1639))
+
+### Fixed
+
+- *(trust)* allow why-is-node-running 3.2.2 without provenance ([#1653](https://github.com/aubepkg/aube/pull/1653))
+- *(import)* read Bun 1.4 lockfiles and link peer dependencies when importing ([#1638](https://github.com/aubepkg/aube/pull/1638))
+
+## [2.5.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.5.0...aube-resolver-v2.5.1) - 2026-09-27
+
+### Other
+
+- refresh benchmarks for v2.5.0 ([#1630](https://github.com/aubepkg/aube/pull/1630))
+
+## [2.5.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.4.0...aube-resolver-v2.5.0) - 2026-09-26
+
+### Fixed
+
+- *(resolver)* show paste-ready exemptions in trust downgrade errors ([#1609](https://github.com/aubepkg/aube/pull/1609))
+
+### Other
+
+- *(resolver)* reuse full metadata for exact optional dependencies ([#1622](https://github.com/aubepkg/aube/pull/1622))
+- *(resolver)* decode fetched release metadata on demand ([#1620](https://github.com/aubepkg/aube/pull/1620))
+- *(resolver)* decode cached release metadata on demand ([#1619](https://github.com/aubepkg/aube/pull/1619))
+- *(resolver)* separate version selection from dependency metadata ([#1618](https://github.com/aubepkg/aube/pull/1618))
+- refresh benchmarks for v2.4.0 ([#1608](https://github.com/aubepkg/aube/pull/1608))
+- refresh benchmarks for v2.4.0 ([#1595](https://github.com/aubepkg/aube/pull/1595))
+
+## [2.4.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.3.0...aube-resolver-v2.4.0) - 2026-09-25
+
+### Fixed
+
+- *(resolver)* exclude webpack-dev-middleware@7.4.6 from no-downgrade by default ([#1592](https://github.com/aubepkg/aube/pull/1592))
+
+### Other
+
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
+## [2.2.16](https://github.com/aubepkg/aube/compare/v2.2.15...v2.2.16) - 2026-09-13
+
+### Fixed
+
+- *(add)* install local tarballs by manifest name ([#1532](https://github.com/aubepkg/aube/pull/1532))
+
+## [2.2.15](https://github.com/aubepkg/aube/compare/aube-resolver-v2.2.14...aube-resolver-v2.2.15) - 2026-09-12
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [2.2.13](https://github.com/aubepkg/aube/compare/aube-resolver-v2.2.12...aube-resolver-v2.2.13) - 2026-09-09
+
+### Other
+
+- improve guides, references, and site design ([#1503](https://github.com/aubepkg/aube/pull/1503))
+
+## [2.2.5](https://github.com/aubepkg/aube/compare/aube-resolver-v2.2.4...aube-resolver-v2.2.5) - 2026-09-03
+
+### Other
+
+- move routine workflows to GitHub-hosted runners ([#1469](https://github.com/aubepkg/aube/pull/1469))
+- move project to aubepkg and aube.sh ([#1460](https://github.com/aubepkg/aube/pull/1460))
+- refresh benchmarks for v2.2.4 ([#1434](https://github.com/aubepkg/aube/pull/1434))
+
+## [2.2.4](https://github.com/jdx/aube/compare/aube-resolver-v2.2.3...aube-resolver-v2.2.4) - 2026-08-31
+
+### Other
+
+- refresh benchmarks for v2.2.3 ([#1417](https://github.com/jdx/aube/pull/1417))
+
+## [2.2.1](https://github.com/jdx/aube/compare/aube-resolver-v2.2.0...aube-resolver-v2.2.1) - 2026-08-29
+
+### Fixed
+
+- *(resolver)* match pnpm importer peer semantics ([#1399](https://github.com/jdx/aube/pull/1399))
+
+### Other
+
+- *(install)* validate trustPolicy from compact trust histories ([#1403](https://github.com/jdx/aube/pull/1403))
+- refresh benchmarks for v2.2.0 ([#1384](https://github.com/jdx/aube/pull/1384))
+- *(sponsors)* replace 37signals with omacom foundation ([#1380](https://github.com/jdx/aube/pull/1380))
+
+## [2.2.0](https://github.com/jdx/aube/compare/aube-resolver-v2.1.0...aube-resolver-v2.2.0) - 2026-08-25
+
+### Other
+
+- refresh benchmarks for v2.1.0 ([#1372](https://github.com/jdx/aube/pull/1372))
+
+## [2.1.0](https://github.com/jdx/aube/compare/aube-resolver-v2.0.1...aube-resolver-v2.1.0) - 2026-08-23
+
+### Other
+
+- *(resolver)* bypass network limit for primer metadata ([#1353](https://github.com/jdx/aube/pull/1353))
+- *(resolver)* bypass network limit for disk metadata ([#1352](https://github.com/jdx/aube/pull/1352))
+- refresh benchmarks for v2.0.1 ([#1350](https://github.com/jdx/aube/pull/1350))
+
+## [1.41.0](https://github.com/jdx/aube/compare/aube-resolver-v1.40.0...aube-resolver-v1.41.0) - 2026-08-16
+
+### Fixed
+
+- *(resolver)* avoid lowest-direct API break ([#1311](https://github.com/jdx/aube/pull/1311))
+- *(sbom)* filter unsupported optional packages ([#1309](https://github.com/jdx/aube/pull/1309))
+- *(resolver)* separate lowest-direct resolution ([#1307](https://github.com/jdx/aube/pull/1307))
+- *(install)* enable embedded memory diagnostics ([#1303](https://github.com/jdx/aube/pull/1303))
+- *(resolver)* skip optional peers in auto-install hoist pass ([#1291](https://github.com/jdx/aube/pull/1291))
+
+### Other
+
+- refresh benchmarks for v1.40.0 ([#1290](https://github.com/jdx/aube/pull/1290))
+
+## [1.40.0](https://github.com/jdx/aube/compare/aube-resolver-v1.39.0...aube-resolver-v1.40.0) - 2026-08-13
+
+### Other
+
+- refresh benchmarks for v1.39.0 ([#1285](https://github.com/jdx/aube/pull/1285))
+- Update Star History chart links with sealed tokens
+
+## [1.39.0](https://github.com/jdx/aube/compare/aube-resolver-v1.38.1...aube-resolver-v1.39.0) - 2026-08-12
+
+### Other
+
+- refresh benchmarks for v1.38.1 ([#1257](https://github.com/jdx/aube/pull/1257))
+
+## [1.38.1](https://github.com/jdx/aube/compare/aube-resolver-v1.38.0...aube-resolver-v1.38.1) - 2026-08-10
+
+### Fixed
+
+- *(resolver)* preserve dependency type for auto-installed peers ([#1252](https://github.com/jdx/aube/pull/1252))
+
+### Other
+
+- refresh benchmarks for v1.38.0 ([#1244](https://github.com/jdx/aube/pull/1244))
+
+## [1.38.0](https://github.com/jdx/aube/compare/aube-resolver-v1.37.0...aube-resolver-v1.38.0) - 2026-08-07
+
+### Other
+
+- refresh benchmarks for v1.37.0 ([#1211](https://github.com/jdx/aube/pull/1211))
+- refresh benchmarks for v1.37.0 ([#1206](https://github.com/jdx/aube/pull/1206))
+
+## [1.37.0](https://github.com/jdx/aube/compare/aube-resolver-v1.36.0...aube-resolver-v1.37.0) - 2026-07-31
+
+### Added
+
+- *(scripts)* use pnpm trusted dependency list ([#1199](https://github.com/jdx/aube/pull/1199))
+
+### Fixed
+
+- *(update)* warn when release age hides upgrades ([#1193](https://github.com/jdx/aube/pull/1193))
+
+### Other
+
+- refresh benchmarks for v1.36.0 ([#1185](https://github.com/jdx/aube/pull/1185))
+
 ## [1.36.0](https://github.com/jdx/aube/compare/aube-resolver-v1.35.0...aube-resolver-v1.36.0) - 2026-07-29
 
 ### Fixed

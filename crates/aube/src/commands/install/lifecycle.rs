@@ -6,6 +6,19 @@ use super::side_effects_cache::{
     SideEffectsCacheConfig, SideEffectsCacheEntry, SideEffectsCacheRestore,
 };
 
+/// Pinned snapshot of pnpm's lifecycle-script trust list. The release-plz PR
+/// workflow refreshes it with `scripts/update-trusted-dependencies.bash`.
+static DEFAULT_TRUSTED_DEPENDENCIES: std::sync::LazyLock<Box<[String]>> =
+    std::sync::LazyLock::new(|| {
+        serde_json::from_str::<Vec<String>>(include_str!(
+            "../../../assets/trusted-dependencies.json"
+        ))
+        // WHY: this is a repository-owned generated asset validated by the
+        // sync script; invalid JSON is a broken build artifact, not user input.
+        .unwrap_or_else(|error| panic!("invalid bundled trusted-dependencies.json: {error}"))
+        .into_boxed_slice()
+    });
+
 /// Run a root-package lifecycle hook, announcing it to the user if defined
 /// and turning aube_scripts::Error into a miette::Report with context.
 /// Silent when the hook isn't defined in package.json.
@@ -54,8 +67,8 @@ pub(super) async fn run_root_lifecycle_script(
 ///   flat list (pnpm's canonical denylist)
 /// - the `--dangerously-allow-all-builds` escape hatch
 ///
-/// Workspace-level entries in the `allowBuilds` map take precedence
-/// over the manifest map for the same pattern, matching pnpm. The
+/// Workspace and manifest entries in the `allowBuilds` map merge for the same
+/// pattern, with an explicit denial from either source taking precedence. The
 /// flat lists are pure append — deny always wins at `decide()` time.
 pub(crate) fn build_policy_from_sources(
     manifest: &aube_manifest::PackageJson,
@@ -81,7 +94,7 @@ pub(crate) fn build_policy_from_manifest_sources<'a>(
     Vec<aube_scripts::BuildPolicyError>,
 ) {
     let mut merged = std::collections::BTreeMap::new();
-    let mut only_built = Vec::new();
+    let mut only_built = DEFAULT_TRUSTED_DEPENDENCIES.to_vec();
     let mut never_built = Vec::new();
     for manifest in manifests {
         for (pattern, allow) in manifest.pnpm_allow_builds() {
@@ -95,7 +108,10 @@ pub(crate) fn build_policy_from_manifest_sources<'a>(
         never_built.extend(manifest.pnpm_never_built_dependencies());
     }
     for (k, v) in workspace.allow_builds_raw() {
-        merged.insert(k, v);
+        merged
+            .entry(k)
+            .and_modify(|existing| merge_allow_build(existing, v.clone()))
+            .or_insert(v);
     }
     only_built.extend(workspace.only_built_dependencies.iter().cloned());
     never_built.extend(workspace.never_built_dependencies.iter().cloned());
@@ -280,7 +296,7 @@ pub(super) fn resolve_link_strategy(
         // handle. `open_store` performs lockfile + IO work; a second
         // call to fetch `virtual_store_dir` would repeat that on the
         // hot path of every `auto`-mode install.
-        let store = super::super::open_store(cwd).ok();
+        let store = super::super::open_store_with_ctx(cwd, ctx).ok();
         let store_dir = store.as_ref().map(|s| s.root().to_path_buf());
         // Probe against the GVS dir when GVS is on. The GVS dir won't
         // exist yet on a cold install, so create it before the probe
@@ -384,6 +400,12 @@ pub(super) fn resolve_link_strategy(
 /// without a second disk read, and the actual execution cwd is
 /// `node_modules/.aube/<dep_path>/node_modules/<name>` — i.e. the
 /// linked dir inside the virtual store.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DepLifecycleOutcome {
+    pub(crate) scripts_run: usize,
+    pub(crate) package_contents_changed: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_dep_lifecycle_scripts(
     project_dir: &std::path::Path,
@@ -392,6 +414,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     graph: &aube_lockfile::LockfileGraph,
     policy: &aube_scripts::BuildPolicy,
     virtual_store_dir_max_length: usize,
+    canonicalize_package_dir: bool,
     child_concurrency: usize,
     placements: Option<&aube_linker::HoistedPlacements>,
     side_effects_cache: SideEffectsCacheConfig<'_>,
@@ -403,7 +426,7 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     // gates which ones actually run. Match is by `pkg.name`, matching
     // pnpm's `pnpm rebuild <name>`.
     selected_names: Option<&std::collections::HashSet<String>>,
-) -> miette::Result<usize> {
+) -> miette::Result<DepLifecycleOutcome> {
     // Pass 1 (serial, cheap): walk the graph, keep only the packages
     // the policy allows AND that actually define at least one dep
     // lifecycle hook in their on-disk `package.json`. Filtering up front
@@ -473,6 +496,29 @@ pub(crate) async fn run_dep_lifecycle_scripts(
             );
             continue;
         }
+        // With the global virtual store on Windows, changing directory through
+        // an NTFS junction preserves the logical `.aube/<dep_path>` path.
+        // Native build tools such as
+        // node-gyp can then resolve a dependency to its graph-hashed GVS path
+        // but interpret that path relative to the unhashed local `.aube/`
+        // namespace, leaving an apparently missing `node_api.gyp`. POSIX
+        // `getcwd` resolves the outer symlink and masks the same mismatch.
+        // Enter the physical shared-store directory explicitly so the script
+        // cwd and every nested dependency use the same namespace.
+        let package_dir = if canonicalize_package_dir {
+            lifecycle_package_dir(&package_dir, true)
+                .await
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!(
+                        "failed to resolve isolated package directory for {} at {}",
+                        pkg.name,
+                        package_dir.display()
+                    )
+                })?
+        } else {
+            package_dir
+        };
         // Read the dep's `package.json` directly from its materialized
         // location. Previously we looked it up via `package_indices`,
         // but the fetch phase now skips `load_index` for packages
@@ -539,17 +585,8 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     }
 
     if jobs.is_empty() {
-        return Ok(0);
+        return Ok(DepLifecycleOutcome::default());
     }
-
-    // Bootstrap node-gyp once before the fan-out when the ambient
-    // `PATH` doesn't already provide one. At least one job is about
-    // to run a lifecycle script, and we can't cheaply predict which
-    // ones will end up shelling out to `node-gyp` (explicit,
-    // implicit via binding.gyp, or transitive via node-gyp-build).
-    // If the user already has node-gyp (system install, nvm, a test
-    // shim), `ensure` returns `None` and we leave their copy alone.
-    let node_gyp_bin_dir = std::sync::Arc::new(node_gyp_bootstrap::ensure(project_dir).await?);
 
     // Pass 2 (parallel, bounded): fan out across `child_concurrency`
     // concurrent workers. Inside one job the three hooks
@@ -574,12 +611,12 @@ pub(crate) async fn run_dep_lifecycle_scripts(
     let should_save_side_effects_cache = side_effects_cache.should_save();
     let overwrite_side_effects_cache = side_effects_cache.overwrite_existing();
     let jail_policy = std::sync::Arc::new((*jail_policy).clone());
-    let mut set: tokio::task::JoinSet<miette::Result<usize>> = tokio::task::JoinSet::new();
+    let mut set: tokio::task::JoinSet<miette::Result<DepLifecycleOutcome>> =
+        tokio::task::JoinSet::new();
     for job in jobs {
         let sem = semaphore.clone();
         let project_dir = project_dir.clone();
         let modules_dir_name = modules_dir_name.clone();
-        let node_gyp_bin_dir = node_gyp_bin_dir.clone();
         let jail_policy = jail_policy.clone();
         let task = crate::dep_chain::scope_current(async move {
             let _permit = sem.acquire().await.unwrap();
@@ -598,14 +635,26 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                     )
                 })?;
                 match restore_result? {
-                    SideEffectsCacheRestore::Restored | SideEffectsCacheRestore::AlreadyApplied => {
-                        return Ok(0);
+                    SideEffectsCacheRestore::Restored => {
+                        return Ok(DepLifecycleOutcome {
+                            package_contents_changed: true,
+                            ..Default::default()
+                        });
+                    }
+                    SideEffectsCacheRestore::AlreadyApplied => {
+                        return Ok(DepLifecycleOutcome::default());
                     }
                     SideEffectsCacheRestore::Miss => {}
                 }
             }
+            // Put a cheap lazy node-gyp shim behind the dep's own `.bin`.
+            // Most lifecycle scripts never invoke node-gyp, so eagerly
+            // installing its dependency tree here adds avoidable network and
+            // linking work. The shim bootstraps on first execution and still
+            // covers indirect calls from JS build helpers.
+            let dep_bin_dir = job.dep_modules_dir.join(".bin");
+            let node_gyp_bin_dir = node_gyp_bootstrap::lazy_shim_bin_dir(&dep_bin_dir)?;
             let tool_dirs: Vec<&std::path::Path> = node_gyp_bin_dir
-                .as_ref()
                 .as_deref()
                 .map(|p| vec![p])
                 .unwrap_or_default();
@@ -675,23 +724,42 @@ pub(crate) async fn run_dep_lifecycle_scripts(
                     );
                 }
             }
-            Ok(ran_here)
+            Ok(DepLifecycleOutcome {
+                scripts_run: ran_here,
+                package_contents_changed: ran_here > 0,
+            })
         });
         let task = crate::runtime::scope_current(task);
         let task = aube_scripts::scope_current(task);
         set.spawn(task);
     }
 
-    let mut ran = 0usize;
+    let mut outcome = DepLifecycleOutcome::default();
     while let Some(res) = set.join_next().await {
         // `?` on the outer `Result` propagates a real task-level panic
         // (tokio's `JoinError`); `?` on the inner `miette::Result`
         // propagates a script failure. Either way, the function
         // returns, `set` is dropped, and the remaining in-flight
         // scripts are aborted before they can scribble on disk.
-        ran += res.into_diagnostic()??;
+        let job_outcome = res.into_diagnostic()??;
+        outcome.scripts_run += job_outcome.scripts_run;
+        outcome.package_contents_changed |= job_outcome.package_contents_changed;
     }
-    Ok(ran)
+    Ok(outcome)
+}
+
+async fn lifecycle_package_dir(
+    package_dir: &std::path::Path,
+    canonicalize: bool,
+) -> std::io::Result<std::path::PathBuf> {
+    if canonicalize {
+        let package_dir = package_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || crate::dirs::canonicalize(&package_dir))
+            .await
+            .map_err(std::io::Error::other)?
+    } else {
+        Ok(package_dir.to_path_buf())
+    }
 }
 
 /// Verify + import + validate + save-index for a freshly fetched
@@ -854,10 +922,59 @@ pub(super) fn import_verified_tarball_streamed(
     )
 }
 
+/// Upper bound on tarball body bytes buffered across every in-flight
+/// download, from arrival until their import has read them. Without it, the fetch limiter's
+/// 256 concurrent downloads could each hold up to the 1 MiB streaming
+/// threshold.
+const BUFFERED_BODY_BUDGET: u64 = 64 << 20;
+static BUFFERED_BODY_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One download's share of [`BUFFERED_BODY_BUDGET`]. It moves into the
+/// import with the buffered chunks and is returned when the import finishes,
+/// or when a download ends without one.
+#[derive(Default)]
+struct BufferedBodyBytes(u64);
+
+impl BufferedBodyBytes {
+    /// Reserve `len` more bytes, or return `false` without reserving when
+    /// that would exceed the budget.
+    fn try_add(&mut self, len: u64) -> bool {
+        use std::sync::atomic::Ordering;
+        // `try_update` replaces this on newer Rust, but is above our MSRV.
+        #[allow(deprecated)]
+        let reserved = BUFFERED_BODY_BYTES
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                held.checked_add(len)
+                    .filter(|&next| next <= BUFFERED_BODY_BUDGET)
+            })
+            .is_ok();
+        if reserved {
+            self.0 += len;
+        }
+        reserved
+    }
+
+    fn release(&mut self) {
+        BUFFERED_BODY_BYTES.fetch_sub(
+            std::mem::take(&mut self.0),
+            std::sync::atomic::Ordering::AcqRel,
+        );
+    }
+}
+
+impl Drop for BufferedBodyBytes {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 /// Fetch + import in one streaming pass. HTTP body chunks pipe through
 /// SHA-512 hasher + a bounded channel into a blocking task that runs
-/// gz+tar+CAS as bytes arrive. RSS bound is current tar entry size,
-/// not full tarball. SHA-512 verifies AFTER import: CAS files use
+/// gz+tar+CAS as bytes arrive. Bodies under 1 MiB are buffered whole
+/// before the import starts, within `BUFFERED_BODY_BUDGET` across all
+/// downloads; past that, RSS is bounded by the buffered prefix plus the
+/// current tar entry, not the full tarball. SHA-512
+/// verifies AFTER import: CAS files use
 /// content-addressed BLAKE3 paths so a verify mismatch leaves orphan
 /// shards but no package_index referencing them.
 ///
@@ -935,16 +1052,40 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     let display_for_import = display_name.to_string();
     let version_for_import = version.to_string();
     let registry_for_import = registry_name.to_string();
-    let import_handle: tokio::task::JoinHandle<miette::Result<aube_store::PackageIndex>> =
-        tokio::task::spawn_blocking(move || {
-            let reader = aube_util::io::ChunkReader::new(chunk_rx);
-            store_for_import.import_tarball_reader(reader).map_err(|e| {
-                miette!(
-                    "failed to import {display_for_import}@{version_for_import}: {e}{}",
-                    crate::dep_chain::format_chain_for(&registry_for_import, &version_for_import)
-                )
+    // The reservation travels with the buffered chunks into the import, so
+    // bytes still queued for a blocking thread keep counting against the
+    // budget until the import has read them or is dropped.
+    let mut start_import = Some(
+        move |buffered: Vec<bytes::Bytes>, reservation: BufferedBodyBytes| {
+            tokio::task::spawn_blocking(move || {
+                let _reservation = reservation;
+                let reader = aube_util::io::ChunkReader::with_buffered(buffered, chunk_rx);
+                store_for_import.import_tarball_reader(reader).map_err(|e| {
+                    miette!(
+                        "failed to import {display_for_import}@{version_for_import}: {e}{}",
+                        crate::dep_chain::format_chain_for(
+                            &registry_for_import,
+                            &version_for_import
+                        )
+                    )
+                })
             })
-        });
+        },
+    );
+    // The import runs on the blocking pool, which Linux caps at 8 threads
+    // shared with package materialization. Started at the first chunk, an
+    // import held its thread for the whole download, mostly idle on the
+    // network, and materialization fell behind until downloads ended. So
+    // the body is buffered here until it ends or passes this size; most
+    // tarballs are tens of KB, and only large ones still stream. A download
+    // that would take the process-wide buffered total past its budget starts
+    // streaming at once instead.
+    const STREAM_AFTER_BYTES: u64 = 1 << 20;
+    let mut buffered: Vec<bytes::Bytes> = Vec::new();
+    let mut reservation = BufferedBodyBytes::default();
+    let mut import_handle: Option<
+        tokio::task::JoinHandle<miette::Result<aube_store::PackageIndex>>,
+    > = None;
 
     // Hash every byte the server sent, regardless of whether the
     // import task consumed them. tar end-of-archive can fire before
@@ -958,7 +1099,9 @@ pub(super) async fn fetch_and_import_tarball_streaming(
         match resp.chunk().await {
             Ok(Some(chunk)) => {
                 if cap > 0 && total.saturating_add(chunk.len() as u64) > cap {
-                    if let Some(tx) = chunk_tx.as_ref() {
+                    if import_handle.is_some()
+                        && let Some(tx) = chunk_tx.as_ref()
+                    {
                         let _ = tx
                             .send(Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
@@ -973,7 +1116,18 @@ pub(super) async fn fetch_and_import_tarball_streaming(
                 }
                 total += chunk.len() as u64;
                 hasher.update(&chunk);
-                if let Some(tx) = chunk_tx.as_ref()
+                if import_handle.is_none() {
+                    let fits = reservation.try_add(chunk.len() as u64);
+                    buffered.push(chunk);
+                    if !fits || total >= STREAM_AFTER_BYTES {
+                        import_handle = start_import.take().map(|start| {
+                            start(
+                                std::mem::take(&mut buffered),
+                                std::mem::take(&mut reservation),
+                            )
+                        });
+                    }
+                } else if let Some(tx) = chunk_tx.as_ref()
                     && tx.send(Ok(chunk)).await.is_err()
                 {
                     // Import task closed the channel (tar EOF hit).
@@ -984,7 +1138,9 @@ pub(super) async fn fetch_and_import_tarball_streaming(
             }
             Ok(None) => break None,
             Err(e) => {
-                if let Some(tx) = chunk_tx.as_ref() {
+                if import_handle.is_some()
+                    && let Some(tx) = chunk_tx.as_ref()
+                {
                     let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
                 }
                 break Some(aube_registry::Error::from(e));
@@ -993,7 +1149,20 @@ pub(super) async fn fetch_and_import_tarball_streaming(
     };
     drop(chunk_tx);
 
-    let import_result = import_handle.await.into_diagnostic().map_err(local)?;
+    // A body that ended below the streaming threshold is imported whole;
+    // a failed stream that never reached it is not imported at all.
+    if import_handle.is_none()
+        && stream_err.is_none()
+        && let Some(start) = start_import.take()
+    {
+        import_handle = Some(start(buffered, std::mem::take(&mut reservation)));
+    }
+    // A stream that failed before its import started returns its bytes here.
+    drop(reservation);
+    let import_result = match import_handle {
+        Some(handle) => Some(handle.await.into_diagnostic().map_err(local)?),
+        None => None,
+    };
     if let Some(e) = stream_err {
         // Stash the Display rendering before `net` consumes `e`
         // for `is_throttle()` — the user-facing diagnostic must
@@ -1009,6 +1178,12 @@ pub(super) async fn fetch_and_import_tarball_streaming(
             ),
         ));
     }
+    // A clean stream always starts the import above.
+    let Some(import_result) = import_result else {
+        return Err(local(miette!(
+            "{display_name}@{version}: tarball import never started"
+        )));
+    };
     let index = import_result.map_err(local)?;
 
     let mut sha512 = [0u8; 64];
@@ -1207,6 +1382,136 @@ pub(super) fn unreviewed_dep_builds(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_body_budget_refuses_past_the_cap_and_frees_on_drop() {
+        let mut first = BufferedBodyBytes::default();
+        assert!(first.try_add(BUFFERED_BODY_BUDGET));
+        let mut second = BufferedBodyBytes::default();
+        assert!(!second.try_add(1), "budget is full");
+        drop(first);
+        assert!(
+            second.try_add(1),
+            "dropping a reservation returns its bytes"
+        );
+        second.release();
+        assert!(second.try_add(BUFFERED_BODY_BUDGET));
+    }
+
+    #[tokio::test]
+    async fn global_virtual_store_lifecycle_uses_physical_package_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let physical = temp
+            .path()
+            .join("shared-store")
+            .join("pkg@1.0.0")
+            .join("node_modules")
+            .join("pkg");
+        std::fs::create_dir_all(&physical).unwrap();
+        let logical = temp
+            .path()
+            .join("project")
+            .join("node_modules")
+            .join(".aube")
+            .join("pkg@1.0.0");
+        std::fs::create_dir_all(logical.parent().unwrap()).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            physical.parent().and_then(std::path::Path::parent).unwrap(),
+            &logical,
+        )
+        .unwrap();
+        #[cfg(windows)]
+        {
+            let target = physical.parent().and_then(std::path::Path::parent).unwrap();
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&logical)
+                .arg(target)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        let logical_package = logical.join("node_modules/pkg");
+        assert_eq!(
+            lifecycle_package_dir(&logical_package, true).await.unwrap(),
+            crate::dirs::canonicalize(&physical).unwrap()
+        );
+        assert_eq!(
+            lifecycle_package_dir(&logical_package, false)
+                .await
+                .unwrap(),
+            logical_package
+        );
+    }
+
+    #[test]
+    fn pnpm_trusted_dependencies_are_allowed_by_default() {
+        let manifest = aube_manifest::PackageJson::default();
+        let workspace = aube_manifest::WorkspaceConfig::default();
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            policy.decide("esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Allow
+        );
+        assert_eq!(
+            policy.decide("sharp", "0.35.2"),
+            aube_scripts::AllowDecision::Allow
+        );
+        assert_eq!(
+            policy.decide("not-on-the-pnpm-trusted-list", "0.28.1"),
+            aube_scripts::AllowDecision::Unspecified
+        );
+    }
+
+    #[test]
+    fn explicit_deny_overrides_default_trust() {
+        let manifest = manifest_with_allow_build("esbuild", false);
+        let workspace = aube_manifest::WorkspaceConfig::default();
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            policy.decide("esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Deny
+        );
+    }
+
+    #[test]
+    fn project_deny_overrides_workspace_allow() {
+        let manifest = manifest_with_allow_build("esbuild", false);
+        let mut workspace = aube_manifest::WorkspaceConfig::default();
+        workspace
+            .allow_builds
+            .insert("esbuild".to_string(), yaml_serde::Value::Bool(true));
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            policy.decide("esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Deny
+        );
+    }
+
+    #[test]
+    fn workspace_deny_overrides_default_trust() {
+        let manifest = aube_manifest::PackageJson::default();
+        let mut workspace = aube_manifest::WorkspaceConfig::default();
+        workspace
+            .allow_builds
+            .insert("esbuild".to_string(), yaml_serde::Value::Bool(false));
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            policy.decide("esbuild", "0.28.1"),
+            aube_scripts::AllowDecision::Deny
+        );
+    }
 
     #[test]
     fn member_allow_build_conflict_denies() {

@@ -24,6 +24,8 @@ impl Linker {
             store: store.clone(),
             use_global_virtual_store,
             project_local_dep_paths: rustc_hash::FxHashSet::default(),
+            fresh_virtual_store_entries: rustc_hash::FxHashSet::default(),
+            gvs_dep_link_targets: std::sync::Mutex::new(None),
             strategy,
             patches: Patches::new(),
             hashes: None,
@@ -145,6 +147,32 @@ impl Linker {
         self
     }
 
+    /// The dependency links of every global virtual-store entry the last
+    /// [`Linker::link_all`] created or verified, so the install state can
+    /// record them without reading each one back. `None` when nothing was
+    /// recorded (workspace linking, per-project layout, Windows); entries
+    /// with a `link:` transitive are left out. Callers read anything
+    /// missing from disk.
+    pub fn take_gvs_dep_link_targets(&self) -> Option<crate::GvsDepLinkTargets> {
+        self.gvs_dep_link_targets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+
+    /// Mark dep paths whose global virtual-store entry this install just
+    /// placed from the same graph hashes this linker uses, so their
+    /// dependency links are trusted instead of read back. Passing an entry
+    /// placed under different hashes, or by another process, would skip a
+    /// needed repair.
+    pub fn with_fresh_virtual_store_entries(
+        mut self,
+        dep_paths: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.fresh_virtual_store_entries = dep_paths.into_iter().collect();
+        self
+    }
+
     pub(crate) fn link_parallelism(&self) -> usize {
         self.link_concurrency
             .unwrap_or_else(default_linker_parallelism)
@@ -235,8 +263,8 @@ impl Linker {
     /// copy via the root-level symlink, so consumer code is
     /// unaffected. Default false (pnpm parity). No-op under
     /// `virtualStoreOnly=true` (no per-importer symlink pass runs)
-    /// and under `NodeLinker::Hoisted` (each importer gets an
-    /// independent flat tree — no shared root to dedupe against).
+    /// and under `NodeLinker::Hoisted` (its workspace-wide placement
+    /// plan deduplicates compatible packages independently).
     pub fn with_dedupe_direct_deps(mut self, on: bool) -> Self {
         self.dedupe_direct_deps = on;
         self

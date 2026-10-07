@@ -7,6 +7,187 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.6.1...aube-linker-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(linker)* replace a real directory left at a global virtual store entry ([#1648](https://github.com/aubepkg/aube/pull/1648))
+- *(linker)* rewrite top-level junctions after virtualStoreDir moves on Windows ([#1646](https://github.com/aubepkg/aube/pull/1646))
+- *(install)* keep the warm path when dedupe-direct-deps skips a member link ([#1688](https://github.com/aubepkg/aube/pull/1688))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+- *(install)* apply missing-EOF-marker patches with hunk headings ([#1678](https://github.com/aubepkg/aube/pull/1678))
+- *(install)* remove stale .bin shims for dependencies dropped from the graph ([#1673](https://github.com/aubepkg/aube/pull/1673))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
+## [2.6.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.6.0...aube-linker-v2.6.1) - 2026-09-29
+
+### Other
+
+- refresh benchmarks for v2.6.0 ([#1667](https://github.com/aubepkg/aube/pull/1667))
+
+## [2.6.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.5.1...aube-linker-v2.6.0) - 2026-09-28
+
+### Added
+
+- publish an agent skill with release packslips ([#1644](https://github.com/aubepkg/aube/pull/1644))
+- support Bun 1.4 scoped overrides in bun.lock and package.json ([#1639](https://github.com/aubepkg/aube/pull/1639))
+
+### Fixed
+
+- *(import)* read Bun 1.4 lockfiles and link peer dependencies when importing ([#1638](https://github.com/aubepkg/aube/pull/1638))
+
+## [2.5.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.5.0...aube-linker-v2.5.1) - 2026-09-27
+
+### Fixed
+
+- *(linker)* silence unused dep_path on Windows ([#1628](https://github.com/aubepkg/aube/pull/1628))
+
+### Other
+
+- *(linker)* reuse unchanged hidden hoist links ([#1632](https://github.com/aubepkg/aube/pull/1632))
+- refresh benchmarks for v2.5.0 ([#1630](https://github.com/aubepkg/aube/pull/1630))
+- *(linker)* avoid redundant package directory operations ([#1626](https://github.com/aubepkg/aube/pull/1626))
+
+## [2.5.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.4.0...aube-linker-v2.5.0) - 2026-09-26
+
+### Other
+
+- *(linker)* avoid directory contention when hardlinking packages ([#1621](https://github.com/aubepkg/aube/pull/1621))
+- *(linker)* speed up cached installs on macOS ([#1614](https://github.com/aubepkg/aube/pull/1614))
+- refresh benchmarks for v2.4.0 ([#1608](https://github.com/aubepkg/aube/pull/1608))
+- refresh benchmarks for v2.4.0 ([#1595](https://github.com/aubepkg/aube/pull/1595))
+
+## [2.4.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.3.0...aube-linker-v2.4.0) - 2026-09-25
+
+### Other
+
+- *(install)* skip reading back GVS links written this install ([#1603](https://github.com/aubepkg/aube/pull/1603))
+- *(linker)* build the hidden hoist tree in parallel ([#1601](https://github.com/aubepkg/aube/pull/1601))
+- *(linker)* link large packages' files in parallel ([#1602](https://github.com/aubepkg/aube/pull/1602))
+- *(linker)* create materialize staging dirs top-down ([#1600](https://github.com/aubepkg/aube/pull/1600))
+- refresh benchmarks for v2.3.0 ([#1593](https://github.com/aubepkg/aube/pull/1593))
+- send bug reports to GitHub Issues ([#1583](https://github.com/aubepkg/aube/pull/1583))
+
+## [2.3.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.17...aube-linker-v2.3.0) - 2026-09-22
+
+### Added
+
+- *(linker)* bind installed CLIs to a host-managed Node runtime ([#1576](https://github.com/aubepkg/aube/pull/1576))
+
+### Fixed
+
+- *(linker)* tolerate a concurrent identical top-level symlink ([#1547](https://github.com/aubepkg/aube/pull/1547))
+
+## [2.2.14](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.13...aube-linker-v2.2.14) - 2026-09-11
+
+### Fixed
+
+- *(linker)* tolerate missing EOF markers on patch context ([#1515](https://github.com/aubepkg/aube/pull/1515))
+
+## [2.2.13](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.12...aube-linker-v2.2.13) - 2026-09-09
+
+### Other
+
+- improve guides, references, and site design ([#1503](https://github.com/aubepkg/aube/pull/1503))
+
+## [2.2.5](https://github.com/aubepkg/aube/compare/aube-linker-v2.2.4...aube-linker-v2.2.5) - 2026-09-03
+
+### Other
+
+- move routine workflows to GitHub-hosted runners ([#1469](https://github.com/aubepkg/aube/pull/1469))
+- move project to aubepkg and aube.sh ([#1460](https://github.com/aubepkg/aube/pull/1460))
+- refresh benchmarks for v2.2.4 ([#1434](https://github.com/aubepkg/aube/pull/1434))
+
+## [2.2.4](https://github.com/jdx/aube/compare/aube-linker-v2.2.3...aube-linker-v2.2.4) - 2026-08-31
+
+### Other
+
+- refresh benchmarks for v2.2.3 ([#1417](https://github.com/jdx/aube/pull/1417))
+
+## [2.2.1](https://github.com/jdx/aube/compare/aube-linker-v2.2.0...aube-linker-v2.2.1) - 2026-08-29
+
+### Other
+
+- refresh benchmarks for v2.2.0 ([#1384](https://github.com/jdx/aube/pull/1384))
+- *(sponsors)* replace 37signals with omacom foundation ([#1380](https://github.com/jdx/aube/pull/1380))
+
+## [2.2.0](https://github.com/jdx/aube/compare/aube-linker-v2.1.0...aube-linker-v2.2.0) - 2026-08-25
+
+### Other
+
+- refresh benchmarks for v2.1.0 ([#1372](https://github.com/jdx/aube/pull/1372))
+
+## [2.1.0](https://github.com/jdx/aube/compare/aube-linker-v2.0.1...aube-linker-v2.1.0) - 2026-08-23
+
+### Other
+
+- refresh benchmarks for v2.0.1 ([#1350](https://github.com/jdx/aube/pull/1350))
+
+## [2.0.1](https://github.com/jdx/aube/compare/aube-linker-v2.0.0...aube-linker-v2.0.1) - 2026-08-23
+
+### Added
+
+- *(resolver)* [**breaking**] expose lowest-direct resolution mode ([#1345](https://github.com/jdx/aube/pull/1345))
+
+## [1.41.0](https://github.com/jdx/aube/compare/aube-linker-v1.40.0...aube-linker-v1.41.0) - 2026-08-16
+
+### Fixed
+
+- *(linker)* repair stale nested gvs links ([#1299](https://github.com/jdx/aube/pull/1299))
+- *(linker)* prefer commonly used hoisted versions ([#1296](https://github.com/jdx/aube/pull/1296))
+
+### Other
+
+- refresh benchmarks for v1.40.0 ([#1290](https://github.com/jdx/aube/pull/1290))
+
+## [1.40.0](https://github.com/jdx/aube/compare/aube-linker-v1.39.0...aube-linker-v1.40.0) - 2026-08-13
+
+### Other
+
+- refresh benchmarks for v1.39.0 ([#1285](https://github.com/jdx/aube/pull/1285))
+- Update Star History chart links with sealed tokens
+
+## [1.39.0](https://github.com/jdx/aube/compare/aube-linker-v1.38.1...aube-linker-v1.39.0) - 2026-08-12
+
+### Other
+
+- refresh benchmarks for v1.38.1 ([#1257](https://github.com/jdx/aube/pull/1257))
+
+## [1.38.1](https://github.com/jdx/aube/compare/aube-linker-v1.38.0...aube-linker-v1.38.1) - 2026-08-10
+
+### Fixed
+
+- *(linker)* protect project root from modules cleanup ([#1246](https://github.com/jdx/aube/pull/1246))
+- *(linker)* resolve symlinks in POSIX shims ([#1249](https://github.com/jdx/aube/pull/1249))
+
+### Other
+
+- refresh benchmarks for v1.38.0 ([#1244](https://github.com/jdx/aube/pull/1244))
+
+## [1.38.0](https://github.com/jdx/aube/compare/aube-linker-v1.37.0...aube-linker-v1.38.0) - 2026-08-07
+
+### Fixed
+
+- *(linker)* share hoisted deps across workspace importers ([#1243](https://github.com/jdx/aube/pull/1243))
+
+### Other
+
+- refresh benchmarks for v1.37.0 ([#1211](https://github.com/jdx/aube/pull/1211))
+- refresh benchmarks for v1.37.0 ([#1206](https://github.com/jdx/aube/pull/1206))
+
+## [1.37.0](https://github.com/jdx/aube/compare/aube-linker-v1.36.0...aube-linker-v1.37.0) - 2026-07-31
+
+### Added
+
+- *(scripts)* use pnpm trusted dependency list ([#1199](https://github.com/jdx/aube/pull/1199))
+
+### Other
+
+- refresh benchmarks for v1.36.0 ([#1185](https://github.com/jdx/aube/pull/1185))
+
 ## [1.36.0](https://github.com/jdx/aube/compare/aube-linker-v1.35.0...aube-linker-v1.36.0) - 2026-07-29
 
 ### Other

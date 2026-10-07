@@ -1,4 +1,4 @@
-// Reads the per-scenario hyperfine JSON output from `bench.sh` and
+// Reads the per-scenario tak JSON output from `bench.sh` and
 // emits two artifacts:
 //
 //   1. A human-readable markdown summary at `outputFile` (same format
@@ -12,7 +12,7 @@
 // Usage:
 //   node generate-results.js <benchDir> <outputMarkdown>
 // Optional env:
-//   BENCH_TOOLS=aube,bun,pnpm,npm,yarn,deno,vlt
+//   BENCH_TOOLS=aube,aube-nogvs,bun,pnpm,npm,yarn,deno,vlt
 //                                   comma-separated tool order
 //                                   (defaults to aube + pnpm)
 //   RESULTS_JSON=<path>             override the JSON output path
@@ -26,6 +26,7 @@ const outputFile = process.argv[3]
 const benchmarks = [
   ['gvs-warm', 'Fresh install (warm cache)'],
   ['gvs-cold', 'Fresh install (cold cache)'],
+  ['pull-update', 'Dependency update after git pull'],
   ['install-test', 'npm install && npm run test'],
 ]
 const SELECTED_BENCHMARKS = new Set(
@@ -40,16 +41,25 @@ const TOOLS = (process.env.BENCH_TOOLS || 'aube,pnpm')
   .map((s) => s.trim())
   .filter(Boolean)
 
+// One `tak run --export-json` file per scenario, with an entry per tool
+// (hyperfine's result shape plus `subject`). A tool that failed is absent
+// from it and reported as n/a.
+//
+// The published value is the median. A few slow samples from a busy
+// runner, or a first sample that pays a one-time cost, would otherwise
+// drag the mean far from a typical install and decide a close comparison.
 function readResult (benchDir, name, tool) {
   try {
-    const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}-${tool}.json`, 'utf8'))
-    const r = data.results[0]
-    if (!r || !Number.isFinite(r.mean)) {
-      throw new Error('missing benchmark mean')
+    const data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
+    const r = data.results.find((result) => result.subject === tool)
+    if (!r) return missing()
+    if (!Number.isFinite(r.median) || !Number.isFinite(r.mean)) {
+      throw new Error('missing benchmark median or mean')
     }
     const stddev = Number.isFinite(r.stddev) ? r.stddev : 0
     return {
-      text: `${r.mean.toFixed(3)}s ± ${stddev.toFixed(3)}s`,
+      text: `${r.median.toFixed(3)}s (mean ${r.mean.toFixed(3)}s ± ${stddev.toFixed(3)}s)`,
+      median: r.median,
       mean: r.mean,
       stddev,
       min: r.min,
@@ -57,18 +67,22 @@ function readResult (benchDir, name, tool) {
     }
   } catch (err) {
     if (err && err.code !== 'ENOENT') {
-      console.error(`Warning: failed to read ${name}-${tool}: ${err.message}`)
+      console.error(`Warning: failed to read ${name}/${tool}: ${err.message}`)
     }
-    return { text: 'n/a', mean: null, stddev: null, min: null, max: null }
+    return missing()
   }
 }
 
-function fmtSpeedup (baseMean, aubeMean) {
-  if (baseMean == null || aubeMean == null) return ''
-  if (aubeMean < baseMean) {
-    return ` (${(baseMean / aubeMean).toFixed(1)}x faster)`
-  } else if (aubeMean > baseMean) {
-    return ` (${(aubeMean / baseMean).toFixed(1)}x slower)`
+function missing () {
+  return { text: 'n/a', median: null, mean: null, stddev: null, min: null, max: null }
+}
+
+function fmtSpeedup (base, aube) {
+  if (base == null || aube == null) return ''
+  if (aube < base) {
+    return ` (${(base / aube).toFixed(1)}x faster)`
+  } else if (aube > base) {
+    return ` (${(aube / base).toFixed(1)}x slower)`
   }
   return ''
 }
@@ -94,23 +108,35 @@ const lines = [
 ]
 
 // -- Structured JSON --------------------------------------------------------
-// bench.sh writes BENCH_VERSIONS_FILE as a "<tool>\t<semver>" TSV so
-// the docs chart can render the actual version each manager was
-// running rather than just the bare name.
+// tak records each tool's `--version` output (`version_cmd` in
+// benchmarks/tak.toml) and the machine it ran on in every scenario's export.
+// Versions are trimmed to the first semver-looking token so the docs chart
+// shows `1.4.2` rather than `bun 1.4.2+abc (…)`. `aube-nogvs` runs the aube
+// binary, so its recorded version is aube's.
 const versions = {}
-const versionsFile = process.env.BENCH_VERSIONS_FILE
-if (versionsFile && fs.existsSync(versionsFile)) {
-  for (const line of fs.readFileSync(versionsFile, 'utf8').split('\n')) {
-    const [name, version] = line.split('\t')
-    if (name && version) versions[name] = version.trim()
+let machine = null
+for (const [name] of benchmarks) {
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(`${benchDir}/${name}.json`, 'utf8'))
+  } catch {
+    continue
+  }
+  machine ??= data.machine ?? null
+  for (const r of data.results ?? []) {
+    if (versions[r.subject] || typeof r.version !== 'string') continue
+    const semver = r.version.match(/[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?/)
+    versions[r.subject] = semver ? semver[0] : r.version.trim()
   }
 }
+versions.node = process.versions.node
 
 const json = {
   updated: new Date().toISOString(),
   unit: 'ms',
   managers: TOOLS,
   versions,
+  machine,
   rows: [],
 }
 
@@ -125,18 +151,18 @@ benchmarks.filter(([name]) => SELECTED_BENCHMARKS.has(name)).forEach(([name, lab
     cells.push(results[tool].text)
   }
   if (TOOLS.includes('pnpm') && TOOLS.includes('aube')) {
-    cells.push(fmtSpeedup(results.pnpm.mean, results.aube.mean).trim())
+    cells.push(fmtSpeedup(results.pnpm.median, results.aube.median).trim())
   }
   if (TOOLS.includes('bun') && TOOLS.includes('aube')) {
-    cells.push(fmtSpeedup(results.bun.mean, results.aube.mean).trim())
+    cells.push(fmtSpeedup(results.bun.median, results.aube.median).trim())
   }
   lines.push(`| ${cells.join(' | ')} |`)
 
   const values = {}
   const stats = {}
   for (const tool of TOOLS) {
-    values[tool] = results[tool].mean == null ? null : Math.round(results[tool].mean * 1000)
-    stats[tool] = results[tool].mean == null ? null : results[tool]
+    values[tool] = results[tool].median == null ? null : Math.round(results[tool].median * 1000)
+    stats[tool] = results[tool].median == null ? null : results[tool]
   }
 
   json.rows.push({ key: name, label, values, stats })

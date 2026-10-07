@@ -7,7 +7,6 @@ use crate::local_source::is_non_registry_specifier;
 use crate::semver_util::version_satisfies;
 use crate::{
     Error, FxHashMap, PeerContextOptions, ReadPackageHook, Resolver, apply_peer_contexts, catalog,
-    hoist_auto_installed_peers,
 };
 use aube_lockfile::{DirectDep, LockedPackage, LockfileGraph};
 use aube_manifest::PackageJson;
@@ -113,6 +112,31 @@ impl Resolver {
     ) -> Result<LockfileGraph, Error> {
         let resolved_catalogs =
             catalog::materialize_catalog_picks(catalog_picks, resolved_versions);
+        // pnpm stores catalog-expanded override values in its lockfile header,
+        // not the raw `catalog:` references from pnpm-workspace.yaml. Resolve
+        // every valid selector against the configured catalogs here so even an
+        // override that did not happen to match this graph is serialized in the
+        // same canonical form. Invalid/missing catalog references stay raw; a
+        // matching task reports the existing catalog diagnostic during resolve.
+        let mut lockfile_overrides = self.overrides.clone();
+        for rule in &self.override_rules {
+            let Some(catalog_name) = rule
+                .replacement
+                .strip_prefix("catalog:")
+                .map(|name| if name.is_empty() { "default" } else { name })
+            else {
+                continue;
+            };
+            let Some(real_range) = self
+                .catalogs
+                .get(catalog_name)
+                .and_then(|catalog| catalog.get(&rule.target.name))
+                .filter(|range| !aube_util::pkg::is_catalog_spec(range))
+            else {
+                continue;
+            };
+            lockfile_overrides.insert(rule.raw_key.clone(), real_range.clone());
+        }
 
         let canonical = LockfileGraph {
             importers,
@@ -125,10 +149,9 @@ impl Resolver {
                 // on after the graph is built when the setting is active.
                 lockfile_include_tarball_url: false,
             },
-            // Stamp the resolver's overrides into the output graph so the
-            // lockfile writer can round-trip them and the next install's
-            // drift check can compare them against the manifest.
-            overrides: self.overrides.clone(),
+            // Stamp the pnpm-canonical override values into the output graph so
+            // the writer and the next install's drift check see the same shape.
+            overrides: lockfile_overrides,
             ignored_optional_dependencies: self.ignored_optional_dependencies.clone(),
             times: resolved_times,
             skipped_optional_dependencies,
@@ -152,19 +175,7 @@ impl Resolver {
             pnpmfile_checksum: None,
         };
 
-        // Second pass: hoist every auto-installed peer to its importer's
-        // direct deps so pnpm-style `node_modules/<peer>` top-level
-        // symlinks get created and the lockfile's `importers.` section
-        // lists them the way pnpm does with `auto-install-peers=true`.
-        // Skipped entirely when the setting is off — matches pnpm, which
-        // leaves the importer's `dependencies` untouched in that mode.
-        let hoisted = if self.auto_install_peers {
-            hoist_auto_installed_peers(canonical)
-        } else {
-            canonical
-        };
-
-        // Third pass: compute peer-context suffixes for every reachable
+        // Second pass: compute peer-context suffixes for every reachable
         // package. See `apply_peer_contexts` for the details.
         let peer_options = PeerContextOptions {
             dedupe_peer_dependents: self.dedupe_peer_dependents,
@@ -174,7 +185,7 @@ impl Resolver {
         };
         let _diag_peer =
             aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "peer_context_apply");
-        let contextualized = apply_peer_contexts(hoisted, &peer_options)?;
+        let contextualized = apply_peer_contexts(canonical, &peer_options)?;
         drop(_diag_peer);
         tracing::debug!(
             "peer-context pass produced {} contextualized packages",

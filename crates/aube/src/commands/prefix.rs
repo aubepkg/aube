@@ -4,8 +4,6 @@
 //! (or cwd when no project root is found). With `--global` / `-g`, prints
 //! the global prefix directory used for PATH-visible global bins.
 
-use clap::Args;
-
 pub const AFTER_LONG_HELP: &str = "\
 Examples:
 
@@ -16,10 +14,10 @@ Examples:
   /home/user/.local/share/pnpm
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct PrefixArgs {
     /// Print the global prefix directory instead of the project's root
-    #[arg(short, long)]
+    #[usage(short, long)]
     pub global: bool,
 }
 

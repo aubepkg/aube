@@ -281,6 +281,123 @@ EOF
 	assert_success
 }
 
+@test "aube import from bun.lock records peer contexts in aube-lock.yaml" {
+	# bun.lock lists which packages declare peers but not which copy
+	# satisfies each one. `fdir` peers on `picomatch`, which bun
+	# installed only to satisfy that peer. Without the peer-context
+	# pass the imported snapshot links no `picomatch`, and a frozen
+	# install leaves fdir unable to resolve it.
+	cp "$PROJECT_ROOT/fixtures/import-bun-peer-only-in-packages/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-peer-only-in-packages/bun.lock" .
+
+	run aube import
+	assert_success
+
+	run grep -F "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+	# The peer is wired through fdir, not promoted to a root dependency
+	# the manifest never declared.
+	run bash -c "sed -n '/^importers:/,/^packages:/p' aube-lock.yaml | grep -E '^ +picomatch:'"
+	assert_failure
+
+	rm bun.lock
+	run aube install --frozen-lockfile
+	assert_success
+
+	local matches=(node_modules/.aube/fdir@6.5.0_picomatch@4.0.4*)
+	[ "${#matches[@]}" -eq 1 ] || fail "expected exactly one peer-qualified fdir dir, got: ${matches[*]}"
+	assert_link_exists "${matches[0]}/node_modules/picomatch"
+}
+
+@test "aube import from package-lock.json records peer contexts in aube-lock.yaml" {
+	# Same shape as the bun.lock case above: npm installs `picomatch`
+	# at `node_modules/picomatch` only because `fdir` peers on it, and
+	# the lockfile does not say which copy satisfies that peer.
+	cp "$PROJECT_ROOT/fixtures/import-npm-peer-only/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-npm-peer-only/package-lock.json" .
+
+	run aube import
+	assert_success
+
+	run grep -F "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+	run bash -c "sed -n '/^importers:/,/^packages:/p' aube-lock.yaml | grep -E '^ +picomatch:'"
+	assert_failure
+
+	rm package-lock.json
+	run aube install --frozen-lockfile
+	assert_success
+
+	local matches=(node_modules/.aube/fdir@6.5.0_picomatch@4.0.4*)
+	[ "${#matches[@]}" -eq 1 ] || fail "expected exactly one peer-qualified fdir dir, got: ${matches[*]}"
+	assert_link_exists "${matches[0]}/node_modules/picomatch"
+}
+
+@test "aube import reads a bun 1.4 lockfileVersion 2 bun.lock" {
+	cp "$PROJECT_ROOT/fixtures/import-bun-peer-only-in-packages/package.json" .
+	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		"$PROJECT_ROOT/fixtures/import-bun-peer-only-in-packages/bun.lock" >bun.lock
+	run grep -F '"lockfileVersion": 2,' bun.lock
+	assert_success
+
+	run aube import
+	assert_success
+	assert_output --partial "Imported 2 packages from bun.lock"
+	run grep -F "fdir@6.5.0(picomatch@4.0.4):" aube-lock.yaml
+	assert_success
+}
+
+@test "aube install reads a bun 1.4 lockfileVersion 3 bun.lock with scoped overrides" {
+	# Written by bun 1.4.2 from `"overrides": { "is-odd": { "is-number": "7.0.0" } }`:
+	# is-number@7.0.0 only under is-odd, 6.0.0 at the root.
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .
+	cp bun.lock bun.lock.before
+
+	run aube install --frozen-lockfile
+	assert_success
+	run node -p 'require("is-number/package.json").version'
+	assert_output "6.0.0"
+	run node -p 'require(require.resolve("is-number/package.json", { paths: [require("path").dirname(require.resolve("is-odd"))] })).version'
+	assert_output "7.0.0"
+	run cmp -s bun.lock bun.lock.before
+	assert_success
+}
+
+@test "aube re-resolving a v3 bun.lock keeps its scoped overrides as bun wrote them" {
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .
+	cp bun.lock bun.lock.before
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run node -p 'require(require.resolve("is-number/package.json", { paths: [require("path").dirname(require.resolve("is-odd"))] })).version'
+	assert_output "7.0.0"
+	# Everything above `packages` (version stamp, workspaces, overrides)
+	# is byte-identical. Package rows can pick up metadata the test
+	# registry adds, such as `deprecated`.
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
+	assert_success
+	run grep -F '"is-odd/is-number": ["is-number@7.0.0"' bun.lock
+	assert_success
+}
+
+@test "aube import from a v3 bun.lock writes scoped overrides as parent>child" {
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
+	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .
+
+	run aube import
+	assert_success
+	run grep -F "is-odd>is-number: 7.0.0" aube-lock.yaml
+	assert_success
+
+	rm bun.lock
+	run aube install --frozen-lockfile
+	assert_success
+	assert_dir_exists node_modules/.aube/is-number@7.0.0
+	assert_dir_exists node_modules/.aube/is-number@6.0.0
+}
+
 @test "aube import refuses to overwrite existing aube-lock.yaml" {
 	cp "$PROJECT_ROOT/fixtures/import-npm/package.json" .
 	cp "$PROJECT_ROOT/fixtures/import-npm/package-lock.json" .

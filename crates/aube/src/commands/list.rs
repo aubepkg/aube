@@ -9,7 +9,6 @@
 //! doesn't hit the network, doesn't take the project lock.
 
 use aube_lockfile::{DepType, DirectDep, LockedPackage, LockfileGraph};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,26 +50,21 @@ Examples:
   $ aube list express
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ListArgs {
     /// Optional package name (or glob-like prefix match) to filter the output
     pub pattern: Option<String>,
 
     /// Show only devDependencies
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// List globally-installed packages instead of the project's dependency tree
-    #[arg(short = 'g', long)]
+    #[usage(short = 'g', long)]
     pub global: bool,
 
     /// Show only production dependencies (skip devDependencies)
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
 
     /// How deep to render the transitive tree.
@@ -80,36 +74,48 @@ pub struct ListArgs {
     /// `--depth=Infinity` is accepted for pnpm/npm compat.
     /// `--depth=-1` (pnpm spelling) lists project headers only —
     /// no direct or transitive deps.
-    #[arg(long, default_value = "0", value_parser = parse_depth)]
+    #[usage(long, default = "0")]
     pub depth: Depth,
 
     /// Output format: one of `default`, `json`, or `parseable`
-    #[arg(long, value_enum, default_value_t = ListFormat::Default)]
+    #[usage(long, value_enum, default_value_t = ListFormat::Default, default = "default")]
     pub format: ListFormat,
 
     /// Shortcut for `--format json`.
     ///
     /// Emit a JSON array of package entries.
-    #[arg(long, conflicts_with = "format")]
+    #[usage(long, conflicts = "--format")]
     pub json: bool,
 
     // Compatibility flag: aube already reads exclusively from the canonical lockfile.
     /// List packages from the lockfile only, without checking node_modules.
-    #[arg(long)]
+    #[usage(long)]
     pub lockfile_only: bool,
 
     /// Show version and path for each entry.
     ///
     /// Default output is already name + version; `--long` adds the
     /// store path for debugging.
-    #[arg(long)]
+    #[usage(long)]
     pub long: bool,
 
     /// Shortcut for `--format parseable`.
     ///
     /// Emit one tab-separated line per package.
-    #[arg(long, conflicts_with_all = ["format", "json"])]
+    #[usage(long, conflicts("--format", "--json"))]
     pub parseable: bool,
+}
+
+#[derive(Debug, usage_rs::Args)]
+pub struct LaArgs {
+    #[usage(flatten)]
+    pub args: ListArgs,
+}
+
+#[derive(Debug, usage_rs::Args)]
+pub struct LlArgs {
+    #[usage(flatten)]
+    pub args: ListArgs,
 }
 
 /// Parsed `--depth` value. `include_direct=false` is the pnpm
@@ -156,7 +162,18 @@ fn parse_depth(s: &str) -> Result<Depth, String> {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+impl std::str::FromStr for Depth {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_depth(value)
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, usage_rs::ValueEnum, strum::Display, strum::EnumString,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ListFormat {
     Default,
     Json,
@@ -248,7 +265,7 @@ pub async fn run(
 
     // Lockfile may be absent in a brand-new project — treat that as "nothing
     // installed yet" rather than a hard error, and print an empty tree.
-    let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&cwd, &manifest) {
         Ok(g) => g,
         Err(aube_lockfile::Error::NotFound(_)) => {
             eprintln!(

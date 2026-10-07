@@ -4,8 +4,7 @@
 // For each release target this:
 //   1. downloads `aube-<tag>-<target>.{tar.gz,zip}` directly from the
 //      public GitHub release asset URL (no API, no auth token),
-//   2. extracts the three binary entries (aube, aubr, aubx) into a
-//      staging dir,
+//   2. extracts the archive and stages its aube executable once,
 //   3. generates a platform-scoped package.json and publishes it as
 //      `@endevco/aube-<os>-<arch>`.
 // Then rewrites the root `npm/package.json` version and publishes
@@ -15,7 +14,7 @@
 // Env:
 //   TAG           — release tag, with leading `v` (e.g. v1.0.0-beta.1)
 //   REPO          — owner/repo for the release assets (optional;
-//                   defaults to $GITHUB_REPOSITORY or `jdx/aube`)
+//                   defaults to $GITHUB_REPOSITORY or `aubepkg/aube`)
 //   NPM_TAG       — npm dist-tag (optional; defaults to `next` for
 //                   pre-releases, `latest` otherwise)
 //   NPM_REGISTRY  — npm-compatible registry URL (optional; defaults to
@@ -52,7 +51,6 @@ const TARGETS = [
     { triple: 'aarch64-pc-windows-msvc',    os: 'win32',  cpu: 'arm64',                 ext: '.zip',    exe: '.exe' },
 ];
 
-const BINS = ['aube', 'aubr', 'aubx'];
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 
 function run(cmd, args, opts = {}) {
@@ -127,16 +125,13 @@ function extractArchive(archivePath, target, destDir) {
     } else {
         run('unzip', ['-o', archivePath, '-d', destDir]);
     }
-    // taiki-e/upload-rust-binary-action packs each bin at the archive
-    // root (no containing directory). Verify each expected binary lands
-    // where we think, so a silent rename doesn't ship an empty package.
-    for (const bin of BINS) {
-        const binPath = resolve(destDir, bin + target.exe);
-        if (!existsSync(binPath)) {
-            throw new Error(`missing ${binPath} in extracted archive`);
-        }
-        if (target.os !== 'win32') chmodSync(binPath, 0o755);
+    // Only aube is staged in the npm package; release archives may also
+    // include aubr and aubx aliases.
+    const binPath = resolve(destDir, 'aube' + target.exe);
+    if (!existsSync(binPath)) {
+        throw new Error(`missing ${binPath} in extracted archive`);
     }
+    if (target.os !== 'win32') chmodSync(binPath, 0o755);
 }
 
 async function resolveAubeBin(repo, tag) {
@@ -165,26 +160,21 @@ async function buildPlatformPackage(repo, tag, version, target) {
     rmSync(extractDir, { recursive: true, force: true });
     extractArchive(archivePath, target, extractDir);
 
-    const bins = {};
-    for (const bin of BINS) {
-        const src = resolve(extractDir, bin + target.exe);
-        const destName = bin + target.exe;
-        const dest = resolve(binDir, destName);
-        // Release archives store aubr/aubx as symlinks to aube on Unix
-        // to avoid shipping duplicate binaries. npm pack drops those
-        // symlinked bin entries, so platform packages must stage real
-        // files for every declared bin target.
-        copyFileSync(realpathSync(src), dest);
-        if (target.os !== 'win32') chmodSync(dest, 0o755);
-        bins[bin] = `bin/${destName}`;
-    }
+    const destName = 'aube' + target.exe;
+    const src = resolve(extractDir, destName);
+    const dest = resolve(binDir, destName);
+    copyFileSync(realpathSync(src), dest);
+    if (target.os !== 'win32') chmodSync(dest, 0o755);
+    // The root package hardlinks this file under each command name at install
+    // time, preserving argv[0] dispatch without three copies in the tarball.
+    const bins = { aube: `bin/${destName}` };
 
     const pkgJson = {
         name: pkgName,
         version,
         description: 'Platform binaries for aube — do not install directly, see @endevco/aube.',
-        homepage: 'https://aube.jdx.dev',
-        repository: { type: 'git', url: 'https://github.com/jdx/aube' },
+        homepage: 'https://aube.sh',
+        repository: { type: 'git', url: 'https://github.com/aubepkg/aube' },
         license: 'MIT',
         bin: bins,
         files: ['bin', 'README.md'],
@@ -222,7 +212,7 @@ function aubePublish(aubeBin, stageDir, registryUrl, npmTag, dryRun) {
 async function main() {
     const tag = assertEnv('TAG');
     const version = versionFromTag(tag);
-    const repo = process.env.REPO || process.env.GITHUB_REPOSITORY || 'jdx/aube';
+    const repo = process.env.REPO || process.env.GITHUB_REPOSITORY || 'aubepkg/aube';
     const npmTag = process.env.NPM_TAG || defaultNpmTag(version);
     const registryUrl = (process.env.NPM_REGISTRY || DEFAULT_REGISTRY).replace(/\/?$/, '/');
     const dryRun = process.env.DRY_RUN === '1';

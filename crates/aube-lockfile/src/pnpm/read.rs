@@ -1,6 +1,6 @@
 use super::dep_path::{
-    parse_dep_path, peerless_alias_target, rewrite_peer_suffix, rewrite_snapshot_alias_deps,
-    version_to_dep_path,
+    parse_dep_path, peerless_alias_target, registry_name_from_qualified_version,
+    rewrite_peer_suffix, rewrite_snapshot_alias_deps, version_to_dep_path,
 };
 use super::raw::{
     RawBinSpec, RawDepSpec, RawRuntimeVariant, local_source_from_resolution, parse_raw_lockfile,
@@ -10,7 +10,7 @@ use crate::{
     ParseOptions, PeerDepMeta, RuntimePin, RuntimeTarget, RuntimeVariant, git_commits_match,
 };
 use aube_util::path::normalize_lexical;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource {
@@ -32,6 +32,59 @@ fn rebase_importer_local(local: LocalSource, importer_path: &str) -> LocalSource
     }
 }
 
+/// Lowest `lockfileVersion` this reader understands. pnpm v9 replaced
+/// the top-level `dependencies:` map and `/name@version` package keys
+/// with `importers:` + `snapshots:`; every pass below assumes that
+/// shape, so older files must be rejected rather than parsed into an
+/// empty graph.
+pub(super) const MIN_LOCKFILE_VERSION: u64 = 9;
+
+/// Major component of a `lockfileVersion`. pnpm has written the value
+/// both as a quoted string (`'9.0'`, `'6.0'`) and as a bare YAML float
+/// (`5.4`), so both encodings are accepted.
+///
+/// Every dot-separated component must be digits: reading only the
+/// leading component would accept `9.invalid` as version 9 and let a
+/// lockfile of unknown shape through the guard. Returns `None` for
+/// anything that isn't a well-formed version number, which the caller
+/// treats as unsupported.
+pub(super) fn lockfile_version_major(value: &yaml_serde::Value) -> Option<u64> {
+    if let Some(s) = value.as_str() {
+        let s = s.trim();
+        let mut components = s.split('.');
+        let major = components.next()?;
+        if !components.all(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit())) {
+            return None;
+        }
+        return major.parse().ok();
+    }
+    if let Some(u) = value.as_u64() {
+        return Some(u);
+    }
+    // A bare YAML float is numeric by construction, so truncating to
+    // the major is safe here — `9.5` is a v9-family lockfile.
+    let f = value.as_f64()?;
+    (f.is_finite() && f >= 0.0).then_some(f.trunc() as u64)
+}
+
+/// Render a `lockfileVersion` back for the error message, preserving
+/// whichever encoding the lockfile used.
+fn render_lockfile_version(value: &yaml_serde::Value) -> String {
+    if let Some(s) = value.as_str() {
+        return s.to_string();
+    }
+    if let Some(u) = value.as_u64() {
+        return u.to_string();
+    }
+    if let Some(i) = value.as_i64() {
+        return i.to_string();
+    }
+    match value.as_f64() {
+        Some(f) => f.to_string(),
+        None => "(unreadable)".to_string(),
+    }
+}
+
 /// Parse a pnpm-lock.yaml file into a LockfileGraph.
 pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     parse_with_options(path, ParseOptions::default())
@@ -41,6 +94,54 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     let content = crate::read_lockfile(path)?;
     let raw = parse_raw_lockfile(&content)
         .map_err(|e| Error::parse_yaml_err(path, content.clone(), &e))?;
+
+    // Version guard before any structural pass: a pre-v9 lockfile is
+    // valid YAML that yields zero importers, which would otherwise
+    // link nothing and exit 0.
+    match lockfile_version_major(&raw.lockfile_version) {
+        Some(major) if major >= MIN_LOCKFILE_VERSION => {}
+        _ => {
+            return Err(Error::UnsupportedPnpmLockfileVersion {
+                path: path.to_path_buf(),
+                version: render_lockfile_version(&raw.lockfile_version),
+            });
+        }
+    }
+
+    // Layout guard for a lockfile whose declared version does not match
+    // its body: `lockfileVersion: '9.0'` over a pre-v9 body passes the
+    // version check, and its root deps are then dropped on the floor —
+    // the graph comes back empty and the declared dependencies go
+    // unlinked.
+    //
+    // Two independent signatures, because either can appear alone: a
+    // root-level dependency block (the only shape a `link:`/`file:`-only
+    // project has, since it has no `packages:` at all), and a
+    // slash-prefixed package key (`/is-odd@3.0.1` in v6,
+    // `/is-odd/3.0.1` in v5). A package name cannot begin with `/`, and
+    // no v9+ document puts dependencies at the root, so neither shape is
+    // one pnpm or aube writes at v9.
+    let legacy_marker = [
+        ("dependencies", raw.dependencies.is_some()),
+        ("devDependencies", raw.dev_dependencies.is_some()),
+        ("optionalDependencies", raw.optional_dependencies.is_some()),
+        ("specifiers", raw.specifiers.is_some()),
+    ]
+    .into_iter()
+    .find_map(|(block, present)| present.then(|| format!("root-level `{block}:` block")))
+    .or_else(|| {
+        raw.packages
+            .keys()
+            .find(|key| key.starts_with('/'))
+            .map(|key| format!("package key `{key}`"))
+    });
+    if let Some(marker) = legacy_marker {
+        return Err(Error::PnpmLockfileLegacyLayout {
+            path: path.to_path_buf(),
+            version: render_lockfile_version(&raw.lockfile_version),
+            marker,
+        });
+    }
 
     // Parse importers (direct deps of each workspace package).
     // We track synthesized LockedPackages for local (`file:` / `link:`)
@@ -143,10 +244,32 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             let snapshot_key = format!("{name}@{}", local.specifier());
             let should_rebase = importer_path != "."
                 && (info.specifier == classify_version || info.specifier.starts_with("workspace:"));
-            let local = if should_rebase {
-                rebase_importer_local(local, importer_path)
-            } else {
-                local
+            // A member's `link:` version is relative to the member, as pnpm
+            // writes it (normalized, `link:./x` as `link:x`), which the
+            // equality check above misses. That holds for a target an
+            // override set too, so the version, not the specifier, settles
+            // the target. Older aube wrote a member's own link root-relative:
+            // a version equal to the specifier resolved from the member.
+            let member_link_spec = (importer_path != "." && matches!(local, LocalSource::Link(_)))
+                .then(|| LocalSource::parse(&info.specifier, Path::new("")))
+                .flatten()
+                .filter(|spec| matches!(spec, LocalSource::Link(_)));
+            let local = match member_link_spec {
+                Some(spec) => {
+                    let own = rebase_importer_local(spec, importer_path);
+                    let root_relative = matches!(
+                        (&own, &local),
+                        (LocalSource::Link(own), LocalSource::Link(version))
+                            if *own == normalize_lexical(version)
+                    );
+                    if root_relative {
+                        own
+                    } else {
+                        rebase_importer_local(local, importer_path)
+                    }
+                }
+                None if should_rebase => rebase_importer_local(local, importer_path),
+                None => local,
             };
             let dep_path = local.dep_path(name);
             deps.push(DirectDep {
@@ -248,10 +371,23 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         }
 
         let mut deps = Vec::new();
+        // One declaration produces one `DirectDep`. pnpm classifies a
+        // name declared in several importer sections under the first
+        // one it appears in, so the block order below is the
+        // precedence and first wins. pnpm does not itself emit such a
+        // lockfile, but a hand-edited or third-party-written one can,
+        // and a duplicate here reads as section drift under
+        // `--frozen-lockfile` and makes the linker create the root
+        // `node_modules/<name>` symlink twice. Keyed on the declared
+        // name so two aliases of the same package stay distinct.
+        let mut direct_seen: BTreeSet<String> = BTreeSet::new();
 
         if let Some(ref d) = importer.dependencies {
             for (name, info) in d {
                 if record_runtime(name, info, DepType::Production) {
+                    continue;
+                }
+                if !direct_seen.insert(name.clone()) {
                     continue;
                 }
                 push_direct(
@@ -269,6 +405,9 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 if record_runtime(name, info, DepType::Dev) {
                     continue;
                 }
+                if !direct_seen.insert(name.clone()) {
+                    continue;
+                }
                 push_direct(
                     &mut deps,
                     &mut alias_remaps,
@@ -282,6 +421,9 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         if let Some(ref d) = importer.optional_dependencies {
             for (name, info) in d {
                 if record_runtime(name, info, DepType::Optional) {
+                    continue;
+                }
+                if !direct_seen.insert(name.clone()) {
                     continue;
                 }
                 push_direct(
@@ -486,6 +628,13 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         }
         let (name, version) = parse_dep_path(&dep_path)
             .ok_or_else(|| Error::parse(path, format!("invalid dep path: {dep_path}")))?;
+        if let Some(registry_name) = registry_name_from_qualified_version(&version) {
+            return Err(Error::UnsupportedNamedRegistry {
+                path: path.to_path_buf(),
+                dep_path,
+                registry_name: registry_name.to_string(),
+            });
+        }
         // Runtime pin entries (`node@runtime:24.4.1`) are not packages
         // — they're absorbed into `graph.runtimes` below. Skipping them
         // here keeps them out of the package table so the fetch/link
@@ -765,9 +914,11 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     //      hashed→spec pass. Without it a registry package that peers with
     //      a git/tarball dep would re-key on the next install, busting the
     //      warm path (and emitting a churned lockfile).
-    let spec_peer_to_hashed = |head: &str| -> Option<String> {
-        let (name, value) = parse_dep_path(head)?;
-        crate::shared_local_dep_path(&name, &value)
+    let spec_peer_to_hashed = |reference: &str| -> Option<String> {
+        let (name, value) = parse_dep_path(reference)?;
+        let head = crate::shared_local_dep_path(&name, &value)?;
+        let suffix = reference.find('(').map_or("", |i| &reference[i..]);
+        Some(format!("{head}{suffix}"))
     };
     // Canonicalize a git/remote-tarball package's own `name@<url>` head to
     // the hashed form, preserving any peer suffix verbatim (URLs aube keys
@@ -815,6 +966,8 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             }
         }
     }
+
+    adopt_link_dependency_edges(&mut packages);
 
     let settings = raw
         .settings
@@ -908,6 +1061,48 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         extra_fields: BTreeMap::new(),
         workspace_extra_fields: BTreeMap::new(),
     })
+}
+
+/// pnpm records a snapshot dependency on a workspace package as
+/// `<name>: link:<path from the lockfile root>`, for example the
+/// workspace peer of a `file:` package. Rewrite each such edge to the tail
+/// of the `LocalSource::Link` package the importer loop would key the same
+/// target under, adding that package when no importer links it, so the
+/// linker can point the sibling symlink at the target directory.
+fn adopt_link_dependency_edges(packages: &mut BTreeMap<String, LockedPackage>) {
+    let mut link_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
+    for pkg in packages.values_mut() {
+        let edges = pkg
+            .dependencies
+            .iter_mut()
+            .chain(pkg.optional_dependencies.iter_mut());
+        for (name, value) in edges {
+            if !value.starts_with("link:") {
+                continue;
+            }
+            let Some(local @ LocalSource::Link(_)) = LocalSource::parse(value, Path::new(""))
+            else {
+                continue;
+            };
+            let dep_path = local.dep_path(name);
+            *value = dep_path
+                .strip_prefix(&format!("{name}@"))
+                .unwrap_or(&dep_path)
+                .to_string();
+            link_packages
+                .entry(dep_path.clone())
+                .or_insert_with(|| LockedPackage {
+                    name: name.clone(),
+                    version: "0.0.0".to_string(),
+                    dep_path,
+                    local_source: Some(local),
+                    ..Default::default()
+                });
+        }
+    }
+    for (dep_path, link) in link_packages {
+        packages.entry(dep_path).or_insert(link);
+    }
 }
 
 fn tarball_url_needs_preserve(url: &str) -> bool {

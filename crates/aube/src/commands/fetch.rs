@@ -9,24 +9,23 @@
 
 use super::{install, make_client};
 use aube_lockfile::{DepType, LockedPackage};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, VecDeque};
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct FetchArgs {
     /// Only fetch devDependencies
-    #[arg(long, short = 'D', conflicts_with = "prod")]
+    #[usage(long, short = 'D', conflicts = "--prod")]
     pub dev: bool,
 
     /// Only fetch production + optional dependencies (skip devDependencies)
-    #[arg(long, short = 'P', conflicts_with = "dev")]
+    #[usage(long, short = 'P', conflicts = "--dev")]
     pub prod: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 
@@ -50,7 +49,7 @@ pub async fn run(args: FetchArgs) -> miette::Result<()> {
         serde_json::from_str::<aube_manifest::PackageJson>("{}").into_diagnostic()?
     };
 
-    let (graph, kind) = match aube_lockfile::parse_lockfile_with_kind(&cwd, &manifest) {
+    let (graph, kind) = match crate::commands::parse_lockfile_with_kind(&cwd, &manifest) {
         Ok(pair) => pair,
         Err(aube_lockfile::Error::NotFound(_)) => {
             return Err(miette!(

@@ -405,6 +405,129 @@ _setup_shared_direct_dep_workspace() {
 	assert_output "function"
 }
 
+@test "aube install: dedupeDirectDeps=true keeps the warm path when a child symlink is skipped" {
+	# The install state used to expect the child's own symlink, which the
+	# linker never creates here, so every later install relinked and every
+	# `aube run` in the child auto-installed first.
+	_setup_shared_direct_dep_workspace
+	cat >.npmrc <<-'EOF'
+		dedupe-direct-deps=true
+	EOF
+	cat >packages/app/package.json <<-'EOF'
+		{"name": "app", "version": "1.0.0", "scripts": {"hi": "echo hi"}, "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+
+	run aube install
+	assert_success
+	run aube install
+	assert_success
+	# Only the fast path says it bare; a full install that links nothing
+	# adds the package count.
+	assert_output --partial "Already up to date"
+	refute_output --partial "Already up to date ("
+
+	cd packages/app
+	run aube run hi
+	assert_success
+	refute_output --partial "Auto-installing"
+
+	# The root symlink the child relies on is still verified.
+	cd ../..
+	rm node_modules/is-odd
+	run aube install
+	assert_success
+	refute_output --partial "Already up to date"
+	run test -L node_modules/is-odd
+	assert_success
+}
+
+@test "aube install: dedupeDirectDeps=true drops a child's stale link when it moves to the root's version" {
+	_setup_shared_direct_dep_workspace
+	cat >.npmrc <<-'EOF'
+		dedupe-direct-deps=true
+	EOF
+	cat >packages/app/package.json <<-'EOF'
+		{"name": "app", "version": "1.0.0", "dependencies": {"is-odd": "3.0.0"}}
+	EOF
+	run aube install
+	assert_success
+	run test -L packages/app/node_modules/is-odd
+	assert_success
+
+	# Matching the root now: the child's old 3.0.0 link would shadow the
+	# root's 3.0.1, so it has to go.
+	cat >packages/app/package.json <<-'EOF'
+		{"name": "app", "version": "1.0.0", "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	run aube install
+	assert_success
+	run test -e packages/app/node_modules/is-odd
+	assert_failure
+	cd packages/app
+	run node -e "console.log(require('is-odd/package.json').version)"
+	assert_output "3.0.1"
+}
+
+@test "aube install: dedupeDirectDeps=true keeps the link of a member outside the root" {
+	# Node never walks from `../sibling` into the root's node_modules.
+	mkdir -p root sibling
+	cat >root/package.json <<-'EOF'
+		{"name": "root", "version": "0.0.0", "private": true, "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	cat >sibling/package.json <<-'EOF'
+		{"name": "sibling", "version": "1.0.0", "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	cat >root/pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - "../sibling"
+	EOF
+	cat >root/.npmrc <<-'EOF'
+		dedupe-direct-deps=true
+	EOF
+
+	cd root
+	run aube install
+	assert_success
+	run test -e ../sibling/node_modules/is-odd
+	assert_success
+	cd ../sibling
+	run node -e "require('is-odd'); console.log('ok')"
+	assert_output "ok"
+}
+
+@test "aube install: dedupeDirectDeps=true keeps a nested member's link that an outer member would shadow" {
+	# Node walking up from packages/outer/inner reaches the outer member's
+	# is-odd@3.0.0 before the root's 3.0.1.
+	mkdir -p packages/outer/inner
+	cat >package.json <<-'EOF'
+		{"name": "root", "version": "0.0.0", "private": true, "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/outer
+		  - packages/outer/inner
+	EOF
+	cat >packages/outer/package.json <<-'EOF'
+		{"name": "outer", "version": "1.0.0", "dependencies": {"is-odd": "3.0.0"}}
+	EOF
+	cat >packages/outer/inner/package.json <<-'EOF'
+		{"name": "inner", "version": "1.0.0", "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	cat >.npmrc <<-'EOF'
+		dedupe-direct-deps=true
+	EOF
+
+	run aube install
+	assert_success
+	run aube install
+	assert_success
+	assert_output --partial "Already up to date"
+	refute_output --partial "Already up to date ("
+	cd packages/outer/inner
+	run node -e "console.log(require('is-odd/package.json').version)"
+	assert_output "3.0.1"
+}
+
 @test "aube install: bare-semver range links to workspace package (yarn/npm/bun style)" {
 	# yarn v1, npm, and bun workspaces let siblings pin each other with
 	# a plain semver range — `"@test/lib": "1.0.0"` rather than
@@ -576,7 +699,7 @@ _setup_shared_direct_dep_workspace() {
 	# the isolated linker are POSIX shims (so `extendNodePath` can
 	# set NODE_PATH), which means `readlink -f` returns the shim's
 	# own canonical path. Check the recorded target inside the shim
-	# instead: the v1 marker comment carries the resolved relative
+	# instead: the v2 marker comment carries the resolved relative
 	# path for the prune / unlink pass to recover.
 	for app in app1 app2; do
 		bin="packages/$app/node_modules/.bin/my-tool"
@@ -584,10 +707,15 @@ _setup_shared_direct_dep_workspace() {
 		assert_success
 		if [ -L "$bin" ]; then
 			target="$(readlink -f "$bin")"
+		elif [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN|Windows_NT) ]]; then
+			# Windows shims carry no v2 marker; the `.cmd` launcher names
+			# the target with backslashes.
+			target="$(grep -o '[^"]*my-tool\.mjs' "$bin.cmd" | head -1)"
+			target="${target//\\//}"
 		else
-			# `aube-bin-shim v1 target=...` line embeds the
+			# `aube-bin-shim v2 target=...` line embeds the
 			# $basedir-relative path to the workspace file.
-			target="$(grep -m1 'aube-bin-shim v1 target=' "$bin")"
+			target="$(grep -m1 'aube-bin-shim v2 target=' "$bin")"
 		fi
 		[[ "$target" == *"tools/dev/bin/my-tool.mjs" ]]
 	done

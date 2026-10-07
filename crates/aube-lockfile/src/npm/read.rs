@@ -2,7 +2,7 @@ use crate::{DepType, DirectDep, Error, LocalSource, LockedPackage, LockfileGraph
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::raw::{InstallPathInfo, RawNpmLockfile};
+use super::raw::{InstallPathInfo, RawNpmLockfile, RawNpmPackage};
 /// Parse a package-lock.json or npm-shrinkwrap.json file into a LockfileGraph.
 pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     let content = crate::read_lockfile(path)?;
@@ -23,6 +23,25 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         packages: BTreeMap::new(),
         ..Default::default()
     };
+
+    // npm does not tag remote-tarball package entries separately from
+    // registry packages: both use an HTTP(S) `resolved` URL. The declared
+    // dependency specifier is the discriminator. Collect every URL spec so
+    // matching entries retain their non-registry identity instead of later
+    // being sent through packument validation.
+    let remote_tarball_specs: BTreeSet<&str> = raw
+        .packages
+        .values()
+        .flat_map(|entry| {
+            entry
+                .dependencies
+                .values()
+                .chain(entry.dev_dependencies.values())
+                .chain(entry.optional_dependencies.values())
+        })
+        .map(String::as_str)
+        .filter(|spec| LocalSource::looks_like_remote_tarball_url(spec))
+        .collect();
 
     // npm workspace links come in pairs:
     // - `node_modules/@scope/pkg: { resolved: "packages/pkg", link: true }`
@@ -88,12 +107,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                     format!("linked package '{install_name}' points to missing target '{target}'"),
                 )
             })?;
-            let version = target_entry.version.clone().ok_or_else(|| {
-                Error::parse(
-                    path,
-                    format!("linked package '{install_name}' target '{target}' has no version"),
-                )
-            })?;
+            // npm writes a workspace member without a `version` in its
+            // package.json as an entry with no version. Use the same
+            // `0.0.0` placeholder as the pnpm reader.
+            let version = target_entry
+                .version
+                .clone()
+                .unwrap_or_else(|| "0.0.0".to_string());
             let local = LocalSource::Link(PathBuf::from(target));
             (
                 target_entry,
@@ -108,6 +128,15 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             let local_source = entry.resolved.as_deref().and_then(|r| {
                 crate::npm::source::local_git_source_from_resolved(r)
                     .or_else(|| crate::npm::source::local_file_source_from_resolved(r))
+                    .or_else(|| {
+                        remote_tarball_specs.contains(r).then(|| {
+                            LocalSource::RemoteTarball(crate::RemoteTarballSource {
+                                url: r.to_string(),
+                                integrity: entry.integrity.clone().unwrap_or_default(),
+                                git_hosted: false,
+                            })
+                        })
+                    })
             });
             let dep_path = local_source.as_ref().map_or_else(
                 || format!("{install_name}@{version}"),
@@ -305,10 +334,31 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     let root = raw.packages.get("").cloned().unwrap_or_default();
 
     let mut direct: Vec<DirectDep> = Vec::new();
-    let push_direct =
+    // A name may be declared in more than one section of the root
+    // manifest (npm allows the same package in `devDependencies` and
+    // `optionalDependencies`). npm classifies such a declaration under
+    // the first section it appears in, walking
+    // `dependencies` > `devDependencies` > `optionalDependencies`, and
+    // records a single flag on the package entry. Mirror that here so
+    // one declaration produces one `DirectDep`: emitting a second
+    // `DirectDep` for the same name makes the drift validator (which
+    // resolves one expected section per name) report the lockfile
+    // stale, and makes the linker create the root `node_modules/<name>`
+    // symlink twice. The priority matches `seed_direct_deps` in
+    // aube-resolver, so an imported lockfile classifies the same way a
+    // freshly resolved one does.
+    let mut direct_seen: BTreeSet<String> = BTreeSet::new();
+    let mut push_direct =
         |dep_name: &str, specifier: &str, dep_type: DepType, direct: &mut Vec<DirectDep>| {
             let root_path = format!("node_modules/{dep_name}");
             if let Some(info) = install_path_info.get(&root_path) {
+                // Key on the declared name, not the resolved one: an npm
+                // alias (`"h3-v2": "npm:h3@2"`) keeps the alias as its
+                // folder name, so two aliases of the same package stay
+                // distinct direct deps.
+                if !direct_seen.insert(dep_name.to_string()) {
+                    return;
+                }
                 direct.push(DirectDep {
                     name: info.name.clone(),
                     dep_path: info.dep_path.clone(),
@@ -325,6 +375,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     }
     for (dep_name, specifier) in &root.optional_dependencies {
         push_direct(dep_name, specifier, DepType::Optional, &mut direct);
+    }
+    // npm installs an importer's required peers, and aube's resolver
+    // seeds them as production deps under autoInstallPeers. Recording
+    // them keeps the drift validator from reading a peer-only
+    // declaration as "manifest adds" on a fresh npm lockfile.
+    for (dep_name, specifier) in required_peers(&root) {
+        push_direct(dep_name, specifier, DepType::Production, &mut direct);
     }
 
     // npm symlinks every workspace member (and any other top-level
@@ -391,6 +448,12 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             continue;
         };
         let mut direct = Vec::new();
+        // Same one-declaration-one-`DirectDep` rule as the root
+        // importer above: a workspace member may also declare a name in
+        // two sections, and the drift validator resolves one expected
+        // section per name for every importer, not just the root. The
+        // chain order below is the precedence, so first wins.
+        let mut direct_seen: BTreeSet<String> = BTreeSet::new();
         for (dep_name, specifier, dep_type) in package_entry
             .dependencies
             .iter()
@@ -407,11 +470,17 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                     .iter()
                     .map(|(name, spec)| (name, spec, DepType::Optional)),
             )
+            .chain(
+                required_peers(package_entry).map(|(name, spec)| (name, spec, DepType::Production)),
+            )
         {
             if let Some(target_install_path) =
                 crate::npm::layout::resolve_nested(target, dep_name, &install_path_info)
                 && let Some(info) = install_path_info.get(&target_install_path)
             {
+                if !direct_seen.insert(dep_name.clone()) {
+                    continue;
+                }
                 direct.push(DirectDep {
                     name: info.name.clone(),
                     dep_path: info.dep_path.clone(),
@@ -423,4 +492,16 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         graph.importers.insert(target.clone(), direct);
     }
     Ok(graph)
+}
+
+/// Required (non-optional) peers an importer entry declares, in the
+/// order `seed_direct_deps` enqueues them. Callers dedupe against the
+/// owned sections, which win when a name appears in both.
+fn required_peers(entry: &RawNpmPackage) -> impl Iterator<Item = (&String, &String)> {
+    entry.peer_dependencies.iter().filter(|(name, _)| {
+        !entry
+            .peer_dependencies_meta
+            .get(*name)
+            .is_some_and(|m| m.optional)
+    })
 }

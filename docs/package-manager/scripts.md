@@ -1,7 +1,18 @@
+---
+description: Run project scripts, installed binaries, and one-off tools with aubr, aube exec, and aubx.
+---
+
 # Run scripts and binaries
 
-aube follows npm and pnpm script conventions while adding an install-state
-check before script execution.
+`aubr` runs project scripts, `aube exec` runs installed binaries, and `aubx`
+runs one-off tools. Script and exec commands install missing or stale
+dependencies before running.
+
+| Command | Lookup order |
+| --- | --- |
+| `aubr <name>` / `aube run <name>` | `package.json` script, then local binary |
+| `aube exec <name>` | Binary on the project command path |
+| `aubx <name>` / `aube dlx <name>` | Local binary, then a throwaway install |
 
 ## Scripts
 
@@ -31,6 +42,44 @@ aube run --if-present lint
 When no `package.json` script matches, `aube run <name>` falls back to a
 local binary with the same name in `node_modules/.bin`. Scripts still win over
 bins, so a project can override a tool command with its own script.
+
+### Forward arguments
+
+Put aube options before the script name; arguments after the name go to the script:
+
+```sh
+aube run --no-install test --watch
+```
+
+For `exec`, use `--` to separate tool arguments when needed:
+
+```sh
+aube exec tsc -- --noEmit
+```
+
+### Echoed command lines
+
+Before running a script, aube prints its command line to **stderr**, prefixed
+with `$` — the same thing npm, pnpm, and bun do:
+
+```console
+$ aubr build
+$ tsc -p .
+```
+
+`pre`/`post` scripts each get their own line, and forwarded args are appended
+so the echoed line reproduces the run exactly. It goes to stderr, so
+`aube run print-json > out.json` still captures only the script's own output.
+
+Pass `--silent` (or `-s`, or `--loglevel silent`) to suppress the echo while
+keeping the script's own stdout and stderr:
+
+```sh
+aube run --silent build
+```
+
+In `--parallel` workspace runs the echoed line carries the same `<package>: `
+prefix as the rest of that package's output.
 
 ## Local binaries
 

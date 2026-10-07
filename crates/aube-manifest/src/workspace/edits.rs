@@ -8,6 +8,7 @@
 //! to mutate whichever file holds the value today.
 
 use super::config::{ConfigWriteTarget, config_write_target, workspace_yaml_existing};
+#[cfg(feature = "workspace-yaml-preserve")]
 use super::yaml_patch;
 use std::path::{Path, PathBuf};
 
@@ -328,16 +329,16 @@ pub(super) fn workspace_yaml_submap<'a>(
 /// Apply `f` to the parsed top-level mapping of the workspace yaml at
 /// `path` and write it back. The helper exists so every workspace-yaml
 /// writer (allowBuilds, patchedDependencies, catalog cleanup, future
-/// settings) shares one comment-preserving rule: **user-authored
-/// comments and formatting in the file survive every edit**.
+/// settings) shares one write path. With the default
+/// `workspace-yaml-preserve` feature, user-authored comments and formatting
+/// survive every edit. Without it, the complete document is serialized with
+/// canonical formatting.
 ///
-/// The closure mutates a parsed `yaml_serde::Mapping`. After it runs,
-/// the helper diffs before-vs-after and reduces the change set to a
-/// minimal sequence of `yamlpatch` operations applied directly to the
-/// original source. yamlpatch is comment- and format-preserving, so
-/// keys, comments, and whitespace that the closure didn't touch land
-/// back on disk byte-identical. A no-op closure produces an empty
-/// patch list and the file isn't rewritten at all.
+/// The closure mutates a parsed `yaml_serde::Mapping`. With preservation
+/// enabled, the helper reduces the before-vs-after diff to a minimal sequence
+/// of `yamlpatch` operations against the original source, leaving untouched
+/// content byte-identical. A no-op closure never rewrites the file in either
+/// mode.
 ///
 /// For brand-new or empty files there is no source to preserve, so the
 /// helper falls back to `yaml_serde::to_string` for the initial write.
@@ -385,13 +386,10 @@ where
     Ok(path.to_path_buf())
 }
 
-/// Persist a structural change against `path`. When `original_source`
-/// is `Some`, the change is encoded as a list of `yamlpatch`
-/// operations applied to the original text — comments and formatting
-/// the closure didn't touch survive the round trip. When it is `None`
-/// (fresh file or one that was empty), the after-state is serialized
-/// directly via `yaml_serde::to_string`; there is no source to
-/// preserve. Both paths atomic-write the result.
+/// Persist a structural change against `path` while preserving untouched
+/// comments and formatting. Fresh files are serialized directly because
+/// there is no original source to preserve.
+#[cfg(feature = "workspace-yaml-preserve")]
 fn write_workspace_yaml(
     path: &Path,
     original_source: Option<&str>,
@@ -409,6 +407,20 @@ fn write_workspace_yaml(
     aube_util::fs_atomic::atomic_write(path, &bytes)
         .map_err(|e| crate::Error::Io(path.to_path_buf(), e))?;
     Ok(())
+}
+
+#[cfg(not(feature = "workspace-yaml-preserve"))]
+fn write_workspace_yaml(
+    path: &Path,
+    _original_source: Option<&str>,
+    _before: &yaml_serde::Mapping,
+    after: &yaml_serde::Mapping,
+) -> Result<(), crate::Error> {
+    let raw = yaml_serde::to_string(&yaml_serde::Value::Mapping(after.clone()))
+        .map_err(|e| crate::Error::YamlParse(path.to_path_buf(), e.to_string()))?;
+    let bytes = indent_block_sequences(&raw);
+    aube_util::fs_atomic::atomic_write(path, bytes.as_bytes())
+        .map_err(|e| crate::Error::Io(path.to_path_buf(), e))
 }
 
 /// Bump every block-sequence item line (`- ...`) by two spaces. Leaves

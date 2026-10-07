@@ -1,11 +1,10 @@
 use aube_lockfile::graph_hash::GraphHashes;
 use aube_store::Store;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[cfg(test)]
 use aube_store::PackageIndex;
-#[cfg(test)]
-use std::collections::BTreeMap;
 #[cfg(test)]
 use std::path::Path;
 
@@ -26,14 +25,17 @@ mod tests;
 
 pub use error::Error;
 pub use hoisted::HoistedPlacements;
-pub use link::build_nested_link_targets;
+pub use link::{build_nested_link_targets, build_workspace_nested_link_targets};
 pub(crate) use materialize::{
     invalidate_stale_index_for_package, validate_index_key, validate_package_link_name,
 };
 pub use patches::Patches;
 pub(crate) use patches::apply_multi_file_patch;
 pub use pool::default_linker_parallelism;
-pub use sweep::{is_physical_importer, mkdirp, remove_dir_all_with_retry, sweep_stale_tmp_dirs};
+pub use sweep::{
+    dedupe_skips_member_link, is_physical_importer, mkdirp, remove_dir_all_with_retry,
+    sweep_stale_tmp_dirs,
+};
 pub(crate) use sweep::{sweep_stale_top_level_entries, try_remove_entry};
 pub use sys::{
     BinShimOptions, create_bin_shim, create_dir_link, normalize_path, parse_posix_shim_target,
@@ -68,8 +70,7 @@ pub enum HoistingLimits {
     /// Hoist as far as possible.
     #[default]
     None,
-    /// Aube plans hoisted installs per physical importer, so this is
-    /// currently equivalent to `None`.
+    /// Do not hoist dependencies above their workspace package.
     Workspaces,
     /// Do not hoist transitives above the direct dependency that
     /// introduced them.
@@ -102,6 +103,14 @@ pub struct Linker {
     /// virtual store. This is reserved for compatibility transforms
     /// that need to mutate one package without touching shared bytes.
     project_local_dep_paths: rustc_hash::FxHashSet<String>,
+    /// Dep paths whose global virtual-store entry this install placed
+    /// itself moments earlier (the fetch-time prewarm), under the same
+    /// graph hashes. Their dependency links were just written from the
+    /// graph, so the link phase doesn't read them back to verify.
+    fresh_virtual_store_entries: rustc_hash::FxHashSet<String>,
+    /// What the last `link_all` recorded for
+    /// [`Linker::take_gvs_dep_link_targets`].
+    gvs_dep_link_targets: std::sync::Mutex<Option<GvsDepLinkTargets>>,
     strategy: LinkStrategy,
     /// Per-`name@version` patch contents applied at materialize
     /// time. Empty when the project has no `pnpm.patchedDependencies`.
@@ -248,9 +257,10 @@ pub enum LinkStrategy {
     /// non-APFS same-FS volume (HFS+) — where `clonefile` is unsupported but
     /// hardlinks are not — `auto` degrades to a hardlink before copy,
     /// keeping the link zero-cost where explicit `clone` / `clone-or-copy`
-    /// would copy. (Small macOS files copy outright before any reflink or
-    /// hardlink attempt; the hardlink step is the reflink-*failure* fallback,
-    /// not an unconditional same-FS guarantee.) Explicit `clone` /
+    /// would copy. Small macOS files (known size at most 16 KiB) attempt
+    /// a reflink first, then copy on failure to preserve isolation from the
+    /// store. The hardlink fallback applies to larger or unknown-size files.
+    /// Explicit `clone` /
     /// `clone-or-copy` keep their documented copy fallback and never take
     /// this hardlink step.
     ///
@@ -279,3 +289,7 @@ pub struct LinkStats {
     /// convention".
     pub hoisted_placements: Option<HoistedPlacements>,
 }
+
+/// Dependency links of global virtual-store entries, as
+/// `dep_path -> [(dep_name, target)]`.
+pub type GvsDepLinkTargets = BTreeMap<String, Vec<(String, PathBuf)>>;

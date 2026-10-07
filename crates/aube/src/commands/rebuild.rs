@@ -1,6 +1,5 @@
 use super::run::load_manifest;
 use aube_scripts::LifecycleHook;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::HashSet;
 
@@ -21,7 +20,7 @@ use std::collections::HashSet;
 /// linking, so triggering an install here would double-run every script
 /// on a stale tree. Users who actually want a fresh install should run
 /// `aube install`.
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct RebuildArgs {
     /// Optional package names. When supplied, only matching deps'
     /// scripts run; the root lifecycle hooks (preinstall, install,
@@ -29,7 +28,7 @@ pub struct RebuildArgs {
     /// not by `dep_path`. The active `allowBuilds` /
     /// `onlyBuiltDependencies` policy is bypassed for the named
     /// deps — naming the package is the explicit opt-in.
-    #[arg(value_name = "PACKAGE")]
+    #[usage(arg, name = "PACKAGE")]
     pub packages: Vec<String>,
 }
 
@@ -56,7 +55,7 @@ pub async fn run(
     let settings_ctx = files.ctx(&raw_workspace, &env_snapshot, &[]);
     super::configure_script_settings(&settings_ctx, Some("rebuild"));
 
-    let graph = match aube_lockfile::parse_lockfile(&cwd, &manifest) {
+    let graph = match crate::commands::parse_lockfile(&cwd, &manifest) {
         Ok(graph) => Some(graph),
         Err(aube_lockfile::Error::NotFound(_)) => None,
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
@@ -134,12 +133,15 @@ pub async fn run(
                     ));
                 }
                 aube_settings::resolved::NodeLinker::Hoisted => {
-                    Some(aube_linker::HoistedPlacements::from_graph(
-                        &cwd,
-                        &graph,
-                        &modules_dir_name,
-                        hoisting_limits,
-                    )?)
+                    Some(match crate::state::read_hoisted_placements(&cwd) {
+                        Some(placements) => placements,
+                        None => aube_linker::HoistedPlacements::from_graph(
+                            &cwd,
+                            &graph,
+                            &modules_dir_name,
+                            hoisting_limits,
+                        )?,
+                    })
                 }
                 aube_settings::resolved::NodeLinker::Isolated => None,
             };
@@ -150,33 +152,82 @@ pub async fn run(
                 } else {
                     None
                 };
-            // Re-emit per-dep `.bin/` shims so a rebuild on a tree
-            // that pre-dates the transitive-bin fix still lands them
-            // on PATH for the lifecycle scripts. `link_bins_for_dep`
-            // is idempotent, so re-running on an already-wired tree
-            // is a no-op.
+            // Re-emit the whole bin surface through the same entry
+            // point `install` uses, rather than only the per-dep
+            // shims. Linking is idempotent, so on an already-wired
+            // tree this is a no-op — but sharing the entry point is
+            // what keeps `rebuild` from drifting: every rule
+            // `link_all_bins` establishes in order (an importer's
+            // direct deps, its own `bin`, each workspace member's,
+            // then the dependency pass) applies here too. Linking only
+            // the dependency pass meant `rebuild` never reconciled an
+            // importer's own `bin`, and left the dependency pass to
+            // infer precedence that the importer passes normally
+            // establish.
             let isolated = !matches!(
                 node_linker_setting,
                 aube_settings::resolved::NodeLinker::Hoisted
             );
-            let prefer_symlinked_executables =
-                aube_settings::resolved::prefer_symlinked_executables(&settings_ctx)
-                    .or(isolated.then_some(false));
-            let hidden_modules_dir = aube_dir.join("node_modules");
-            let shim_opts = aube_linker::BinShimOptions {
-                extend_node_path: aube_settings::resolved::extend_node_path(&settings_ctx),
-                prefer_symlinked_executables,
-                hidden_modules_dir: isolated.then_some(hidden_modules_dir.as_path()),
+            let canonicalize_package_dir = cfg!(windows)
+                && isolated
+                && super::install::detect_existing_global_virtual_store(
+                    &cwd,
+                    &aube_dir,
+                    &modules_dir_name,
+                    &super::global_virtual_store_dir(&cwd),
+                )
+                .unwrap_or(false);
+            let node_linker = match node_linker_setting {
+                aube_settings::resolved::NodeLinker::Hoisted => aube_linker::NodeLinker::Hoisted,
+                // `Pnp` already returned above.
+                _ => aube_linker::NodeLinker::Isolated,
             };
-            let mut pkg_json_cache = super::install::PkgJsonCache::new();
-            super::install::link_dep_bins(
-                &aube_dir,
-                &graph,
-                super::resolve_virtual_store_dir_max_length(&settings_ctx),
-                hoisted_placements.as_ref(),
-                shim_opts,
-                &mut pkg_json_cache,
-            )?;
+            // `rebuild` is a repair command, so a workspace member that
+            // can't be read must not stop it: `install` fails loudly on a
+            // malformed member manifest, but aborting here would block the
+            // very command someone reaches for to fix a half-built tree,
+            // over a member the rebuild never needed. Fall back to
+            // reconciling the root importer alone — which is still more
+            // than the pre-`link_all_bins` path did, since it linked no
+            // importer bins at all.
+            let workspace_plan = match super::install::discover_workspace_plan(
+                &cwd,
+                &manifest,
+                &settings_ctx,
+                &filter,
+            ) {
+                Ok(plan) => plan,
+                Err(e) => {
+                    eprintln!(
+                        "warn: could not read the workspace layout ({e}); \
+                             rebuilding bins for the root package only"
+                    );
+                    super::install::WorkspaceInstallPlan::root_only(&cwd, &manifest)
+                }
+            };
+            let link_bins = |preserved: Option<&super::install::PreservedBinLinks>,
+                             capture_managed: bool| {
+                super::install::link_all_bins(super::install::LinkAllBinsInput {
+                    project_dir: &cwd,
+                    settings_ctx: &settings_ctx,
+                    modules_dir_name: &modules_dir_name,
+                    aube_dir: &aube_dir,
+                    graph: &graph,
+                    virtual_store_dir_max_length: super::resolve_virtual_store_dir_max_length(
+                        &settings_ctx,
+                    ),
+                    placements: hoisted_placements.as_ref(),
+                    ws_dirs: &workspace_plan.ws_dirs,
+                    manifests: &workspace_plan.manifests,
+                    manifest: &manifest,
+                    node_linker,
+                    has_workspace: workspace_plan.has_workspace,
+                    link_dependency_bins: true,
+                    capture_managed,
+                    preserved,
+                })
+            };
+            let managed_bin_links = link_bins(None, true)?;
             super::install::run_dep_lifecycle_scripts(
                 &cwd,
                 &modules_dir_name,
@@ -184,6 +235,7 @@ pub async fn run(
                 &graph,
                 &policy,
                 super::resolve_virtual_store_dir_max_length(&settings_ctx),
+                canonicalize_package_dir,
                 child_concurrency,
                 hoisted_placements.as_ref(),
                 side_effects_cache_root
@@ -203,6 +255,13 @@ pub async fn run(
                 selected.as_ref(),
             )
             .await?;
+            let preserved = super::install::remove_managed_bin_links(&managed_bin_links)?;
+            let refreshed_bin_links = link_bins(Some(&preserved), false)?;
+            super::install::remove_unclaimed_preserved_bin_links(
+                &managed_bin_links,
+                &preserved,
+                &refreshed_bin_links,
+            )?;
         }
     }
 

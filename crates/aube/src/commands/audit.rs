@@ -18,7 +18,6 @@ use super::DepFilter;
 use aube_registry::Packument;
 use aube_registry::client::RegistryClient;
 use aube_registry::config::normalize_registry_url_pub;
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
@@ -47,24 +46,24 @@ Examples:
   No known vulnerabilities found
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct AuditArgs {
     /// Only print advisories at or above this severity.
     ///
     /// One of: `info`, `low`, `moderate`, `high`, `critical`.
     /// Defaults to `audit.level` (or legacy `auditLevel`), then `low`.
-    #[arg(long, value_enum)]
+    #[usage(long, value_enum)]
     pub audit_level: Option<Severity>,
 
     /// Only audit `devDependencies`.
-    #[arg(short = 'D', long, conflicts_with = "prod")]
+    #[usage(short = 'D', long, conflicts = "--prod")]
     pub dev: bool,
 
     /// Fix advisories.
     ///
     /// Bare `--fix` writes package.json overrides for backwards compatibility.
     /// `--fix=update` refreshes the lockfile without writing overrides.
-    #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "override")]
+    #[usage(long, value_enum, default_missing = "override")]
     pub fix: Option<FixMode>,
 
     /// Drop advisories whose ID matches one of these values.
@@ -73,13 +72,13 @@ pub struct AuditArgs {
     /// `github_advisory_id` (`GHSA-…`), and any entry in `cves[]`
     /// (case-insensitive). Repeatable; comma-separated values are also
     /// accepted.
-    #[arg(long, value_name = "ID", value_delimiter = ',')]
+    #[usage(long, value_name = "ID", delimiter = ',')]
     pub ignore: Vec<String>,
 
     /// Use exit code 0 if the registry responds with an error.
     ///
     /// Useful when audit checks run in CI and the registry has a hiccup.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_registry_errors: bool,
 
     /// Drop advisories that have no non-vulnerable upgrade.
@@ -88,30 +87,25 @@ pub struct AuditArgs {
     /// available in the package's packument. Same "best non-vulnerable"
     /// logic as `--fix`: an advisory is kept only when an upgrade path
     /// exists.
-    #[arg(long)]
+    #[usage(long)]
     pub ignore_unfixable: bool,
 
     /// Pick which advisories to fix interactively.
-    #[arg(short = 'i', long)]
+    #[usage(short = 'i', long)]
     pub interactive: bool,
 
     /// Emit the report as JSON (pnpm-compatible shape) instead of a table.
-    #[arg(long)]
+    #[usage(long)]
     pub json: bool,
 
     /// Skip `optionalDependencies`.
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
 
     /// Only audit `dependencies` and `optionalDependencies`.
-    #[arg(
-        short = 'P',
-        long,
-        conflicts_with = "dev",
-        visible_alias = "production"
-    )]
+    #[usage(short = 'P', long, long = "production", conflicts = "--dev")]
     pub prod: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 
@@ -123,11 +117,11 @@ pub struct AuditArgs {
     Eq,
     PartialOrd,
     Ord,
-    clap::ValueEnum,
+    usage_rs::ValueEnum,
     strum::Display,
     strum::EnumString,
 )]
-#[value(rename_all = "lowercase")]
+#[usage(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum Severity {
     // Declaration order IS severity order (`Ord` is derived): `Info` is
@@ -142,8 +136,8 @@ pub enum Severity {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-#[value(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, usage_rs::ValueEnum, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub enum FixMode {
     /// Refresh the lockfile to patched versions allowed by existing ranges.
     Update,
@@ -420,11 +414,11 @@ fn build_client(cwd: &std::path::Path, registry_override: Option<&str>) -> Regis
 }
 
 /// Drop advisories whose ID matches any `ignore` value. Matches
-/// against the npm numeric `id`, the `github_advisory_id`, and each
-/// entry in `cves[]`. IDs are compared case-insensitively as strings
-/// so users can pass either `GHSA-abcd-...` or the same in uppercase
-/// / lowercase, or the CVE form. Packages whose advisories all get
-/// filtered out drop from the response entirely.
+/// against the npm numeric `id`, the `github_advisory_id`, the advisory ID
+/// in `url`, and each entry in `cves[]`. IDs are compared case-insensitively
+/// as strings so users can pass either `GHSA-abcd-...` or the same in
+/// uppercase / lowercase, or the CVE form. Packages whose advisories all
+/// get filtered out drop from the response entirely.
 fn configured_audit_ignores(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
@@ -541,6 +535,15 @@ fn advisory_matches_ignore(adv: &serde_json::Value, needles: &BTreeSet<String>) 
                 return true;
             }
         }
+    }
+    if let Some(url) = adv.get("url").and_then(|v| v.as_str())
+        && let Some(advisory_id) = url
+            .split(['?', '#'])
+            .next()
+            .and_then(|path| path.trim_end_matches('/').rsplit('/').next())
+        && needles.contains(&advisory_id.to_ascii_lowercase())
+    {
+        return true;
     }
     false
 }
@@ -689,7 +692,7 @@ async fn write_fix_lockfile_update(
     widen_vulnerable_direct_pins(&mut resolver_manifest, graph, &vulnerable_ranges);
 
     let workspace_catalogs = super::load_workspace_catalogs(cwd)?;
-    let mut resolver = super::build_resolver(cwd, &resolver_manifest, workspace_catalogs)
+    let mut resolver = super::build_resolver(cwd, &resolver_manifest, workspace_catalogs)?
         .with_vulnerable_ranges(vulnerable_ranges.clone());
     let mut new_graph = resolver
         .resolve(&resolver_manifest, Some(graph))
@@ -1448,6 +1451,43 @@ mod tests {
         );
         assert!(out.get("pkg-a").is_none());
         assert!(out.get("pkg-b").is_some());
+    }
+
+    #[test]
+    fn filter_ignored_matches_advisory_id_in_url() {
+        let raw = serde_json::json!({
+            "image-size": [
+                {
+                    "id": 1,
+                    "severity": "high",
+                    "title": "ICNS parser denial of service",
+                    "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr?source=npm"
+                },
+                {
+                    "id": 2,
+                    "severity": "high",
+                    "title": "JXL and HEIF parser denial of service",
+                    "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq/#references"
+                },
+                {
+                    "id": 3,
+                    "severity": "high",
+                    "title": "Unrelated advisory",
+                    "url": "https://github.com/advisories/GHSA-unrelated"
+                }
+            ]
+        });
+
+        let out = filter_ignored_ids(
+            &raw,
+            &[
+                "ghsa-w3rx-r6r6-pgpr".to_string(),
+                "GHSA-5P2G-FCMC-QVQQ".to_string(),
+            ],
+        );
+        let advisories = out.get("image-size").unwrap().as_array().unwrap();
+        assert_eq!(advisories.len(), 1);
+        assert_eq!(advisories[0]["id"], 3);
     }
 
     #[test]

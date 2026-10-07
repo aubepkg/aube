@@ -1,7 +1,11 @@
 use tracing::{debug, trace, warn};
 
 use crate::patches::apply_multi_file_patch;
-use crate::sweep::{EntryState, classify_entry_state, mkdirp, try_remove_entry};
+use crate::pool::with_link_pool;
+use crate::sweep::{
+    EntryState, classify_entry_state, create_dir_link_idempotent, mkdirp, reconcile_dir_link,
+    try_remove_entry,
+};
 use crate::{Error, LinkStats, LinkStrategy, Linker, sys};
 use aube_lockfile::{LockedPackage, shared_local_dep_path};
 use aube_store::{PackageIndex, StoredFile};
@@ -21,6 +25,36 @@ fn materialize_tmp_name() -> String {
     static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
     format!(".tmp-{}-{id}", std::process::id())
+}
+
+/// Create every directory in `dirs` (each under `base_dir`) with one `mkdir`
+/// per directory, parents first. `create_dir_all` starts at the deepest path
+/// and walks up on `ENOENT`, so a fresh staging tree paid about three failed
+/// `mkdir` calls per package before creating anything.
+fn create_dirs_under(base_dir: &Path, dirs: &[PathBuf]) -> Result<(), Error> {
+    std::fs::create_dir_all(base_dir).map_err(|e| Error::Io(base_dir.to_path_buf(), e))?;
+    let mut made: std::collections::HashSet<PathBuf> =
+        std::collections::HashSet::with_capacity(dirs.len() * 2);
+    for dir in dirs {
+        let Ok(rel) = dir.strip_prefix(base_dir) else {
+            std::fs::create_dir_all(dir).map_err(|e| Error::Io(dir.clone(), e))?;
+            continue;
+        };
+        let mut current = base_dir.to_path_buf();
+        for component in rel.components() {
+            current.push(component);
+            if made.contains(&current) {
+                continue;
+            }
+            match std::fs::create_dir(&current) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && current.is_dir() => {}
+                Err(e) => return Err(Error::Io(current, e)),
+            }
+            made.insert(current.clone());
+        }
+    }
+    Ok(())
 }
 
 fn place_materialized_entry(src: &Path, dst: &Path) -> io::Result<MaterializePlacement> {
@@ -238,6 +272,9 @@ impl Linker {
             .join(&pkg.name);
 
         if pkg_nm_dir.exists() {
+            if !self.fresh_virtual_store_entries.contains(dep_path) {
+                self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
+            }
             trace!("virtual store hit: {dep_path}");
             stats.packages_cached += 1;
             return Ok(());
@@ -246,10 +283,10 @@ impl Linker {
         // Materialize into a temp directory, then atomically rename into place
         // to avoid TOCTOU races between concurrent `aube install` processes.
         let tmp_name = materialize_tmp_name();
-        let tmp_base = self.virtual_store.join(&tmp_name);
+        let tmp_entry = self.virtual_store.join(&tmp_name);
 
-        let result = self.materialize_into(
-            &tmp_base,
+        let result = self.materialize_at(
+            &tmp_entry,
             &self.virtual_store,
             dep_path,
             pkg,
@@ -260,19 +297,18 @@ impl Linker {
         );
 
         if result.is_err() {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return result;
         }
 
         // Atomically move the dep_path entry from the temp dir to the final location.
-        let tmp_entry = tmp_base.join(subdir);
         let final_entry = self.virtual_store.join(subdir);
 
         // Ensure the parent of the final entry exists (e.g. for scoped packages).
         if let Some(parent) = final_entry.parent()
             && let Err(e) = mkdirp(parent)
         {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return Err(e);
         }
 
@@ -287,39 +323,101 @@ impl Linker {
                 stats.packages_linked = stats.packages_linked.saturating_sub(1);
                 stats.files_linked = stats.files_linked.saturating_sub(index.len());
                 stats.packages_cached += 1;
-                // Lost-race path: our `subdir` is still inside
-                // `tmp_base`, so a full recursive delete is needed.
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                // Our staging entry was not moved, so discard its tree.
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Ok(());
             }
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Err(Error::Io(final_entry, e));
             }
         }
 
-        // Successful rename: `tmp_base` is now an empty wrapper directory
-        // (its single child was the subdir we just renamed out). Use
-        // `remove_dir` instead of `remove_dir_all` — the latter still
-        // does the full `opendir`/`fdopendir`(fcntl)/`readdir`/`close`
-        // walk even on an empty dir, which dtrace shows as ~6 extra
-        // syscalls per package. At 227 packages that's ~1.4k wasted
-        // syscalls on every cold install.
-        //
-        // `remove_dir` fails with `ENOTEMPTY` if a future change to
-        // `materialize_into` starts dropping extra files into
-        // `tmp_base`. Log at debug so the leak is observable without
-        // being fatal; the worst-case outcome is a stray tmp dir, and
-        // concurrent-writer races already use the full
-        // `remove_dir_all` branch above.
-        if let Err(e) = std::fs::remove_dir(&tmp_base) {
-            debug!(
-                "remove_dir({}) failed, leaving tmp in place: {e}",
-                tmp_base.display()
-            );
-        }
-
         Ok(())
+    }
+
+    /// Validate and repair the dependency links inside an existing global
+    /// virtual-store package entry, returning the targets they now hold. The package directory itself can be a
+    /// valid cache hit while one of its sibling links still targets an old
+    /// graph identity.
+    pub(crate) fn reconcile_virtual_store_entry(
+        &self,
+        dep_path: &str,
+        pkg: &LockedPackage,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<Vec<(String, PathBuf)>, Error> {
+        let pkg_nm_parent = self
+            .virtual_store
+            .join(self.virtual_store_subdir(dep_path))
+            .join("node_modules");
+        let targets = self.virtual_store_dep_link_targets(dep_path, pkg, nested_link_targets)?;
+        for (dep_name, target) in &targets {
+            let symlink_path = pkg_nm_parent.join(dep_name);
+            if reconcile_dir_link(&symlink_path, target)? {
+                continue;
+            }
+            if let Some(parent) = symlink_path.parent() {
+                mkdirp(parent)?;
+            }
+            create_dir_link_idempotent(target, &symlink_path)?;
+        }
+        Ok(targets)
+    }
+
+    /// The dependency links a global virtual-store entry holds, as
+    /// `(dep_name, target)` in the form they're written: relative sibling
+    /// paths (absolute on Windows, where junctions store one) and the
+    /// absolute on-disk path for `link:` transitives. Pure computation,
+    /// shared by [`Self::reconcile_virtual_store_entry`] and the link
+    /// phase's record of what it left on disk.
+    pub(crate) fn virtual_store_dep_link_targets(
+        &self,
+        #[cfg_attr(windows, allow(unused_variables))] dep_path: &str,
+        pkg: &LockedPackage,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<Vec<(String, PathBuf)>, Error> {
+        #[cfg(not(windows))]
+        let pkg_nm_parent = self
+            .virtual_store
+            .join(self.virtual_store_subdir(dep_path))
+            .join("node_modules");
+        let mut targets = Vec::with_capacity(pkg.dependencies.len());
+        for (dep_name, dep_version) in &pkg.dependencies {
+            if dep_name == &pkg.name {
+                continue;
+            }
+            validate_package_link_name(dep_name)?;
+            let dep_dep_path = shared_local_dep_path(dep_name, dep_version)
+                .unwrap_or_else(|| format!("{dep_name}@{dep_version}"));
+            let target = if let Some(abs_target) =
+                nested_link_targets.and_then(|targets| targets.get(&dep_dep_path))
+            {
+                abs_target.clone()
+            } else {
+                let sibling_subdir = self.virtual_store_subdir(&dep_dep_path);
+                #[cfg(not(windows))]
+                {
+                    let sibling_abs = self
+                        .virtual_store
+                        .join(sibling_subdir)
+                        .join("node_modules")
+                        .join(dep_name);
+                    let symlink_path = pkg_nm_parent.join(dep_name);
+                    let link_parent = symlink_path.parent().unwrap_or(&pkg_nm_parent);
+                    pathdiff::diff_paths(&sibling_abs, link_parent)
+                        .unwrap_or_else(|| sibling_abs.clone())
+                }
+                #[cfg(windows)]
+                {
+                    self.virtual_store
+                        .join(sibling_subdir)
+                        .join("node_modules")
+                        .join(dep_name)
+                }
+            };
+            targets.push((dep_name.clone(), target));
+        }
+        Ok(targets)
     }
 
     /// Materialize a globally-reproducible local source (a `git`
@@ -330,7 +428,7 @@ impl Linker {
     /// Used by the isolated linker in global-virtual-store mode. Plain
     /// `file:` / `link:` / `portal:` / `exec:` sources resolve against
     /// a path inside the project and are materialized per-project
-    /// instead (see `materialize_into` with `apply_hashes = false`),
+    /// instead (see `materialize_at` with `apply_hashes = false`),
     /// but git and remote-tarball sources are content-pinned and shared
     /// like registry packages. They MUST live in the shared store when
     /// it is enabled: a registry dependent in the shared store links
@@ -352,6 +450,7 @@ impl Linker {
         let global_entry = self.virtual_store.join(self.virtual_store_subdir(dep_path));
         let state = classify_entry_state(&local_aube_entry, &global_entry);
         if matches!(state, EntryState::Fresh) {
+            self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
             stats.packages_cached += 1;
             return Ok(());
         }
@@ -401,9 +500,9 @@ impl Linker {
         }
 
         let tmp_name = materialize_tmp_name();
-        let tmp_base = aube_dir.join(&tmp_name);
-        let result = self.materialize_into(
-            &tmp_base,
+        let tmp_entry = aube_dir.join(&tmp_name);
+        let result = self.materialize_at(
+            &tmp_entry,
             aube_dir,
             dep_path,
             pkg,
@@ -414,15 +513,14 @@ impl Linker {
         );
 
         if result.is_err() {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return result;
         }
 
-        let tmp_entry = tmp_base.join(&subdir);
         if let Some(parent) = final_entry.parent()
             && let Err(e) = mkdirp(parent)
         {
-            let _ = std::fs::remove_dir_all(&tmp_base);
+            let _ = std::fs::remove_dir_all(&tmp_entry);
             return Err(e);
         }
 
@@ -432,34 +530,26 @@ impl Linker {
                 stats.packages_linked = stats.packages_linked.saturating_sub(1);
                 stats.files_linked = stats.files_linked.saturating_sub(index.len());
                 stats.packages_cached += 1;
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Ok(());
             }
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&tmp_base);
+                let _ = std::fs::remove_dir_all(&tmp_entry);
                 return Err(Error::Io(final_entry, e));
             }
-        }
-
-        if let Err(e) = std::fs::remove_dir(&tmp_base) {
-            debug!(
-                "remove_dir({}) failed, leaving tmp in place: {e}",
-                tmp_base.display()
-            );
         }
 
         Ok(())
     }
 
-    /// Materialize a package's files and transitive dep symlinks into a base directory.
+    /// Materialize a package's files and dependency links at an explicit entry path.
     ///
-    /// `base_dir` is where files are written during materialization.
-    /// `final_base_dir` is where those files will live after any
-    /// wrapper rename. These differ for `.tmp-*` staging dirs; Windows
+    /// `entry_dir` contains the package's `node_modules` directory.
+    /// `final_base_dir` is the store root containing the final entries. These differ for `.tmp-*` staging dirs; Windows
     /// junctions need the final root because they persist absolute
     /// targets at creation time.
     ///
-    /// `apply_hashes` controls whether per-dep subdir names are run
+    /// `apply_hashes` controls whether dependency-link target names are run
     /// through `vstore_key` (the content-addressed name) or used as
     /// raw `dep_path` strings. Global-store callers pass `true` so
     /// the shared `~/.cache/aube/virtual-store/` can hold isolated
@@ -467,9 +557,9 @@ impl Linker {
     /// per-project `.aube/` callers pass `false` because node's
     /// runtime module walk resolves by dep_path only.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn materialize_into(
+    pub(crate) fn materialize_at(
         &self,
-        base_dir: &Path,
+        entry_dir: &Path,
         final_base_dir: &Path,
         dep_path: &str,
         pkg: &LockedPackage,
@@ -494,12 +584,7 @@ impl Linker {
         for dep_name in pkg.dependencies.keys() {
             validate_package_link_name(dep_name)?;
         }
-        let subdir = if apply_hashes {
-            self.virtual_store_subdir(dep_path)
-        } else {
-            self.aube_dir_entry_name(dep_path)
-        };
-        let pkg_nm_dir = base_dir.join(&subdir).join("node_modules").join(&pkg.name);
+        let pkg_nm_dir = entry_dir.join("node_modules").join(&pkg.name);
 
         // Pre-compute the set of unique parent directories across
         // every file in the index AND every scoped transitive-dep
@@ -507,14 +592,14 @@ impl Linker {
         // pass. Previously each file looped through `mkdirp(parent)`
         // which always did an `exists()` check (= statx syscall) even
         // though the same parents were shared by dozens of siblings —
-        // `materialize_into` for a typical 32-file npm package
+        // `materialize_at` for a typical 32-file npm package
         // resulted in ~25 redundant statx calls. Collecting the unique
         // parents first, sorting by length (so ancestors precede
         // descendants), and calling `create_dir_all` once each cuts
         // out the redundant stats entirely. `BTreeSet` sorts
         // lexicographically, which is good enough because every
         // ancestor of a directory is a prefix of it.
-        let pkg_nm_parent = base_dir.join(&subdir).join("node_modules");
+        let pkg_nm_parent = entry_dir.join("node_modules");
         // Collect into Vec + sort + dedup instead of BTreeSet. For a
         // package with thousands of files (typescript, next), the
         // BTreeSet's per-insert log-N PathBuf comparison (~50-byte
@@ -544,29 +629,39 @@ impl Linker {
         }
         parents.sort_unstable();
         parents.dedup();
-        for parent in &parents {
-            std::fs::create_dir_all(parent).map_err(|e| Error::Io(parent.clone(), e))?;
-        }
+        create_dirs_under(entry_dir, &parents)?;
 
-        // `materialize_into` always writes into a fresh location
+        // Linux can resolve every destination relative to one open package
+        // directory instead of walking the long GVS staging path per file.
+        // Failure to open is harmless: `link_file_fresh` retains the portable
+        // full-path operation and its existing copy fallback.
+        #[cfg(target_os = "linux")]
+        let pkg_nm_dir_fd = std::fs::File::open(&pkg_nm_dir).ok();
+        #[cfg(not(target_os = "linux"))]
+        let pkg_nm_dir_fd: Option<std::fs::File> = None;
+
+        // `materialize_at` always writes into a fresh location
         // (either a `.tmp-<pid>-...` staging dir for the global virtual
         // store or a per-project `.aube/<dep_path>` just created by
         // the caller), so we can skip the `remove_file(dst)` that
         // `link_file` does defensively. Pass `fresh = true` to suppress
         // the unlink syscall on every file. For a 1.4k-package install
         // that's ~45k wasted `unlink` calls on the hot path.
-        for (rel_path, stored) in index {
+        let link_one = |(rel_path, stored): (&String, &StoredFile)| -> Result<LinkStrategy, Error> {
             // Key already validated in the parent-collection loop
             // above. The index is immutable between the two loops.
             let target = pkg_nm_dir.join(rel_path);
 
-            if let Err(e) = self.link_file_fresh(stored, rel_path, &target) {
-                if let Error::MissingStoreFile { .. } = &e {
-                    invalidate_stale_index_for_package(&self.store, pkg);
-                }
-                return Err(e);
-            }
-            stats.files_linked += 1;
+            let realized =
+                match self.link_file_fresh(stored, rel_path, &target, pkg_nm_dir_fd.as_ref()) {
+                    Ok(realized) => realized,
+                    Err(e) => {
+                        if let Error::MissingStoreFile { .. } = &e {
+                            invalidate_stale_index_for_package(&self.store, pkg);
+                        }
+                        return Err(e);
+                    }
+                };
 
             if stored.executable {
                 // `create_cas_file` writes every CAS entry as 0o644
@@ -581,7 +676,56 @@ impl Linker {
                 #[cfg(unix)]
                 xx::file::make_executable(&target).map_err(|e| Error::Xx(e.to_string()))?;
             }
+            Ok(realized)
+        };
+        // A package is materialized as one task, so a large one that
+        // finishes downloading last links its files alone after every
+        // other package is done: date-fns (4.8k files) held a cold install
+        // open for ~110 ms after its import. Spread large packages across
+        // the linker pool; below the threshold the handoff isn't worth it.
+        const PARALLEL_LINK_MIN_FILES: usize = 256;
+        if index.len() >= PARALLEL_LINK_MIN_FILES {
+            use rayon::prelude::*;
+            with_link_pool(self.link_parallelism(), || {
+                if cfg!(target_os = "linux") && matches!(self.strategy, LinkStrategy::Hardlink) {
+                    // linkat takes the destination directory's write lock.
+                    // Give each directory one worker so siblings do not spin
+                    // on that lock, while independent directories still link
+                    // concurrently.
+                    let mut directories: rustc_hash::FxHashMap<_, Vec<_>> = Default::default();
+                    for entry in index {
+                        directories
+                            .entry(Path::new(entry.0).parent())
+                            .or_default()
+                            .push(entry);
+                    }
+                    directories.into_par_iter().try_for_each(|(_, files)| {
+                        let mut files = files.into_iter();
+                        while let Some(entry) = files.next() {
+                            if matches!(link_one(entry)?, LinkStrategy::Copy) {
+                                // An explicitly requested hardlink can still
+                                // fall back to copy (for example, on EXDEV).
+                                // Copies benefit from per-file parallelism.
+                                return files
+                                    .as_slice()
+                                    .par_iter()
+                                    .try_for_each(|entry| link_one(*entry).map(|_| ()));
+                            }
+                        }
+                        Ok(())
+                    })
+                } else {
+                    index
+                        .par_iter()
+                        .try_for_each(|entry| link_one(entry).map(|_| ()))
+                }
+            })?;
+        } else {
+            index
+                .iter()
+                .try_for_each(|entry| link_one(entry).map(|_| ()))?;
         }
+        stats.files_linked += index.len();
 
         // Apply any user-supplied patch for this `(name, version)`.
         // Patches are applied *after* the files have been linked into
@@ -641,7 +785,7 @@ impl Linker {
             // is fixable; together every `pathdiff` variant lands one
             // component off and the link dangles. Sibling symlinks
             // get away with relative paths because both endpoints
-            // live inside `base_dir` and move together; nested-link
+            // live inside `entry_dir` and move together; nested-link
             // targets are *external* (under `project_dir`) so the
             // tricks that work for siblings don't apply. Windows
             // already uses absolute targets for the same reason (see
@@ -671,8 +815,8 @@ impl Linker {
             // difference for us, yielding `../..` for `foo` and
             // `../../..` for `@vue/shared`, both relative to whatever
             // parent `symlink_path` ends up with.
-            // `pkg_nm_parent` is `<base_dir>/<subdir>/node_modules/`, so
-            // two parents deep brings us to `<base_dir>/` where all
+            // `pkg_nm_parent` is `<entry_dir>/node_modules/`, so
+            // two parents deep brings us to the store root where all
             // sibling subdirs live side-by-side.
             #[cfg(not(windows))]
             let target = {
@@ -690,13 +834,13 @@ impl Linker {
             };
 
             // Staged materialization writes into `.tmp-<pid>-<id>/`,
-            // then atomic-renames into `final_base_dir/<subdir>/`.
+            // then atomic-renames the entry into its final store location.
             // POSIX symlinks store the relative offset verbatim.
-            // Offset stays invariant under the wrapper rename, so the
+            // Offset stays invariant under the entry rename, so the
             // link resolves correctly after the move. Windows junctions
             // resolve the target against `link.parent()` at create time
             // and persist an absolute path, which binds the junction to
-            // the tmp wrapper. Point Windows at the final root up front
+            // the temporary entry. Point Windows at the final root up front
             // so the stored absolute path survives the rename.
             #[cfg(windows)]
             let target = final_base_dir
@@ -714,20 +858,20 @@ impl Linker {
     }
 
     /// Hardlink-or-copy a file into a freshly-created destination.
-    /// Assumes `dst` does not exist — callers (`materialize_into`)
+    /// Assumes `dst` does not exist — callers (`materialize_at`)
     /// always write into a `.tmp-<pid>-...` staging dir or a
     /// just-wiped per-project `.aube/<dep_path>`, so the defensive
     /// `remove_file(dst)` an idempotent variant would need is skipped.
     /// Eliminates one syscall per linked file (~45k on the medium
     /// benchmark fixture).
+    /// Returns the realized strategy, including any fallback.
     pub(crate) fn link_file_fresh(
         &self,
         stored: &StoredFile,
         rel_path: &str,
         dst: &Path,
-    ) -> Result<(), Error> {
-        #[cfg(target_os = "macos")]
-        const SMALL_FILE_COPY_MAX: u64 = 16 * 1024;
+        dst_dir: Option<&std::fs::File>,
+    ) -> Result<LinkStrategy, Error> {
         let map_io = |e: std::io::Error| classify_link_error(stored, rel_path, dst, e);
         let missing_source = || Error::MissingStoreFile {
             store_path: stored.store_path.clone(),
@@ -738,13 +882,13 @@ impl Linker {
         // attribution. Diag emits a `linker.link_<strategy>` event with
         // the per-file duration so the analyzer can break down link cost
         // by realized path: reflink (zero-copy CoW), hardlink (zero-cost
-        // metadata link), copy (full byte transfer), or the
-        // small-file-copy short circuit on macOS.
+        // metadata link), or copy (full byte transfer).
         let diag_t0 = aube_util::diag::enabled().then(std::time::Instant::now);
         let realized: &'static str;
         match self.strategy {
-            // Two reflink strategies share the clonefile attempt and the
-            // macOS small-file copy shortcut, but differ in fallback:
+            // Both reflink strategies use clonefile directly, including for
+            // small files. On macOS std::fs::copy also attempts a clone,
+            // but opens and inspects the source first. They differ in fallback:
             //   * `Reflink` (explicit `clone` / `clone-or-copy`) — the
             //     documented contract is reflink with a plain copy
             //     fallback, so a clonefile failure degrades straight to
@@ -753,22 +897,9 @@ impl Linker {
             //     probe already proved the target shares a mount, so on a
             //     non-APFS same-FS volume (HFS+, where `clonefile` is
             //     unsupported but hardlinks are not) it tries a zero-cost
-            //     hardlink before copy.
+            //     hardlink before copy, except for small macOS files whose
+            //     independent-copy fallback is preserved.
             LinkStrategy::Reflink | LinkStrategy::ReflinkAuto => {
-                let auto = matches!(self.strategy, LinkStrategy::ReflinkAuto);
-                #[cfg(target_os = "macos")]
-                if matches!(stored.size, Some(size) if size <= SMALL_FILE_COPY_MAX) {
-                    std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
-                    if let Some(t0) = diag_t0 {
-                        aube_util::diag::event(
-                            aube_util::diag::Category::Linker,
-                            "link_macos_small_copy",
-                            t0.elapsed(),
-                            None,
-                        );
-                    }
-                    return Ok(());
-                }
                 let reflink_result = {
                     #[cfg(test)]
                     {
@@ -811,7 +942,14 @@ impl Linker {
                     // — not the original reflink error — is the proximate
                     // cause of the copy, so reporting only `e` would point at
                     // the wrong failure.
-                    let hardlinked = if auto {
+                    // Small macOS files previously used an independent copy.
+                    // Preserve that isolation when clonefile is unavailable:
+                    // edits to installed files must not modify the shared CAS.
+                    let allow_hardlink_fallback =
+                        matches!(self.strategy, LinkStrategy::ReflinkAuto)
+                            && !(cfg!(target_os = "macos")
+                                && matches!(stored.size, Some(size) if size <= 16 * 1024));
+                    let hardlinked = if allow_hardlink_fallback {
                         match std::fs::hard_link(&stored.store_path, dst) {
                             Ok(()) => {
                                 trace!("reflink failed, fell back to hardlink: {e}");
@@ -830,7 +968,7 @@ impl Linker {
                     if hardlinked {
                         realized = "reflink_fallback_hardlink";
                     } else {
-                        if !auto {
+                        if !allow_hardlink_fallback {
                             trace!("reflink failed, falling back to copy: {e}");
                         }
                         std::fs::copy(&stored.store_path, dst).map_err(map_io)?;
@@ -841,7 +979,48 @@ impl Linker {
                 }
             }
             LinkStrategy::Hardlink => {
-                if let Err(e) = std::fs::hard_link(&stored.store_path, dst) {
+                #[cfg(target_os = "linux")]
+                let hardlink_result = if let Some(dst_dir) = dst_dir {
+                    use std::ffi::CString;
+                    use std::os::fd::AsRawFd;
+                    use std::os::unix::ffi::OsStrExt;
+
+                    let source = CString::new(stored.store_path.as_os_str().as_bytes());
+                    let relative = CString::new(rel_path.as_bytes());
+                    match (source, relative) {
+                        (Ok(source), Ok(relative)) => {
+                            // SAFETY: both C strings live through the call and
+                            // `dst_dir` owns a valid package-directory fd.
+                            let result = unsafe {
+                                libc::linkat(
+                                    libc::AT_FDCWD,
+                                    source.as_ptr(),
+                                    dst_dir.as_raw_fd(),
+                                    relative.as_ptr(),
+                                    0,
+                                )
+                            };
+                            if result == 0 {
+                                Ok(())
+                            } else {
+                                Err(std::io::Error::last_os_error())
+                            }
+                        }
+                        _ => Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "hardlink path contains nul",
+                        )),
+                    }
+                } else {
+                    std::fs::hard_link(&stored.store_path, dst)
+                };
+                #[cfg(not(target_os = "linux"))]
+                let hardlink_result = {
+                    let _ = dst_dir;
+                    std::fs::hard_link(&stored.store_path, dst)
+                };
+
+                if let Err(e) = hardlink_result {
                     if !stored.store_path.exists() {
                         return Err(missing_source());
                     }
@@ -860,7 +1039,7 @@ impl Linker {
         }
 
         if let Some(t0) = diag_t0 {
-            // `realized` is one of seven static strings; matching is
+            // `realized` is one of six static strings; matching is
             // O(1) and the static `&str` keeps the JSONL category compact.
             let name = match realized {
                 "reflink" => "link_reflink",
@@ -869,12 +1048,15 @@ impl Linker {
                 "hardlink" => "link_hardlink",
                 "hardlink_fallback_copy" => "link_hardlink_fallback",
                 "copy" => "link_copy",
-                "macos_small_copy" => "link_macos_small_copy",
                 _ => "link_unknown",
             };
             aube_util::diag::event(aube_util::diag::Category::Linker, name, t0.elapsed(), None);
         }
-        Ok(())
+        Ok(match realized {
+            "hardlink" | "reflink_fallback_hardlink" => LinkStrategy::Hardlink,
+            "reflink" => LinkStrategy::Reflink,
+            _ => LinkStrategy::Copy,
+        })
     }
 }
 
@@ -1038,5 +1220,47 @@ mod package_name_tests {
                 "{name:?} should be rejected"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod create_dirs_under_tests {
+    use super::*;
+
+    #[test]
+    fn creates_nested_dirs_under_a_missing_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join(".tmp-1-0");
+        let dirs = vec![
+            base.join("pkg@1.0.0/node_modules/@scope/pkg"),
+            base.join("pkg@1.0.0/node_modules/@scope/pkg/lib/deep"),
+            base.join("pkg@1.0.0/node_modules/@other"),
+        ];
+        create_dirs_under(&base, &dirs).unwrap();
+        for dir in &dirs {
+            assert!(dir.is_dir(), "{} missing", dir.display());
+        }
+    }
+
+    #[test]
+    fn accepts_dirs_that_already_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = tmp.path().join("pkg/node_modules/pkg/lib");
+        std::fs::create_dir_all(&existing).unwrap();
+        let dirs = vec![
+            existing.clone(),
+            tmp.path().join("pkg/node_modules/pkg/bin"),
+        ];
+        create_dirs_under(tmp.path(), &dirs).unwrap();
+        assert!(dirs.iter().all(|dir| dir.is_dir()));
+    }
+
+    #[test]
+    fn rejects_a_file_in_the_way() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("pkg")).unwrap();
+        std::fs::write(tmp.path().join("pkg/lib"), "").unwrap();
+        let err = create_dirs_under(tmp.path(), &[tmp.path().join("pkg/lib/x")]).unwrap_err();
+        assert!(matches!(err, Error::Io(ref path, _) if path.ends_with("pkg/lib")));
     }
 }

@@ -17,21 +17,20 @@
 //! defeat the point of a CI cache layer.
 
 use super::install;
-use clap::Args;
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct CiArgs {
-    /// Skip lifecycle scripts (no-op; aube already skips by default)
-    #[arg(long)]
+    /// Skip root and dependency lifecycle scripts
+    #[usage(long)]
     pub ignore_scripts: bool,
     /// Skip optionalDependencies; don't install optional native modules
-    #[arg(long)]
+    #[usage(long)]
     pub no_optional: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub lockfile: crate::cli_args::LockfileArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub virtual_store: crate::cli_args::VirtualStoreArgs,
 }
 
@@ -39,6 +38,11 @@ pub async fn run(args: CiArgs) -> miette::Result<()> {
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();
+    let mut cli_flags = args.virtual_store.flags().to_cli_flag_bag();
+    cli_flags.push((
+        "dangerously-allow-all-builds".to_string(),
+        "false".to_string(),
+    ));
     let CiArgs {
         ignore_scripts,
         no_optional,
@@ -80,10 +84,7 @@ pub async fn run(args: CiArgs) -> miette::Result<()> {
         minimum_release_age_override: None,
         strict_no_lockfile: true,
         force: false,
-        cli_flags: vec![(
-            "dangerously-allow-all-builds".to_string(),
-            "false".to_string(),
-        )],
+        cli_flags,
         env_snapshot: aube_settings::values::capture_env(),
         git_prepare_depth: 0,
         inherited_build_policy: None,

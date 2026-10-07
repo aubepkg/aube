@@ -108,7 +108,13 @@ fn classic_import_preserves_custom_registry_tarball_url() {
     );
 
     let out = tempfile::NamedTempFile::new().unwrap();
-    crate::pnpm::write(out.path(), &graph, &manifest).unwrap();
+    crate::pnpm::write_with_project_root(
+        out.path(),
+        out.path().parent().unwrap(),
+        &graph,
+        &manifest,
+    )
+    .unwrap();
     let yaml = std::fs::read_to_string(out.path()).unwrap();
     assert!(
         yaml.contains("tarball: https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz"),
@@ -117,7 +123,13 @@ fn classic_import_preserves_custom_registry_tarball_url() {
 
     let round_trip_graph = crate::pnpm::parse(out.path()).unwrap();
     let second_out = tempfile::NamedTempFile::new().unwrap();
-    crate::pnpm::write(second_out.path(), &round_trip_graph, &manifest).unwrap();
+    crate::pnpm::write_with_project_root(
+        second_out.path(),
+        second_out.path().parent().unwrap(),
+        &round_trip_graph,
+        &manifest,
+    )
+    .unwrap();
     let second_yaml = std::fs::read_to_string(second_out.path()).unwrap();
     assert!(
         second_yaml.contains("tarball: https://npm.example.test/@scope/pkg/-/pkg-1.0.0.tgz"),
@@ -170,7 +182,7 @@ fn test_parse_scoped_and_multi_spec() {
 /// in the spec key and the real name only behind the `npm:` value.
 /// Without surfacing the real name into `LockedPackage.alias_of`,
 /// the install path would fetch the alias-qualified URL and 404
-/// (https://github.com/jdx/aube/discussions/681).
+/// (https://github.com/aubepkg/aube/discussions/681).
 #[test]
 fn test_parse_npm_protocol_alias_transitive() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -1406,4 +1418,55 @@ fn test_write_berry_escapes_resolution_and_header() {
     // blows up here instead of corrupting a real install.
     let _doc: yaml_serde::Value = yaml_serde::from_str(&written)
         .unwrap_or_else(|e| panic!("berry writer produced malformed YAML: {e}\n{written}"));
+}
+
+/// A package declared in both `devDependencies` and
+/// `optionalDependencies` must yield exactly one root `DirectDep`,
+/// classified under the first declaring section (dev beats optional).
+/// A second `DirectDep` for the same name reads as section drift under
+/// `--frozen-lockfile` and makes the linker create the root symlink
+/// twice. See discussion #1544.
+#[test]
+fn classic_dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), "foo@^1.0.0:\n  version \"1.0.0\"\n").unwrap();
+    let manifest = aube_manifest::PackageJson {
+        optional_dependencies: [("foo".to_string(), "^1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..make_manifest(&[], &[("foo", "^1.0.0")])
+    };
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
+}
+
+#[test]
+fn berry_dev_and_optional_overlap_yields_one_direct_dep() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@npm:^1.0.0":
+  version: 1.2.3
+  resolution: "foo@npm:1.2.3"
+  checksum: 10c0/foohash
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        optional_dependencies: [("foo".to_string(), "^1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..make_manifest(&[], &[("foo", "^1.0.0")])
+    };
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let root = graph.importers.get(".").unwrap();
+    assert_eq!(root.len(), 1, "expected one direct dep, got {root:?}");
+    assert_eq!(root[0].name, "foo");
+    assert_eq!(root[0].dep_type, DepType::Dev);
 }

@@ -18,6 +18,8 @@ pub const WARN_AUBE_HOOK_PACKAGE_ADDED: &str = "WARN_AUBE_HOOK_PACKAGE_ADDED";
 
 // ── install lifecycle ───────────────────────────────────────────────
 pub const WARN_AUBE_IGNORED_BUILD_SCRIPTS: &str = "WARN_AUBE_IGNORED_BUILD_SCRIPTS";
+pub const WARN_AUBE_DEPRECATED_PACKAGE: &str = "WARN_AUBE_DEPRECATED_PACKAGE";
+pub const WARN_AUBE_DEPRECATED_PACKAGE_SUMMARY: &str = "WARN_AUBE_DEPRECATED_PACKAGE_SUMMARY";
 #[rustfmt::skip] pub const WARN_AUBE_SUSPICIOUS_LIFECYCLE_SCRIPT: &str = "WARN_AUBE_SUSPICIOUS_LIFECYCLE_SCRIPT";
 #[rustfmt::skip] pub const WARN_AUBE_WINDOWS_JOB_OBJECT_UNAVAILABLE: &str = "WARN_AUBE_WINDOWS_JOB_OBJECT_UNAVAILABLE";
 pub const WARN_AUBE_MISSING_INTEGRITY: &str = "WARN_AUBE_MISSING_INTEGRITY";
@@ -28,15 +30,22 @@ pub const WARN_AUBE_DELTA_INVALIDATE_FAILED: &str = "WARN_AUBE_DELTA_INVALIDATE_
 pub const WARN_AUBE_GVS_INCOMPATIBLE: &str = "WARN_AUBE_GVS_INCOMPATIBLE";
 pub const WARN_AUBE_GVS_MODE_CHANGED: &str = "WARN_AUBE_GVS_MODE_CHANGED";
 pub const WARN_AUBE_GVS_CROSS_VOLUME: &str = "WARN_AUBE_GVS_CROSS_VOLUME";
+pub const WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED: &str = "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED";
+#[rustfmt::skip] pub const WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE: &str = "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE";
 
 // ── settings / config validation ────────────────────────────────────
 pub const WARN_AUBE_INVALID_CONCURRENCY: &str = "WARN_AUBE_INVALID_CONCURRENCY";
 pub const WARN_AUBE_INVALID_TRUST_POLICY: &str = "WARN_AUBE_INVALID_TRUST_POLICY";
+pub const WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION: &str =
+    "WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION";
 pub const WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE: &str =
     "WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE";
+pub const WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE: &str =
+    "WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE";
 pub const WARN_AUBE_OVERRIDE_MISSING_DEP: &str = "WARN_AUBE_OVERRIDE_MISSING_DEP";
 pub const WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED: &str =
     "WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED";
+pub const WARN_AUBE_OVERRIDE_TOO_DEEP: &str = "WARN_AUBE_OVERRIDE_TOO_DEEP";
 pub const WARN_AUBE_INVALID_PEER_PATTERN: &str = "WARN_AUBE_INVALID_PEER_PATTERN";
 pub const WARN_AUBE_INVALID_SAVE_PREFIX: &str = "WARN_AUBE_INVALID_SAVE_PREFIX";
 pub const WARN_AUBE_CONCURRENCY_ENV_INVALID: &str = "WARN_AUBE_CONCURRENCY_ENV_INVALID";
@@ -44,6 +53,8 @@ pub const WARN_AUBE_MANAGED_CONFIG_ENFORCED: &str = "WARN_AUBE_MANAGED_CONFIG_EN
 
 // ── update / prerelease ─────────────────────────────────────────────
 pub const WARN_AUBE_PRERELEASE_CHECK_SKIPPED: &str = "WARN_AUBE_PRERELEASE_CHECK_SKIPPED";
+pub const WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE: &str =
+    "WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE";
 pub const WARN_AUBE_WORKSPACE_PACKAGE_MISSING_NAME: &str =
     "WARN_AUBE_WORKSPACE_PACKAGE_MISSING_NAME";
 
@@ -95,6 +106,11 @@ pub const WARN_AUBE_YARN_BERRY_UNSUPPORTED: &str = "WARN_AUBE_YARN_BERRY_UNSUPPO
 pub const WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX: &str =
     "WARN_AUBE_LOCKFILE_MALFORMED_PEER_SUFFIX";
 pub const WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE: &str = "WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE";
+pub const WARN_AUBE_HIDDEN_LOCKFILE_BROKEN: &str = "WARN_AUBE_HIDDEN_LOCKFILE_BROKEN";
+
+// ── global installs ─────────────────────────────────────────────────
+pub const WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION: &str = "WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION";
+pub const WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH: &str = "WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH";
 
 // ── progress UI ─────────────────────────────────────────────────────
 pub const WARN_AUBE_PROGRESS_OVERFLOW: &str = "WARN_AUBE_PROGRESS_OVERFLOW";
@@ -121,6 +137,7 @@ pub const WARN_AUBE_RUNTIME_MISE_FALLBACK: &str = "WARN_AUBE_RUNTIME_MISE_FALLBA
 pub mod category {
     pub const PNPMFILE_HOOKS: &str = "pnpmfile / hooks";
     pub const INSTALL_LIFECYCLE: &str = "Install lifecycle";
+    pub const STORE: &str = "Store maintenance";
     pub const SETTINGS_CONFIG: &str = "Settings / config validation";
     pub const UPDATE_PRERELEASE: &str = "Update / prerelease";
     pub const AUDIT_NPMRC: &str = "Audit / npmrc";
@@ -134,6 +151,7 @@ pub mod category {
     pub const WORKSPACE_RECURSION: &str = "Workspace recursion";
     pub const SUPPLY_CHAIN: &str = "Supply chain (add-time)";
     pub const NODE_RUNTIME: &str = "Node runtime";
+    pub const GLOBAL_INSTALLS: &str = "Global installs";
 }
 
 /// Registry of every warning code with its category and description.
@@ -191,6 +209,18 @@ pub const ALL: &[CodeMeta] = &[
         exit_code: None,
     },
     CodeMeta {
+        name: WARN_AUBE_DEPRECATED_PACKAGE,
+        category: category::INSTALL_LIFECYCLE,
+        description: "An installed package version is deprecated.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_DEPRECATED_PACKAGE_SUMMARY,
+        category: category::INSTALL_LIFECYCLE,
+        description: "One or more installed package versions have deprecation warnings.",
+        exit_code: None,
+    },
+    CodeMeta {
         name: WARN_AUBE_SUSPICIOUS_LIFECYCLE_SCRIPT,
         category: category::INSTALL_LIFECYCLE,
         description: "A dependency's lifecycle script matched a dangerous-shape heuristic (curl|sh, eval+atob, credential-file read, secret-env exfil, exfil endpoint, bare-IP HTTP). Advisory only; the `allowBuilds` allowlist still gates execution. Inspect the script before approving the build.",
@@ -223,7 +253,7 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: WARN_AUBE_LTHASH_MISMATCH,
         category: category::INSTALL_LIFECYCLE,
-        description: "Incremental and full LtHash digests disagreed — homomorphic invariant broken. Real bug signal.",
+        description: "aube's incremental install digest disagreed with a full recomputation. This indicates a bug in aube — please report it at https://github.com/aubepkg/aube/discussions.",
         exit_code: None,
     },
     CodeMeta {
@@ -241,13 +271,25 @@ pub const ALL: &[CodeMeta] = &[
     CodeMeta {
         name: WARN_AUBE_GVS_MODE_CHANGED,
         category: category::INSTALL_LIFECYCLE,
-        description: "Switching between gvs-on and gvs-off; removing `node_modules` and reinstalling from scratch.",
+        description: "The global virtual store was switched on or off since the last install, so aube is removing `node_modules` and reinstalling from scratch.",
         exit_code: None,
     },
     CodeMeta {
         name: WARN_AUBE_GVS_CROSS_VOLUME,
         category: category::INSTALL_LIFECYCLE,
-        description: "`cacheDir` (global virtual store) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
+        description: "The global virtual store (`globalVirtualStoreDir`, by default under `cacheDir`) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE,
+        category: category::INSTALL_LIFECYCLE,
+        description: "A `link:` dependency's `package.json` couldn't be read or parsed, so install skipped linking its bins into `node_modules/.bin`.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED,
+        category: category::STORE,
+        description: "A global virtual-store entry disappeared while a prune plan was being built; the preview skipped it.",
         exit_code: None,
     },
     // Settings / config validation
@@ -264,9 +306,21 @@ pub const ALL: &[CodeMeta] = &[
         exit_code: None,
     },
     CodeMeta {
+        name: WARN_AUBE_INVALID_BUNDLED_PACKAGE_EXTENSION,
+        category: category::SETTINGS_CONFIG,
+        description: "A bundled package-extension entry was malformed and skipped.",
+        exit_code: None,
+    },
+    CodeMeta {
         name: WARN_AUBE_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE,
         category: category::SETTINGS_CONFIG,
         description: "A `minimumReleaseAgeExclude` entry was malformed and skipped.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_INVALID_BLOCK_EXOTIC_SUBDEPS_EXCLUDE,
+        category: category::SETTINGS_CONFIG,
+        description: "A `blockExoticSubdepsExclude` entry was malformed and skipped.",
         exit_code: None,
     },
     CodeMeta {
@@ -279,6 +333,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_OVERRIDE_DOLLAR_REF_DEPRECATED,
         category: category::SETTINGS_CONFIG,
         description: "An `overrides` entry used pnpm's deprecated `$` version reference syntax.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_OVERRIDE_TOO_DEEP,
+        category: category::SETTINGS_CONFIG,
+        description: "A nested `overrides` entry went deeper than one level (or chained `>` inside a group) and was skipped.",
         exit_code: None,
     },
     CodeMeta {
@@ -310,6 +370,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_PRERELEASE_CHECK_SKIPPED,
         category: category::UPDATE_PRERELEASE,
         description: "`aube update` couldn't fetch the packument or got a non-semver `latest` tag; preserved-prerelease check skipped for that package.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_MINIMUM_RELEASE_AGE_BLOCKED_UPDATE,
+        category: category::UPDATE_PRERELEASE,
+        description: "One or more newer package versions were hidden because they have not satisfied `minimumReleaseAge` yet.",
         exit_code: None,
     },
     CodeMeta {
@@ -527,6 +593,25 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_GLOBAL_OUTDATED_NO_LOCKFILE,
         category: category::LOCKFILE,
         description: "`aube outdated -g` found a global install without a lockfile and skipped that install.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_HIDDEN_LOCKFILE_BROKEN,
+        category: category::LOCKFILE,
+        description: "The hidden lockfile in `node_modules/.aube-lock.yaml` could not be parsed, so install ignored it and resolved dependencies without it.",
+        exit_code: None,
+    },
+    // Global installs
+    CodeMeta {
+        name: WARN_AUBE_GLOBAL_DIR_LEGACY_LOCATION,
+        category: category::GLOBAL_INSTALLS,
+        description: "Global packages were found under the pnpm-named directory aube used before it owned its own global layout (`$PNPM_HOME`, `$XDG_DATA_HOME/pnpm`, `~/Library/pnpm`, `%LOCALAPPDATA%\\pnpm`), while the current global directory holds none. Those installs are no longer visible to `aube list -g` / `remove -g`; reinstall them with `aube add -g`, or point `AUBE_HOME` at the old directory.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_GLOBAL_BIN_DIR_NOT_ON_PATH,
+        category: category::GLOBAL_INSTALLS,
+        description: "`aube add -g` linked a bin into a directory that is not on `$PATH`, so the command it installed won't be found. Add the directory to `PATH`, or point `globalBinDir` / `AUBE_HOME` at one that already is.",
         exit_code: None,
     },
     // Progress UI

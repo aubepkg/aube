@@ -202,8 +202,8 @@ _setup_no_match_workspace() {
 	# directory path (matches the help-text contract in list.rs and
 	# pnpm's `list --filter=… --parseable` shape). Each project gets
 	# its own line ending with the package directory.
-	assert_line --regexp '/packages/project-1$'
-	assert_line --regexp '/packages/project-2$'
+	assert_line --regexp '[/\]packages[/\]project-1$'
+	assert_line --regexp '[/\]packages[/\]project-2$'
 	# `--depth=-1` must NOT emit any dep records (project-1 owns
 	# is-odd as a direct dep — make sure it doesn't leak).
 	refute_output --partial "is-odd"
@@ -306,7 +306,7 @@ _setup_no_match_workspace() {
 	assert_success
 	# pwd -P resolves the macOS /var -> /private/var symlink so the
 	# expected path matches aube's canonicalized workspace root.
-	assert_output "$(pwd -P)"
+	assert_output "$(_native_path "$(pwd -P)")"
 	refute_output --partial "No projects matched"
 	refute_output --partial "packages/project"
 }

@@ -1,5 +1,6 @@
 use super::body::{check_body_cap, is_retriable_status, retry_after_from};
 use super::cache::*;
+use super::parse::parse_full_response_with;
 use super::{
     PACKUMENT_ACCEPT, PACKUMENT_FULL_ACCEPT, RegistryClient, force_full_packument,
     parse_full_response,
@@ -7,7 +8,141 @@ use super::{
 use crate::{Error, NetworkMode, Packument};
 use std::path::{Path, PathBuf};
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedResolutionIndex {
+    source_len: u64,
+    source_modified_ns: u128,
+    #[cfg(unix)]
+    source_inode: u64,
+    source_digest: String,
+    fetched_at: u64,
+    max_age_secs: Option<u64>,
+    index: crate::resolution::ResolutionIndex,
+}
+
+fn resolution_index_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".resolution-index-v1");
+    PathBuf::from(name)
+}
+
+fn source_stamp(path: &Path) -> Option<(u64, u128, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.ino()
+    };
+    #[cfg(not(unix))]
+    let inode = 0;
+    Some((metadata.len(), modified, inode))
+}
+
 impl RegistryClient {
+    /// Read fresh metadata without decoding every release's dependency maps.
+    /// Uses the existing registry-partitioned cache and freshness policy.
+    pub fn cached_resolution_packument(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+    ) -> CachedResolutionPackumentLookup {
+        #[derive(serde::Deserialize)]
+        struct Cached<'a> {
+            etag: Option<String>,
+            last_modified: Option<String>,
+            fetched_at: u64,
+            #[serde(default)]
+            max_age_secs: Option<u64>,
+            #[serde(borrow)]
+            packument: crate::resolution::RawResolutionPackument<'a>,
+        }
+        let Some(path) = packument_full_cache_path(cache_dir, name, self.config.registry_for(name))
+        else {
+            return Default::default();
+        };
+        let before = source_stamp(&path);
+        let Ok(content) = std::fs::read(&path) else {
+            return Default::default();
+        };
+        let content = bytes::Bytes::from(content);
+        if let Some(stamp) = before.filter(|stamp| source_stamp(&path) == Some(*stamp))
+            && let Ok(raw) = std::fs::read(resolution_index_path(&path))
+            && let Ok(cached) = sonic_rs::from_slice::<CachedResolutionIndex>(&raw)
+            && cached.source_len == stamp.0
+            && cached.source_modified_ns == stamp.1
+            && cached.source_digest == blake3::hash(&content).to_hex().as_str()
+            && {
+                #[cfg(unix)]
+                {
+                    cached.source_inode == stamp.2
+                }
+                #[cfg(not(unix))]
+                {
+                    true
+                }
+            }
+            && self.trust_cached_packument(cached.fetched_at, cached.max_age_secs)
+            && let Some(packument) = cached.index.into_resolution(&content)
+        {
+            return CachedResolutionPackumentLookup {
+                packument: Some(packument),
+                revalidation: Default::default(),
+            };
+        }
+        let Ok(cached) = sonic_rs::from_slice::<Cached>(&content) else {
+            return Default::default();
+        };
+        if self.trust_cached_packument(cached.fetched_at, cached.max_age_secs) {
+            let packument = cached.packument.into_resolution(&content).ok();
+            if let (Some(stamp), Some(packument)) = (before, packument.as_ref())
+                && source_stamp(&path) == Some(stamp)
+                && let Some(index) = packument.index(&content)
+            {
+                let cached_index = CachedResolutionIndex {
+                    source_len: stamp.0,
+                    source_modified_ns: stamp.1,
+                    #[cfg(unix)]
+                    source_inode: stamp.2,
+                    source_digest: blake3::hash(&content).to_hex().to_string(),
+                    fetched_at: cached.fetched_at,
+                    max_age_secs: cached.max_age_secs,
+                    index,
+                };
+                if let Ok(bytes) = sonic_rs::to_vec(&cached_index) {
+                    let _ =
+                        aube_util::fs_atomic::atomic_write(&resolution_index_path(&path), &bytes);
+                }
+            }
+            return CachedResolutionPackumentLookup {
+                packument,
+                revalidation: Default::default(),
+            };
+        }
+        let Some(packument) = cached.packument.into_packument() else {
+            return Default::default();
+        };
+        CachedResolutionPackumentLookup {
+            packument: None,
+            revalidation: CachedPackumentLookup {
+                packument: None,
+                stale: true,
+                cached: Some(CachedPackumentLookupEntry::Full(CachedFullPackumentTyped {
+                    etag: cached.etag,
+                    last_modified: cached.last_modified,
+                    fetched_at: cached.fetched_at,
+                    max_age_secs: cached.max_age_secs,
+                    packument,
+                })),
+            },
+        }
+    }
+
     pub fn cached_packument_lookup(&self, name: &str, cache_dir: &Path) -> CachedPackumentLookup {
         let registry_url = self.config.registry_for(name).to_string();
         let Some(cache_path) = packument_cache_path(cache_dir, name, &registry_url) else {
@@ -134,10 +269,35 @@ impl RegistryClient {
         name: &str,
         cache_dir: &Path,
     ) -> Result<serde_json::Value, Error> {
+        self.fetch_packument_full_cached_with(
+            name,
+            cache_dir,
+            false,
+            |_| true,
+            |bytes| sonic_rs::from_slice(&bytes),
+        )
+        .await
+    }
+
+    async fn fetch_packument_full_cached_with<T>(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+        force_refresh: bool,
+        can_reuse: impl Fn(&T) -> bool,
+        decode: impl Fn(bytes::Bytes) -> Result<T, sonic_rs::Error> + Copy,
+    ) -> Result<T, Error>
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize + Clone,
+    {
         let registry_url = self.config.registry_for(name).to_string();
         let cache_path = packument_full_cache_path(cache_dir, name, &registry_url)
             .ok_or_else(|| Error::InvalidName(name.to_string()))?;
-        let cached = read_cached_full_packument(&cache_path);
+        let cached = if force_refresh {
+            None
+        } else {
+            read_cached_full_packument::<T>(&cache_path)
+        };
 
         // --prefer-offline / --offline: trust any cached copy regardless of age.
         // --offline additionally forbids falling back to the network on a miss.
@@ -160,11 +320,15 @@ impl RegistryClient {
         let sf_key = format!("full:{registry_url}:{name}");
         let sf_mutex = self.packument_singleflight_mutex(sf_key);
         let mut sf_guard = Some(sf_mutex.lock().await);
-        let cached = match read_cached_full_packument(&cache_path) {
-            Some(c) if force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs) => {
+        let cached = match read_cached_full_packument::<T>(&cache_path) {
+            Some(c)
+                if (force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs))
+                    && can_reuse(&c.packument) =>
+            {
                 return Ok(c.packument);
             }
-            recheck => recheck.or(cached),
+            recheck if !force_refresh => recheck.or(cached),
+            _ => None,
         };
         let started = std::time::Instant::now();
 
@@ -252,7 +416,7 @@ impl RegistryClient {
                     let max_age_secs = parse_cache_control_max_age(&resp);
                     let resp = resp.error_for_status()?;
                     check_body_cap(&resp, self.fetch_policy.packument_max_bytes, &label)?;
-                    match parse_full_response::<serde_json::Value>(resp).await {
+                    match parse_full_response_with(resp, decode).await {
                         Ok(packument) => {
                             if let Err(e) = write_cached_full_packument(
                                 &cache_path,
@@ -336,17 +500,19 @@ impl RegistryClient {
             return Ok(packument);
         }
 
-        // Slow path: full value round-trip covers revalidation + fresh
-        // network fetches + all the ETag bookkeeping.
-        // `fetch_packument_full_cached` is the single source of truth
-        // for those branches; we just re-parse its `Value` into
-        // `Packument` here. The one `from_value` walk this still pays
-        // is amortized across the network round-trip so it doesn't
-        // show up in steady-state resolves.
-        let value = self.fetch_packument_full_cached(name, cache_dir).await?;
-        let packument: Packument = serde_json::from_value(value)
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-        Ok(packument)
+        // Keep the complete response in the shared cache, but decode the
+        // install shape directly instead of building an intermediate JSON tree.
+        let raw = self
+            .fetch_packument_full_cached_with(
+                name,
+                cache_dir,
+                false,
+                |_| true,
+                RawPackument::from_bytes,
+            )
+            .await?;
+        sonic_rs::from_slice(&raw.0)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
     pub async fn fetch_packument_with_time_cached_after_lookup(
@@ -362,6 +528,225 @@ impl RegistryClient {
             }
             _ => self.fetch_packument_with_time_cached(name, cache_dir).await,
         }
+    }
+
+    /// Fetch complete selection and trust history while deferring dependency
+    /// metadata decoding until a release is selected. Uses the canonical full
+    /// cache and the same conditional requests, single-flight gate, and retries.
+    pub async fn fetch_resolution_packument_after_lookup(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+        lookup: CachedPackumentLookup,
+    ) -> Result<crate::ResolutionPackument, Error> {
+        if let Some(CachedPackumentLookupEntry::Full(cached)) = lookup.cached {
+            return self
+                .revalidate_full_packument_typed(name, cache_dir, cached)
+                .await
+                .map(Into::into);
+        }
+        let raw = self
+            .fetch_packument_full_cached_with(
+                name,
+                cache_dir,
+                false,
+                |_| true,
+                RawPackument::from_bytes,
+            )
+            .await?;
+        raw.into_resolution()
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+    }
+
+    /// Refresh an incomplete inventory without validators, preserving its disk
+    /// entry until a response replaces it through the normal atomic cache write.
+    /// A required version allows a fresh inventory written by a concurrent
+    /// request to satisfy this refresh. `None` forces an unconditional request.
+    /// Offline mode still forbids the request.
+    pub async fn refresh_resolution_packument(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+        required_version: Option<&str>,
+    ) -> Result<crate::ResolutionPackument, Error> {
+        let raw = self
+            .fetch_packument_full_cached_with(
+                name,
+                cache_dir,
+                true,
+                |raw: &RawPackument| {
+                    required_version
+                        .is_some_and(|version| sonic_rs::get(&raw.0, ["versions", version]).is_ok())
+                },
+                RawPackument::from_bytes,
+            )
+            .await?;
+        raw.into_resolution()
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+    }
+
+    /// Fetch the compact trust history (`time` map plus per-version trust
+    /// evidence) for a package, backed by its own small on-disk cache.
+    ///
+    /// The lockfile trust-policy validator calls this once per package
+    /// *name* in the locked graph. It hits the same full-packument
+    /// endpoint as [`Self::fetch_packument_with_time_cached`], but
+    /// decodes only the fields the no-downgrade check reads and caches
+    /// that compact shape instead of the multi-megabyte raw document —
+    /// cold validations skip the `serde_json::Value` round-trip and the
+    /// full-packument cache write, warm revalidations re-read kilobytes
+    /// instead of megabytes per name.
+    pub async fn fetch_trust_history_cached(
+        &self,
+        name: &str,
+        cache_dir: &Path,
+    ) -> Result<crate::PackumentTrustHistory, Error> {
+        let cache_registry_url = self.config.registry_for(name).to_string();
+        // Same per-origin/name file layout as the packument caches;
+        // only the cache root differs (`trust-history-v1/`).
+        let cache_path = packument_full_cache_path(cache_dir, name, &cache_registry_url)
+            .ok_or_else(|| Error::InvalidName(name.to_string()))?;
+        let force_cache = self.force_cache();
+        let cached = read_cached_trust_history(&cache_path);
+        if let Some(c) = &cached
+            && (force_cache || cached_is_fresh(c.fetched_at, c.max_age_secs))
+        {
+            return Ok(c.history.clone());
+        }
+        if self.network_mode == NetworkMode::Offline {
+            // A stale entry beats failing outright: offline installs
+            // can't revalidate anything, and the caller already decided
+            // offline installs may proceed.
+            if let Some(c) = cached {
+                return Ok(c.history);
+            }
+            return Err(Error::Offline(format!("trust history for {name}")));
+        }
+
+        let (url, registry_url) = self.packument_url(name);
+        let etag = cached.as_ref().and_then(|c| c.etag.clone());
+        let last_modified = cached.as_ref().and_then(|c| c.last_modified.clone());
+        let label = format!("trust history {name}");
+        let started = std::time::Instant::now();
+        // Single attempt loop covering send *and* body decode, matching
+        // `fetch_packument_full_cached`: a truncated or malformed body on
+        // an otherwise-successful response is retriable, and letting it
+        // through would abort trust validation for the whole install.
+        let max_attempts = self.fetch_policy.retries.saturating_add(1);
+        for attempt in 0..max_attempts {
+            let is_last = attempt + 1 >= max_attempts;
+            let resp = match {
+                let mut req = self
+                    .authed_get_for_package(&url, registry_url, name)
+                    .header("Accept", PACKUMENT_FULL_ACCEPT);
+                if let Some(ref etag) = etag {
+                    req = req.header("If-None-Match", etag);
+                }
+                if let Some(ref lm) = last_modified {
+                    req = req.header("If-Modified-Since", lm);
+                }
+                req
+            }
+            .send()
+            .await
+            {
+                Ok(resp) if is_retriable_status(resp.status()) && !is_last => {
+                    let wait = retry_after_from(&resp)
+                        .unwrap_or_else(|| self.fetch_policy.backoff_for_attempt(attempt + 1));
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts,
+                        backoff_ms = wait.as_millis() as u64,
+                        status = resp.status().as_u16(),
+                        label,
+                        code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSIENT,
+                        "retrying HTTP request after transient failure",
+                    );
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Ok(resp) => resp,
+                Err(_) if !is_last => {
+                    let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                self.maybe_record_slow_metadata(&label, started);
+                return Err(Error::NotFound(name.to_string()));
+            }
+            if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+                if let Some(mut c) = cached {
+                    c.max_age_secs = parse_cache_control_max_age(&resp).or(c.max_age_secs);
+                    c.fetched_at = now_secs();
+                    if let Err(e) = write_cached_trust_history(&cache_path, &c) {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                            "failed to write trust-history cache {}: {e}",
+                            cache_path.display()
+                        );
+                    }
+                    self.maybe_record_slow_metadata(&label, started);
+                    return Ok(c.history);
+                }
+                // 304 without a cached entry means we never sent
+                // conditional headers — a misbehaving registry. Treat as
+                // a hard error rather than parsing the empty body.
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "registry returned 304 for unconditional trust-history request: {name}"
+                    ),
+                )));
+            }
+
+            let resp = resp.error_for_status()?;
+            check_body_cap(
+                &resp,
+                self.fetch_policy.packument_max_bytes,
+                "packument-trust-history",
+            )?;
+            let (etag, last_modified) = extract_cache_headers(&resp);
+            let max_age_secs = parse_cache_control_max_age(&resp);
+            match parse_full_response::<crate::PackumentTrustHistory>(resp).await {
+                Ok(history) => {
+                    let to_cache = CachedTrustHistory {
+                        etag,
+                        last_modified,
+                        fetched_at: now_secs(),
+                        max_age_secs,
+                        history,
+                    };
+                    if let Err(e) = write_cached_trust_history(&cache_path, &to_cache) {
+                        tracing::warn!(
+                            code = aube_codes::warnings::WARN_AUBE_PACKUMENT_CACHE_WRITE,
+                            "failed to write trust-history cache {}: {e}",
+                            cache_path.display()
+                        );
+                    }
+                    self.maybe_record_slow_metadata(&label, started);
+                    return Ok(to_cache.history);
+                }
+                Err(err) if !is_last => {
+                    let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts,
+                        backoff_ms = wait.as_millis() as u64,
+                        label,
+                        error = %err,
+                        code = aube_codes::warnings::WARN_AUBE_HTTP_RETRY_TRANSIENT,
+                        "retrying HTTP request after body read failure",
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        unreachable!("retry loop exited without returning; max_attempts was {max_attempts}")
     }
 
     pub(super) async fn revalidate_full_packument_typed(
@@ -391,8 +776,13 @@ impl RegistryClient {
         let sf_key = format!("full:{registry_url}:{name}");
         let sf_mutex = self.packument_singleflight_mutex(sf_key);
         let mut sf_guard = Some(sf_mutex.lock().await);
-        if let Some(refreshed) = read_cached_full_packument_typed(&cache_path, force_cache) {
-            return Ok(refreshed);
+        // A waiter only needs to decode releases when another request has
+        // refreshed the cache. Stale entries retain the typed snapshot above.
+        if let Some(refreshed) = read_cached_full_packument_raw(&cache_path)
+            && (force_cache || cached_is_fresh(refreshed.fetched_at, refreshed.max_age_secs))
+            && let Ok(packument) = sonic_rs::from_slice(&refreshed.packument.0)
+        {
+            return Ok(packument);
         }
 
         let label = format!("packument {name}");
@@ -438,20 +828,21 @@ impl RegistryClient {
                 Ok(resp) if resp.status() == reqwest::StatusCode::NOT_MODIFIED => {
                     let revalidated_max_age =
                         parse_cache_control_max_age(&resp).or(cached.max_age_secs);
-                    let to_cache = if let Some(to_cache) = read_cached_full_packument(&cache_path) {
-                        to_cache
-                    } else {
-                        let packument = serde_json::to_value(&cached.packument).map_err(|e| {
-                            Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-                        })?;
-                        CachedFullPackument {
-                            etag: cached.etag.clone(),
-                            last_modified: cached.last_modified.clone(),
-                            fetched_at: cached.fetched_at,
-                            max_age_secs: cached.max_age_secs,
-                            packument,
-                        }
-                    };
+                    let to_cache =
+                        if let Some(to_cache) = read_cached_full_packument_raw(&cache_path) {
+                            to_cache
+                        } else {
+                            let packument = sonic_rs::to_vec(&cached.packument).map_err(|e| {
+                                Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                            })?;
+                            CachedFullPackument {
+                                etag: cached.etag.clone(),
+                                last_modified: cached.last_modified.clone(),
+                                fetched_at: cached.fetched_at,
+                                max_age_secs: cached.max_age_secs,
+                                packument: RawPackument(bytes::Bytes::from(packument)),
+                            }
+                        };
                     if let Err(e) = write_cached_full_packument(
                         &cache_path,
                         to_cache.etag.as_deref(),
@@ -890,5 +1281,118 @@ impl RegistryClient {
             }
         }
         unreachable!("retry loop exited without returning; max_attempts was {max_attempts}")
+    }
+}
+
+#[cfg(test)]
+mod resolution_index_tests {
+    use super::*;
+
+    #[test]
+    fn derived_index_tracks_the_full_cache_and_invalidates_after_rewrite() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new("https://registry.npmjs.org/");
+        let first: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {
+                "1.0.0": {"name": "index-demo", "version": "1.0.0", "dependencies": {"child": "^1"}},
+                "1.1.0": {"name": "index-demo", "version": "1.1.0", "deprecated": "old", "approver": {"name": "reviewer"}}
+            },
+            "dist-tags": {"latest": "1.0.0"},
+            "time": {"1.0.0": "2024-01-01T00:00:00.000Z", "1.1.0": "2024-02-01T00:00:00.000Z"}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("index-demo", cache.path(), &first, None, None, true);
+        let path = packument_full_cache_path(
+            cache.path(),
+            "index-demo",
+            client.config.registry_for("index-demo"),
+        )
+        .unwrap();
+        let dotted_package_path = packument_full_cache_path(
+            cache.path(),
+            "index-demo.resolution-index-v1",
+            client.config.registry_for("index-demo.resolution-index-v1"),
+        )
+        .unwrap();
+        assert_ne!(resolution_index_path(&path), dotted_package_path);
+        let initial = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(resolution_index_path(&path).exists());
+        assert!(initial.versions["1.1.0"].is_deprecated());
+        assert_eq!(
+            initial.versions["1.0.0"].metadata().unwrap().dependencies["child"],
+            "^1"
+        );
+        let indexed = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert_eq!(indexed.time, initial.time);
+        assert_eq!(indexed.versions.len(), 2);
+        assert_eq!(
+            indexed.versions["1.1.0"].trust_metadata().approver,
+            initial.versions["1.1.0"].trust_metadata().approver
+        );
+
+        let second: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {"2.0.0": {"name": "index-demo", "version": "2.0.0"}},
+            "dist-tags": {"latest": "2.0.0"}
+        }))
+        .unwrap();
+        write_cached_full_packument(&path, None, None, now_secs(), None, &second).unwrap();
+        let after_rewrite = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(after_rewrite.versions.contains_key("2.0.0"));
+        assert!(!after_rewrite.versions.contains_key("1.0.0"));
+    }
+
+    #[test]
+    fn derived_index_rejects_same_length_rewrite_with_unchanged_timestamp() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new("https://registry.npmjs.org/");
+        let packument: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {"1.0.0": {"name": "index-demo", "version": "1.0.0"}},
+            "dist-tags": {"latest": "1.0.0"}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("index-demo", cache.path(), &packument, None, None, true);
+        let path = packument_full_cache_path(
+            cache.path(),
+            "index-demo",
+            client.config.registry_for("index-demo"),
+        )
+        .unwrap();
+        let initial = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(initial.versions.contains_key("1.0.0"));
+        assert!(resolution_index_path(&path).exists());
+
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+        let rewritten = original.replace("1.0.0", "2.0.0");
+        assert_eq!(original.len(), rewritten.len());
+        std::fs::write(&path, rewritten).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+
+        let after_rewrite = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(after_rewrite.versions.contains_key("2.0.0"));
+        assert!(!after_rewrite.versions.contains_key("1.0.0"));
     }
 }

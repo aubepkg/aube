@@ -10,7 +10,6 @@
 //! passed, the target package name is read from the local manifest.
 
 use crate::commands::{make_client, packument_full_cache_dir, resolve_version, split_name_spec};
-use clap::Args;
 use miette::{Context, IntoDiagnostic, miette};
 use serde_json::Value;
 
@@ -59,7 +58,7 @@ Examples:
   $ aube view react@next --json
 ";
 
-#[derive(Debug, Args)]
+#[derive(Debug, usage_rs::Args)]
 pub struct ViewArgs {
     /// Package to view, optionally with a version or dist-tag.
     ///
@@ -75,13 +74,16 @@ pub struct ViewArgs {
     /// Print the full JSON of the selected version instead of the summary.
     ///
     /// Mutually exclusive with `field`.
-    #[arg(long, conflicts_with = "field")]
+    #[usage(long)]
     pub json: bool,
-    #[command(flatten)]
+    #[usage(flatten)]
     pub network: crate::cli_args::NetworkArgs,
 }
 
 pub async fn run(args: ViewArgs) -> miette::Result<()> {
+    if args.json && args.field.is_some() {
+        return Err(miette!("--json cannot be used with a field argument"));
+    }
     args.network.install_overrides();
     let cwd = crate::dirs::project_root_or_cwd()?;
     let package = match &args.package {
