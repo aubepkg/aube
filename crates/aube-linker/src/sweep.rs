@@ -513,21 +513,37 @@ pub(crate) fn reconcile_dir_link(link_path: &Path, expected_target: &Path) -> Re
 /// Whether two Windows paths name the same location, ignoring a `\\?\`
 /// prefix and `.`/`..` segments. Paths that differ only in case usually
 /// do, but not inside a directory made case-sensitive (`fsutil file
-/// setCaseSensitiveInfo`), so the filesystem settles those.
+/// setCaseSensitiveInfo`), so the filesystem settles those. A dangling
+/// target can't be resolved, so the deepest existing ancestors are
+/// compared instead and the missing tail must match exactly: whether a
+/// name that doesn't exist yet matches case-insensitively is unknowable.
 #[cfg(windows)]
 fn same_windows_path(a: &Path, b: &Path) -> bool {
     let plain = |p: &Path| {
         let normalized = crate::sys::normalize_path(p);
         let text = normalized.to_string_lossy();
-        text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
+        std::path::PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
     };
-    let (a_plain, b_plain) = (plain(a), plain(b));
-    a_plain == b_plain
-        || (a_plain.eq_ignore_ascii_case(&b_plain)
-            && matches!(
-                (std::fs::canonicalize(a), std::fs::canonicalize(b)),
-                (Ok(a), Ok(b)) if a == b
-            ))
+    let (a, b) = (plain(a), plain(b));
+    if a == b {
+        return true;
+    }
+    if !a.as_os_str().eq_ignore_ascii_case(b.as_os_str()) {
+        return false;
+    }
+    // Differing only in case, the paths have the same components, so
+    // their ancestors line up.
+    a.ancestors()
+        .zip(b.ancestors())
+        .find_map(|(a_dir, b_dir)| {
+            match (std::fs::canonicalize(a_dir), std::fs::canonicalize(b_dir)) {
+                (Ok(a_real), Ok(b_real)) => Some(
+                    a_real == b_real && a.strip_prefix(a_dir).ok() == b.strip_prefix(b_dir).ok(),
+                ),
+                _ => None,
+            }
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -572,6 +588,16 @@ mod tests {
         let link = link_into_case_variant_stores(tmp.path());
         let expected = tmp.path().join("store").join("pkg");
         assert!(!super::reconcile_dir_link(&link, &expected).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_keeps_a_dangling_junction_whose_target_differs_only_in_case() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = link_into_case_variant_stores(tmp.path());
+        std::fs::remove_dir(tmp.path().join("Store").join("pkg")).unwrap();
+        let expected = tmp.path().join("store").join("pkg");
+        assert!(super::reconcile_dir_link(&link, &expected).unwrap());
     }
 
     #[cfg(windows)]
