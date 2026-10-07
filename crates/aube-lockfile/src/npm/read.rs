@@ -107,12 +107,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                     format!("linked package '{install_name}' points to missing target '{target}'"),
                 )
             })?;
-            let version = target_entry.version.clone().ok_or_else(|| {
-                Error::parse(
-                    path,
-                    format!("linked package '{install_name}' target '{target}' has no version"),
-                )
-            })?;
+            // npm writes a workspace member without a `version` in its
+            // package.json as an entry with no version. Use the same
+            // `0.0.0` placeholder as the pnpm reader.
+            let version = target_entry
+                .version
+                .clone()
+                .unwrap_or_else(|| "0.0.0".to_string());
             let local = LocalSource::Link(PathBuf::from(target));
             (
                 target_entry,

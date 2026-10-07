@@ -202,15 +202,14 @@ pub fn write(
     );
 
     // A freshly resolved graph has no `link:` package for a member that
-    // nothing depends on, so read those members' own package.json, as
-    // the bun writer does.
+    // nothing depends on, so read the members' own package.json, as the
+    // bun writer does. It also says whether a member has a version, which
+    // a `link:` package read from npm's lockfile records as `0.0.0`.
     let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let member_manifests: BTreeMap<&str, aube_manifest::PackageJson> = graph
         .importers
         .keys()
-        .filter(|importer| {
-            *importer != "." && workspace_package_for_importer(graph, importer).is_none()
-        })
+        .filter(|importer| *importer != ".")
         .filter_map(|importer| {
             let manifest_path = project_dir.join(importer).join("package.json");
             let manifest = aube_manifest::PackageJson::from_path(&manifest_path).ok()?;
@@ -219,12 +218,22 @@ pub fn write(
         .collect();
 
     for (importer_path, importer_roots) in graph.importers.iter().filter(|(path, _)| *path != ".") {
-        let (name, version, peer_dependencies, declared) =
+        let (name, version, peer_dependencies, peer_dependencies_meta, declared) =
             if let Some(pkg) = workspace_package_for_importer(graph, importer_path) {
                 (
                     pkg.name.as_str(),
-                    Some(pkg.version.as_str()),
+                    member_manifests
+                        .get(importer_path.as_str())
+                        .map_or(Some(pkg.version.as_str()), |manifest| {
+                            manifest.version.as_deref()
+                        }),
                     &pkg.peer_dependencies,
+                    optional_peers_meta(
+                        pkg.peer_dependencies_meta
+                            .iter()
+                            .filter(|(_, meta)| meta.optional)
+                            .map(|(name, _)| name.as_str()),
+                    ),
                     &pkg.declared_dependencies,
                 )
             } else if let Some(manifest) = member_manifests.get(importer_path.as_str()) {
@@ -241,6 +250,16 @@ pub fn write(
                     name,
                     manifest.version.as_deref(),
                     &manifest.peer_dependencies,
+                    optional_peers_meta(
+                        manifest
+                            .extra
+                            .get("peerDependenciesMeta")
+                            .and_then(serde_json::Value::as_object)
+                            .into_iter()
+                            .flat_map(|meta| meta.keys())
+                            .map(String::as_str)
+                            .filter(|peer| manifest.peer_dependency_is_optional(peer)),
+                    ),
                     &manifest.dependencies,
                 )
             } else {
@@ -266,6 +285,7 @@ pub fn write(
                 dev_dependencies,
                 optional_dependencies,
                 peer_dependencies: borrow_map(peer_dependencies),
+                peer_dependencies_meta,
                 ..Default::default()
             },
         );
@@ -599,6 +619,16 @@ fn reachable_from(
     }
     out
 }
+/// `peerDependenciesMeta` for a workspace member's optional peers. Without
+/// it, rereading the lockfile turns those peers into required ones.
+fn optional_peers_meta<'a>(
+    optional_peers: impl Iterator<Item = &'a str>,
+) -> BTreeMap<&'a str, WriteNpmPeerDepMeta> {
+    optional_peers
+        .map(|peer| (peer, WriteNpmPeerDepMeta { optional: true }))
+        .collect()
+}
+
 fn borrow_map(m: &BTreeMap<String, String>) -> BTreeMap<&str, &str> {
     m.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
 }
