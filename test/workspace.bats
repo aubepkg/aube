@@ -905,3 +905,18 @@ _setup_shared_direct_dep_workspace() {
 	assert_file_exists packages/lib/node_modules/is-odd/index.js
 	assert_file_exists packages/app/node_modules/is-even/index.js
 }
+
+@test "aube install --frozen-lockfile reports a member removed from the workspace that another links" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true}' >package.json
+	printf 'packages:\n  - packages/a\n  - packages/b\n' >pnpm-workspace.yaml
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"link:../b"}}' >packages/a/package.json
+	echo '{"name":"b","version":"1.0.0"}' >packages/b/package.json
+	run aube install
+	assert_success
+
+	printf 'packages:\n  - packages/a\n' >pnpm-workspace.yaml
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "workspace importer packages/b"
+}

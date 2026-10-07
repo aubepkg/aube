@@ -150,10 +150,12 @@ teardown() {
 }
 
 @test "aube install --frozen-lockfile accepts a file: dep of an npm workspace member" {
-	mkdir -p packages/app/vendor/x
+	mkdir -p packages/app/vendor/x packages/app/vendor/y packages/app/vendor/z
 	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
 	echo '{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}' >packages/app/package.json
-	echo '{"name":"x","version":"1.2.3"}' >packages/app/vendor/x/package.json
+	echo '{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y"}}' >packages/app/vendor/x/package.json
+	echo '{"name":"y","version":"0.1.0"}' >packages/app/vendor/y/package.json
+	echo '{"name":"z","version":"9.0.0"}' >packages/app/vendor/z/package.json
 	# What npm 11 writes for this workspace.
 	cat >package-lock.json <<'EOF'
 {
@@ -175,6 +177,10 @@ teardown() {
       "resolved": "packages/app/vendor/x",
       "link": true
     },
+    "node_modules/y": {
+      "resolved": "packages/app/vendor/y",
+      "link": true
+    },
     "packages/app": {
       "version": "1.0.0",
       "dependencies": {
@@ -182,7 +188,13 @@ teardown() {
       }
     },
     "packages/app/vendor/x": {
-      "version": "1.2.3"
+      "version": "1.2.3",
+      "dependencies": {
+        "y": "file:../y"
+      }
+    },
+    "packages/app/vendor/y": {
+      "version": "0.1.0"
     }
   }
 }
@@ -190,7 +202,17 @@ EOF
 
 	run aube install --frozen-lockfile
 	assert_success
-	assert_file_exists packages/app/node_modules/x/package.json
+	cd packages/app
+	run node -e 'console.log(require(require.resolve("y/package.json", { paths: [require("path").dirname(require.resolve("x/package.json"))] })).version)'
+	assert_success
+	assert_output "0.1.0"
+	cd ../..
+
+	# A dependency added to a file: target is drift, as `npm ci` reports.
+	echo '{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y","z":"file:../z"}}' >packages/app/vendor/x/package.json
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "packages/app/vendor/x: manifest"
 }
 
 @test "aube install keeps npm workspace members in package-lock.json on re-resolve" {

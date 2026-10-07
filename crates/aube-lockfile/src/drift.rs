@@ -228,13 +228,13 @@ impl LockfileGraph {
         // path, where the parser synthesizes importer entries for
         // every `file:` link and a manifest-shape gate would
         // false-positive on legitimate single-package installs. An npm
-        // workspace can still carry such `file:` importers, so importers a
-        // current project reaches by a `file:`/`link:` path count too.
+        // workspace can still carry such `file:` importers; the caller
+        // passes their manifests in (see [`Self::npm_local_importers`]).
         if is_workspace_install {
-            let current_importers = self
-                .importers_reachable_by_path(manifests.iter().map(|(p, _)| p.clone()).collect());
+            let current_importers: std::collections::HashSet<&str> =
+                manifests.iter().map(|(p, _)| p.as_str()).collect();
             for importer_path in self.importers.keys() {
-                if !current_importers.contains(importer_path) {
+                if !current_importers.contains(importer_path.as_str()) {
                     return DriftStatus::Stale {
                         reason: format!(
                             "workspace importer {importer_path} is in the lockfile but not in the workspace"
@@ -246,12 +246,14 @@ impl LockfileGraph {
         DriftStatus::Fresh
     }
 
-    /// `projects` plus every lockfile importer they reach, directly or
-    /// through each other, by a `file:` or `link:` path. The npm reader
-    /// records the target of each such dep as an importer.
-    fn importers_reachable_by_path(&self, projects: Vec<String>) -> BTreeSet<String> {
-        let mut reached: BTreeSet<String> = projects.iter().cloned().collect();
-        let mut queue = projects;
+    /// The lockfile importers, other than `projects` themselves, that
+    /// `projects` reach by a `file:` or `link:` path, directly or through
+    /// each other. The npm reader records the target of each such dep as
+    /// an importer; the caller checks their own `package.json` against
+    /// them like a workspace project's, as `npm ci` does.
+    pub fn npm_local_importers(&self, projects: &[&str]) -> BTreeSet<String> {
+        let mut reached: BTreeSet<String> = projects.iter().map(|p| p.to_string()).collect();
+        let mut queue: Vec<String> = reached.iter().cloned().collect();
         while let Some(importer) = queue.pop() {
             let Some(deps) = self.importers.get(&importer) else {
                 continue;
@@ -271,6 +273,9 @@ impl LockfileGraph {
                     queue.push(target);
                 }
             }
+        }
+        for project in projects {
+            reached.remove(*project);
         }
         reached
     }
