@@ -271,6 +271,18 @@ The normative loader pattern:
 const fs = require('node:fs');
 const path = require('node:path');
 
+function findPackageRoot(start) {
+  let directory = start;
+  while (true) {
+    if (fs.existsSync(path.join(directory, 'package.json'))) return directory;
+    const parent = path.dirname(directory);
+    if (parent === directory) throw new Error('package root not found');
+    directory = parent;
+  }
+}
+
+const packageRoot = findPackageRoot(__dirname);
+
 function hasPackageAlias(name) {
   if (process.versions.pnp) {
     const pnp = require('pnpapi');
@@ -281,7 +293,7 @@ function hasPackageAlias(name) {
   }
 
   // Check only this package's dependency realm; an ancestor alias is unrelated.
-  const aliasPath = path.join(__dirname, 'node_modules', name);
+  const aliasPath = path.join(packageRoot, 'node_modules', name);
   try {
     fs.lstatSync(aliasPath);
     return true;
@@ -296,7 +308,7 @@ const native = hasPackageAlias('_addon')
   : legacyRequireChain();           // alias absent: use today's fallback
 ```
 
-The filesystem check inspects only the parent's own nested `node_modules` entry; searching ancestor paths could mistake an unrelated package's `_addon` for this package's alias. Under Yarn Plug'n'Play, the check reads the current package's dependency map through `pnpapi`, because PnP aliases exist only in that resolver table. In either layout, the presence check does not load the artifact. Once present, `require('#addon')` runs outside any fallback catch, so invalid exports, initialization failures, and missing transitive dependencies propagate. Only an actually absent dependency edge selects the legacy loader.
+The loader first finds the nearest package root by walking upward to its `package.json`, then checks only that package's own `node_modules` entry; it does not search ancestor `node_modules` directories, which could mistake an unrelated package's `_addon` for this package's alias. Under Yarn Plug'n'Play, the check reads the current package's dependency map through `pnpapi`, because PnP aliases exist only in that resolver table. In either layout, the presence check does not load the artifact. Once present, `require('#addon')` runs outside any fallback catch, so invalid exports, initialization failures, and missing transitive dependencies propagate. Only an actually absent dependency edge selects the legacy loader.
 
 `imports: { "#addon": "_addon" }` is **recommended sugar, not a requirement**: it gives parent code and bundlers a single static `#`-namespaced specifier, is inert in the published tarball, and behaves identically under all package managers. A parent may `require('_addon')` directly.
 
