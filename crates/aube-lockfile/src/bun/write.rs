@@ -603,7 +603,7 @@ fn bun_local_path(path: &Path) -> String {
 /// packages, only the child's dep_path. Both paths are anchored at
 /// `project_dir`, so a parent outside the project still gets a path that
 /// leads to the child.
-fn local_child_spec(
+pub(super) fn local_child_spec(
     project_dir: &Path,
     parent: &LockedPackage,
     child: &LockedPackage,
@@ -615,10 +615,15 @@ fn local_child_spec(
     };
     let relative = match &parent.local_source {
         Some(LocalSource::Directory(parent_dir)) if !child_path.is_absolute() => {
+            // `diff_paths` finds no relative path between an absolute and a
+            // relative path, so anchor at an absolute project directory.
+            let project_dir =
+                std::path::absolute(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
             let anchored = |p: &Path| aube_util::path::normalize_lexical(&project_dir.join(p));
-            pathdiff::diff_paths(anchored(child_path), anchored(parent_dir))
+            let child_path = anchored(child_path);
+            pathdiff::diff_paths(&child_path, anchored(parent_dir))
                 .map(|relative| bun_local_path(&relative))
-                .unwrap_or_else(|| bun_local_path(child_path))
+                .unwrap_or_else(|| bun_local_path(&child_path))
         }
         _ => bun_local_path(child_path),
     };

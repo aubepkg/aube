@@ -1775,6 +1775,13 @@ fn dev_and_optional_overlap_yields_one_direct_dep() {
     assert_eq!(root[0].dep_type, DepType::Dev);
 }
 
+/// The `packages` section of the `bun.lock` at `path`.
+fn written_packages(path: &Path) -> serde_json::Value {
+    let written = std::fs::read_to_string(path).unwrap();
+    let mut lockfile: serde_json::Value = serde_json::from_str(&strip_jsonc(&written)).unwrap();
+    lockfile["packages"].take()
+}
+
 /// A fresh resolve keys `file:` packages by a path-hash dep_path and
 /// keeps no declared specs for them. The writer must still emit them in
 /// bun's shape, or `bun install --frozen-lockfile` sees them missing.
@@ -1838,18 +1845,13 @@ fn test_write_file_directory_and_tarball_packages() {
     let path = tmp.path().join("bun.lock");
     write(&path, &graph, &manifest).unwrap();
 
-    let written = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        written.contains(r#""x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }]"#),
-        "{written}"
-    );
-    assert!(
-        written.contains(r#""y": ["y@file:vendor/y", {}]"#),
-        "{written}"
-    );
-    assert!(
-        written.contains(r#""t": ["t@./vendor/t.tgz", {}, ""]"#),
-        "{written}"
+    assert_eq!(
+        written_packages(&path),
+        serde_json::json!({
+            "t": ["t@./vendor/t.tgz", {}, ""],
+            "x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }],
+            "y": ["y@file:vendor/y", {}],
+        })
     );
 
     let reparsed = parse(&path).unwrap();
@@ -1924,16 +1926,37 @@ fn test_write_file_packages_with_absolute_and_outside_paths() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     write(&path, &graph, &manifest).unwrap();
 
-    let written = std::fs::read_to_string(&path).unwrap();
     let absolute = archive.to_string_lossy().replace('\\', "/");
-    assert!(
-        written.contains(&format!(r#""t": ["t@{absolute}", {{}}, ""]"#)),
-        "{written}"
+    assert_eq!(
+        written_packages(&path),
+        serde_json::json!({
+            "t": [format!("t@{absolute}"), {}, ""],
+            "x": ["x@file:../x", { "dependencies": { "y": "file:../app/vendor/y" } }],
+            "y": ["y@file:vendor/y", {}],
+        })
     );
-    assert!(
-        written.contains(
-            r#""x": ["x@file:../x", { "dependencies": { "y": "file:../app/vendor/y" } }]"#
-        ),
-        "{written}"
+}
+
+/// With a relative lockfile path, a local child under the project still
+/// gets a spec that leads to it from an absolute parent directory.
+#[test]
+fn test_local_child_spec_from_an_absolute_parent_with_a_relative_project_dir() {
+    let parent_dir = std::env::temp_dir().join("elsewhere").join("x");
+    let parent = LockedPackage {
+        local_source: Some(LocalSource::Directory(parent_dir.clone())),
+        ..Default::default()
+    };
+    let child = LockedPackage {
+        local_source: Some(LocalSource::Directory(PathBuf::from("vendor/y"))),
+        ..Default::default()
+    };
+    let spec = super::write::local_child_spec(Path::new("proj"), &parent, &child).unwrap();
+
+    let target = std::path::absolute(Path::new("proj/vendor/y")).unwrap();
+    let relative = spec.strip_prefix("file:").unwrap();
+    assert_eq!(
+        aube_util::path::normalize_lexical(&parent_dir.join(relative)),
+        aube_util::path::normalize_lexical(&target),
+        "{spec}"
     );
 }
