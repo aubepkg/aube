@@ -2107,17 +2107,25 @@ fn test_write_lists_workspace_members_without_link_packages() {
     assert!(a_deps.iter().any(|dep| dep.name == "b"), "{a_deps:?}");
 }
 
-/// bun leaves out a workspace member whose name a resolved package
-/// already takes; a second key would replace that package on reparse.
+/// bun keeps a resolved package under a name a workspace member also
+/// has, and nests the member under each member that asks for it with
+/// `workspace:`. A second top-level key would replace one on reparse.
 #[test]
-fn test_write_skips_workspace_members_named_like_a_package() {
+fn test_write_nests_workspace_members_named_like_a_package() {
     let tmp = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(tmp.path().join("packages/is-number")).unwrap();
-    std::fs::write(
-        tmp.path().join("packages/is-number/package.json"),
-        r#"{"name":"is-number","version":"1.0.0"}"#,
-    )
-    .unwrap();
+    for (dir, manifest) in [
+        (
+            "packages/is-number",
+            r#"{"name":"is-number","version":"1.0.0"}"#,
+        ),
+        (
+            "packages/a",
+            r#"{"name":"a","version":"1.0.0","dependencies":{"is-number":"workspace:*"}}"#,
+        ),
+    ] {
+        std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+        std::fs::write(tmp.path().join(dir).join("package.json"), manifest).unwrap();
+    }
     let mut graph = LockfileGraph::default();
     graph.packages.insert(
         "is-number@7.0.0".to_string(),
@@ -2128,14 +2136,18 @@ fn test_write_skips_workspace_members_named_like_a_package() {
             ..Default::default()
         },
     );
+    let direct = |dep_path: &str, specifier: &str| DirectDep {
+        name: "is-number".to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some(specifier.to_string()),
+    };
+    graph
+        .importers
+        .insert(".".to_string(), vec![direct("is-number@7.0.0", "^7.0.0")]);
     graph.importers.insert(
-        ".".to_string(),
-        vec![DirectDep {
-            name: "is-number".to_string(),
-            dep_path: "is-number@7.0.0".to_string(),
-            dep_type: DepType::Production,
-            specifier: Some("^7.0.0".to_string()),
-        }],
+        "packages/a".to_string(),
+        vec![direct("is-number@1.0.0", "workspace:*")],
     );
     graph
         .importers
@@ -2150,7 +2162,18 @@ fn test_write_skips_workspace_members_named_like_a_package() {
 
     let written = std::fs::read_to_string(&path).unwrap();
     assert_eq!(written.matches(r#""is-number": ["#).count(), 1, "{written}");
+    assert!(
+        written.contains(r#""a/is-number": ["is-number@workspace:packages/is-number"]"#),
+        "{written}"
+    );
     let reparsed = parse(&path).unwrap();
-    let root_dep = &reparsed.importers["."][0];
-    assert_eq!(root_dep.dep_path, "is-number@7.0.0", "{written}");
+    assert_eq!(reparsed.importers["."][0].dep_path, "is-number@7.0.0");
+    let member_dep = &reparsed.importers["packages/a"][0];
+    assert!(
+        matches!(
+            reparsed.packages[&member_dep.dep_path].local_source,
+            Some(LocalSource::Link(_))
+        ),
+        "{member_dep:?}"
+    );
 }

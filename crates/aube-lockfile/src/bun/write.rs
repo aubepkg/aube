@@ -489,21 +489,45 @@ pub fn write(
     // nothing depends on, or whose dependents reach it by version. bun
     // still lists every member; without the entry the reader can't wire
     // workspace deps, and installs from the lockfile skip those links.
-    // Like bun, leave out a member whose name a package already takes.
-    let taken: BTreeSet<String> = package_entries.iter().map(|(key, _)| key.clone()).collect();
+    // When a package already takes a member's name, bun nests the member
+    // under each member that asks for it with `workspace:` instead.
+    let taken: BTreeSet<String> = package_entries
+        .iter()
+        .map(|(key, _)| key.clone())
+        .filter(|key| !emitted_workspace_keys.contains(key))
+        .collect();
     for (importer_path, pj) in &workspace_manifests {
         let Some(name) = pj.name.as_deref() else {
             continue;
         };
-        if taken.contains(name) || !emitted_workspace_keys.insert(name.to_string()) {
+        let ident = Value::Array(vec![Value::String(format!(
+            "{name}@workspace:{importer_path}"
+        ))]);
+        if !taken.contains(name) {
+            if emitted_workspace_keys.insert(name.to_string()) {
+                package_entries.push((name.to_string(), ident));
+            }
             continue;
         }
-        package_entries.push((
-            name.to_string(),
-            Value::Array(vec![Value::String(format!(
-                "{name}@workspace:{importer_path}"
-            ))]),
-        ));
+        for dependent in workspace_manifests.values() {
+            let Some(dependent_name) = dependent.name.as_deref() else {
+                continue;
+            };
+            let asks = [
+                &dependent.dependencies,
+                &dependent.dev_dependencies,
+                &dependent.optional_dependencies,
+            ]
+            .into_iter()
+            .any(|deps| {
+                deps.get(name)
+                    .is_some_and(|spec| spec.starts_with("workspace:"))
+            });
+            let key = format!("{dependent_name}/{name}");
+            if asks && !taken.contains(&key) {
+                package_entries.push((key, ident.clone()));
+            }
+        }
     }
     package_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
