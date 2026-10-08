@@ -2106,3 +2106,51 @@ fn test_write_lists_workspace_members_without_link_packages() {
     let a_deps = &reparsed.importers["packages/a"];
     assert!(a_deps.iter().any(|dep| dep.name == "b"), "{a_deps:?}");
 }
+
+/// bun leaves out a workspace member whose name a resolved package
+/// already takes; a second key would replace that package on reparse.
+#[test]
+fn test_write_skips_workspace_members_named_like_a_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("packages/is-number")).unwrap();
+    std::fs::write(
+        tmp.path().join("packages/is-number/package.json"),
+        r#"{"name":"is-number","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        "is-number@7.0.0".to_string(),
+        LockedPackage {
+            name: "is-number".to_string(),
+            version: "7.0.0".to_string(),
+            dep_path: "is-number@7.0.0".to_string(),
+            ..Default::default()
+        },
+    );
+    graph.importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "is-number".to_string(),
+            dep_path: "is-number@7.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("^7.0.0".to_string()),
+        }],
+    );
+    graph
+        .importers
+        .insert("packages/is-number".to_string(), Vec::new());
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        dependencies: [("is-number".to_string(), "^7.0.0".to_string())].into(),
+        ..Default::default()
+    };
+    let path = tmp.path().join("bun.lock");
+    write(&path, &graph, &manifest).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(written.matches(r#""is-number": ["#).count(), 1, "{written}");
+    let reparsed = parse(&path).unwrap();
+    let root_dep = &reparsed.importers["."][0];
+    assert_eq!(root_dep.dep_path, "is-number@7.0.0", "{written}");
+}

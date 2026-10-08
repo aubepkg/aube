@@ -489,11 +489,13 @@ pub fn write(
     // nothing depends on, or whose dependents reach it by version. bun
     // still lists every member; without the entry the reader can't wire
     // workspace deps, and installs from the lockfile skip those links.
+    // Like bun, leave out a member whose name a package already takes.
+    let taken: BTreeSet<String> = package_entries.iter().map(|(key, _)| key.clone()).collect();
     for (importer_path, pj) in &workspace_manifests {
         let Some(name) = pj.name.as_deref() else {
             continue;
         };
-        if !emitted_workspace_keys.insert(name.to_string()) {
+        if taken.contains(name) || !emitted_workspace_keys.insert(name.to_string()) {
             continue;
         }
         package_entries.push((
