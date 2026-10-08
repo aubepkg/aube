@@ -77,7 +77,7 @@ toml_edit = "0.25"
 rkyv = "0.8"
 
 # CLI
-usage-rs = { version = "6", features = ["diagnostics", "completions", "validation"] }
+usage-rs = { version = "7", features = ["diagnostics", "completions", "validation"] }
 
 # Enum derives (Display/FromStr/etc.)
 strum = { version = "0.28", features = ["derive"] }
