@@ -27,6 +27,15 @@ local linters = new Mapping<String, Step> {
             new FileSelector { types = List("sh", "bash") },
         )
     }
+    // lints GitHub Actions workflows (jdx/jactionlint, a maintained actionlint fork)
+    ["jactionlint"] {
+        glob = List(".github/workflows/*.yml", ".github/workflows/*.yaml")
+        batch = true
+        check = new CommandSpec {
+            command = "jactionlint {{files}}"
+            effect = "read"
+        }
+    }
     ["pkl"] {
         glob = "*.pkl"
         check = new CommandSpec {
