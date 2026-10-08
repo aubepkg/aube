@@ -89,7 +89,9 @@ teardown() {
 	assert_dir_exists node_modules/is-odd
 }
 
-@test "aube install keeps file: packages in bun.lock on re-resolve" {
+# A project with file: directory and tarball deps, and the bun.lock
+# bun 1.4 writes for it.
+_bun_file_packages_project() {
 	mkdir -p vendor/x vendor/y vendor/t/package
 	echo '{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y"}}' >vendor/x/package.json
 	echo '{"name":"y","version":"0.1.0"}' >vendor/y/package.json
@@ -118,6 +120,10 @@ teardown() {
   }
 }
 EOF
+}
+
+@test "aube install keeps file: packages in bun.lock on re-resolve" {
+	_bun_file_packages_project
 
 	run aube install --no-frozen-lockfile
 	assert_success
@@ -134,6 +140,17 @@ EOF
 	assert_success
 	assert_file_exists node_modules/x/package.json
 	assert_file_exists node_modules/t/package.json
+}
+
+@test "bun accepts the bun.lock aube rewrites for file: packages" {
+	command -v bun >/dev/null || skip "bun is not installed"
+	_bun_file_packages_project
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	rm -rf node_modules
+	run bun install --frozen-lockfile
+	assert_success
 }
 
 @test "aube install preserves pnpm-lock.yaml format on re-resolve (does not create aube-lock.yaml)" {

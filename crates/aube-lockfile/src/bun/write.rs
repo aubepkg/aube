@@ -240,7 +240,7 @@ pub fn write(
                 .declared_dependencies
                 .get(dep_name)
                 .cloned()
-                .or_else(|| local_child_spec(pkg, canonical.get(&key).copied()?))
+                .or_else(|| local_child_spec(project_dir, pkg, canonical.get(&key).copied()?))
                 .unwrap_or_else(|| {
                     crate::npm::dep_value_as_version(dep_name, dep_value).to_string()
                 });
@@ -370,7 +370,11 @@ pub fn write(
             ]),
             Some(LocalSource::Tarball(tarball)) => {
                 let tarball = bun_local_path(tarball);
-                let prefix = if tarball.starts_with("..") { "" } else { "./" };
+                let prefix = if tarball.starts_with("..") || Path::new(&tarball).is_absolute() {
+                    ""
+                } else {
+                    "./"
+                };
                 Value::Array(vec![
                     Value::String(format!("{ident_name}@{prefix}{tarball}")),
                     Value::Object(meta),
@@ -584,6 +588,43 @@ pub fn write(
     Ok(())
 }
 
+/// A local path in the form bun writes it: normalized, with forward
+/// slashes. A relative path is root-relative and has no leading `./`; an
+/// absolute one stays absolute.
+fn bun_local_path(path: &Path) -> String {
+    aube_util::path::normalize_lexical(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The `file:` spec a local package declares for a local child, as bun
+/// writes it: relative to the parent's directory, or absolute when the
+/// child's path is. A fresh resolve keeps no declared specs for local
+/// packages, only the child's dep_path. Both paths are anchored at
+/// `project_dir`, so a parent outside the project still gets a path that
+/// leads to the child.
+fn local_child_spec(
+    project_dir: &Path,
+    parent: &LockedPackage,
+    child: &LockedPackage,
+) -> Option<String> {
+    let Some(LocalSource::Directory(child_path) | LocalSource::Tarball(child_path)) =
+        &child.local_source
+    else {
+        return None;
+    };
+    let relative = match &parent.local_source {
+        Some(LocalSource::Directory(parent_dir)) if !child_path.is_absolute() => {
+            let anchored = |p: &Path| aube_util::path::normalize_lexical(&project_dir.join(p));
+            pathdiff::diff_paths(anchored(child_path), anchored(parent_dir))
+                .map(|relative| bun_local_path(&relative))
+                .unwrap_or_else(|| bun_local_path(child_path))
+        }
+        _ => bun_local_path(child_path),
+    };
+    Some(format!("file:{relative}"))
+}
+
 /// Hand-written JSONC emitter matching bun 1.2's `bun.lock` style.
 ///
 /// bun's output has an idiosyncratic shape — nested object fields use
@@ -603,55 +644,6 @@ pub fn write(
 ///
 /// `lockfile_version` and `config_version` are echoed back into the
 /// output as bun itself does — hardcoding would silently downgrade them.
-/// A root-relative local path in the form bun writes it: normalized,
-/// with forward slashes and no leading `./`.
-fn bun_local_path(path: &Path) -> String {
-    aube_util::path::normalize_lexical(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-/// The `file:` spec a local package declares for a local child, as bun
-/// writes it: relative to the parent's directory. A fresh resolve keeps
-/// no declared specs for local packages, only the child's dep_path.
-fn local_child_spec(parent: &LockedPackage, child: &LockedPackage) -> Option<String> {
-    let Some(LocalSource::Directory(child_path) | LocalSource::Tarball(child_path)) =
-        &child.local_source
-    else {
-        return None;
-    };
-    let child_path = aube_util::path::normalize_lexical(child_path);
-    let relative = match &parent.local_source {
-        Some(LocalSource::Directory(parent_dir)) => {
-            let parent_dir = aube_util::path::normalize_lexical(parent_dir);
-            let parent_parts: Vec<_> = parent_dir.components().collect();
-            let child_parts: Vec<_> = child_path.components().collect();
-            let common = parent_parts
-                .iter()
-                .zip(&child_parts)
-                .take_while(|(a, b)| a == b)
-                .count();
-            // A `..` left in the parent's own path can't be climbed out of.
-            if parent_parts[common..]
-                .iter()
-                .any(|part| matches!(part, std::path::Component::ParentDir))
-            {
-                bun_local_path(&child_path)
-            } else {
-                let mut parts: Vec<String> = vec!["..".to_string(); parent_parts.len() - common];
-                parts.extend(
-                    child_parts[common..]
-                        .iter()
-                        .map(|part| part.as_os_str().to_string_lossy().into_owned()),
-                );
-                parts.join("/")
-            }
-        }
-        _ => bun_local_path(&child_path),
-    };
-    Some(format!("file:{relative}"))
-}
-
 fn format_bun_lockfile(
     workspaces: &[(String, Vec<(String, serde_json::Value)>)],
     package_entries: &[(String, serde_json::Value)],

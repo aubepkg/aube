@@ -1862,3 +1862,78 @@ fn test_write_file_directory_and_tarball_packages() {
     assert!(local_sources.contains(&LocalSource::Directory(PathBuf::from("vendor/y"))));
     assert!(local_sources.contains(&LocalSource::Tarball(PathBuf::from("./vendor/t.tgz"))));
 }
+
+/// bun keeps an absolute `file:` tarball absolute, and writes a local
+/// child's spec relative to its parent even when the parent sits outside
+/// the project.
+#[test]
+fn test_write_file_packages_with_absolute_and_outside_paths() {
+    let project = tempfile::tempdir().unwrap();
+    let archive = project.path().join("elsewhere").join("t.tgz");
+    let tarball = LocalSource::Tarball(archive.clone());
+    let parent = LocalSource::Directory(PathBuf::from("../x"));
+    let child = LocalSource::Directory(PathBuf::from("vendor/y"));
+    let (t_path, x_path, y_path) = (
+        tarball.dep_path("t"),
+        parent.dep_path("x"),
+        child.dep_path("y"),
+    );
+    let mut graph = LockfileGraph::default();
+    for (name, dep_path, local, deps) in [
+        ("t", &t_path, tarball, BTreeMap::new()),
+        (
+            "x",
+            &x_path,
+            parent,
+            BTreeMap::from([(
+                "y".to_string(),
+                y_path.strip_prefix("y@").unwrap().to_string(),
+            )]),
+        ),
+        ("y", &y_path, child, BTreeMap::new()),
+    ] {
+        graph.packages.insert(
+            dep_path.clone(),
+            LockedPackage {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                dep_path: dep_path.clone(),
+                local_source: Some(local),
+                dependencies: deps,
+                ..Default::default()
+            },
+        );
+    }
+    graph.importers.insert(
+        ".".to_string(),
+        [("t", &t_path), ("x", &x_path)]
+            .into_iter()
+            .map(|(name, dep_path)| DirectDep {
+                name: name.to_string(),
+                dep_path: dep_path.clone(),
+                dep_type: DepType::Production,
+                specifier: None,
+            })
+            .collect(),
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        ..Default::default()
+    };
+    let path = project.path().join("app").join("bun.lock");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write(&path, &graph, &manifest).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    let absolute = archive.to_string_lossy().replace('\\', "/");
+    assert!(
+        written.contains(&format!(r#""t": ["t@{absolute}", {{}}, ""]"#)),
+        "{written}"
+    );
+    assert!(
+        written.contains(
+            r#""x": ["x@file:../x", { "dependencies": { "y": "file:../app/vendor/y" } }]"#
+        ),
+        "{written}"
+    );
+}
