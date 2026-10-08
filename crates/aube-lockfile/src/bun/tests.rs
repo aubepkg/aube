@@ -1971,16 +1971,17 @@ fn test_parse_fills_local_versions_and_writes_bun_lock_back_unchanged() {
     for (path, manifest) in [
         (
             "package.json",
-            r#"{"name":"root","private":true,"workspaces":["packages/*"],"dependencies":{"x":"file:./vendor/x"}}"#,
+            r#"{"name":"root","private":true,"workspaces":["packages/*","lib"],"dependencies":{"x":"file:./vendor/x"}}"#,
         ),
         (
             "packages/a/package.json",
-            r#"{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}"#,
+            r#"{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*","lib":"workspace:*"}}"#,
         ),
         (
             "packages/b/package.json",
             r#"{"name":"b","version":"2.0.0"}"#,
         ),
+        ("lib/package.json", r#"{"name":"lib","version":"3.1.4"}"#),
         (
             "vendor/x/package.json",
             r#"{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y"}}"#,
@@ -2002,11 +2003,16 @@ fn test_parse_fills_local_versions_and_writes_bun_lock_back_unchanged() {
         "x": "file:./vendor/x",
       },
     },
+    "lib": {
+      "name": "lib",
+      "version": "3.1.4",
+    },
     "packages/a": {
       "name": "a",
       "version": "1.0.0",
       "dependencies": {
         "b": "workspace:*",
+        "lib": "workspace:*",
       },
     },
     "packages/b": {
@@ -2018,6 +2024,8 @@ fn test_parse_fills_local_versions_and_writes_bun_lock_back_unchanged() {
     "a": ["a@workspace:packages/a"],
 
     "b": ["b@workspace:packages/b"],
+
+    "lib": ["lib@workspace:lib"],
 
     "x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }],
 
@@ -2046,4 +2054,5 @@ fn test_parse_fills_local_versions_and_writes_bun_lock_back_unchanged() {
     assert_eq!(version_of("x"), Some("1.2.3"));
     assert_eq!(version_of("y"), Some("0.1.0"));
     assert_eq!(version_of("b"), Some("2.0.0"));
+    assert_eq!(version_of("lib"), Some("3.1.4"));
 }

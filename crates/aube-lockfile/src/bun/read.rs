@@ -93,7 +93,15 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             entry.integrity.as_deref(),
         )?;
         let local_source = local_source
-            .map(|local| rebase_workspace_scoped_local_source(key, local, &workspace_scopes));
+            .map(|local| rebase_workspace_scoped_local_source(key, local, &workspace_scopes))
+            // A member path without a `/` (`workspace:lib`) reads as `.`;
+            // take it from the spec when bun lists it as a workspace.
+            .map(|local| match version.strip_prefix("workspace:") {
+                Some(ws_path) if !ws_path.is_empty() && raw.workspaces.contains_key(ws_path) => {
+                    crate::LocalSource::Link(ws_path.into())
+                }
+                _ => local,
+            });
         key_info.insert(key.clone(), (name.clone(), version.clone()));
 
         let dep_path = format!("{name}@{version}");
