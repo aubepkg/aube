@@ -1923,8 +1923,20 @@ fn fresh_workspace_dependencies_are_written_as_links() {
         }],
     );
     importers.insert("packages/shared".to_string(), Vec::new());
+    let mut packages = BTreeMap::new();
+    packages.insert(
+        "consumer@1.0.0".to_string(),
+        LockedPackage {
+            name: "consumer".to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: "consumer@1.0.0".to_string(),
+            dependencies: BTreeMap::from([("@x/shared".to_string(), "1.2.3".to_string())]),
+            ..Default::default()
+        },
+    );
     let graph = LockfileGraph {
         importers,
+        packages,
         ..Default::default()
     };
     let manifest = PackageJson::default();
@@ -1936,6 +1948,63 @@ fn fresh_workspace_dependencies_are_written_as_links() {
         written.contains("version: link:../shared"),
         "workspace dependency must be a link, got:\n{written}"
     );
+    assert!(
+        written.contains("'@x/shared': link:packages/shared"),
+        "snapshot edge must be a root-relative link, got:\n{written}"
+    );
+
+    let mut excluded = graph.clone();
+    excluded.settings.exclude_links_from_lockfile = true;
+    write_with_project_root(&lockfile_path, dir.path(), &excluded, &manifest).unwrap();
+    let written = std::fs::read_to_string(&lockfile_path).unwrap();
+    assert!(
+        !written.contains("version: link:../shared"),
+        "excludeLinksFromLockfile must drop workspace links, got:\n{written}"
+    );
+}
+
+#[test]
+fn workspace_links_cover_versionless_members_and_the_root() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        r#"{"name":"@x/root","version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let app_dir = dir.path().join("packages/app");
+    let bare_dir = dir.path().join("packages/bare");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    std::fs::create_dir_all(&bare_dir).unwrap();
+    std::fs::write(app_dir.join("package.json"), r#"{"name":"@x/app"}"#).unwrap();
+    std::fs::write(bare_dir.join("package.json"), r#"{"name":"@x/bare"}"#).unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+
+    let dep = |name: &str, dep_path: &str| DirectDep {
+        name: name.to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some("workspace:*".to_string()),
+    };
+    let mut importers = BTreeMap::new();
+    importers.insert(".".to_string(), Vec::new());
+    importers.insert(
+        "packages/app".to_string(),
+        vec![
+            dep("@x/root", "@x/root@2.0.0"),
+            dep("@x/bare", "@x/bare@0.0.0"),
+        ],
+    );
+    importers.insert("packages/bare".to_string(), Vec::new());
+    let graph = LockfileGraph {
+        importers,
+        ..Default::default()
+    };
+
+    write_with_project_root(&lockfile_path, dir.path(), &graph, &PackageJson::default()).unwrap();
+
+    let written = std::fs::read_to_string(&lockfile_path).unwrap();
+    assert!(written.contains("version: link:../.."), "got:\n{written}");
+    assert!(written.contains("version: link:../bare"), "got:\n{written}");
 }
 
 #[test]

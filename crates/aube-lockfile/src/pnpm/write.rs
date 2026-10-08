@@ -268,16 +268,19 @@ pub fn write_with_project_root(
     // A fresh resolve wires a `workspace:` dependency to the member's
     // `name@version` with no package entry. pnpm records that edge as
     // `link:<path>`, and refuses a lockfile that names a version it has no
-    // package for. Members are the non-root importers, so their names and
-    // versions come from their manifests.
+    // package for. Members are the importers, so their names and versions
+    // come from their manifests; a member without a version is keyed `0.0.0`,
+    // as the resolver keys it.
     let workspace_links: BTreeMap<String, &str> = graph
         .importers
         .keys()
-        .filter(|importer| importer.as_str() != ".")
         .filter_map(|importer| {
             let member =
                 PackageJson::from_path(&project_root.join(importer).join("package.json")).ok()?;
-            let dep_path = version_to_dep_path(member.name.as_deref()?, member.version.as_deref()?);
+            let dep_path = version_to_dep_path(
+                member.name.as_deref()?,
+                member.version.as_deref().unwrap_or("0.0.0"),
+            );
             Some((dep_path, importer.as_str()))
         })
         .collect();
@@ -302,6 +305,12 @@ pub fn write_with_project_root(
                         .and_then(|p| p.local_source.as_ref()),
                     Some(LocalSource::Link(_))
                 )
+            {
+                continue;
+            }
+            if exclude_links
+                && !graph.packages.contains_key(&dep.dep_path)
+                && workspace_links.contains_key(&dep.dep_path)
             {
                 continue;
             }
