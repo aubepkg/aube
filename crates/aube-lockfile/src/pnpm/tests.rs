@@ -1898,6 +1898,47 @@ fn writer_preserves_workspace_importer_specifiers() {
 }
 
 #[test]
+fn fresh_workspace_dependencies_are_written_as_links() {
+    let dir = tempfile::tempdir().unwrap();
+    for (member, version) in [("app", "1.0.0"), ("shared", "1.2.3")] {
+        let member_dir = dir.path().join("packages").join(member);
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(
+            member_dir.join("package.json"),
+            format!(r#"{{"name":"@x/{member}","version":"{version}"}}"#),
+        )
+        .unwrap();
+    }
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+
+    let mut importers = BTreeMap::new();
+    importers.insert(".".to_string(), Vec::new());
+    importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "@x/shared".to_string(),
+            dep_path: "@x/shared@1.2.3".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("workspace:*".to_string()),
+        }],
+    );
+    importers.insert("packages/shared".to_string(), Vec::new());
+    let graph = LockfileGraph {
+        importers,
+        ..Default::default()
+    };
+    let manifest = PackageJson::default();
+
+    write_with_project_root(&lockfile_path, dir.path(), &graph, &manifest).unwrap();
+
+    let written = std::fs::read_to_string(&lockfile_path).unwrap();
+    assert!(
+        written.contains("version: link:../shared"),
+        "workspace dependency must be a link, got:\n{written}"
+    );
+}
+
+#[test]
 fn overrides_round_trip_through_pnpm_lock_yaml() {
     let dir = tempfile::tempdir().unwrap();
     let lockfile_path = dir.path().join("pnpm-lock.yaml");

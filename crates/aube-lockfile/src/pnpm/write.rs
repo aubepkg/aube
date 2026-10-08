@@ -265,6 +265,22 @@ pub fn write_with_project_root(
         pkg.map(|pkg| with_patch_hash(&rewritten, patch_hash_for(pkg)))
             .unwrap_or(rewritten)
     };
+    // A fresh resolve wires a `workspace:` dependency to the member's
+    // `name@version` with no package entry. pnpm records that edge as
+    // `link:<path>`, and refuses a lockfile that names a version it has no
+    // package for. Members are the non-root importers, so their names and
+    // versions come from their manifests.
+    let workspace_links: BTreeMap<String, &str> = graph
+        .importers
+        .keys()
+        .filter(|importer| importer.as_str() != ".")
+        .filter_map(|importer| {
+            let member =
+                PackageJson::from_path(&project_root.join(importer).join("package.json")).ok()?;
+            let dep_path = version_to_dep_path(member.name.as_deref()?, member.version.as_deref()?);
+            Some((dep_path, importer.as_str()))
+        })
+        .collect();
     let mut importers = BTreeMap::new();
     let exclude_links = graph.settings.exclude_links_from_lockfile;
     for (importer_path, deps) in &graph.importers {
@@ -333,6 +349,13 @@ pub fn write_with_project_root(
                     }
                     _ => local.specifier(),
                 }
+            } else if !graph.packages.contains_key(&dep.dep_path)
+                && let Some(member) = workspace_links.get(&dep.dep_path)
+            {
+                format!(
+                    "link:{}",
+                    relative_to_importer(Path::new(member), importer_path, &project_root)
+                )
             } else if native_pnpm_aliases
                 && let Some(pkg) = graph.packages.get(&dep.dep_path)
                 && let Some(real_name) = pkg.alias_of.as_deref()
@@ -780,6 +803,10 @@ pub fn write_with_project_root(
                     && let Some(ref local) = target.local_source
                 {
                     local.specifier()
+                } else if target.is_none()
+                    && let Some(member) = workspace_links.get(&dp)
+                {
+                    format!("link:{member}")
                 } else if native_pnpm_aliases
                     && let Some(target) = target
                     && let Some(real_name) = target.alias_of.as_deref()
