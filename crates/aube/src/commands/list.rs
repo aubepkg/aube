@@ -297,6 +297,11 @@ pub async fn run(
         &super::resolve_virtual_store_dir_for_cwd(&cwd),
         &cwd,
     );
+    let local_dirs = if args.long && format == ListFormat::Default {
+        local_dep_dirs(&cwd, &graph)
+    } else {
+        BTreeMap::new()
+    };
 
     if let Some(selected) = selected {
         return run_filtered(
@@ -308,6 +313,7 @@ pub async fn run(
             &selected,
             vstore_max_len,
             &vstore_prefix,
+            &local_dirs,
         );
     }
 
@@ -320,12 +326,47 @@ pub async fn run(
             dep_filter,
             vstore_max_len,
             &vstore_prefix,
+            &local_dirs,
         )?,
         ListFormat::Json => render_json(&cwd, &manifest, &graph, &args, dep_filter)?,
         ListFormat::Parseable => render_parseable(&graph, &args, dep_filter)?,
     }
 
     Ok(())
+}
+
+/// Where `--long` points a direct dep that has no virtual-store entry,
+/// keyed by dep_path: a `link:` dep's target, or the member's own
+/// directory for a workspace dep with no package entry.
+fn local_dep_dirs(root: &std::path::Path, graph: &LockfileGraph) -> BTreeMap<String, String> {
+    let display = |dir: &std::path::Path| {
+        let dir = aube_util::path::normalize_lexical(&root.join(dir));
+        let display = super::format_virtual_store_display_prefix(&dir, root);
+        display.trim_end_matches('/').to_string()
+    };
+    let members: BTreeMap<String, String> = graph
+        .importers
+        .keys()
+        .filter_map(|importer| {
+            let dir = root.join(importer);
+            let manifest = aube_manifest::PackageJson::from_path(&dir.join("package.json")).ok()?;
+            Some((manifest.name?, display(std::path::Path::new(importer))))
+        })
+        .collect();
+    let mut dirs = BTreeMap::new();
+    for dep in graph.importers.values().flatten() {
+        let dir = match graph.get_package(&dep.dep_path) {
+            Some(pkg) => match &pkg.local_source {
+                Some(aube_lockfile::LocalSource::Link(target)) => Some(display(target)),
+                _ => None,
+            },
+            None => members.get(&dep.name).cloned(),
+        };
+        if let Some(dir) = dir {
+            dirs.insert(dep.dep_path.clone(), dir);
+        }
+    }
+    dirs
 }
 
 use super::DepFilter;
@@ -340,6 +381,7 @@ fn run_filtered(
     selected: &[aube_workspace::selector::SelectedPackage],
     vstore_max_len: usize,
     vstore_prefix: &str,
+    local_dirs: &BTreeMap<String, String>,
 ) -> miette::Result<()> {
     let format = if args.json {
         ListFormat::Json
@@ -385,6 +427,7 @@ fn run_filtered(
                     &importer,
                     vstore_max_len,
                     vstore_prefix,
+                    local_dirs,
                 )?;
             }
         }
@@ -522,6 +565,7 @@ fn matches_pattern(pat: Option<&str>, name: &str) -> bool {
 }
 
 /// Default tree output, pnpm-style.
+#[allow(clippy::too_many_arguments)]
 fn render_default(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
@@ -530,6 +574,7 @@ fn render_default(
     filter: DepFilter,
     vstore_max_len: usize,
     vstore_prefix: &str,
+    local_dirs: &BTreeMap<String, String>,
 ) -> miette::Result<()> {
     render_default_for_importer(
         cwd,
@@ -540,6 +585,7 @@ fn render_default(
         ".",
         vstore_max_len,
         vstore_prefix,
+        local_dirs,
     )
 }
 
@@ -553,6 +599,7 @@ fn render_default_for_importer(
     importer: &str,
     vstore_max_len: usize,
     vstore_prefix: &str,
+    local_dirs: &BTreeMap<String, String>,
 ) -> miette::Result<()> {
     let project_name = manifest.name.as_deref().unwrap_or("(unnamed)");
     let project_version = manifest.version.as_deref().unwrap_or("");
@@ -584,6 +631,7 @@ fn render_default_for_importer(
             args,
             vstore_max_len,
             vstore_prefix,
+            local_dirs,
             sanitize_tree,
         )?;
     }
@@ -598,6 +646,7 @@ fn render_default_for_importer(
             args,
             vstore_max_len,
             vstore_prefix,
+            local_dirs,
             sanitize_tree,
         )?;
     }
@@ -612,6 +661,7 @@ fn render_default_for_importer(
             args,
             vstore_max_len,
             vstore_prefix,
+            local_dirs,
             sanitize_tree,
         )?;
     }
@@ -670,6 +720,7 @@ fn render_section(
     args: &ListArgs,
     vstore_max_len: usize,
     vstore_prefix: &str,
+    local_dirs: &BTreeMap<String, String>,
     sanitize_tree: bool,
 ) -> miette::Result<()> {
     let last_idx = roots.len().saturating_sub(1);
@@ -688,7 +739,13 @@ fn render_section(
         } else {
             std::borrow::Cow::Borrowed(version)
         };
-        let extra = if args.long {
+        let extra = if !args.long {
+            String::new()
+        } else if let Some(dir) = local_dirs.get(&dep.dep_path) {
+            // A `link:` or workspace dep points at its own directory, not
+            // at a virtual-store entry.
+            format!("  ({})", aube_util::terminal::sanitize_inline(dir))
+        } else {
             let filename = aube_lockfile::dep_path_filename::dep_path_to_filename(
                 &dep.dep_path,
                 vstore_max_len,
@@ -699,8 +756,6 @@ fn render_section(
                 std::borrow::Cow::Borrowed(filename.as_str())
             };
             format!("  ({vstore_prefix}{filename})")
-        } else {
-            String::new()
         };
         println!("{connector}{name} {version}{extra}");
 
