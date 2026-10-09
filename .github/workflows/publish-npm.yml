@@ -43,6 +43,7 @@ jobs:
       # configured as a Trusted Publisher on npmjs.com (org level
       # default covers new packages under the scope).
       id-token: write
+    timeout-minutes: 20
     steps:
       - name: Resolve tag
         id: tag

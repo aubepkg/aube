@@ -31,6 +31,10 @@ env:
   MBX_DISABLE: "1"
   DEBIAN_FRONTEND: noninteractive
 
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
   publish-ppa:
     # dput needs outbound FTP (port 21) to upload the source package to
@@ -154,6 +158,7 @@ jobs:
             jq
 
       - name: Resolve minimum supported Rust version
+        shell: bash
         run: |
           MSRV=$(cargo metadata --no-deps --format-version 1 |
             jq -er '

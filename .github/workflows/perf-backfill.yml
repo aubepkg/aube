@@ -191,6 +191,7 @@ jobs:
       - name: Verify the bundle carries only measurements
         env:
           EXPECTED_BENCH: release-graph
+        shell: bash
         run: |
           git bundle verify notes.bundle
 

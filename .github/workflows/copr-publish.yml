@@ -20,6 +20,10 @@ permissions: {}
 env:
   PACKAGE_NAME: aube
 
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
   publish-copr:
     runs-on: ubuntu-latest

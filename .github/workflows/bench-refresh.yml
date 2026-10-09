@@ -43,12 +43,14 @@ jobs:
       drift: ${{ steps.drift.outputs.drift }}
       workspace: ${{ steps.drift.outputs.workspace }}
       bench: ${{ steps.drift.outputs.bench }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Compare workspace vs bench version
         id: drift
+        shell: bash
         run: |
           WORKSPACE=$(cargo metadata --format-version=1 --no-deps \
             | jq -r '.packages[] | select(.name == "aube") | .version')
@@ -197,6 +199,7 @@ jobs:
       - name: Validate and stage refreshed benchmarks
         env:
           WORKSPACE: ${{ needs.check.outputs.workspace }}
+        shell: bash
         run: |
           cd "$RUNNER_TEMP/bench-refresh"
           if find . -type l -print -quit | grep -q .; then

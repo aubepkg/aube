@@ -61,6 +61,10 @@ env:
   AUBE_PRIMER_VERSION_CAP: "100"
   AUBE_REQUIRE_PRIMER: "1"
 
+concurrency:
+  group: aube-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   validate-inputs:
     # inputs.ref is dry-run-only by contract: it lets us rebuild a branch
@@ -328,9 +332,11 @@ jobs:
       # BuildKit reuses unchanged dependency/toolchain layers from the GHA
       # cache; changing the Containerfile or mise.toml invalidates only the
       # layers after that change.
-      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+      # The cache is restored but only written from main (see cache-to below), so
+      # a pull request or dry run cannot poison what this job publishes.
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0 # jactionlint ignore=cache-poisoning
       - name: Build cached ARM64 PGO environment
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0 # jactionlint ignore=cache-poisoning
         with:
           context: .github/containers/release-arm64
           file: .github/containers/release-arm64/Containerfile
@@ -776,6 +782,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

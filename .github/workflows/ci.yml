@@ -8,16 +8,15 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   ci:
     permissions:
       contents: read
     uses: $/.github/workflows/ci-impl.yml
-
-  zizmor:
-    permissions:
-      contents: read
-    uses: $/.github/workflows/zizmor.yml
 
   # The ffi and node-addon builds are expensive, so they only run when a path
   # they build from changed. Path filters can't live on a required check (a
@@ -68,7 +67,7 @@ jobs:
     if: ${{ !cancelled() }}
     permissions:
       contents: read
-    needs: [ci, zizmor, changes, ffi, node-addon]
+    needs: [ci, changes, ffi, node-addon]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

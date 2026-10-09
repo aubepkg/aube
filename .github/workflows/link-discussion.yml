@@ -3,6 +3,9 @@ name: link-discussion
 on:
   pull_request:
     types: [closed]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   link-discussion:
@@ -11,6 +14,7 @@ jobs:
     permissions:
       discussions: write
       pull-requests: read
+    timeout-minutes: 5
     steps:
       - uses: jdx/link-discussion-action@38e7537b4b00d6b04a08de54c2f38b3001c9cd8d # v0.1
         with:
