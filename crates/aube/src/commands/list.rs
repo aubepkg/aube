@@ -297,7 +297,11 @@ pub async fn run(
         &super::resolve_virtual_store_dir_for_cwd(&cwd),
         &cwd,
     );
-    let workspace_dirs = workspace_member_dirs(&cwd, &graph);
+    let local_dirs = if args.long && format == ListFormat::Default {
+        local_dep_dirs(&cwd, &graph)
+    } else {
+        BTreeMap::new()
+    };
 
     if let Some(selected) = selected {
         return run_filtered(
@@ -309,7 +313,7 @@ pub async fn run(
             &selected,
             vstore_max_len,
             &vstore_prefix,
-            &workspace_dirs,
+            &local_dirs,
         );
     }
 
@@ -322,7 +326,7 @@ pub async fn run(
             dep_filter,
             vstore_max_len,
             &vstore_prefix,
-            &workspace_dirs,
+            &local_dirs,
         )?,
         ListFormat::Json => render_json(&cwd, &manifest, &graph, &args, dep_filter)?,
         ListFormat::Parseable => render_parseable(&graph, &args, dep_filter)?,
@@ -331,22 +335,38 @@ pub async fn run(
     Ok(())
 }
 
-/// Where `--long` points a workspace dep, keyed by member name: the
-/// member's own directory, since it has no virtual-store entry.
-fn workspace_member_dirs(
-    root: &std::path::Path,
-    graph: &LockfileGraph,
-) -> BTreeMap<String, String> {
-    graph
+/// Where `--long` points a direct dep that has no virtual-store entry,
+/// keyed by dep_path: a `link:` dep's target, or the member's own
+/// directory for a workspace dep with no package entry.
+fn local_dep_dirs(root: &std::path::Path, graph: &LockfileGraph) -> BTreeMap<String, String> {
+    let display = |dir: &std::path::Path| {
+        let dir = aube_util::path::normalize_lexical(&root.join(dir));
+        let display = super::format_virtual_store_display_prefix(&dir, root);
+        display.trim_end_matches('/').to_string()
+    };
+    let members: BTreeMap<String, String> = graph
         .importers
         .keys()
         .filter_map(|importer| {
-            let dir = aube_util::path::normalize_lexical(&root.join(importer));
+            let dir = root.join(importer);
             let manifest = aube_manifest::PackageJson::from_path(&dir.join("package.json")).ok()?;
-            let display = super::format_virtual_store_display_prefix(&dir, root);
-            Some((manifest.name?, display.trim_end_matches('/').to_string()))
+            Some((manifest.name?, display(std::path::Path::new(importer))))
         })
-        .collect()
+        .collect();
+    let mut dirs = BTreeMap::new();
+    for dep in graph.importers.values().flatten() {
+        let dir = match graph.get_package(&dep.dep_path) {
+            Some(pkg) => match &pkg.local_source {
+                Some(aube_lockfile::LocalSource::Link(target)) => Some(display(target)),
+                _ => None,
+            },
+            None => members.get(&dep.name).cloned(),
+        };
+        if let Some(dir) = dir {
+            dirs.insert(dep.dep_path.clone(), dir);
+        }
+    }
+    dirs
 }
 
 use super::DepFilter;
@@ -361,7 +381,7 @@ fn run_filtered(
     selected: &[aube_workspace::selector::SelectedPackage],
     vstore_max_len: usize,
     vstore_prefix: &str,
-    workspace_dirs: &BTreeMap<String, String>,
+    local_dirs: &BTreeMap<String, String>,
 ) -> miette::Result<()> {
     let format = if args.json {
         ListFormat::Json
@@ -407,7 +427,7 @@ fn run_filtered(
                     &importer,
                     vstore_max_len,
                     vstore_prefix,
-                    workspace_dirs,
+                    local_dirs,
                 )?;
             }
         }
@@ -554,7 +574,7 @@ fn render_default(
     filter: DepFilter,
     vstore_max_len: usize,
     vstore_prefix: &str,
-    workspace_dirs: &BTreeMap<String, String>,
+    local_dirs: &BTreeMap<String, String>,
 ) -> miette::Result<()> {
     render_default_for_importer(
         cwd,
@@ -565,7 +585,7 @@ fn render_default(
         ".",
         vstore_max_len,
         vstore_prefix,
-        workspace_dirs,
+        local_dirs,
     )
 }
 
@@ -579,7 +599,7 @@ fn render_default_for_importer(
     importer: &str,
     vstore_max_len: usize,
     vstore_prefix: &str,
-    workspace_dirs: &BTreeMap<String, String>,
+    local_dirs: &BTreeMap<String, String>,
 ) -> miette::Result<()> {
     let project_name = manifest.name.as_deref().unwrap_or("(unnamed)");
     let project_version = manifest.version.as_deref().unwrap_or("");
@@ -611,7 +631,7 @@ fn render_default_for_importer(
             args,
             vstore_max_len,
             vstore_prefix,
-            workspace_dirs,
+            local_dirs,
             sanitize_tree,
         )?;
     }
@@ -626,7 +646,7 @@ fn render_default_for_importer(
             args,
             vstore_max_len,
             vstore_prefix,
-            workspace_dirs,
+            local_dirs,
             sanitize_tree,
         )?;
     }
@@ -641,7 +661,7 @@ fn render_default_for_importer(
             args,
             vstore_max_len,
             vstore_prefix,
-            workspace_dirs,
+            local_dirs,
             sanitize_tree,
         )?;
     }
@@ -700,7 +720,7 @@ fn render_section(
     args: &ListArgs,
     vstore_max_len: usize,
     vstore_prefix: &str,
-    workspace_dirs: &BTreeMap<String, String>,
+    local_dirs: &BTreeMap<String, String>,
     sanitize_tree: bool,
 ) -> miette::Result<()> {
     let last_idx = roots.len().saturating_sub(1);
@@ -721,12 +741,10 @@ fn render_section(
         };
         let extra = if !args.long {
             String::new()
-        } else if let Some(dir) = workspace_dirs.get(&dep.name).filter(|_| {
-            pkg.is_none_or(|p| matches!(p.local_source, Some(aube_lockfile::LocalSource::Link(_))))
-        }) {
-            // A workspace dep links to the member itself, not to a
-            // virtual-store entry.
-            format!("  ({dir})")
+        } else if let Some(dir) = local_dirs.get(&dep.dep_path) {
+            // A `link:` or workspace dep points at its own directory, not
+            // at a virtual-store entry.
+            format!("  ({})", aube_util::terminal::sanitize_inline(dir))
         } else {
             let filename = aube_lockfile::dep_path_filename::dep_path_to_filename(
                 &dep.dep_path,
