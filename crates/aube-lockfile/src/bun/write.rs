@@ -52,55 +52,6 @@ pub fn write(
         }
     }
 
-    // Build the hoist tree from every importer's direct deps (not just
-    // the root's), so transitive deps declared only by a non-root
-    // workspace still appear in the `packages` section. Skip
-    // workspace-link deps for the same reason as the canonical filter.
-    //
-    // Dedupe by package name so duplicate direct deps across
-    // workspaces don't confuse `build_hoist_tree` — its root-seeding
-    // loop silently drops any queue entry whose segs already exist in
-    // `placed`, which would mean the second workspace's transitive
-    // deps never get walked. `graph.importers` is a BTreeMap, so `.`
-    // iterates first and wins conflicts. When two workspaces declare
-    // the same dep at different versions we still collapse to a
-    // single top-level entry (the first-seen version); a proper fix
-    // would emit `<workspace>/<dep>` nested entries per-workspace,
-    // which is out of scope here.
-    let mut all_roots: Vec<DirectDep> = Vec::new();
-    let mut seen_names: BTreeSet<String> = BTreeSet::new();
-    for deps in graph.importers.values() {
-        for d in deps {
-            if matches!(
-                graph
-                    .packages
-                    .get(&d.dep_path)
-                    .and_then(|p| p.local_source.as_ref()),
-                Some(LocalSource::Link(_))
-            ) {
-                continue;
-            }
-            if !seen_names.insert(d.name.clone()) {
-                continue;
-            }
-            all_roots.push(d.clone());
-        }
-    }
-    // bun gives the top-level slot of a member the root asks for with
-    // `workspace:` to that member, nesting a registry package of the same
-    // name under whatever depends on it.
-    let reserved_roots: BTreeSet<String> = [
-        &manifest.dependencies,
-        &manifest.dev_dependencies,
-        &manifest.optional_dependencies,
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|(_, spec)| spec.starts_with("workspace:"))
-    .map(|(name, _)| name.clone())
-    .collect();
-    let tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None, &reserved_roots);
-
     // Non-root workspaces are read fresh from disk because the caller
     // doesn't thread them through — the root manifest is the only one
     // that might carry unsaved edits (from `aube add` / `remove`).
@@ -116,6 +67,86 @@ pub fn write(
         let pj_path = project_dir.join(importer_path).join("package.json");
         let pj = aube_manifest::PackageJson::from_path(&pj_path).unwrap_or_default();
         workspace_manifests.insert(importer_path.clone(), pj);
+    }
+
+    // Build the hoist tree from every importer's direct deps (not just
+    // the root's), so transitive deps declared only by a non-root
+    // workspace still appear in the `packages` section. Skip
+    // workspace-link deps for the same reason as the canonical filter.
+    //
+    // Dedupe by package name so duplicate direct deps across
+    // workspaces don't confuse `build_hoist_tree` — its root-seeding
+    // loop silently drops any queue entry whose segs already exist in
+    // `placed`, which would mean the second workspace's transitive
+    // deps never get walked. `graph.importers` is a BTreeMap, so `.`
+    // iterates first and wins conflicts. When two workspaces declare
+    // the same dep at different versions we still collapse to a
+    // single top-level entry (the first-seen version); a proper fix
+    // would emit `<workspace>/<dep>` nested entries per-workspace,
+    // which is out of scope here.
+    // bun gives the top-level slot of a member the root asks for with
+    // `workspace:` to that member, nesting a registry package of the same
+    // name under whatever depends on it.
+    let reserved_roots: BTreeSet<String> = [
+        &manifest.dependencies,
+        &manifest.dev_dependencies,
+        &manifest.optional_dependencies,
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|(_, spec)| spec.starts_with("workspace:"))
+    .map(|(name, _)| name.clone())
+    .collect();
+    // A member's own direct dep on a reserved name goes under the member
+    // (`app/is-number`), as bun writes it, unless a package or another
+    // member's path shares the member's name: the reader would hand the
+    // nested entry to them too.
+    let scope_of = |importer_path: &str| -> Option<&str> {
+        let name = workspace_manifests.get(importer_path)?.name.as_deref()?;
+        let shared = canonical.values().any(|pkg| pkg.name == name)
+            || (importer_path != name && workspace_manifests.contains_key(name));
+        (!shared).then_some(name)
+    };
+    let mut all_roots: Vec<DirectDep> = Vec::new();
+    let mut scoped_roots: Vec<(&str, DirectDep)> = Vec::new();
+    let mut seen_names: BTreeSet<String> = BTreeSet::new();
+    for (importer_path, deps) in &graph.importers {
+        for d in deps {
+            if matches!(
+                graph
+                    .packages
+                    .get(&d.dep_path)
+                    .and_then(|p| p.local_source.as_ref()),
+                Some(LocalSource::Link(_))
+            ) {
+                continue;
+            }
+            if importer_path != "."
+                && reserved_roots.contains(&d.name)
+                && let Some(scope) = scope_of(importer_path)
+            {
+                scoped_roots.push((scope, d.clone()));
+                continue;
+            }
+            if !seen_names.insert(d.name.clone()) {
+                continue;
+            }
+            all_roots.push(d.clone());
+        }
+    }
+    let mut tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None, &reserved_roots);
+    for (scope, dep) in scoped_roots {
+        let subtree = crate::npm::build_hoist_tree(
+            &canonical,
+            std::slice::from_ref(&dep),
+            None,
+            &BTreeSet::new(),
+        );
+        for (segs, key) in subtree {
+            let mut scoped = vec![scope.to_string()];
+            scoped.extend(segs);
+            tree.entry(scoped).or_insert(key);
+        }
     }
 
     // Build the `workspaces[path]` object for each importer.

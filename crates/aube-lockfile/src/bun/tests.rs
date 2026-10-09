@@ -2406,3 +2406,67 @@ fn test_write_keeps_the_root_workspace_dep_at_the_top_level() {
         "6.0.0"
     );
 }
+
+/// A member's own registry dep on a name the root reserves for a
+/// workspace member goes under that member, as bun writes it.
+#[test]
+fn test_write_nests_a_members_registry_dep_on_a_reserved_name() {
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        "is-number@6.0.0".to_string(),
+        LockedPackage {
+            name: "is-number".to_string(),
+            version: "6.0.0".to_string(),
+            dep_path: "is-number@6.0.0".to_string(),
+            ..Default::default()
+        },
+    );
+    graph.importers.insert(
+        ".".to_string(),
+        vec![is_number_dep("is-number@1.0.0", "workspace:*")],
+    );
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![is_number_dep("is-number@6.0.0", "^6.0.0")],
+    );
+    graph
+        .importers
+        .insert("packages/is-number".to_string(), Vec::new());
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[
+            (
+                "packages/is-number",
+                r#"{"name":"is-number","version":"1.0.0"}"#,
+            ),
+            (
+                "packages/app",
+                r#"{"name":"app","version":"1.0.0","dependencies":{"is-number":"^6.0.0"}}"#,
+            ),
+        ],
+        &[("is-number", "workspace:*")],
+    );
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(r#""is-number": ["is-number@workspace:packages/is-number"]"#),
+        "{written}"
+    );
+    assert!(
+        written.contains(r#""app/is-number": ["is-number@6.0.0""#),
+        "{written}"
+    );
+    let reparsed = parse(&path).unwrap();
+    assert_eq!(
+        reparsed.importers["packages/app"][0].dep_path,
+        "is-number@6.0.0"
+    );
+    let root_dep = &reparsed.importers["."][0];
+    assert!(
+        matches!(
+            reparsed.packages[&root_dep.dep_path].local_source,
+            Some(LocalSource::Link(_))
+        ),
+        "{root_dep:?}"
+    );
+}
