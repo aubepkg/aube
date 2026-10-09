@@ -2331,3 +2331,78 @@ fn test_write_does_not_nest_members_under_another_members_path() {
     let reparsed = parse(&path).unwrap();
     assert_eq!(reparsed.importers["a"][0].dep_path, "is-number@7.0.0");
 }
+
+/// bun gives the top-level slot of a member the root asks for with
+/// `workspace:` to that member, and nests a registry package of the same
+/// name under the package that depends on it.
+#[test]
+fn test_write_keeps_the_root_workspace_dep_at_the_top_level() {
+    let mut graph = LockfileGraph::default();
+    for (name, version, deps) in [
+        ("is-number", "6.0.0", vec![]),
+        ("is-odd", "3.0.1", vec![("is-number", "6.0.0")]),
+    ] {
+        graph.packages.insert(
+            format!("{name}@{version}"),
+            LockedPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dep_path: format!("{name}@{version}"),
+                dependencies: deps
+                    .into_iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+    graph.importers.insert(
+        ".".to_string(),
+        vec![
+            is_number_dep("is-number@1.0.0", "workspace:*"),
+            DirectDep {
+                name: "is-odd".to_string(),
+                dep_path: "is-odd@3.0.1".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("^3.0.1".to_string()),
+            },
+        ],
+    );
+    graph
+        .importers
+        .insert("packages/is-number".to_string(), Vec::new());
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[(
+            "packages/is-number",
+            r#"{"name":"is-number","version":"1.0.0"}"#,
+        )],
+        &[("is-number", "workspace:*"), ("is-odd", "^3.0.1")],
+    );
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(r#""is-number": ["is-number@workspace:packages/is-number"]"#),
+        "{written}"
+    );
+    assert!(
+        written.contains(r#""is-odd/is-number": ["is-number@6.0.0""#),
+        "{written}"
+    );
+    let reparsed = parse(&path).unwrap();
+    let root_dep = reparsed.importers["."]
+        .iter()
+        .find(|dep| dep.name == "is-number")
+        .unwrap();
+    assert!(
+        matches!(
+            reparsed.packages[&root_dep.dep_path].local_source,
+            Some(LocalSource::Link(_))
+        ),
+        "{root_dep:?}"
+    );
+    assert_eq!(
+        reparsed.packages["is-odd@3.0.1"].dependencies["is-number"],
+        "6.0.0"
+    );
+}

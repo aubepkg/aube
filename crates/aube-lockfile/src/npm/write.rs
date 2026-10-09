@@ -174,7 +174,12 @@ pub fn write(
     // with bun (which renders the same segment list as `foo/bar`).
     let root_tree_roots = non_link_roots(graph, &roots);
     let preferred_roots = preferred_root_placements(path, &canonical);
-    let tree = super::build_hoist_tree(&canonical, &root_tree_roots, Some(&preferred_roots));
+    let tree = super::build_hoist_tree(
+        &canonical,
+        &root_tree_roots,
+        Some(&preferred_roots),
+        &BTreeSet::new(),
+    );
     // For the npm writer, re-key the tree by install_path strings.
     let mut placed: BTreeMap<String, String> = tree
         .into_iter()
@@ -299,7 +304,8 @@ pub fn write(
         );
 
         let workspace_tree_roots = non_link_roots(graph, importer_roots);
-        let workspace_tree = super::build_hoist_tree(&canonical, &workspace_tree_roots, None);
+        let workspace_tree =
+            super::build_hoist_tree(&canonical, &workspace_tree_roots, None, &BTreeSet::new());
         // Skip subtrees whose top-level segment is already hoisted to
         // `node_modules/<name>` at the same canonical version: Node's
         // upward `node_modules` walk from `<importer>/...` resolves to

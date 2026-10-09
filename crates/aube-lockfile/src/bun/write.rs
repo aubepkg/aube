@@ -86,7 +86,20 @@ pub fn write(
             all_roots.push(d.clone());
         }
     }
-    let tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None);
+    // bun gives the top-level slot of a member the root asks for with
+    // `workspace:` to that member, nesting a registry package of the same
+    // name under whatever depends on it.
+    let reserved_roots: BTreeSet<String> = [
+        &manifest.dependencies,
+        &manifest.dev_dependencies,
+        &manifest.optional_dependencies,
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|(_, spec)| spec.starts_with("workspace:"))
+    .map(|(name, _)| name.clone())
+    .collect();
+    let tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None, &reserved_roots);
 
     // Non-root workspaces are read fresh from disk because the caller
     // doesn't thread them through — the root manifest is the only one
