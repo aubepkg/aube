@@ -509,7 +509,7 @@ pub fn write(
             }
             continue;
         }
-        for dependent in workspace_manifests.values() {
+        for (dependent_path, dependent) in &workspace_manifests {
             let Some(dependent_name) = dependent.name.as_deref() else {
                 continue;
             };
@@ -523,8 +523,14 @@ pub fn write(
                 deps.get(name)
                     .is_some_and(|spec| spec.starts_with("workspace:"))
             });
+            // The reader also looks up `<dependent>/<name>` from a package
+            // keyed `<dependent>` and from a member whose path is
+            // `<dependent>`; nesting there would hand them the member.
+            let shared = taken.contains(dependent_name)
+                || (dependent_path != dependent_name
+                    && workspace_manifests.contains_key(dependent_name));
             let key = format!("{dependent_name}/{name}");
-            if asks && !taken.contains(&key) {
+            if asks && !shared && !taken.contains(&key) {
                 package_entries.push((key, ident.clone()));
             }
         }

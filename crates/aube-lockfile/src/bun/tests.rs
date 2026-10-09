@@ -2177,3 +2177,157 @@ fn test_write_nests_workspace_members_named_like_a_package() {
         "{member_dep:?}"
     );
 }
+
+/// Writes `graph` for a workspace whose member manifests are `members`
+/// (path, package.json) and whose root declares `root_deps`.
+fn write_workspace(
+    graph: &LockfileGraph,
+    members: &[(&str, &str)],
+    root_deps: &[(&str, &str)],
+) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    for (dir, manifest) in members {
+        std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+        std::fs::write(tmp.path().join(dir).join("package.json"), manifest).unwrap();
+    }
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        dependencies: root_deps
+            .iter()
+            .map(|(name, spec)| (name.to_string(), spec.to_string()))
+            .collect(),
+        ..Default::default()
+    };
+    let path = tmp.path().join("bun.lock");
+    write(&path, graph, &manifest).unwrap();
+    (tmp, path)
+}
+
+fn is_number_dep(dep_path: &str, specifier: &str) -> DirectDep {
+    DirectDep {
+        name: "is-number".to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some(specifier.to_string()),
+    }
+}
+
+/// A package keyed like the dependent member would read the nested
+/// member as its own dependency, so the member is not nested there.
+#[test]
+fn test_write_does_not_nest_members_under_a_package_key() {
+    let mut graph = LockfileGraph::default();
+    for (name, version, deps) in [
+        ("is-number", "6.0.0", vec![]),
+        ("is-odd", "3.0.1", vec![("is-number", "6.0.0")]),
+    ] {
+        graph.packages.insert(
+            format!("{name}@{version}"),
+            LockedPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dep_path: format!("{name}@{version}"),
+                dependencies: deps
+                    .into_iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+    graph.importers.insert(
+        ".".to_string(),
+        vec![
+            is_number_dep("is-number@6.0.0", "^6.0.0"),
+            DirectDep {
+                name: "is-odd".to_string(),
+                dep_path: "is-odd@3.0.1".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("^3.0.1".to_string()),
+            },
+        ],
+    );
+    graph.importers.insert(
+        "packages/is-odd".to_string(),
+        vec![is_number_dep("is-number@1.0.0", "workspace:*")],
+    );
+    graph
+        .importers
+        .insert("packages/is-number".to_string(), Vec::new());
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[
+            (
+                "packages/is-number",
+                r#"{"name":"is-number","version":"1.0.0"}"#,
+            ),
+            (
+                "packages/is-odd",
+                r#"{"name":"is-odd","version":"1.0.0","dependencies":{"is-number":"workspace:*"}}"#,
+            ),
+        ],
+        &[("is-number", "^6.0.0"), ("is-odd", "^3.0.1")],
+    );
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(!written.contains(r#""is-odd/is-number""#), "{written}");
+    let reparsed = parse(&path).unwrap();
+    assert_eq!(
+        reparsed.packages["is-odd@3.0.1"].dependencies["is-number"],
+        "6.0.0"
+    );
+}
+
+/// A member whose path is the dependent's name would read the nested
+/// member through its path scope, so the member is not nested there.
+#[test]
+fn test_write_does_not_nest_members_under_another_members_path() {
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        "is-number@7.0.0".to_string(),
+        LockedPackage {
+            name: "is-number".to_string(),
+            version: "7.0.0".to_string(),
+            dep_path: "is-number@7.0.0".to_string(),
+            ..Default::default()
+        },
+    );
+    graph.importers.insert(
+        ".".to_string(),
+        vec![is_number_dep("is-number@7.0.0", "^7.0.0")],
+    );
+    graph.importers.insert(
+        "packages/a".to_string(),
+        vec![is_number_dep("is-number@1.0.0", "workspace:*")],
+    );
+    graph.importers.insert(
+        "a".to_string(),
+        vec![is_number_dep("is-number@7.0.0", "^7.0.0")],
+    );
+    graph
+        .importers
+        .insert("packages/is-number".to_string(), Vec::new());
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[
+            (
+                "packages/is-number",
+                r#"{"name":"is-number","version":"1.0.0"}"#,
+            ),
+            (
+                "packages/a",
+                r#"{"name":"a","version":"1.0.0","dependencies":{"is-number":"workspace:*"}}"#,
+            ),
+            (
+                "a",
+                r#"{"name":"c","version":"1.0.0","dependencies":{"is-number":"^7.0.0"}}"#,
+            ),
+        ],
+        &[("is-number", "^7.0.0")],
+    );
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(!written.contains(r#""a/is-number""#), "{written}");
+    let reparsed = parse(&path).unwrap();
+    assert_eq!(reparsed.importers["a"][0].dep_path, "is-number@7.0.0");
+}
