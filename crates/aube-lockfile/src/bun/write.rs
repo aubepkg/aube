@@ -142,8 +142,13 @@ pub fn write(
             None,
             &BTreeSet::new(),
         );
+        // Its own deps go below it (`app/is-odd/is-number`), as bun writes
+        // them, so they can't shadow the member's other direct deps.
         for (segs, key) in subtree {
             let mut scoped = vec![scope.to_string()];
+            if segs != [dep.name.as_str()] {
+                scoped.push(dep.name.clone());
+            }
             scoped.extend(segs);
             tree.entry(scoped).or_insert(key);
         }

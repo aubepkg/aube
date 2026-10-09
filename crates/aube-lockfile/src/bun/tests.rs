@@ -2470,3 +2470,76 @@ fn test_write_nests_a_members_registry_dep_on_a_reserved_name() {
         "{root_dep:?}"
     );
 }
+
+/// The deps of a member's nested registry package go below that package,
+/// so they don't shadow the member's own direct deps.
+#[test]
+fn test_write_nests_the_deps_of_a_members_nested_package_below_it() {
+    let mut graph = LockfileGraph::default();
+    for (name, version, deps) in [
+        ("is-number", "6.0.0", vec![]),
+        ("is-number", "7.0.0", vec![]),
+        ("is-odd", "3.0.1", vec![("is-number", "6.0.0")]),
+    ] {
+        graph.packages.insert(
+            format!("{name}@{version}"),
+            LockedPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dep_path: format!("{name}@{version}"),
+                dependencies: deps
+                    .into_iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+    let is_odd_dep = |dep_path: &str, specifier: &str| DirectDep {
+        name: "is-odd".to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some(specifier.to_string()),
+    };
+    graph.importers.insert(
+        ".".to_string(),
+        vec![is_odd_dep("is-odd@1.0.0", "workspace:*")],
+    );
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![
+            is_odd_dep("is-odd@3.0.1", "^3.0.1"),
+            is_number_dep("is-number@7.0.0", "^7.0.0"),
+        ],
+    );
+    graph
+        .importers
+        .insert("packages/is-odd".to_string(), Vec::new());
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[
+            ("packages/is-odd", r#"{"name":"is-odd","version":"1.0.0"}"#),
+            (
+                "packages/app",
+                r#"{"name":"app","version":"1.0.0","dependencies":{"is-odd":"^3.0.1","is-number":"^7.0.0"}}"#,
+            ),
+        ],
+        &[("is-odd", "workspace:*")],
+    );
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(r#""app/is-odd/is-number": ["is-number@6.0.0""#),
+        "{written}"
+    );
+    let reparsed = parse(&path).unwrap();
+    let app_number = reparsed.importers["packages/app"]
+        .iter()
+        .find(|dep| dep.name == "is-number")
+        .unwrap();
+    assert_eq!(app_number.dep_path, "is-number@7.0.0", "{written}");
+    assert_eq!(
+        reparsed.packages["is-odd@3.0.1"].dependencies["is-number"],
+        "6.0.0"
+    );
+}
