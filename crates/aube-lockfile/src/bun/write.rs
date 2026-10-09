@@ -146,7 +146,9 @@ pub fn write(
         // them, so they can't shadow the member's other direct deps.
         for (segs, key) in subtree {
             let mut scoped = vec![scope.to_string()];
-            if segs != [dep.name.as_str()] {
+            // Paths starting with the dep's name are the dep itself or
+            // already nested beneath it.
+            if segs.first() != Some(&dep.name) {
                 scoped.push(dep.name.clone());
             }
             scoped.extend(segs);

@@ -2543,3 +2543,61 @@ fn test_write_nests_the_deps_of_a_members_nested_package_below_it() {
         "6.0.0"
     );
 }
+
+/// A member's nested package that depends on another version of its own
+/// name keeps that version one level below it.
+#[test]
+fn test_write_keeps_a_nested_packages_same_name_dep_one_level_below() {
+    let mut graph = LockfileGraph::default();
+    for (version, deps) in [("1.0.0", vec![]), ("2.0.0", vec![("foo", "1.0.0")])] {
+        graph.packages.insert(
+            format!("foo@{version}"),
+            LockedPackage {
+                name: "foo".to_string(),
+                version: version.to_string(),
+                dep_path: format!("foo@{version}"),
+                dependencies: deps
+                    .into_iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+    let foo_dep = |dep_path: &str, specifier: &str| DirectDep {
+        name: "foo".to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some(specifier.to_string()),
+    };
+    graph
+        .importers
+        .insert(".".to_string(), vec![foo_dep("foo@0.1.0", "workspace:*")]);
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![foo_dep("foo@2.0.0", "^2.0.0")],
+    );
+    graph
+        .importers
+        .insert("packages/foo".to_string(), Vec::new());
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[
+            ("packages/foo", r#"{"name":"foo","version":"0.1.0"}"#),
+            (
+                "packages/app",
+                r#"{"name":"app","version":"1.0.0","dependencies":{"foo":"^2.0.0"}}"#,
+            ),
+        ],
+        &[("foo", "workspace:*")],
+    );
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(r#""app/foo/foo": ["foo@1.0.0""#),
+        "{written}"
+    );
+    let reparsed = parse(&path).unwrap();
+    assert_eq!(reparsed.importers["packages/app"][0].dep_path, "foo@2.0.0");
+    assert_eq!(reparsed.packages["foo@2.0.0"].dependencies["foo"], "1.0.0");
+}
