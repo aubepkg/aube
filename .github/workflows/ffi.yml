@@ -34,7 +34,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ffi-${{ github.event_name }}-${{ inputs.tag || github.event.release.tag_name || github.ref }}
+  group: ffi-caller-${{ github.event_name }}-${{ inputs.tag || github.event.release.tag_name || github.ref }}
   cancel-in-progress: false
 
 jobs:

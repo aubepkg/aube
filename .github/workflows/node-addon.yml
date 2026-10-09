@@ -13,7 +13,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.tag || github.event.release.tag_name || github.ref }}
+  group: node-addon-caller-${{ github.event_name }}-${{ inputs.tag || github.event.release.tag_name || github.ref }}
   cancel-in-progress: false
 
 jobs:
