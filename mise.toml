@@ -15,7 +15,7 @@ communique = { version = "latest", minimum_release_age = "0s" }
 cargo-msrv = "latest"
 tak = { version = "latest", minimum_release_age = "0s" }
 hk = { version = "latest", minimum_release_age = "0s" }
-jactionlint = "latest"
+jactionlint = "2.1.0"
 node = "24"
 pitchfork = { version = "latest", minimum_release_age = "0s" }
 pkl = "latest"
