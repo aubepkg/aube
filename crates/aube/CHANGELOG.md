@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1](https://github.com/aubepkg/aube/compare/v2.7.0...v2.7.1) - 2026-10-10
+
+### Fixed
+
+- *(install)* show a workspace dep's version in the install summary ([#1724](https://github.com/aubepkg/aube/pull/1724))
+- *(lockfile)* accept file: deps of npm workspace members when frozen ([#1714](https://github.com/aubepkg/aube/pull/1714))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/v2.6.1...v2.7.0) - 2026-10-07
 
 ### Added
