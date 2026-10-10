@@ -20,6 +20,15 @@ permissions: {}
 env:
   PACKAGE_NAME: aube
 
+concurrency:
+  # Every dispatch for a tag
+  # must finish, so queue them all instead of letting the newest pending run
+  # replace an older one. The key is the tag without inputs so a release and a
+  # manual dispatch for the same tag still run one at a time.
+  group: ${{ github.workflow }}-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   publish-copr:
     runs-on: ubuntu-latest

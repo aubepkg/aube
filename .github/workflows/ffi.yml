@@ -33,6 +33,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ffi-caller-${{ github.event_name }}-${{ inputs.tag || github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     if: ${{ github.event_name != 'release' && inputs.tag == '' }}

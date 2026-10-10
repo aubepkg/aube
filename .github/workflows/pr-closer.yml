@@ -17,5 +17,6 @@ jobs:
       pull-requests: write
       checks: read
       statuses: read
+    timeout-minutes: 5
     steps:
       - uses: jdx/pr-closer@cfa2025cb55ac202d3e329fc4cc412449de884e2 # v1.3.0

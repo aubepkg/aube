@@ -162,7 +162,6 @@ _final() {
 		cat <<JSON
 {
   "ci": {"result": "${6:-success}", "outputs": {}},
-  "zizmor": {"result": "success", "outputs": {}},
   "changes": {"result": "${5:-success}", "outputs": {"ffi": "$3", "node_addon": "$4"}},
   "ffi": {"result": "$1", "outputs": {}},
   "node-addon": {"result": "$2", "outputs": {}}

@@ -17,6 +17,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: docs-caller-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   docs:
     permissions:

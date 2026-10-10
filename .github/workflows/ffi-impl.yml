@@ -35,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       include: ${{ steps.targets.outputs.include }}
+    timeout-minutes: 5
+    permissions: {}
     steps:
       - id: targets
         shell: bash
@@ -67,6 +69,8 @@ jobs:
     timeout-minutes: 60
     env:
       MISE_EXEC_AUTO_INSTALL: "false"
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, ref: "${{ inputs.tag || github.ref }}" }
@@ -78,7 +82,7 @@ jobs:
           install_args: mr-boxington
           cache: false
           add_shims_to_path: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: github.event_name != 'release' && inputs.tag == '' && !inputs.draft_phase
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -145,9 +149,15 @@ jobs:
           path: ${{ runner.temp }}/ffi/*
           if-no-files-found: error
 
+  # This job inherits the caller's permissions on purpose: read-only for the CI
+  # smoke builds, and id-token plus attestations for a release (npm provenance and
+  # build attestations). Naming them here would make the CI callers, which grant
+  # only contents: read, invalid.
+  # jactionlint ignore=missing-permissions
   packages:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, ref: "${{ inputs.tag || github.ref }}" }
@@ -183,7 +193,9 @@ jobs:
           deno run --allow-env=AUBE_FFI_LIBRARY --allow-ffi --allow-read --allow-write crates/aube-ffi/poc/deno.ts
       - name: Smoke-test npm packages and declarations
         shell: bash
-        run: | # zizmor: ignore[adhoc-packages] installs only tarballs built by required matrix jobs
+        # installs only tarballs built by required matrix jobs
+        # jactionlint ignore=adhoc-packages
+        run: |
           mkdir npm-smoke
           cd npm-smoke
           npm init --yes >/dev/null
@@ -214,7 +226,9 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: | # zizmor: ignore[use-trusted-publishing] publishes each tarball with npm provenance via OIDC
+        # publishes each tarball with npm provenance via OIDC
+        # jactionlint ignore=use-trusted-publishing
+        run: |
           version=${RELEASE_TAG#v}; tag=latest; [[ "$version" == *-* ]] && tag=next
           publish_package() {
             local package=$1 name
@@ -243,6 +257,7 @@ jobs:
     # Uploads authenticate with AUBE_GH_TOKEN (the PAT release.yml
     # already uses for draft asset uploads), not github.token.
     permissions: {}
+    timeout-minutes: 60
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { name: aube-ffi-distribution, path: packages }

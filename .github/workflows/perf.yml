@@ -129,6 +129,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
+        shell: bash
         run: |
           sha=$(cat /tmp/tak-out/sha)
           git config user.name "github-actions[bot]"

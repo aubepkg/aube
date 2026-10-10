@@ -13,6 +13,13 @@ env:
   MBX_DISABLE: "1"
   CARGO_INCREMENTAL: "0"
 
+concurrency:
+  # No `queue: max` on purpose: a release-plz run acts on the SHA it checked
+  # out, so queued runs for older main SHAs would act on stale state. The
+  # default keeps one pending run and replaces it with the newest push.
+  group: workflow-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # On every push to main: run `release-plz release`. If the current
   # workspace version has no tag yet (because the release PR was just
@@ -33,6 +40,7 @@ jobs:
       id-token: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -177,6 +185,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    timeout-minutes: 60
     steps:
       - name: Publish GitHub release
         env:
@@ -195,6 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -263,6 +273,7 @@ jobs:
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -456,6 +467,7 @@ jobs:
 
       - name: Capture release version
         id: version
+        shell: bash
         run: |
           VERSION=$(cargo metadata --format-version=1 --no-deps \
             | jq -r '.packages[] | select(.name == "aube") | .version')
