@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.7.0...aube-lockfile-v2.7.1) - 2026-10-10
+
+### Fixed
+
+- *(install)* show a workspace dep's version in the install summary ([#1724](https://github.com/aubepkg/aube/pull/1724))
+- *(lockfile)* link the member a bun root asks for with workspace: ([#1723](https://github.com/aubepkg/aube/pull/1723))
+- *(lockfile)* keep bun workspace members in bun.lock on re-resolve ([#1721](https://github.com/aubepkg/aube/pull/1721))
+- *(lockfile)* write workspace dependencies as link: in pnpm-lock.yaml ([#1719](https://github.com/aubepkg/aube/pull/1719))
+- *(lockfile)* report real versions of bun.lock file: deps and members ([#1717](https://github.com/aubepkg/aube/pull/1717))
+- *(lockfile)* keep file: packages in bun.lock on re-resolve ([#1715](https://github.com/aubepkg/aube/pull/1715))
+- *(lockfile)* accept file: deps of npm workspace members when frozen ([#1714](https://github.com/aubepkg/aube/pull/1714))
+- *(lockfile)* keep npm workspace members in package-lock.json ([#1712](https://github.com/aubepkg/aube/pull/1712))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.6.1...aube-lockfile-v2.7.0) - 2026-10-07
 
 ### Fixed
