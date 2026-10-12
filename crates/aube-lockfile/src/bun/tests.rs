@@ -1707,6 +1707,18 @@ fn test_write_keeps_resolved_peers_out_of_dependencies() {
         written.contains(r#""dependencies": { "react": "^19.2.0", "scheduler": "^0.27.0" }"#),
         "declared dependency dropped:\n{written}"
     );
+
+    // A package whose declared set is unknown (read from pnpm-lock.yaml)
+    // keeps the entry, since it may be a real dependency.
+    let dom = graph.packages.get_mut("react-dom@19.2.0").unwrap();
+    dom.declared_dependencies.clear();
+    dom.declared_dependencies_known = false;
+    write(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(
+        written.contains(r#""dependencies": { "react": "19.2.0", "scheduler": "0.27.0" }"#),
+        "dependency with unknown declarations dropped:\n{written}"
+    );
 }
 
 /// A fresh resolve leaves `declared_dependencies` empty for local

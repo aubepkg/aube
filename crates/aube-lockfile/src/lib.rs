@@ -431,11 +431,21 @@ pub struct LockedPackage {
     /// fall back to the resolved pin otherwise (e.g. when the source
     /// lockfile was pnpm, whose `snapshots:` only carries pins).
     ///
-    /// Empty means "unknown" — writers should fall back to pins.
+    /// Writers fall back to pins for a name missing here; whether a
+    /// missing name is known not to be declared is
+    /// [`Self::declared_dependencies_known`].
     /// Covers production *and* optional dependencies in one map since
     /// a package can't declare the same name twice across those
     /// sections.
     pub declared_dependencies: BTreeMap<String, String>,
+    /// Whether [`Self::declared_dependencies`] holds the package's full
+    /// declared set, so a name missing from it is known not to be
+    /// declared. Set by the registry resolve and by the npm, yarn berry
+    /// and bun readers; false for pnpm / aube lockfiles (including the
+    /// hidden lockfile), for yarn classic (its reader skips
+    /// `optionalDependencies`), and for local packages created by a
+    /// fresh resolve.
+    pub declared_dependencies_known: bool,
     /// Package's `license` field, collapsed to the simple string
     /// form. Round-tripped so npm's lockfile keeps its per-entry
     /// `"license": "MIT"` line; pnpm / yarn / bun don't record
@@ -589,6 +599,7 @@ mod locked_package_tests {
             engines: BTreeMap::new(),
             bin: BTreeMap::new(),
             declared_dependencies: BTreeMap::new(),
+            declared_dependencies_known: false,
             license: None,
             funding_url: None,
             optional: false,

@@ -291,10 +291,11 @@ pub fn write(
             // wire it, but bun lists only the package's declared
             // dependencies here. Writing the peer's pin makes bun treat
             // it as a hard dependency and nest the old copy once the
-            // root's version moves. Only registry packages carry their
-            // declared dependencies after a fresh resolve, so a local
-            // package keeps every entry rather than lose a real one.
-            if pkg.local_source.is_none()
+            // root's version moves. Without the full declared set (a
+            // local package, or one read from pnpm-lock.yaml) the
+            // writer can't tell the two apart, so it keeps the entry
+            // rather than lose a real dependency.
+            if pkg.declared_dependencies_known
                 && pkg.peer_dependencies.contains_key(dep_name)
                 && !pkg.declared_dependencies.contains_key(dep_name)
             {
