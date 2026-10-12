@@ -797,6 +797,14 @@ async fn run_inner(
     // records flush to stdout before afterAllResolved emits its own.
     crate::pnpmfile::ReadPackageHostChain::drain_forwarders(read_package_forwarders).await;
     crate::pnpmfile::run_after_all_resolved_chain(&pnpmfile_paths, &cwd, &mut graph).await?;
+    // Same metadata overlay as `aube install`: carry forward what the
+    // fresh resolve can't recover from the existing lockfile (bun's
+    // `lockfileVersion`, `license`, per-entry extras). Updated packages
+    // have new versions, so their canonical keys don't match and they
+    // keep only fresh data.
+    if let Some(prior) = existing.as_ref() {
+        graph.overlay_metadata_from(prior);
+    }
 
     let mut catalog_updates: BTreeMap<super::CatalogSource, Vec<super::catalogs::CatalogUpdate>> =
         BTreeMap::new();

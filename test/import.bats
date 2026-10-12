@@ -382,6 +382,28 @@ EOF
 	assert_success
 }
 
+@test "aube install --lockfile-only keeps a bun 1.4 lockfileVersion 2" {
+	cp "$PROJECT_ROOT/fixtures/import-bun/package.json" .
+	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
+
+	run aube install --lockfile-only --no-frozen-lockfile
+	assert_success
+	run grep -F '"lockfileVersion": 2,' bun.lock
+	assert_success
+}
+
+@test "aube update keeps a bun 1.4 lockfileVersion 2" {
+	cp "$PROJECT_ROOT/fixtures/import-bun/package.json" .
+	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
+
+	run aube update kind-of
+	assert_success
+	run grep -F '"lockfileVersion": 2,' bun.lock
+	assert_success
+}
+
 @test "aube import from a v3 bun.lock writes scoped overrides as parent>child" {
 	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
 	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .

@@ -281,6 +281,13 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
     // ndjson stream.
     crate::pnpmfile::ReadPackageHostChain::drain_forwarders(read_package_forwarders).await;
     crate::pnpmfile::run_after_all_resolved_chain(&pnpmfile_paths, cwd, &mut graph).await?;
+    // Same metadata overlay as the main install path: carry forward
+    // what a fresh resolve can't recover from the lockfile on disk
+    // (bun's `lockfileVersion`, `license`, per-entry extras), so
+    // `--lockfile-only` doesn't churn fields a regular install keeps.
+    if let Ok((prior, _)) = parsed {
+        graph.overlay_metadata_from(prior);
+    }
     // Same tarball-URL population pass as the main fetch branch —
     // keeps `--lockfile-only` and regular installs byte-identical.
     // Reuses the resolver's `client` (already built above) to avoid
