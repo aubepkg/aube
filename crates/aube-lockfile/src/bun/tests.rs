@@ -1649,6 +1649,66 @@ fn test_roundtrip_peer_and_platform_metadata() {
     assert_eq!(foo2.libc, foo.libc);
 }
 
+/// The resolver links a resolved peer through the package's
+/// `dependencies`, but bun keeps peers out of that map. Writing the
+/// pin there makes bun treat the peer as a hard dependency: after a
+/// later `bun add react@<newer>`, bun nests the old react under
+/// react-dom. A dependency the package also declares stays.
+#[test]
+fn test_write_keeps_resolved_peers_out_of_dependencies() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+  "lockfileVersion": 1,
+  "workspaces": { "": { "dependencies": { "react": "19.2.0", "react-dom": "19.2.0" } } },
+  "packages": {
+    "react": ["react@19.2.0", "", {}, "SRI_R"],
+    "react-dom": ["react-dom@19.2.0", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.0" } }, "SRI_D"],
+    "scheduler": ["scheduler@0.27.0", "", {}, "SRI_S"]
+  }
+}"#
+    .replace("SRI_R", &fake_sri('r'))
+    .replace("SRI_D", &fake_sri('d'))
+    .replace("SRI_S", &fake_sri('s'));
+    std::fs::write(tmp.path(), &content).unwrap();
+    let mut graph = parse(tmp.path()).unwrap();
+    // What a re-resolve hands the writer: the peer resolved into
+    // `dependencies` with no declared range.
+    let dom = graph.packages.get_mut("react-dom@19.2.0").unwrap();
+    assert!(!dom.declared_dependencies.contains_key("react"));
+    dom.dependencies
+        .insert("react".to_string(), "19.2.0".to_string());
+
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        dependencies: [
+            ("react".to_string(), "19.2.0".to_string()),
+            ("react-dom".to_string(), "19.2.0".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(
+        written.contains(r#""react-dom": ["react-dom@19.2.0", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.0" } }"#),
+        "resolved peer written into dependencies:\n{written}"
+    );
+
+    // A package that declares the same name as a dependency and a
+    // peer keeps the dependency.
+    let dom = graph.packages.get_mut("react-dom@19.2.0").unwrap();
+    dom.declared_dependencies
+        .insert("react".to_string(), "^19.2.0".to_string());
+    write(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(
+        written.contains(r#""dependencies": { "react": "^19.2.0", "scheduler": "^0.27.0" }"#),
+        "declared dependency dropped:\n{written}"
+    );
+}
+
 #[test]
 fn test_parse_scalar_platform_metadata() {
     let tmp = tempfile::NamedTempFile::new().unwrap();

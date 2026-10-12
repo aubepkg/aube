@@ -287,6 +287,16 @@ pub fn write(
             if !canonical.contains_key(&key) {
                 continue;
             }
+            // A resolved peer sits in `dependencies` so the linker can
+            // wire it, but bun lists only the package's declared
+            // dependencies here. Writing the peer's pin makes bun treat
+            // it as a hard dependency and nest the old copy once the
+            // root's version moves.
+            if pkg.peer_dependencies.contains_key(dep_name)
+                && !pkg.declared_dependencies.contains_key(dep_name)
+            {
+                continue;
+            }
             let rendered = pkg
                 .declared_dependencies
                 .get(dep_name)
