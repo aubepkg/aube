@@ -1709,6 +1709,59 @@ fn test_write_keeps_resolved_peers_out_of_dependencies() {
     );
 }
 
+/// A fresh resolve leaves `declared_dependencies` empty for local
+/// (`file:`, git, tarball) packages, so the writer can't tell a resolved peer from a dependency
+/// the package also declares, and keeps the entry.
+#[test]
+fn test_write_keeps_local_package_dependency_that_is_also_a_peer() {
+    let local = LocalSource::Directory(PathBuf::from("vendor/x"));
+    let x_path = local.dep_path("x");
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        x_path.clone(),
+        LockedPackage {
+            name: "x".to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: x_path.clone(),
+            local_source: Some(local),
+            dependencies: BTreeMap::from([("react".to_string(), "19.2.0".to_string())]),
+            peer_dependencies: BTreeMap::from([("react".to_string(), "^19.2.0".to_string())]),
+            ..Default::default()
+        },
+    );
+    graph.packages.insert(
+        "react@19.2.0".to_string(),
+        LockedPackage {
+            name: "react".to_string(),
+            version: "19.2.0".to_string(),
+            dep_path: "react@19.2.0".to_string(),
+            integrity: Some(fake_sri('r')),
+            ..Default::default()
+        },
+    );
+    graph.importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "x".to_string(),
+            dep_path: x_path,
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        ..Default::default()
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("bun.lock");
+    write(&path, &graph, &manifest).unwrap();
+
+    assert_eq!(
+        written_packages(&path)["x"],
+        serde_json::json!(["x@file:vendor/x", { "dependencies": { "react": "19.2.0" }, "peerDependencies": { "react": "^19.2.0" } }])
+    );
+}
+
 #[test]
 fn test_parse_scalar_platform_metadata() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
