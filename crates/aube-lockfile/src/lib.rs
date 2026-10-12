@@ -438,13 +438,10 @@ pub struct LockedPackage {
     /// a package can't declare the same name twice across those
     /// sections.
     pub declared_dependencies: BTreeMap<String, String>,
-    /// Whether [`Self::declared_dependencies`] holds the package's full
-    /// declared set, so a name missing from it is known not to be
-    /// declared. Set by the registry resolve and by the npm, yarn berry
-    /// and bun readers; false for pnpm / aube lockfiles (including the
-    /// hidden lockfile), for yarn classic (its reader skips
-    /// `optionalDependencies`), and for local packages created by a
-    /// fresh resolve.
+    /// True only when the source recorded every `dependencies` and
+    /// `optionalDependencies` name in [`Self::declared_dependencies`],
+    /// so a name missing from it is known not to be declared. The
+    /// default false keeps writers conservative.
     pub declared_dependencies_known: bool,
     /// Package's `license` field, collapsed to the simple string
     /// form. Round-tripped so npm's lockfile keeps its per-entry
