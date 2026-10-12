@@ -267,7 +267,7 @@ fn render_entry(key: &str, value: &yaml_serde::Value, indent: usize) -> String {
                     yaml_serde::Value::Mapping(_) | yaml_serde::Value::Sequence(_)
                 ) {
                     // Nested mapping/sequence as a list item: defer
-                    // to serde_yaml for inner shape, then attach
+                    // to yaml_serde for inner shape, then attach
                     // the dash to the first emitted line and pad
                     // every continuation line so it stays inside
                     // the same item.
@@ -298,7 +298,7 @@ fn render_entry(key: &str, value: &yaml_serde::Value, indent: usize) -> String {
     }
 }
 
-/// Re-serialize a single scalar through serde_yaml so YAML
+/// Re-serialize a single scalar through yaml_serde so YAML
 /// quoting (escapes, leading-special-char handling) matches what
 /// the rest of the file already uses. Trailing newlines from the
 /// emitter are stripped — the caller owns its own line break.
@@ -308,13 +308,13 @@ fn render_scalar(value: &yaml_serde::Value) -> String {
 }
 
 /// Render a mapping key for emission, quoting only when the YAML
-/// 1.2 plain-scalar grammar requires it. Defers to serde_yaml's
+/// 1.2 plain-scalar grammar requires it. Defers to yaml_serde's
 /// emitter so the rules stay in lockstep with the rest of the
 /// file: identifiers like `b@2.0.0` and `is-positive@3.1.0`
 /// round-trip unquoted (the `@` is reserved only at the *start*
 /// of a scalar), while keys that lead with a reserved indicator
 /// or contain flow/quote/comment characters get the canonical
-/// quoted form serde_yaml would have produced.
+/// quoted form yaml_serde would have produced.
 fn scalar_key_str(key: &str) -> String {
     let raw = yaml_serde::to_string(&yaml_serde::Value::String(key.to_string()))
         .unwrap_or_else(|_| format!("{key}\n"));
