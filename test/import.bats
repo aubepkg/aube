@@ -387,9 +387,13 @@ EOF
 	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
 		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
 
+	cp bun.lock bun.lock.before
+
 	run aube install --lockfile-only --no-frozen-lockfile
 	assert_success
-	run grep -F '"lockfileVersion": 2,' bun.lock
+	# The version stamp and everything else above `packages` stay as bun
+	# wrote them.
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
 	assert_success
 }
 
@@ -398,9 +402,13 @@ EOF
 	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
 		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
 
+	cp bun.lock bun.lock.before
+
 	run aube update kind-of
 	assert_success
-	run grep -F '"lockfileVersion": 2,' bun.lock
+	# The version stamp and everything else above `packages` stay as bun
+	# wrote them.
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
 	assert_success
 }
 

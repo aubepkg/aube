@@ -202,11 +202,17 @@ pub async fn run(
             (graph, true)
         }
         None => {
-            let graph = resolver
+            let mut graph = resolver
                 .resolve(&manifest, existing.as_ref())
                 .await
                 .map_err(miette::Report::new)
                 .wrap_err("failed to resolve dependencies")?;
+            // Carry forward what a fresh resolve can't recover from the lockfile
+            // on disk (bun's version stamp, licenses, per-entry extras), the same
+            // overlay the main install path does.
+            if let Some(prior) = existing.as_ref() {
+                graph.overlay_metadata_from(prior);
+            }
             eprintln!("Resolved {} packages", graph.packages.len());
             (graph, false)
         }
