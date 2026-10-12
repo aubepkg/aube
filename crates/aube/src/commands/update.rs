@@ -246,14 +246,14 @@ async fn run_inner(
     // — the indirect's snapshot lives in the shared lockfile, not in
     // each project's directory, and without the fallback the
     // indirect-arg validation below would reject it.
-    let existing = crate::commands::parse_lockfile(&cwd, &manifest)
-        .ok()
-        .or_else(|| {
-            super::find_workspace_root(&cwd)
-                .ok()
-                .filter(|ws| ws.as_path() != cwd.as_path())
-                .and_then(|ws| crate::commands::parse_lockfile(&ws, &manifest).ok())
-        });
+    let own_lockfile = crate::commands::parse_lockfile(&cwd, &manifest).ok();
+    let existing_is_own = own_lockfile.is_some();
+    let existing = own_lockfile.or_else(|| {
+        super::find_workspace_root(&cwd)
+            .ok()
+            .filter(|ws| ws.as_path() != cwd.as_path())
+            .and_then(|ws| crate::commands::parse_lockfile(&ws, &manifest).ok())
+    });
     // Importer keys to try when looking up a direct dep in `existing`.
     // Order matters: try the cwd's own importer first, then fall through
     // to `"."`.
@@ -801,8 +801,10 @@ async fn run_inner(
     // fresh resolve can't recover from the existing lockfile (bun's
     // `lockfileVersion`, `license`, per-entry extras). Updated packages
     // have new versions, so their canonical keys don't match and they
-    // keep only fresh data.
-    if let Some(prior) = existing.as_ref() {
+    // keep only fresh data. Only from cwd's own lockfile: the workspace
+    // root's fallback graph would hand a member the root's importer
+    // extras, and the shared-lockfile merge keeps the root's own.
+    if existing_is_own && let Some(prior) = existing.as_ref() {
         graph.overlay_metadata_from(prior);
     }
 
