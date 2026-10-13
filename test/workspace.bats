@@ -707,6 +707,8 @@ _setup_shared_direct_dep_workspace() {
 		assert_success
 		if [ -L "$bin" ]; then
 			target="$(readlink -f "$bin")"
+			[[ "$target" == *"tools/dev/bin/my-tool.mjs" ]]
+			continue
 		elif [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN|Windows_NT) ]]; then
 			# Windows shims carry no v2 marker; the `.cmd` launcher names
 			# the target with backslashes.
@@ -717,7 +719,9 @@ _setup_shared_direct_dep_workspace() {
 			# $basedir-relative path to the workspace file.
 			target="$(grep -m1 'aube-bin-shim v2 target=' "$bin")"
 		fi
-		[[ "$target" == *"tools/dev/bin/my-tool.mjs" ]]
+		# A shim names the target through the consumer's own
+		# `node_modules/@test/dev` link, as pnpm's do.
+		[[ "$target" == *"../@test/dev/bin/my-tool.mjs" ]]
 	done
 }
 
