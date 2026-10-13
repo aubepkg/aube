@@ -124,14 +124,14 @@ pub fn importer_relative_override(spec: &str, importer: &str) -> Option<String> 
 }
 
 /// The version range of an `npm:`/`jsr:` alias spec (`npm:foo@^1` →
-/// `^1`), or `spec` itself. Mirrors `aube-resolver`'s helper of the same
-/// name.
+/// `^1`), or `spec` itself. An alias without a range (`npm:foo`,
+/// `jsr:@scope/name`) is `latest`, the range the resolver installs it at.
 fn strip_alias_prefix(spec: &str) -> &str {
     for prefix in ["npm:", "jsr:"] {
         if let Some(rest) = spec.strip_prefix(prefix) {
             return match rest.rfind('@') {
                 Some(at) if at > 0 => &rest[at + 1..],
-                _ => rest,
+                _ => "latest",
             };
         }
     }
@@ -281,6 +281,11 @@ fn parse_segment(seg: &str) -> Option<(String, Option<String>)> {
 /// exclusive form via a separate try with `bumped_lower_bound` first.
 fn range_could_satisfy(task_range: &str, req: &str) -> bool {
     let declared = task_range.trim();
+    // The drift check sees `catalog:` before the resolver expands it, so
+    // it can't tell which range the catalog names.
+    if declared.starts_with("catalog:") {
+        return true;
+    }
     if !declared.is_empty() && node_semver::Range::parse(declared).is_err() {
         return declared == req.trim();
     }
@@ -456,6 +461,20 @@ mod tests {
         // An alias is matched on its version range.
         assert_eq!(apply(&rules, "x", "npm:y@^1.0.0"), Some("link:./vendor/x"));
         assert_eq!(apply(&rules, "x", "npm:y@^2.0.0"), None);
+    }
+
+    #[test]
+    fn range_rule_reads_unversioned_aliases_as_latest_and_trusts_catalogs() {
+        let latest = compile(&map(&[("x@latest", "link:./vendor/x")]));
+        assert_eq!(apply(&latest, "x", "npm:y"), Some("link:./vendor/x"));
+        assert_eq!(apply(&latest, "x", "jsr:@std/fmt"), Some("link:./vendor/x"));
+        // The drift check sees `catalog:` unexpanded.
+        let ranged = compile(&map(&[("x@^1", "link:./vendor/x")]));
+        assert_eq!(apply(&ranged, "x", "catalog:"), Some("link:./vendor/x"));
+        assert_eq!(
+            apply(&ranged, "x", "catalog:evens"),
+            Some("link:./vendor/x")
+        );
     }
 
     #[test]

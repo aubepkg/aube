@@ -638,3 +638,75 @@ YAML
 	run cat pkg-a/node_modules/x/package.json
 	assert_output --partial '"root-x"'
 }
+
+@test "a frozen reinstall accepts a link: override applied to an unversioned alias" {
+	mkdir -p pkg-a vendor/x
+	echo '{"name":"root-x","version":"1.0.0"}' >vendor/x/package.json
+	echo '{"name":"root","version":"0.0.0","private":true}' >package.json
+	printf 'packages:\n  - "pkg-a"\noverrides:\n  "x@latest": "link:./vendor/x"\n' >pnpm-workspace.yaml
+	echo '{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"npm:y"}}' >pkg-a/package.json
+	run aube install
+	assert_success
+
+	rm -rf node_modules pkg-a/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"root-x"'
+}
+
+@test "a frozen reinstall accepts a range-scoped link: override applied to a catalog: dep" {
+	mkdir -p pkg-a vendor/x
+	echo '{"name":"root-x","version":"1.0.0"}' >vendor/x/package.json
+	echo '{"name":"root","version":"0.0.0","private":true}' >package.json
+	printf 'packages:\n  - "pkg-a"\ncatalog:\n  x: ^1.0.0\noverrides:\n  "x@^1": "link:./vendor/x"\n' >pnpm-workspace.yaml
+	echo '{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"catalog:"}}' >pkg-a/package.json
+	run aube install
+	assert_success
+
+	rm -rf node_modules pkg-a/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"root-x"'
+}
+
+@test "a lockfile from older aube that skipped an override equal to a member's link: is re-resolved" {
+	_link_override_workspace 'x' 'link:./vendor/x'
+	# As older aube wrote it: the override skipped, the path resolved from pkg-a.
+	cat >aube-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+overrides:
+  x: link:./vendor/x
+
+importers:
+
+  .: {}
+
+  pkg-a:
+    dependencies:
+      x:
+        specifier: link:./vendor/x
+        version: link:vendor/x
+
+packages: {}
+
+snapshots: {}
+YAML
+
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "resolves from the project root"
+
+	run aube install
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"root-x"'
+	run cat aube-lock.yaml
+	assert_output --partial 'specifier: link:../vendor/x'
+}

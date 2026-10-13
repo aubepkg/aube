@@ -590,6 +590,24 @@ impl LockfileGraph {
                         ),
                     };
                 }
+                // An override whose value equals a member's declaration
+                // resolves from the root and is recorded relative to the
+                // member. Older aube skipped it, resolving the path from the
+                // member and recording the value as written, so that
+                // specifier names a different package now.
+                Some(_)
+                    if importer_path != "."
+                        && override_match::apply(&override_rules, name.as_str(), spec)
+                            == Some(spec.as_str())
+                        && override_match::importer_relative_override(spec, importer_path)
+                            .is_some_and(|relative| relative != *spec) =>
+                {
+                    return DriftStatus::Stale {
+                        reason: format!(
+                            "{label}{name}: the {spec} override now resolves from the project root"
+                        ),
+                    };
+                }
                 Some(_) => {}
             }
         }
