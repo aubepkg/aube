@@ -1712,7 +1712,8 @@ fn test_write_keeps_resolved_peers_out_of_dependencies() {
     // keeps the entry, since it may be a real dependency.
     let dom = graph.packages.get_mut("react-dom@19.2.0").unwrap();
     dom.declared_dependencies.clear();
-    dom.declared_dependencies_known = false;
+    dom.extra_meta
+        .remove(crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN);
     write(out.path(), &graph, &manifest).unwrap();
     let written = std::fs::read_to_string(out.path()).unwrap();
     assert!(

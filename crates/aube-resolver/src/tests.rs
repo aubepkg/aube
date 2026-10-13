@@ -2095,17 +2095,17 @@ fn mk_locked(
 
 // The bun writer drops a resolved peer from `dependencies` only when the
 // package's declared set is known, so the peer-context pass must keep
-// `declared_dependencies_known` on the contextualized copy.
+// `declared_dependencies_known()` on the contextualized copy.
 #[test]
 fn apply_peer_contexts_keeps_declared_dependencies_known() {
     let react = mk_locked("react", "19.2.0", &[], &[]);
-    let mut dom = mk_locked(
+    let dom = mk_locked(
         "react-dom",
         "19.2.0",
         &[("react", "19.2.0")],
         &[("react", "^19")],
-    );
-    dom.declared_dependencies_known = true;
+    )
+    .with_declared_dependencies_known();
 
     let mut packages = BTreeMap::new();
     packages.insert("react@19.2.0".to_string(), react);
@@ -2131,7 +2131,7 @@ fn apply_peer_contexts_keeps_declared_dependencies_known() {
         .expect("test graph should converge");
 
     let dom = &out.packages["react-dom@19.2.0(react@19.2.0)"];
-    assert!(dom.declared_dependencies_known);
+    assert!(dom.declared_dependencies_known());
 }
 
 fn graph_has_package(graph: &LockfileGraph, name: &str, version: &str) -> bool {

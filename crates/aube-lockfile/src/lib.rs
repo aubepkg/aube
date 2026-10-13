@@ -30,6 +30,9 @@ pub use source::{
 };
 
 pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url";
+/// Internal `extra_meta` marker behind
+/// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
+pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
 
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
@@ -438,11 +441,6 @@ pub struct LockedPackage {
     /// a package can't declare the same name twice across those
     /// sections.
     pub declared_dependencies: BTreeMap<String, String>,
-    /// True only when the source recorded every `dependencies` and
-    /// `optionalDependencies` name in [`Self::declared_dependencies`],
-    /// so a name missing from it is known not to be declared. The
-    /// default false keeps writers conservative.
-    pub declared_dependencies_known: bool,
     /// Package's `license` field, collapsed to the simple string
     /// form. Round-tripped so npm's lockfile keeps its per-entry
     /// `"license": "MIT"` line; pnpm / yarn / bun don't record
@@ -476,11 +474,31 @@ pub struct LockedPackage {
     /// anything a future lockfile bump adds) so a parse/write cycle
     /// doesn't drop them. Each format's writer re-emits what makes
     /// sense there — bun inlines the extras back on the package-entry
-    /// meta object, pnpm / yarn / npm currently ignore them.
+    /// meta object, pnpm / yarn / npm currently ignore them. Also
+    /// holds aube's internal `__aube_*` markers, which writers skip.
     pub extra_meta: BTreeMap<String, serde_json::Value>,
 }
 
 impl LockedPackage {
+    /// True only when the source recorded every `dependencies` and
+    /// `optionalDependencies` name in [`Self::declared_dependencies`],
+    /// so a name missing from it is known not to be declared. False
+    /// by default, which keeps writers conservative.
+    pub fn declared_dependencies_known(&self) -> bool {
+        self.extra_meta
+            .contains_key(EXTRA_DECLARED_DEPENDENCIES_KNOWN)
+    }
+
+    /// Mark [`Self::declared_dependencies`] as the package's full
+    /// declared set (see [`Self::declared_dependencies_known`]).
+    pub fn with_declared_dependencies_known(mut self) -> Self {
+        self.extra_meta.insert(
+            EXTRA_DECLARED_DEPENDENCIES_KNOWN.to_string(),
+            serde_json::Value::Bool(true),
+        );
+        self
+    }
+
     /// The package name to use for registry / store operations — the real
     /// name behind an npm-alias when aliased, otherwise just `name`. Used
     /// at every site that derives a tarball URL, a packument URL, or an
@@ -596,13 +614,27 @@ mod locked_package_tests {
             engines: BTreeMap::new(),
             bin: BTreeMap::new(),
             declared_dependencies: BTreeMap::new(),
-            declared_dependencies_known: false,
             license: None,
             funding_url: None,
             optional: false,
             transitive_peer_dependencies: Vec::new(),
             extra_meta: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn overlay_metadata_does_not_carry_declared_dependencies_known() {
+        let mut prior = LockfileGraph::default();
+        prior.packages.insert(
+            "pkg@1.0.0".to_string(),
+            pkg().with_declared_dependencies_known(),
+        );
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert("pkg@1.0.0".to_string(), pkg());
+
+        graph.overlay_metadata_from(&prior);
+
+        assert!(!graph.packages["pkg@1.0.0"].declared_dependencies_known());
     }
 
     #[test]
@@ -1092,7 +1124,12 @@ impl LockfileGraph {
             // meta block) can't be recovered from a fresh resolve,
             // so carry them forward when the newer graph doesn't
             // already carry its own. `self`-side keys always win.
+            // The declared-set marker describes the prior entry's
+            // `declared_dependencies`, which isn't carried over.
             for (k, v) in &prior_pkg.extra_meta {
+                if k == EXTRA_DECLARED_DEPENDENCIES_KNOWN {
+                    continue;
+                }
                 pkg.extra_meta.entry(k.clone()).or_insert_with(|| v.clone());
             }
         }

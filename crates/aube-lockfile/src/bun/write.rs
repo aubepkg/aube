@@ -295,7 +295,7 @@ pub fn write(
             // local package, or one read from pnpm-lock.yaml) the
             // writer can't tell the two apart, so it keeps the entry
             // rather than lose a real dependency.
-            if pkg.declared_dependencies_known
+            if pkg.declared_dependencies_known()
                 && pkg.peer_dependencies.contains_key(dep_name)
                 && !pkg.declared_dependencies.contains_key(dep_name)
             {
@@ -411,7 +411,10 @@ pub fn write(
             "libc",
         ];
         for (k, v) in &pkg.extra_meta {
-            if MODELED_META_KEYS.contains(&k.as_str()) || k == crate::EXTRA_PRESERVE_TARBALL_URL {
+            if MODELED_META_KEYS.contains(&k.as_str())
+                || k == crate::EXTRA_PRESERVE_TARBALL_URL
+                || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
+            {
                 continue;
             }
             meta.insert(k.clone(), v.clone());

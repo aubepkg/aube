@@ -190,11 +190,11 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 cpu: entry.meta.cpu.iter().cloned().collect(),
                 libc: entry.meta.libc.iter().cloned().collect(),
                 declared_dependencies: declared,
-                declared_dependencies_known: true,
                 bin: bin_map,
                 extra_meta,
                 ..Default::default()
-            },
+            }
+            .with_declared_dependencies_known(),
         );
     }
 
