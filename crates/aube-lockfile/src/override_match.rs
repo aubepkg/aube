@@ -123,15 +123,29 @@ pub fn importer_relative_override(spec: &str, importer: &str) -> Option<String> 
     })
 }
 
+/// The path a `link:`/`file:` override value names, relative to the
+/// project root where overrides are declared.
+pub(crate) fn root_relative_local_path(spec: &str) -> Option<std::path::PathBuf> {
+    let path = ["link:", "file:"]
+        .into_iter()
+        .find_map(|protocol| spec.strip_prefix(protocol))?;
+    Some(aube_util::path::normalize_lexical(std::path::Path::new(
+        path,
+    )))
+}
+
 /// The version range of an `npm:`/`jsr:` alias spec (`npm:foo@^1` →
-/// `^1`), or `spec` itself. An alias without a range (`npm:foo`,
-/// `jsr:@scope/name`) is `latest`, the range the resolver installs it at.
+/// `^1`), or `spec` itself. An alias that names a package without a
+/// range (`npm:foo`, `jsr:@scope/name`) is `latest`, the range the
+/// resolver installs it at; a bare JSR range (`jsr:^1`) is that range.
 fn strip_alias_prefix(spec: &str) -> &str {
     for prefix in ["npm:", "jsr:"] {
         if let Some(rest) = spec.strip_prefix(prefix) {
             return match rest.rfind('@') {
                 Some(at) if at > 0 => &rest[at + 1..],
-                _ => "latest",
+                Some(_) => "latest",
+                None if prefix == "npm:" => "latest",
+                None => rest,
             };
         }
     }
@@ -468,6 +482,12 @@ mod tests {
         let latest = compile(&map(&[("x@latest", "link:./vendor/x")]));
         assert_eq!(apply(&latest, "x", "npm:y"), Some("link:./vendor/x"));
         assert_eq!(apply(&latest, "x", "jsr:@std/fmt"), Some("link:./vendor/x"));
+        // A bare JSR range is matched as that range.
+        let jsr_range = compile(&map(&[("@std/fmt@^1", "link:./vendor/x")]));
+        assert_eq!(
+            apply(&jsr_range, "@std/fmt", "jsr:^1"),
+            Some("link:./vendor/x")
+        );
         // The drift check sees `catalog:` unexpanded.
         let ranged = compile(&map(&[("x@^1", "link:./vendor/x")]));
         assert_eq!(apply(&ranged, "x", "catalog:"), Some("link:./vendor/x"));

@@ -710,3 +710,43 @@ YAML
 	run cat aube-lock.yaml
 	assert_output --partial 'specifier: link:../vendor/x'
 }
+
+@test "aube install --frozen-lockfile accepts bun's lockfile for an override equal to a member's file: dep" {
+	mkdir -p pkg-a/vendor/x vendor/x
+	echo '{"name":"member-x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"root-x","version":"1.0.0"}' >vendor/x/package.json
+	echo '{"name":"root","version":"0.0.0","private":true,"workspaces":["pkg-a"],"overrides":{"x":"file:./vendor/x"}}' >package.json
+	echo '{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"file:./vendor/x"}}' >pkg-a/package.json
+	# As bun 1.4.2 writes it: the declaration is kept, the root's package is linked.
+	cat >bun.lock <<'JSON'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+    "pkg-a": {
+      "name": "pkg-a",
+      "version": "0.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x",
+      },
+    },
+  },
+  "overrides": {
+    "x": "file:./vendor/x",
+  },
+  "packages": {
+    "pkg-a": ["pkg-a@workspace:pkg-a"],
+
+    "pkg-a/x": ["root-x@file:vendor/x", {}],
+  }
+}
+JSON
+
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"root-x"'
+}

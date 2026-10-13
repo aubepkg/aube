@@ -414,6 +414,23 @@ impl LockfileGraph {
         )
     }
 
+    /// The project-root-relative path an importer's local dep `name` is
+    /// locked to, if it is a local package.
+    fn locked_local_path(
+        &self,
+        importer_deps: &[DirectDep],
+        name: &str,
+    ) -> Option<std::path::PathBuf> {
+        let dep = importer_deps.iter().find(|dep| dep.name == name)?;
+        let path = self
+            .packages
+            .get(&dep.dep_path)?
+            .local_source
+            .as_ref()?
+            .path()?;
+        Some(aube_util::path::normalize_lexical(path))
+    }
+
     fn check_drift_for_importer_with_workspace_links(
         &self,
         importer_path: &str,
@@ -591,16 +608,22 @@ impl LockfileGraph {
                     };
                 }
                 // An override whose value equals a member's declaration
-                // resolves from the root and is recorded relative to the
-                // member. Older aube skipped it, resolving the path from the
-                // member and recording the value as written, so that
-                // specifier names a different package now.
+                // resolves from the root. Older aube skipped it and linked
+                // the path from the member, so a lockfile that still points
+                // there names a different package now. Formats that keep the
+                // declaration as the specifier (bun.lock) and point at the
+                // root's path are fine.
                 Some(_)
                     if importer_path != "."
                         && override_match::apply(&override_rules, name.as_str(), spec)
                             == Some(spec.as_str())
                         && override_match::importer_relative_override(spec, importer_path)
-                            .is_some_and(|relative| relative != *spec) =>
+                            .is_some_and(|relative| relative != *spec)
+                        && self
+                            .locked_local_path(importer_deps, name)
+                            .is_some_and(|locked| {
+                                Some(locked) != override_match::root_relative_local_path(spec)
+                            }) =>
                 {
                     return DriftStatus::Stale {
                         reason: format!(
