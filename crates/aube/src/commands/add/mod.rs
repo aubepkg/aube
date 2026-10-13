@@ -417,6 +417,14 @@ pub async fn run(
     if packages.is_empty() {
         return Err(miette!("no packages specified"));
     }
+    // A package name can't start with `-`, so this is a flag aube doesn't know. Without
+    // the check it would be looked up in the registry (and advisory database) as a package.
+    if let Some(flag) = packages.iter().find(|p| p.starts_with('-')) {
+        return Err(miette!(
+            code = aube_codes::errors::ERR_AUBE_INVALID_PACKAGE_NAME,
+            "unknown option `{flag}` for `aube add`"
+        ));
+    }
     reject_conflicting_build_flags(&allow_build, &deny_build)?;
 
     if global {
