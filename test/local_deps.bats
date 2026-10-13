@@ -276,6 +276,31 @@ EOF
 	assert_failure
 }
 
+@test "aube install keeps a symlink someone else aimed at a link: dep's file" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0"}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	ln -s ../../../linked-tool/cli.js node_modules/.bin/custom-tool
+
+	# Change the manifest so the install relinks bins.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/custom-tool ]
+}
+
 @test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
 	_skip_on_windows "bins are shims, not symlinks, on Windows"
 	mkdir -p packages/tool packages/app

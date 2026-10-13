@@ -1048,9 +1048,11 @@ pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
 /// are left alone. Must run after a full linking pass so `managed.seen`
 /// holds every command this install claims.
 ///
-/// A symlinked bin of a `link:` or workspace dep resolves into that dep's
-/// own directory rather than the virtual store. One the importer's current
-/// such deps no longer claim, such as a renamed command, is aube's too.
+/// A symlinked bin of a `link:` or workspace dep points through the
+/// importer's `<modules_dir>/<name>` link rather than into the virtual
+/// store. One such link no current dep claims, such as a renamed command,
+/// is aube's too. Links that reach the dep's directory some other way are
+/// left alone: aube didn't write them.
 pub(crate) fn remove_unclaimed_bin_links(
     project_dir: &Path,
     modules_dir_name: &str,
@@ -1080,23 +1082,18 @@ pub(crate) fn remove_unclaimed_bin_links(
     }
     for (bin_dir, importer_path) in bin_dirs {
         let claimed = managed.seen.get(&bin_dir);
-        let local_dep_dirs: Vec<PathBuf> = graph
+        let modules_dir = aube_util::path::normalize_lexical(bin_dir.parent().unwrap_or(&bin_dir));
+        let local_dep_links: Vec<PathBuf> = graph
             .importers
             .get(importer_path)
             .into_iter()
             .flatten()
-            .filter_map(|dep| {
-                let (dir, _) = unmaterialized_bin_source(
-                    graph,
-                    &dep.dep_path,
-                    &dep.name,
-                    project_dir,
-                    ws_dirs,
-                )?;
-                std::fs::canonicalize(dir).ok()
+            .filter(|dep| {
+                unmaterialized_bin_source(graph, &dep.dep_path, &dep.name, project_dir, ws_dirs)
+                    .is_some()
             })
+            .map(|dep| modules_dir.join(&dep.name))
             .collect();
-        let modules_dir = aube_util::path::normalize_lexical(bin_dir.parent().unwrap_or(&bin_dir));
         let launcher_roots: Vec<&Path> = [aube_dir.as_path(), modules_dir.as_path()]
             .into_iter()
             .chain(workspace_dirs.iter().map(PathBuf::as_path))
@@ -1109,7 +1106,7 @@ pub(crate) fn remove_unclaimed_bin_links(
                 claimed,
                 (&aube_dir, &modules_dir),
                 &launcher_roots,
-                &local_dep_dirs,
+                &local_dep_links,
             ) {
                 stale.push(path);
             }
@@ -1196,7 +1193,7 @@ fn is_unclaimed_aube_bin_link(
     claimed: Option<&BTreeSet<String>>,
     (aube_dir, modules_dir): (&Path, &Path),
     launcher_roots: &[&Path],
-    local_dep_dirs: &[PathBuf],
+    local_dep_links: &[PathBuf],
 ) -> bool {
     // A command literally named `foo.cmd` is recorded under that name, so
     // check the file's own name before falling back to its command stem.
@@ -1218,14 +1215,16 @@ fn is_unclaimed_aube_bin_link(
         // A live link into the virtual store is aube's private layout. A
         // dangling link is also ours when it points into the importer's
         // `node_modules`, where hoisted installs link bins and the
-        // package has since been swept. A live link into one of the
-        // importer's `link:` or workspace deps is one aube wrote for a
-        // command that dep no longer declares. Anything else, or a live
-        // link someone aimed at a file under `node_modules`, is not aube's.
+        // package has since been swept. A link through the importer's
+        // `<modules_dir>/<name>` link of a current `link:` or workspace dep
+        // is one aube wrote for a command that dep no longer declares.
+        // Anything else, or a live link someone aimed at another file under
+        // `node_modules`, is not aube's.
         return resolved.starts_with(aube_dir)
             || (resolved.starts_with(modules_dir) && !path.exists())
-            || std::fs::canonicalize(path)
-                .is_ok_and(|real| local_dep_dirs.iter().any(|dir| real.starts_with(dir)));
+            || local_dep_links
+                .iter()
+                .any(|link| resolved.starts_with(link));
     }
     if cfg!(windows) {
         return aube_linker::sys::is_generated_windows_launcher(path, launcher_roots)
