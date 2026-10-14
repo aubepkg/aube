@@ -33,6 +33,22 @@ pub fn workspace_yaml_names() -> &'static [&'static str] {
     })
 }
 
+fn bool_or_ignored_map<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrMap {
+        Bool(bool),
+        Map(#[allow(dead_code)] BTreeMap<String, yaml_serde::Value>),
+    }
+    Ok(match Option::<BoolOrMap>::deserialize(deserializer)? {
+        Some(BoolOrMap::Bool(b)) => Some(b),
+        Some(BoolOrMap::Map(_)) | None => None,
+    })
+}
+
 fn find_and_read(project_dir: &Path) -> Result<Option<(PathBuf, String)>, crate::Error> {
     for name in workspace_yaml_names().iter().copied() {
         let path = project_dir.join(name);
@@ -196,8 +212,10 @@ pub struct WorkspaceConfig {
     pub global_virtual_store_dir: Option<String>,
 
     // -- Lockfile Settings --
-    /// Whether to use a lockfile (default: true).
-    #[serde(default)]
+    /// Whether to use a lockfile (default: true). pnpm also accepts a
+    /// nested settings map here (`lockfile.includeResolutionSettings`);
+    /// that form is tolerated and reads as unset.
+    #[serde(default, deserialize_with = "bool_or_ignored_map")]
     pub lockfile: Option<bool>,
 
     /// Format to create when no supported lockfile exists: "aube" or
@@ -900,5 +918,22 @@ pub fn config_write_target(project_dir: &Path) -> ConfigWriteTarget {
     match workspace_yaml_existing(project_dir) {
         Some(path) => ConfigWriteTarget::WorkspaceYaml(path),
         None => ConfigWriteTarget::PackageJson,
+    }
+}
+
+#[cfg(test)]
+mod lockfile_setting_tests {
+    use super::*;
+
+    #[test]
+    fn lockfile_accepts_bool_and_nested_settings_map() {
+        let cfg: WorkspaceConfig = yaml_serde::from_str("lockfile: false\n").unwrap();
+        assert_eq!(cfg.lockfile, Some(false));
+
+        let cfg: WorkspaceConfig = yaml_serde::from_str(
+            "packages:\n  - apps/*\nlockfile:\n  includeResolutionSettings: true\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.lockfile, None);
     }
 }
