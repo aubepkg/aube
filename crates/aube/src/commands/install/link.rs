@@ -48,6 +48,9 @@ pub(super) struct LinkPhaseOutput {
     pub(super) current_subtree_hashes: Option<BTreeMap<String, String>>,
     pub(super) patch_hashes: BTreeMap<String, String>,
     pub(super) managed_bin_links: ManagedBinLinks,
+    /// The `.bin` directories the stale-bin sweep visited, for
+    /// `record_bin_links` once the install succeeds.
+    pub(super) swept_bin_dirs: Vec<std::path::PathBuf>,
     pub(super) gvs_dep_link_targets: Option<aube_linker::GvsDepLinkTargets>,
 }
 
@@ -395,7 +398,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
     //    invoke their own dependencies. Approved builds get a refresh pass in
     //    finalize because a lifecycle may replace its bin target.
     let phase_start = std::time::Instant::now();
-    let managed_bin_links = if !virtual_store_only {
+    let (managed_bin_links, swept_bin_dirs) = if !virtual_store_only {
         let managed = link_all_bins(LinkAllBinsInput {
             project_dir: cwd,
             settings_ctx,
@@ -413,7 +416,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
             capture_managed: !ignore_scripts && build_policy.has_any_allow_rule(),
             preserved: None,
         })?;
-        remove_unclaimed_bin_links(
+        let swept = remove_unclaimed_bin_links(
             cwd,
             modules_dir_name,
             aube_dir,
@@ -423,9 +426,9 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         )?;
         tracing::debug!("phase:link_bins {:.1?}", phase_start.elapsed());
         phase_timings.record("link_bins", phase_start.elapsed());
-        managed
+        (managed, swept)
     } else {
-        ManagedBinLinks::default()
+        (ManagedBinLinks::default(), Vec::new())
     };
     Ok(LinkPhaseOutput {
         stats,
@@ -435,6 +438,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         current_subtree_hashes,
         patch_hashes,
         managed_bin_links,
+        swept_bin_dirs,
         gvs_dep_link_targets,
     })
 }

@@ -354,6 +354,34 @@ EOF
 	assert_failure
 }
 
+@test "a filtered install keeps the bin record of the members it skips" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	printf 'dedupe-direct-deps=true\npreferSymlinkedExecutables=true\n' >.npmrc
+	echo '{"name":"root","private":true,"dependencies":{"tool":"workspace:*"}}' >package.json
+	echo '{"name":"tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >packages/tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+	run aube install --filter other
+	assert_success
+
+	echo '{"name":"tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >packages/tool/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
 @test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
 	_skip_on_windows "bins are shims, not symlinks, on Windows"
 	mkdir -p packages/tool packages/app

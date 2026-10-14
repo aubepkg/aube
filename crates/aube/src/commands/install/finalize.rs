@@ -1,5 +1,5 @@
 use super::bin_linking::{
-    LinkAllBinsInput, ManagedBinLinks, link_all_bins, remove_managed_bin_links,
+    LinkAllBinsInput, ManagedBinLinks, link_all_bins, record_bin_links, remove_managed_bin_links,
     remove_unclaimed_preserved_bin_links,
 };
 use super::dep_selection::DepSelection;
@@ -32,6 +32,7 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
     pub(super) managed_bin_links: &'a ManagedBinLinks,
+    pub(super) swept_bin_dirs: &'a [std::path::PathBuf],
     /// The linker's record of global virtual-store dependency links, used by
     /// the state writer unless a lifecycle script ran and could have
     /// changed them.
@@ -79,6 +80,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         jail_policy,
         stats,
         managed_bin_links,
+        swept_bin_dirs,
         mut gvs_dep_link_targets,
         node_linker,
         has_workspace,
@@ -277,6 +279,12 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             }
         }
         phase_timings.record("root_lifecycle", phase_start.elapsed());
+    }
+
+    // Only now, with builds and root hooks done, record the bins this
+    // install linked: a failed install leaves the install state untouched.
+    if !virtual_store_only {
+        record_bin_links(cwd, swept_bin_dirs, managed_bin_links)?;
     }
 
     // 8. Write state file for auto-install tracking.

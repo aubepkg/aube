@@ -1184,11 +1184,24 @@ pub fn write_bin_links(project_dir: &Path, links: &BinLinks) -> Result<(), std::
     aube_util::fs_atomic::atomic_write(&state_path.join(BIN_LINKS_FILE_NAME), &json)
 }
 
-/// The symlinked bins the previous install recorded. `None` when no install
-/// has recorded them yet (or the record is unreadable).
+/// The symlinked bins the previous install recorded. `None` only when no
+/// install has recorded them yet; a record that exists but can't be read
+/// comes back empty, so callers don't fall back to guessing which links
+/// are aube's.
 pub fn read_bin_links(project_dir: &Path) -> Option<BinLinks> {
     let path = state_dir(project_dir).join(BIN_LINKS_FILE_NAME);
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            tracing::debug!("ignoring unreadable {}: {err}", path.display());
+            return Some(BinLinks::new());
+        }
+    };
+    Some(serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+        tracing::debug!("ignoring malformed {}: {err}", path.display());
+        BinLinks::new()
+    }))
 }
 
 /// Read licenses captured at install time without adding them to the main

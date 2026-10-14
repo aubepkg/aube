@@ -1066,7 +1066,7 @@ pub(crate) fn remove_unclaimed_bin_links(
     graph: &aube_lockfile::LockfileGraph,
     ws_dirs: Option<&BTreeMap<String, PathBuf>>,
     managed: &ManagedBinLinks,
-) -> miette::Result<()> {
+) -> miette::Result<Vec<PathBuf>> {
     let aube_dir = aube_util::path::normalize_lexical(aube_dir);
     let mut bin_dirs = BTreeMap::from([(project_dir.join(modules_dir_name).join(".bin"), ".")]);
     // A workspace dependency's native executable is linked from its own
@@ -1088,7 +1088,7 @@ pub(crate) fn remove_unclaimed_bin_links(
     }
     let previous = crate::state::read_bin_links(project_dir);
     let no_links = BTreeMap::new();
-    let mut written = crate::state::BinLinks::new();
+    let swept: Vec<PathBuf> = bin_dirs.keys().cloned().collect();
     for (bin_dir, importer_path) in bin_dirs {
         let claimed = managed.seen.get(&bin_dir);
         let key = bin_dir_key(project_dir, &bin_dir);
@@ -1144,7 +1144,26 @@ pub(crate) fn remove_unclaimed_bin_links(
                 let _ = std::fs::remove_dir(parent);
             }
         }
-        let links: BTreeMap<String, String> = list_bin_entries(&bin_dir)?
+    }
+    Ok(swept)
+}
+
+/// Record the symlinked bins this install claims in each of `bin_dirs`,
+/// keeping what the previous record holds for any other `.bin` directory
+/// (a filtered install visits only some importers). Call it once the
+/// install has succeeded, so a failed one leaves no state behind.
+pub(crate) fn record_bin_links(
+    project_dir: &Path,
+    bin_dirs: &[PathBuf],
+    managed: &ManagedBinLinks,
+) -> miette::Result<()> {
+    if bin_dirs.is_empty() {
+        return Ok(());
+    }
+    let mut record = crate::state::read_bin_links(project_dir).unwrap_or_default();
+    for bin_dir in bin_dirs {
+        let claimed = managed.seen.get(bin_dir);
+        let links: BTreeMap<String, String> = list_bin_entries(bin_dir)?
             .into_iter()
             .filter(|(_, name)| claimed.is_some_and(|names| names.contains(name)))
             .filter_map(|(path, name)| {
@@ -1152,11 +1171,14 @@ pub(crate) fn remove_unclaimed_bin_links(
                 Some((name, target.to_string_lossy().into_owned()))
             })
             .collect();
-        if !links.is_empty() {
-            written.insert(key, links);
+        let key = bin_dir_key(project_dir, bin_dir);
+        if links.is_empty() {
+            record.remove(&key);
+        } else {
+            record.insert(key, links);
         }
     }
-    crate::state::write_bin_links(project_dir, &written)
+    crate::state::write_bin_links(project_dir, &record)
         .into_diagnostic()
         .wrap_err("failed to record linked bins")
 }
@@ -1249,7 +1271,7 @@ fn is_unclaimed_aube_bin_link(
         let recorded_by_aube = recorded.is_some_and(|links| {
             links
                 .get(name)
-                .is_some_and(|written| Path::new(written) == target)
+                .is_some_and(|written| *written == target.to_string_lossy())
         });
         let resolved = aube_util::path::normalize_lexical(
             &path.parent().unwrap_or(Path::new("")).join(target),
