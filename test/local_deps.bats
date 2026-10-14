@@ -382,6 +382,32 @@ EOF
 	assert_failure
 }
 
+@test "aube install keeps a bin a root postinstall retargeted after its dep is removed" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}' >linked-tool/package.json
+	printf '#!/bin/sh\necho linked\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	printf '#!/bin/sh\necho custom\n' >custom.sh
+	cd app
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	# The hook replaces aube's link once, pointing it outside node_modules.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","scripts":{"postinstall":"[ -e .retargeted ] || { ln -sf ../../../custom.sh node_modules/.bin/linked-tool && touch .retargeted; }"},"dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	run aube install
+	assert_success
+	run readlink node_modules/.bin/linked-tool
+	assert_output "../../../custom.sh"
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","scripts":{"postinstall":"[ -e .retargeted ] || { ln -sf ../../../custom.sh node_modules/.bin/linked-tool && touch .retargeted; }"},"dependencies":{"other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/linked-tool ]
+}
+
 @test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
 	_skip_on_windows "bins are shims, not symlinks, on Windows"
 	mkdir -p packages/tool packages/app

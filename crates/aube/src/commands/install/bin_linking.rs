@@ -1148,22 +1148,26 @@ pub(crate) fn remove_unclaimed_bin_links(
     Ok(swept)
 }
 
-/// Record the symlinked bins this install claims in each of `bin_dirs`,
-/// keeping what the previous record holds for any other `.bin` directory
-/// (a filtered install visits only some importers). Call it once the
-/// install has succeeded, so a failed one leaves no state behind.
-pub(crate) fn record_bin_links(
+/// The symlinked bins aube wrote in the `.bin` directories it swept, taken
+/// right after linking so links a lifecycle script puts there later aren't
+/// mistaken for aube's.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BinLinkSnapshot {
+    dirs: Vec<PathBuf>,
+    links: crate::state::BinLinks,
+}
+
+/// Take the [`BinLinkSnapshot`] of the commands `managed` claims in each of
+/// `bin_dirs`.
+pub(crate) fn snapshot_bin_links(
     project_dir: &Path,
-    bin_dirs: &[PathBuf],
+    bin_dirs: Vec<PathBuf>,
     managed: &ManagedBinLinks,
-) -> miette::Result<()> {
-    if bin_dirs.is_empty() {
-        return Ok(());
-    }
-    let mut record = crate::state::read_bin_links(project_dir).unwrap_or_default();
-    for bin_dir in bin_dirs {
+) -> miette::Result<BinLinkSnapshot> {
+    let mut links = crate::state::BinLinks::new();
+    for bin_dir in &bin_dirs {
         let claimed = managed.seen.get(bin_dir);
-        let links: BTreeMap<String, String> = list_bin_entries(bin_dir)?
+        let written: BTreeMap<String, String> = list_bin_entries(bin_dir)?
             .into_iter()
             .filter(|(_, name)| claimed.is_some_and(|names| names.contains(name)))
             .filter_map(|(path, name)| {
@@ -1171,12 +1175,41 @@ pub(crate) fn record_bin_links(
                 Some((name, target.to_string_lossy().into_owned()))
             })
             .collect();
-        let key = bin_dir_key(project_dir, bin_dir);
-        if links.is_empty() {
-            record.remove(&key);
-        } else {
-            record.insert(key, links);
+        if !written.is_empty() {
+            links.insert(bin_dir_key(project_dir, bin_dir), written);
         }
+    }
+    Ok(BinLinkSnapshot {
+        dirs: bin_dirs,
+        links,
+    })
+}
+
+impl BinLinkSnapshot {
+    /// The `.bin` directories this snapshot covers.
+    pub(crate) fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
+    }
+}
+
+/// Save `snapshot` as the bin link record, keeping what the previous record
+/// holds for any `.bin` directory it doesn't cover (a filtered install
+/// visits only some importers). Call it once the install has succeeded, so
+/// a failed one leaves no state behind.
+pub(crate) fn commit_bin_links(
+    project_dir: &Path,
+    snapshot: &BinLinkSnapshot,
+) -> miette::Result<()> {
+    if snapshot.dirs.is_empty() {
+        return Ok(());
+    }
+    let mut record = crate::state::read_bin_links(project_dir).unwrap_or_default();
+    for bin_dir in &snapshot.dirs {
+        let key = bin_dir_key(project_dir, bin_dir);
+        match snapshot.links.get(&key) {
+            Some(links) => record.insert(key, links.clone()),
+            None => record.remove(&key),
+        };
     }
     crate::state::write_bin_links(project_dir, &record)
         .into_diagnostic()
