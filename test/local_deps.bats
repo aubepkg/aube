@@ -301,6 +301,59 @@ EOF
 	[ -L node_modules/.bin/custom-tool ]
 }
 
+@test "aube install keeps a symlink someone else aimed through a link: dep's node_modules entry" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0"}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	# The same target aube would write for a `custom-tool` command.
+	ln -s ../linked-tool/cli.js node_modules/.bin/custom-tool
+
+	# Change the manifest so the install relinks bins.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/custom-tool ]
+}
+
+@test "aube install removes a renamed bin a deduped workspace dep linked straight at its directory" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	printf 'dedupe-direct-deps=true\npreferSymlinkedExecutables=true\n' >.npmrc
+	echo '{"name":"root","private":true,"dependencies":{"tool":"workspace:*"}}' >package.json
+	echo '{"name":"tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >packages/tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+
+	echo '{"name":"tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >packages/tool/package.json
+	# Change a manifest too, so the install relinks.
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
 @test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
 	_skip_on_windows "bins are shims, not symlinks, on Windows"
 	mkdir -p packages/tool packages/app

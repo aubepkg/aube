@@ -8,6 +8,7 @@ const INSTALL_STATE_FILE_NAME: &str = "state.json";
 const FRESH_STATE_FILE_NAME: &str = "fresh.json";
 const LICENSE_STATE_FILE_NAME: &str = "licenses.json";
 const HOISTED_PLACEMENTS_FILE_NAME: &str = "hoisted-placements.json";
+const BIN_LINKS_FILE_NAME: &str = "bin-links.json";
 
 /// The install-state directory name, `.<name>-state`. Standalone aube:
 /// `.aube-state`.
@@ -1168,6 +1169,26 @@ pub fn read_hoisted_placements(project_dir: &Path) -> Option<aube_linker::Hoiste
     Some(aube_linker::HoistedPlacements::from_package_dirs(
         by_dep_path,
     ))
+}
+
+/// Symlinked bins an install wrote: each `.bin` directory, relative to the
+/// project, maps a command entry to the link target as written.
+pub type BinLinks = BTreeMap<String, BTreeMap<String, String>>;
+
+/// Record the symlinked bins this install wrote, so the next one can tell
+/// them from links someone else put in `.bin`.
+pub fn write_bin_links(project_dir: &Path, links: &BinLinks) -> Result<(), std::io::Error> {
+    let state_path = state_dir(project_dir);
+    remove_legacy_state_file(&state_path)?;
+    let json = serde_json::to_vec(links)?;
+    aube_util::fs_atomic::atomic_write(&state_path.join(BIN_LINKS_FILE_NAME), &json)
+}
+
+/// The symlinked bins the previous install recorded. `None` when no install
+/// has recorded them yet (or the record is unreadable).
+pub fn read_bin_links(project_dir: &Path) -> Option<BinLinks> {
+    let path = state_dir(project_dir).join(BIN_LINKS_FILE_NAME);
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
 /// Read licenses captured at install time without adding them to the main
