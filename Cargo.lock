@@ -1324,9 +1324,9 @@ dependencies = [
 
 [[package]]
 name = "demand"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7585a0f6254e4545ecd6efced4a844500ea857cac7ff214c7dfdbfde6c06c9d"
+checksum = "98864c9027938dbcc4fcca6073d8f7e49a8bd7a10183a8652201e6e9ea0cea7f"
 dependencies = [
  "console",
  "fuzzy-matcher",
