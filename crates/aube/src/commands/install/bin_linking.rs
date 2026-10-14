@@ -1087,21 +1087,28 @@ pub(crate) fn remove_unclaimed_bin_links(
         }
     }
     let previous = crate::state::read_bin_links(project_dir);
-    let no_links = BTreeMap::new();
     let swept: Vec<PathBuf> = bin_dirs.keys().cloned().collect();
     for (bin_dir, importer_path) in bin_dirs {
         let claimed = managed.seen.get(&bin_dir);
         let key = bin_dir_key(project_dir, &bin_dir);
-        let recorded = previous
-            .as_ref()
-            .map(|links| links.get(&key).unwrap_or(&no_links));
+        // Guess only for a directory no install has recorded yet. An
+        // unreadable record disables the guess everywhere: it can't say
+        // which directories it covered.
+        let (recorded, guess) = match &previous {
+            crate::state::StoredBinLinks::Missing => (None, true),
+            crate::state::StoredBinLinks::Unreadable => (None, false),
+            crate::state::StoredBinLinks::Recorded(links) => {
+                let recorded = links.get(&key);
+                (recorded, recorded.is_none())
+            }
+        };
         let modules_dir = aube_util::path::normalize_lexical(bin_dir.parent().unwrap_or(&bin_dir));
         let local_dep_links: Vec<PathBuf> = graph
             .importers
             .get(importer_path)
             .into_iter()
             .flatten()
-            .filter(|_| recorded.is_none())
+            .filter(|_| guess)
             .filter(|dep| {
                 unmaterialized_bin_source(graph, &dep.dep_path, &dep.name, project_dir, ws_dirs)
                     .is_some()
@@ -1203,13 +1210,16 @@ pub(crate) fn commit_bin_links(
     if snapshot.dirs.is_empty() {
         return Ok(());
     }
-    let mut record = crate::state::read_bin_links(project_dir).unwrap_or_default();
+    let mut record = match crate::state::read_bin_links(project_dir) {
+        crate::state::StoredBinLinks::Recorded(links) => links,
+        _ => crate::state::BinLinks::new(),
+    };
+    // Every swept directory gets an entry, empty or not, so the next
+    // install knows it was recorded.
     for bin_dir in &snapshot.dirs {
         let key = bin_dir_key(project_dir, bin_dir);
-        match snapshot.links.get(&key) {
-            Some(links) => record.insert(key, links.clone()),
-            None => record.remove(&key),
-        };
+        let links = snapshot.links.get(&key).cloned().unwrap_or_default();
+        record.insert(key, links);
     }
     crate::state::write_bin_links(project_dir, &record)
         .into_diagnostic()

@@ -1172,8 +1172,20 @@ pub fn read_hoisted_placements(project_dir: &Path) -> Option<aube_linker::Hoiste
 }
 
 /// Symlinked bins an install wrote: each `.bin` directory, relative to the
-/// project, maps a command entry to the link target as written.
+/// project, maps a command entry to the link target as written. A directory
+/// an install swept is listed even when it holds no symlinked bins, so a
+/// missing key means no install has recorded that directory yet.
 pub type BinLinks = BTreeMap<String, BTreeMap<String, String>>;
+
+/// The bin link record as [`read_bin_links`] finds it.
+#[derive(Debug)]
+pub enum StoredBinLinks {
+    /// No install has recorded bins yet.
+    Missing,
+    /// A record exists but can't be read or parsed.
+    Unreadable,
+    Recorded(BinLinks),
+}
 
 /// Record the symlinked bins this install wrote, so the next one can tell
 /// them from links someone else put in `.bin`.
@@ -1184,24 +1196,24 @@ pub fn write_bin_links(project_dir: &Path, links: &BinLinks) -> Result<(), std::
     aube_util::fs_atomic::atomic_write(&state_path.join(BIN_LINKS_FILE_NAME), &json)
 }
 
-/// The symlinked bins the previous install recorded. `None` only when no
-/// install has recorded them yet; a record that exists but can't be read
-/// comes back empty, so callers don't fall back to guessing which links
-/// are aube's.
-pub fn read_bin_links(project_dir: &Path) -> Option<BinLinks> {
+/// The symlinked bins the previous install recorded.
+pub fn read_bin_links(project_dir: &Path) -> StoredBinLinks {
     let path = state_dir(project_dir).join(BIN_LINKS_FILE_NAME);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return StoredBinLinks::Missing,
         Err(err) => {
             tracing::debug!("ignoring unreadable {}: {err}", path.display());
-            return Some(BinLinks::new());
+            return StoredBinLinks::Unreadable;
         }
     };
-    Some(serde_json::from_slice(&bytes).unwrap_or_else(|err| {
-        tracing::debug!("ignoring malformed {}: {err}", path.display());
-        BinLinks::new()
-    }))
+    match serde_json::from_slice(&bytes) {
+        Ok(links) => StoredBinLinks::Recorded(links),
+        Err(err) => {
+            tracing::debug!("ignoring malformed {}: {err}", path.display());
+            StoredBinLinks::Unreadable
+        }
+    }
 }
 
 /// Read licenses captured at install time without adding them to the main

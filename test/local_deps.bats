@@ -408,6 +408,36 @@ EOF
 	[ -L node_modules/.bin/linked-tool ]
 }
 
+@test "a member no install recorded yet still gets its renamed bin swept after a filtered install" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	echo '{"name":"root","private":true}' >package.json
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"app","version":"1.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}' >packages/app/package.json
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+	# As an install from before the record existed left it.
+	rm -f node_modules/.aube-state/bin-links.json
+	run aube install --filter other
+	assert_success
+
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >linked-tool/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"linked-tool":"link:../../linked-tool","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
 @test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
 	_skip_on_windows "bins are shims, not symlinks, on Windows"
 	mkdir -p packages/tool packages/app
