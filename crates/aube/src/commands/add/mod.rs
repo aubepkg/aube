@@ -472,11 +472,13 @@ pub async fn run(
     // npm, so it gets its own manifest rather than adopting an ancestor's.
     // Declared workspace members keep the workspace-root install.
     let initial_cwd = crate::dirs::cwd()?;
-    let exact_dir = crate::dirs::dir_flag_given()
-        && !crate::dirs::find_workspace_root(&initial_cwd).is_some_and(|root| {
-            aube_workspace::find_workspace_packages(&root)
-                .is_ok_and(|members| members.iter().any(|m| m == &initial_cwd))
-        });
+    let mut exact_dir = crate::dirs::dir_flag_given();
+    if exact_dir && let Some(root) = crate::dirs::find_workspace_root(&initial_cwd) {
+        let members = aube_workspace::find_workspace_packages(&root)
+            .into_diagnostic()
+            .wrap_err("failed to enumerate workspace packages")?;
+        exact_dir = !members.iter().any(|m| m == &initial_cwd);
+    }
     let needs_manifest = if exact_dir {
         !initial_cwd.join("package.json").exists()
     } else {
