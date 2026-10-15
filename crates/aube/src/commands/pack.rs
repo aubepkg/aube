@@ -472,11 +472,13 @@ fn expand_files_glob(
     keep: &mut BTreeSet<String>,
 ) -> miette::Result<()> {
     // `dir/**` and `dir/` mean "everything under dir"; the glob crate's
-    // trailing `**` only yields directories, so select the directory itself.
-    let pattern = pattern
+    // trailing `**` only yields directories, so select the directory itself
+    // and keep the directory-only requirement.
+    let stripped = pattern
         .strip_suffix("/**")
-        .or_else(|| pattern.strip_suffix('/'))
-        .unwrap_or(pattern);
+        .or_else(|| pattern.strip_suffix('/'));
+    let dir_only = stripped.is_some();
+    let pattern = stripped.unwrap_or(pattern);
     let full_pattern = project_dir.join(pattern);
     let matches = glob::glob(&full_pattern.to_string_lossy())
         .map_err(|e| miette!("pack: invalid files glob {pattern:?}: {e}"))?;
@@ -485,6 +487,9 @@ fn expand_files_glob(
         let Ok(rel) = path.strip_prefix(project_dir) else {
             continue;
         };
+        if dir_only && !path.is_dir() {
+            continue;
+        }
         if path.is_dir() {
             let mut sub: BTreeSet<String> = BTreeSet::new();
             walk_subdir(project_dir, &path, &mut sub)?;
@@ -866,6 +871,15 @@ mod tests {
                 "package.json"
             ]
         );
+    }
+
+    #[test]
+    fn files_trailing_slash_glob_selects_only_directories() {
+        let got = collect_rel(
+            r#"["dist/*/"]"#,
+            &["dist/index.js", "dist/esm/a.js", "dist/cjs/b.js"],
+        );
+        assert_eq!(got, ["dist/cjs/b.js", "dist/esm/a.js", "package.json"]);
     }
 
     #[test]
