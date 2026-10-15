@@ -474,11 +474,17 @@ fn expand_files_glob(
     // `dir/**` and `dir/` mean "everything under dir"; the glob crate's
     // trailing `**` only yields directories, so select the directory itself
     // and keep the directory-only requirement.
+    let pattern_is_recursive_suffix = pattern.ends_with("/**");
     let stripped = pattern
         .strip_suffix("/**")
         .or_else(|| pattern.strip_suffix('/'));
     let dir_only = stripped.is_some();
     let pattern = stripped.unwrap_or(pattern);
+    // npm selects nothing for a glob with a trailing slash (`dist/*/`),
+    // while a literal `dist/` includes the whole directory.
+    if dir_only && !pattern_is_recursive_suffix && pattern.contains(['*', '?', '[']) {
+        return Ok(());
+    }
     let full_pattern = project_dir.join(pattern);
     let matches = glob::glob(&full_pattern.to_string_lossy())
         .map_err(|e| miette!("pack: invalid files glob {pattern:?}: {e}"))?;
@@ -874,12 +880,12 @@ mod tests {
     }
 
     #[test]
-    fn files_trailing_slash_glob_selects_only_directories() {
+    fn files_trailing_slash_glob_selects_nothing_like_npm() {
         let got = collect_rel(
             r#"["dist/*/"]"#,
             &["dist/index.js", "dist/esm/a.js", "dist/cjs/b.js"],
         );
-        assert_eq!(got, ["dist/cjs/b.js", "dist/esm/a.js", "package.json"]);
+        assert_eq!(got, ["package.json"]);
     }
 
     #[test]
