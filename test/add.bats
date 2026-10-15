@@ -33,6 +33,20 @@ EOF
 	assert_file_exists node_modules/is-odd/index.js
 }
 
+@test "aube add -C: bootstraps the named directory instead of an ancestor manifest" {
+	mkdir -p outer/staging dep
+	echo '{"name":"outer","private":true}' >outer/package.json
+	echo '{"name":"dep","version":"1.0.0"}' >dep/package.json
+
+	run aube add "file:$PWD/dep" -C outer/staging
+	assert_success
+
+	run grep -c '"dep"' outer/staging/package.json
+	assert_output 1
+	run grep -c '"dep"' outer/package.json
+	assert_output 0
+}
+
 @test "aube add: adds dev dependency with -D" {
 	cat >package.json <<'EOF'
 {

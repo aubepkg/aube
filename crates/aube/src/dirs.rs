@@ -8,8 +8,22 @@
 use miette::{IntoDiagnostic, miette};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static CWD: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+static DIR_FLAG_GIVEN: AtomicBool = AtomicBool::new(false);
+
+/// Record that the user passed `-C` / `--dir` / `--prefix`, so commands
+/// that bootstrap a manifest treat the directory as the project itself
+/// instead of walking up to an ancestor `package.json`.
+pub fn mark_dir_flag_given() {
+    DIR_FLAG_GIVEN.store(true, Ordering::Relaxed);
+}
+
+pub fn dir_flag_given() -> bool {
+    DIR_FLAG_GIVEN.load(Ordering::Relaxed)
+}
 
 /// Return the process's current working directory, resolving it via
 /// `std::env::current_dir()` on first call and caching the result.
