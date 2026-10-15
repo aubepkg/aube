@@ -279,11 +279,18 @@ pub fn select_workspace_packages(
     let root_selected = select_members(workspace_root, &candidates, &root_filter)?
         .iter()
         .any(|pkg| pkg.dir == workspace_root);
-    if root_selected {
-        select_members(workspace_root, &candidates, filter)
-    } else {
-        select_members(workspace_root, workspace_pkgs, filter)
+    // Expand against the root-inclusive graph so selectors like `!foo...`
+    // traverse `foo -> root -> lib`, then drop the root again unless an
+    // explicit selector or `includeWorkspaceRoot` asked for it.
+    let keep_root = root_selected
+        || select_members(workspace_root, workspace_pkgs, filter)?
+            .iter()
+            .any(|pkg| pkg.dir == workspace_root);
+    let mut selected = select_members(workspace_root, &candidates, filter)?;
+    if !keep_root {
+        selected.retain(|pkg| pkg.dir != workspace_root);
     }
+    Ok(selected)
 }
 
 fn select_members(
