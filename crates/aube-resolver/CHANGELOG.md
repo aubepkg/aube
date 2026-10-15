@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.7.0...aube-resolver-v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(lockfile)* keep resolved peers out of bun.lock dependencies ([#1727](https://github.com/aubepkg/aube/pull/1727))
+- *(resolver)* apply link: overrides to workspace members like pnpm ([#1729](https://github.com/aubepkg/aube/pull/1729))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.6.1...aube-resolver-v2.7.0) - 2026-10-07
 
 ### Fixed

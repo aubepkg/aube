@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1](https://github.com/aubepkg/aube/compare/v2.7.0...v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(pack)* honor files negations and dir/** patterns ([#1752](https://github.com/aubepkg/aube/pull/1752))
+- *(add)* treat -C/--dir/--prefix as the exact project directory ([#1751](https://github.com/aubepkg/aube/pull/1751))
+- *(install)* link a symlinked member's deps from its real location ([#1748](https://github.com/aubepkg/aube/pull/1748))
+- *(install)* record the bins aube links so cleanup removes only those ([#1734](https://github.com/aubepkg/aube/pull/1734))
+- *(lockfile)* keep bun.lock lockfileVersion when re-resolving outside install ([#1732](https://github.com/aubepkg/aube/pull/1732))
+- *(install)* remove stale symlinked bins of link: and workspace deps ([#1731](https://github.com/aubepkg/aube/pull/1731))
+- *(install)* map npm's --legacy-peer-deps instead of treating it as a package ([#1730](https://github.com/aubepkg/aube/pull/1730))
+- *(install)* show the member directory for workspace deps in aube ll ([#1725](https://github.com/aubepkg/aube/pull/1725))
+- *(install)* show a workspace dep's version in the install summary ([#1724](https://github.com/aubepkg/aube/pull/1724))
+- *(lockfile)* accept file: deps of npm workspace members when frozen ([#1714](https://github.com/aubepkg/aube/pull/1714))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/v2.6.1...v2.7.0) - 2026-10-07
 
 ### Added

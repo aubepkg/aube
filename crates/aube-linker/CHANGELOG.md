@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.0...aube-linker-v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(install)* link a symlinked member's deps from its real location ([#1748](https://github.com/aubepkg/aube/pull/1748))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.6.1...aube-linker-v2.7.0) - 2026-10-07
 
 ### Fixed
