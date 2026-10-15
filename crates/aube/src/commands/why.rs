@@ -119,13 +119,7 @@ fn run_filtered(
     args: &WhyArgs,
     workspace_filter: &aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<()> {
-    let workspace_root = crate::dirs::find_workspace_root(cwd).ok_or_else(|| {
-        miette!(
-            "{}: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at or above {}",
-            aube_util::cmd("why"),
-            cwd.display()
-        )
-    })?;
+    let workspace_root = crate::dirs::find_workspace_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
 
     let manifest = super::load_manifest_or_default(&workspace_root)?;
 

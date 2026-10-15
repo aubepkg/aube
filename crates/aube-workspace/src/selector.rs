@@ -247,37 +247,43 @@ pub fn select_workspace_packages(
     workspace_pkgs: &[PathBuf],
     filter: &EffectiveFilter,
 ) -> Result<Vec<SelectedPackage>, SelectError> {
-    let mut selected = select_members(workspace_root, workspace_pkgs, filter)?;
-    if selected.iter().any(|pkg| pkg.dir == workspace_root)
-        || !workspace_root.join("package.json").is_file()
-    {
-        return Ok(selected);
-    }
-    // The root project is not a workspace member, but an explicit selector
-    // (`--filter <name>`, `--filter ./`) can still pick it, as in pnpm. This
-    // also covers single-package projects with no workspace at all. Bare
-    // wildcards (`-r`) and exclusions never add the root.
-    let explicit = |selectors: &[String]| -> Vec<String> {
+    let root_is_member = workspace_pkgs.iter().any(|dir| dir == workspace_root);
+    let explicit = |selectors: &[String], keep_exclusions: bool| -> Vec<String> {
         selectors
             .iter()
-            .filter(|s| !s.starts_with('!') && s.as_str() != "*")
+            .filter(|s| s.as_str() != "*" && (keep_exclusions || !s.starts_with('!')))
             .cloned()
             .collect()
     };
+    let has_explicit = explicit(&filter.filters, false)
+        .iter()
+        .chain(&explicit(&filter.filter_prods, false))
+        .next()
+        .is_some();
+    if root_is_member || !has_explicit || !workspace_root.join("package.json").is_file() {
+        return select_members(workspace_root, workspace_pkgs, filter);
+    }
+    // The root project is not a workspace member, but an explicit selector
+    // (`--filter <name>`, `--filter ./`) can still pick it, as in pnpm. This
+    // also covers single-package projects with no workspace at all. The root
+    // is indexed alongside the members so graph selectors (`root...`) see
+    // both, but bare wildcards (`-r`) never add it and exclusions apply to it.
+    let mut candidates = workspace_pkgs.to_vec();
+    candidates.push(workspace_root.to_path_buf());
     let root_filter = EffectiveFilter {
-        filters: explicit(&filter.filters),
-        filter_prods: explicit(&filter.filter_prods),
+        filters: explicit(&filter.filters, true),
+        filter_prods: explicit(&filter.filter_prods, true),
         fail_if_no_match: filter.fail_if_no_match,
         include_workspace_root: false,
     };
-    if !root_filter.is_empty() {
-        selected.extend(select_members(
-            workspace_root,
-            &[workspace_root.to_path_buf()],
-            &root_filter,
-        )?);
+    let root_selected = select_members(workspace_root, &candidates, &root_filter)?
+        .iter()
+        .any(|pkg| pkg.dir == workspace_root);
+    if root_selected {
+        select_members(workspace_root, &candidates, filter)
+    } else {
+        select_members(workspace_root, workspace_pkgs, filter)
     }
-    Ok(selected)
 }
 
 fn select_members(
@@ -541,10 +547,23 @@ fn changed_since(
     let mut out = BTreeSet::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let changed = git_root.join(line);
+        let mut owned_by_member = false;
+        let mut root_idx = None;
         for (idx, pkg) in packages.iter().enumerate() {
-            if changed.starts_with(&pkg.selected.dir) {
+            if !changed.starts_with(&pkg.selected.dir) {
+                continue;
+            }
+            if pkg.selected.dir == workspace_root {
+                root_idx = Some(idx);
+            } else {
+                owned_by_member = true;
                 out.insert(idx);
             }
+        }
+        // A root project that is indexed next to its members only owns the
+        // files no member claims; otherwise every change would mark it.
+        if let Some(idx) = root_idx.filter(|_| !owned_by_member) {
+            out.insert(idx);
         }
     }
     Ok(out)
@@ -966,6 +985,10 @@ mod tests {
         );
         assert_eq!(
             names(&EffectiveFilter::from_filters(["!app"]), &members),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["root", "!root"]), &members),
             Vec::<String>::new()
         );
     }
