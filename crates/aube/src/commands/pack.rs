@@ -423,7 +423,11 @@ fn collect_files(project_dir: &Path, manifest: &PackageJson) -> miette::Result<V
             let Some(pattern) = entry.as_str() else {
                 continue;
             };
-            expand_files_glob(project_dir, pattern, &mut keep)?;
+            if let Some(negated) = pattern.strip_prefix('!') {
+                exclude_files_glob(project_dir, negated, &mut keep);
+            } else {
+                expand_files_glob(project_dir, pattern, &mut keep)?;
+            }
         }
     } else {
         walk_with_ignores(project_dir, &mut keep)?;
@@ -467,6 +471,12 @@ fn expand_files_glob(
     pattern: &str,
     keep: &mut BTreeSet<String>,
 ) -> miette::Result<()> {
+    // `dir/**` and `dir/` mean "everything under dir"; the glob crate's
+    // trailing `**` only yields directories, so select the directory itself.
+    let pattern = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix('/'))
+        .unwrap_or(pattern);
     let full_pattern = project_dir.join(pattern);
     let matches = glob::glob(&full_pattern.to_string_lossy())
         .map_err(|e| miette!("pack: invalid files glob {pattern:?}: {e}"))?;
@@ -484,6 +494,25 @@ fn expand_files_glob(
         }
     }
     Ok(())
+}
+
+/// Apply a negated `files` entry (`!pattern`): drop every already-selected
+/// file whose path, or any parent directory, matches the pattern with
+/// gitignore semantics (`**/x` at any depth, `a/x` anchored to the root).
+fn exclude_files_glob(project_dir: &Path, pattern: &str, keep: &mut BTreeSet<String>) {
+    let mut builder = GitignoreBuilder::new(project_dir);
+    if let Err(err) = builder.add_line(None, pattern) {
+        tracing::debug!("pack: ignoring invalid negated files entry {pattern:?}: {err}");
+        return;
+    }
+    let Ok(matcher) = builder.build() else {
+        return;
+    };
+    keep.retain(|rel| {
+        !matcher
+            .matched_path_or_any_parents(project_dir.join(rel), false)
+            .is_ignore()
+    });
 }
 
 /// Recursive walk of `dir` collecting relative paths, respecting the
@@ -789,6 +818,53 @@ mod tests {
         assert_eq!(
             tarball_filename("@babel/core", "7.24.0"),
             "babel-core-7.24.0.tgz"
+        );
+    }
+
+    fn collect_rel(files: &str, paths: &[&str]) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        for p in paths {
+            let abs = dir.path().join(p);
+            std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
+            std::fs::write(abs, "x").unwrap();
+        }
+        std::fs::write(
+            dir.path().join("package.json"),
+            format!(r#"{{"name":"a","version":"1.0.0","files":{files}}}"#),
+        )
+        .unwrap();
+        let manifest = PackageJson::from_path(&dir.path().join("package.json")).unwrap();
+        collect_files(dir.path(), &manifest)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.rel)
+            .collect()
+    }
+
+    const LIB: &[&str] = &["lib/index.js", "lib/__tests__/index.test.js"];
+
+    #[test]
+    fn files_negation_with_recursive_prefix_excludes_nested_dirs() {
+        let got = collect_rel(r#"["lib","!**/__tests__"]"#, LIB);
+        assert_eq!(got, ["lib/index.js", "package.json"]);
+    }
+
+    #[test]
+    fn files_negation_with_anchored_path_excludes_dir() {
+        let got = collect_rel(r#"["lib","!lib/__tests__"]"#, LIB);
+        assert_eq!(got, ["lib/index.js", "package.json"]);
+    }
+
+    #[test]
+    fn files_dir_double_star_includes_whole_tree() {
+        let got = collect_rel(r#"["lib/**"]"#, LIB);
+        assert_eq!(
+            got,
+            [
+                "lib/__tests__/index.test.js",
+                "lib/index.js",
+                "package.json"
+            ]
         );
     }
 
