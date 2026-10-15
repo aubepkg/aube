@@ -45,6 +45,21 @@ EOF
 	assert_output 1
 	run grep -c '"dep"' outer/package.json
 	assert_output 0
+	assert_file_exists outer/staging/aube-lock.yaml
+	assert_file_exists outer/staging/node_modules/dep/package.json
+	assert_file_not_exists outer/aube-lock.yaml
+	assert_file_not_exists outer/node_modules
+}
+
+@test "aube add -C: installs into the named directory outside a workspace's packages" {
+	mkdir -p outer/staging dep
+	echo '{"name":"outer","private":true,"workspaces":["packages/*"]}' >outer/package.json
+	echo '{"name":"dep","version":"1.0.0"}' >dep/package.json
+
+	run aube add "file:$PWD/dep" -C outer/staging
+	assert_success
+	assert_file_exists outer/staging/node_modules/dep/package.json
+	assert_file_not_exists outer/node_modules/dep
 }
 
 @test "aube add: adds dev dependency with -D" {

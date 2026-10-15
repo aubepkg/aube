@@ -17,8 +17,8 @@ static DIR_FLAG_GIVEN: AtomicBool = AtomicBool::new(false);
 /// Record that the user passed `-C` / `--dir` / `--prefix`, so commands
 /// that bootstrap a manifest treat the directory as the project itself
 /// instead of walking up to an ancestor `package.json`.
-pub fn mark_dir_flag_given() {
-    DIR_FLAG_GIVEN.store(true, Ordering::Relaxed);
+pub fn set_dir_flag_given(given: bool) {
+    DIR_FLAG_GIVEN.store(given, Ordering::Relaxed);
 }
 
 pub fn dir_flag_given() -> bool {
