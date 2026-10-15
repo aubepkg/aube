@@ -145,13 +145,6 @@ fn run_filtered(
 
     let workspace_pkgs = aube_workspace::find_workspace_packages(&workspace_root)
         .map_err(|e| miette!("failed to discover workspace packages: {e}"))?;
-    if workspace_pkgs.is_empty() {
-        return Err(miette!(
-            "{}: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at {}",
-            aube_util::cmd("why"),
-            workspace_root.display()
-        ));
-    }
 
     let selected = aube_workspace::selector::select_workspace_packages(
         &workspace_root,

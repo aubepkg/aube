@@ -223,13 +223,6 @@ pub async fn run(
     let selected = if !filter.is_empty() {
         let workspace_pkgs = aube_workspace::find_workspace_packages(&cwd)
             .map_err(|e| miette!("failed to discover workspace packages: {e}"))?;
-        if workspace_pkgs.is_empty() {
-            return Err(miette!(
-                "{}: --filter requires a workspace root (aube-workspace.yaml, pnpm-workspace.yaml, or package.json with a `workspaces` field) at or above {}",
-                aube_util::cmd("list"),
-                cwd.display()
-            ));
-        }
         let selected =
             aube_workspace::selector::select_workspace_packages(&cwd, &workspace_pkgs, &filter)
                 .map_err(|e| miette!("invalid --filter selector: {e}"))?;

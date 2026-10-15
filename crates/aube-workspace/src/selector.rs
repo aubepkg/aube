@@ -247,6 +247,44 @@ pub fn select_workspace_packages(
     workspace_pkgs: &[PathBuf],
     filter: &EffectiveFilter,
 ) -> Result<Vec<SelectedPackage>, SelectError> {
+    let mut selected = select_members(workspace_root, workspace_pkgs, filter)?;
+    if selected.iter().any(|pkg| pkg.dir == workspace_root)
+        || !workspace_root.join("package.json").is_file()
+    {
+        return Ok(selected);
+    }
+    // The root project is not a workspace member, but an explicit selector
+    // (`--filter <name>`, `--filter ./`) can still pick it, as in pnpm. This
+    // also covers single-package projects with no workspace at all. Bare
+    // wildcards (`-r`) and exclusions never add the root.
+    let explicit = |selectors: &[String]| -> Vec<String> {
+        selectors
+            .iter()
+            .filter(|s| !s.starts_with('!') && s.as_str() != "*")
+            .cloned()
+            .collect()
+    };
+    let root_filter = EffectiveFilter {
+        filters: explicit(&filter.filters),
+        filter_prods: explicit(&filter.filter_prods),
+        fail_if_no_match: filter.fail_if_no_match,
+        include_workspace_root: false,
+    };
+    if !root_filter.is_empty() {
+        selected.extend(select_members(
+            workspace_root,
+            &[workspace_root.to_path_buf()],
+            &root_filter,
+        )?);
+    }
+    Ok(selected)
+}
+
+fn select_members(
+    workspace_root: &Path,
+    workspace_pkgs: &[PathBuf],
+    filter: &EffectiveFilter,
+) -> Result<Vec<SelectedPackage>, SelectError> {
     let selectors = parse_effective(filter).map_err(SelectError::Parse)?;
     let packages = index_packages(workspace_pkgs);
     if selectors.is_empty() {
@@ -889,5 +927,46 @@ mod tests {
             other => panic!("expected GitFailed, got {other:?}"),
         };
         assert!(msg.contains("refusing"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn explicit_name_selects_root_project_outside_members() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"root","version":"0.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/app")).unwrap();
+        std::fs::write(
+            dir.path().join("packages/app/package.json"),
+            r#"{"name":"app","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let members = [dir.path().join("packages/app")];
+        let names = |filter: &EffectiveFilter, pkgs: &[PathBuf]| -> Vec<String> {
+            select_workspace_packages(dir.path(), pkgs, filter)
+                .unwrap()
+                .into_iter()
+                .filter_map(|pkg| pkg.name)
+                .collect()
+        };
+
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["root"]), &members),
+            vec!["root"]
+        );
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["root"]), &[]),
+            vec!["root"]
+        );
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["*"]), &members),
+            vec!["app"]
+        );
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["!app"]), &members),
+            Vec::<String>::new()
+        );
     }
 }
