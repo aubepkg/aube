@@ -470,8 +470,13 @@ pub async fn run(
     // redirected to a known root above. An explicit `-C <dir>` /
     // `--prefix` names the project directory exactly, as in pnpm and
     // npm, so it gets its own manifest rather than adopting an ancestor's.
+    // Declared workspace members keep the workspace-root install.
     let initial_cwd = crate::dirs::cwd()?;
-    let exact_dir = crate::dirs::dir_flag_given();
+    let exact_dir = crate::dirs::dir_flag_given()
+        && !crate::dirs::find_workspace_root(&initial_cwd).is_some_and(|root| {
+            aube_workspace::find_workspace_packages(&root)
+                .is_ok_and(|members| members.iter().any(|m| m == &initial_cwd))
+        });
     let needs_manifest = if exact_dir {
         !initial_cwd.join("package.json").exists()
     } else {

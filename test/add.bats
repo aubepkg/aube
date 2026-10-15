@@ -811,3 +811,15 @@ JSON
 	[ -L node_modules/local-dep ]
 	assert_file_exists node_modules/local-dep/package.json
 }
+
+@test "aube add -C: workspace member installs at the workspace root" {
+	mkdir -p ws/packages/app dep
+	echo '{"name":"ws","private":true,"workspaces":["packages/*"]}' >ws/package.json
+	echo '{"name":"app","version":"1.0.0"}' >ws/packages/app/package.json
+	echo '{"name":"dep","version":"1.0.0"}' >dep/package.json
+
+	run aube add "file:$PWD/dep" -C ws/packages/app
+	assert_success
+	assert_file_exists ws/aube-lock.yaml
+	assert_file_not_exists ws/packages/app/aube-lock.yaml
+}
