@@ -710,11 +710,10 @@ fn materialize_hoisted_plan(
     // correctness (each package's files are written into its own
     // directory) but we iterate by index so the BFS order surfaces
     // in progress/debug logs.
-    for idx in 0..plan.nodes.len() {
+    for node in &plan.nodes {
         // Borrow scoping: take a clone of the fields we need out of
         // the node before calling methods that re-borrow `linker`
         // with `&mut stats`. The arena is read-only from here on.
-        let node = &plan.nodes[idx];
         let (Some(dep_path), Some(pkg_dir)) = (&node.dep_path, &node.pkg_dir) else {
             continue;
         };
