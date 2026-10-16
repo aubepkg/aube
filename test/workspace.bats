@@ -468,6 +468,188 @@ _setup_shared_direct_dep_workspace() {
 	assert_output "3.0.1"
 }
 
+@test "aube install links the deps of a member that is a symlink to outside the root" {
+	# Node resolves from where the member really is, so its links have to
+	# be relative to that, and it can't reach the root's node_modules.
+	mkdir -p ws/packages/sib ws/vendor/lib outside/app
+	cd ws
+	cat >package.json <<-'EOF'
+		{"name": "root", "version": "0.0.0", "private": true, "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	echo '{"name": "lib", "version": "2.0.0"}' >vendor/lib/package.json
+	echo '{"name": "sib", "version": "1.0.0", "bin": {"sib": "cli.js"}}' >packages/sib/package.json
+	printf '#!/usr/bin/env node\nconsole.log("sib ran")\n' >packages/sib/cli.js
+	cat >../outside/app/package.json <<-'EOF'
+		{"name": "app", "version": "1.0.0", "dependencies": {"lib": "link:../../vendor/lib", "is-odd": "3.0.1", "sib": "workspace:*"}}
+	EOF
+	ln -s ../../outside/app packages/app
+
+	for npmrc in "" "dedupe-direct-deps=true"; do
+		rm -rf node_modules packages/sib/node_modules ../outside/app/node_modules aube-lock.yaml
+		echo "$npmrc" >.npmrc
+		run aube install
+		assert_success
+		cd ../outside/app
+		run node -e "for (const d of ['lib', 'is-odd', 'sib']) console.log(require(d + '/package.json').version)"
+		assert_success
+		assert_output "2.0.0
+3.0.1
+1.0.0"
+		run ./node_modules/.bin/sib
+		assert_output "sib ran"
+		cd ../../ws
+		run aube install
+		assert_success
+		assert_output --partial "Already up to date"
+		refute_output --partial "Already up to date ("
+	done
+}
+
+@test "aube install --node-linker=hoisted links members outside the root and behind a symlink" {
+	# Node can't walk from either member up into ws/node_modules, so each
+	# gets its own copy of what it needs, linked from where it really is.
+	mkdir -p ws/packages/sib ws/vendor/lib sibling outside/app
+	cd ws
+	cat >package.json <<-'EOF'
+		{"name": "root", "version": "0.0.0", "private": true, "dependencies": {"is-odd": "3.0.1"}}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+		  - ../sibling
+	EOF
+	echo 'node-linker=hoisted' >.npmrc
+	echo '{"name": "lib", "version": "2.0.0"}' >vendor/lib/package.json
+	echo '{"name": "sib", "version": "1.0.0", "bin": {"sib": "cli.js"}}' >packages/sib/package.json
+	printf '#!/usr/bin/env node\nconsole.log("sib ran")\n' >packages/sib/cli.js
+	cat >../sibling/package.json <<-'EOF'
+		{"name": "sibling", "version": "1.0.0", "dependencies": {"lib": "link:../ws/vendor/lib", "is-odd": "3.0.1", "sib": "workspace:*"}}
+	EOF
+	cat >../outside/app/package.json <<-'EOF'
+		{"name": "app", "version": "1.0.0", "dependencies": {"lib": "link:../../vendor/lib", "is-odd": "3.0.1", "sib": "workspace:*"}}
+	EOF
+	ln -s ../../outside/app packages/app
+
+	run aube install
+	assert_success
+	local ws=$PWD
+	for member in ../sibling ../outside/app; do
+		cd "$ws/$member"
+		run node -e "for (const d of ['lib', 'is-odd', 'sib']) console.log(require(d + '/package.json').version)"
+		assert_success
+		assert_output "2.0.0
+3.0.1
+1.0.0"
+		run ./node_modules/.bin/sib
+		assert_output "sib ran"
+	done
+	cd "$ws"
+	run aube install
+	assert_success
+	assert_output --partial "Already up to date"
+}
+
+@test "aube install --node-linker=hoisted keeps the transitive bins of a member behind a symlink" {
+	# The bin pass and cleanup have to agree on where the member's `.bin` is.
+	mkdir -p ws/packages outside/app
+	cd ws
+	echo '{"name": "root", "version": "0.0.0", "private": true}' >package.json
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	printf 'node-linker=hoisted\nhoisting-limits=workspaces\n' >.npmrc
+	echo '{"name": "app", "version": "1.0.0", "dependencies": {"aube-test-transitive-consumer": "^1.0.0"}}' >../outside/app/package.json
+	ln -s ../../outside/app packages/app
+
+	run aube install
+	assert_success
+	assert_exists ../outside/app/node_modules/.bin/aube-transitive-bin-probe
+}
+
+@test "aube install --node-linker=hoisted keeps the warm path for a member a symlink puts inside the root" {
+	# `../app` is a symlink to `ws/inner/app`, so Node walks up from there
+	# into ws/node_modules, where the hoisted dependency lands.
+	mkdir -p ws/inner/app
+	ln -s ws/inner/app app
+	cd ws
+	echo '{"name": "root", "version": "0.0.0", "private": true}' >package.json
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - ../app
+	EOF
+	echo 'node-linker=hoisted' >.npmrc
+	echo '{"name": "app", "version": "1.0.0", "dependencies": {"is-odd": "3.0.1"}}' >inner/app/package.json
+
+	run aube install
+	assert_success
+	cd inner/app
+	run node -p "require('is-odd/package.json').version"
+	assert_output "3.0.1"
+	cd ../..
+	run aube install
+	assert_success
+	assert_output --partial "Already up to date"
+	refute_output --partial "Already up to date ("
+}
+
+@test "aube rebuild keeps the own command of a hoisted member behind a symlink" {
+	# The command's placement is read back from install state, so it has to
+	# land on the same `.bin` the member's own command is claimed in.
+	mkdir -p ws/packages outside/app
+	cd ws
+	echo '{"name": "root", "version": "0.0.0", "private": true}' >package.json
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	printf 'node-linker=hoisted\nhoisting-limits=workspaces\n' >.npmrc
+	cat >../outside/app/package.json <<-'EOF'
+		{"name": "app", "version": "1.0.0", "bin": {"aube-transitive-bin-probe": "own.js"}, "dependencies": {"aube-test-transitive-bin": "^1.0.0"}}
+	EOF
+	printf '#!/usr/bin/env node\nconsole.log("own ran")\n' >../outside/app/own.js
+	ln -s ../../outside/app packages/app
+
+	run aube install
+	assert_success
+	run aube rebuild
+	assert_success
+	cd ../outside/app
+	run ./node_modules/.bin/aube-transitive-bin-probe
+	assert_output "own ran"
+}
+
+@test "aube install relinks a member whose symlink now points somewhere else" {
+	mkdir -p ws/packages ws/vendor/lib outside/app
+	cd ws
+	echo '{"name": "root", "version": "0.0.0", "private": true}' >package.json
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+	EOF
+	echo '{"name": "lib", "version": "2.0.0"}' >vendor/lib/package.json
+	echo '{"name": "app", "version": "1.0.0", "dependencies": {"lib": "link:../../vendor/lib"}}' >../outside/app/package.json
+	ln -s ../../outside/app packages/app
+	run aube install
+	assert_success
+
+	# Same manifest in a new directory with no links yet.
+	mkdir -p ../outside/app2
+	cp ../outside/app/package.json ../outside/app2/
+	rm packages/app
+	ln -s ../../outside/app2 packages/app
+	run aube install
+	assert_success
+	refute_output --partial "Already up to date"
+	cd ../outside/app2
+	run node -p "require('lib/package.json').version"
+	assert_output "2.0.0"
+}
+
 @test "aube install: dedupeDirectDeps=true keeps the link of a member outside the root" {
 	# Node never walks from `../sibling` into the root's node_modules.
 	mkdir -p root sibling
@@ -707,6 +889,8 @@ _setup_shared_direct_dep_workspace() {
 		assert_success
 		if [ -L "$bin" ]; then
 			target="$(readlink -f "$bin")"
+			[[ "$target" == *"tools/dev/bin/my-tool.mjs" ]]
+			continue
 		elif [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN|Windows_NT) ]]; then
 			# Windows shims carry no v2 marker; the `.cmd` launcher names
 			# the target with backslashes.
@@ -717,7 +901,9 @@ _setup_shared_direct_dep_workspace() {
 			# $basedir-relative path to the workspace file.
 			target="$(grep -m1 'aube-bin-shim v2 target=' "$bin")"
 		fi
-		[[ "$target" == *"tools/dev/bin/my-tool.mjs" ]]
+		# A shim names the target through the consumer's own
+		# `node_modules/@test/dev` link, as pnpm's do.
+		[[ "$target" == *"../@test/dev/bin/my-tool.mjs" ]]
 	done
 }
 

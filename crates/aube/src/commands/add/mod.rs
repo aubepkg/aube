@@ -373,6 +373,15 @@ pub async fn run(
     args.network.install_overrides();
     args.lockfile.install_overrides();
     args.virtual_store.install_overrides();
+    // A package name can't start with `-`, so this is a flag aube doesn't know. Without
+    // the check it would be looked up in the registry (and advisory database) as a package.
+    if let Some(flag) = args.packages.iter().find(|p| p.starts_with('-')) {
+        return Err(miette!(
+            code = aube_codes::errors::ERR_AUBE_INVALID_PACKAGE_NAME,
+            "unknown option `{flag}` for `{}`",
+            aube_util::cmd("add")
+        ));
+    }
     if !filter.is_empty() && !args.global && !args.workspace {
         return filtered::run(args, &filter).await;
     }
@@ -458,14 +467,33 @@ pub async fn run(
     // ancestor has a package.json (within the home boundary), write a
     // minimal `{}` in cwd before resolving the project root. The
     // `--global`/`-g` path returned earlier; `--workspace` already
-    // redirected to a known root above.
+    // redirected to a known root above. An explicit `-C <dir>` /
+    // `--prefix` names the project directory exactly, as in pnpm and
+    // npm, so it gets its own manifest rather than adopting an ancestor's.
+    // Declared workspace members keep the workspace-root install.
     let initial_cwd = crate::dirs::cwd()?;
-    if crate::dirs::find_project_root(&initial_cwd).is_none() {
+    let mut exact_dir = crate::dirs::dir_flag_given();
+    if exact_dir && let Some(root) = crate::dirs::find_workspace_root(&initial_cwd) {
+        let members = aube_workspace::find_workspace_packages(&root)
+            .into_diagnostic()
+            .wrap_err("failed to enumerate workspace packages")?;
+        exact_dir = !members.iter().any(|m| m == &initial_cwd);
+    }
+    let needs_manifest = if exact_dir {
+        !initial_cwd.join("package.json").exists()
+    } else {
+        crate::dirs::find_project_root(&initial_cwd).is_none()
+    };
+    if needs_manifest {
         std::fs::write(initial_cwd.join("package.json"), "{}\n")
             .into_diagnostic()
             .wrap_err("failed to create package.json")?;
     }
-    let cwd = crate::dirs::project_root()?;
+    let cwd = if exact_dir {
+        initial_cwd
+    } else {
+        crate::dirs::project_root()?
+    };
 
     // Refuse to add into a workspace root unless the caller opts out.
     // Matches pnpm: deps added here are shared by every workspace
@@ -504,7 +532,11 @@ pub async fn run(
         }
     }
 
-    let lock = super::take_install_project_lock(&cwd)?;
+    let lock = if exact_dir {
+        super::take_project_lock(&cwd)?
+    } else {
+        super::take_install_project_lock(&cwd)?
+    };
     let manifest_path = cwd.join("package.json");
 
     // 1. Read existing package.json. Snapshot the raw bytes when

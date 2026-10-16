@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
       - name: Run release-plz
         id: release-plz
-        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
+        uses: release-plz/action@18641b6c63063cc5ff8786ebf69cd57e8541bae1 # v0.5.140
         with:
           command: release
         env:
@@ -211,7 +211,7 @@ jobs:
           ref: refs/tags/${{ needs.release-plz-release.outputs.tag }}
           submodules: recursive
           persist-credentials: false
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: communique
           cache: false
@@ -286,7 +286,7 @@ jobs:
       # of silently re-resolving `"latest"` pins and rewriting mise.lock.
       # release-plz refuses to run against a dirty tree, and intentional
       # lockfile bumps should land via their own PR.
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: false
         env:

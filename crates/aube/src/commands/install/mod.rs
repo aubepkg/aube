@@ -2407,6 +2407,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         current_subtree_hashes,
         patch_hashes,
         managed_bin_links,
+        bin_link_snapshot,
         gvs_dep_link_targets,
     } = link::run_link_phase(link::LinkPhaseInput {
         cwd: &cwd,
@@ -2462,6 +2463,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         jail_policy: &jail_policy,
         stats: &stats,
         managed_bin_links: &managed_bin_links,
+        bin_link_snapshot,
         gvs_dep_link_targets,
         node_linker,
         has_workspace,

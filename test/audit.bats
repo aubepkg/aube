@@ -292,6 +292,47 @@ _write_audit_update_exact_fixture() {
 	assert_success
 }
 
+@test "aube audit --fix=update keeps a bun 1.4 lockfileVersion 2" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "audit-update-fixture",
+		  "version": "1.0.0",
+		  "dependencies": { "is-number": ">=0.1.0" }
+		}
+	EOF
+	cat >bun.lock <<-'EOF'
+		{
+		  "lockfileVersion": 2,
+		  "configVersion": 1,
+		  "workspaces": {
+		    "": {
+		      "name": "audit-update-fixture",
+		      "dependencies": {
+		        "is-number": ">=0.1.0",
+		      },
+		    },
+		  },
+		  "packages": {
+		    "is-number": ["is-number@3.0.0", "", {}, "sha512-4cboCqIpliH+mAvFNegjZQ4kgKc3ZUhQVr3HvWbSh5q3WH2v82ct+T2Y1hdU5Gdtorx/cLifQjqCbL7bpznLTg=="],
+		  }
+		}
+	EOF
+	cp bun.lock bun.lock.before
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit --fix=update
+	_stop_audit_server
+	assert_success
+	assert_output --partial "Updated lockfile for 1 package"
+
+	run grep -F '"is-number@7.0.0"' bun.lock
+	assert_success
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
+	assert_success
+}
+
 @test "aube audit --fix=update keeps exact pins aligned with lockfile specifiers" {
 	_write_audit_update_exact_fixture
 	_start_audit_server

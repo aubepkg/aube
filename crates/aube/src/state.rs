@@ -8,6 +8,7 @@ const INSTALL_STATE_FILE_NAME: &str = "state.json";
 const FRESH_STATE_FILE_NAME: &str = "fresh.json";
 const LICENSE_STATE_FILE_NAME: &str = "licenses.json";
 const HOISTED_PLACEMENTS_FILE_NAME: &str = "hoisted-placements.json";
+const BIN_LINKS_FILE_NAME: &str = "bin-links.json";
 
 /// The install-state directory name, `.<name>-state`. Standalone aube:
 /// `.aube-state`.
@@ -1159,7 +1160,10 @@ pub fn read_hoisted_placements(project_dir: &Path) -> Option<aube_linker::Hoiste
         .map(|(dep_path, paths)| {
             let paths = paths
                 .into_iter()
-                .map(|path| project_dir.join(path))
+                // Written as a lexical diff from `project_dir`, so collapsing
+                // `..` here gives back the recorded path, which is how a
+                // member outside the root is compared with its `.bin`.
+                .map(|path| aube_util::path::normalize_lexical(&project_dir.join(path)))
                 .filter(|path| path.exists())
                 .collect();
             (dep_path, paths)
@@ -1168,6 +1172,51 @@ pub fn read_hoisted_placements(project_dir: &Path) -> Option<aube_linker::Hoiste
     Some(aube_linker::HoistedPlacements::from_package_dirs(
         by_dep_path,
     ))
+}
+
+/// Symlinked bins an install wrote: each `.bin` directory, relative to the
+/// project, maps a command entry to the link target as written. A directory
+/// an install swept is listed even when it holds no symlinked bins, so a
+/// missing key means no install has recorded that directory yet.
+pub type BinLinks = BTreeMap<String, BTreeMap<String, String>>;
+
+/// The bin link record as [`read_bin_links`] finds it.
+#[derive(Debug)]
+pub enum StoredBinLinks {
+    /// No install has recorded bins yet.
+    Missing,
+    /// A record exists but can't be read or parsed.
+    Unreadable,
+    Recorded(BinLinks),
+}
+
+/// Record the symlinked bins this install wrote, so the next one can tell
+/// them from links someone else put in `.bin`.
+pub fn write_bin_links(project_dir: &Path, links: &BinLinks) -> Result<(), std::io::Error> {
+    let state_path = state_dir(project_dir);
+    remove_legacy_state_file(&state_path)?;
+    let json = serde_json::to_vec(links)?;
+    aube_util::fs_atomic::atomic_write(&state_path.join(BIN_LINKS_FILE_NAME), &json)
+}
+
+/// The symlinked bins the previous install recorded.
+pub fn read_bin_links(project_dir: &Path) -> StoredBinLinks {
+    let path = state_dir(project_dir).join(BIN_LINKS_FILE_NAME);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return StoredBinLinks::Missing,
+        Err(err) => {
+            tracing::debug!("ignoring unreadable {}: {err}", path.display());
+            return StoredBinLinks::Unreadable;
+        }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(links) => StoredBinLinks::Recorded(links),
+        Err(err) => {
+            tracing::debug!("ignoring malformed {}: {err}", path.display());
+            StoredBinLinks::Unreadable
+        }
+    }
 }
 
 /// Read licenses captured at install time without adding them to the main
@@ -1333,11 +1382,18 @@ impl InstallLayoutState {
             } else {
                 aube_util::path::normalize_lexical(&project_dir.join(importer))
             };
+            // The linker keeps every link of a member a symlink relocates
+            // and hoists from where it really is. Its own entries stay
+            // under the workspace path, which follows the symlink, so
+            // pointing it at another directory busts the warm path.
+            let relocated = aube_linker::relocated_importer_dir(project_dir, importer);
+            let dedupes_importer = dedupes_direct_deps && relocated.is_none();
+            let hoist_dir = relocated.as_deref().unwrap_or(&importer_dir);
             let entries = deps
                 .iter()
                 .map(|dep| {
                     // Deduped by the linker: Node finds the root's link.
-                    if dedupes_direct_deps
+                    if dedupes_importer
                         && aube_linker::dedupe_skips_member_link(
                             &layout.graph.importers,
                             importer,
@@ -1359,7 +1415,7 @@ impl InstallLayoutState {
                         .filter(|_| matches!(layout.node_linker, aube_linker::NodeLinker::Hoisted))
                         .and_then(|placements| {
                             let package_dirs = placements.all_package_dirs(&dep.dep_path);
-                            importer_dir.ancestors().find_map(|ancestor| {
+                            hoist_dir.ancestors().find_map(|ancestor| {
                                 let candidate =
                                     ancestor.join(layout.modules_dir_name).join(&dep.name);
                                 package_dirs.contains(&candidate).then_some(candidate)
@@ -2299,6 +2355,107 @@ mod tests {
 
         assert_eq!(
             layout.direct_entries.get("packages/app"),
+            Some(&vec!["node_modules/is-number".to_string()])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_graph_records_a_relocated_member_through_its_workspace_path() {
+        // Checked through the symlink, so pointing it at another
+        // directory without these links busts the warm path.
+        let base = std::fs::canonicalize(temp_project_dir("layout-relocated-named")).unwrap();
+        let project_dir = base.join("ws");
+        std::fs::create_dir_all(project_dir.join("packages")).unwrap();
+        std::fs::create_dir_all(base.join("outside/app")).unwrap();
+        std::os::unix::fs::symlink("../../outside/app", project_dir.join("packages/app")).unwrap();
+        let aube_dir = project_dir.join("node_modules/.aube");
+        let graph = aube_lockfile::LockfileGraph {
+            importers: BTreeMap::from([
+                (".".to_string(), Vec::new()),
+                (
+                    "packages/app".to_string(),
+                    vec![aube_lockfile::DirectDep {
+                        name: "is-number".to_string(),
+                        dep_path: "is-number@7.0.0".to_string(),
+                        dep_type: aube_lockfile::DepType::Production,
+                        specifier: None,
+                    }],
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        let layout = InstallLayoutState::from_graph(
+            &project_dir,
+            &WriteStateLayout {
+                graph: &graph,
+                node_linker: aube_linker::NodeLinker::Isolated,
+                hoisting_limits: aube_linker::HoistingLimits::None,
+                modules_dir_name: "node_modules",
+                aube_dir: &aube_dir,
+                virtual_store_dir_max_length: 120,
+                placements: None,
+                use_global_virtual_store: false,
+                dedupe_direct_deps: false,
+                gvs_dep_link_targets: None,
+            },
+        )
+        .expect("isolated layout should build");
+
+        assert_eq!(
+            layout.direct_entries.get("packages/app"),
+            Some(&vec!["packages/app/node_modules/is-number".to_string()])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_graph_finds_hoisted_entries_from_where_a_relocated_member_really_is() {
+        // `../app` is a symlink to `ws/inner/app`, so Node finds the dep
+        // the planner hoisted into `ws/node_modules`.
+        let base = std::fs::canonicalize(temp_project_dir("layout-hoisted-relocated")).unwrap();
+        let project_dir = base.join("ws");
+        std::fs::create_dir_all(project_dir.join("inner/app")).unwrap();
+        std::os::unix::fs::symlink("ws/inner/app", base.join("app")).unwrap();
+        let aube_dir = project_dir.join("node_modules/.aube");
+        let dep = aube_lockfile::DirectDep {
+            name: "is-number".to_string(),
+            dep_path: "is-number@7.0.0".to_string(),
+            dep_type: aube_lockfile::DepType::Production,
+            specifier: None,
+        };
+        let graph = aube_lockfile::LockfileGraph {
+            importers: BTreeMap::from([
+                (".".to_string(), Vec::new()),
+                ("../app".to_string(), vec![dep]),
+            ]),
+            ..Default::default()
+        };
+        let placements = aube_linker::HoistedPlacements::from_package_dirs(BTreeMap::from([(
+            "is-number@7.0.0".to_string(),
+            vec![project_dir.join("node_modules/is-number")],
+        )]));
+
+        let layout = InstallLayoutState::from_graph(
+            &project_dir,
+            &WriteStateLayout {
+                graph: &graph,
+                node_linker: aube_linker::NodeLinker::Hoisted,
+                hoisting_limits: aube_linker::HoistingLimits::None,
+                modules_dir_name: "node_modules",
+                aube_dir: &aube_dir,
+                virtual_store_dir_max_length: 120,
+                placements: Some(&placements),
+                use_global_virtual_store: false,
+                dedupe_direct_deps: false,
+                gvs_dep_link_targets: None,
+            },
+        )
+        .expect("hoisted layout should build");
+
+        assert_eq!(
+            layout.direct_entries.get("../app"),
             Some(&vec!["node_modules/is-number".to_string()])
         );
     }

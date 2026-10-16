@@ -33,6 +33,35 @@ EOF
 	assert_file_exists node_modules/is-odd/index.js
 }
 
+@test "aube add -C: bootstraps the named directory instead of an ancestor manifest" {
+	mkdir -p outer/staging dep
+	echo '{"name":"outer","private":true}' >outer/package.json
+	echo '{"name":"dep","version":"1.0.0"}' >dep/package.json
+
+	run aube add "file:$PWD/dep" -C outer/staging
+	assert_success
+
+	run grep -c '"dep"' outer/staging/package.json
+	assert_output 1
+	run grep -c '"dep"' outer/package.json
+	assert_output 0
+	assert_file_exists outer/staging/aube-lock.yaml
+	assert_file_exists outer/staging/node_modules/dep/package.json
+	assert_file_not_exists outer/aube-lock.yaml
+	assert_file_not_exists outer/node_modules
+}
+
+@test "aube add -C: installs into the named directory outside a workspace's packages" {
+	mkdir -p outer/staging dep
+	echo '{"name":"outer","private":true,"workspaces":["packages/*"]}' >outer/package.json
+	echo '{"name":"dep","version":"1.0.0"}' >dep/package.json
+
+	run aube add "file:$PWD/dep" -C outer/staging
+	assert_success
+	assert_file_exists outer/staging/node_modules/dep/package.json
+	assert_file_not_exists outer/node_modules/dep
+}
+
 @test "aube add: adds dev dependency with -D" {
 	cat >package.json <<'EOF'
 {
@@ -781,4 +810,16 @@ JSON
 
 	[ -L node_modules/local-dep ]
 	assert_file_exists node_modules/local-dep/package.json
+}
+
+@test "aube add -C: workspace member installs at the workspace root" {
+	mkdir -p ws/packages/app dep
+	echo '{"name":"ws","private":true,"workspaces":["packages/*"]}' >ws/package.json
+	echo '{"name":"app","version":"1.0.0"}' >ws/packages/app/package.json
+	echo '{"name":"dep","version":"1.0.0"}' >dep/package.json
+
+	run aube add "file:$PWD/dep" -C ws/packages/app
+	assert_success
+	assert_file_exists ws/aube-lock.yaml
+	assert_file_not_exists ws/packages/app/aube-lock.yaml
 }

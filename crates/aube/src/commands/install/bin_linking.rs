@@ -446,6 +446,12 @@ fn read_bin_manifest(
 /// `link:` deps, see [`unmaterialized_bin_source`]), where
 /// `link_bins_for_dep` would find no `package.json` and skip them. pnpm
 /// exposes these bins to the importer's scripts the same way.
+///
+/// The bins point through the importer's own `<modules_dir>/<name>` link
+/// when it leads to `dir`, as a hoisted registry dep's bins point into
+/// its `node_modules` entry. Once the dep is removed and that link swept,
+/// a symlinked bin dangles there and [`remove_unclaimed_bin_links`]
+/// removes it.
 fn link_bins_from_dir(
     bin_dir: &Path,
     dir: &Path,
@@ -456,9 +462,13 @@ fn link_bins_from_dir(
     preserved: Option<&PreservedBinLinks>,
 ) -> miette::Result<()> {
     if let Some(bin) = pkg_json.get("bin") {
+        let via_link = bin_dir
+            .parent()
+            .map(|modules_dir| modules_dir.join(name))
+            .filter(|link| same_dir(link, dir));
         link_bin_entries(
             bin_dir,
-            dir,
+            via_link.as_deref().unwrap_or(dir),
             Some(name),
             bin,
             shim_opts,
@@ -468,6 +478,14 @@ fn link_bins_from_dir(
         )?;
     }
     Ok(())
+}
+
+/// Whether `a` and `b` lead to the same existing directory.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    matches!(
+        (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+        (Ok(a), Ok(b)) if a == b
+    )
 }
 
 /// Write per-dep `.bin/` directories holding shims for each package's
@@ -685,10 +703,13 @@ fn importer_bin_rules<'a>(
         if !aube_linker::is_physical_importer(importer_path) {
             continue;
         }
+        // A member a symlink relocates gets its placements where it
+        // really is, so its rules are keyed there too.
         let importer_dir = if importer_path == "." {
             project_dir.to_path_buf()
         } else {
-            project_dir.join(importer_path)
+            aube_linker::relocated_importer_dir(project_dir, importer_path)
+                .unwrap_or_else(|| project_dir.join(importer_path))
         };
         // Normalized because the probe side is too: a placement restored
         // from the state sidecar is a recorded *relative* path re-joined
@@ -941,7 +962,10 @@ pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
             if importer_path == "." || !aube_linker::is_physical_importer(importer_path) {
                 continue;
             }
-            let pkg_dir = project_dir.join(importer_path);
+            // Shims hold paths relative to their `.bin`, so a member a
+            // symlink relocates gets them written where it really is.
+            let pkg_dir = aube_linker::relocated_importer_dir(project_dir, importer_path)
+                .unwrap_or_else(|| project_dir.join(importer_path));
             let bin_dir = pkg_dir.join(modules_dir_name).join(".bin");
             std::fs::create_dir_all(&bin_dir).into_diagnostic()?;
             for dep in deps {
@@ -1029,15 +1053,28 @@ pub(crate) fn link_all_bins(input: LinkAllBinsInput<'_>) -> miette::Result<Manag
 /// launchers are touched; files a lifecycle script or the user put there
 /// are left alone. Must run after a full linking pass so `managed.seen`
 /// holds every command this install claims.
+///
+/// A symlinked bin of a `link:` or workspace dep points through the
+/// importer's `<modules_dir>/<name>` link rather than into the virtual
+/// store. One such link no current dep claims, such as a renamed command,
+/// is aube's too. Links that reach the dep's directory some other way are
+/// left alone: aube didn't write them.
+///
+/// Each install records the symlinked bins it wrote. With that record, a
+/// symlink still pointing where aube wrote it is aube's whatever its target,
+/// and the `<modules_dir>/<name>` guess above, which can't tell aube's link
+/// from someone else's, is skipped. The guess is only for the first install
+/// that has no record yet.
 pub(crate) fn remove_unclaimed_bin_links(
     project_dir: &Path,
     modules_dir_name: &str,
     aube_dir: &Path,
     graph: &aube_lockfile::LockfileGraph,
+    ws_dirs: Option<&BTreeMap<String, PathBuf>>,
     managed: &ManagedBinLinks,
-) -> miette::Result<()> {
+) -> miette::Result<Vec<PathBuf>> {
     let aube_dir = aube_util::path::normalize_lexical(aube_dir);
-    let mut bin_dirs = BTreeSet::from([project_dir.join(modules_dir_name).join(".bin")]);
+    let mut bin_dirs = BTreeMap::from([(project_dir.join(modules_dir_name).join(".bin"), ".")]);
     // A workspace dependency's native executable is linked from its own
     // package directory, outside the virtual store and `node_modules`.
     let mut workspace_dirs = Vec::new();
@@ -1046,17 +1083,45 @@ pub(crate) fn remove_unclaimed_bin_links(
             workspace_dirs.push(aube_util::path::normalize_lexical(
                 &project_dir.join(importer_path),
             ));
+            // Where `link_all_bins` wrote the member's shims.
             bin_dirs.insert(
-                project_dir
-                    .join(importer_path)
+                aube_linker::relocated_importer_dir(project_dir, importer_path)
+                    .unwrap_or_else(|| project_dir.join(importer_path))
                     .join(modules_dir_name)
                     .join(".bin"),
+                importer_path.as_str(),
             );
         }
     }
-    for bin_dir in bin_dirs {
+    let previous = crate::state::read_bin_links(project_dir);
+    let swept: Vec<PathBuf> = bin_dirs.keys().cloned().collect();
+    for (bin_dir, importer_path) in bin_dirs {
         let claimed = managed.seen.get(&bin_dir);
+        let key = bin_dir_key(project_dir, &bin_dir);
+        // Guess only for a directory no install has recorded yet. An
+        // unreadable record disables the guess everywhere: it can't say
+        // which directories it covered.
+        let (recorded, guess) = match &previous {
+            crate::state::StoredBinLinks::Missing => (None, true),
+            crate::state::StoredBinLinks::Unreadable => (None, false),
+            crate::state::StoredBinLinks::Recorded(links) => {
+                let recorded = links.get(&key);
+                (recorded, recorded.is_none())
+            }
+        };
         let modules_dir = aube_util::path::normalize_lexical(bin_dir.parent().unwrap_or(&bin_dir));
+        let local_dep_links: Vec<PathBuf> = graph
+            .importers
+            .get(importer_path)
+            .into_iter()
+            .flatten()
+            .filter(|_| guess)
+            .filter(|dep| {
+                unmaterialized_bin_source(graph, &dep.dep_path, &dep.name, project_dir, ws_dirs)
+                    .is_some()
+            })
+            .map(|dep| modules_dir.join(&dep.name))
+            .collect();
         let launcher_roots: Vec<&Path> = [aube_dir.as_path(), modules_dir.as_path()]
             .into_iter()
             .chain(workspace_dirs.iter().map(PathBuf::as_path))
@@ -1069,6 +1134,8 @@ pub(crate) fn remove_unclaimed_bin_links(
                 claimed,
                 (&aube_dir, &modules_dir),
                 &launcher_roots,
+                recorded,
+                &local_dep_links,
             ) {
                 stale.push(path);
             }
@@ -1092,7 +1159,86 @@ pub(crate) fn remove_unclaimed_bin_links(
             }
         }
     }
-    Ok(())
+    Ok(swept)
+}
+
+/// The symlinked bins aube wrote in the `.bin` directories it swept, taken
+/// right after linking so links a lifecycle script puts there later aren't
+/// mistaken for aube's.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BinLinkSnapshot {
+    dirs: Vec<PathBuf>,
+    links: crate::state::BinLinks,
+}
+
+/// Take the [`BinLinkSnapshot`] of the commands `managed` claims in each of
+/// `bin_dirs`.
+pub(crate) fn snapshot_bin_links(
+    project_dir: &Path,
+    bin_dirs: Vec<PathBuf>,
+    managed: &ManagedBinLinks,
+) -> miette::Result<BinLinkSnapshot> {
+    let mut links = crate::state::BinLinks::new();
+    for bin_dir in &bin_dirs {
+        let claimed = managed.seen.get(bin_dir);
+        let written: BTreeMap<String, String> = list_bin_entries(bin_dir)?
+            .into_iter()
+            .filter(|(_, name)| claimed.is_some_and(|names| names.contains(name)))
+            .filter_map(|(path, name)| {
+                let target = std::fs::read_link(&path).ok()?;
+                Some((name, target.to_string_lossy().into_owned()))
+            })
+            .collect();
+        if !written.is_empty() {
+            links.insert(bin_dir_key(project_dir, bin_dir), written);
+        }
+    }
+    Ok(BinLinkSnapshot {
+        dirs: bin_dirs,
+        links,
+    })
+}
+
+impl BinLinkSnapshot {
+    /// The `.bin` directories this snapshot covers.
+    pub(crate) fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
+    }
+}
+
+/// Save `snapshot` as the bin link record, keeping what the previous record
+/// holds for any `.bin` directory it doesn't cover (a filtered install
+/// visits only some importers). Call it once the install has succeeded, so
+/// a failed one leaves no state behind.
+pub(crate) fn commit_bin_links(
+    project_dir: &Path,
+    snapshot: &BinLinkSnapshot,
+) -> miette::Result<()> {
+    if snapshot.dirs.is_empty() {
+        return Ok(());
+    }
+    let mut record = match crate::state::read_bin_links(project_dir) {
+        crate::state::StoredBinLinks::Recorded(links) => links,
+        _ => crate::state::BinLinks::new(),
+    };
+    // Every swept directory gets an entry, empty or not, so the next
+    // install knows it was recorded.
+    for bin_dir in &snapshot.dirs {
+        let key = bin_dir_key(project_dir, bin_dir);
+        let links = snapshot.links.get(&key).cloned().unwrap_or_default();
+        record.insert(key, links);
+    }
+    crate::state::write_bin_links(project_dir, &record)
+        .into_diagnostic()
+        .wrap_err("failed to record linked bins")
+}
+
+/// `bin_dir` relative to the project, as the bin link record keys it.
+fn bin_dir_key(project_dir: &Path, bin_dir: &Path) -> String {
+    pathdiff::diff_paths(bin_dir, project_dir)
+        .unwrap_or_else(|| bin_dir.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Every command launcher directly in `bin_dir`, plus one level under
@@ -1155,6 +1301,8 @@ fn is_unclaimed_aube_bin_link(
     claimed: Option<&BTreeSet<String>>,
     (aube_dir, modules_dir): (&Path, &Path),
     launcher_roots: &[&Path],
+    recorded: Option<&BTreeMap<String, String>>,
+    local_dep_links: &[PathBuf],
 ) -> bool {
     // A command literally named `foo.cmd` is recorded under that name, so
     // check the file's own name before falling back to its command stem.
@@ -1170,16 +1318,28 @@ fn is_unclaimed_aube_bin_link(
         let Ok(target) = std::fs::read_link(path) else {
             return false;
         };
+        let recorded_by_aube = recorded.is_some_and(|links| {
+            links
+                .get(name)
+                .is_some_and(|written| *written == target.to_string_lossy())
+        });
         let resolved = aube_util::path::normalize_lexical(
             &path.parent().unwrap_or(Path::new("")).join(target),
         );
         // A live link into the virtual store is aube's private layout. A
         // dangling link is also ours when it points into the importer's
         // `node_modules`, where hoisted installs link bins and the
-        // package has since been swept. Anything else, or a live link
-        // someone aimed at a file under `node_modules`, is not aube's.
-        return resolved.starts_with(aube_dir)
-            || (resolved.starts_with(modules_dir) && !path.exists());
+        // package has since been swept. A link through the importer's
+        // `<modules_dir>/<name>` link of a current `link:` or workspace dep
+        // is one aube wrote for a command that dep no longer declares.
+        // Anything else, or a live link someone aimed at another file under
+        // `node_modules`, is not aube's.
+        return recorded_by_aube
+            || resolved.starts_with(aube_dir)
+            || (resolved.starts_with(modules_dir) && !path.exists())
+            || local_dep_links
+                .iter()
+                .any(|link| resolved.starts_with(link));
     }
     if cfg!(windows) {
         return aube_linker::sys::is_generated_windows_launcher(path, launcher_roots)
@@ -1588,7 +1748,8 @@ mod tests {
             .or_default()
             .insert("kept".to_string());
         let graph = LockfileGraph::default();
-        remove_unclaimed_bin_links(project, "node_modules", &aube_dir, &graph, &current).unwrap();
+        remove_unclaimed_bin_links(project, "node_modules", &aube_dir, &graph, None, &current)
+            .unwrap();
 
         assert!(!bin_dir.join("gone").exists(), "stale shim is removed");
         assert!(bin_dir.join("kept").exists(), "claimed shim stays");
@@ -1630,6 +1791,7 @@ mod tests {
             "node_modules",
             &aube_dir,
             &LockfileGraph::default(),
+            None,
             &ManagedBinLinks::default(),
         )
         .unwrap();
@@ -1667,6 +1829,7 @@ mod tests {
             "node_modules",
             &aube_dir,
             &LockfileGraph::default(),
+            None,
             &ManagedBinLinks::default(),
         )
         .unwrap();

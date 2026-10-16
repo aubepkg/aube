@@ -217,6 +217,254 @@ EOF
 	assert_output "linked-tool ran"
 }
 
+@test "aube install removes the bin of a removed link: dep with node-linker=hoisted" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	# Hoisted installs symlink bins. A link: dep's bin goes through its
+	# node_modules entry, so it dangles once the dep is gone and is swept.
+	mkdir -p linked-tool kept-tool app
+	for tool in linked-tool kept-tool; do
+		echo "{\"name\":\"$tool\",\"version\":\"1.0.0\",\"bin\":{\"$tool\":\"cli.js\"}}" >"$tool/package.json"
+		printf '#!/usr/bin/env node\nconsole.log("ran");\n' >"$tool/cli.js"
+	done
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","kept-tool":"link:../kept-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/linked-tool ]
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"kept-tool":"link:../kept-tool"}}
+EOF
+	run aube install
+	assert_success
+	run test -L node_modules/.bin/linked-tool
+	assert_failure
+	[ -e node_modules/.bin/kept-tool ]
+}
+
+@test "aube install removes a symlinked bin a link: dep no longer declares" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/old-cmd ]
+
+	cat >../linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}
+EOF
+	# Change the manifest too, so the install relinks.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/new-cmd ]
+	run test -L node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install keeps a symlink someone else aimed at a link: dep's file" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0"}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	ln -s ../../../linked-tool/cli.js node_modules/.bin/custom-tool
+
+	# Change the manifest so the install relinks bins.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/custom-tool ]
+}
+
+@test "aube install keeps a symlink someone else aimed through a link: dep's node_modules entry" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0"}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	# The same target aube would write for a `custom-tool` command.
+	ln -s ../linked-tool/cli.js node_modules/.bin/custom-tool
+
+	# Change the manifest so the install relinks bins.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/custom-tool ]
+}
+
+@test "aube install removes a renamed bin a deduped workspace dep linked straight at its directory" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	printf 'dedupe-direct-deps=true\npreferSymlinkedExecutables=true\n' >.npmrc
+	echo '{"name":"root","private":true,"dependencies":{"tool":"workspace:*"}}' >package.json
+	echo '{"name":"tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >packages/tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+
+	echo '{"name":"tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >packages/tool/package.json
+	# Change a manifest too, so the install relinks.
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "a filtered install keeps the bin record of the members it skips" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	printf 'dedupe-direct-deps=true\npreferSymlinkedExecutables=true\n' >.npmrc
+	echo '{"name":"root","private":true,"dependencies":{"tool":"workspace:*"}}' >package.json
+	echo '{"name":"tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >packages/tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+	run aube install --filter other
+	assert_success
+
+	echo '{"name":"tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >packages/tool/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install keeps a bin a root postinstall retargeted after its dep is removed" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}' >linked-tool/package.json
+	printf '#!/bin/sh\necho linked\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	printf '#!/bin/sh\necho custom\n' >custom.sh
+	cd app
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	# The hook replaces aube's link once, pointing it outside node_modules.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","scripts":{"postinstall":"[ -e .retargeted ] || { ln -sf ../../../custom.sh node_modules/.bin/linked-tool && touch .retargeted; }"},"dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	run aube install
+	assert_success
+	run readlink node_modules/.bin/linked-tool
+	assert_output "../../../custom.sh"
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","scripts":{"postinstall":"[ -e .retargeted ] || { ln -sf ../../../custom.sh node_modules/.bin/linked-tool && touch .retargeted; }"},"dependencies":{"other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/linked-tool ]
+}
+
+@test "a member no install recorded yet still gets its renamed bin swept after a filtered install" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	echo '{"name":"root","private":true}' >package.json
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"app","version":"1.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}' >packages/app/package.json
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+	# As an install from before the record existed left it.
+	rm -f node_modules/.aube-state/bin-links.json
+	run aube install --filter other
+	assert_success
+
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >linked-tool/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"linked-tool":"link:../../linked-tool","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	echo '{"name":"root","private":true}' >package.json
+	echo 'node-linker=hoisted' >.npmrc
+	cat >packages/tool/package.json <<'EOF'
+{"name":"tool","version":"1.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	cat >packages/app/package.json <<'EOF'
+{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}
+EOF
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/tool ]
+
+	echo '{"name":"app","version":"1.0.0"}' >packages/app/package.json
+	run aube install
+	assert_success
+	run test -L packages/app/node_modules/.bin/tool
+	assert_failure
+}
+
 @test "aube rebuild relinks the bins of a link: dep" {
 	mkdir -p linked-tool app
 	cat >linked-tool/package.json <<'EOF'
@@ -772,11 +1020,12 @@ YAML
 	refute_output --partial "version: link:pkg-a/vendor/x"
 }
 
-@test "aube install and a frozen reinstall link a member's own link: when a root override has the same value" {
-	# Neither root override rewrites pkg-a's declarations, so the resolver
-	# keeps them member-relative: `parent@^1/x` targets `x` under `parent`,
-	# and `x` already declares the override's value. The frozen reinstall
-	# must link the same member packages, not the root's.
+@test "aube install and a frozen reinstall agree when root overrides share the value of a member's link: deps" {
+	# `parent@^1/x` targets `x` under `parent`, so it doesn't apply to
+	# pkg-a's own `parent`, which stays member-relative. The `x` override
+	# applies even though its value equals pkg-a's declaration, so, as in
+	# pnpm, `x` resolves from the root. The frozen reinstall must link the
+	# same packages as the fresh install.
 	mkdir -p pkg-a/vendor/p pkg-a/vendor/x vendor/p vendor/x
 	cat >package.json <<'JSON'
 {"name":"root","version":"0.0.0","private":true,"resolutions":{"parent@^1/x":"link:./vendor/p"},"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
@@ -797,15 +1046,16 @@ JSON
 	assert_success
 	run cat pkg-a/node_modules/parent/package.json pkg-a/node_modules/x/package.json
 	assert_output --partial '"name":"member-p"'
-	assert_output --partial '"name":"member-x"'
+	assert_output --partial '"name":"root-x"'
 
 	rm -rf node_modules pkg-a/node_modules
 	run aube install --frozen-lockfile
 	assert_success
 	run cat pkg-a/node_modules/parent/package.json pkg-a/node_modules/x/package.json
 	assert_output --partial '"name":"member-p"'
-	assert_output --partial '"name":"member-x"'
-	refute_output --partial '"name":"root-'
+	assert_output --partial '"name":"root-x"'
+	refute_output --partial '"name":"root-p"'
+	refute_output --partial '"name":"member-x"'
 }
 
 @test "aube install and a frozen reinstall link a root override target from a member" {

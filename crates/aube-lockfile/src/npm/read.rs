@@ -236,7 +236,8 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 license: package_entry.license.as_ref().and_then(|l| l.value.clone()),
                 funding_url: package_entry.funding.as_ref().and_then(|f| f.url.clone()),
                 ..Default::default()
-            },
+            }
+            .with_declared_dependencies_known(),
         );
     }
 

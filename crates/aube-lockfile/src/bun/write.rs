@@ -287,6 +287,20 @@ pub fn write(
             if !canonical.contains_key(&key) {
                 continue;
             }
+            // A resolved peer sits in `dependencies` so the linker can
+            // wire it, but bun lists only the package's declared
+            // dependencies here. Writing the peer's pin makes bun treat
+            // it as a hard dependency and nest the old copy once the
+            // root's version moves. Without the full declared set (a
+            // local package, or one read from pnpm-lock.yaml) the
+            // writer can't tell the two apart, so it keeps the entry
+            // rather than lose a real dependency.
+            if pkg.declared_dependencies_known()
+                && pkg.peer_dependencies.contains_key(dep_name)
+                && !pkg.declared_dependencies.contains_key(dep_name)
+            {
+                continue;
+            }
             let rendered = pkg
                 .declared_dependencies
                 .get(dep_name)
@@ -397,7 +411,10 @@ pub fn write(
             "libc",
         ];
         for (k, v) in &pkg.extra_meta {
-            if MODELED_META_KEYS.contains(&k.as_str()) || k == crate::EXTRA_PRESERVE_TARBALL_URL {
+            if MODELED_META_KEYS.contains(&k.as_str())
+                || k == crate::EXTRA_PRESERVE_TARBALL_URL
+                || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
+            {
                 continue;
             }
             meta.insert(k.clone(), v.clone());

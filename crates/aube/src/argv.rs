@@ -111,6 +111,45 @@ fn rewrite_pnpm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 }
 
 fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
+    let legacy_peer_deps = take_npm_legacy_peer_deps(&mut args);
+    let mut args = rewrite_npm_command(args);
+    if let Some(legacy) = legacy_peer_deps {
+        // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
+        // installs, which is what `auto-install-peers=false` means here. Emit it as a
+        // `--config.` override, which `extract_config_overrides` picks up after this
+        // rewrite, ahead of any `--` so it can't be mistaken for a package.
+        let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+        args.insert(
+            at,
+            OsString::from(format!("--config.auto-install-peers={}", !legacy)),
+        );
+    }
+    args
+}
+
+/// Remove npm's `--legacy-peer-deps` / `--legacy-peer-deps=<bool>` /
+/// `--no-legacy-peer-deps` flag, which aube has no flag of its own for, and return
+/// the value it requested (the last one wins). Tokens after `--` are left alone.
+fn take_npm_legacy_peer_deps(args: &mut Vec<OsString>) -> Option<bool> {
+    let mut requested = None;
+    let mut i = 1;
+    while i < args.len() {
+        let value = match args[i].to_str() {
+            Some("--") => break,
+            Some("--legacy-peer-deps" | "--legacy-peer-deps=true") => true,
+            Some("--no-legacy-peer-deps" | "--legacy-peer-deps=false") => false,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        requested = Some(value);
+        args.remove(i);
+    }
+    requested
+}
+
+fn rewrite_npm_command(mut args: Vec<OsString>) -> Vec<OsString> {
     args[0] = OsString::from("aube");
     if rewrite_pm_help_or_version(&mut args) {
         return args;

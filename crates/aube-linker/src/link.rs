@@ -696,8 +696,12 @@ impl Linker {
                 // importer key (`../sibling`, possible when
                 // `pnpm-workspace.yaml#packages` uses `../**`) needs
                 // to land at the actual sibling dir before
-                // `pathdiff`/`strip_prefix` see it.
-                aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                // `pathdiff`/`strip_prefix` see it. A member a symlink
+                // relocates is planned where it really is, so Node can
+                // reach what lands in its `node_modules`.
+                crate::relocated_importer_dir(root_dir, importer_path).unwrap_or_else(|| {
+                    aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                })
             };
             // Workspace deps resolve through `workspace_dirs` rather
             // than going through the placement tree, so the hoisted
@@ -762,7 +766,9 @@ impl Linker {
             let importer_dir = if importer_path == "." {
                 root_dir.to_path_buf()
             } else {
-                aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                crate::relocated_importer_dir(root_dir, importer_path).unwrap_or_else(|| {
+                    aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                })
             };
             let nm = self.checked_modules_dir(&importer_dir)?;
             if !self.hoist_workspace_packages {
@@ -811,7 +817,23 @@ impl Linker {
         package_indices: &BTreeMap<String, PackageIndex>,
         workspace_dirs: &BTreeMap<String, PathBuf>,
     ) -> Result<LinkStats, Error> {
-        let root_dir = aube_util::path::normalize_lexical(root_dir);
+        // A member a symlink relocates links from its real, absolute
+        // location, which a relative root or workspace dir can't be
+        // diffed against.
+        let root_dir = aube_util::path::normalize_lexical(
+            &std::path::absolute(root_dir).map_err(|e| Error::Io(root_dir.to_path_buf(), e))?,
+        );
+        let workspace_dirs = &workspace_dirs
+            .iter()
+            .map(|(name, dir)| {
+                let dir = if dir.is_relative() {
+                    std::path::absolute(dir).map_err(|e| Error::Io(dir.clone(), e))?
+                } else {
+                    dir.clone()
+                };
+                Ok((name.clone(), dir))
+            })
+            .collect::<Result<BTreeMap<_, _>, Error>>()?;
         self.checked_modules_dir(&root_dir)?;
         for importer_path in graph.importers.keys() {
             if !is_physical_importer(importer_path) || importer_path == "." {
@@ -1257,6 +1279,9 @@ impl Linker {
         struct Step2Task<'a> {
             importer_path: &'a str,
             nm: PathBuf,
+            /// `nm` where the importer really is, when a symlink puts it
+            /// somewhere other than its workspace path.
+            real_nm: Option<PathBuf>,
             dep: &'a aube_lockfile::DirectDep,
         }
         let tasks: Vec<Step2Task<'_>> = graph
@@ -1275,9 +1300,12 @@ impl Linker {
                         &root_dir.join(importer_path).join(&self.modules_dir_name),
                     )
                 };
+                let real_nm = crate::relocated_importer_dir(&root_dir, importer_path)
+                    .map(|dir| dir.join(&self.modules_dir_name));
                 deps.iter().map(move |dep| Step2Task {
                     importer_path: importer_path.as_str(),
                     nm: nm.clone(),
+                    real_nm: real_nm.clone(),
                     dep,
                 })
             })
@@ -1292,15 +1320,17 @@ impl Linker {
                     let Step2Task {
                         importer_path,
                         nm,
+                        real_nm,
                         dep,
                     } = task;
-
                     // `dedupeDirectDeps`: non-root importer dep
                     // already covered by the root symlink +
                     // parent-directory walk. A link the member kept
                     // from an earlier, different version would shadow
-                    // the root's, so clear it.
+                    // the root's, so clear it. A member a symlink puts
+                    // elsewhere may never reach the root's link.
                     if self.dedupe_direct_deps
+                        && real_nm.is_none()
                         && crate::dedupe_skips_member_link(&graph.importers, importer_path, dep)
                     {
                         crate::validate_package_link_name(&dep.name)?;
@@ -1321,6 +1351,9 @@ impl Linker {
                     }
 
                     crate::validate_package_link_name(&dep.name)?;
+                    // Node resolves from where the importer really is, so
+                    // its links are made there, relative to that location.
+                    let nm = real_nm.as_ref().unwrap_or(nm);
                     let link_path = nm.join(&dep.name);
 
                     // Workspace dep (`workspace:` protocol or bare

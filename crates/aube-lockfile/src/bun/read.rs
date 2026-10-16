@@ -193,7 +193,8 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 bin: bin_map,
                 extra_meta,
                 ..Default::default()
-            },
+            }
+            .with_declared_dependencies_known(),
         );
     }
 

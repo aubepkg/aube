@@ -94,7 +94,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           cache: false
         env:
@@ -171,7 +171,7 @@ jobs:
           cp /tmp/bench_summary.md "$RUNNER_TEMP/bench-refresh/summary.md"
       - name: Upload refreshed benchmarks
         if: steps.dirty.outputs.dirty == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.dirty.outputs.artifact_name }}
           path: ${{ runner.temp }}/bench-refresh
@@ -192,7 +192,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.refresh.outputs.artifact_name }}
           path: ${{ runner.temp }}/bench-refresh

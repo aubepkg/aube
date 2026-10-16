@@ -414,6 +414,23 @@ impl LockfileGraph {
         )
     }
 
+    /// The project-root-relative path an importer's local dep `name` is
+    /// locked to, if it is a local package.
+    fn locked_local_path(
+        &self,
+        importer_deps: &[DirectDep],
+        name: &str,
+    ) -> Option<std::path::PathBuf> {
+        let dep = importer_deps.iter().find(|dep| dep.name == name)?;
+        let path = self
+            .packages
+            .get(&dep.dep_path)?
+            .local_source
+            .as_ref()?
+            .path()?;
+        Some(aube_util::path::normalize_lexical(path))
+    }
+
     fn check_drift_for_importer_with_workspace_links(
         &self,
         importer_path: &str,
@@ -541,9 +558,18 @@ impl LockfileGraph {
                     // resolves to the lockfile's recorded spec —
                     // otherwise any pnpm-written lockfile with
                     // overrides reads stale on every frozen install.
+                    // pnpm also re-anchors an applied `link:`/`file:` override's
+                    // root-relative path at the importer (`link:./vendor/x` is
+                    // recorded as `link:../vendor/x` for `pkg-a`); aube writes
+                    // that form too, and older aube wrote the value as is.
                     if let Some(override_spec) =
                         override_match::apply(&override_rules, name.as_str(), spec)
-                        && override_spec == *locked_spec
+                        && (override_spec == *locked_spec
+                            || override_match::importer_relative_override(
+                                override_spec,
+                                importer_path,
+                            )
+                            .is_some_and(|relative| relative == *locked_spec))
                     {
                         continue;
                     }
@@ -578,6 +604,30 @@ impl LockfileGraph {
                     return DriftStatus::Stale {
                         reason: format!(
                             "{label}{name}: manifest says {spec}, lockfile says {locked_spec}"
+                        ),
+                    };
+                }
+                // An override whose value equals a member's declaration
+                // resolves from the root. Older aube skipped it and linked
+                // the path from the member, so a lockfile that still points
+                // there names a different package now. Formats that keep the
+                // declaration as the specifier (bun.lock) and point at the
+                // root's path are fine.
+                Some(_)
+                    if importer_path != "."
+                        && override_match::apply(&override_rules, name.as_str(), spec)
+                            == Some(spec.as_str())
+                        && override_match::importer_relative_override(spec, importer_path)
+                            .is_some_and(|relative| relative != *spec)
+                        && self
+                            .locked_local_path(importer_deps, name)
+                            .is_some_and(|locked| {
+                                Some(locked) != override_match::root_relative_local_path(spec)
+                            }) =>
+                {
+                    return DriftStatus::Stale {
+                        reason: format!(
+                            "{label}{name}: the {spec} override now resolves from the project root"
                         ),
                     };
                 }

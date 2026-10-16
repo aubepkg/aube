@@ -242,7 +242,8 @@ pub(super) fn parse_berry_str(
                     local_source,
                     declared_dependencies: declared,
                     ..Default::default()
-                },
+                }
+                .with_declared_dependencies_known(),
             );
         }
     }
