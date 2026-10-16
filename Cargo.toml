@@ -186,7 +186,7 @@ zstd = { version = "0.14", default-features = false }
 # zip-of-JSONs and the dependency-free std crate ecosystem has no
 # alternative. `deflate` is the only OSV-used compression method, so
 # defeature everything else to keep the build slim.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # Semver
 node-semver = "2"

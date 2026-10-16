@@ -452,7 +452,7 @@ fn build_index_from_zip(bytes: &[u8]) -> Result<HashMap<String, Vec<AdvisoryEntr
         // directory in order without re-cloning the archive
         // reader. Holds a mutable borrow for one iteration each.
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         if !is_mal_filename(&name) {
             continue;
         }
