@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.2](https://github.com/aubepkg/aube/compare/v2.7.1...v2.7.2) - 2026-10-17
+
+### Fixed
+
+- *(deps)* bump zip to 9 ([#1756](https://github.com/aubepkg/aube/pull/1756))
+- *(workspace)* let --filter select the root project by name ([#1754](https://github.com/aubepkg/aube/pull/1754))
+
 ## [2.7.1](https://github.com/aubepkg/aube/compare/v2.7.0...v2.7.1) - 2026-10-15
 
 ### Fixed
