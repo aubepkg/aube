@@ -55,7 +55,9 @@ pub(crate) fn sanitize_process_path() {
 }
 
 fn path_without_shim_dir(path: Option<OsString>) -> Option<OsString> {
-    let shim_dir = activated_shim_dir()?;
+    // Fall back to the default location so a host that inherits `PATH`
+    // but not `AUBE_SHIM_DIR` doesn't resolve the shim again and re-exec forever.
+    let shim_dir = activated_shim_dir().or_else(shim_dir)?;
     strip_path_entry(path?, &shim_dir)
 }
 
