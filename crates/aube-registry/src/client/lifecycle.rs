@@ -1,5 +1,5 @@
 use super::{
-    RegistryClient, build_http_client, build_http_tarball_client, load_node_extra_ca_certs,
+    RegistryClient, load_node_extra_ca_certs, try_build_http_client, try_build_http_tarball_client,
 };
 use crate::NetworkMode;
 use crate::config::{FetchPolicy, NpmConfig};
@@ -28,21 +28,44 @@ impl RegistryClient {
     /// have already resolved a `ResolveCtx` should prefer
     /// [`Self::from_config_with_policy`] so env / workspace-yaml /
     /// `.npmrc` overrides to the `fetch*` settings take effect.
+    ///
+    /// Panics if an HTTP client cannot be built; use
+    /// [`Self::try_from_config`] to get the error instead.
     pub fn from_config(config: NpmConfig) -> Self {
         Self::from_config_with_policy(config, FetchPolicy::default())
+    }
+
+    /// Fallible [`Self::from_config`]: a TLS root store reqwest cannot
+    /// load (for example a malformed certificate) is returned as an
+    /// error rather than panicking.
+    pub fn try_from_config(config: NpmConfig) -> reqwest::Result<Self> {
+        Self::try_from_config_with_policy(config, FetchPolicy::default())
     }
 
     /// Build a client with an explicit [`FetchPolicy`]. This is the
     /// primary constructor used by `aube::commands::make_client`,
     /// which resolves the policy from the full settings precedence
     /// chain before calling in.
+    ///
+    /// Panics if an HTTP client cannot be built; use
+    /// [`Self::try_from_config_with_policy`] to get the error instead.
     pub fn from_config_with_policy(config: NpmConfig, fetch_policy: FetchPolicy) -> Self {
+        Self::try_from_config_with_policy(config, fetch_policy)
+            .expect("failed to build HTTP client")
+    }
+
+    /// Fallible [`Self::from_config_with_policy`].
+    pub fn try_from_config_with_policy(
+        config: NpmConfig,
+        fetch_policy: FetchPolicy,
+    ) -> reqwest::Result<Self> {
         // Read + parse `NODE_EXTRA_CA_CERTS` once here, then share the
         // certs across the default, tarball, and every per-registry /
         // scoped client — building each one re-parses nothing.
         let extra_ca_certs = load_node_extra_ca_certs();
-        let http = build_http_client(&config, None, &fetch_policy, &extra_ca_certs);
-        let http_tarball = build_http_tarball_client(&config, None, &fetch_policy, &extra_ca_certs);
+        let http = try_build_http_client(&config, None, &fetch_policy, &extra_ca_certs)?;
+        let http_tarball =
+            try_build_http_tarball_client(&config, None, &fetch_policy, &extra_ca_certs)?;
         let mut http_by_uri = BTreeMap::new();
         for (uri, registry) in &config.auth_by_uri {
             if !registry.has_tls_material() {
@@ -50,7 +73,7 @@ impl RegistryClient {
             }
             http_by_uri.insert(
                 uri.clone(),
-                build_http_client(&config, Some(registry), &fetch_policy, &extra_ca_certs),
+                try_build_http_client(&config, Some(registry), &fetch_policy, &extra_ca_certs)?,
             );
         }
         let mut http_by_uri_scope = BTreeMap::new();
@@ -64,12 +87,17 @@ impl RegistryClient {
                     .or_insert_with(BTreeMap::new)
                     .insert(
                         scope.clone(),
-                        build_http_client(&config, Some(registry), &fetch_policy, &extra_ca_certs),
+                        try_build_http_client(
+                            &config,
+                            Some(registry),
+                            &fetch_policy,
+                            &extra_ca_certs,
+                        )?,
                     );
             }
         }
 
-        Self {
+        Ok(Self {
             http,
             http_by_uri,
             http_by_uri_scope,
@@ -80,7 +108,7 @@ impl RegistryClient {
             config,
             network_mode: NetworkMode::Online,
             fetch_policy,
-        }
+        })
     }
 
     /// Return (and lazily insert) the per-name mutex from
