@@ -133,6 +133,18 @@ pub(crate) fn probe_client_builder() -> reqwest::ClientBuilder {
     builder
 }
 
+/// Panicking [`try_build_http_tarball_client`], for tests.
+#[cfg(test)]
+pub(super) fn build_http_tarball_client(
+    config: &NpmConfig,
+    registry_config: Option<&crate::config::AuthConfig>,
+    fetch_policy: &FetchPolicy,
+    extra_ca_certs: &[reqwest::Certificate],
+) -> reqwest::Client {
+    try_build_http_tarball_client(config, registry_config, fetch_policy, extra_ca_certs)
+        .expect("failed to build HTTP client")
+}
+
 /// HTTP/1.1-only variant for tarball downloads. Tarballs are large
 /// opaque blobs where h2 multiplexing buys nothing: there are no
 /// compressible headers, and a single slow tarball stream causes
@@ -152,18 +164,8 @@ pub(crate) fn probe_client_builder() -> reqwest::ClientBuilder {
 /// Packument requests stay on the h2 client because gzip+brotli
 /// header compression and request multiplexing are real wins for
 /// thousands of small JSON payloads.
-#[cfg(test)]
-pub(super) fn build_http_tarball_client(
-    config: &NpmConfig,
-    registry_config: Option<&crate::config::AuthConfig>,
-    fetch_policy: &FetchPolicy,
-    extra_ca_certs: &[reqwest::Certificate],
-) -> reqwest::Client {
-    try_build_http_tarball_client(config, registry_config, fetch_policy, extra_ca_certs)
-        .expect("failed to build HTTP client")
-}
-
-/// Fallible [`build_http_tarball_client`].
+///
+/// A trust root reqwest cannot load is returned as an error.
 pub(super) fn try_build_http_tarball_client(
     config: &NpmConfig,
     registry_config: Option<&crate::config::AuthConfig>,
@@ -474,6 +476,47 @@ mod tests {
     /// roots, and treats a missing / unreadable / malformed file as an
     /// empty list (warned, never fatal) so client construction always
     /// succeeds. `build_http_client` accepts whatever it returns.
+    /// PEM that parses but whose body is not a DER certificate: reqwest
+    /// accepts it until the client is built, as with a malformed `.npmrc`
+    /// `ca` entry.
+    const UNLOADABLE_CA_PEM: &str =
+        "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n";
+
+    fn unloadable_auth() -> crate::config::AuthConfig {
+        crate::config::AuthConfig {
+            tls: crate::config::TlsConfig {
+                ca: vec![UNLOADABLE_CA_PEM.to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn try_from_config_returns_a_per_registry_root_error() {
+        let mut config = NpmConfig::default();
+        config
+            .auth_by_uri
+            .insert("//registry.example/".to_string(), unloadable_auth());
+        assert!(crate::client::RegistryClient::try_from_config(config).is_err());
+    }
+
+    #[test]
+    fn try_from_config_returns_a_scoped_root_error() {
+        let mut config = NpmConfig::default();
+        config
+            .scoped_auth_by_uri
+            .entry("//registry.example/".to_string())
+            .or_default()
+            .insert("@scope".to_string(), unloadable_auth());
+        assert!(crate::client::RegistryClient::try_from_config(config).is_err());
+    }
+
+    #[test]
+    fn try_from_config_builds_with_a_valid_config() {
+        assert!(crate::client::RegistryClient::try_from_config(NpmConfig::default()).is_ok());
+    }
+
     /// A trust root reqwest cannot load is returned as an error rather
     /// than panicking, so embedders can report it.
     #[test]
