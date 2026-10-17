@@ -77,6 +77,7 @@ pub(super) fn translate_npm_config_env(name: &str, value: &str) -> Option<(Strin
         "noproxy" => "noproxy",
         "strict_ssl" => "strict-ssl",
         "local_address" => "local-address",
+        "dns_resolver" => "dns-resolver",
         "maxsockets" => "maxsockets",
         _ => return None,
     };

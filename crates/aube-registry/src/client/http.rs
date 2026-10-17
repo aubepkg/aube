@@ -247,9 +247,13 @@ fn build_http_client_inner(
     // so embedders that keep their host binary on getaddrinfo (reqwest's
     // hickory-dns cargo feature flips the default for every client in
     // the binary) can opt out; default features keep it on for aube.
+    // `dns-resolver=system` opts out at runtime: hickory orders A
+    // before AAAA, so a dual-stack host whose IPv4 leaves through a
+    // NAT gateway pays for every byte that getaddrinfo would have
+    // sent over IPv6.
     #[cfg(feature = "hickory-dns")]
     {
-        builder = builder.hickory_dns(true);
+        builder = builder.hickory_dns(config.dns_resolver == crate::config::DnsResolver::Builtin);
     }
     builder = builder
         .tcp_keepalive(std::time::Duration::from_secs(60))

@@ -85,6 +85,8 @@ pub struct NpmConfig {
     /// (`local-address`). Parsed as `IpAddr`; unparseable values are
     /// dropped at load time and logged.
     pub local_address: Option<std::net::IpAddr>,
+    /// Which resolver looks up registry hosts (`dns-resolver`).
+    pub dns_resolver: DnsResolver,
     /// Idle connection pool size per host (`maxsockets`).
     /// Plumbed into reqwest's `pool_max_idle_per_host`, which is the
     /// closest analogue to npm/pnpm's per-origin socket cap.
@@ -104,6 +106,22 @@ pub struct NpmConfig {
     /// `httpProxy`). Resolved into the final `https_proxy` /
     /// `http_proxy` values during `apply_proxy_env`.
     pub npmrc_proxy: Option<String>,
+}
+
+/// Resolver for registry hostnames.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DnsResolver {
+    /// hickory-dns in process, cached for the run, when the binary is
+    /// built with the `hickory-dns` feature; otherwise the system
+    /// resolver.
+    #[default]
+    Builtin,
+    /// The OS resolver (`getaddrinfo`). Honors `/etc/hosts` and the
+    /// system's address ordering, so a dual-stack host prefers IPv6
+    /// the way curl and node do. hickory orders A before AAAA, so
+    /// with `builtin` a host that reaches IPv4 through a NAT gateway
+    /// sends every download through it.
+    System,
 }
 
 /// Authentication for a specific registry.
@@ -154,6 +172,7 @@ impl Default for NpmConfig {
             no_proxy: None,
             strict_ssl: true,
             local_address: None,
+            dns_resolver: DnsResolver::default(),
             max_sockets: None,
             cafile: None,
             ca: Vec::new(),
