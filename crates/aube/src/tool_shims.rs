@@ -44,21 +44,30 @@ fn single_path_entry(value: OsString) -> Option<PathBuf> {
 }
 
 pub(crate) fn sanitize_process_path() {
-    let Some(path) = path_without_shim_dir(std::env::var_os("PATH")) else {
+    let Some(path) = std::env::var_os("PATH") else {
+        return;
+    };
+    let (shim_dir, inferred) = match activated_shim_dir() {
+        Some(dir) => (dir, false),
+        // A host that inherits `PATH` but not `AUBE_SHIM_DIR` would otherwise
+        // resolve the shim again and re-exec forever.
+        None => match shim_dir() {
+            Some(dir) => (dir, true),
+            None => return,
+        },
+    };
+    let Some(path) = strip_path_entry(path, &shim_dir) else {
         return;
     };
     // SAFETY: called from the synchronous CLI startup path before the
     // tokio runtime spawns worker threads.
     unsafe {
         std::env::set_var("PATH", path);
+        if inferred {
+            // Behave as if activated so child commands get the shims back.
+            std::env::set_var(SHIM_DIR_ENV, &shim_dir);
+        }
     }
-}
-
-fn path_without_shim_dir(path: Option<OsString>) -> Option<OsString> {
-    // Fall back to the default location so a host that inherits `PATH`
-    // but not `AUBE_SHIM_DIR` doesn't resolve the shim again and re-exec forever.
-    let shim_dir = activated_shim_dir().or_else(shim_dir)?;
-    strip_path_entry(path?, &shim_dir)
 }
 
 fn strip_path_entry(path: OsString, entry_to_remove: &Path) -> Option<OsString> {
