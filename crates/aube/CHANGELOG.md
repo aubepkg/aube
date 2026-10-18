@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.3](https://github.com/aubepkg/aube/compare/v2.7.2...v2.7.3) - 2026-10-18
+
+### Fixed
+
+- *(install)* strip default shim dir from PATH when AUBE_SHIM_DIR is unset ([#1761](https://github.com/aubepkg/aube/pull/1761))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/v2.7.1...v2.7.2) - 2026-10-17
 
 ### Fixed
