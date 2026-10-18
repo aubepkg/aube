@@ -679,7 +679,7 @@ fn default_launch_for_target(target: &Path, content: &[u8], allow_direct: bool) 
         // opens with a `#` comment but no `#!` is a shebang-less shell
         // script (pnpm 12's placeholder bin), which the kernel would
         // hand to `sh` after ENOEXEC.
-        _ if content.starts_with(b"#") && !content.starts_with(b"#!") => {
+        None if content.starts_with(b"#") && !content.starts_with(b"#!") => {
             BinLaunch::Interpreter("sh".to_string())
         }
         _ => BinLaunch::Interpreter("node".to_string()),
@@ -1933,6 +1933,17 @@ process.exit(17);
         assert_eq!(
             detect_bin_launch(&target),
             BinLaunch::Interpreter("sh".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_launch_keeps_hash_comment_file_with_unknown_extension_on_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("cli.custom");
+        std::fs::write(&target, b"# comment\n").unwrap();
+        assert_eq!(
+            detect_bin_launch(&target),
+            BinLaunch::Interpreter("node".to_string())
         );
     }
 
