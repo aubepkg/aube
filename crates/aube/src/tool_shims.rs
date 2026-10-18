@@ -47,27 +47,35 @@ pub(crate) fn sanitize_process_path() {
     let Some(path) = std::env::var_os("PATH") else {
         return;
     };
-    let (shim_dir, inferred) = match activated_shim_dir() {
-        Some(dir) => (dir, false),
-        // A host that inherits `PATH` but not `AUBE_SHIM_DIR` would otherwise
-        // resolve the shim again and re-exec forever.
-        None => match shim_dir() {
-            Some(dir) => (dir, true),
-            None => return,
-        },
-    };
-    let Some(path) = strip_path_entry(path, &shim_dir) else {
+    let Some((path, inferred_shim_dir)) = sanitized_path(path, activated_shim_dir(), shim_dir())
+    else {
         return;
     };
     // SAFETY: called from the synchronous CLI startup path before the
     // tokio runtime spawns worker threads.
     unsafe {
         std::env::set_var("PATH", path);
-        if inferred {
+        if let Some(dir) = inferred_shim_dir {
             // Behave as if activated so child commands get the shims back.
-            std::env::set_var(SHIM_DIR_ENV, &shim_dir);
+            std::env::set_var(SHIM_DIR_ENV, dir);
         }
     }
+}
+
+/// Returns the stripped `PATH` plus the default shim dir when it was removed
+/// without `AUBE_SHIM_DIR` being set. A host that inherits `PATH` but not
+/// `AUBE_SHIM_DIR` would otherwise resolve the shim again and re-exec forever.
+fn sanitized_path(
+    path: OsString,
+    activated: Option<PathBuf>,
+    default: Option<PathBuf>,
+) -> Option<(OsString, Option<PathBuf>)> {
+    let (dir, inferred) = match activated {
+        Some(dir) => (dir, false),
+        None => (default?, true),
+    };
+    let path = strip_path_entry(path, &dir)?;
+    Some((path, inferred.then_some(dir)))
 }
 
 fn strip_path_entry(path: OsString, entry_to_remove: &Path) -> Option<OsString> {
@@ -136,6 +144,30 @@ mod tests {
         assert_eq!(
             strip_path_entry(path, Path::new("/b")),
             Some(OsString::from(format!("/a{sep}/c")))
+        );
+    }
+
+    #[test]
+    fn unset_shim_dir_env_strips_default_dir_and_reports_it() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let path = OsString::from(format!("/shims{sep}/node"));
+        assert_eq!(
+            sanitized_path(path, None, Some(PathBuf::from("/shims"))),
+            Some((OsString::from("/node"), Some(PathBuf::from("/shims"))))
+        );
+    }
+
+    #[test]
+    fn activated_shim_dir_is_stripped_without_being_reported() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let path = OsString::from(format!("/shims{sep}/node"));
+        assert_eq!(
+            sanitized_path(
+                path,
+                Some(PathBuf::from("/shims")),
+                Some(PathBuf::from("/other"))
+            ),
+            Some((OsString::from("/node"), None))
         );
     }
 
