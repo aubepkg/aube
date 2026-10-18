@@ -675,6 +675,13 @@ fn default_launch_for_target(target: &Path, content: &[u8], allow_direct: bool) 
         Some("sh") => BinLaunch::Interpreter("sh".to_string()),
         Some(ext) if allow_direct && ext.eq_ignore_ascii_case("exe") => BinLaunch::Direct,
         _ if allow_direct && has_native_executable_magic(content) => BinLaunch::Direct,
+        // Only a hashbang may start JavaScript with `#`, so a file that
+        // opens with a `#` comment but no `#!` is a shebang-less shell
+        // script (pnpm 12's placeholder bin), which the kernel would
+        // hand to `sh` after ENOEXEC.
+        _ if content.starts_with(b"#") && !content.starts_with(b"#!") => {
+            BinLaunch::Interpreter("sh".to_string())
+        }
         _ => BinLaunch::Interpreter("node".to_string()),
     }
 }
@@ -1915,6 +1922,17 @@ process.exit(17);
         assert_eq!(
             detect_bin_launch(&target),
             BinLaunch::Interpreter("node".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_launch_runs_shebangless_hash_comment_script_with_sh() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("pnpm");
+        std::fs::write(&target, b"# placeholder\nexec node \"$0.mjs\" \"$@\"\n").unwrap();
+        assert_eq!(
+            detect_bin_launch(&target),
+            BinLaunch::Interpreter("sh".to_string())
         );
     }
 
