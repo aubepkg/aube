@@ -2336,6 +2336,16 @@ impl<'a> ResolveDriver<'a> {
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);
                 let canonical_version = stripped.split('(').next().unwrap_or(stripped).to_string();
+                // A peer satisfied by a `file:`/`link:`/git dep records
+                // that specifier as the snapshot edge. It is not a
+                // dependency the package declares, so re-resolving it
+                // here would be a transitive local source; the peer
+                // pass re-wires it from the importer instead.
+                if locked_pkg.peer_dependencies.contains_key(dep_name)
+                    && is_non_registry_specifier(&canonical_version)
+                {
+                    continue;
+                }
                 let dep_type = if locked_pkg.optional_dependencies.contains_key(dep_name) {
                     DepType::Optional
                 } else {
