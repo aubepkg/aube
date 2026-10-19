@@ -50,7 +50,7 @@ jobs:
             ("https://github.com/\($repo)/releases/tag/\($tag | @uri)") as $release_url |
             { from: "aube Releases <mise@en.dev>", to: [$to],
               subject: "❌ aube \($tag): \($workflow) \($conclusion)",
-              html: ("<p>The <strong>\($workflow | @html)</strong> workflow for <strong>\($tag | @html)</strong> finished with <strong>\($conclusion | @html)</strong> on attempt \($attempt | @html).</p>" + "<p>The release is published but this workflow's output did not ship. Re-run it once the cause is fixed.</p>" + "<p><a href=\"\($run_url | @html)\">View workflow run</a> | <a href=\"\($release_url | @html)\">View release</a></p>")
+              html: ("<p>The <strong>\($workflow | @html)</strong> workflow for <strong>\($tag | @html)</strong> finished with <strong>\($conclusion | @html)</strong> on attempt \($attempt | @html).</p>" + "<p>The release is published but this workflow output did not ship. Re-run it once the cause is fixed.</p>" + "<p><a href=\"\($run_url | @html)\">View workflow run</a> | <a href=\"\($release_url | @html)\">View release</a></p>")
             }')
           curl --fail-with-body -sS \
             --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
