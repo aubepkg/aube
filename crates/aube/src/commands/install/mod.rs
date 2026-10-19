@@ -547,6 +547,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 lifecycle_manifests.iter().map(|(_, manifest)| manifest),
                 &ws_config_shared,
                 dangerously_allow_all_builds,
+                aube_settings::resolved::use_default_trusted_dependencies(&settings_ctx),
             );
             if let Some(inherited) = opts.inherited_build_policy.as_deref() {
                 build_policy.merge(inherited);

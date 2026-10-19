@@ -142,7 +142,7 @@ pub(super) fn collect_ignored(project_dir: &std::path::Path) -> miette::Result<V
         .into_diagnostic()
         .wrap_err("failed to load workspace config")?;
     let (policy, _warnings) =
-        super::install::build_policy_from_sources(&manifest, &workspace, false);
+        super::install::build_policy_from_sources(&manifest, &workspace, false, true);
 
     let store = super::open_store(project_dir)?;
 
