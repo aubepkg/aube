@@ -168,6 +168,7 @@ pub fn write(
         .collect();
     let prod_reach = reachable_from(&canonical, &all_roots, DepType::Production, true);
     let dev_reach = reachable_from(&canonical, &all_roots, DepType::Dev, false);
+    let dev_required_reach = reachable_from(&canonical, &all_roots, DepType::Dev, true);
     let opt_reach = optional_reach(&canonical, &all_roots, &prod_reach);
 
     // Build a hoist/nest tree keyed by a sequence of "node_modules"
@@ -402,7 +403,10 @@ pub fn write(
         let is_prod = prod_reach.contains(canonical_key);
         let is_dev = !is_prod && dev_reach.contains(canonical_key);
         let is_opt = !is_prod && opt_reach.contains(canonical_key);
-        let dev_optional = is_dev && is_opt;
+        // `devOptional` needs a *required* dev path plus an optional
+        // path. An optional child of a dev dependency (esbuild's
+        // `@esbuild/*`) is both `dev` and `optional`.
+        let dev_optional = is_dev && is_opt && dev_required_reach.contains(canonical_key);
         let dev = is_dev && !dev_optional;
         let optional = is_opt && !dev_optional;
 

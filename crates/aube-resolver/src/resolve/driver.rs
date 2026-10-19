@@ -2336,13 +2336,23 @@ impl<'a> ResolveDriver<'a> {
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);
                 let canonical_version = stripped.split('(').next().unwrap_or(stripped).to_string();
-                // A peer satisfied by a `file:`/`link:`/git dep records
-                // that specifier as the snapshot edge. It is not a
-                // dependency the package declares, so re-resolving it
-                // here would be a transitive local source; the peer
-                // pass re-wires it from the importer instead.
+                // A peer supplied by the importer or an ancestor through a
+                // `file:`/`link:`/git dep records that specifier as the
+                // snapshot edge. Re-resolving it here would be a transitive
+                // local source; the peer pass re-wires it instead. Peers
+                // nothing else supplies keep resolving.
                 if locked_pkg.peer_dependencies.contains_key(dep_name)
                     && is_non_registry_specifier(&canonical_version)
+                    && (task.ancestors.iter().any(|(name, _)| name == dep_name)
+                        || self
+                            .importer_declared_dep_names
+                            .get(&task.importer)
+                            .is_some_and(|names| names.contains(dep_name))
+                        || self.resolver.resolve_peers_from_workspace_root
+                            && self
+                                .importer_declared_dep_names
+                                .get(".")
+                                .is_some_and(|names| names.contains(dep_name)))
                 {
                     continue;
                 }

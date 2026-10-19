@@ -688,6 +688,23 @@ fn test_write_optional_edge_and_install_script_flags_round_trip() {
     let parent = &json["packages"]["node_modules/esbuild"];
     assert_eq!(parent["hasInstallScript"], true);
     assert!(parent.get("optional").is_none());
+
+    let dev_manifest = aube_manifest::PackageJson {
+        dependencies: Default::default(),
+        dev_dependencies: manifest.dependencies.clone(),
+        ..manifest
+    };
+    let mut dev_graph = graph;
+    for dep in dev_graph.importers.get_mut(".").unwrap() {
+        dep.dep_type = DepType::Dev;
+    }
+    write(&path, &dev_graph, &dev_manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/@esbuild/aix-ppc64"];
+    assert_eq!(child["dev"], true);
+    assert_eq!(child["optional"], true);
+    assert!(child.get("devOptional").is_none());
 }
 
 /// Regression: the npm writer must drop `dependencies` entries
