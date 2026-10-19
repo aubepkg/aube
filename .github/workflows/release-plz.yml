@@ -227,13 +227,14 @@ jobs:
         run: |
           set -euo pipefail
           original_body="$(gh release view "$TAG" --json body --jq .body)"
-          communique generate "$TAG" --github-release
           previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
+          communique generate "$TAG" --prev-tag "$previous_tag" --github-release
           body="$(gh release view "$TAG" --json body --jq .body)"
           expected="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG}"
-          if ! printf '%s\n' "$body" | grep -Fq "$expected"; then
+          self_comparison="https://github.com/${GITHUB_REPOSITORY}/compare/${TAG}...${TAG}"
+          if [[ "$body" != *"$expected"* || "$body" == *"$self_comparison"* ]]; then
             gh release edit "$TAG" --notes "$original_body"
-            echo "::error::communique generated release notes without the expected range: $expected"
+            echo "::error::communique generated invalid release-note comparison (expected $expected; rejected $self_comparison)"
             exit 1
           fi
       - name: Append jdx.dev sponsor blurb

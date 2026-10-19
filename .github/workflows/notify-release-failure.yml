@@ -29,32 +29,30 @@ jobs:
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           WORKFLOW: ${{ github.event.workflow_run.name }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          TAG: ${{ github.event.workflow_run.head_branch }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
           ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           set -euo pipefail
           if [ -z "${RESEND_API_KEY:-}" ] || [ -z "${NOTIFY_EMAIL:-}" ]; then
-            echo "::warning::RESEND_API_KEY or NOTIFY_EMAIL is unset; skipping notification for ${WORKFLOW} on ${TAG}"
+            echo "::warning::RESEND_API_KEY or NOTIFY_EMAIL is unset; skipping notification for ${WORKFLOW}"
             exit 0
           fi
           payload=$(jq -n \
             --arg to "$NOTIFY_EMAIL" \
             --arg workflow "$WORKFLOW" \
             --arg conclusion "$CONCLUSION" \
-            --arg tag "$TAG" \
             --arg run_url "$RUN_URL" \
             --arg attempt "$ATTEMPT" \
-            --arg repo "$GITHUB_REPOSITORY" \
             '
-            ("https://github.com/\($repo)/releases/tag/\($tag | @uri)") as $release_url |
             { from: "aube Releases <mise@en.dev>", to: [$to],
-              subject: "❌ aube \($tag): \($workflow) \($conclusion)",
-              html: ("<p>The <strong>\($workflow | @html)</strong> workflow for <strong>\($tag | @html)</strong> finished with <strong>\($conclusion | @html)</strong> on attempt \($attempt | @html).</p>" + "<p>The release is published but this workflow output did not ship. Re-run it once the cause is fixed.</p>" + "<p><a href=\"\($run_url | @html)\">View workflow run</a> | <a href=\"\($release_url | @html)\">View release</a></p>")
+              subject: "❌ aube \($workflow) \($conclusion)",
+              html: ("<p>The <strong>\($workflow | @html)</strong> workflow finished with <strong>\($conclusion | @html)</strong> on attempt \($attempt | @html).</p>" + "<p>The release is published but this workflow output did not ship. Re-run it once the cause is fixed.</p>" + "<p><a href=\"\($run_url | @html)\">View workflow run</a></p>")
             }')
           curl --fail-with-body -sS \
             --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
             -X POST 'https://api.resend.com/emails' \
             -H "Authorization: Bearer ${RESEND_API_KEY}" \
             -H 'Content-Type: application/json' \
+            -H "Idempotency-Key: aube-release-failure-${RUN_ID}-${ATTEMPT}" \
             -d "$payload"
