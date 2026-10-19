@@ -225,17 +225,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TAG: ${{ needs.release-plz-release.outputs.tag }}
         run: |
-          communique generate "$TAG" --github-release
-      - name: Verify generated release-note range
-        env:
-          GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
-          TAG: ${{ needs.release-plz-release.outputs.tag }}
-        run: |
           set -euo pipefail
+          original_body="$(gh release view "$TAG" --json body --jq .body)"
+          communique generate "$TAG" --github-release
           previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
           body="$(gh release view "$TAG" --json body --jq .body)"
           expected="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG}"
           if ! printf '%s\n' "$body" | grep -Fq "$expected"; then
+            gh release edit "$TAG" --notes "$original_body"
             echo "::error::communique generated release notes without the expected range: $expected"
             exit 1
           fi
