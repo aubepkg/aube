@@ -2025,6 +2025,24 @@ mod multicall_tests {
             rewrite_multicall_argv(os(&["npm", "install", "--", "--min-release-age=0"])),
             os(&["aube", "add", "--", "--min-release-age=0"])
         );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--min-release-age=abc"])),
+            os(&["aube", "install", "--min-release-age=abc"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--min-release-age",
+                "--ignore-scripts",
+            ])),
+            os(&[
+                "aube",
+                "install",
+                "--min-release-age",
+                "--ignore-scripts",
+            ])
+        );
     }
 
     #[test]

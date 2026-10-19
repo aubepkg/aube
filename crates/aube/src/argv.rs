@@ -158,10 +158,9 @@ fn take_npm_legacy_peer_deps(args: &mut Vec<OsString>) -> Option<bool> {
 }
 
 /// Convert npm's day-based `--min-release-age` option to aube's minute-based
-/// matching setting. npm accepts both `--min-release-age=0` and the
-/// space-separated form; consume neither a missing value nor anything after
-/// `--` so normal argument errors and forwarded package arguments keep their
-/// meaning.
+/// matching setting. Only consume a valid numeric value: malformed, overflow,
+/// or missing values stay in argv so clap reports them without swallowing a
+/// following flag. Anything after `--` is left untouched.
 fn take_npm_min_release_age(args: &mut Vec<OsString>) -> Option<String> {
     let mut requested = None;
     let mut i = 1;
@@ -174,30 +173,31 @@ fn take_npm_min_release_age(args: &mut Vec<OsString>) -> Option<String> {
             break;
         }
         let age = if let Some(age) = value.strip_prefix("--min-release-age=") {
-            Some((age.to_owned(), 1))
+            npm_release_age_minutes(age).map(|age| (age, 1))
         } else if value == "--min-release-age" {
             args.get(i + 1)
                 .and_then(|next| next.to_str())
-                .filter(|next| *next != "--")
-                .map(|age| (age.to_owned(), 2))
+                .filter(|next| !next.starts_with('-'))
+                .and_then(npm_release_age_minutes)
+                .map(|age| (age, 2))
         } else {
             None
         };
         if let Some((age, count)) = age {
-            // Preserve an invalid value as a setting override so the settings
-            // parser reports it instead of treating the flag as a package.
-            requested = Some(
-                age.parse::<u64>()
-                    .ok()
-                    .and_then(|days| days.checked_mul(24 * 60))
-                    .map_or(age, |minutes| minutes.to_string()),
-            );
+            requested = Some(age);
             args.drain(i..i + count);
         } else {
             i += 1;
         }
     }
     requested
+}
+
+fn npm_release_age_minutes(days: &str) -> Option<String> {
+    days.parse::<u64>()
+        .ok()?
+        .checked_mul(24 * 60)
+        .map(|minutes| minutes.to_string())
 }
 
 fn rewrite_npm_command(mut args: Vec<OsString>) -> Vec<OsString> {
