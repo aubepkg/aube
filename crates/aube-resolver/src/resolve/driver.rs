@@ -2342,6 +2342,8 @@ impl<'a> ResolveDriver<'a> {
                 // local source; the peer pass re-wires it instead. Peers
                 // nothing else supplies keep resolving.
                 if locked_pkg.peer_dependencies.contains_key(dep_name)
+                    && !(locked_pkg.declared_dependencies_known()
+                        && locked_pkg.declared_dependencies.contains_key(dep_name))
                     && is_non_registry_specifier(&canonical_version)
                     && (task.ancestors.iter().any(|(name, _)| name == dep_name)
                         || self
