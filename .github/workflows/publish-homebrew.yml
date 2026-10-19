@@ -1,7 +1,6 @@
 name: publish-homebrew
 
-# Releases are published to the aubepkg tap until aube is submitted to and
-# accepted by homebrew-core.
+# Releases are published to the Aube-maintained aubepkg tap.
 
 on:
   release:
