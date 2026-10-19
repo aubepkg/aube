@@ -209,6 +209,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ needs.release-plz-release.outputs.tag }}
+          # communique determines the previous release tag from history; a
+          # shallow checkout makes the checked-out release commit look like
+          # the repository root and produces a self-comparison.
+          fetch-depth: 0
           submodules: recursive
           persist-credentials: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
@@ -222,6 +226,19 @@ jobs:
           TAG: ${{ needs.release-plz-release.outputs.tag }}
         run: |
           communique generate "$TAG" --github-release
+      - name: Verify generated release-note range
+        env:
+          GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
+          TAG: ${{ needs.release-plz-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
+          body="$(gh release view "$TAG" --json body --jq .body)"
+          expected="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG}"
+          if ! printf '%s\n' "$body" | grep -Fq "$expected"; then
+            echo "::error::communique generated release notes without the expected range: $expected"
+            exit 1
+          fi
       - name: Append jdx.dev sponsor blurb
         env:
           GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
