@@ -284,11 +284,14 @@ pub fn write(
             declared.get(*name).map(String::as_str) == Some(*spec)
                 || peer_dependencies.get(*name).map(String::as_str) != Some(*spec)
         });
+        let importer_has_install_script =
+            workspace_package_for_importer(graph, importer_path).is_some_and(has_install_script);
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
                 name: Some(name),
                 version,
+                has_install_script: importer_has_install_script,
                 dependencies,
                 dev_dependencies,
                 optional_dependencies,
@@ -401,14 +404,22 @@ pub fn write(
         // chains would get removed under either omit even though the
         // other chain still needs it.
         let is_prod = prod_reach.contains(canonical_key);
-        let is_dev = !is_prod && dev_reach.contains(canonical_key);
-        let is_opt = !is_prod && opt_reach.contains(canonical_key);
-        // `devOptional` needs a *required* dev path plus an optional
-        // path. An optional child of a dev dependency (esbuild's
-        // `@esbuild/*`) is both `dev` and `optional`.
-        let dev_optional = is_dev && is_opt && dev_required_reach.contains(canonical_key);
-        let dev = is_dev && !dev_optional;
-        let optional = is_opt && !dev_optional;
+        let dev_required = dev_required_reach.contains(canonical_key);
+        let optional_from_non_dev = opt_reach.contains(canonical_key);
+        let dev_any = dev_reach.contains(canonical_key);
+        let (dev, optional, dev_optional) = if is_prod {
+            (false, false, false)
+        } else if optional_from_non_dev {
+            // Kept by a non-dev optional chain: never `dev`. A required
+            // dev path on top makes it `devOptional`.
+            (false, !dev_required, dev_required)
+        } else if dev_any {
+            // Reached only through dev roots; an optional edge on
+            // every path (esbuild's `@esbuild/*`) also makes it optional.
+            (true, !dev_required, false)
+        } else {
+            (false, false, false)
+        };
 
         // Aliased deps (`"h3-v2": "npm:h3@..."` in package.json)
         // round-trip as `node_modules/h3-v2` with an explicit
@@ -457,10 +468,7 @@ pub fn write(
                 version: Some(pkg.version.as_str()),
                 resolved,
                 integrity: pkg.integrity.as_deref(),
-                has_install_script: pkg
-                    .extra_meta
-                    .get(HAS_INSTALL_SCRIPT_KEY)
-                    .is_some_and(|v| v.as_bool() == Some(true)),
+                has_install_script: has_install_script(pkg),
                 license: pkg.license.as_deref(),
                 dependencies: deps,
                 optional_dependencies: optional_deps,
@@ -545,6 +553,12 @@ fn preferred_root_placements(
         }
     }
     preferred
+}
+
+fn has_install_script(pkg: &LockedPackage) -> bool {
+    pkg.extra_meta
+        .get(HAS_INSTALL_SCRIPT_KEY)
+        .is_some_and(|v| v.as_bool() == Some(true))
 }
 
 fn workspace_package_for_importer<'a>(
@@ -640,10 +654,10 @@ fn reachable_from(
     out
 }
 
-/// Packages reached through at least one optional edge: an
-/// `optionalDependencies` root, or an optional edge out of any package
-/// in `prod_reach` or reachable from a dev/optional root. This is what
-/// puts `optional: true` on `esbuild`'s `@esbuild/*` platform packages.
+/// Packages reached through an optional edge from the non-dev side: an
+/// `optionalDependencies` root, or an optional edge out of a package in
+/// `prod_reach`. This is what puts `optional: true` on `esbuild`'s
+/// `@esbuild/*` platform packages.
 fn optional_reach(
     canonical: &BTreeMap<String, &LockedPackage>,
     roots: &[DirectDep],
@@ -664,13 +678,9 @@ fn optional_reach(
             );
         }
     }
-    let required_roots = roots
-        .iter()
-        .filter(|d| d.dep_type != DepType::Optional)
-        .map(|d| super::canonical_key_from_dep_path(&d.dep_path));
     let mut required_seen: BTreeSet<String> = BTreeSet::new();
     let mut required_queue: VecDeque<String> = VecDeque::new();
-    for key in required_roots.chain(prod_reach.iter().cloned()) {
+    for key in prod_reach.iter().cloned() {
         if canonical.contains_key(&key) && required_seen.insert(key.clone()) {
             required_queue.push_back(key);
         }
