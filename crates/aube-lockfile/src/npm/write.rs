@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
-use super::raw::RawNpmLockfile;
+use super::raw::{HAS_INSTALL_SCRIPT_KEY, RawNpmLockfile};
 
 #[derive(Debug, Serialize)]
 struct WriteNpmLockfile<'a> {
@@ -36,6 +36,8 @@ struct WriteNpmPackage<'a> {
     resolved: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     integrity: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    has_install_script: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     license: Option<&'a str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -164,9 +166,9 @@ pub fn write(
         .values()
         .flat_map(|deps| deps.iter().cloned())
         .collect();
-    let prod_reach = reachable_from(&canonical, &all_roots, DepType::Production);
-    let dev_reach = reachable_from(&canonical, &all_roots, DepType::Dev);
-    let opt_reach = reachable_from(&canonical, &all_roots, DepType::Optional);
+    let prod_reach = reachable_from(&canonical, &all_roots, DepType::Production, true);
+    let dev_reach = reachable_from(&canonical, &all_roots, DepType::Dev, false);
+    let opt_reach = optional_reach(&canonical, &all_roots, &prod_reach);
 
     // Build a hoist/nest tree keyed by a sequence of "node_modules"
     // path segments — e.g. `["foo"]` for `node_modules/foo`,
@@ -451,6 +453,10 @@ pub fn write(
                 version: Some(pkg.version.as_str()),
                 resolved,
                 integrity: pkg.integrity.as_deref(),
+                has_install_script: pkg
+                    .extra_meta
+                    .get(HAS_INSTALL_SCRIPT_KEY)
+                    .is_some_and(|v| v.as_bool() == Some(true)),
                 license: pkg.license.as_deref(),
                 dependencies: deps,
                 optional_dependencies: optional_deps,
@@ -600,6 +606,7 @@ fn reachable_from(
     canonical: &BTreeMap<String, &LockedPackage>,
     roots: &[DirectDep],
     dep_type: DepType,
+    required_edges_only: bool,
 ) -> BTreeSet<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -617,6 +624,9 @@ fn reachable_from(
             continue;
         };
         for (child_name, child_value) in &pkg.dependencies {
+            if required_edges_only && pkg.optional_dependencies.contains_key(child_name) {
+                continue;
+            }
             let child_key = super::child_canonical_key(child_name, child_value);
             if canonical.contains_key(&child_key) && out.insert(child_key.clone()) {
                 queue.push_back(child_key);
@@ -624,6 +634,69 @@ fn reachable_from(
         }
     }
     out
+}
+
+/// Packages reached through at least one optional edge: an
+/// `optionalDependencies` root, or an optional edge out of any package
+/// in `prod_reach` or reachable from a dev/optional root. This is what
+/// puts `optional: true` on `esbuild`'s `@esbuild/*` platform packages.
+fn optional_reach(
+    canonical: &BTreeMap<String, &LockedPackage>,
+    roots: &[DirectDep],
+    prod_reach: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    let mut enqueue = |key: String, queue: &mut VecDeque<String>| {
+        if canonical.contains_key(&key) && seen.insert(key.clone()) {
+            queue.push_back(key);
+        }
+    };
+    for dep in roots {
+        if dep.dep_type == DepType::Optional {
+            enqueue(
+                super::canonical_key_from_dep_path(&dep.dep_path),
+                &mut queue,
+            );
+        }
+    }
+    let required_roots = roots
+        .iter()
+        .filter(|d| d.dep_type != DepType::Optional)
+        .map(|d| super::canonical_key_from_dep_path(&d.dep_path));
+    let mut required_seen: BTreeSet<String> = BTreeSet::new();
+    let mut required_queue: VecDeque<String> = VecDeque::new();
+    for key in required_roots.chain(prod_reach.iter().cloned()) {
+        if canonical.contains_key(&key) && required_seen.insert(key.clone()) {
+            required_queue.push_back(key);
+        }
+    }
+    while let Some(key) = required_queue.pop_front() {
+        let Some(pkg) = canonical.get(&key).copied() else {
+            continue;
+        };
+        for (child_name, child_value) in &pkg.dependencies {
+            let child_key = super::child_canonical_key(child_name, child_value);
+            if pkg.optional_dependencies.contains_key(child_name) {
+                enqueue(child_key, &mut queue);
+            } else if canonical.contains_key(&child_key) && required_seen.insert(child_key.clone())
+            {
+                required_queue.push_back(child_key);
+            }
+        }
+    }
+    while let Some(key) = queue.pop_front() {
+        let Some(pkg) = canonical.get(&key).copied() else {
+            continue;
+        };
+        for (child_name, child_value) in &pkg.dependencies {
+            enqueue(
+                super::child_canonical_key(child_name, child_value),
+                &mut queue,
+            );
+        }
+    }
+    seen
 }
 /// `peerDependenciesMeta` for a workspace member's optional peers. Without
 /// it, rereading the lockfile turns those peers into required ones.

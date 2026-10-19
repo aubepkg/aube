@@ -648,6 +648,48 @@ fn test_write_dev_and_optional_reachable_uses_dev_optional() {
     assert_eq!(json["packages"]["node_modules/opt-root"]["optional"], true);
 }
 
+/// Regression: an `optionalDependencies` edge out of a production
+/// package (esbuild -> @esbuild/*) must write `optional: true` on the
+/// child, and `hasInstallScript` must survive a parse/write cycle.
+#[test]
+fn test_write_optional_edge_and_install_script_flags_round_trip() {
+    let lock = r#"{
+  "name": "t", "version": "1.0.0", "lockfileVersion": 3, "requires": true,
+  "packages": {
+    "": {"name": "t", "version": "1.0.0", "dependencies": {"esbuild": "0.25.10"}},
+    "node_modules/@esbuild/aix-ppc64": {
+      "version": "0.25.10", "resolved": "https://r/a.tgz", "integrity": "sha512-a",
+      "cpu": ["ppc64"], "optional": true, "os": ["aix"]
+    },
+    "node_modules/esbuild": {
+      "version": "0.25.10", "resolved": "https://r/e.tgz", "integrity": "sha512-e",
+      "hasInstallScript": true,
+      "optionalDependencies": {"@esbuild/aix-ppc64": "0.25.10"}
+    }
+  }
+}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("package-lock.json");
+    std::fs::write(&path, lock).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        name: Some("t".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: [("esbuild".to_string(), "0.25.10".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let graph = parse(&path).unwrap();
+    write(&path, &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/@esbuild/aix-ppc64"];
+    assert_eq!(child["optional"], true);
+    let parent = &json["packages"]["node_modules/esbuild"];
+    assert_eq!(parent["hasInstallScript"], true);
+    assert!(parent.get("optional").is_none());
+}
+
 /// Regression: the npm writer must drop `dependencies` entries
 /// whose target isn't in the canonical map. Platform-filtered
 /// optionals and `ignoredOptionalDependencies` leave the parent's
