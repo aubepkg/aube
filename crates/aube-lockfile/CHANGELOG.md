@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.7.2...aube-lockfile-v2.8.0) - 2026-10-19
+
+### Fixed
+
+- *(lockfile)* keep snapshot keys over 1024 chars in explicit form ([#1765](https://github.com/aubepkg/aube/pull/1765))
+
 ## [2.7.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.7.0...aube-lockfile-v2.7.1) - 2026-10-15
 
 ### Fixed

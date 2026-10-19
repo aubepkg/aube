@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0](https://github.com/aubepkg/aube/compare/aube-settings-v2.7.2...aube-settings-v2.8.0) - 2026-10-19
+
+### Added
+
+- *(install)* add useDefaultTrustedDependencies to opt out of the built-in trust list ([#1767](https://github.com/aubepkg/aube/pull/1767))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/aube-settings-v2.7.1...aube-settings-v2.7.2) - 2026-10-17
 
 ### Fixed

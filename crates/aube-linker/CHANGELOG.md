@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.2...aube-linker-v2.8.0) - 2026-10-19
+
+### Fixed
+
+- *(linker)* run shebang-less shell bins with sh ([#1766](https://github.com/aubepkg/aube/pull/1766))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.1...aube-linker-v2.7.2) - 2026-10-17
 
 ### Fixed
