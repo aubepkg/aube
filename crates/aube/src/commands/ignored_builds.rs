@@ -138,11 +138,18 @@ pub(super) fn collect_ignored(project_dir: &std::path::Path) -> miette::Result<V
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
     };
 
-    let workspace = aube_manifest::WorkspaceConfig::load(project_dir)
+    let (workspace, raw_workspace) = aube_manifest::workspace::load_both(project_dir)
         .into_diagnostic()
         .wrap_err("failed to load workspace config")?;
-    let (policy, _warnings) =
-        super::install::build_policy_from_sources(&manifest, &workspace, false, true);
+    let files = crate::commands::FileSources::load(project_dir);
+    let env_snapshot = aube_settings::values::capture_env();
+    let settings_ctx = files.ctx(&raw_workspace, &env_snapshot, &[]);
+    let (policy, _warnings) = super::install::build_policy_from_sources(
+        &manifest,
+        &workspace,
+        false,
+        aube_settings::resolved::use_default_trusted_dependencies(&settings_ctx),
+    );
 
     let store = super::open_store(project_dir)?;
 
