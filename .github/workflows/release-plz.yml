@@ -228,7 +228,7 @@ jobs:
           set -euo pipefail
           original_body="$(gh release view "$TAG" --json body --jq .body)"
           previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
-          communique generate "$TAG" --prev-tag "$previous_tag" --github-release
+          communique generate "$TAG" "$previous_tag" --github-release
           body="$(gh release view "$TAG" --json body --jq .body)"
           expected="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG}"
           self_comparison="https://github.com/${GITHUB_REPOSITORY}/compare/${TAG}...${TAG}"
