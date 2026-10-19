@@ -4345,7 +4345,20 @@ async fn lockfile_reuse_skips_local_peer_edge_supplied_by_importer() {
         .resolve(&manifest, Some(&existing))
         .await
         .expect("a local peer supplied by the importer must not be re-resolved as a transitive");
-    assert!(graph.packages.values().any(|p| p.name == "host"));
+    let host = graph
+        .packages
+        .values()
+        .find(|p| p.name == "host")
+        .expect("host resolved");
+    let react = host
+        .dependencies
+        .get("react")
+        .expect("peer pass must wire the importer's react into host");
+    let importer_react = graph.importers["."]
+        .iter()
+        .find(|d| d.name == "react")
+        .expect("importer react");
+    assert_eq!(importer_react.dep_path, format!("react@{react}"));
 }
 
 // Bun and yarn parsers store transitive deps in `pkg.dependencies`
