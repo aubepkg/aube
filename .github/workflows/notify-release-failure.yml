@@ -5,7 +5,10 @@ name: notify-release-failure
 # jactionlint ignore=dangerous-triggers
 on:
   workflow_run:
-    workflows: [release, publish-homebrew, publish-npm, ppa-publish, copr-publish]
+    # Each release-published downstream publisher is listed once. The
+    # per-workflow-run concurrency key prevents duplicate delivery for the
+    # same run while still reporting a distinct failed publisher.
+    workflows: [release, publish-homebrew, publish-npm, ppa-publish, copr-publish, node-addon, ffi]
     types: [completed]
 
 concurrency:
