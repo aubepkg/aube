@@ -2335,15 +2335,16 @@ impl<'a> ResolveDriver<'a> {
             for (dep_name, dep_version) in &locked_pkg.dependencies {
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);
-                let canonical_version = stripped.split('(').next().unwrap_or(stripped).to_string();
+                let mut canonical_version =
+                    stripped.split('(').next().unwrap_or(stripped).to_string();
                 // A peer supplied by the importer or an ancestor through a
                 // `file:`/`link:`/git dep records that specifier as the
                 // snapshot edge. Re-resolving it here would be a transitive
-                // local source; the peer pass re-wires it instead. Peers
-                // nothing else supplies keep resolving.
+                // local source; the peer pass re-wires it instead. A name
+                // the package also declares as a dependency resolves from
+                // its declared range, and peers nothing else supplies keep
+                // resolving.
                 if locked_pkg.peer_dependencies.contains_key(dep_name)
-                    && !(locked_pkg.declared_dependencies_known()
-                        && locked_pkg.declared_dependencies.contains_key(dep_name))
                     && is_non_registry_specifier(&canonical_version)
                     && (task.ancestors.iter().any(|(name, _)| name == dep_name)
                         || self
@@ -2356,7 +2357,14 @@ impl<'a> ResolveDriver<'a> {
                                 .get(".")
                                 .is_some_and(|names| names.contains(dep_name)))
                 {
-                    continue;
+                    let declared = locked_pkg
+                        .declared_dependencies_known()
+                        .then(|| locked_pkg.declared_dependencies.get(dep_name))
+                        .flatten();
+                    let Some(declared) = declared else {
+                        continue;
+                    };
+                    canonical_version = declared.clone();
                 }
                 let dep_type = if locked_pkg.optional_dependencies.contains_key(dep_name) {
                     DepType::Optional
