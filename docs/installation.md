@@ -61,11 +61,11 @@ same dependency versions CI built against. The compiled binary lands in
 aube is published from the official Aube tap until it lands in homebrew-core:
 
 ```sh
-brew install aubepkg/aube/aube
+brew install aubepkg/tap/aube
 ```
 
 Homebrew adds the tap automatically. You can also add it explicitly with
-`brew tap aubepkg/aube` and then run `brew install aube`. The tap provides the
+`brew tap aubepkg/tap` and then run `brew install aube`. The tap provides the
 formula and shell completions. The legacy `jdx/tap/aube` formula remains
 available for existing installations during the transition.
 
