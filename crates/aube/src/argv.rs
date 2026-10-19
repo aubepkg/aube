@@ -112,7 +112,6 @@ fn rewrite_pnpm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 
 fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     let legacy_peer_deps = take_npm_legacy_peer_deps(&mut args);
-    let min_release_age = take_npm_min_release_age(&mut args);
     let mut args = rewrite_npm_command(args);
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
@@ -123,13 +122,6 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         args.insert(
             at,
             OsString::from(format!("--config.auto-install-peers={}", !legacy)),
-        );
-    }
-    if let Some(age) = min_release_age {
-        let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
-        args.insert(
-            at,
-            OsString::from(format!("--config.minimum-release-age={age}")),
         );
     }
     args
@@ -153,49 +145,6 @@ fn take_npm_legacy_peer_deps(args: &mut Vec<OsString>) -> Option<bool> {
         };
         requested = Some(value);
         args.remove(i);
-    }
-    requested
-}
-
-/// Convert npm's day-based `--min-release-age` option to aube's minute-based
-/// matching setting. npm accepts both `--min-release-age=0` and the
-/// space-separated form; consume neither a missing value nor anything after
-/// `--` so normal argument errors and forwarded package arguments keep their
-/// meaning.
-fn take_npm_min_release_age(args: &mut Vec<OsString>) -> Option<String> {
-    let mut requested = None;
-    let mut i = 1;
-    while i < args.len() {
-        let Some(value) = args[i].to_str() else {
-            i += 1;
-            continue;
-        };
-        if value == "--" {
-            break;
-        }
-        let age = if let Some(age) = value.strip_prefix("--min-release-age=") {
-            Some((age.to_owned(), 1))
-        } else if value == "--min-release-age" {
-            args.get(i + 1)
-                .and_then(|next| next.to_str())
-                .filter(|next| *next != "--")
-                .map(|age| (age.to_owned(), 2))
-        } else {
-            None
-        };
-        if let Some((age, count)) = age {
-            // Preserve an invalid value as a setting override so the settings
-            // parser reports it instead of treating the flag as a package.
-            requested = Some(
-                age.parse::<u64>()
-                    .ok()
-                    .and_then(|days| days.checked_mul(24 * 60))
-                    .map_or(age, |minutes| minutes.to_string()),
-            );
-            args.drain(i..i + count);
-        } else {
-            i += 1;
-        }
     }
     requested
 }
