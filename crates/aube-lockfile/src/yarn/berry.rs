@@ -961,19 +961,25 @@ fn workspace_block(
             out.push('\n');
         }
     };
-    // A name in both sections is one entry; `dependencies` wins, as in
-    // the parser.
+    // A name in several sections is one entry; `dependencies` wins over
+    // `devDependencies`, as in the parser. Yarn folds optional dependencies
+    // into `dependencies` and flags them in `dependenciesMeta`.
     let mut deps: BTreeMap<&String, &String> = manifest.dev_dependencies.iter().collect();
     deps.extend(manifest.dependencies.iter());
+    deps.extend(manifest.optional_dependencies.iter());
     write_section("dependencies", deps.into_iter().collect());
-    write_section(
-        "optionalDependencies",
-        manifest.optional_dependencies.iter().collect(),
-    );
     write_section(
         "peerDependencies",
         manifest.peer_dependencies.iter().collect(),
     );
+    if !manifest.optional_dependencies.is_empty() {
+        out.push_str("  dependenciesMeta:\n");
+        for dep_name in manifest.optional_dependencies.keys() {
+            out.push_str("    ");
+            out.push_str(&quote_yaml_key(dep_name));
+            out.push_str(":\n      optional: true\n");
+        }
+    }
     out.push_str("  languageName: unknown\n  linkType: soft\n");
     Some((header, out))
 }

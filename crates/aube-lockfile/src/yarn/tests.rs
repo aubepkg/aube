@@ -1604,3 +1604,19 @@ fn berry_preserves_compat_patch_in_crlf_lockfile_and_numeric_cache_key() {
     assert!(written.contains("__metadata:\n  version: 6\n  cacheKey: 8\n"));
     assert!(written.contains("builtin<compat/typescript>::version=5.5.4&hash=379a07"));
 }
+
+#[test]
+fn berry_root_block_folds_optional_dependencies_into_dependencies_meta() {
+    let mut manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    manifest.name = Some("t".to_string());
+    manifest
+        .optional_dependencies
+        .insert("fsevents".into(), "^2.0.0".into());
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &LockfileGraph::default(), &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(written.contains(
+        "  dependencies:\n    foo: \"npm:^1.0.0\"\n    fsevents: \"npm:^2.0.0\"\n  dependenciesMeta:\n    fsevents:\n      optional: true\n  languageName: unknown\n"
+    ), "{written}");
+    assert!(!written.contains("optionalDependencies:"));
+}
