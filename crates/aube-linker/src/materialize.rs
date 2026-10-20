@@ -96,10 +96,19 @@ fn replace_materialized_entry(
             Ok(MaterializePlacement::Placed)
         }
         other => {
-            if !dst.exists() {
-                let _ = std::fs::rename(aside, dst);
+            if dst.exists() {
+                // Another installer published its entry first; ours is stale.
+                let _ = std::fs::remove_dir_all(aside);
+                return other;
             }
-            other
+            match std::fs::rename(aside, dst) {
+                Ok(()) => other,
+                Err(rollback) => Err(io::Error::other(format!(
+                    "could not place the new entry and could not restore the previous one \
+                     (kept at {}): {rollback}",
+                    aside.display()
+                ))),
+            }
         }
     }
 }
@@ -489,7 +498,7 @@ impl Linker {
     ) -> Result<(), Error> {
         let local_aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
         let global_entry = self.virtual_store.join(self.virtual_store_subdir(dep_path));
-        let state = classify_entry_state(&local_aube_entry, &global_entry);
+        let state = self.forced_entry_state(classify_entry_state(&local_aube_entry, &global_entry));
         if matches!(state, EntryState::Fresh) {
             self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
             stats.packages_cached += 1;

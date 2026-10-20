@@ -475,7 +475,7 @@ impl Linker {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
                             if self.force {
-                                try_remove_entry(&aube_entry);
+                                remove_entry_checked(&aube_entry)?;
                             }
                             if aube_entry.exists() {
                                 // Already in place from a previous run —
@@ -1127,7 +1127,7 @@ impl Linker {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
                             if self.force {
-                                try_remove_entry(&aube_entry);
+                                remove_entry_checked(&aube_entry)?;
                             }
                             if aube_entry.exists() {
                                 local_stats.packages_cached += 1;
@@ -1786,6 +1786,19 @@ impl Linker {
         }
         Ok(())
     }
+}
+
+/// Remove a stale `.aube/<dep_path>` entry for `--force`, failing when it
+/// survives so a partly removed tree is never counted as a cache hit.
+fn remove_entry_checked(entry: &Path) -> Result<(), Error> {
+    try_remove_entry(entry);
+    if entry.symlink_metadata().is_ok() {
+        return Err(Error::Io(
+            entry.to_path_buf(),
+            std::io::Error::other("failed to remove existing entry for --force"),
+        ));
+    }
+    Ok(())
 }
 
 /// Build a `dep_path → absolute on-disk target` map for every

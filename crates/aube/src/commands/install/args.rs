@@ -36,7 +36,7 @@ pub struct InstallArgs {
     ///
     /// Bypasses the `node_modules/.aube-state` freshness check,
     /// re-resolves the lockfile even when nothing has drifted, and
-    /// re-materializes every linked package so deleted or modified
+    /// re-materializes every linked package so deleted
     /// files in `node_modules` are restored. With the global virtual
     /// store, the shared entry is rebuilt and swapped into place for
     /// every project that uses it. Mirrors pnpm's `install --force`.
