@@ -1055,6 +1055,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         skipped_optional_dependencies,
         catalogs,
         bun_config_version: None,
+        yarn_berry_metadata: None,
         patched_dependencies,
         trusted_dependencies: Vec::new(),
         runtimes,

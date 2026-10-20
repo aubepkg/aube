@@ -35,6 +35,11 @@ pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url
 /// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
 pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
 
+/// `LockedPackage::extra_meta` key holding yarn berry blocks the parser
+/// skipped but the writer must re-emit verbatim (the `builtin<compat/…>`
+/// patch entries yarn adds for `typescript`, `resolve` and `fsevents`).
+pub(crate) const EXTRA_YARN_BERRY_PRESERVED_BLOCKS: &str = "__aube_yarn_berry_preserved_blocks";
+
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -124,6 +129,11 @@ pub struct LockfileGraph {
     /// (e.g. from `2` back to `1`) when bun bumps it in a future
     /// release.
     pub bun_config_version: Option<u32>,
+    /// Yarn berry `__metadata` (`version`, `cacheKey`) as parsed, so the
+    /// writer re-stamps what yarn wrote instead of downgrading the
+    /// lockfile version on a re-resolve. `None` for other formats and
+    /// fresh graphs; the berry writer then falls back to its defaults.
+    pub yarn_berry_metadata: Option<(u32, String)>,
     /// Top-level `patchedDependencies:` block mirrored by bun 1.1+ and
     /// pnpm 9+. Key: selector (`lodash@4.17.21`); value is the relative
     /// patch path for bun/fresh resolution or pnpm's patch-content hash
@@ -1015,6 +1025,7 @@ impl LockfileGraph {
             skipped_optional_dependencies: self.skipped_optional_dependencies.clone(),
             catalogs: self.catalogs.clone(),
             bun_config_version: self.bun_config_version,
+            yarn_berry_metadata: self.yarn_berry_metadata.clone(),
             patched_dependencies: self.patched_dependencies.clone(),
             trusted_dependencies: self.trusted_dependencies.clone(),
             // Runtime pins are graph-wide resolution intent, same as
@@ -1083,6 +1094,7 @@ impl LockfileGraph {
             skipped_optional_dependencies,
             catalogs: self.catalogs.clone(),
             bun_config_version: self.bun_config_version,
+            yarn_berry_metadata: self.yarn_berry_metadata.clone(),
             patched_dependencies: self.patched_dependencies.clone(),
             trusted_dependencies: self.trusted_dependencies.clone(),
             runtimes: self.runtimes.clone(),
@@ -1136,6 +1148,9 @@ impl LockfileGraph {
         }
         if self.bun_config_version.is_none() {
             self.bun_config_version = prior.bun_config_version;
+        }
+        if self.yarn_berry_metadata.is_none() {
+            self.yarn_berry_metadata = prior.yarn_berry_metadata.clone();
         }
         if self.patched_dependencies.is_empty() {
             self.patched_dependencies = prior.patched_dependencies.clone();

@@ -147,7 +147,7 @@ pub(super) fn parse_classic_str(
                     name: name.to_string(),
                     dep_path: dep_path.clone(),
                     dep_type,
-                    specifier: None,
+                    specifier: Some(range.to_string()),
                 });
             }
         };

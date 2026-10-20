@@ -414,6 +414,7 @@ pub fn write(
             if MODELED_META_KEYS.contains(&k.as_str())
                 || k == crate::EXTRA_PRESERVE_TARBALL_URL
                 || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
+                || k == crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS
             {
                 continue;
             }

@@ -40,12 +40,22 @@ pub(super) fn parse_berry_str(
         ));
     }
 
+    let cache_key = map
+        .get("__metadata")
+        .and_then(|m| m.as_mapping())
+        .and_then(|m| m.get("cacheKey"))
+        .and_then(yaml_scalar_as_string)
+        .unwrap_or_else(|| DEFAULT_CACHE_KEY.to_string());
+
     // First pass: walk every top-level block, turning each into a
     // `LockedPackage` keyed by canonical `name@version` and recording
     // every header-spec → dep_path mapping for the second pass.
     let mut spec_to_dep_path: BTreeMap<String, String> = BTreeMap::new();
     let mut packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
     let mut patched_dependencies: BTreeMap<String, String> = BTreeMap::new();
+    // `(name@version, header)` of blocks skipped as yarn-internal compat
+    // patches; their raw text is attached to the owning package below.
+    let mut preserved_blocks: Vec<(String, String)> = Vec::new();
     // Transitive dep values written into each `LockedPackage` in this
     // pass are the raw header specs (e.g. `"foo@npm:^2.0.0"`); the
     // second pass collapses them down to dep_paths.
@@ -119,6 +129,7 @@ pub(super) fn parse_berry_str(
                     None
                 }
                 PatchSelector::Skip => {
+                    preserved_blocks.push((format!("{res_name}@{version}"), key_str.to_string()));
                     tracing::warn!(
                         code = aube_codes::warnings::WARN_AUBE_YARN_BERRY_UNSUPPORTED,
                         "yarn berry patch protocol in block '{}' is not supported — entry skipped",
@@ -221,6 +232,16 @@ pub(super) fn parse_berry_str(
             .map(|(n, v)| (n.clone(), format!("{n}@{v}")))
             .collect();
 
+        let bin: BTreeMap<String, String> = block
+            .get("bin")
+            .and_then(|v| v.as_mapping())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let checksum = block
             .get("checksum")
             .and_then(|v| v.as_str())
@@ -234,6 +255,7 @@ pub(super) fn parse_berry_str(
                     version: version.clone(),
                     integrity: None,
                     yarn_checksum: checksum,
+                    bin,
                     dependencies: raw_deps_specs,
                     optional_dependencies: optional_deps_specs,
                     peer_dependencies: peer_deps,
@@ -245,6 +267,22 @@ pub(super) fn parse_berry_str(
                 }
                 .with_declared_dependencies_known(),
             );
+        }
+    }
+
+    for (spec_key, header) in preserved_blocks {
+        let Some(pkg) = packages.values_mut().find(|p| p.spec_key() == spec_key) else {
+            continue;
+        };
+        let Some(raw) = raw_block_text(content, &header) else {
+            continue;
+        };
+        let entry = pkg
+            .extra_meta
+            .entry(crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS.to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if let serde_json::Value::Array(blocks) = entry {
+            blocks.push(serde_json::json!({ "header": header, "raw": raw }));
         }
     }
 
@@ -298,7 +336,7 @@ pub(super) fn parse_berry_str(
                         name: name.to_string(),
                         dep_path: dep_path.clone(),
                         dep_type,
-                        specifier: None,
+                        specifier: Some(range.to_string()),
                     });
                     return;
                 }
@@ -321,9 +359,34 @@ pub(super) fn parse_berry_str(
         importers,
         packages,
         patched_dependencies,
+        yarn_berry_metadata: Some((meta_version as u32, cache_key)),
         ..Default::default()
     })
 }
+
+/// Raw text of the top-level block whose (unquoted) header is `header`,
+/// without its trailing blank line. Yarn separates blocks with a blank
+/// line, so the file splits cleanly on `\n\n`.
+fn raw_block_text(content: &str, header: &str) -> Option<String> {
+    content.split("\n\n").find_map(|chunk| {
+        let chunk = chunk.trim_matches('\n');
+        let first = chunk.lines().next()?;
+        if first.starts_with('#') || !first.ends_with(':') {
+            return None;
+        }
+        let doc: yaml_serde::Value = yaml_serde::from_str(&format!("{first} ~")).ok()?;
+        let key = doc.as_mapping()?.keys().next()?.as_str()?;
+        (key == header).then(|| chunk.to_string())
+    })
+}
+
+/// `__metadata.cacheKey` yarn 4 writes; used when the graph didn't come
+/// from a berry lockfile.
+const DEFAULT_CACHE_KEY: &str = "10c0";
+
+/// `__metadata.version` written when the graph didn't come from a berry
+/// lockfile.
+const DEFAULT_METADATA_VERSION: u32 = 8;
 
 /// Split a berry block header like `"foo@npm:^1.0.0, foo@npm:^2.0.0"`
 /// into individual specs. The YAML layer already unquoted the key;
@@ -594,7 +657,8 @@ fn classify_remote(url: &str, _block: &yaml_serde::Mapping) -> Option<LocalSourc
 
 /// Serialize a [`LockfileGraph`] as a yarn berry (v2+) lockfile.
 ///
-/// Output targets yarn 4's `__metadata.version: 8` / `cacheKey: 10c0`
+/// `__metadata` is re-stamped from the parsed lockfile; a graph that
+/// didn't come from berry gets yarn 4's `version: 8` / `cacheKey: 10c0`
 /// (accepted by yarn 3.x too; yarn 2.x is functionally extinct). The
 /// block shape — one entry per canonical `(name, version)` with a
 /// comma-separated header of all specifiers that resolve to it — is
@@ -700,9 +764,26 @@ pub fn write_berry(
     let mut out = String::with_capacity(canonical.len().saturating_mul(256).max(4096));
     out.push_str("# This file is generated by running \"yarn install\" inside your project.\n");
     out.push_str("# Manual changes might be lost - proceed with caution!\n\n");
-    out.push_str("__metadata:\n  version: 8\n  cacheKey: 10c0\n\n");
+    let (metadata_version, cache_key) = graph
+        .yarn_berry_metadata
+        .as_ref()
+        .map_or((DEFAULT_METADATA_VERSION, DEFAULT_CACHE_KEY), |(v, k)| {
+            (*v, k.as_str())
+        });
+    out.push_str(&format!(
+        "__metadata:\n  version: {metadata_version}\n  cacheKey: {}\n\n",
+        quote_yaml_scalar_if_needed(cache_key)
+    ));
+
+    // Yarn sorts blocks by header, so collect them and emit in that order
+    // rather than in the graph's `name@version` order.
+    let mut blocks: Vec<(String, String)> = Vec::with_capacity(canonical.len() + 1);
+    if let Some(block) = workspace_block(manifest, &format_berry_spec) {
+        blocks.push(block);
+    }
 
     for (canonical_key, pkg) in &canonical {
+        let mut out = String::with_capacity(256);
         // Every block starts with the exact `name@protocol:version`
         // specifier so transitive lookups (which parse emits as
         // `"name@npm:version"`) find a header match, then appends the
@@ -728,7 +809,7 @@ pub fn write_berry(
 
         // Scalar fields: version, resolution.
         out.push_str("  version: ");
-        out.push_str(&quote_yaml_scalar(&pkg.version));
+        out.push_str(&quote_yaml_scalar_if_needed(&pkg.version));
         out.push('\n');
         out.push_str("  resolution: ");
         out.push_str(&quote_yaml_scalar(&exact_spec));
@@ -760,10 +841,20 @@ pub fn write_berry(
         );
         write_berry_peer_deps(&mut out, &pkg.peer_dependencies);
         write_berry_peer_meta(&mut out, &pkg.peer_dependencies_meta);
+        if !pkg.bin.is_empty() {
+            out.push_str("  bin:\n");
+            for (name, bin_path) in &pkg.bin {
+                out.push_str("    ");
+                out.push_str(&quote_yaml_key(name));
+                out.push_str(": ");
+                out.push_str(&quote_yaml_scalar_if_needed(bin_path));
+                out.push('\n');
+            }
+        }
 
         if let Some(checksum) = &pkg.yarn_checksum {
             out.push_str("  checksum: ");
-            out.push_str(&quote_yaml_scalar(checksum));
+            out.push_str(&quote_yaml_scalar_if_needed(checksum));
             out.push('\n');
         }
         out.push_str("  languageName: node\n");
@@ -777,11 +868,82 @@ pub fn write_berry(
         };
         out.push_str("  linkType: ");
         out.push_str(link_type);
-        out.push_str("\n\n");
+        out.push('\n');
+        blocks.push((header_inner, out));
+
+        let preserved = pkg
+            .extra_meta
+            .get(crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS)
+            .and_then(|v| v.as_array());
+        for block in preserved.into_iter().flatten() {
+            if let (Some(header), Some(raw)) = (
+                block.get("header").and_then(|v| v.as_str()),
+                block.get("raw").and_then(|v| v.as_str()),
+            ) {
+                blocks.push((header.to_string(), format!("{raw}\n")));
+            }
+        }
+    }
+
+    blocks.sort_by(|a, b| a.0.cmp(&b.0));
+    for (i, (_, text)) in blocks.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(text);
     }
 
     crate::atomic_write_lockfile(path, out.as_bytes())?;
     Ok(())
+}
+
+/// The root `name@workspace:.` block yarn records for the project itself.
+/// Returns `(header, text)`; yarn names an unnamed root `root-workspace-0b6124`.
+fn workspace_block(
+    manifest: &aube_manifest::PackageJson,
+    format_spec: &dyn Fn(&str, &str) -> String,
+) -> Option<(String, String)> {
+    let name = manifest.name.as_deref().unwrap_or("root-workspace-0b6124");
+    let header = format!("{name}@workspace:.");
+    let mut out = String::new();
+    out.push_str(&quote_yaml_scalar(&header));
+    out.push_str(":\n  version: 0.0.0-use.local\n  resolution: ");
+    out.push_str(&quote_yaml_scalar(&header));
+    out.push('\n');
+    let mut write_section = |section: &str, deps: Vec<(&String, &String)>| {
+        if deps.is_empty() {
+            return;
+        }
+        out.push_str("  ");
+        out.push_str(section);
+        out.push_str(":\n");
+        for (dep_name, range) in deps {
+            let spec = format_spec(dep_name, range);
+            let body = spec.strip_prefix(&format!("{dep_name}@")).unwrap_or(&spec);
+            out.push_str("    ");
+            out.push_str(&quote_yaml_key(dep_name));
+            out.push_str(": ");
+            out.push_str(&quote_yaml_scalar(body));
+            out.push('\n');
+        }
+    };
+    let mut deps: Vec<(&String, &String)> = manifest
+        .dependencies
+        .iter()
+        .chain(manifest.dev_dependencies.iter())
+        .collect();
+    deps.sort_by(|a, b| a.0.cmp(b.0));
+    write_section("dependencies", deps);
+    write_section(
+        "optionalDependencies",
+        manifest.optional_dependencies.iter().collect(),
+    );
+    write_section(
+        "peerDependencies",
+        manifest.peer_dependencies.iter().collect(),
+    );
+    out.push_str("  languageName: unknown\n  linkType: soft\n");
+    Some((header, out))
 }
 
 /// The canonical header-spec used for a berry block's first
@@ -910,10 +1072,34 @@ fn quote_yaml_scalar(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-/// Scoped package names start with `@`, which YAML interprets as a
-/// reserved indicator character. Quoting them is required; bare
-/// un-scoped names round-trip without quotes, but we quote them too
-/// for consistency with berry's own output.
+/// Like [`quote_yaml_scalar`], but leaves plain tokens (versions such as
+/// `4.6.20`, cache keys and checksums such as `10c0` / `10c0/2095be31`,
+/// bin paths such as `bin/tsc`) bare the way yarn writes them.
+fn quote_yaml_scalar_if_needed(s: &str) -> String {
+    let plain = s.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '/' | '_'))
+        && !s.chars().all(|c| c.is_ascii_digit())
+        && !matches!(
+            s.to_ascii_lowercase().as_str(),
+            "true" | "false" | "null" | "yes" | "no" | "on" | "off"
+        );
+    if plain {
+        s.to_string()
+    } else {
+        quote_yaml_scalar(s)
+    }
+}
+
+/// Dependency names are written bare when YAML allows it, like yarn does;
+/// scoped names start with `@`, a reserved YAML indicator, and stay quoted.
 fn quote_yaml_key(s: &str) -> String {
-    quote_yaml_scalar(s)
+    let bare = s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if bare {
+        s.to_string()
+    } else {
+        quote_yaml_scalar(s)
+    }
 }
