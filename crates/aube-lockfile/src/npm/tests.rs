@@ -240,7 +240,7 @@ fn test_write_preserves_git_resolved_url() {
 }
 
 #[test]
-fn test_write_skips_non_git_local_sources() {
+fn test_write_emits_file_directory_dep_as_link_and_target() {
     let local = LocalSource::Directory(PathBuf::from("vendor/local-dir"));
     let dep_path = local.dep_path("local-dir");
     let mut graph = LockfileGraph::default();
@@ -276,7 +276,16 @@ fn test_write_skips_non_git_local_sources() {
     write(out.path(), &graph, &manifest).unwrap();
 
     let body = std::fs::read_to_string(out.path()).unwrap();
-    assert!(!body.contains("\"node_modules/local-dir\""));
+    let lock: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        lock["packages"]["node_modules/local-dir"],
+        serde_json::json!({"resolved": "vendor/local-dir", "link": true})
+    );
+    assert_eq!(
+        lock["packages"]["vendor/local-dir"],
+        serde_json::json!({"name": "local-dir", "version": "1.0.0"})
+    );
+    parse(out.path()).unwrap();
 }
 
 #[test]

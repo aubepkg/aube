@@ -50,6 +50,12 @@ pub(super) fn npm_resolved_field(pkg: &LockedPackage) -> Option<String> {
             }
         }
         Some(LocalSource::RemoteTarball(tarball)) => Some(tarball.url.clone()),
+        Some(LocalSource::Tarball(path)) => Some(format!(
+            "file:{}",
+            aube_util::path::normalize_lexical(path)
+                .to_string_lossy()
+                .replace('\\', "/")
+        )),
         _ => None,
     })
 }

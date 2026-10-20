@@ -130,9 +130,11 @@ struct WriteNpmPeerDepMeta {
 ///  - Registry `resolved` tarball URLs are emitted when they were
 ///    present in the parsed graph. Graphs synthesized without
 ///    `tarball_url` fall back to npm's tolerated no-`resolved` form.
-///  - Path-backed local source entries (`file:`, `link:`) aren't
-///    emitted yet. Git and remote-tarball sources emit their pinned
-///    `resolved:` URL.
+///  - `file:` directory deps are emitted as npm does: a `link: true`
+///    entry at `node_modules/<name>` plus a target entry at the
+///    directory's path. `file:` tarballs emit `resolved: file:<path>`.
+///    `link:` deps aren't emitted. Git and remote-tarball sources emit
+///    their pinned `resolved:` URL.
 ///    Workspace `link:` packages are emitted as importer entries plus
 ///    a root `node_modules/<name>` link record.
 pub fn write(
@@ -147,7 +149,12 @@ pub fn write(
     for pkg in graph.packages.values().filter(|pkg| {
         matches!(
             pkg.local_source,
-            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+            Some(
+                LocalSource::Git(_)
+                    | LocalSource::RemoteTarball(_)
+                    | LocalSource::Directory(_)
+                    | LocalSource::Tarball(_)
+            )
         )
     }) {
         canonical
@@ -460,6 +467,50 @@ pub fn write(
                 )
             })
             .collect();
+
+        if let Some(LocalSource::Directory(dir)) = &pkg.local_source {
+            let target = aube_util::path::normalize_lexical(dir)
+                .to_string_lossy()
+                .replace('\\', "/");
+            packages.insert(
+                install_path.clone(),
+                WriteNpmPackage {
+                    resolved: Some(target.clone()),
+                    link: true,
+                    dev,
+                    optional,
+                    dev_optional,
+                    ..Default::default()
+                },
+            );
+            packages.insert(
+                target,
+                WriteNpmPackage {
+                    name: Some(pkg.name.as_str()),
+                    version: Some(pkg.version.as_str()),
+                    dependencies: deps,
+                    optional_dependencies: optional_deps,
+                    peer_dependencies: peer_deps,
+                    peer_dependencies_meta: peer_deps_meta,
+                    bin: pkg
+                        .bin
+                        .iter()
+                        .filter(|(k, _)| !k.is_empty())
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect(),
+                    engines: pkg
+                        .engines
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect(),
+                    dev,
+                    optional,
+                    dev_optional,
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
 
         packages.insert(
             install_path.clone(),
