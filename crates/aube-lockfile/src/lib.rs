@@ -40,6 +40,10 @@ pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_depe
 /// patch entries yarn adds for `typescript`, `resolve` and `fsevents`).
 pub(crate) const EXTRA_YARN_BERRY_METADATA: &str = "__aube_yarn_berry_metadata";
 
+/// `LockedPackage::extra_meta` key holding a berry block's `conditions:`
+/// value (`os=darwin & cpu=arm64`), written back verbatim.
+pub(crate) const EXTRA_YARN_BERRY_CONDITIONS: &str = "__aube_yarn_berry_conditions";
+
 pub(crate) const EXTRA_YARN_BERRY_PRESERVED_BLOCKS: &str = "__aube_yarn_berry_preserved_blocks";
 
 use smallvec::SmallVec;

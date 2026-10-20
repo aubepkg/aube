@@ -1620,3 +1620,43 @@ fn berry_root_block_folds_optional_dependencies_into_dependencies_meta() {
     ), "{written}");
     assert!(!written.contains("optionalDependencies:"));
 }
+
+#[test]
+fn berry_write_preserves_conditions() {
+    let lock = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"fsevents@npm:^2.0.0":
+  version: 2.3.3
+  resolution: "fsevents@npm:2.3.3"
+  checksum: 10c0/abc
+  conditions: os=darwin
+  languageName: node
+  linkType: hard
+"#;
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), lock).unwrap();
+    let manifest = make_manifest(&[("fsevents", "^2.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(
+        written.contains("  checksum: 10c0/abc\n  conditions: os=darwin\n  languageName: node\n")
+    );
+}
+
+#[test]
+fn berry_root_block_uses_regular_range_when_optional_overlaps() {
+    let mut manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    manifest.name = Some("t".to_string());
+    manifest
+        .optional_dependencies
+        .insert("foo".into(), "^2.0.0".into());
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &LockfileGraph::default(), &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(written.contains("    foo: \"npm:^1.0.0\"\n"), "{written}");
+    assert!(!written.contains("^2.0.0"));
+}

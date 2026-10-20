@@ -249,6 +249,11 @@ pub(super) fn parse_berry_str(
             })
             .unwrap_or_default();
 
+        let conditions = block
+            .get("conditions")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
         let checksum = block
             .get("checksum")
             .and_then(|v| v.as_str())
@@ -270,6 +275,14 @@ pub(super) fn parse_berry_str(
                     dep_path: dep_path.clone(),
                     local_source,
                     declared_dependencies: declared,
+                    extra_meta: conditions
+                        .map(|c| {
+                            BTreeMap::from([(
+                                crate::EXTRA_YARN_BERRY_CONDITIONS.to_string(),
+                                serde_json::Value::String(c),
+                            )])
+                        })
+                        .unwrap_or_default(),
                     ..Default::default()
                 }
                 .with_declared_dependencies_known(),
@@ -891,6 +904,15 @@ pub fn write_berry(
             out.push_str(&quote_yaml_scalar_if_needed(checksum));
             out.push('\n');
         }
+        if let Some(conditions) = pkg
+            .extra_meta
+            .get(crate::EXTRA_YARN_BERRY_CONDITIONS)
+            .and_then(|v| v.as_str())
+        {
+            out.push_str("  conditions: ");
+            out.push_str(conditions);
+            out.push('\n');
+        }
         out.push_str("  languageName: node\n");
         // `linkType: soft` means "just symlink, don't materialize into
         // the virtual store" — what berry uses for local directory refs
@@ -961,12 +983,14 @@ fn workspace_block(
             out.push('\n');
         }
     };
-    // A name in several sections is one entry; `dependencies` wins over
-    // `devDependencies`, as in the parser. Yarn folds optional dependencies
+    // A name in several sections is one entry. Yarn folds optional dependencies
     // into `dependencies` and flags them in `dependenciesMeta`.
-    let mut deps: BTreeMap<&String, &String> = manifest.dev_dependencies.iter().collect();
+    // Same precedence as the package headers' `manifest_ranges` lookup in
+    // `write_berry`, so the workspace entry always names a descriptor that
+    // has a block.
+    let mut deps: BTreeMap<&String, &String> = manifest.optional_dependencies.iter().collect();
+    deps.extend(manifest.dev_dependencies.iter());
     deps.extend(manifest.dependencies.iter());
-    deps.extend(manifest.optional_dependencies.iter());
     write_section("dependencies", deps.into_iter().collect());
     write_section(
         "peerDependencies",
