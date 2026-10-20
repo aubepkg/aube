@@ -224,17 +224,39 @@ fn is_workspace_member(root: &Path, project: &Path) -> bool {
 /// because it feeds callers that specifically need the yaml file path
 /// (catalog loader, settings loader).
 pub fn find_workspace_yaml_root(start: &Path) -> Option<PathBuf> {
+    find_workspace_yaml_root_with(start, IGNORE_WORKSPACE.load(Ordering::Relaxed))
+}
+
+/// A yaml at the project's own directory always counts; an ancestor yaml
+/// only counts when the project is one of its members, and never under
+/// `--ignore-workspace`, so a standalone project doesn't inherit an
+/// unrelated ancestor's catalogs or settings.
+fn find_workspace_yaml_root_with(start: &Path, ignore_workspace: bool) -> Option<PathBuf> {
     // Cap the walk at $HOME for the same reason as find_project_root.
     let stop = home_stop_boundary();
+    let mut project: Option<&Path> = None;
     for dir in start.ancestors() {
         if aube_manifest::workspace::workspace_yaml_existing(dir).is_some() {
-            return Some(dir.to_path_buf());
+            match project {
+                None => return Some(dir.to_path_buf()),
+                Some(_) if ignore_workspace => {}
+                Some(project) if !is_workspace_member(dir, project) => {}
+                Some(_) => return Some(dir.to_path_buf()),
+            }
+        }
+        if project.is_none() && dir.join("package.json").is_file() {
+            project = Some(dir);
         }
         if stop.as_deref() == Some(dir) {
             return None;
         }
     }
     None
+}
+
+/// Whether `--ignore-workspace` was passed.
+pub fn ignore_workspace() -> bool {
+    IGNORE_WORKSPACE.load(Ordering::Relaxed)
 }
 
 /// Return the nearest project root at or above the cached cwd.
@@ -433,6 +455,30 @@ mod tests {
 
         assert!(find_workspace_root_with(&child, true).is_none());
         assert_eq!(find_workspace_root_with(&child, false).unwrap(), dir.path());
+    }
+
+    #[test]
+    fn find_workspace_yaml_root_skips_non_member_and_ignored_ancestors() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - 'packages/*'\n",
+        );
+        write(&dir.path().join("packages/a/package.json"), "{}");
+        write(&dir.path().join("tools/b/package.json"), "{}");
+        let member = dir.path().join("packages/a");
+        let other = dir.path().join("tools/b");
+
+        assert_eq!(
+            find_workspace_yaml_root_with(&member, false).unwrap(),
+            dir.path()
+        );
+        assert!(find_workspace_yaml_root_with(&member, true).is_none());
+        assert!(find_workspace_yaml_root_with(&other, false).is_none());
+        assert_eq!(
+            find_workspace_yaml_root_with(dir.path(), true).unwrap(),
+            dir.path()
+        );
     }
 
     #[test]

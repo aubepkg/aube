@@ -132,3 +132,12 @@ _setup_minimal_workspace() {
 	assert_dir_exists node_modules/is-odd
 	assert_file_not_exists ../../aube-lock.yaml
 }
+
+@test "aube install --ignore-workspace at the workspace root skips members" {
+	_setup_minimal_workspace
+
+	run aube install --ignore-workspace
+	assert_success
+	assert_file_exists aube-lock.yaml
+	assert_file_not_exists packages/a/node_modules/is-odd
+}
