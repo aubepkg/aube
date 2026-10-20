@@ -739,7 +739,8 @@ _setup_catalog_workspace() {
 	aube install
 
 	# Inject an entry no importer references, as an older writer left behind.
-	sed -i "s/^  default:\$/  default:\\n    is-even:\\n      specifier: ^1.0.0\\n      version: 1.0.0/" pnpm-lock.yaml
+	awk '{print} /^  default:$/ {print "    is-even:"; print "      specifier: ^1.0.0"; print "      version: 1.0.0"}' pnpm-lock.yaml >pnpm-lock.yaml.new
+	mv pnpm-lock.yaml.new pnpm-lock.yaml
 	run aube install
 	assert_success
 	run aube install --frozen-lockfile
