@@ -276,10 +276,23 @@ pub(super) fn maybe_cleanup_unused_catalogs(
     // forced resolve still needs them in the workspace yaml.
     let mut used = used.clone();
     let mut manifest_dirs = vec![cwd.to_path_buf()];
-    manifest_dirs.extend(aube_workspace::find_workspace_packages(cwd).unwrap_or_default());
+    match aube_workspace::find_workspace_packages(cwd) {
+        Ok(members) => manifest_dirs.extend(members),
+        Err(e) => {
+            tracing::debug!("catalogPrune: skipped, workspace discovery failed: {e}");
+            return Ok(());
+        }
+    }
     for dir in manifest_dirs {
-        let Ok(manifest) = aube_manifest::PackageJson::from_path(&dir.join("package.json")) else {
-            continue;
+        let manifest = match aube_manifest::PackageJson::from_path(&dir.join("package.json")) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!(
+                    "catalogPrune: skipped, could not read {}: {e}",
+                    dir.display()
+                );
+                return Ok(());
+            }
         };
         let deps = manifest
             .dependencies

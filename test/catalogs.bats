@@ -817,7 +817,7 @@ _setup_catalog_workspace() {
 	assert_success
 	# The lockfile omits the overridden entry, but the manifest still says
 	# `catalog:`, so the workspace yaml must keep it for the next resolve.
-	run grep "is-even" pnpm-workspace.yaml
+	run grep -Fx '  is-even: ^1.0.0' pnpm-workspace.yaml
 	assert_success
 	run aube install --no-frozen-lockfile
 	assert_success
