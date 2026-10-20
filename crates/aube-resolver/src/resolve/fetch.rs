@@ -404,7 +404,10 @@ async fn fetch_one_packument(
                     .fetch_resolution_packument_after_lookup(&name, dir, cached)
                     .await
             }
-            None => client.fetch_packument(&name).await.map(Into::into),
+            None => client
+                .fetch_packument_with_time(&name)
+                .await
+                .map(Into::into),
         }
     } else if let Some(ref dir) = cache_dir {
         client

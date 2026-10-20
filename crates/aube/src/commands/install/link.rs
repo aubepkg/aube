@@ -37,6 +37,7 @@ pub(super) struct LinkPhaseInput<'a> {
     pub(super) dep_selection_filtered: bool,
     pub(super) workspace_filter_empty: bool,
     pub(super) ignore_scripts: bool,
+    pub(super) force: bool,
     pub(super) prog_ref: Option<&'a crate::progress::InstallProgress>,
     pub(super) phase_timings: &'a mut InstallPhaseTimings,
 }
@@ -79,6 +80,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         dep_selection_filtered,
         workspace_filter_empty,
         ignore_scripts,
+        force,
         prog_ref,
         phase_timings,
     } = input;
@@ -148,6 +150,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         .with_node_linker(node_linker)
         .with_link_concurrency(link_concurrency_setting)
         .with_virtual_store_only(virtual_store_only)
+        .with_force(force)
         .with_modules_dir_name(modules_dir_name.to_string())
         .with_aube_dir_override(aube_dir.to_path_buf());
     if planned_gvs && node_linker == aube_linker::NodeLinker::Isolated {

@@ -2438,6 +2438,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         dep_selection_filtered: opts.dep_selection.is_filtered(),
         workspace_filter_empty: opts.workspace_filter.is_empty(),
         ignore_scripts: opts.ignore_scripts,
+        force: opts.force,
         prog_ref,
         phase_timings: &mut phase_timings,
     })?;
