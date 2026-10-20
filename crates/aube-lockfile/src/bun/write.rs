@@ -413,6 +413,7 @@ pub fn write(
         for (k, v) in &pkg.extra_meta {
             if MODELED_META_KEYS.contains(&k.as_str())
                 || k == crate::EXTRA_PRESERVE_TARBALL_URL
+                || k == crate::EXTRA_YARN_RESOLVED
                 || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
             {
                 continue;

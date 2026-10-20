@@ -31,6 +31,9 @@ pub use source::{
 };
 
 pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url";
+/// Internal `extra_meta` key holding a yarn v1 block's verbatim `resolved`
+/// string (tarball URL plus `#sha1` fragment) so a rewrite keeps it.
+pub(crate) const EXTRA_YARN_RESOLVED: &str = "__aube_yarn_resolved";
 /// Internal `extra_meta` marker behind
 /// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
 pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
