@@ -1372,6 +1372,75 @@ async fn minimum_release_age_fetches_full_packument_directly() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// npmjs.org omits `time` from abbreviated packuments. With no full-cache
+/// directory the resolver must still request the full document, or every
+/// version looks old enough to pass the `minimumReleaseAge` cutoff.
+#[tokio::test]
+async fn minimum_release_age_without_full_cache_requests_full_packument() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut full = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    full.time
+        .insert("1.0.0".to_string(), "2018-05-30T00:00:00.000Z".to_string());
+    full.time
+        .insert("1.1.0".to_string(), "2999-01-01T00:00:00.000Z".to_string());
+    let full_body = serde_json::to_vec(&full).unwrap();
+    let mut corgi = full.clone();
+    corgi.time.clear();
+    let corgi_body = serde_json::to_vec(&corgi).unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let (full_body, corgi_body) = (full_body.clone(), corgi_body.clone());
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                let body = if request.contains("application/vnd.npm.install-v1+json") {
+                    &corgi_body
+                } else {
+                    &full_body
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.write_all(body).await.unwrap();
+            });
+        }
+    });
+
+    let resolve = |range: &'static str, strict: bool| {
+        let registry = registry.clone();
+        async move {
+            let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+            let mut resolver =
+                Resolver::new(client).with_minimum_release_age(Some(MinimumReleaseAge {
+                    minutes: 60,
+                    strict,
+                    ..Default::default()
+                }));
+            let mut manifest = PackageJson::default();
+            manifest
+                .dependencies
+                .insert("foo".to_string(), range.to_string());
+            resolver.resolve(&manifest, None).await
+        }
+    };
+
+    let graph = resolve("^1.0.0", false).await.unwrap();
+    assert!(graph_has_package(&graph, "foo", "1.0.0"));
+    assert!(!graph_has_package(&graph, "foo", "1.1.0"));
+    assert!(resolve("1.1.0", true).await.is_err());
+    server.abort();
+}
+
 #[tokio::test]
 async fn minimum_release_age_compacts_exact_optional_platform_history() {
     use std::sync::atomic::{AtomicUsize, Ordering};
