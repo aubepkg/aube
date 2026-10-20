@@ -12,7 +12,7 @@ pub(super) fn resolve_global_virtual_store_override(
         let triggers =
             aube_settings::resolved::disable_global_virtual_store_for_packages(settings_ctx);
         let triggered_by = super::settings::find_gvs_incompatible_trigger(manifests, &triggers);
-        let ci_mode = env_snapshot.iter().any(|(k, _)| k == "CI");
+        let ci_mode = aube_util::env::is_ci_in(env_snapshot);
         let virtual_store_only_setting = aube_settings::resolved::virtual_store_only(settings_ctx);
         if let Some(name) = triggered_by
             && !ci_mode
@@ -42,8 +42,7 @@ pub(super) fn planned_global_virtual_store(
     use_global_virtual_store_override: Option<bool>,
     env_snapshot: &[(String, String)],
 ) -> bool {
-    use_global_virtual_store_override
-        .unwrap_or_else(|| !env_snapshot.iter().any(|(k, _)| k == "CI"))
+    use_global_virtual_store_override.unwrap_or_else(|| !aube_util::env::is_ci_in(env_snapshot))
 }
 
 /// Write the pnpm-compatible metadata Vite 8.1+ uses to allow files

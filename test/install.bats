@@ -1400,3 +1400,20 @@ JSON
 	shard_count="$(find "$store_v1/files" -type f | wc -l | tr -d ' ')"
 	[ "$shard_count" -gt 0 ]
 }
+
+@test "aube install treats an empty CI env var as not CI" {
+	_setup_basic_fixture
+	# Loosen the range so the lockfile specifier no longer matches
+	node -e '
+		const fs = require("fs");
+		const pkg = JSON.parse(fs.readFileSync("package.json"));
+		pkg.dependencies["is-odd"] = "^3.0.0";
+		fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+	'
+	CI=1 run aube install
+	assert_failure
+	assert_output --partial "lockfile is out of date"
+	CI='' run aube install
+	assert_success
+	refute_output --partial "lockfile is out of date"
+}

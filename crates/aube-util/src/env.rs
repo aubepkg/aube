@@ -99,8 +99,15 @@ pub fn config_env(suffix: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(format!("{prefix}_{suffix}"))
 }
 
+/// CI is on when `CI` is set to a non-empty value, matching pnpm: `CI=` is
+/// not CI, while `CI=0` and `CI=false` still are.
 pub fn is_ci() -> bool {
-    std::env::var_os("CI").is_some()
+    std::env::var_os("CI").is_some_and(|v| !v.is_empty())
+}
+
+/// [`is_ci`] over a captured `(key, value)` environment snapshot.
+pub fn is_ci_in(env: &[(String, String)]) -> bool {
+    env.iter().any(|(k, v)| k == "CI" && !v.is_empty())
 }
 
 pub fn home_dir() -> Option<PathBuf> {
@@ -137,6 +144,27 @@ pub fn xdg_cache_home() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snap(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn ci_snapshot_empty_value_is_not_ci() {
+        assert!(!is_ci_in(&snap(&[])));
+        assert!(!is_ci_in(&snap(&[("CI", "")])));
+        assert!(!is_ci_in(&snap(&[("OTHER", "1")])));
+    }
+
+    #[test]
+    fn ci_snapshot_any_non_empty_value_is_ci() {
+        assert!(is_ci_in(&snap(&[("CI", "1")])));
+        assert!(is_ci_in(&snap(&[("CI", "0")])));
+        assert!(is_ci_in(&snap(&[("CI", "false")])));
+    }
 
     /// Under the default (AUBE) profile — `env_prefix = Some("AUBE")` — every
     /// settings env alias aube's table declares is honored: the branded

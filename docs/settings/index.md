@@ -3175,8 +3175,9 @@ Explicitly mark the environment as CI.
 - .npmrc keys: `ci`
 
 aube treats the environment as CI when the `CI` environment variable
-is set. CI mode disables the global virtual store and flips the default
-install mode to `--frozen-lockfile`.
+is set to a non-empty value (an empty `CI=` is treated as not CI, matching
+pnpm; `CI=0` and `CI=false` still count as CI). CI mode disables the
+global virtual store and flips the default install mode to `--frozen-lockfile`.
 
 Examples:
 
