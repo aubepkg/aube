@@ -160,7 +160,6 @@ impl Resolver {
             // defaults `configVersion` to 1 when emitting a fresh
             // lockfile.
             bun_config_version: None,
-            yarn_berry_metadata: None,
             // Fresh resolves don't carry over unknown blocks; the
             // install-side merge (`overlay_metadata_from`) copies
             // them back from the prior lockfile when round-tripping.

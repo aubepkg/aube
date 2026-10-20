@@ -690,7 +690,7 @@ pub fn write(
         "catalogs",
     ];
     for (k, v) in &graph.extra_fields {
-        if MODELED_TOP_KEYS.contains(&k.as_str()) {
+        if MODELED_TOP_KEYS.contains(&k.as_str()) || k == crate::EXTRA_YARN_BERRY_METADATA {
             continue;
         }
         top_level_extras.push((k.clone(), v.clone()));
