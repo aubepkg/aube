@@ -55,6 +55,9 @@ pub(super) fn parse_berry_str(
     let mut patched_dependencies: BTreeMap<String, String> = BTreeMap::new();
     // `(name@version, header)` of blocks skipped as yarn-internal compat
     // patches; their raw text is attached to the owning package below.
+    // Ranges the root `name@workspace:.` block recorded; drift is judged
+    // against these, not the current manifest.
+    let mut root_ranges: BTreeMap<String, String> = BTreeMap::new();
     let mut preserved_blocks: Vec<(String, String)> = Vec::new();
     // Transitive dep values written into each `LockedPackage` in this
     // pass are the raw header specs (e.g. `"foo@npm:^2.0.0"`); the
@@ -120,6 +123,10 @@ pub(super) fn parse_berry_str(
                 // as `LockedPackage` entries.
                 for spec in &specs {
                     spec_to_dep_path.insert(spec.clone(), format!("{res_name}@{version}"));
+                }
+                if res_body == "." {
+                    root_ranges.extend(collect_dep_map(block, "dependencies"));
+                    root_ranges.extend(collect_dep_map(block, "optionalDependencies"));
                 }
                 continue;
             }
@@ -336,7 +343,7 @@ pub(super) fn parse_berry_str(
                         name: name.to_string(),
                         dep_path: dep_path.clone(),
                         dep_type,
-                        specifier: Some(range.to_string()),
+                        specifier: Some(locked_root_range(&root_ranges, name, range)),
                     });
                     return;
                 }
@@ -364,10 +371,27 @@ pub(super) fn parse_berry_str(
     })
 }
 
+/// The range the lockfile's root workspace block recorded for `name`, in
+/// manifest spelling (the `npm:` prefix berry adds is dropped when the
+/// manifest range has no protocol). Falls back to the manifest range when
+/// the block doesn't list the dep.
+fn locked_root_range(root_ranges: &BTreeMap<String, String>, name: &str, range: &str) -> String {
+    match root_ranges.get(name) {
+        Some(locked) if range_has_protocol(range) => locked.clone(),
+        Some(locked) => locked.strip_prefix("npm:").unwrap_or(locked).to_string(),
+        None => range.to_string(),
+    }
+}
+
 /// Raw text of the top-level block whose (unquoted) header is `header`,
 /// without its trailing blank line. Yarn separates blocks with a blank
 /// line, so the file splits cleanly on `\n\n`.
 fn raw_block_text(content: &str, header: &str) -> Option<String> {
+    let content = if content.contains('\r') {
+        std::borrow::Cow::Owned(content.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(content)
+    };
     content.split("\n\n").find_map(|chunk| {
         let chunk = chunk.trim_matches('\n');
         let first = chunk.lines().next()?;
@@ -772,7 +796,11 @@ pub fn write_berry(
         });
     out.push_str(&format!(
         "__metadata:\n  version: {metadata_version}\n  cacheKey: {}\n\n",
-        quote_yaml_scalar_if_needed(cache_key)
+        if !cache_key.is_empty() && cache_key.bytes().all(|b| b.is_ascii_digit()) {
+            cache_key.to_string()
+        } else {
+            quote_yaml_scalar_if_needed(cache_key)
+        }
     ));
 
     // Yarn sorts blocks by header, so collect them and emit in that order
@@ -927,13 +955,11 @@ fn workspace_block(
             out.push('\n');
         }
     };
-    let mut deps: Vec<(&String, &String)> = manifest
-        .dependencies
-        .iter()
-        .chain(manifest.dev_dependencies.iter())
-        .collect();
-    deps.sort_by(|a, b| a.0.cmp(b.0));
-    write_section("dependencies", deps);
+    // A name in both sections is one entry; `dependencies` wins, as in
+    // the parser.
+    let mut deps: BTreeMap<&String, &String> = manifest.dev_dependencies.iter().collect();
+    deps.extend(manifest.dependencies.iter());
+    write_section("dependencies", deps.into_iter().collect());
     write_section(
         "optionalDependencies",
         manifest.optional_dependencies.iter().collect(),
@@ -1080,10 +1106,7 @@ fn quote_yaml_scalar_if_needed(s: &str) -> String {
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '/' | '_'))
         && !s.chars().all(|c| c.is_ascii_digit())
-        && !matches!(
-            s.to_ascii_lowercase().as_str(),
-            "true" | "false" | "null" | "yes" | "no" | "on" | "off"
-        );
+        && !is_yaml_special_word(s);
     if plain {
         s.to_string()
     } else {
@@ -1091,12 +1114,21 @@ fn quote_yaml_scalar_if_needed(s: &str) -> String {
     }
 }
 
+/// Words YAML reads as a boolean or null rather than a string.
+fn is_yaml_special_word(s: &str) -> bool {
+    matches!(
+        s.to_ascii_lowercase().as_str(),
+        "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "y" | "n"
+    )
+}
+
 /// Dependency names are written bare when YAML allows it, like yarn does;
 /// scoped names start with `@`, a reserved YAML indicator, and stay quoted.
 fn quote_yaml_key(s: &str) -> String {
     let bare = s.starts_with(|c: char| c.is_ascii_alphabetic())
         && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && !is_yaml_special_word(s);
     if bare {
         s.to_string()
     } else {

@@ -1554,3 +1554,53 @@ fn berry_direct_deps_record_specifiers_so_manifest_drift_is_detected() {
         crate::DriftStatus::Fresh
     ));
 }
+
+#[test]
+fn berry_drift_compares_manifest_against_root_workspace_block() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    // Another dependency's range makes `hono@npm:5.0.0` a known header, so
+    // the new manifest range resolves in the parse; only the root block
+    // (still recording 4.6.0) can reveal the drift.
+    let lock = BERRY_V10_WITH_COMPAT_PATCH
+        .replace("\"hono@npm:4.6.0\":", "\"hono@npm:4.6.0, hono@npm:5.0.0\":");
+    std::fs::write(tmp.path(), lock).unwrap();
+    let mut changed = berry_manifest();
+    changed.dependencies.insert("hono".into(), "5.0.0".into());
+    let graph = parse(tmp.path(), &changed).unwrap();
+    assert!(matches!(
+        graph.check_drift(&changed, &BTreeMap::new(), &[], &BTreeMap::new()),
+        crate::DriftStatus::Stale { .. }
+    ));
+}
+
+#[test]
+fn berry_write_dedupes_shared_dev_dependency_and_quotes_special_keys() {
+    let mut manifest = make_manifest(
+        &[("foo", "^1.0.0")],
+        &[("foo", "^2.0.0"), ("true", "1.0.0")],
+    );
+    manifest.name = Some("t".to_string());
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &LockfileGraph::default(), &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert_eq!(written.matches("    foo:").count(), 1, "{written}");
+    assert!(written.contains("    foo: \"npm:^1.0.0\"\n"));
+    assert!(written.contains("    \"true\": "));
+    assert!(parse(out.path(), &make_manifest(&[], &[])).is_ok());
+}
+
+#[test]
+fn berry_preserves_compat_patch_in_crlf_lockfile_and_numeric_cache_key() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let crlf = BERRY_V10_WITH_COMPAT_PATCH
+        .replace("version: 10\n  cacheKey: 10c0", "version: 6\n  cacheKey: 8")
+        .replace('\n', "\r\n");
+    std::fs::write(tmp.path(), crlf).unwrap();
+    let manifest = berry_manifest();
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(written.contains("__metadata:\n  version: 6\n  cacheKey: 8\n"));
+    assert!(written.contains("builtin<compat/typescript>::version=5.5.4&hash=379a07"));
+}
