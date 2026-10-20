@@ -5,6 +5,7 @@ use aube_lockfile::graph_hash::GraphHashes;
 use aube_store::Store;
 use std::path::{Path, PathBuf};
 
+use crate::sweep::EntryState;
 use crate::{
     HoistingLimits, LinkStrategy, Linker, NodeLinker, Patches, default_linker_parallelism,
 };
@@ -42,6 +43,7 @@ impl Linker {
             node_linker: NodeLinker::Isolated,
             link_concurrency: None,
             virtual_store_only: false,
+            force: false,
             modules_dir_name: "node_modules".to_string(),
             aube_dir_override: None,
         }
@@ -311,6 +313,27 @@ impl Linker {
     pub fn with_virtual_store_only(mut self, only: bool) -> Self {
         self.virtual_store_only = only;
         self
+    }
+
+    /// Toggle `install --force`. When enabled, `link_all` /
+    /// `link_workspace` re-materialize every virtual-store entry rather
+    /// than treating an existing one as a cache hit, so deleted or
+    /// modified package files are restored. Per-project `.aube/` entries
+    /// are removed and rewritten. A shared global virtual-store entry is
+    /// rebuilt in a staging directory and swapped into place, so the
+    /// shared path is never left half-written for other projects.
+    pub fn with_force(mut self, force: bool) -> Self {
+        self.force = force;
+        self
+    }
+
+    /// Under `--force` a symlink that already points at the right target
+    /// is not a cache hit: the entry behind it is rebuilt too.
+    pub(crate) fn forced_entry_state(&self, state: EntryState) -> EntryState {
+        match state {
+            EntryState::Fresh if self.force => EntryState::Stale,
+            other => other,
+        }
     }
 
     /// Whether this linker will skip the top-level `node_modules/<name>`

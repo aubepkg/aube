@@ -1996,6 +1996,47 @@ mod multicall_tests {
     }
 
     #[test]
+    fn npm_min_release_age_becomes_minimum_release_age_override() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--ignore-scripts",
+                "--min-release-age=0",
+                "@earendil-works/pi-coding-agent@1.3.0",
+            ])),
+            os(&[
+                "aube",
+                "add",
+                "--ignore-scripts",
+                "@earendil-works/pi-coding-agent@1.3.0",
+                "--config.minimum-release-age=0",
+            ])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--min-release-age", "1"])),
+            os(&["aube", "install", "--config.minimum-release-age=1440",])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--", "--min-release-age=0"])),
+            os(&["aube", "add", "--", "--min-release-age=0"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--min-release-age=abc"])),
+            os(&["aube", "install", "--min-release-age=abc"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--min-release-age",
+                "--ignore-scripts",
+            ])),
+            os(&["aube", "install", "--min-release-age", "--ignore-scripts",])
+        );
+    }
+
+    #[test]
     fn npm_common_commands_rewrite_to_aube() {
         assert_eq!(
             rewrite_multicall_argv(os(&["npm", "ci"])),

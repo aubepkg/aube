@@ -635,6 +635,59 @@ fn test_link_all_creates_pnpm_virtual_store() {
 }
 
 #[test]
+fn force_relink_restores_deleted_files_in_both_virtual_store_modes() {
+    for global in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let (store, indices) = setup_store_with_files(dir.path());
+        let graph = make_graph();
+        Linker::new_with_gvs(&store, LinkStrategy::Copy, global)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+
+        let foo_index = project_dir.join("node_modules/foo/index.js");
+        std::fs::remove_file(&foo_index).unwrap();
+
+        Linker::new_with_gvs(&store, LinkStrategy::Copy, global)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+        assert!(
+            !foo_index.exists(),
+            "a plain relink trusts the existing entry (global={global})"
+        );
+
+        let stats = Linker::new_with_gvs(&store, LinkStrategy::Copy, global)
+            .with_force(true)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&foo_index).unwrap(),
+            "module.exports = 'foo';",
+            "force restores the deleted file (global={global})"
+        );
+        assert_eq!(stats.packages_linked, 2, "global={global}");
+        assert!(
+            project_dir
+                .join("node_modules/.aube/foo@1.0.0/node_modules/bar")
+                .exists(),
+            "sibling dependency link survives the rebuild (global={global})"
+        );
+        let leftovers = std::fs::read_dir(store.virtual_store_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"))
+            .count();
+        assert_eq!(
+            leftovers, 0,
+            "no staging dirs left behind (global={global})"
+        );
+    }
+}
+
+#[test]
 fn gvs_link_replaces_a_real_directory_at_a_virtual_store_entry() {
     // Copying a project in a way that follows links (Windows Explorer,
     // `cp -rL`) leaves real directories where the `.aube/<dep_path>` links

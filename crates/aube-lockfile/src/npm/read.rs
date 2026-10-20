@@ -2,7 +2,7 @@ use crate::{DepType, DirectDep, Error, LocalSource, LockedPackage, LockfileGraph
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::raw::{InstallPathInfo, RawNpmLockfile, RawNpmPackage};
+use super::raw::{HAS_INSTALL_SCRIPT_KEY, InstallPathInfo, RawNpmLockfile, RawNpmPackage};
 /// Parse a package-lock.json or npm-shrinkwrap.json file into a LockfileGraph.
 pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     let content = crate::read_lockfile(path)?;
@@ -235,6 +235,11 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 bin: package_entry.bin.clone(),
                 license: package_entry.license.as_ref().and_then(|l| l.value.clone()),
                 funding_url: package_entry.funding.as_ref().and_then(|f| f.url.clone()),
+                extra_meta: package_entry
+                    .has_install_script
+                    .then(|| (HAS_INSTALL_SCRIPT_KEY.to_string(), true.into()))
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             }
             .with_declared_dependencies_known(),

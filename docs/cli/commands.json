@@ -7269,7 +7269,7 @@
             "name": "force",
             "usage": "--force",
             "help": "Force reinstall, ignoring lockfile/state freshness.",
-            "help_long": "Force reinstall, ignoring lockfile/state freshness.\n\nBypasses the `node_modules/.aube-state` freshness check and re-resolves the lockfile even when nothing has drifted. Mirrors pnpm's `install --force`.",
+            "help_long": "Force reinstall, ignoring lockfile/state freshness.\n\nBypasses the `node_modules/.aube-state` freshness check, re-resolves the lockfile even when nothing has drifted, and re-materializes every linked package so deleted files in `node_modules` are restored. With the global virtual store, the shared entry is rebuilt and swapped into place for every project that uses it. Mirrors pnpm's `install --force`.",
             "help_first_line": "Force reinstall, ignoring lockfile/state freshness.",
             "short": [],
             "long": [

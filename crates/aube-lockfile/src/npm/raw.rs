@@ -84,7 +84,13 @@ pub(super) struct RawNpmPackage {
     pub(super) license: Option<RawNpmLicense>,
     #[serde(default)]
     pub(super) funding: Option<RawNpmFunding>,
+    #[serde(default)]
+    pub(super) has_install_script: bool,
 }
+
+/// `LockedPackage::extra_meta` key carrying npm's `hasInstallScript: true`
+/// so a parse/write cycle keeps it.
+pub(super) const HAS_INSTALL_SCRIPT_KEY: &str = "hasInstallScript";
 
 /// npm's `license:` field on a package entry. Modern npm writes the
 /// SPDX expression as a bare string, but older packages (e.g. `tv4`)

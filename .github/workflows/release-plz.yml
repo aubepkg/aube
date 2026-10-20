@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
       - name: Run release-plz
         id: release-plz
-        uses: release-plz/action@18641b6c63063cc5ff8786ebf69cd57e8541bae1 # v0.5.140
+        uses: release-plz/action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:
           command: release
         env:
@@ -209,9 +209,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ needs.release-plz-release.outputs.tag }}
+          # communique determines the previous release tag from history; a
+          # shallow checkout makes the checked-out release commit look like
+          # the repository root and produces a self-comparison.
+          fetch-depth: 0
           submodules: recursive
           persist-credentials: false
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           install_args: communique
           cache: false
@@ -221,7 +225,24 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TAG: ${{ needs.release-plz-release.outputs.tag }}
         run: |
-          communique generate "$TAG" --github-release
+          set -euo pipefail
+          original_body="$(gh release view "$TAG" --json body --jq .body)"
+          restore_original_body() {
+            gh release edit "$TAG" --notes "$original_body"
+          }
+          trap restore_original_body ERR
+          previous_tag="$(git describe --tags --abbrev=0 "${TAG}^")"
+          communique generate "$TAG" "$previous_tag" --github-release
+          body="$(gh release view "$TAG" --json body --jq .body)"
+          expected="https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${TAG}"
+          self_comparison="https://github.com/${GITHUB_REPOSITORY}/compare/${TAG}...${TAG}"
+          if [[ "$body" != *"$expected"* || "$body" == *"$self_comparison"* ]]; then
+            restore_original_body
+            trap - ERR
+            echo "::error::communique generated invalid release-note comparison (expected $expected; rejected $self_comparison)"
+            exit 1
+          fi
+          trap - ERR
       - name: Append jdx.dev sponsor blurb
         env:
           GITHUB_TOKEN: ${{ secrets.AUBE_GH_TOKEN }}
@@ -286,12 +307,12 @@ jobs:
       # of silently re-resolving `"latest"` pins and rewriting mise.lock.
       # release-plz refuses to run against a dirty tree, and intentional
       # lockfile bumps should land via their own PR.
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache: false
         env:
           MISE_LOCKED: "1"
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: release-plz
       # `release-plz update` shells out to `cargo package` inside temp

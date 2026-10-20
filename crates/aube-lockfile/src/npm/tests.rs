@@ -648,6 +648,115 @@ fn test_write_dev_and_optional_reachable_uses_dev_optional() {
     assert_eq!(json["packages"]["node_modules/opt-root"]["optional"], true);
 }
 
+/// Regression: an `optionalDependencies` edge out of a production
+/// package (esbuild -> @esbuild/*) must write `optional: true` on the
+/// child, and `hasInstallScript` must survive a parse/write cycle.
+#[test]
+fn test_write_optional_edge_and_install_script_flags_round_trip() {
+    let lock = r#"{
+  "name": "t", "version": "1.0.0", "lockfileVersion": 3, "requires": true,
+  "packages": {
+    "": {"name": "t", "version": "1.0.0", "dependencies": {"esbuild": "0.25.10"}},
+    "node_modules/@esbuild/aix-ppc64": {
+      "version": "0.25.10", "resolved": "https://r/a.tgz", "integrity": "sha512-a",
+      "cpu": ["ppc64"], "optional": true, "os": ["aix"]
+    },
+    "node_modules/esbuild": {
+      "version": "0.25.10", "resolved": "https://r/e.tgz", "integrity": "sha512-e",
+      "hasInstallScript": true,
+      "optionalDependencies": {"@esbuild/aix-ppc64": "0.25.10"}
+    }
+  }
+}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("package-lock.json");
+    std::fs::write(&path, lock).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        name: Some("t".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: [("esbuild".to_string(), "0.25.10".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let graph = parse(&path).unwrap();
+    write(&path, &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/@esbuild/aix-ppc64"];
+    assert_eq!(child["optional"], true);
+    let parent = &json["packages"]["node_modules/esbuild"];
+    assert_eq!(parent["hasInstallScript"], true);
+    assert!(parent.get("optional").is_none());
+
+    let dev_manifest = aube_manifest::PackageJson {
+        dependencies: Default::default(),
+        dev_dependencies: manifest.dependencies.clone(),
+        ..manifest
+    };
+    let mut dev_graph = graph;
+    for dep in dev_graph.importers.get_mut(".").unwrap() {
+        dep.dep_type = DepType::Dev;
+    }
+    write(&path, &dev_graph, &dev_manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/@esbuild/aix-ppc64"];
+    assert_eq!(child["dev"], true);
+    assert_eq!(child["optional"], true);
+    assert!(child.get("devOptional").is_none());
+}
+
+/// An optional child shared by a production and a dev dependency is
+/// kept by the production chain, so it must be `optional` only, never
+/// `dev`.
+#[test]
+fn test_write_optional_child_of_prod_and_dev_is_not_dev() {
+    let mut graph = LockfileGraph::default();
+    let mk = |name: &str, opt: bool| LockedPackage {
+        name: name.to_string(),
+        version: "1.0.0".to_string(),
+        dep_path: format!("{name}@1.0.0"),
+        dependencies: if opt {
+            [("child".to_string(), "1.0.0".to_string())].into()
+        } else {
+            Default::default()
+        },
+        optional_dependencies: if opt {
+            [("child".to_string(), "1.0.0".to_string())].into()
+        } else {
+            Default::default()
+        },
+        ..Default::default()
+    };
+    for (n, o) in [("prod", true), ("dev", true), ("child", false)] {
+        graph.packages.insert(format!("{n}@1.0.0"), mk(n, o));
+    }
+    let root = |n: &str, t| DirectDep {
+        name: n.to_string(),
+        dep_path: format!("{n}@1.0.0"),
+        dep_type: t,
+        specifier: None,
+    };
+    graph.importers.insert(
+        ".".to_string(),
+        vec![root("prod", DepType::Production), root("dev", DepType::Dev)],
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("t".to_string()),
+        version: Some("1.0.0".to_string()),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/child"];
+    assert_eq!(child["optional"], true);
+    assert!(child.get("dev").is_none());
+    assert!(child.get("devOptional").is_none());
+}
+
 /// Regression: the npm writer must drop `dependencies` entries
 /// whose target isn't in the canonical map. Platform-filtered
 /// optionals and `ignoredOptionalDependencies` leave the parent's

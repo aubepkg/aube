@@ -4305,6 +4305,62 @@ async fn lockfile_reuse_preserves_transitive_optional_edges() {
     );
 }
 
+#[tokio::test]
+async fn lockfile_reuse_skips_local_peer_edge_supplied_by_importer() {
+    let dir = tempfile::tempdir().unwrap();
+    let react_dir = dir.path().join("deps/react");
+    std::fs::create_dir_all(&react_dir).unwrap();
+    std::fs::write(
+        react_dir.join("package.json"),
+        r#"{"name":"react","version":"18.0.0"}"#,
+    )
+    .unwrap();
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client).with_project_root(dir.path().to_path_buf());
+
+    let mut existing = LockfileGraph::default();
+    existing.packages.insert(
+        "host@1.0.0".to_string(),
+        LockedPackage {
+            name: "host".to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: "host@1.0.0".to_string(),
+            dependencies: [("react".to_string(), "file:deps/react".to_string())].into(),
+            peer_dependencies: [("react".to_string(), "*".to_string())].into(),
+            ..Default::default()
+        },
+    );
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("host".to_string(), "1.0.0".to_string());
+    manifest
+        .dependencies
+        .insert("react".to_string(), "file:deps/react".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, Some(&existing))
+        .await
+        .expect("a local peer supplied by the importer must not be re-resolved as a transitive");
+    let host = graph
+        .packages
+        .values()
+        .find(|p| p.name == "host")
+        .expect("host resolved");
+    let react = host
+        .dependencies
+        .get("react")
+        .expect("peer pass must wire the importer's react into host");
+    let importer_react = graph.importers["."]
+        .iter()
+        .find(|d| d.name == "react")
+        .expect("importer react");
+    assert_eq!(importer_react.dep_path, format!("react@{react}"));
+}
+
 // Bun and yarn parsers store transitive deps in `pkg.dependencies`
 // using the full dep_path form (`is-number@6.0.0`), while pnpm uses
 // bare versions (`6.0.0`). The resolver's lockfile-reuse path

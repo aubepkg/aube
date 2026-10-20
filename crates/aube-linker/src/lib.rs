@@ -240,6 +240,9 @@ pub struct Linker {
     /// `NodeLinker::Hoisted` — that layout *is* a flat top-level
     /// materialization, so "only the virtual store" doesn't apply.
     virtual_store_only: bool,
+    /// `install --force`: rebuild every virtual-store entry instead of
+    /// trusting entries that already exist on disk.
+    force: bool,
 }
 
 /// Strategy for linking files from the store to node_modules.

@@ -5368,3 +5368,41 @@ fn write_takes_the_lockfile_directory_as_the_project_root() {
     assert_eq!(written, std::fs::read_to_string(&explicit_path).unwrap());
     assert!(written.contains("version: link:vendor/x"), "{written}");
 }
+
+#[test]
+fn snapshot_key_over_1024_chars_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let long_dep_path = format!(
+        "@scope/foo@1.0.0({})",
+        "@scope/peer-package@1.0.0,".repeat(60)
+    );
+    assert!(long_dep_path.len() > 1024);
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "@scope/foo".to_string(),
+            dep_path: long_dep_path.clone(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".to_string()),
+        }],
+    );
+    graph.packages.insert(
+        long_dep_path.clone(),
+        LockedPackage {
+            name: "@scope/foo".to_string(),
+            version: "1.0.0".to_string(),
+            integrity: Some("sha512-abc123==".to_string()),
+            dep_path: long_dep_path.clone(),
+            dependencies: BTreeMap::from([("bar".to_string(), "2.0.0".to_string())]),
+            ..Default::default()
+        },
+    );
+    super::write(&path, &graph, &PackageJson::default()).unwrap();
+    let parsed = super::parse(&path).unwrap();
+    assert!(parsed.packages.contains_key(&long_dep_path));
+    let content = std::fs::read_to_string(&path).unwrap();
+    let raw = super::raw::parse_raw_lockfile_serde(&content).unwrap();
+    assert!(raw.snapshots.contains_key(&long_dep_path));
+}

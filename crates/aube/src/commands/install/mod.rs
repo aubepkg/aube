@@ -547,6 +547,12 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 lifecycle_manifests.iter().map(|(_, manifest)| manifest),
                 &ws_config_shared,
                 dangerously_allow_all_builds,
+                // A nested git-prepare install inherits the outer project's
+                // finished policy, which already holds the defaults when the
+                // outer project wants them. Re-adding them here would undo an
+                // opt-out the scratch clone's settings cannot see.
+                opts.inherited_build_policy.is_none()
+                    && aube_settings::resolved::use_default_trusted_dependencies(&settings_ctx),
             );
             if let Some(inherited) = opts.inherited_build_policy.as_deref() {
                 build_policy.merge(inherited);
@@ -2432,6 +2438,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         dep_selection_filtered: opts.dep_selection.is_filtered(),
         workspace_filter_empty: opts.workspace_filter.is_empty(),
         ignore_scripts: opts.ignore_scripts,
+        force: opts.force,
         prog_ref,
         phase_timings: &mut phase_timings,
     })?;

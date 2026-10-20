@@ -1417,3 +1417,41 @@ JSON
 	assert_success
 	refute_output --partial "lockfile is out of date"
 }
+
+@test "aube install --force restores a deleted file in a per-project virtual store" {
+	_setup_basic_fixture
+	run aube --disable-global-virtual-store install
+	assert_success
+	rm node_modules/is-odd/index.js
+	run aube --disable-global-virtual-store install
+	assert_success
+	assert_file_not_exists node_modules/is-odd/index.js
+
+	run aube --disable-global-virtual-store install --force
+	assert_success
+	assert_file_exists node_modules/is-odd/index.js
+}
+
+@test "aube install --force restores a deleted file in the global virtual store" {
+	_setup_basic_fixture
+	run aube --enable-global-virtual-store install
+	assert_success
+	rm node_modules/is-odd/index.js
+	assert_file_not_exists node_modules/is-odd/index.js
+
+	run aube --enable-global-virtual-store install --force
+	assert_success
+	assert_file_exists node_modules/is-odd/index.js
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "aube install --force restores a deleted file with node-linker=hoisted" {
+	_setup_basic_fixture
+	run aube install --node-linker=hoisted
+	assert_success
+	rm node_modules/is-odd/index.js
+
+	run aube install --node-linker=hoisted --force
+	assert_success
+	assert_file_exists node_modules/is-odd/index.js
+}
