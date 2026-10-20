@@ -1660,3 +1660,17 @@ fn berry_root_block_uses_regular_range_when_optional_overlaps() {
     assert!(written.contains("    foo: \"npm:^1.0.0\"\n"), "{written}");
     assert!(!written.contains("^2.0.0"));
 }
+
+#[test]
+fn berry_write_escapes_conditions_that_would_inject_fields() {
+    let lock = "__metadata:\n  version: 8\n  cacheKey: 10c0\n\n\"foo@npm:^1.0.0\":\n  version: 1.0.0\n  resolution: \"foo@npm:1.0.0\"\n  conditions: \"os=darwin\\n  injected: value\"\n  languageName: node\n  linkType: hard\n";
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), lock).unwrap();
+    let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(!written.contains("\n  injected:"), "{written}");
+    assert!(parse(out.path(), &manifest).is_ok());
+}

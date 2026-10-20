@@ -910,7 +910,7 @@ pub fn write_berry(
             .and_then(|v| v.as_str())
         {
             out.push_str("  conditions: ");
-            out.push_str(conditions);
+            out.push_str(&quote_conditions(conditions));
             out.push('\n');
         }
         out.push_str("  languageName: node\n");
@@ -1130,8 +1130,37 @@ fn write_berry_peer_meta(out: &mut String, meta: &BTreeMap<String, crate::PeerDe
 /// `@`, protocol prefixes, leading digits). Berry itself quotes
 /// liberally; we do too. Double quotes are backslash-escaped.
 fn quote_yaml_scalar(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A `conditions:` value (`os=darwin & cpu=arm64`) is written bare like
+/// yarn does when it only holds characters that can't change the YAML
+/// structure; anything else is quoted and escaped.
+fn quote_conditions(s: &str) -> String {
+    let bare = s.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && s.ends_with(|c: char| c.is_ascii_alphanumeric())
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | '=' | '&' | '|' | '!' | '.' | '-' | '_')
+        });
+    if bare {
+        s.to_string()
+    } else {
+        quote_yaml_scalar(s)
+    }
 }
 
 /// Like [`quote_yaml_scalar`], but leaves plain tokens (versions such as
