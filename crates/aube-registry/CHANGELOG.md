@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.0...aube-registry-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(resolver)* honor minimumReleaseAge in update and dedupe on npmjs.org ([#1791](https://github.com/aubepkg/aube/pull/1791))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/aube-registry-v2.7.1...aube-registry-v2.7.2) - 2026-10-17
 
 ### Fixed

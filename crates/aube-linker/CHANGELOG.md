@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.0...aube-linker-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(install)* make --force re-materialize linked packages ([#1789](https://github.com/aubepkg/aube/pull/1789))
+
 ## [2.8.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.2...aube-linker-v2.8.0) - 2026-10-19
 
 ### Fixed

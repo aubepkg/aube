@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/v2.8.0...v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(lockfile)* omit unreferenced catalog entries from pnpm-lock.yaml ([#1788](https://github.com/aubepkg/aube/pull/1788))
+- *(install)* treat an empty CI env var as not CI ([#1786](https://github.com/aubepkg/aube/pull/1786))
+- *(workspace)* install a non-member subdirectory on its own ([#1787](https://github.com/aubepkg/aube/pull/1787))
+- *(install)* make --force re-materialize linked packages ([#1789](https://github.com/aubepkg/aube/pull/1789))
+- *(npm)* translate min release age ([#1770](https://github.com/aubepkg/aube/pull/1770))
+
 ## [2.8.0](https://github.com/aubepkg/aube/compare/v2.7.2...v2.8.0) - 2026-10-19
 
 ### Added

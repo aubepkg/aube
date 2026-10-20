@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-util-v2.8.0...aube-util-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(install)* treat an empty CI env var as not CI ([#1786](https://github.com/aubepkg/aube/pull/1786))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/aube-util-v2.6.1...aube-util-v2.7.0) - 2026-10-07
 
 ### Fixed
