@@ -1963,14 +1963,11 @@ impl<'a> ResolveDriver<'a> {
                 if is_non_registry_specifier(&effective_spec) {
                     task.range_from_override = true;
                 }
+                // The override replaced the catalog reference, so the
+                // pre-pass pick no longer drives resolution. Only the
+                // override's own catalog target (if any) is recorded.
+                catalog_pick = pending_pick;
                 if task.range != effective_spec {
-                    catalog_pick = None;
-                    if let Some((catalog_name, real_range)) = pending_pick {
-                        self.catalog_picks
-                            .entry(catalog_name)
-                            .or_default()
-                            .insert(task.name.clone(), real_range);
-                    }
                     tracing::trace!(
                         "override: {}@{} -> {}",
                         task.name,

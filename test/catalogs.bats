@@ -786,3 +786,38 @@ _setup_catalog_workspace() {
 	run aube install --frozen-lockfile
 	assert_success
 }
+
+@test "aube install: catalogPrune keeps overridden catalog entries the manifest references" {
+	mkdir -p packages/lib
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - packages/*
+		catalog:
+		  is-odd: ^3.0.1
+		  is-even: ^1.0.0
+		overrides:
+		  is-even: 1.0.0
+	EOF
+	cat >package.json <<-'EOF'
+		{ "name": "aube-test", "version": "0.0.0", "private": true }
+	EOF
+	cat >packages/lib/package.json <<-'EOF'
+		{
+		  "name": "@test/lib",
+		  "version": "1.0.0",
+		  "dependencies": { "is-odd": "catalog:", "is-even": "catalog:" }
+		}
+	EOF
+	cat >.npmrc <<-'EOF'
+		catalogPrune=true
+	EOF
+
+	run aube install
+	assert_success
+	# The lockfile omits the overridden entry, but the manifest still says
+	# `catalog:`, so the workspace yaml must keep it for the next resolve.
+	run grep "is-even" pnpm-workspace.yaml
+	assert_success
+	run aube install --no-frozen-lockfile
+	assert_success
+}

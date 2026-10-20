@@ -4799,6 +4799,35 @@ async fn overridden_catalog_entry_is_not_recorded_in_lockfile_catalogs() {
 }
 
 #[tokio::test]
+async fn equal_valued_override_still_drops_catalog_entry_from_lockfile_catalogs() {
+    let is_odd = make_packument("is-odd", &["3.0.1"], "3.0.1");
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let catalogs = BTreeMap::from([(
+        "default".to_string(),
+        BTreeMap::from([("is-odd".to_string(), "^3.0.1".to_string())]),
+    )]);
+    let overrides = BTreeMap::from([("is-odd".to_string(), "^3.0.1".to_string())]);
+    let mut resolver = Resolver::new(client)
+        .with_catalogs(catalogs)
+        .with_overrides(overrides);
+    resolver.cache.insert("is-odd".to_string(), is_odd.into());
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("equal-valued override should resolve");
+
+    assert!(!graph.catalogs.contains_key("default"));
+}
+
+#[tokio::test]
 async fn skipped_optional_override_keeps_raw_manifest_specifier() {
     let mut optional = make_packument("platform-only", &["7.0.0"], "7.0.0");
     let unsupported_os = if cfg!(target_os = "macos") {
