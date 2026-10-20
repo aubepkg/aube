@@ -222,7 +222,7 @@ impl Linker {
             // materialization instead of treating the path-keyed entry as a
             // cache hit. The install-state warm path prevents this work when
             // the source fingerprint is unchanged.
-            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            if self.force || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -326,6 +326,7 @@ impl Linker {
                         } else {
                             classify_entry_state(&local_aube_entry, &global_entry)
                         };
+                        let state = self.forced_entry_state(state);
 
                         if matches!(state, EntryState::Fresh) {
                             local_stats.packages_cached += 1;
@@ -473,6 +474,9 @@ impl Linker {
                         .map(|(dep_path, pkg)| {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
+                            if self.force {
+                                try_remove_entry(&aube_entry);
+                            }
                             if aube_entry.exists() {
                                 // Already in place from a previous run —
                                 // count as cached. `install.rs`
@@ -927,7 +931,7 @@ impl Linker {
                 continue;
             };
             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            if self.force || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -1023,6 +1027,7 @@ impl Linker {
                             } else {
                                 classify_entry_state(&local_aube_entry, &global_entry)
                             };
+                            let state = self.forced_entry_state(state);
 
                             if matches!(state, EntryState::Fresh) {
                                 if !project_local {
@@ -1121,6 +1126,9 @@ impl Linker {
                         .map(|(dep_path, pkg)| {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
+                            if self.force {
+                                try_remove_entry(&aube_entry);
+                            }
                             if aube_entry.exists() {
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);

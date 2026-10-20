@@ -34,9 +34,12 @@ pub struct InstallArgs {
     pub fix_lockfile: bool,
     /// Force reinstall, ignoring lockfile/state freshness.
     ///
-    /// Bypasses the `node_modules/.aube-state` freshness check and
-    /// re-resolves the lockfile even when nothing has drifted. Mirrors
-    /// pnpm's `install --force`.
+    /// Bypasses the `node_modules/.aube-state` freshness check,
+    /// re-resolves the lockfile even when nothing has drifted, and
+    /// re-materializes every linked package so deleted or modified
+    /// files in `node_modules` are restored. With the global virtual
+    /// store, the shared entry is rebuilt and swapped into place for
+    /// every project that uses it. Mirrors pnpm's `install --force`.
     #[usage(long)]
     pub force: bool,
     /// Add a global pnpmfile that runs before the local one.
@@ -410,8 +413,9 @@ pub struct InstallOptions {
     /// default (`CI=1`, no explicit flag) leaves this `false` so a
     /// fresh checkout still resolves and writes a lockfile.
     pub strict_no_lockfile: bool,
-    /// `--force`: re-resolve and relink even when `node_modules/.aube-state` says the
-    /// tree is up to date. Mirrors pnpm's `install --force`.
+    /// `--force`: re-resolve and re-materialize every linked package even when
+    /// `node_modules/.aube-state` says the tree is up to date. Mirrors pnpm's
+    /// `install --force`.
     pub force: bool,
     /// Parsed CLI flag bag forwarded into
     /// [`aube_settings::ResolveCtx::cli`] so the build-time-generated

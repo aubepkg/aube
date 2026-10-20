@@ -1231,7 +1231,7 @@ Leaves everything else pinned at its locked version. Unchanged specs keep their 
         long_help #"""
 Force reinstall, ignoring lockfile/state freshness.
 
-Bypasses the `node_modules/.aube-state` freshness check and re-resolves the lockfile even when nothing has drifted. Mirrors pnpm's `install --force`.
+Bypasses the `node_modules/.aube-state` freshness check, re-resolves the lockfile even when nothing has drifted, and re-materializes every linked package so deleted or modified files in `node_modules` are restored. With the global virtual store, the shared entry is rebuilt and swapped into place for every project that uses it. Mirrors pnpm's `install --force`.
 """#
     }
     flag --global-pnpmfile help="Add a global pnpmfile that runs before the local one." conflicts=--ignore-pnpmfile {

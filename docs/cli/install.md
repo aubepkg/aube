@@ -42,7 +42,7 @@ Read the [workflow guide](/package-manager/install) for context.
   Leaves everything else pinned at its locked version. Unchanged specs keep their existing version and integrity hash; only drifted entries (and any new transitives they pull in) get re-resolved.
 - **`--force`** — Force reinstall, ignoring lockfile/state freshness.
 
-  Bypasses the `node_modules/.aube-state` freshness check and re-resolves the lockfile even when nothing has drifted. Mirrors pnpm's `install --force`.
+  Bypasses the `node_modules/.aube-state` freshness check, re-resolves the lockfile even when nothing has drifted, and re-materializes every linked package so deleted or modified files in `node_modules` are restored. With the global virtual store, the shared entry is rebuilt and swapped into place for every project that uses it. Mirrors pnpm's `install --force`.
 - **`--global-pnpmfile <PATH>`** — Add a global pnpmfile that runs before the local one.
 
   Mirrors pnpm's `--global-pnpmfile <path>`. Relative paths resolve against the project root. The global hook runs first and the local hook (if any) runs second, so local mutations win on conflicts — matching pnpm's composition order.

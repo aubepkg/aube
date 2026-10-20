@@ -75,6 +75,35 @@ fn place_materialized_entry(src: &Path, dst: &Path) -> io::Result<MaterializePla
     }
 }
 
+/// Swap a freshly staged entry over an existing one (`install --force`).
+/// The old entry is renamed aside first, so the shared path is never
+/// half-written; if the final rename fails the old entry is put back.
+fn replace_materialized_entry(
+    src: &Path,
+    dst: &Path,
+    aside: &Path,
+) -> io::Result<MaterializePlacement> {
+    match std::fs::rename(dst, aside) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return place_materialized_entry(src, dst);
+        }
+        Err(e) => return Err(e),
+    }
+    match place_materialized_entry(src, dst) {
+        Ok(MaterializePlacement::Placed) => {
+            let _ = std::fs::remove_dir_all(aside);
+            Ok(MaterializePlacement::Placed)
+        }
+        other => {
+            if !dst.exists() {
+                let _ = std::fs::rename(aside, dst);
+            }
+            other
+        }
+    }
+}
+
 fn is_transient_rename_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
@@ -271,7 +300,10 @@ impl Linker {
             .join("node_modules")
             .join(&pkg.name);
 
-        if pkg_nm_dir.exists() {
+        // Under `--force` an existing entry is only trusted when this very
+        // install just placed it.
+        let trust_existing = !self.force || self.fresh_virtual_store_entries.contains(dep_path);
+        if trust_existing && pkg_nm_dir.exists() {
             if !self.fresh_virtual_store_entries.contains(dep_path) {
                 self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
             }
@@ -312,7 +344,16 @@ impl Linker {
             return Err(e);
         }
 
-        match place_materialized_entry(&tmp_entry, &final_entry) {
+        let placement = if self.force && final_entry.exists() {
+            replace_materialized_entry(
+                &tmp_entry,
+                &final_entry,
+                &self.virtual_store.join(materialize_tmp_name()),
+            )
+        } else {
+            place_materialized_entry(&tmp_entry, &final_entry)
+        };
+        match placement {
             Ok(MaterializePlacement::Placed) => {
                 trace!("atomically placed {subdir} in virtual store");
             }
