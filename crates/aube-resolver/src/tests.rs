@@ -4755,6 +4755,49 @@ async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
     assert_eq!(dep.specifier.as_deref(), Some("7.0.0"));
 }
 
+// pnpm drops a `catalogs:` entry whose range an override replaced, so the
+// lockfile only lists catalog values that actually drove resolution.
+#[tokio::test]
+async fn overridden_catalog_entry_is_not_recorded_in_lockfile_catalogs() {
+    let is_number = make_packument("is-number", &["6.0.0", "7.0.0"], "7.0.0");
+    let is_odd = make_packument("is-odd", &["3.0.1"], "3.0.1");
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let catalogs = BTreeMap::from([(
+        "default".to_string(),
+        BTreeMap::from([
+            ("is-number".to_string(), "^7.0.0".to_string()),
+            ("is-odd".to_string(), "^3.0.1".to_string()),
+        ]),
+    )]);
+    let overrides = BTreeMap::from([("is-number".to_string(), "6.0.0".to_string())]);
+    let mut resolver = Resolver::new(client)
+        .with_catalogs(catalogs)
+        .with_overrides(overrides);
+    resolver
+        .cache
+        .insert("is-number".to_string(), is_number.into());
+    resolver.cache.insert("is-odd".to_string(), is_odd.into());
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-number".to_string(), "catalog:".to_string());
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("overridden catalog dep should resolve");
+
+    let default = &graph.catalogs["default"];
+    assert!(default.contains_key("is-odd"));
+    assert!(!default.contains_key("is-number"));
+}
+
 #[tokio::test]
 async fn skipped_optional_override_keeps_raw_manifest_specifier() {
     let mut optional = make_packument("platform-only", &["7.0.0"], "7.0.0");
