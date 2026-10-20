@@ -474,10 +474,7 @@ impl Linker {
                         .map(|(dep_path, pkg)| {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-                            if self.force {
-                                remove_entry_checked(&aube_entry)?;
-                            }
-                            if aube_entry.exists() {
+                            if !self.force && aube_entry.exists() {
                                 // Already in place from a previous run —
                                 // count as cached. `install.rs`
                                 // deliberately omits this dep_path from
@@ -508,14 +505,12 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.materialize_at(
-                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
+                            self.materialize_replacing(
                                 &aube_dir,
                                 dep_path,
                                 pkg,
                                 index,
                                 &mut local_stats,
-                                false,
                                 nested_link_targets.as_ref(),
                             )?;
                             Ok(local_stats)
@@ -1126,10 +1121,7 @@ impl Linker {
                         .map(|(dep_path, pkg)| {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-                            if self.force {
-                                remove_entry_checked(&aube_entry)?;
-                            }
-                            if aube_entry.exists() {
+                            if !self.force && aube_entry.exists() {
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
@@ -1150,14 +1142,12 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.materialize_at(
-                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
+                            self.materialize_replacing(
                                 &aube_dir,
                                 dep_path,
                                 pkg,
                                 index,
                                 &mut local_stats,
-                                false,
                                 nested_link_targets.as_ref(),
                             )?;
                             Ok(local_stats)
@@ -1786,19 +1776,6 @@ impl Linker {
         }
         Ok(())
     }
-}
-
-/// Remove a stale `.aube/<dep_path>` entry for `--force`, failing when it
-/// survives so a partly removed tree is never counted as a cache hit.
-fn remove_entry_checked(entry: &Path) -> Result<(), Error> {
-    try_remove_entry(entry);
-    if entry.symlink_metadata().is_ok() {
-        return Err(Error::Io(
-            entry.to_path_buf(),
-            std::io::Error::other("failed to remove existing entry for --force"),
-        ));
-    }
-    Ok(())
 }
 
 /// Build a `dep_path → absolute on-disk target` map for every

@@ -470,6 +470,54 @@ impl Linker {
         Ok(targets)
     }
 
+    /// Materialize a per-project `.aube` entry. Under `--force` an existing
+    /// entry is set aside first and only deleted once the replacement is
+    /// complete; if materializing fails, the partial entry is dropped and
+    /// the original is restored.
+    pub(crate) fn materialize_replacing(
+        &self,
+        aube_dir: &Path,
+        dep_path: &str,
+        pkg: &LockedPackage,
+        index: &PackageIndex,
+        stats: &mut LinkStats,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<(), Error> {
+        let entry = &aube_dir.join(self.aube_dir_entry_name(dep_path));
+        let aside = if self.force && entry.symlink_metadata().is_ok() {
+            let aside = aube_dir.join(materialize_tmp_name());
+            std::fs::rename(entry, &aside).map_err(|e| Error::Io(entry.to_path_buf(), e))?;
+            Some(aside)
+        } else {
+            None
+        };
+        let result = self.materialize_at(
+            entry,
+            aube_dir,
+            dep_path,
+            pkg,
+            index,
+            stats,
+            false,
+            nested_link_targets,
+        );
+        if let Some(aside) = aside {
+            if result.is_ok() {
+                let _ = std::fs::remove_dir_all(&aside);
+            } else {
+                try_remove_entry(entry);
+                if let Err(e) = std::fs::rename(&aside, entry) {
+                    tracing::warn!(
+                        "could not restore {} after a failed --force relink (kept at {}): {e}",
+                        entry.display(),
+                        aside.display()
+                    );
+                }
+            }
+        }
+        result
+    }
+
     /// Materialize a globally-reproducible local source (a `git`
     /// dependency or a remote `.tgz`) into the shared virtual store and
     /// point the per-project `.aube/<dep_path>` entry at it — the exact
