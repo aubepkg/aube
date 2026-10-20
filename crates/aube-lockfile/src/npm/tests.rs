@@ -289,6 +289,68 @@ fn test_write_emits_file_directory_dep_as_link_and_target() {
 }
 
 #[test]
+fn test_write_nests_file_directory_children_under_target() {
+    let local = LocalSource::Directory(PathBuf::from("vendor/local-dir"));
+    let dir_path = local.dep_path("local-dir");
+    let pkg = |name: &str, version: &str, deps: &[(&str, &str)]| LockedPackage {
+        name: name.to_string(),
+        version: version.to_string(),
+        dep_path: format!("{name}@{version}"),
+        dependencies: deps
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect(),
+        os: ["linux".to_string()].into_iter().collect(),
+        ..Default::default()
+    };
+    let mut graph = LockfileGraph::default();
+    for p in [pkg("foo", "1.0.0", &[]), pkg("foo", "2.0.0", &[])] {
+        graph.packages.insert(p.dep_path.clone(), p);
+    }
+    graph.packages.insert(
+        dir_path.clone(),
+        LockedPackage {
+            dep_path: dir_path.clone(),
+            local_source: Some(local),
+            ..pkg("local-dir", "1.0.0", &[("foo", "2.0.0")])
+        },
+    );
+    let direct = |name: &str, dep_path: &str| DirectDep {
+        name: name.to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: None,
+    };
+    graph.importers.insert(
+        ".".to_string(),
+        vec![direct("foo", "foo@1.0.0"), direct("local-dir", &dir_path)],
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("test".to_string()),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    assert_eq!(lock["packages"]["vendor/local-dir"]["os"][0], "linux");
+    assert_eq!(
+        lock["packages"]["vendor/local-dir/node_modules/foo"]["version"],
+        "2.0.0"
+    );
+    assert!(lock["packages"]["node_modules/local-dir/node_modules/foo"].is_null());
+
+    let reparsed = parse(out.path()).unwrap();
+    let local_pkg = reparsed
+        .packages
+        .values()
+        .find(|p| p.name == "local-dir")
+        .unwrap();
+    assert_eq!(local_pkg.dependencies["foo"], "2.0.0");
+}
+
+#[test]
 fn test_parse_file_resolved_without_link() {
     // npm writes `resolved: "file:..."` without `link: true` for
     // local tarball deps (`npm install file:../foo-1.0.0.tgz`) and

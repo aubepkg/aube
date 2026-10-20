@@ -345,6 +345,25 @@ pub fn write(
         }
     }
 
+    // npm links a `file:` directory to its target, so the link's nested
+    // `node_modules` live under the target path, where the reader looks.
+    let placed: BTreeMap<String, String> = placed
+        .iter()
+        .map(|(install_path, key)| {
+            let remapped = install_path
+                .match_indices("/node_modules/")
+                .find_map(|(idx, _)| {
+                    let pkg = canonical.get(placed.get(&install_path[..idx])?)?;
+                    let Some(LocalSource::Directory(dir)) = &pkg.local_source else {
+                        return None;
+                    };
+                    Some(format!("{}{}", directory_target(dir), &install_path[idx..]))
+                })
+                .unwrap_or_else(|| install_path.clone());
+            (remapped, key.clone())
+        })
+        .collect();
+
     for (install_path, canonical_key) in &placed {
         let Some(pkg) = canonical.get(canonical_key).copied() else {
             continue;
@@ -469,9 +488,7 @@ pub fn write(
             .collect();
 
         if let Some(LocalSource::Directory(dir)) = &pkg.local_source {
-            let target = aube_util::path::normalize_lexical(dir)
-                .to_string_lossy()
-                .replace('\\', "/");
+            let target = directory_target(dir);
             packages.insert(
                 install_path.clone(),
                 WriteNpmPackage {
@@ -503,6 +520,11 @@ pub fn write(
                         .iter()
                         .map(|(k, v)| (k.as_str(), v.as_str()))
                         .collect(),
+                    has_install_script: has_install_script(pkg),
+                    license: pkg.license.as_deref(),
+                    os: pkg.os.to_vec(),
+                    cpu: pkg.cpu.to_vec(),
+                    libc: pkg.libc.to_vec(),
                     dev,
                     optional,
                     dev_optional,
@@ -604,6 +626,12 @@ fn preferred_root_placements(
         }
     }
     preferred
+}
+
+fn directory_target(dir: &Path) -> String {
+    aube_util::path::normalize_lexical(dir)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn has_install_script(pkg: &LockedPackage) -> bool {
