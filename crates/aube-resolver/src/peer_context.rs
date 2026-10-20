@@ -1299,7 +1299,7 @@ fn propagate_peer_suffixes_to_ancestors(
 
     // Build rewrite map. A package's new key is its canonical_base
     // (`name@version`) plus the cumulative segments concatenated in
-    // peer-name lex order — same order `apply_peer_contexts_once`
+    // full-segment lex order — same order `apply_peer_contexts_once`
     // already produces for self segments, so when a package's
     // cumulative is identical to its self set the rewrite is a no-op
     // and we skip it.
@@ -1352,7 +1352,9 @@ fn propagate_peer_suffixes_to_ancestors(
             // leave the key untouched.
             continue;
         }
-        let suffix: String = segments.values().cloned().collect();
+        let mut parts: Vec<&str> = segments.values().map(String::as_str).collect();
+        parts.sort_unstable();
+        let suffix: String = parts.concat();
         let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
         let new_key = format!("{canonical}{effective_suffix}");
         if new_key != *key {
@@ -1882,7 +1884,7 @@ fn visit_peer_context<'g>(
     // the same version would false-positive). `dedupe-peers` is
     // applied as a post-pass over the final graph in
     // `dedupe_peer_suffixes` after cycle detection is done.
-    let suffix: String = peer_context
+    let mut suffix_parts: Vec<String> = peer_context
         .iter()
         .map(|(n, provider)| {
             let cycles_back = refers_back_through_hashes(
@@ -1898,6 +1900,11 @@ fn visit_peer_context<'g>(
             format!("({n}@{display_v})")
         })
         .collect();
+    // pnpm orders the suffix by the full `name@version(...)` string, not by
+    // peer name alone, so `react-dom@19(react@19)` sorts before `react@19`
+    // ('-' < '@'). Scope propagation keeps the name-sorted `peer_context`.
+    suffix_parts.sort_unstable();
+    let suffix = suffix_parts.concat();
     // pnpm's `peersSuffixMaxLength`: when the suffix body exceeds the
     // cap, `effective_peer_suffix` replaces the whole suffix with a
     // parenthesized short hash `(<hash>)` so the lockfile key stays
@@ -2113,6 +2120,62 @@ mod tests {
             g.packages.insert(p.dep_path.clone(), p);
         }
         g
+    }
+
+    #[test]
+    fn suffix_orders_peers_by_full_name_at_version_string() {
+        let versioned = |name: &str, version: &str, deps: &[(&str, &str)]| LockedPackage {
+            version: version.to_string(),
+            dep_path: format!("{name}@{version}"),
+            ..locked(name, deps)
+        };
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            ".".to_string(),
+            ["editor", "monaco-editor", "react", "react-dom"]
+                .iter()
+                .map(|name| DirectDep {
+                    name: (*name).to_string(),
+                    dep_path: match *name {
+                        "editor" => "editor@4.7.0".to_string(),
+                        "monaco-editor" => "monaco-editor@0.57.0".to_string(),
+                        _ => format!("{name}@19.3.0"),
+                    },
+                    dep_type: DepType::Production,
+                    specifier: Some("*".to_string()),
+                })
+                .collect(),
+        );
+        let mut editor = versioned("editor", "4.7.0", &[]);
+        let mut react_dom = versioned("react-dom", "19.3.0", &[]);
+        for peer in ["monaco-editor", "react", "react-dom"] {
+            editor
+                .peer_dependencies
+                .insert(peer.to_string(), "*".to_string());
+        }
+        react_dom
+            .peer_dependencies
+            .insert("react".to_string(), "*".to_string());
+        for p in [
+            editor,
+            react_dom,
+            versioned("monaco-editor", "0.57.0", &[]),
+            versioned("react", "19.3.0", &[]),
+        ] {
+            g.packages.insert(p.dep_path.clone(), p);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        // `react-dom@…` sorts before `react@…` because '-' < '@', matching
+        // pnpm; a name-only sort would put `react` first.
+        assert!(
+            out.packages.contains_key(
+                "editor@4.7.0(monaco-editor@0.57.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)"
+            ),
+            "got keys: {:?}",
+            out.packages.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
