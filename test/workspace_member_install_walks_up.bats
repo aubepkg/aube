@@ -97,3 +97,38 @@ _setup_minimal_workspace() {
 	# both snapshots and we can diff what changed.
 	assert_equal "$(cat node_modules/.aube-state/state.json)" "$root_state_before"
 }
+
+@test "aube install in a non-member subdirectory installs it on its own" {
+	# Settings-only workspace yaml (no `packages:`): only the root is a
+	# member, so a nested project is not part of the workspace.
+	cat >package.json <<-'JSON'
+		{"name": "ws-root", "version": "0.0.0", "private": true}
+	JSON
+	cat >aube-workspace.yaml <<-'YAML'
+		allowBuilds:
+		  esbuild: true
+	YAML
+	mkdir -p sub
+	cat >sub/package.json <<-'JSON'
+		{"name": "sub-app", "version": "1.0.0", "dependencies": {"is-odd": "3.0.1"}}
+	JSON
+
+	cd sub
+	run aube install
+	assert_success
+	assert_file_exists aube-lock.yaml
+	assert_dir_exists node_modules/is-odd
+	assert_file_not_exists ../aube-lock.yaml
+	assert_dir_not_exists ../node_modules
+}
+
+@test "aube install --ignore-workspace installs a workspace member on its own" {
+	_setup_minimal_workspace
+
+	cd packages/a
+	run aube install --ignore-workspace
+	assert_success
+	assert_file_exists aube-lock.yaml
+	assert_dir_exists node_modules/is-odd
+	assert_file_not_exists ../../aube-lock.yaml
+}

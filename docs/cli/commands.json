@@ -16834,14 +16834,14 @@
       {
         "name": "ignore-workspace",
         "usage": "--ignore-workspace",
-        "help": "Ignore workspace discovery for commands that support workspace fanout.",
-        "help_long": "Ignore workspace discovery for commands that support workspace fanout.\n\nParsed for pnpm compatibility.",
-        "help_first_line": "Ignore workspace discovery for commands that support workspace fanout.",
+        "help": "Ignore workspace discovery and operate on the current project alone.",
+        "help_long": "Ignore workspace discovery and operate on the current project alone.\n\nSkips the search for an enclosing `aube-workspace.yaml`, `pnpm-workspace.yaml`, or `package.json#workspaces` root, so the nearest `package.json` is installed on its own.",
+        "help_first_line": "Ignore workspace discovery and operate on the current project alone.",
         "short": [],
         "long": [
           "ignore-workspace"
         ],
-        "hide": true,
+        "hide": false,
         "global": true
       },
       {

@@ -153,10 +153,10 @@ pub(crate) struct Cli {
     #[usage(long, global, value_name = "PATTERN")]
     filter_prod: Vec<String>,
 
-    /// Ignore workspace discovery for commands that support workspace fanout.
+    /// Ignore workspace discovery and operate on the current project alone.
     ///
-    /// Parsed for pnpm compatibility.
-    #[usage(long, global, hide)]
+    /// Skips the search for an enclosing `aube-workspace.yaml`, `pnpm-workspace.yaml`, or `package.json#workspaces` root, so the nearest `package.json` is installed on its own.
+    #[usage(long, global)]
     ignore_workspace: bool,
 
     /// Include the workspace root in recursive workspace operations.
@@ -1006,6 +1006,7 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
             .wrap_err_with(|| format!("failed to change directory to {}", dir.display()))?;
     }
     crate::dirs::set_dir_flag_given(cli.dir.is_some());
+    crate::dirs::set_ignore_workspace(cli.ignore_workspace);
 
     let print_top_level_version = should_print_top_level_version(&cli);
     if cli.workspace_root && !print_top_level_version {

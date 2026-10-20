@@ -65,6 +65,9 @@ limited behavior. See [pnpm differences](/pnpm-users) before replacing a workflo
 - **`--filter-prod <PATTERN>`** — Production-only variant of `--filter`.
 
   Same selector grammar as `--filter`, but graph walks (`pkg...`, `...pkg`) only follow `dependencies` / `optionalDependencies` / `peerDependencies` edges — `devDependencies` (and packages reachable solely through them) are skipped. Non-graph forms (exact name, glob, path, `[git-ref]`) behave identically to `--filter`. Repeatable; can be combined with `--filter`.
+- **`--ignore-workspace`** — Ignore workspace discovery and operate on the current project alone.
+
+  Skips the search for an enclosing `aube-workspace.yaml`, `pnpm-workspace.yaml`, or `package.json#workspaces` root, so the nearest `package.json` is installed on its own.
 - **`--loglevel <LEVEL>`** — Set the log level. Logs at or above this level are shown.
 
   **Choices:** `trace`, `debug`, `info`, `warn`, `error`, `silent`

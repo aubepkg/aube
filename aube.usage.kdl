@@ -176,11 +176,11 @@ Same selector grammar as `--filter`, but graph walks (`pkg...`, `...pkg`) only f
 """#
     arg <PATTERN>
 }
-flag --ignore-workspace help="Ignore workspace discovery for commands that support workspace fanout." global=#true hide=#true {
+flag --ignore-workspace help="Ignore workspace discovery and operate on the current project alone." global=#true {
     long_help #"""
-Ignore workspace discovery for commands that support workspace fanout.
+Ignore workspace discovery and operate on the current project alone.
 
-Parsed for pnpm compatibility.
+Skips the search for an enclosing `aube-workspace.yaml`, `pnpm-workspace.yaml`, or `package.json#workspaces` root, so the nearest `package.json` is installed on its own.
 """#
 }
 flag --include-workspace-root help="Include the workspace root in recursive workspace operations." global=#true hide=#true {
