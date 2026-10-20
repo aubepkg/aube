@@ -187,7 +187,7 @@ fn find_workspace_root_uncached(start: &Path) -> Option<PathBuf> {
             || (pkg.is_file() && package_json_has_workspaces(&pkg));
         if is_root {
             match project {
-                Some(project) if !is_workspace_member(dir, project) => {}
+                Some(project) if !is_workspace_member(dir, project) => break,
                 _ => return Some(dir.to_path_buf()),
             }
         }
@@ -239,8 +239,8 @@ fn find_workspace_yaml_root_with(start: &Path, ignore_workspace: bool) -> Option
         if aube_manifest::workspace::workspace_yaml_existing(dir).is_some() {
             match project {
                 None => return Some(dir.to_path_buf()),
-                Some(_) if ignore_workspace => {}
-                Some(project) if !is_workspace_member(dir, project) => {}
+                Some(_) if ignore_workspace => break,
+                Some(project) if !is_workspace_member(dir, project) => break,
                 Some(_) => return Some(dir.to_path_buf()),
             }
         }
@@ -479,6 +479,26 @@ mod tests {
             find_workspace_yaml_root_with(dir.path(), true).unwrap(),
             dir.path()
         );
+    }
+
+    #[test]
+    fn nested_workspace_boundary_is_not_crossed_for_non_members() {
+        // `inner` is a settings-only root nested in an outer workspace that
+        // would otherwise match `outer/*`; a project below `inner` that is
+        // not its member must not be claimed by the outer root.
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - '**'\n",
+        );
+        let inner = dir.path().join("inner");
+        write(&inner.join("package.json"), "{}");
+        write(&inner.join("pnpm-workspace.yaml"), "hoist: true\n");
+        let app = inner.join("app");
+        write(&app.join("package.json"), "{}");
+
+        assert!(find_workspace_root_with(&app, false).is_none());
+        assert!(find_workspace_yaml_root_with(&app, false).is_none());
     }
 
     #[test]

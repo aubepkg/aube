@@ -1645,6 +1645,12 @@ fn hash_settings(project_dir: &Path, cli_flags: &[(String, String)]) -> String {
         hasher.update(node.as_os_str().as_encoded_bytes());
         hasher.update(b"\0");
     }
+    // `--ignore-workspace` installs a root-only plan; hashed only when set
+    // so a later plain install at the same root re-runs with its members
+    // while existing state hashes stay valid.
+    if crate::dirs::ignore_workspace() {
+        hasher.update(b"ignore_workspace=true\0");
+    }
     // node_linker, hoist family, modules_dir, import method. these shape
     // the tree on disk. flip any of them, linker needs to rebuild.
     let node_linker = aube_settings::resolved::node_linker(&ctx);
