@@ -1598,3 +1598,28 @@ async fn resolution_retries_invalid_json_inside_unused_fields() {
         }
     }
 }
+
+#[tokio::test]
+async fn fetch_packument_with_time_requests_full_document() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/demo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "demo",
+            "versions": {},
+            "dist-tags": {},
+            "time": {"1.0.0": "2018-05-30T00:00:00.000Z"},
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_with(&server, FetchPolicy::default());
+    let packument = client.fetch_packument_with_time("demo").await.unwrap();
+    assert!(packument.time.contains_key("1.0.0"));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests[0].headers.get("accept").unwrap().to_str().unwrap(),
+        PACKUMENT_FULL_ACCEPT
+    );
+}

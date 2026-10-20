@@ -930,6 +930,18 @@ impl RegistryClient {
 
     /// Fetch the abbreviated packument for a package (corgi format).
     pub async fn fetch_packument(&self, name: &str) -> Result<Packument, Error> {
+        self.fetch_packument_uncached(name, false).await
+    }
+
+    /// Fetch the full packument (with the `time` map) without touching the
+    /// disk cache. npmjs.org omits `time` from corgi responses, so callers
+    /// that need publish times but must see the registry's current state
+    /// (`update`, `dedupe`) use this instead of [`Self::fetch_packument`].
+    pub async fn fetch_packument_with_time(&self, name: &str) -> Result<Packument, Error> {
+        self.fetch_packument_uncached(name, true).await
+    }
+
+    async fn fetch_packument_uncached(&self, name: &str, full: bool) -> Result<Packument, Error> {
         if self.network_mode == NetworkMode::Offline {
             return Err(Error::Offline(format!("packument for {name}")));
         }
@@ -968,7 +980,9 @@ impl RegistryClient {
                             false,
                         ),
                     );
-                if force_full_packument() {
+                if full {
+                    req.header("Accept", PACKUMENT_FULL_ACCEPT)
+                } else if force_full_packument() {
                     req
                 } else {
                     req.header("Accept", PACKUMENT_ACCEPT)
