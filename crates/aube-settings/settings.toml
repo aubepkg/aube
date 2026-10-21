@@ -1913,10 +1913,14 @@ description = "Max time (ms) to wait for an HTTP request."
 type = "int"
 default = "300000"
 docs = """
-Per-request HTTP timeout, applied via `reqwest`'s single-knob
-`.timeout()` so it covers headers + body together. A request that
-exceeds this limit fails with a transport error, which is then
-retriable (see `fetchRetries`). Default matches npm's 5 minutes.
+Per-request HTTP timeout. For registry metadata (packuments,
+dist-tags) it is applied via `reqwest`'s single-knob `.timeout()`, so it
+covers headers + body together. For tarball downloads it bounds
+inactivity instead: the connect, and each wait for more data, may take
+this long, but the transfer as a whole may take longer, so a slow
+connection that keeps delivering bytes is never cut off. A request that
+exceeds the limit fails with a transport error, which is then retriable
+(see `fetchRetries`). Default matches npm's 5 minutes.
 """
 sources.cli = ["fetch-timeout"]
 sources.env = ["npm_config_fetch_timeout", "NPM_CONFIG_FETCH_TIMEOUT", "AUBE_FETCH_TIMEOUT"]

@@ -189,20 +189,31 @@ fn build_http_client_inner(
         .gzip(true)
         .brotli(true)
         .zstd(true)
-        // `fetchTimeout` — applied to the whole response (headers +
-        // body) via reqwest's single-knob timeout. pnpm / npm expose
-        // this as `fetch-timeout` in `.npmrc`; the default matches
-        // npm's 60s. Without this override reqwest would use its
-        // built-in 30s default, which is tighter than pnpm's.
-        .timeout(std::time::Duration::from_millis(fetch_policy.timeout_ms))
         // Bigger connection pool so concurrent fetches don't queue on a small set of conns.
         // HTTP/2 (when negotiated via ALPN, which npm registry supports) multiplexes many
         // requests over a single connection so this mostly matters for fallback HTTP/1.1.
         .pool_max_idle_per_host(pool_max_idle)
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .tcp_nodelay(true);
-    if !for_tarball {
+    let timeout = std::time::Duration::from_millis(fetch_policy.timeout_ms);
+    if for_tarball {
+        // Tarballs are large opaque bodies, so `fetchTimeout` bounds
+        // inactivity, not the whole transfer: `connect_timeout` limits
+        // the handshake and `read_timeout` resets every time data
+        // arrives, so a slow but steady download (100MB+ native
+        // packages on a ~400 kB/s link) finishes however long it takes,
+        // while a connection that stops sending still fails after
+        // `fetchTimeout`.
         builder = builder
+            .connect_timeout(timeout)
+            .read_timeout(timeout)
+            .http1_only();
+    } else {
+        // Metadata responses are small, so `fetchTimeout` caps the whole
+        // response (headers + body) via reqwest's single-knob timeout.
+        // pnpm / npm expose this as `fetch-timeout` in `.npmrc`.
+        builder = builder
+            .timeout(timeout)
             .http2_keep_alive_interval(std::time::Duration::from_secs(30))
             .http2_keep_alive_timeout(std::time::Duration::from_secs(20))
             .http2_keep_alive_while_idle(true)
@@ -210,8 +221,6 @@ fn build_http_client_inner(
             .http2_initial_stream_window_size(Some(16 * 1024 * 1024))
             .http2_initial_connection_window_size(Some(16 * 1024 * 1024))
             .http2_max_frame_size(Some(16 * 1024 * 1024 - 1));
-    } else {
-        builder = builder.http1_only();
     }
     // In-process DNS caching via hickory-dns. The system resolver
     // does not cache and uses a thread pool for `getaddrinfo`,

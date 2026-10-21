@@ -602,7 +602,7 @@ async fn tarball_body_read_timeout_retries_at_most_once() {
     // Body-read timeout: a different code path from headers-stage
     // timeouts. Server sends the 200 status line + headers
     // immediately, then stalls the body. reqwest's `fetchTimeout`
-    // fires inside `resp.chunk().await` during `read_body_capped`,
+    // (idle read timeout for tarballs) fires inside `resp.chunk().await` during `read_body_capped`,
     // surfacing as `Error::Http(reqwest_timeout)` from the Ok-arm of
     // the retry loop — guarded by `timeout_retry_exhausted`. This
     // is the actual reproducer shape: `@cloudflare/workerd-*`
@@ -672,6 +672,64 @@ async fn tarball_body_read_timeout_retries_at_most_once() {
         count.load(Ordering::SeqCst),
         2,
         "body-read timeouts must cap retries at 1 regardless of fetchRetries",
+    );
+}
+
+#[tokio::test]
+async fn tarball_download_slower_than_fetch_timeout_succeeds_while_data_flows() {
+    // `fetchTimeout` bounds inactivity for tarballs, not the whole
+    // transfer: a body that takes several times longer than the
+    // timeout in total still completes as long as every gap between
+    // chunks stays under it. Models a 100MB+ package on a slow link.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\n\
+                              Content-Length: 10\r\n\
+                              Content-Type: application/octet-stream\r\n\r\n",
+                    )
+                    .await;
+                for _ in 0..10 {
+                    let _ = sock.write_all(b"x").await;
+                    let _ = sock.flush().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                }
+            });
+        }
+    });
+
+    let policy = FetchPolicy {
+        timeout_ms: 200,
+        retries: 0,
+        ..FetchPolicy::default()
+    };
+    let config = NpmConfig {
+        registry: format!("http://{addr}/"),
+        ..Default::default()
+    };
+    let client = RegistryClient::from_config_with_policy(config, policy);
+    let url = format!("http://{addr}/pkg.tgz");
+    let started = std::time::Instant::now();
+    let bytes = client
+        .fetch_tarball_bytes(&url)
+        .await
+        .expect("steady download must not hit fetchTimeout");
+    assert_eq!(bytes.len(), 10);
+    assert!(
+        started.elapsed() > std::time::Duration::from_millis(200),
+        "test must take longer than fetchTimeout to prove the point",
     );
 }
 
