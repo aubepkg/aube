@@ -573,8 +573,18 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
     if let Some(url) = &pkg.tarball_url {
         return Some(url.clone());
     }
-    if pkg.local_source.is_some() {
-        return None;
+    if let Some(local) = &pkg.local_source {
+        return match local {
+            LocalSource::Git(git) => {
+                let url = if git.url.starts_with("git://") || git.url.starts_with("git+") {
+                    git.url.clone()
+                } else {
+                    format!("git+{}", git.url)
+                };
+                Some(format!("{url}#{}", git.resolved))
+            }
+            _ => None,
+        };
     }
     let name = pkg.registry_name();
     let base = name.rsplit('/').next().unwrap_or(name);
