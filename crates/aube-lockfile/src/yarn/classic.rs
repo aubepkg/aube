@@ -550,7 +550,7 @@ pub fn write_classic(
 
 /// The `resolved` value yarn would have written for `pkg`: the verbatim
 /// string from the yarn.lock it was read from (unless the package now
-/// comes from a different tarball URL), else its tarball URL, else the
+/// comes from a different tarball URL or git commit), else its tarball URL, else the
 /// default registry's tarball URL for a plain registry package.
 fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
     if let Some(resolved) = pkg
@@ -559,11 +559,14 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
         .and_then(|v| v.as_str())
     {
         let saved_url = resolved.split_once('#').map_or(resolved, |(url, _)| url);
-        if pkg
-            .tarball_url
-            .as_deref()
-            .is_none_or(|url| url == saved_url)
-        {
+        let still_current = match &pkg.local_source {
+            Some(LocalSource::Git(git)) => resolved.contains(git.resolved.as_str()),
+            _ => pkg
+                .tarball_url
+                .as_deref()
+                .is_none_or(|url| url == saved_url),
+        };
+        if still_current {
             return Some(resolved.to_string());
         }
     }

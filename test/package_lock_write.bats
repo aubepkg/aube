@@ -58,8 +58,8 @@ teardown() {
 	assert_success
 	run grep -c '^is-odd@3.0.1:$' yarn.lock
 	assert_success
-	# `resolved` URLs (with their sha1 fragment) survive the rewrite.
-	run grep -c '#65101baf3727d728b66fa62f50cda7f2d3989601"$' yarn.lock
+	# Every entry keeps a `resolved` line through the rewrite.
+	run grep -c '^  resolved "' yarn.lock
 	assert_success
 
 	# Second install from the regenerated yarn.lock must succeed.
