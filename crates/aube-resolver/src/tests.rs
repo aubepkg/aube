@@ -5636,6 +5636,68 @@ fn peer_suffix_propagation_updates_nested_references_to_rewritten_peers() {
     );
 }
 
+// The `peersSuffixMaxLength` cap is applied after nested references are
+// updated, not before.
+#[test]
+fn peer_suffix_length_cap_applies_to_the_final_nested_suffix() {
+    let mut consumer = mk_locked("consumer", "1.0.0", &[], &[("parent", "^1")]);
+    consumer.dep_path = "consumer@1.0.0".to_string();
+    let mut parent = mk_locked(
+        "parent",
+        "1.0.0",
+        &[("child", "1.0.0")],
+        &[("react", "^19")],
+    );
+    parent.dep_path = "parent@1.0.0".to_string();
+    let child = mk_locked("child", "1.0.0", &[], &[("zod", "^4")]);
+    let react = mk_locked("react", "19.0.0", &[], &[]);
+    let zod = mk_locked("zod", "4.0.0", &[], &[]);
+
+    let mut packages = BTreeMap::new();
+    for p in [consumer, parent, child, react, zod] {
+        packages.insert(p.dep_path.clone(), p);
+    }
+    let dep = |name: &str, dep_path: &str| DirectDep {
+        name: name.to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some("*".to_string()),
+    };
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![
+            dep("consumer", "consumer@1.0.0"),
+            dep("parent", "parent@1.0.0"),
+            dep("react", "react@19.0.0"),
+            dep("zod", "zod@4.0.0"),
+        ],
+    );
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    // The consumer's suffix fits the cap before `parent` gains `(zod@4.0.0)`
+    // (28 chars) and exceeds it afterwards (39 chars).
+    let options = PeerContextOptions {
+        peers_suffix_max_length: 30,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &options).expect("test graph should converge");
+
+    let consumer_keys: Vec<_> = out
+        .packages
+        .keys()
+        .filter(|k| k.starts_with("consumer@1.0.0"))
+        .collect();
+    assert_eq!(consumer_keys.len(), 1, "got {consumer_keys:?}");
+    assert!(
+        !consumer_keys[0].contains("parent@"),
+        "consumer's over-long suffix is hashed; got {consumer_keys:?}"
+    );
+}
+
 // A peer suffix must stop at the package that *supplies* the peer.
 // Real-world chain: `xml2json -> node-expat -> node-gyp -> tinyglobby ->
 // fdir`, where `fdir` declares an OPTIONAL `picomatch` peer and

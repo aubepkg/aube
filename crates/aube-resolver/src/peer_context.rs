@@ -1165,9 +1165,14 @@ fn peer_name_from_segment(seg: &str) -> Option<&str> {
 ///     keys, dep edges (each dep's stored tail), and importer
 ///     dep_paths.
 fn propagate_peer_suffixes_to_ancestors(
-    graph: LockfileGraph,
+    mut graph: LockfileGraph,
     options: &PeerContextOptions,
 ) -> LockfileGraph {
+    // Names carried over from an older lockfile may no longer apply; this
+    // pass re-derives the inherited peers from the current graph.
+    for pkg in graph.packages.values_mut() {
+        pkg.transitive_peer_dependencies.clear();
+    }
     // Forward dep map. Edges that don't resolve to a present package
     // (e.g. an unresolved peer that `detect_unmet_peers` will warn
     // about) are dropped — they can't contribute cumulative peers.
@@ -1331,7 +1336,13 @@ fn propagate_peer_suffixes_to_ancestors(
     // suffix names). They end up in `transitivePeerDependencies`, and are
     // recorded here because `dedupe_peers` later strips names from keys.
     let mut inherited_peers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for key in &pkg_keys {
+    // Shortest keys first: a key embedded in another key's suffix is always
+    // shorter than its host, so its final (possibly hashed) form is known
+    // by the time the host is built.
+    let mut by_length: Vec<&String> = pkg_keys.iter().collect();
+    by_length.sort_by_key(|k| k.len());
+    let mut nested: Vec<(String, String)> = Vec::new();
+    for key in by_length {
         let Some(segments) = cumulative.get(key) else {
             continue;
         };
@@ -1365,21 +1376,29 @@ fn propagate_peer_suffixes_to_ancestors(
             // leave the key untouched.
             continue;
         }
+        let own: BTreeSet<&str> = suffix_peer_names(key).collect();
+        let inherited: Vec<String> = segments
+            .keys()
+            .filter(|n| !own.contains(n.as_str()))
+            .cloned()
+            .collect();
+        if !inherited.is_empty() {
+            inherited_peers.insert(key.clone(), inherited);
+        }
         let mut parts: Vec<&str> = segments.values().map(String::as_str).collect();
         parts.sort_unstable();
-        let suffix: String = parts.concat();
+        // A package this key embeds in its suffix, e.g.
+        // `consumer@1(parent@1(react@19))`, may itself have gained peers
+        // (`parent@1(react@19)(zod@4)`). Point at its final key before the
+        // length cap is applied to the whole suffix.
+        let suffix = nested
+            .iter()
+            .rev()
+            .fold(parts.concat(), |acc, (old, new)| acc.replace(old, new));
         let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
         let new_key = format!("{canonical}{effective_suffix}");
         if new_key != *key {
-            let own: BTreeSet<&str> = suffix_peer_names(key).collect();
-            let inherited: Vec<String> = segments
-                .keys()
-                .filter(|n| !own.contains(n.as_str()))
-                .cloned()
-                .collect();
-            if !inherited.is_empty() {
-                inherited_peers.insert(key.clone(), inherited);
-            }
+            nested.push((format!("({key})"), format!("({new_key})")));
             rewrite.insert(key.clone(), new_key);
         }
     }
@@ -1387,30 +1406,6 @@ fn propagate_peer_suffixes_to_ancestors(
     if rewrite.is_empty() {
         return graph;
     }
-
-    // A package whose key changed may also be embedded in another key's
-    // suffix, e.g. `consumer@1(parent@1(react@19))` once `parent` gains
-    // `(zod@4)`. Rewrite those nested references too (longest first, so an
-    // outer key is replaced before the keys nested inside it), which also
-    // renames keys that only changed through such a reference.
-    let mut nested: Vec<(String, String)> = rewrite
-        .iter()
-        .map(|(old, new)| (format!("({old})"), format!("({new})")))
-        .collect();
-    nested.sort_by_key(|(old, _)| std::cmp::Reverse(old.len()));
-    let fix_nested = |key: &str| -> String {
-        nested
-            .iter()
-            .fold(key.to_string(), |acc, (old, new)| acc.replace(old, new))
-    };
-    let rewrite: BTreeMap<String, String> = pkg_keys
-        .iter()
-        .filter_map(|key| {
-            let base = rewrite.get(key).map_or(key.as_str(), String::as_str);
-            let fixed = fix_nested(base);
-            (fixed != *key).then(|| (key.clone(), fixed))
-        })
-        .collect();
 
     // Helper: rewrite a `dependencies` tail (the part after `name@`).
     // Reconstruct the target's old full key, look up its rewrite, and
