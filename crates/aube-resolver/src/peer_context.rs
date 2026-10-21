@@ -1391,10 +1391,13 @@ fn propagate_peer_suffixes_to_ancestors(
         // `consumer@1(parent@1(react@19))`, may itself have gained peers
         // (`parent@1(react@19)(zod@4)`). Point at its final key before the
         // length cap is applied to the whole suffix.
-        let suffix = nested
-            .iter()
-            .rev()
-            .fold(parts.concat(), |acc, (old, new)| acc.replace(old, new));
+        let mut suffix = parts.concat();
+        if !suffix.is_empty() {
+            suffix = nested
+                .iter()
+                .rev()
+                .fold(suffix, |acc, (old, new)| acc.replace(old, new));
+        }
         let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
         let new_key = format!("{canonical}{effective_suffix}");
         if new_key != *key {
