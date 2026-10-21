@@ -1128,9 +1128,6 @@ fn peer_name_from_segment(seg: &str) -> Option<&str> {
     head.rfind('@').map(|idx| &head[..idx])
 }
 
-/// Cap on the passes that settle keys embedded in other keys' suffixes.
-const MAX_NESTED_REWRITE_PASSES: usize = 16;
-
 /// Walk the resolved graph from each node and accumulate the union of
 /// peer-suffix segments contributed by self + every reachable
 /// descendant, then rewrite each node's dep_path to embed that union.
@@ -1342,10 +1339,11 @@ fn propagate_peer_suffixes_to_ancestors(
     // every ancestor that absorbs it), so the final form of a key depends
     // on the final forms of the keys nested in it. Re-derive every key
     // against the previous pass's rewrites until they stop changing.
-    // Nesting is finite, so this converges in about as many passes as the
-    // deepest chain of embedded keys.
+    // A key can't embed itself, so this converges in about as many passes
+    // as the deepest chain of embedded keys, which the package count
+    // bounds.
     let mut rewrite: BTreeMap<String, String> = BTreeMap::new();
-    for _ in 0..MAX_NESTED_REWRITE_PASSES {
+    for _ in 0..=pkg_keys.len() {
         let mut nested: Vec<(String, String)> = rewrite
             .iter()
             .map(|(old, new)| (format!("({old})"), format!("({new})")))
