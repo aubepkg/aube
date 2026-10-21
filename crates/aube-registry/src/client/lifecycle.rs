@@ -78,7 +78,12 @@ impl RegistryClient {
             );
             http_tarball_by_uri.insert(
                 uri.clone(),
-                build_http_tarball_client(&config, Some(registry), &fetch_policy, &extra_ca_certs),
+                try_build_http_tarball_client(
+                    &config,
+                    Some(registry),
+                    &fetch_policy,
+                    &extra_ca_certs,
+                )?,
             );
         }
         let mut http_by_uri_scope = BTreeMap::new();
@@ -105,12 +110,12 @@ impl RegistryClient {
                     .or_insert_with(BTreeMap::new)
                     .insert(
                         scope.clone(),
-                        build_http_tarball_client(
+                        try_build_http_tarball_client(
                             &config,
                             Some(registry),
                             &fetch_policy,
                             &extra_ca_certs,
-                        ),
+                        )?,
                     );
             }
         }
