@@ -52,10 +52,22 @@ pub(crate) fn policy_version_info(
                 aube_resolver::PickResult::Found(meta) => Some(meta.version.clone()),
                 aube_resolver::PickResult::NoMatch | aube_resolver::PickResult::AgeGated => None,
             }?;
-        selected
-            .as_deref()
-            .is_some_and(|baseline| is_newer(&ungated, baseline))
-            .then_some(ungated)
+        // The gated pick can also lose to the ungated one for reasons
+        // unrelated to age (a prerelease `latest` never satisfies the `*`
+        // the gated pick rewrites it to), so only blame the gate when the
+        // ungated version itself is too young and not exempt.
+        let too_young = minimum_release_age.is_some_and(|m| {
+            let published = packument.time.get(&ungated);
+            !m.exclude.excludes(registry_name, &ungated)
+                && published
+                    .zip(m.cutoff())
+                    .is_some_and(|(published, cutoff)| published.as_str() > cutoff.as_str())
+        });
+        (too_young
+            && selected
+                .as_deref()
+                .is_some_and(|baseline| is_newer(&ungated, baseline)))
+        .then_some(ungated)
     });
     PolicyVersion { selected, blocked }
 }
@@ -345,6 +357,35 @@ mod tests {
         );
         assert_eq!(alias.selected.as_deref(), Some("1.0.0"));
         assert_eq!(alias.blocked.as_deref(), Some("2.0.0"));
+    }
+
+    #[test]
+    fn prerelease_latest_is_not_blamed_on_minimum_release_age() {
+        let package = packument(serde_json::json!({
+            "name": "demo",
+            "dist-tags": { "latest": "0.19.3-0" },
+            "versions": {
+                "0.19.2-1": { "name": "demo", "version": "0.19.2-1" },
+                "0.19.3-0": { "name": "demo", "version": "0.19.3-0" }
+            },
+            "time": {
+                "0.19.2-1": "2000-01-01T00:00:00.000Z",
+                "0.19.3-0": "2000-02-01T00:00:00.000Z"
+            }
+        }));
+        let minimum_release_age = aube_resolver::MinimumReleaseAge {
+            minutes: 1440,
+            exclude: aube_resolver::PackageVersionPolicy::default(),
+            strict: false,
+        };
+        let info = policy_version_info(
+            &package,
+            "demo",
+            "latest",
+            Some(&minimum_release_age),
+            Some("0.19.2-1"),
+        );
+        assert_eq!(info.blocked, None);
     }
 
     #[test]
