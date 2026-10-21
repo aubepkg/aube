@@ -47,9 +47,16 @@ pub(crate) fn discover_workspace_plan(
     settings_ctx: &aube_settings::ResolveCtx<'_>,
     workspace_filter: &aube_workspace::selector::EffectiveFilter,
 ) -> miette::Result<WorkspaceInstallPlan> {
-    let workspace_packages = aube_workspace::find_workspace_packages(cwd)
-        .into_diagnostic()
-        .wrap_err("failed to discover workspace packages")?;
+    // `--ignore-workspace` installs just this project, even at a workspace
+    // root, so its members and workspace-ness are not discovered.
+    let ignore_workspace = crate::dirs::ignore_workspace();
+    let workspace_packages = if ignore_workspace {
+        Vec::new()
+    } else {
+        aube_workspace::find_workspace_packages(cwd)
+            .into_diagnostic()
+            .wrap_err("failed to discover workspace packages")?
+    };
     let recursive_install = aube_settings::resolved::recursive_install(settings_ctx);
     let has_workspace = !workspace_packages.is_empty();
     // Distinct from `has_workspace`: `is_workspace_project` stays
@@ -59,7 +66,7 @@ pub(crate) fn discover_workspace_plan(
     // it still prunes orphan importer entries on the all-packages-
     // gone boundary, where `manifests` collapses to `[(".", root)]`
     // and looks indistinguishable from a non-workspace install.
-    let is_workspace_project = aube_workspace::is_workspace_project_root(cwd);
+    let is_workspace_project = !ignore_workspace && aube_workspace::is_workspace_project_root(cwd);
     let link_all_workspace_importers =
         has_workspace && (recursive_install || !workspace_filter.is_empty());
 

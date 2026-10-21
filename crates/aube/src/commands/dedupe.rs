@@ -109,6 +109,12 @@ pub async fn run(args: DedupeArgs) -> miette::Result<()> {
         return Err(miette!("dedupe --check: lockfile is not deduped"));
     }
 
+    // Carry forward what a fresh resolve can't recover from the lockfile
+    // on disk (bun's version stamp, licenses, per-entry extras), the same
+    // overlay the main install path does.
+    if let Some(prior) = existing.as_ref() {
+        graph.overlay_metadata_from(prior);
+    }
     install::finalize_lockfile_graph(&cwd, &mut graph, &manifest, false, None).await?;
     super::write_and_log_lockfile(&cwd, &graph, &manifest)?;
 

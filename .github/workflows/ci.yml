@@ -8,26 +8,74 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ci-caller-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   ci:
     permissions:
       contents: read
     uses: $/.github/workflows/ci-impl.yml
 
+  # The ffi and node-addon builds are expensive, so they only run when a path
+  # they build from changed. Path filters can't live on a required check (a
+  # skipped workflow never reports), so the filtering happens here and `final`
+  # accepts a skip only when this job said the build wasn't needed.
+  changes:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ffi: ${{ steps.filter.outputs.ffi }}
+      node_addon: ${{ steps.filter.outputs.node_addon }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: .github/scripts/ci-changes.sh
+
+  ffi:
+    needs: changes
+    if: ${{ needs.changes.outputs.ffi == 'true' }}
+    permissions:
+      contents: read
+    uses: $/.github/workflows/ffi-impl.yml
+    with:
+      tag: ""
+      draft_phase: false
+      publish_packages: false
+
+  node-addon:
+    needs: changes
+    if: ${{ needs.changes.outputs.node_addon == 'true' }}
+    permissions:
+      contents: read
+    uses: $/.github/workflows/node-addon-impl.yml
+    with:
+      tag: ""
+
   final:
     name: final
     if: ${{ !cancelled() }}
-    permissions: {}
-    needs: ci
+    permissions:
+      contents: read
+    needs: [ci, changes, ffi, node-addon]
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 2
     steps:
-      - name: Check CI result
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Check CI results
         env:
-          CI_RESULT: ${{ needs.ci.result }}
-        run: |
-          if [[ "$CI_RESULT" == success ]]; then
-            exit 0
-          fi
-          echo "ci=$CI_RESULT"
-          exit 1
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: .github/scripts/ci-final.py

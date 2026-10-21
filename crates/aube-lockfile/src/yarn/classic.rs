@@ -1,6 +1,6 @@
 use crate::{
-    DepType, DirectDep, EXTRA_PRESERVE_TARBALL_URL, Error, LocalSource, LockedPackage,
-    LockfileGraph,
+    DepType, DirectDep, EXTRA_PRESERVE_TARBALL_URL, EXTRA_YARN_RESOLVED, Error, LocalSource,
+    LockedPackage, LockfileGraph,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -77,7 +77,7 @@ pub(super) fn parse_classic_str(
                 .fields
                 .get("resolved")
                 .and_then(|url| yarn_resolved_tarball_url(url));
-            let extra_meta = tarball_url
+            let mut extra_meta: BTreeMap<String, serde_json::Value> = tarball_url
                 .as_deref()
                 .filter(|url| yarn_resolved_tarball_url_needs_preserve(url))
                 .map(|_| {
@@ -87,6 +87,12 @@ pub(super) fn parse_classic_str(
                     )])
                 })
                 .unwrap_or_default();
+            if let Some(resolved) = block.fields.get("resolved") {
+                extra_meta.insert(
+                    EXTRA_YARN_RESOLVED.to_string(),
+                    serde_json::Value::String(resolved.clone()),
+                );
+            }
             packages.insert(
                 dep_path.clone(),
                 LockedPackage {
@@ -147,7 +153,7 @@ pub(super) fn parse_classic_str(
                     name: name.to_string(),
                     dep_path: dep_path.clone(),
                     dep_type,
-                    specifier: None,
+                    specifier: Some(range.to_string()),
                 });
             }
         };
@@ -396,24 +402,19 @@ pub(super) fn parse_npm_alias_real_name(spec: &str) -> Option<String> {
 /// yarn v1 is flat — unlike npm or bun, there's no nested install
 /// path. Every `(name, version)` pair gets exactly one block whose
 /// header is a comma-separated list of every spec that resolves to
-/// it. We always emit the exact `"name@version"` spec (so transitive
-/// deps emitted as `bar "2.5.0"` round-trip), and for direct root
-/// deps we *also* emit the manifest range spec (e.g. `"bar@^2.0.0"`)
-/// so `yarn install` and `aube install` — both of which look up
-/// manifest ranges against the block headers — find the entry.
-///
-/// Transitive deps that arrive through a semver *range* (e.g. `foo`
-/// depends on `bar "^2.0.0"`) are still technically lossy: the
-/// original range isn't preserved, so if the parent's resolved
-/// `bar` version differs from what the lockfile records, reparse
-/// will miss. In practice the writer only runs on a graph the
-/// resolver just produced, so the resolved versions match the
-/// transitive dep keys exactly and reparse finds them.
+/// it, mirroring yarn's own output: the manifest ranges of direct
+/// deps and the declared ranges of every consuming package. A pin
+/// (`name@version`) only appears when something references the entry
+/// by pin — a manifest that pins, or a dependency rendered from its
+/// resolved version because the source lockfile carried no declared
+/// ranges — or when no range points at the entry at all.
 ///
 /// Peer-contextualized variants collapse to a single `name@version`
-/// entry (yarn v1's data model has no peer context). `resolved` URLs
-/// are omitted for the same reason as the npm writer: we don't
-/// persist the origin URL. yarn tolerates missing `resolved`.
+/// entry (yarn v1's data model has no peer context). `resolved` keeps
+/// the verbatim string (with its `#sha1` fragment) read from an
+/// earlier yarn.lock; entries without one get the tarball URL the
+/// resolver recorded, minus the fragment, which yarn tolerates and
+/// fills in later.
 pub fn write_classic(
     path: &Path,
     graph: &LockfileGraph,
@@ -422,19 +423,9 @@ pub fn write_classic(
     // Collapse peer-context variants: one entry per canonical (name, version).
     let canonical = crate::build_canonical_map(graph);
 
-    // Collect every spec that points at a canonical `(name, version)` —
-    // both root-manifest ranges *and* transitive declared ranges from
-    // every other package's `declared_dependencies`. Yarn groups all
-    // specs resolving to the same (name, version) under one block
-    // header (`is-number@^6.0.0, is-number@~6.0.1:`), and reparse of
-    // a transitive `bar "^2.0.0"` needs `bar@^2.0.0` to appear in
-    // some block's header to find the right canonical entry.
-    //
-    // Keyed by canonical key; values are the extra range-form spec
-    // strings to emit alongside the exact `"name@version"` one.
-    // Deduped per canonical so identical ranges coming from multiple
-    // consumers collapse.
-    let mut extra_specs: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    // Keyed by canonical key; values are every spec string that resolves
+    // to it. Identical ranges from multiple consumers collapse.
+    let mut specs: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
     let root_importer_specs = manifest
         .dependencies
         .iter()
@@ -452,60 +443,60 @@ pub fn write_classic(
             .find(|(n, _)| n.as_str() == dep.name.as_str())
             .map(|(_, r)| r.clone());
         if let Some(range) = range {
-            let spec = format!("{}@{range}", dep.name);
-            if spec != canonical_key {
-                extra_specs.entry(canonical_key).or_default().insert(spec);
-            }
+            specs
+                .entry(canonical_key)
+                .or_default()
+                .insert(format!("{}@{range}", dep.name));
         }
     }
-    // Harvest transitive declared ranges. Each package's
-    // `declared_dependencies[name] = range` is the range its own
-    // manifest uses; the canonical the range resolves to is whatever
-    // the resolver already placed under `pkg.dependencies[name]`.
+    // Each package's `declared_dependencies[name] = range` is the range
+    // its own manifest uses; the canonical the range resolves to is
+    // whatever the resolver already placed under `pkg.dependencies[name]`.
+    // Without a declared range the dependency is rendered as its pin,
+    // so the pin has to be a header spec for reparse to find it.
     for pkg in canonical.values() {
-        for (dep_name, range) in &pkg.declared_dependencies {
-            let Some(resolved_value) = pkg.dependencies.get(dep_name) else {
-                continue;
-            };
+        for (dep_name, resolved_value) in &pkg.dependencies {
             let target = crate::npm::child_canonical_key(dep_name, resolved_value);
             if !canonical.contains_key(&target) {
                 continue;
             }
-            let spec = format!("{dep_name}@{range}");
-            if spec != target {
-                extra_specs.entry(target).or_default().insert(spec);
-            }
+            let spec = match pkg.declared_dependencies.get(dep_name) {
+                Some(range) => format!("{dep_name}@{range}"),
+                None => format!(
+                    "{dep_name}@{}",
+                    crate::npm::dep_value_as_version(dep_name, resolved_value)
+                ),
+            };
+            specs.entry(target).or_default().insert(spec);
         }
     }
 
-    let mut out = String::with_capacity(canonical.len().saturating_mul(256).max(4096));
-    out.push_str("# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\n");
-    out.push_str("# yarn lockfile v1\n\n\n");
-
+    let mut blocks: Vec<(String, String)> = Vec::with_capacity(canonical.len());
     for (canonical_key, pkg) in &canonical {
-        // Header: `"name@version"[, "name@range"]*:` — always start
-        // with the exact spec so transitive reparse works, then
-        // append any manifest range specs pointing at this entry.
-        out.push('"');
-        out.push_str(canonical_key);
-        out.push('"');
-        if let Some(extras) = extra_specs.get(canonical_key) {
-            for spec in extras {
-                out.push_str(", \"");
-                out.push_str(spec);
-                out.push('"');
-            }
-        }
+        let header_specs: Vec<&str> = match specs.get(canonical_key) {
+            Some(set) if !set.is_empty() => set.iter().map(String::as_str).collect(),
+            _ => vec![canonical_key.as_str()],
+        };
+        // Yarn orders groups by their smallest spec; `specs` is sorted.
+        let sort_key = header_specs[0].to_string();
+        let mut out = String::with_capacity(256);
+        let header: Vec<String> = header_specs.iter().map(|s| yarn_scalar(s)).collect();
+        out.push_str(&header.join(", "));
         out.push_str(":\n");
 
-        // `  version "..."`
-        out.push_str("  version \"");
-        out.push_str(&pkg.version);
-        out.push_str("\"\n");
+        out.push_str("  version ");
+        out.push_str(&yarn_scalar(&pkg.version));
+        out.push('\n');
+
+        if let Some(resolved) = yarn_resolved_field(pkg) {
+            out.push_str("  resolved ");
+            out.push_str(&yarn_scalar(&resolved));
+            out.push('\n');
+        }
 
         if let Some(integ) = &pkg.integrity {
             out.push_str("  integrity ");
-            out.push_str(integ);
+            out.push_str(&yarn_scalar(integ));
             out.push('\n');
         }
 
@@ -533,16 +524,94 @@ pub fn write_classic(
             out.push_str("  dependencies:\n");
             for (dep_name, dep_version) in &nonempty_deps {
                 out.push_str("    ");
-                out.push_str(dep_name);
-                out.push_str(" \"");
-                out.push_str(dep_version);
-                out.push_str("\"\n");
+                out.push_str(&yarn_scalar(dep_name));
+                out.push(' ');
+                out.push_str(&yarn_scalar(dep_version));
+                out.push('\n');
             }
         }
 
-        out.push('\n');
+        blocks.push((sort_key, out));
+    }
+    blocks.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = String::with_capacity(canonical.len().saturating_mul(256).max(4096));
+    out.push_str("# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\n");
+    out.push_str("# yarn lockfile v1\n\n\n");
+    for (i, (_, block)) in blocks.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(block);
     }
 
     crate::atomic_write_lockfile(path, out.as_bytes())?;
     Ok(())
+}
+
+/// The `resolved` value yarn would have written for `pkg`: the verbatim
+/// string from the yarn.lock it was read from (unless the package now
+/// comes from a different tarball URL or git commit), else its tarball URL
+/// or git ref. A package with neither gets no `resolved`: the registry it
+/// came from is unknown, so none is asserted.
+fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
+    if let Some(resolved) = pkg
+        .extra_meta
+        .get(EXTRA_YARN_RESOLVED)
+        .and_then(|v| v.as_str())
+    {
+        let saved_url = resolved.split_once('#').map_or(resolved, |(url, _)| url);
+        let still_current = match &pkg.local_source {
+            Some(LocalSource::Git(git)) => {
+                let bare = |url: &str| url.strip_prefix("git+").unwrap_or(url).to_string();
+                !git.resolved.is_empty()
+                    && resolved.rsplit_once('#').map(|(_, commit)| commit)
+                        == Some(git.resolved.as_str())
+                    && bare(saved_url) == bare(&git.url)
+            }
+            _ => pkg
+                .tarball_url
+                .as_deref()
+                .is_none_or(|url| url == saved_url),
+        };
+        if still_current {
+            return Some(resolved.to_string());
+        }
+    }
+    if let Some(url) = &pkg.tarball_url {
+        // Yarn spells the public registry `registry.yarnpkg.com`.
+        let url = url.strip_prefix("https://registry.npmjs.org/").map_or_else(
+            || url.clone(),
+            |rest| format!("https://registry.yarnpkg.com/{rest}"),
+        );
+        return Some(url);
+    }
+    match &pkg.local_source {
+        Some(LocalSource::Git(git)) => {
+            let url = if git.url.starts_with("git://") || git.url.starts_with("git+") {
+                git.url.clone()
+            } else {
+                format!("git+{}", git.url)
+            };
+            Some(format!("{url}#{}", git.resolved))
+        }
+        _ => None,
+    }
+}
+
+/// Quote `value` the way yarn v1's stringifier does: bare unless it
+/// starts with a non-letter, starts with `true`/`false`, or contains
+/// whitespace or any of `:\",[]`.
+fn yarn_scalar(value: &str) -> String {
+    let needs_quotes = value.starts_with("true")
+        || value.starts_with("false")
+        || !value.starts_with(|c: char| c.is_ascii_alphabetic())
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, ':' | '\\' | '"' | ',' | '[' | ']'));
+    if needs_quotes {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
 }

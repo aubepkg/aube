@@ -28,7 +28,7 @@ use miette::{IntoDiagnostic, miette};
 use sha2::{Digest as _, Sha512};
 use sigstore_oidc::IdentityToken;
 use sigstore_sign::SigningContext;
-use sigstore_types::{Digest, Statement, Subject};
+use sigstore_types::{Digest, Sha512Hash, Statement, Subject};
 
 /// Predicate type for SLSA v1 provenance. The Sigstore bundle the registry
 /// surfaces in the npm UI only lights up as "provenance" when this exact URI
@@ -57,6 +57,13 @@ pub async fn probe_oidc_available() -> miette::Result<()> {
 /// the current CI run. Returns the serialized bundle JSON, ready to be
 /// base64-encoded into the npm publish body.
 ///
+fn tarball_subject(tarball_bytes: &[u8], package_name: &str, package_version: &str) -> Subject {
+    Subject::new(
+        npm_purl(package_name, package_version),
+        Digest::sha512(Sha512Hash::new(Sha512::digest(tarball_bytes).into())),
+    )
+}
+
 /// The in-toto subject mirrors what `libnpmpublish` produces so npm's
 /// server-side verification accepts it:
 ///   - `name`: a `pkg:npm/<name>@<version>` purl, with `@` in scoped names
@@ -72,24 +79,22 @@ pub async fn generate(
     let token = detect_oidc_token().await?;
     let predicate = build_slsa_predicate()?;
 
-    let sha512_hex = hex::encode(Sha512::digest(tarball_bytes));
-
-    let statement = Statement {
-        type_: "https://in-toto.io/Statement/v1".to_string(),
-        subject: vec![Subject {
-            name: npm_purl(package_name, package_version),
-            digest: Digest {
-                sha256: None,
-                sha512: Some(sha512_hex),
-            },
-        }],
-        predicate_type: SLSA_V1_PREDICATE_TYPE.to_string(),
+    let statement = Statement::new(
+        vec![tarball_subject(
+            tarball_bytes,
+            package_name,
+            package_version,
+        )],
+        SLSA_V1_PREDICATE_TYPE,
         predicate,
-    };
+    );
     let statement_json = serde_json::to_vec(&statement)
         .map_err(|e| miette!("failed to serialize in-toto statement: {e}"))?;
 
-    let signer = SigningContext::production().signer(token);
+    let signer = SigningContext::production()
+        .await
+        .map_err(|e| miette!("failed to initialize sigstore signing context: {e}"))?
+        .signer(token);
     let bundle = signer
         .sign_raw_statement(&statement_json)
         .await
@@ -282,6 +287,20 @@ fn generic_predicate() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subject_digest_is_lowercase_hex_sha512_only() {
+        let subject = tarball_subject(b"abc", "@scope/foo", "1.0.0");
+        assert_eq!(
+            serde_json::to_value(&subject).unwrap(),
+            serde_json::json!({
+                "name": "pkg:npm/%40scope/foo@1.0.0",
+                "digest": {
+                    "sha512": "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+                }
+            })
+        );
+    }
 
     #[test]
     fn purl_plain_package() {

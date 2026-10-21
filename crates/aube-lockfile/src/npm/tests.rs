@@ -5,7 +5,7 @@ use crate::{
     DepType, DirectDep, DriftStatus, Error, GitSource, LocalSource, LockedPackage, LockfileGraph,
     LockfileKind,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -240,7 +240,7 @@ fn test_write_preserves_git_resolved_url() {
 }
 
 #[test]
-fn test_write_skips_non_git_local_sources() {
+fn test_write_emits_file_directory_dep_as_link_and_target() {
     let local = LocalSource::Directory(PathBuf::from("vendor/local-dir"));
     let dep_path = local.dep_path("local-dir");
     let mut graph = LockfileGraph::default();
@@ -276,7 +276,78 @@ fn test_write_skips_non_git_local_sources() {
     write(out.path(), &graph, &manifest).unwrap();
 
     let body = std::fs::read_to_string(out.path()).unwrap();
-    assert!(!body.contains("\"node_modules/local-dir\""));
+    let lock: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        lock["packages"]["node_modules/local-dir"],
+        serde_json::json!({"resolved": "vendor/local-dir", "link": true})
+    );
+    assert_eq!(
+        lock["packages"]["vendor/local-dir"],
+        serde_json::json!({"name": "local-dir", "version": "1.0.0"})
+    );
+    parse(out.path()).unwrap();
+}
+
+#[test]
+fn test_write_nests_file_directory_children_under_target() {
+    let local = LocalSource::Directory(PathBuf::from("vendor/local-dir"));
+    let dir_path = local.dep_path("local-dir");
+    let pkg = |name: &str, version: &str, deps: &[(&str, &str)]| LockedPackage {
+        name: name.to_string(),
+        version: version.to_string(),
+        dep_path: format!("{name}@{version}"),
+        dependencies: deps
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect(),
+        os: ["linux".to_string()].into_iter().collect(),
+        ..Default::default()
+    };
+    let mut graph = LockfileGraph::default();
+    for p in [pkg("foo", "1.0.0", &[]), pkg("foo", "2.0.0", &[])] {
+        graph.packages.insert(p.dep_path.clone(), p);
+    }
+    graph.packages.insert(
+        dir_path.clone(),
+        LockedPackage {
+            dep_path: dir_path.clone(),
+            local_source: Some(local),
+            ..pkg("local-dir", "1.0.0", &[("foo", "2.0.0")])
+        },
+    );
+    let direct = |name: &str, dep_path: &str| DirectDep {
+        name: name.to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: None,
+    };
+    graph.importers.insert(
+        ".".to_string(),
+        vec![direct("foo", "foo@1.0.0"), direct("local-dir", &dir_path)],
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("test".to_string()),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    assert_eq!(lock["packages"]["vendor/local-dir"]["os"][0], "linux");
+    assert_eq!(
+        lock["packages"]["vendor/local-dir/node_modules/foo"]["version"],
+        "2.0.0"
+    );
+    assert!(lock["packages"]["node_modules/local-dir/node_modules/foo"].is_null());
+
+    let reparsed = parse(out.path()).unwrap();
+    let local_pkg = reparsed
+        .packages
+        .values()
+        .find(|p| p.name == "local-dir")
+        .unwrap();
+    assert_eq!(local_pkg.dependencies["foo"], "2.0.0");
 }
 
 #[test]
@@ -646,6 +717,115 @@ fn test_write_dev_and_optional_reachable_uses_dev_optional() {
     // Roots themselves retain their specific flag.
     assert_eq!(json["packages"]["node_modules/dev-root"]["dev"], true);
     assert_eq!(json["packages"]["node_modules/opt-root"]["optional"], true);
+}
+
+/// Regression: an `optionalDependencies` edge out of a production
+/// package (esbuild -> @esbuild/*) must write `optional: true` on the
+/// child, and `hasInstallScript` must survive a parse/write cycle.
+#[test]
+fn test_write_optional_edge_and_install_script_flags_round_trip() {
+    let lock = r#"{
+  "name": "t", "version": "1.0.0", "lockfileVersion": 3, "requires": true,
+  "packages": {
+    "": {"name": "t", "version": "1.0.0", "dependencies": {"esbuild": "0.25.10"}},
+    "node_modules/@esbuild/aix-ppc64": {
+      "version": "0.25.10", "resolved": "https://r/a.tgz", "integrity": "sha512-a",
+      "cpu": ["ppc64"], "optional": true, "os": ["aix"]
+    },
+    "node_modules/esbuild": {
+      "version": "0.25.10", "resolved": "https://r/e.tgz", "integrity": "sha512-e",
+      "hasInstallScript": true,
+      "optionalDependencies": {"@esbuild/aix-ppc64": "0.25.10"}
+    }
+  }
+}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("package-lock.json");
+    std::fs::write(&path, lock).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        name: Some("t".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: [("esbuild".to_string(), "0.25.10".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let graph = parse(&path).unwrap();
+    write(&path, &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/@esbuild/aix-ppc64"];
+    assert_eq!(child["optional"], true);
+    let parent = &json["packages"]["node_modules/esbuild"];
+    assert_eq!(parent["hasInstallScript"], true);
+    assert!(parent.get("optional").is_none());
+
+    let dev_manifest = aube_manifest::PackageJson {
+        dependencies: Default::default(),
+        dev_dependencies: manifest.dependencies.clone(),
+        ..manifest
+    };
+    let mut dev_graph = graph;
+    for dep in dev_graph.importers.get_mut(".").unwrap() {
+        dep.dep_type = DepType::Dev;
+    }
+    write(&path, &dev_graph, &dev_manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/@esbuild/aix-ppc64"];
+    assert_eq!(child["dev"], true);
+    assert_eq!(child["optional"], true);
+    assert!(child.get("devOptional").is_none());
+}
+
+/// An optional child shared by a production and a dev dependency is
+/// kept by the production chain, so it must be `optional` only, never
+/// `dev`.
+#[test]
+fn test_write_optional_child_of_prod_and_dev_is_not_dev() {
+    let mut graph = LockfileGraph::default();
+    let mk = |name: &str, opt: bool| LockedPackage {
+        name: name.to_string(),
+        version: "1.0.0".to_string(),
+        dep_path: format!("{name}@1.0.0"),
+        dependencies: if opt {
+            [("child".to_string(), "1.0.0".to_string())].into()
+        } else {
+            Default::default()
+        },
+        optional_dependencies: if opt {
+            [("child".to_string(), "1.0.0".to_string())].into()
+        } else {
+            Default::default()
+        },
+        ..Default::default()
+    };
+    for (n, o) in [("prod", true), ("dev", true), ("child", false)] {
+        graph.packages.insert(format!("{n}@1.0.0"), mk(n, o));
+    }
+    let root = |n: &str, t| DirectDep {
+        name: n.to_string(),
+        dep_path: format!("{n}@1.0.0"),
+        dep_type: t,
+        specifier: None,
+    };
+    graph.importers.insert(
+        ".".to_string(),
+        vec![root("prod", DepType::Production), root("dev", DepType::Dev)],
+    );
+    let manifest = aube_manifest::PackageJson {
+        name: Some("t".to_string()),
+        version: Some("1.0.0".to_string()),
+        ..Default::default()
+    };
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write(out.path(), &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path()).unwrap()).unwrap();
+    let child = &json["packages"]["node_modules/child"];
+    assert_eq!(child["optional"], true);
+    assert!(child.get("dev").is_none());
+    assert!(child.get("devOptional").is_none());
 }
 
 /// Regression: the npm writer must drop `dependencies` entries
@@ -1698,6 +1878,61 @@ fn test_write_npm_workspace_importers() {
     assert!(reparsed.importers.contains_key("web"));
 }
 
+/// A fresh resolve of an npm workspace whose root depends on no member
+/// has no `link:` package for them. The writer still has to emit each
+/// member, reading its name and version from its own package.json.
+#[test]
+fn test_write_npm_workspace_members_nothing_depends_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("packages/a")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("packages/unnamed")).unwrap();
+    std::fs::write(
+        tmp.path().join("packages/a/package.json"),
+        r#"{"name":"a","version":"1.0.0","peerDependencies":{"p":"^1"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("packages/unnamed/package.json"),
+        r#"{"version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(".".to_string(), Vec::new());
+    graph.importers.insert("packages/a".to_string(), Vec::new());
+    graph
+        .importers
+        .insert("packages/unnamed".to_string(), Vec::new());
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        workspaces: Some(aube_manifest::Workspaces::Array(vec![
+            "packages/*".to_string(),
+        ])),
+        ..Default::default()
+    };
+    let path = tmp.path().join("package-lock.json");
+    write(&path, &graph, &manifest).unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let packages = &json["packages"];
+    assert_eq!(
+        packages[""]["workspaces"],
+        serde_json::json!(["packages/*"])
+    );
+    assert_eq!(packages["node_modules/a"]["resolved"], "packages/a");
+    assert_eq!(packages["node_modules/a"]["link"], true);
+    assert_eq!(packages["packages/a"]["version"], "1.0.0");
+    assert_eq!(packages["packages/a"]["peerDependencies"]["p"], "^1");
+    assert_eq!(
+        packages["node_modules/unnamed"]["resolved"],
+        "packages/unnamed"
+    );
+
+    let reparsed = parse(&path).unwrap();
+    assert!(reparsed.importers.contains_key("packages/a"));
+    assert!(reparsed.importers.contains_key("packages/unnamed"));
+}
+
 /// When the root tree already hoists a package to
 /// `node_modules/<name>`, the workspace tree must NOT emit a
 /// redundant `<workspace>/node_modules/<name>` for the same
@@ -2363,4 +2598,232 @@ fn workspace_member_required_peers_are_direct_deps() {
         serde_json::json!({ "kind-of": "^6.0.0" })
     );
     assert!(written["packages"][""].get("dependencies").is_none());
+}
+
+/// npm records the target of every `file:` dep as an importer, including
+/// ones a workspace member declares. Given their manifests, as the install
+/// passes them, the drift check accepts those importers and compares their
+/// dependencies like a project's.
+#[test]
+fn test_drift_checks_file_dep_importers_of_workspace_members() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    // What npm 11 writes for a member depending on `file:./vendor/x`,
+    // which in turn depends on `file:../y`.
+    std::fs::write(
+        tmp.path(),
+        r#"
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/app": {
+      "resolved": "packages/app",
+      "link": true
+    },
+    "node_modules/x": {
+      "resolved": "packages/app/vendor/x",
+      "link": true
+    },
+    "node_modules/y": {
+      "resolved": "packages/app/vendor/y",
+      "link": true
+    },
+    "packages/app": {
+      "version": "1.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x"
+      }
+    },
+    "packages/app/vendor/x": {
+      "version": "1.0.0",
+      "dependencies": {
+        "y": "file:../y"
+      }
+    },
+    "packages/app/vendor/y": {
+      "version": "1.0.0"
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root: aube_manifest::PackageJson =
+        serde_json::from_str(r#"{"name":"root","private":true,"workspaces":["packages/*"]}"#)
+            .unwrap();
+    let app: aube_manifest::PackageJson = serde_json::from_str(
+        r#"{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}"#,
+    )
+    .unwrap();
+    let members = [(".".to_string(), root), ("packages/app".to_string(), app)];
+    let check = |targets: &[(String, aube_manifest::PackageJson)]| {
+        graph.check_drift_workspace_with_local_targets_for_kind(
+            &members,
+            targets,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+
+    // The install reads the reachable `file:` targets' manifests from disk.
+    assert_eq!(
+        graph.npm_local_importers(&[".", "packages/app"]),
+        ["packages/app/vendor/x", "packages/app/vendor/y"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    );
+    let targets = |x_deps: &str| {
+        vec![
+            (
+                "packages/app/vendor/x".to_string(),
+                serde_json::from_str(&format!(
+                    r#"{{"name":"x","version":"1.0.0","dependencies":{x_deps}}}"#
+                ))
+                .unwrap(),
+            ),
+            (
+                "packages/app/vendor/y".to_string(),
+                serde_json::from_str(r#"{"name":"y","version":"1.0.0"}"#).unwrap(),
+            ),
+        ]
+    };
+
+    assert_eq!(check(&targets(r#"{"y":"file:../y"}"#)), DriftStatus::Fresh);
+    // A dependency added to a `file:` target is drift, as `npm ci` reports.
+    assert!(matches!(
+        check(&targets(r#"{"y":"file:../y","z":"^1.0.0"}"#)),
+        DriftStatus::Stale { reason } if reason.contains("packages/app/vendor/x")
+    ));
+    // Without the targets' manifests they read as projects that left.
+    assert!(matches!(
+        check(&[]),
+        DriftStatus::Stale { reason } if reason.contains("packages/app/vendor/")
+    ));
+    assert_eq!(graph.npm_local_importers(&["."]), BTreeSet::new());
+}
+
+/// npm writes a workspace member without a `version` in its package.json
+/// as an empty entry. Reading it must not fail.
+#[test]
+fn test_parse_workspace_member_without_version() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "root",
+            "lockfileVersion": 3,
+            "requires": true,
+            "packages": {
+                "": {
+                    "name": "root",
+                    "workspaces": ["packages/*"]
+                },
+                "node_modules/app": {
+                    "resolved": "packages/app",
+                    "link": true
+                },
+                "packages/app": {}
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let graph = parse(tmp.path()).unwrap();
+    let dep_path = LocalSource::Link(PathBuf::from("packages/app")).dep_path("app");
+    assert_eq!(graph.packages[&dep_path].version, "0.0.0");
+    assert!(graph.importers.contains_key("packages/app"));
+}
+
+/// A member nothing depends on is written from its package.json: one
+/// without a version stays versionless, as npm writes it, and its
+/// optional peers keep `peerDependenciesMeta`, so reading the lockfile
+/// back keeps them out of its required deps.
+#[test]
+fn test_write_npm_workspace_member_versionless_and_optional_peers_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (dir, manifest) in [
+        (
+            "packages/a",
+            r#"{"name":"a","version":"1.0.0","peerDependencies":{"p":"^1"},"peerDependenciesMeta":{"p":{"optional":true}}}"#,
+        ),
+        ("packages/b", r#"{"name":"b"}"#),
+    ] {
+        std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+        std::fs::write(tmp.path().join(dir).join("package.json"), manifest).unwrap();
+    }
+    let mut graph = LockfileGraph::default();
+    for importer in [".", "packages/a", "packages/b"] {
+        graph.importers.insert(importer.to_string(), Vec::new());
+    }
+    let manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        ..Default::default()
+    };
+    let path = tmp.path().join("package-lock.json");
+    write(&path, &graph, &manifest).unwrap();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let packages = &json["packages"];
+    assert_eq!(
+        packages["packages/a"]["peerDependenciesMeta"]["p"]["optional"],
+        true
+    );
+    assert!(packages["packages/b"].get("version").is_none());
+
+    let reparsed = parse(&path).unwrap();
+    assert!(
+        reparsed.importers["packages/a"]
+            .iter()
+            .all(|dep| dep.name != "p"),
+        "an optional peer must not become a required dep"
+    );
+    let b = LocalSource::Link(PathBuf::from("packages/b")).dep_path("b");
+    assert_eq!(reparsed.packages[&b].version, "0.0.0");
+
+    // Rewriting the reread graph keeps `b` versionless.
+    write(&path, &reparsed, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(json["packages"]["packages/b"].get("version").is_none());
+}
+
+/// npm copies an object-form `workspaces` field as declared: an absent
+/// `nohoist` stays absent and a declared one is kept.
+#[test]
+fn test_write_npm_object_form_workspaces_as_declared() {
+    for (nohoist, expected) in [
+        (Vec::new(), serde_json::json!({"packages": ["packages/*"]})),
+        (
+            vec!["**/x".to_string()],
+            serde_json::json!({"packages": ["packages/*"], "nohoist": ["**/x"]}),
+        ),
+    ] {
+        let manifest = aube_manifest::PackageJson {
+            name: Some("root".to_string()),
+            workspaces: Some(aube_manifest::Workspaces::Object {
+                packages: vec!["packages/*".to_string()],
+                nohoist,
+                catalog: BTreeMap::new(),
+                catalogs: BTreeMap::new(),
+            }),
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("package-lock.json");
+        write(&path, &LockfileGraph::default(), &manifest).unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["packages"][""]["workspaces"], expected);
+    }
 }

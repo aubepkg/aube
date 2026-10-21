@@ -547,6 +547,12 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 lifecycle_manifests.iter().map(|(_, manifest)| manifest),
                 &ws_config_shared,
                 dangerously_allow_all_builds,
+                // A nested git-prepare install inherits the outer project's
+                // finished policy, which already holds the defaults when the
+                // outer project wants them. Re-adding them here would undo an
+                // opt-out the scratch clone's settings cannot see.
+                opts.inherited_build_policy.is_none()
+                    && aube_settings::resolved::use_default_trusted_dependencies(&settings_ctx),
             );
             if let Some(inherited) = opts.inherited_build_policy.as_deref() {
                 build_policy.merge(inherited);
@@ -773,7 +779,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             if source_kind_before.is_none()
                 && hidden_lockfile::seed_allowed(mode, opts.strict_no_lockfile) =>
         {
-            lockfile_pre_parse = hidden_lockfile::read(path, lockfile_parse_options)
+            lockfile_pre_parse = hidden_lockfile::read(path, &cwd, lockfile_parse_options)
                 .map(|graph| (graph, aube_lockfile::LockfileKind::Aube));
             lockfile_pre_parse.is_some()
         }
@@ -1001,8 +1007,9 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 ) {
                     let hidden_graph = graph.clone();
                     let hidden_manifest = manifest.clone();
+                    let hidden_cwd = cwd.clone();
                     hidden_lockfile_write_handle = Some(tokio::task::spawn_blocking(move || {
-                        hidden_lockfile::write(&path, &hidden_graph, &hidden_manifest);
+                        hidden_lockfile::write(&path, &hidden_cwd, &hidden_graph, &hidden_manifest);
                     }));
                 } else {
                     hidden_lockfile::remove(&path);
@@ -2265,7 +2272,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                             .into_diagnostic()
                             .wrap_err("failed to write lockfile with computed integrity")?;
                             if let Some(path) = &hidden_lockfile_path {
-                                hidden_lockfile::write(path, lock_graph, &manifest);
+                                hidden_lockfile::write(path, &cwd, lock_graph, &manifest);
                             }
                         } else {
                             write_per_project_lockfiles(
@@ -2406,6 +2413,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         current_subtree_hashes,
         patch_hashes,
         managed_bin_links,
+        bin_link_snapshot,
         gvs_dep_link_targets,
     } = link::run_link_phase(link::LinkPhaseInput {
         cwd: &cwd,
@@ -2430,6 +2438,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         dep_selection_filtered: opts.dep_selection.is_filtered(),
         workspace_filter_empty: opts.workspace_filter.is_empty(),
         ignore_scripts: opts.ignore_scripts,
+        force: opts.force,
         prog_ref,
         phase_timings: &mut phase_timings,
     })?;
@@ -2461,6 +2470,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         jail_policy: &jail_policy,
         stats: &stats,
         managed_bin_links: &managed_bin_links,
+        bin_link_snapshot,
         gvs_dep_link_targets,
         node_linker,
         has_workspace,

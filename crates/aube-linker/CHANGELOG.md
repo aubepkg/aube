@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.0...aube-linker-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(install)* make --force re-materialize linked packages ([#1789](https://github.com/aubepkg/aube/pull/1789))
+
+## [2.8.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.2...aube-linker-v2.8.0) - 2026-10-19
+
+### Fixed
+
+- *(linker)* run shebang-less shell bins with sh ([#1766](https://github.com/aubepkg/aube/pull/1766))
+
+## [2.7.2](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.1...aube-linker-v2.7.2) - 2026-10-17
+
+### Fixed
+
+- *(deps)* bump zip to 9 ([#1756](https://github.com/aubepkg/aube/pull/1756))
+
+## [2.7.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.7.0...aube-linker-v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(install)* link a symlinked member's deps from its real location ([#1748](https://github.com/aubepkg/aube/pull/1748))
+
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-linker-v2.6.1...aube-linker-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(linker)* replace a real directory left at a global virtual store entry ([#1648](https://github.com/aubepkg/aube/pull/1648))
+- *(linker)* rewrite top-level junctions after virtualStoreDir moves on Windows ([#1646](https://github.com/aubepkg/aube/pull/1646))
+- *(install)* keep the warm path when dedupe-direct-deps skips a member link ([#1688](https://github.com/aubepkg/aube/pull/1688))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+- *(install)* apply missing-EOF-marker patches with hunk headings ([#1678](https://github.com/aubepkg/aube/pull/1678))
+- *(install)* remove stale .bin shims for dependencies dropped from the graph ([#1673](https://github.com/aubepkg/aube/pull/1673))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.6.0...aube-linker-v2.6.1) - 2026-09-29
 
 ### Other

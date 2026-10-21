@@ -109,7 +109,7 @@ pub(super) fn write_one(
         )?;
     }
     if let Some(path) = hidden_lockfile {
-        super::hidden_lockfile::write(path, graph, manifest);
+        super::hidden_lockfile::write(path, cwd, graph, manifest);
     }
     Ok(())
 }

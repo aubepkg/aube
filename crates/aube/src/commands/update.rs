@@ -246,14 +246,14 @@ async fn run_inner(
     // — the indirect's snapshot lives in the shared lockfile, not in
     // each project's directory, and without the fallback the
     // indirect-arg validation below would reject it.
-    let existing = crate::commands::parse_lockfile(&cwd, &manifest)
-        .ok()
-        .or_else(|| {
-            super::find_workspace_root(&cwd)
-                .ok()
-                .filter(|ws| ws.as_path() != cwd.as_path())
-                .and_then(|ws| crate::commands::parse_lockfile(&ws, &manifest).ok())
-        });
+    let own_lockfile = crate::commands::parse_lockfile(&cwd, &manifest).ok();
+    let existing_is_own = own_lockfile.is_some();
+    let existing = own_lockfile.or_else(|| {
+        super::find_workspace_root(&cwd)
+            .ok()
+            .filter(|ws| ws.as_path() != cwd.as_path())
+            .and_then(|ws| crate::commands::parse_lockfile(&ws, &manifest).ok())
+    });
     // Importer keys to try when looking up a direct dep in `existing`.
     // Order matters: try the cwd's own importer first, then fall through
     // to `"."`.
@@ -519,6 +519,7 @@ async fn run_inner(
                 &existing_importers,
                 &preserve_pin,
                 &cwd,
+                manifest.name.as_deref(),
                 &latest_keys,
                 no_save,
                 args.exact,
@@ -796,6 +797,16 @@ async fn run_inner(
     // records flush to stdout before afterAllResolved emits its own.
     crate::pnpmfile::ReadPackageHostChain::drain_forwarders(read_package_forwarders).await;
     crate::pnpmfile::run_after_all_resolved_chain(&pnpmfile_paths, &cwd, &mut graph).await?;
+    // Same metadata overlay as `aube install`: carry forward what the
+    // fresh resolve can't recover from the existing lockfile (bun's
+    // `lockfileVersion`, `license`, per-entry extras). Updated packages
+    // have new versions, so their canonical keys don't match and they
+    // keep only fresh data. Only from cwd's own lockfile: the workspace
+    // root's fallback graph would hand a member the root's importer
+    // extras, and the shared-lockfile merge keeps the root's own.
+    if existing_is_own && let Some(prior) = existing.as_ref() {
+        graph.overlay_metadata_from(prior);
+    }
 
     let mut catalog_updates: BTreeMap<super::CatalogSource, Vec<super::catalogs::CatalogUpdate>> =
         BTreeMap::new();
@@ -1147,6 +1158,7 @@ async fn pick_update_interactively(
     existing_importers: &[&str],
     preserve_pin: &BTreeSet<String>,
     cwd: &std::path::Path,
+    project_name: Option<&str>,
     latest_keys: &BTreeSet<String>,
     no_save: bool,
     exact: bool,
@@ -1235,7 +1247,8 @@ async fn pick_update_interactively(
         }
     }
 
-    let mut picker = demand::GridSelect::new("Choose which dependencies to update")
+    let title = picker_title(project_name, cwd);
+    let mut picker = demand::GridSelect::new(title)
         .columns(["Current", "Range", "Latest"])
         .filterable(true);
     let mut shown = BTreeSet::new();
@@ -1369,6 +1382,22 @@ async fn pick_update_interactively(
         })
         .collect();
     Ok(Some(InteractiveSelection { selected, shown }))
+}
+
+/// Picker title naming the project, so a recursive run over many
+/// workspace packages shows which one it is acting on (discussion #1687).
+/// Falls back to the directory name when `package.json` has no `name`.
+fn picker_title(project_name: Option<&str>, cwd: &std::path::Path) -> String {
+    let label = project_name
+        .map(str::to_string)
+        .or_else(|| cwd.file_name().map(|n| n.to_string_lossy().into_owned()));
+    match label {
+        Some(label) => format!(
+            "Choose which dependencies to update in {}",
+            aube_util::terminal::sanitize_inline(&label)
+        ),
+        None => "Choose which dependencies to update".to_string(),
+    }
 }
 
 fn real_name_from_spec(manifest_key: &str, specifier: Option<&String>) -> String {
@@ -2187,6 +2216,20 @@ fn exact_semver_pin(spec: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_title_names_project_or_falls_back_to_directory() {
+        let dir = std::path::Path::new("/ws/packages/web");
+        assert_eq!(
+            picker_title(Some("@acme/web"), dir),
+            "Choose which dependencies to update in @acme/web"
+        );
+        assert_eq!(
+            picker_title(None, dir),
+            "Choose which dependencies to update in web"
+        );
+        assert!(!picker_title(Some("a\x1b[31mb"), dir).contains('\x1b'));
+    }
 
     #[tokio::test]
     async fn filtered_workspace_update_merges_selected_member_lockfile() {

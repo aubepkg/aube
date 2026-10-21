@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.0...aube-registry-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(resolver)* honor minimumReleaseAge in update and dedupe on npmjs.org ([#1791](https://github.com/aubepkg/aube/pull/1791))
+
+## [2.7.2](https://github.com/aubepkg/aube/compare/aube-registry-v2.7.1...aube-registry-v2.7.2) - 2026-10-17
+
+### Fixed
+
+- *(registry)* return an unloadable TLS root as an error instead of panicking ([#1758](https://github.com/aubepkg/aube/pull/1758))
+- *(deps)* bump zip to 9 ([#1756](https://github.com/aubepkg/aube/pull/1756))
+
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.6.1...aube-registry-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(registry)* expose transport causes and validate CA files ([#1681](https://github.com/aubepkg/aube/pull/1681))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/aube-registry-v2.6.0...aube-registry-v2.6.1) - 2026-09-29
 
 ### Other

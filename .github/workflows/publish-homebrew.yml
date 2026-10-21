@@ -1,7 +1,6 @@
 name: publish-homebrew
 
-# Releases are published to the jdx tap until aube is submitted to and
-# accepted by homebrew-core.
+# Releases are published to the Aube-maintained aubepkg tap.
 
 on:
   release:
@@ -25,7 +24,7 @@ jobs:
     permissions:
       contents: read
     env:
-      TAP_REPO: jdx/homebrew-tap
+      TAP_REPO: aubepkg/homebrew-tap
     steps:
       - name: Resolve tag
         id: tag

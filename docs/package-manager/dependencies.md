@@ -78,7 +78,7 @@ and lets you choose, per package, between staying put, the newest version its
 range allows, and the registry's `latest`:
 
 ```
-Choose which dependencies to update
+Choose which dependencies to update in my-app
               Current     Range      Latest
  > chalk      [•] ^4.1.2             [ ] ^6.0.0
    is-number  [•] ^6.0.0             [ ] ^7.0.0
@@ -86,6 +86,10 @@ Choose which dependencies to update
    semver     [ ] 7.5.0   [•] 7.8.5
 ↑/↓/k/j up/down • ←/→/h/l choose • / filter • enter confirm
 ```
+
+The title names the project the picker is acting on: its `package.json` `name`,
+or the directory name when `name` is absent. With `-r`, this tells you which
+workspace package you are on.
 
 The manifest keeps each specifier's shape: `^4.1.2` becomes `^6.0.0`, and an
 exact pin such as `7.5.0` is offered the newest release its caret range allows,

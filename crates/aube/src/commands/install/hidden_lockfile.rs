@@ -40,15 +40,24 @@ pub(super) fn seed_allowed(mode: super::FrozenMode, strict_no_lockfile: bool) ->
     }
 }
 
-/// Parse the hidden lockfile at `path`. A missing file is `None`; an
-/// unreadable or corrupt one is `None` plus a warning, so the install
-/// falls back to a normal resolve instead of failing.
-pub(super) fn read(path: &Path, options: aube_lockfile::ParseOptions) -> Option<LockfileGraph> {
+/// Parse the hidden lockfile at `path` for the project at `cwd`. A missing
+/// file is `None`; an unreadable or corrupt one is `None` plus a warning,
+/// so the install falls back to a normal resolve instead of failing.
+pub(super) fn read(
+    path: &Path,
+    cwd: &Path,
+    options: aube_lockfile::ParseOptions,
+) -> Option<LockfileGraph> {
     if !path.exists() {
         return None;
     }
     match aube_lockfile::pnpm::parse_with_options(path, options) {
-        Ok(graph) => Some(graph),
+        Ok(mut graph) => {
+            // Local paths in the graph are relative to the project, not to
+            // the modules dir the copy lives in.
+            aube_lockfile::fill_local_package_versions(&mut graph, cwd);
+            Some(graph)
+        }
         Err(e) => {
             tracing::warn!(
                 code = aube_codes::warnings::WARN_AUBE_HIDDEN_LOCKFILE_BROKEN,
@@ -63,13 +72,19 @@ pub(super) fn read(path: &Path, options: aube_lockfile::ParseOptions) -> Option<
 /// Write `graph` to the hidden lockfile (atomic tempfile + rename via
 /// the lockfile writer). Best-effort: the hidden lockfile is only an
 /// accelerator, so a failure drops any stale copy and never fails the
-/// install.
-pub(super) fn write(path: &Path, graph: &LockfileGraph, manifest: &aube_manifest::PackageJson) {
+/// install. The graph's paths are relative to `cwd`, the project root,
+/// not to the modules dir the copy lives in.
+pub(super) fn write(
+    path: &Path,
+    cwd: &Path,
+    graph: &LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
+) {
     let result = path
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .map_err(|e| aube_lockfile::Error::Io(path.to_path_buf(), e))
-        .and_then(|()| aube_lockfile::pnpm::write(path, graph, manifest));
+        .and_then(|()| aube_lockfile::pnpm::write_with_project_root(path, cwd, graph, manifest));
     if let Err(e) = result {
         tracing::debug!("failed to write hidden lockfile {}: {e}", path.display());
         remove(path);
@@ -134,12 +149,57 @@ mod tests {
         // The modules dir doesn't exist yet: write creates it.
         write(
             &path,
+            dir.path(),
             &graph_with("is-odd", "3.0.1"),
             &manifest_with("is-odd", "^3.0.1"),
         );
-        let graph = read(&path, aube_lockfile::ParseOptions::default()).unwrap();
+        let graph = read(&path, dir.path(), aube_lockfile::ParseOptions::default()).unwrap();
         assert_eq!(graph.importers["."][0].name, "is-odd");
         assert_eq!(graph.packages["is-odd@3.0.1"].version, "3.0.1");
+    }
+
+    #[test]
+    fn hidden_lockfile_reads_local_versions_relative_to_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = path(dir.path(), "node_modules");
+        std::fs::create_dir_all(dir.path().join("vendor/foo")).unwrap();
+        std::fs::write(
+            dir.path().join("vendor/foo/package.json"),
+            r#"{"name":"foo","version":"1.2.3"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      foo:
+        specifier: file:./vendor/foo
+        version: file:./vendor/foo
+
+packages:
+
+  foo@file:./vendor/foo:
+    resolution: {directory: ./vendor/foo, type: directory}
+
+snapshots:
+
+  foo@file:./vendor/foo: {}
+",
+        )
+        .unwrap();
+
+        let graph = read(&path, dir.path(), aube_lockfile::ParseOptions::default()).unwrap();
+        let foo = graph
+            .packages
+            .values()
+            .find(|pkg| pkg.name == "foo")
+            .unwrap();
+        assert_eq!(foo.version, "1.2.3");
     }
 
     #[test]
@@ -158,7 +218,7 @@ mod tests {
     fn missing_hidden_lockfile_reads_as_none() {
         let dir = tempfile::tempdir().unwrap();
         let path = path(dir.path(), "node_modules");
-        assert!(read(&path, aube_lockfile::ParseOptions::default()).is_none());
+        assert!(read(&path, dir.path(), aube_lockfile::ParseOptions::default()).is_none());
     }
 
     #[test]
@@ -167,7 +227,7 @@ mod tests {
         let path = path(dir.path(), "node_modules");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "lockfileVersion: [\n  : not yaml").unwrap();
-        assert!(read(&path, aube_lockfile::ParseOptions::default()).is_none());
+        assert!(read(&path, dir.path(), aube_lockfile::ParseOptions::default()).is_none());
     }
 
     #[test]
@@ -176,6 +236,7 @@ mod tests {
         let path = path(dir.path(), "node_modules");
         write(
             &path,
+            dir.path(),
             &graph_with("is-odd", "3.0.1"),
             &manifest_with("is-odd", "^3.0.1"),
         );

@@ -1372,6 +1372,75 @@ async fn minimum_release_age_fetches_full_packument_directly() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// npmjs.org omits `time` from abbreviated packuments. With no full-cache
+/// directory the resolver must still request the full document, or every
+/// version looks old enough to pass the `minimumReleaseAge` cutoff.
+#[tokio::test]
+async fn minimum_release_age_without_full_cache_requests_full_packument() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut full = make_packument("foo", &["1.0.0", "1.1.0"], "1.1.0");
+    full.time
+        .insert("1.0.0".to_string(), "2018-05-30T00:00:00.000Z".to_string());
+    full.time
+        .insert("1.1.0".to_string(), "2999-01-01T00:00:00.000Z".to_string());
+    let full_body = serde_json::to_vec(&full).unwrap();
+    let mut corgi = full.clone();
+    corgi.time.clear();
+    let corgi_body = serde_json::to_vec(&corgi).unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let (full_body, corgi_body) = (full_body.clone(), corgi_body.clone());
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                let body = if request.contains("application/vnd.npm.install-v1+json") {
+                    &corgi_body
+                } else {
+                    &full_body
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.write_all(body).await.unwrap();
+            });
+        }
+    });
+
+    let resolve = |range: &'static str, strict: bool| {
+        let registry = registry.clone();
+        async move {
+            let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+            let mut resolver =
+                Resolver::new(client).with_minimum_release_age(Some(MinimumReleaseAge {
+                    minutes: 60,
+                    strict,
+                    ..Default::default()
+                }));
+            let mut manifest = PackageJson::default();
+            manifest
+                .dependencies
+                .insert("foo".to_string(), range.to_string());
+            resolver.resolve(&manifest, None).await
+        }
+    };
+
+    let graph = resolve("^1.0.0", false).await.unwrap();
+    assert!(graph_has_package(&graph, "foo", "1.0.0"));
+    assert!(!graph_has_package(&graph, "foo", "1.1.0"));
+    assert!(resolve("1.1.0", true).await.is_err());
+    server.abort();
+}
+
 #[tokio::test]
 async fn minimum_release_age_compacts_exact_optional_platform_history() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2091,6 +2160,47 @@ fn mk_locked(
         dep_path: format!("{name}@{version}"),
         ..Default::default()
     }
+}
+
+// The bun writer drops a resolved peer from `dependencies` only when the
+// package's declared set is known, so the peer-context pass must keep
+// `declared_dependencies_known()` on the contextualized copy.
+#[test]
+fn apply_peer_contexts_keeps_declared_dependencies_known() {
+    let react = mk_locked("react", "19.2.0", &[], &[]);
+    let dom = mk_locked(
+        "react-dom",
+        "19.2.0",
+        &[("react", "19.2.0")],
+        &[("react", "^19")],
+    )
+    .with_declared_dependencies_known();
+
+    let mut packages = BTreeMap::new();
+    packages.insert("react@19.2.0".to_string(), react);
+    packages.insert("react-dom@19.2.0".to_string(), dom);
+    let importers = BTreeMap::from([(
+        ".".to_string(),
+        ["react", "react-dom"]
+            .into_iter()
+            .map(|name| DirectDep {
+                name: name.to_string(),
+                dep_path: format!("{name}@19.2.0"),
+                dep_type: DepType::Production,
+                specifier: Some("19.2.0".to_string()),
+            })
+            .collect(),
+    )]);
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+
+    let dom = &out.packages["react-dom@19.2.0(react@19.2.0)"];
+    assert!(dom.declared_dependencies_known());
 }
 
 fn graph_has_package(graph: &LockfileGraph, name: &str, version: &str) -> bool {
@@ -4264,6 +4374,62 @@ async fn lockfile_reuse_preserves_transitive_optional_edges() {
     );
 }
 
+#[tokio::test]
+async fn lockfile_reuse_skips_local_peer_edge_supplied_by_importer() {
+    let dir = tempfile::tempdir().unwrap();
+    let react_dir = dir.path().join("deps/react");
+    std::fs::create_dir_all(&react_dir).unwrap();
+    std::fs::write(
+        react_dir.join("package.json"),
+        r#"{"name":"react","version":"18.0.0"}"#,
+    )
+    .unwrap();
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client).with_project_root(dir.path().to_path_buf());
+
+    let mut existing = LockfileGraph::default();
+    existing.packages.insert(
+        "host@1.0.0".to_string(),
+        LockedPackage {
+            name: "host".to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: "host@1.0.0".to_string(),
+            dependencies: [("react".to_string(), "file:deps/react".to_string())].into(),
+            peer_dependencies: [("react".to_string(), "*".to_string())].into(),
+            ..Default::default()
+        },
+    );
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("host".to_string(), "1.0.0".to_string());
+    manifest
+        .dependencies
+        .insert("react".to_string(), "file:deps/react".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, Some(&existing))
+        .await
+        .expect("a local peer supplied by the importer must not be re-resolved as a transitive");
+    let host = graph
+        .packages
+        .values()
+        .find(|p| p.name == "host")
+        .expect("host resolved");
+    let react = host
+        .dependencies
+        .get("react")
+        .expect("peer pass must wire the importer's react into host");
+    let importer_react = graph.importers["."]
+        .iter()
+        .find(|d| d.name == "react")
+        .expect("importer react");
+    assert_eq!(importer_react.dep_path, format!("react@{react}"));
+}
+
 // Bun and yarn parsers store transitive deps in `pkg.dependencies`
 // using the full dep_path form (`is-number@6.0.0`), while pnpm uses
 // bare versions (`6.0.0`). The resolver's lockfile-reuse path
@@ -4712,6 +4878,78 @@ async fn catalog_override_records_pnpm_resolved_lockfile_shape() {
     let dep = &graph.importers["."][0];
     assert_eq!(dep.name, "is-number");
     assert_eq!(dep.specifier.as_deref(), Some("7.0.0"));
+}
+
+// pnpm drops a `catalogs:` entry whose range an override replaced, so the
+// lockfile only lists catalog values that actually drove resolution.
+#[tokio::test]
+async fn overridden_catalog_entry_is_not_recorded_in_lockfile_catalogs() {
+    let is_number = make_packument("is-number", &["6.0.0", "7.0.0"], "7.0.0");
+    let is_odd = make_packument("is-odd", &["3.0.1"], "3.0.1");
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let catalogs = BTreeMap::from([(
+        "default".to_string(),
+        BTreeMap::from([
+            ("is-number".to_string(), "^7.0.0".to_string()),
+            ("is-odd".to_string(), "^3.0.1".to_string()),
+        ]),
+    )]);
+    let overrides = BTreeMap::from([("is-number".to_string(), "6.0.0".to_string())]);
+    let mut resolver = Resolver::new(client)
+        .with_catalogs(catalogs)
+        .with_overrides(overrides);
+    resolver
+        .cache
+        .insert("is-number".to_string(), is_number.into());
+    resolver.cache.insert("is-odd".to_string(), is_odd.into());
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-number".to_string(), "catalog:".to_string());
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("overridden catalog dep should resolve");
+
+    let default = &graph.catalogs["default"];
+    assert!(default.contains_key("is-odd"));
+    assert!(!default.contains_key("is-number"));
+}
+
+#[tokio::test]
+async fn equal_valued_override_still_drops_catalog_entry_from_lockfile_catalogs() {
+    let is_odd = make_packument("is-odd", &["3.0.1"], "3.0.1");
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let catalogs = BTreeMap::from([(
+        "default".to_string(),
+        BTreeMap::from([("is-odd".to_string(), "^3.0.1".to_string())]),
+    )]);
+    let overrides = BTreeMap::from([("is-odd".to_string(), "^3.0.1".to_string())]);
+    let mut resolver = Resolver::new(client)
+        .with_catalogs(catalogs)
+        .with_overrides(overrides);
+    resolver.cache.insert("is-odd".to_string(), is_odd.into());
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("equal-valued override should resolve");
+
+    assert!(!graph.catalogs.contains_key("default"));
 }
 
 #[tokio::test]

@@ -94,6 +94,44 @@ _common_teardown() {
 	temp_del "$TEST_TEMP_DIR"
 }
 
+# Assert that the directory link `$1` targets `$2`, a path relative to the
+# link's parent. Unix symlinks store that relative path; Windows junctions
+# store an absolute one, so there check that both name the same directory.
+_assert_link_target() {
+	local link="$1" expected="$2"
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT)
+		local link_path expected_path
+		link_path="$(cd "$link" && pwd -P)" || return 1
+		expected_path="$(cd "$(dirname "$link")/$expected" && pwd -P)" || return 1
+		assert_equal "$link_path" "$expected_path"
+		;;
+	*)
+		run readlink "$link"
+		assert_output "$expected"
+		;;
+	esac
+}
+
+# Print `$1` in the form a native program reports and reads. On Windows,
+# Git Bash paths such as `/tmp/x` mean `C:\tmp\x` to aube (and Node), so
+# convert them with `cygpath`; elsewhere the path is already native.
+_native_path() {
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT) cygpath -w "$1" ;;
+	*) printf '%s\n' "$1" ;;
+	esac
+}
+
+# Skip the current test on Windows. Git Bash, MSYS2, and Cygwin report
+# `MINGW64_NT-…` / `MSYS_NT-…` / `CYGWIN_NT-…` from `uname -s`, never
+# `Windows_NT` (that is `$OS`), so match all of them.
+_skip_on_windows() {
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN* | Windows_NT) skip "$1" ;;
+	esac
+}
+
 # Create a minimal package.json + aube-lock.yaml fixture in cwd.
 # Deliberately does NOT copy the pnpm-lock.yaml sidecar — tests that
 # want to exercise the pnpm→aube migration path should copy it

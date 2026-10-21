@@ -153,10 +153,10 @@ pub(crate) struct Cli {
     #[usage(long, global, value_name = "PATTERN")]
     filter_prod: Vec<String>,
 
-    /// Ignore workspace discovery for commands that support workspace fanout.
+    /// Ignore workspace discovery and operate on the current project alone.
     ///
-    /// Parsed for pnpm compatibility.
-    #[usage(long, global, hide)]
+    /// Skips the search for an enclosing `aube-workspace.yaml`, `pnpm-workspace.yaml`, or `package.json#workspaces` root, so the nearest `package.json` is installed on its own.
+    #[usage(long, global)]
     ignore_workspace: bool,
 
     /// Include the workspace root in recursive workspace operations.
@@ -790,14 +790,19 @@ fn inner_main() -> miette::Result<i32> {
     // clap parses it. Stripping here means the rest of the binary sees
     // a clean argv, and the parsed pairs feed every `ResolveCtx::cli`
     // through the process-global slot in `aube_settings`.
-    let config_overrides = extract_config_overrides(&mut argv);
-    aube_settings::set_global_cli_overrides(config_overrides);
+    let mut config_overrides = extract_config_overrides(&mut argv);
     // Shell activation prepends aube's shim dir so `node` / `pnpm` /
     // `yarn` resolve to this binary. Once aube is running, scrub that
     // directory before any runtime probe or child spawn can recursively
     // rediscover the shim as the "real" tool.
     tool_shims::sanitize_process_path();
-    let argv = lift_per_subcommand_flags(rewrite_multicall_argv(argv));
+    let mut argv = rewrite_multicall_argv(argv);
+    // Shim rewrites can translate foreign flags (npm's `--legacy-peer-deps`) into
+    // `--config.` overrides. Explicit user overrides stay later so they win.
+    let mut overrides = extract_config_overrides(&mut argv);
+    overrides.append(&mut config_overrides);
+    aube_settings::set_global_cli_overrides(overrides);
+    let argv = lift_per_subcommand_flags(argv);
     let argv: Vec<&std::ffi::OsStr> = argv.iter().map(OsString::as_os_str).collect();
     let cli = match Cli::parse_from_argv(&argv) {
         Ok(cli) => cli,
@@ -1000,6 +1005,8 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to change directory to {}", dir.display()))?;
     }
+    crate::dirs::set_dir_flag_given(cli.dir.is_some());
+    crate::dirs::set_ignore_workspace(cli.ignore_workspace);
 
     let print_top_level_version = should_print_top_level_version(&cli);
     if cli.workspace_root && !print_top_level_version {
@@ -1942,6 +1949,91 @@ mod multicall_tests {
         assert_eq!(
             rewrite_multicall_argv(os(&["npm", "install", "--", "vitest"])),
             os(&["aube", "add", "--", "vitest"])
+        );
+    }
+
+    #[test]
+    fn npm_legacy_peer_deps_becomes_auto_install_peers_override() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "pkg@latest",
+                "--prefix",
+                "/tmp/p",
+                "--legacy-peer-deps"
+            ])),
+            os(&[
+                "aube",
+                "add",
+                "pkg@latest",
+                "--prefix",
+                "/tmp/p",
+                "--config.auto-install-peers=false"
+            ])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--legacy-peer-deps", "install"])),
+            os(&["aube", "install", "--config.auto-install-peers=false"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--legacy-peer-deps=false"])),
+            os(&["aube", "install", "--config.auto-install-peers=true"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--legacy-peer-deps", "--", "pkg"])),
+            os(&[
+                "aube",
+                "add",
+                "--config.auto-install-peers=false",
+                "--",
+                "pkg"
+            ])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "run", "x", "--", "--legacy-peer-deps"])),
+            os(&["aube", "run", "x", "--", "--legacy-peer-deps"])
+        );
+    }
+
+    #[test]
+    fn npm_min_release_age_becomes_minimum_release_age_override() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--ignore-scripts",
+                "--min-release-age=0",
+                "@earendil-works/pi-coding-agent@1.3.0",
+            ])),
+            os(&[
+                "aube",
+                "add",
+                "--ignore-scripts",
+                "@earendil-works/pi-coding-agent@1.3.0",
+                "--config.minimum-release-age=0",
+            ])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--min-release-age", "1"])),
+            os(&["aube", "install", "--config.minimum-release-age=1440",])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--", "--min-release-age=0"])),
+            os(&["aube", "add", "--", "--min-release-age=0"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--min-release-age=abc"])),
+            os(&["aube", "install", "--min-release-age=abc"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--min-release-age",
+                "--ignore-scripts",
+            ])),
+            os(&["aube", "install", "--min-release-age", "--ignore-scripts",])
         );
     }
 

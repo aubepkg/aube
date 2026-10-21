@@ -451,6 +451,53 @@ EOF
 	assert_success
 }
 
+@test "non-frozen pnpm re-resolve preserves patched peer identities" {
+	cat >package.json <<'EOF'
+{
+  "name": "patched-peer-test",
+  "private": true,
+  "dependencies": {"react": "18.2.0", "react-dom": "18.2.0"}
+}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - .
+patchedDependencies:
+  react@18.2.0: patches/react.patch
+EOF
+	mkdir patches
+	cat >patches/react.patch <<'EOF'
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -5,3 +5,4 @@ if (process.env.NODE_ENV === 'production') {
+ } else {
+   module.exports = require('./cjs/react.development.js');
+ }
++module.exports.patched = 'v1';
+EOF
+	echo "lockfileVersion: '9.0'" >pnpm-lock.yaml
+	run aube install --no-frozen-lockfile --ignore-scripts
+	assert_success
+	# Simulate unrelated manifest drift against an existing patched lockfile.
+	node -e 'const fs = require("fs"); const p = require("./package.json"); p.dependencies["is-positive"] = "3.1.0"; fs.writeFileSync("package.json", JSON.stringify(p));'
+	run aube install --no-frozen-lockfile --ignore-scripts
+	assert_success
+	run node -e 'if (require("react").patched !== "v1") process.exit(1); require("react-dom"); require("is-positive");'
+	assert_success
+	patch_hash="$(awk '$1 == "react@18.2.0:" && NF == 2 { print $2; exit }' pnpm-lock.yaml)"
+	assert_equal "${#patch_hash}" 64
+	peer_version="18.2.0(react@18.2.0(patch_hash=$patch_hash))"
+	run grep -Fq "version: $peer_version" pnpm-lock.yaml
+	assert_success
+	run grep -Fq "react-dom@$peer_version:" pnpm-lock.yaml
+	assert_success
+	run grep -Fq "react: 18.2.0(patch_hash=$patch_hash)" pnpm-lock.yaml
+	assert_success
+	run aube install --frozen-lockfile --ignore-scripts
+	assert_success
+}
+
 # aube-lock.yaml must record patch identities the same way on every
 # write. Before, `aube add` in another workspace member re-resolved
 # and dropped the `(patch_hash=...)` suffixes that install had kept.

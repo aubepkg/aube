@@ -47,6 +47,7 @@ jobs:
       MODE: ${{ inputs.mode }}
       OIDC_PACKAGE: "@jdx/aube-publish-oidc-smoke"
       OTP_PACKAGE: "@jdx/aube-publish-otp-smoke"
+    timeout-minutes: 60
     steps:
       - name: Validate mode
         run: |

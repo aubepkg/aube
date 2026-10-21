@@ -31,6 +31,7 @@ pub const WARN_AUBE_GVS_INCOMPATIBLE: &str = "WARN_AUBE_GVS_INCOMPATIBLE";
 pub const WARN_AUBE_GVS_MODE_CHANGED: &str = "WARN_AUBE_GVS_MODE_CHANGED";
 pub const WARN_AUBE_GVS_CROSS_VOLUME: &str = "WARN_AUBE_GVS_CROSS_VOLUME";
 pub const WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED: &str = "WARN_AUBE_STORE_PRUNE_ENTRY_DISAPPEARED";
+#[rustfmt::skip] pub const WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE: &str = "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE";
 
 // ── settings / config validation ────────────────────────────────────
 pub const WARN_AUBE_INVALID_CONCURRENCY: &str = "WARN_AUBE_INVALID_CONCURRENCY";
@@ -277,6 +278,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_GVS_CROSS_VOLUME,
         category: category::INSTALL_LIFECYCLE,
         description: "The global virtual store (`globalVirtualStoreDir`, by default under `cacheDir`) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE,
+        category: category::INSTALL_LIFECYCLE,
+        description: "A `link:` dependency's `package.json` couldn't be read or parsed, so install skipped linking its bins into `node_modules/.bin`.",
         exit_code: None,
     },
     CodeMeta {

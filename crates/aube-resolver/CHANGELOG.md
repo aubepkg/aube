@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.0...aube-resolver-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(lockfile)* omit unreferenced catalog entries from pnpm-lock.yaml ([#1788](https://github.com/aubepkg/aube/pull/1788))
+- *(lockfile)* resolve optional peers like pnpm 11 ([#1793](https://github.com/aubepkg/aube/pull/1793))
+- *(resolver)* honor minimumReleaseAge in update and dedupe on npmjs.org ([#1791](https://github.com/aubepkg/aube/pull/1791))
+- *(lockfile)* sort peer suffix by full name@version like pnpm ([#1792](https://github.com/aubepkg/aube/pull/1792))
+- *(lockfile)* keep npm optional flags and re-resolve file: peers on add ([#1775](https://github.com/aubepkg/aube/pull/1775))
+
+## [2.7.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.7.0...aube-resolver-v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(lockfile)* keep resolved peers out of bun.lock dependencies ([#1727](https://github.com/aubepkg/aube/pull/1727))
+- *(resolver)* apply link: overrides to workspace members like pnpm ([#1729](https://github.com/aubepkg/aube/pull/1729))
+
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-resolver-v2.6.1...aube-resolver-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.6.0...aube-resolver-v2.6.1) - 2026-09-29
 
 ### Fixed

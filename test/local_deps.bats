@@ -87,14 +87,617 @@ EOF
 
 	# link: deps are a direct symlink, not a `.aube/` entry.
 	[ -L node_modules/vendor-link ]
-	run readlink node_modules/vendor-link
-	assert_output "../../vendor-link"
+	_assert_link_target node_modules/vendor-link "../../vendor-link"
 	assert_file_exists node_modules/vendor-link/package.json
 
 	# Editing the target should be visible through the symlink.
 	echo '{"name":"vendor-link","version":"2.0.1","main":"index.js"}' >../vendor-link/package.json
 	run cat node_modules/vendor-link/package.json
 	assert_output --partial '"version":"2.0.1"'
+}
+
+@test "aube install links the bins of a link: dep" {
+	# pnpm exposes a `link:` dep's bins in `.bin` like any other direct
+	# dep's; the linker never materializes it in `.aube`, so they are read
+	# from the link target.
+	mkdir -p linked-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+
+	run aube install
+	assert_success
+	[ -e node_modules/.bin/linked-tool ]
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "aube install links the bins of a link: dep in a workspace member" {
+	mkdir -p linked-tool packages/app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cat >package.json <<'EOF'
+{"name":"ws-root","version":"0.0.0","private":true}
+EOF
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - "packages/*"
+EOF
+	cat >packages/app/package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}
+EOF
+
+	run aube install
+	assert_success
+	[ -e packages/app/node_modules/.bin/linked-tool ]
+	cd packages/app
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "a workspace member keeps a link: dep's bins when dedupe-direct-deps drops its link" {
+	# With the root and a member linking the same target,
+	# `dedupe-direct-deps` leaves only the root's `node_modules` entry;
+	# the member's `.bin` still needs the tool, as for a registry dep.
+	mkdir -p linked-tool packages/app
+	cat >linked-tool/package.json <<'JSON'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+JSON
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cat >package.json <<'JSON'
+{"name":"ws-root","version":"0.0.0","private":true,"dependencies":{"linked-tool":"link:./linked-tool"}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "packages/*"
+YAML
+	cat >packages/app/package.json <<'JSON'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}
+JSON
+	echo 'dedupe-direct-deps=true' >.npmrc
+
+	run aube install
+	assert_success
+	[ ! -e packages/app/node_modules/linked-tool ]
+	[ -e packages/app/node_modules/.bin/linked-tool ]
+	cd packages/app
+	run aube exec linked-tool
+	assert_success
+	# Member-side freshness checks may auto-install first under
+	# dedupe-direct-deps (a separate issue), so look for the tool's line.
+	assert_line "linked-tool ran"
+}
+
+@test "aube install warns and skips the bins of a link: dep with a malformed package.json" {
+	# The resolver accepts a link: target whose manifest doesn't parse, so
+	# its bins alone mustn't fail the install.
+	mkdir -p broken app
+	echo '{not json' >broken/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"broken":"link:../broken"}}
+EOF
+
+	run aube install
+	assert_success
+	assert_output --partial "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE"
+	[ -L node_modules/broken ]
+}
+
+@test "aube install links the bins of a link: dep with node-linker=hoisted" {
+	mkdir -p linked-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+
+	run aube install
+	assert_success
+	[ -e node_modules/.bin/linked-tool ]
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "aube install removes the bin of a removed link: dep with node-linker=hoisted" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	# Hoisted installs symlink bins. A link: dep's bin goes through its
+	# node_modules entry, so it dangles once the dep is gone and is swept.
+	mkdir -p linked-tool kept-tool app
+	for tool in linked-tool kept-tool; do
+		echo "{\"name\":\"$tool\",\"version\":\"1.0.0\",\"bin\":{\"$tool\":\"cli.js\"}}" >"$tool/package.json"
+		printf '#!/usr/bin/env node\nconsole.log("ran");\n' >"$tool/cli.js"
+	done
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","kept-tool":"link:../kept-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/linked-tool ]
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"kept-tool":"link:../kept-tool"}}
+EOF
+	run aube install
+	assert_success
+	run test -L node_modules/.bin/linked-tool
+	assert_failure
+	[ -e node_modules/.bin/kept-tool ]
+}
+
+@test "aube install removes a symlinked bin a link: dep no longer declares" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/old-cmd ]
+
+	cat >../linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}
+EOF
+	# Change the manifest too, so the install relinks.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/new-cmd ]
+	run test -L node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install keeps a symlink someone else aimed at a link: dep's file" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0"}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	ln -s ../../../linked-tool/cli.js node_modules/.bin/custom-tool
+
+	# Change the manifest so the install relinks bins.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/custom-tool ]
+}
+
+@test "aube install keeps a symlink someone else aimed through a link: dep's node_modules entry" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0"}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	echo 'node-linker=hoisted' >.npmrc
+	run aube install
+	assert_success
+	mkdir -p node_modules/.bin
+	# The same target aube would write for a `custom-tool` command.
+	ln -s ../linked-tool/cli.js node_modules/.bin/custom-tool
+
+	# Change the manifest so the install relinks bins.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/custom-tool ]
+}
+
+@test "aube install removes a renamed bin a deduped workspace dep linked straight at its directory" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	printf 'dedupe-direct-deps=true\npreferSymlinkedExecutables=true\n' >.npmrc
+	echo '{"name":"root","private":true,"dependencies":{"tool":"workspace:*"}}' >package.json
+	echo '{"name":"tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >packages/tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+
+	echo '{"name":"tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >packages/tool/package.json
+	# Change a manifest too, so the install relinks.
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "a filtered install keeps the bin record of the members it skips" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	printf 'dedupe-direct-deps=true\npreferSymlinkedExecutables=true\n' >.npmrc
+	echo '{"name":"root","private":true,"dependencies":{"tool":"workspace:*"}}' >package.json
+	echo '{"name":"tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >packages/tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+	run aube install --filter other
+	assert_success
+
+	echo '{"name":"tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >packages/tool/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install keeps a bin a root postinstall retargeted after its dep is removed" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool other-tool app
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}' >linked-tool/package.json
+	printf '#!/bin/sh\necho linked\n' >linked-tool/cli.js
+	echo '{"name":"other-tool","version":"1.0.0"}' >other-tool/package.json
+	printf '#!/bin/sh\necho custom\n' >custom.sh
+	cd app
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	# The hook replaces aube's link once, pointing it outside node_modules.
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","scripts":{"postinstall":"[ -e .retargeted ] || { ln -sf ../../../custom.sh node_modules/.bin/linked-tool && touch .retargeted; }"},"dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+	run aube install
+	assert_success
+	run readlink node_modules/.bin/linked-tool
+	assert_output "../../../custom.sh"
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","scripts":{"postinstall":"[ -e .retargeted ] || { ln -sf ../../../custom.sh node_modules/.bin/linked-tool && touch .retargeted; }"},"dependencies":{"other-tool":"link:../other-tool"}}
+EOF
+	run aube install
+	assert_success
+	[ -L node_modules/.bin/linked-tool ]
+}
+
+@test "a member no install recorded yet still gets its renamed bin swept after a filtered install" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p linked-tool packages/app packages/other
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	echo 'preferSymlinkedExecutables=true' >.npmrc
+	echo '{"name":"root","private":true}' >package.json
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"old-cmd":"cli.js"}}' >linked-tool/package.json
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >linked-tool/cli.js
+	echo '{"name":"app","version":"1.0.0","dependencies":{"linked-tool":"link:../../linked-tool"}}' >packages/app/package.json
+	echo '{"name":"other","version":"1.0.0"}' >packages/other/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/old-cmd ]
+	# As an install from before the record existed left it.
+	rm -f node_modules/.aube-state/bin-links.json
+	run aube install --filter other
+	assert_success
+
+	echo '{"name":"linked-tool","version":"1.0.0","bin":{"new-cmd":"cli.js"}}' >linked-tool/package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"linked-tool":"link:../../linked-tool","other":"workspace:*"}}' >packages/app/package.json
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/new-cmd ]
+	run test -L packages/app/node_modules/.bin/old-cmd
+	assert_failure
+}
+
+@test "aube install removes the bin of a removed workspace dep with node-linker=hoisted" {
+	_skip_on_windows "bins are shims, not symlinks, on Windows"
+	mkdir -p packages/tool packages/app
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - packages/*
+EOF
+	echo '{"name":"root","private":true}' >package.json
+	echo 'node-linker=hoisted' >.npmrc
+	cat >packages/tool/package.json <<'EOF'
+{"name":"tool","version":"1.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("ran");\n' >packages/tool/cli.js
+	cat >packages/app/package.json <<'EOF'
+{"name":"app","version":"1.0.0","dependencies":{"tool":"workspace:*"}}
+EOF
+	run aube install
+	assert_success
+	[ -L packages/app/node_modules/.bin/tool ]
+
+	echo '{"name":"app","version":"1.0.0"}' >packages/app/package.json
+	run aube install
+	assert_success
+	run test -L packages/app/node_modules/.bin/tool
+	assert_failure
+}
+
+@test "aube rebuild relinks the bins of a link: dep" {
+	mkdir -p linked-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+
+	run aube install
+	assert_success
+	rm node_modules/.bin/linked-tool*
+
+	run aube rebuild
+	assert_success
+	[ -e node_modules/.bin/linked-tool ]
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "aube install keeps a link: dep's bins through the relink after a dependency build" {
+	# A dependency's lifecycle script makes install relink every bin.
+	mkdir -p linked-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool","aube-test-builds-marker":"^1.0.0"},"pnpm":{"allowBuilds":{"aube-test-builds-marker":true}}}
+EOF
+
+	run aube install
+	assert_success
+	assert_file_exists aube-builds-marker.txt
+	run aube exec linked-tool
+	assert_success
+	assert_output "linked-tool ran"
+}
+
+@test "aube install links no bins and warns nothing for a link: dep without a package.json" {
+	# Like pnpm, a link: target with no manifest simply has no bins.
+	mkdir -p bare app
+	echo 'console.log(1)' >bare/index.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"bare":"link:../bare"}}
+EOF
+
+	run aube install
+	assert_success
+	refute_output --partial "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE"
+	[ -L node_modules/bare ]
+	[ ! -e node_modules/.bin/bare ]
+}
+
+@test "aube install follows a link: target's changed bin" {
+	mkdir -p linked-tool app
+	cat >linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"linked-tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("linked-tool ran");\n' >linked-tool/cli.js
+	chmod +x linked-tool/cli.js
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"linked-tool":"link:../linked-tool"}}
+EOF
+
+	run aube install
+	assert_success
+	[ -e node_modules/.bin/linked-tool ]
+
+	cat >../linked-tool/package.json <<'EOF'
+{"name":"linked-tool","version":"1.0.0","bin":{"renamed-tool":"cli.js"}}
+EOF
+	run aube install
+	assert_success
+	[ -e node_modules/.bin/renamed-tool ]
+	[ ! -e node_modules/.bin/linked-tool ]
+}
+
+@test "aube install fails on a malformed workspace package that another importer links, whichever importer comes first" {
+	# A `link:` reader of a bad manifest only warns, but install must still
+	# fail when a `workspace:*` importer reaches the same directory, in
+	# either importer order. Workspace discovery parses every member's
+	# manifest first, so this fails there and never reaches bin linking;
+	# the bin-linking cache's per-caller policy is pinned by the
+	# `read_bin_manifest` unit test.
+	for link_importer in a b; do
+		rm -rf ws
+		mkdir -p ws/packages/pkg ws/packages/a ws/packages/b
+		cat >ws/package.json <<'EOF'
+{"name":"root","version":"0.0.0","private":true}
+EOF
+		cat >ws/pnpm-workspace.yaml <<'EOF'
+packages:
+  - "packages/*"
+EOF
+		echo '{not json' >ws/packages/pkg/package.json
+		for importer in a b; do
+			if [ "$importer" = "$link_importer" ]; then
+				spec='link:../pkg'
+			else
+				spec='workspace:*'
+			fi
+			echo "{\"name\":\"$importer\",\"version\":\"0.0.0\",\"dependencies\":{\"pkg\":\"$spec\"}}" >"ws/packages/$importer/package.json"
+		done
+
+		run aube -C ws install
+		assert_failure 70
+		assert_output --partial "ERR_AUBE_MANIFEST_PARSE"
+		assert_output --partial "pkg/package.json"
+	done
+}
+
+@test "a link: dep's bins win over a same-named workspace package" {
+	mkdir -p outside/tool packages/tool
+	cat >outside/tool/package.json <<'EOF'
+{"name":"tool","version":"9.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("from link");\n' >outside/tool/cli.js
+	chmod +x outside/tool/cli.js
+	cat >packages/tool/package.json <<'EOF'
+{"name":"tool","version":"1.0.0","bin":{"tool":"cli.js"}}
+EOF
+	printf '#!/usr/bin/env node\nconsole.log("from workspace");\n' >packages/tool/cli.js
+	chmod +x packages/tool/cli.js
+	cat >pnpm-workspace.yaml <<'EOF'
+packages:
+  - "packages/*"
+EOF
+	cat >package.json <<'EOF'
+{"name":"ws-root","version":"0.0.0","private":true,"dependencies":{"tool":"link:./outside/tool"}}
+EOF
+
+	run aube install
+	assert_success
+	run aube exec tool
+	assert_success
+	assert_output "from link"
+}
+
+@test "installs from the lockfile report the real versions of local deps" {
+	# pnpm lockfiles record no version for file:/link: packages; a
+	# frozen or filtered install and `aube list` must still show the
+	# version from the package's own package.json, not 0.0.0.
+	_make_local_pkg vendor-dir vendor-dir 1.2.3
+	_make_local_pkg vendor-link vendor-link 4.5.6
+	mkdir -p app
+	cd app
+	cat >package.json <<'EOF'
+{"name":"app","version":"1.0.0","dependencies":{"vendor-dir":"file:../vendor-dir","vendor-link":"link:../vendor-link"}}
+EOF
+	run aube install
+	assert_success
+
+	rm -rf node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_output --partial "vendor-dir@1.2.3"
+	assert_output --partial "vendor-link@4.5.6"
+
+	run aube list
+	assert_success
+	assert_output --partial "vendor-dir 1.2.3"
+	assert_output --partial "vendor-link 4.5.6"
+	refute_output --partial "0.0.0"
+
+	# Without the project lockfile, install seeds from the hidden copy
+	# under node_modules, whose local paths are project-relative.
+	rm aube-lock.yaml
+	run aube install
+	assert_success
+	assert_output --partial "vendor-dir@1.2.3"
+	assert_output --partial "vendor-link@4.5.6"
+	refute_output --partial "0.0.0"
+}
+
+@test "installs from bun.lock report the real versions of file: deps and workspace members" {
+	mkdir -p packages/a packages/b vendor/x
+	echo '{"name":"root","private":true,"workspaces":["packages/*"],"dependencies":{"x":"file:./vendor/x"}}' >package.json
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}' >packages/a/package.json
+	echo '{"name":"b","version":"2.0.0"}' >packages/b/package.json
+	echo '{"name":"x","version":"1.2.3"}' >vendor/x/package.json
+	# bun.lock records the `file:` and `workspace:` specs, not versions.
+	cat >bun.lock <<'EOF'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "x": "file:./vendor/x",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "workspace:*",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "version": "2.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "b": ["b@workspace:packages/b"],
+
+    "x": ["x@file:vendor/x", {}],
+  }
+}
+EOF
+
+	run aube install --frozen-lockfile
+	assert_success
+	assert_output --partial "+ x@1.2.3"
+	assert_output --partial "+ b@2.0.0"
+	refute_output --partial "file:vendor/x"
+	refute_output --partial "workspace:packages/b"
+
+	run aube list
+	assert_success
+	assert_output --partial "x 1.2.3"
 }
 
 @test "aube install handles file: tarball dep" {
@@ -221,8 +824,7 @@ EOF
 	assert_success
 	assert_file_exists node_modules/vendor-dir/package.json
 	[ -L node_modules/vendor-link ]
-	run readlink node_modules/vendor-link
-	assert_output "../../vendor-link"
+	_assert_link_target node_modules/vendor-link "../../vendor-link"
 }
 
 @test "aube install handles file:/link: in a workspace importer" {
@@ -311,9 +913,245 @@ EOF
 	assert_success
 
 	[ -L pkg-a/node_modules/pkg-b ]
-	run readlink pkg-a/node_modules/pkg-b
-	assert_output "../../gems/pkg-b-parent/pkg-b"
+	_assert_link_target pkg-a/node_modules/pkg-b "../../gems/pkg-b-parent/pkg-b"
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
+}
+
+@test "aube install reads and writes a member's link: relative to the member, like pnpm" {
+	# pnpm records a member's own `link:` relative to the member and
+	# normalized (`link:./vendor/x` as `link:vendor/x`). aube used to read
+	# that against the root and write root-relative paths pnpm misreads.
+	mkdir -p pkg-a/vendor/x libs/y
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"link:./vendor/x","y":"link:../libs/y"}}
+JSON
+	echo '{"name":"x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"y","version":"2.0.0"}' >libs/y/package.json
+	cat >pnpm-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  pkg-a:
+    dependencies:
+      x:
+        specifier: link:./vendor/x
+        version: link:vendor/x
+      y:
+        specifier: link:../libs/y
+        version: link:../libs/y
+YAML
+
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json pkg-a/node_modules/y/package.json
+	assert_output --partial '"name":"x"'
+	assert_output --partial '"name":"y"'
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run cat pnpm-lock.yaml
+	assert_output --partial "version: link:vendor/x"
+	assert_output --partial "version: link:../libs/y"
+}
+
+@test "aube install keeps a member's link: member-relative when an override that doesn't apply to it has the same value" {
+	# Overrides for `foo` and for `x` under `parent` share the value
+	# `link:./vendor/x` with pkg-a's own `x`. Neither applies to a direct
+	# dependency of pkg-a, so `x` still resolves from pkg-a, not from the
+	# root's `vendor/x`.
+	mkdir -p pkg-a/vendor/x vendor/x
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"foo":"link:./vendor/x","parent>x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"link:./vendor/x"}}
+JSON
+	echo '{"name":"x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+	cat >pnpm-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+overrides:
+  foo: link:./vendor/x
+  parent>x: link:./vendor/x
+
+importers:
+
+  .: {}
+
+  pkg-a:
+    dependencies:
+      x:
+        specifier: link:./vendor/x
+        version: link:vendor/x
+YAML
+
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"x"'
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run cat pnpm-lock.yaml
+	assert_output --partial "version: link:vendor/x"
+	refute_output --partial "version: link:pkg-a/vendor/x"
+}
+
+@test "aube install and a frozen reinstall agree when root overrides share the value of a member's link: deps" {
+	# `parent@^1/x` targets `x` under `parent`, so it doesn't apply to
+	# pkg-a's own `parent`, which stays member-relative. The `x` override
+	# applies even though its value equals pkg-a's declaration, so, as in
+	# pnpm, `x` resolves from the root. The frozen reinstall must link the
+	# same packages as the fresh install.
+	mkdir -p pkg-a/vendor/p pkg-a/vendor/x vendor/p vendor/x
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"resolutions":{"parent@^1/x":"link:./vendor/p"},"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"parent":"link:./vendor/p","x":"link:./vendor/x"}}
+JSON
+	echo '{"name":"member-p","version":"1.0.0"}' >pkg-a/vendor/p/package.json
+	echo '{"name":"member-x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"root-p","version":"9.9.9"}' >vendor/p/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+
+	run aube install
+	assert_success
+	run cat pkg-a/node_modules/parent/package.json pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"member-p"'
+	assert_output --partial '"name":"root-x"'
+
+	rm -rf node_modules pkg-a/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/parent/package.json pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"member-p"'
+	assert_output --partial '"name":"root-x"'
+	refute_output --partial '"name":"root-p"'
+	refute_output --partial '"name":"member-x"'
+}
+
+@test "aube install and a frozen reinstall link a root override target from a member" {
+	# The override rewrites pkg-a's `x`, so its target is anchored at the
+	# root. A distinct package at the member's `vendor/x` must not win on
+	# the frozen reinstall.
+	mkdir -p pkg-a/other pkg-a/vendor/x vendor/x
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"link:./other"}}
+JSON
+	echo '{"name":"other","version":"1.0.0"}' >pkg-a/other/package.json
+	echo '{"name":"member-x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+
+	run aube install
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+
+	rm -rf node_modules pkg-a/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+}
+
+@test "aube install and a frozen reinstall link a root override target that replaced a non-link: declaration" {
+	# pkg-a declares a range; the override turns it into a root `link:`.
+	# The importer version is relative to pkg-a, as pnpm writes it.
+	mkdir -p pkg-a/vendor/x vendor/x
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "pkg-a"
+YAML
+	cat >pkg-a/package.json <<'JSON'
+{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"^1"}}
+JSON
+	echo '{"name":"member-x","version":"1.0.0"}' >pkg-a/vendor/x/package.json
+	echo '{"name":"root-x","version":"1.0.0"}' >vendor/x/package.json
+
+	run aube install
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+	run cat aube-lock.yaml
+	assert_output --partial 'version: link:../vendor/x'
+
+	rm -rf node_modules pkg-a/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat pkg-a/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+}
+
+@test "aube install and a frozen reinstall link a root override target from an importer outside the root" {
+	# `../sibling` reaches the root's `vendor/x` through the root's own
+	# directory name. Without it the frozen reinstall resolved the target
+	# under the sibling instead.
+	mkdir -p proj/vendor/x sibling/other sibling/vendor/x
+	cd proj
+	cat >package.json <<'JSON'
+{"name":"root","version":"0.0.0","private":true,"pnpm":{"overrides":{"x":"link:./vendor/x"}}}
+JSON
+	cat >pnpm-workspace.yaml <<'YAML'
+packages:
+  - "../sibling"
+YAML
+	cat >../sibling/package.json <<'JSON'
+{"name":"sibling","version":"0.0.0","dependencies":{"x":"link:./other"}}
+JSON
+	echo '{"name":"other","version":"1.0.0"}' >../sibling/other/package.json
+	echo '{"name":"sibling-x","version":"1.0.0"}' >../sibling/vendor/x/package.json
+	echo '{"name":"root-x","version":"9.9.9"}' >vendor/x/package.json
+
+	run aube install
+	assert_success
+	run cat ../sibling/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
+	run cat aube-lock.yaml
+	assert_output --partial 'version: link:../proj/vendor/x'
+
+	rm -rf node_modules ../sibling/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat ../sibling/node_modules/x/package.json
+	assert_output --partial '"name":"root-x"'
 }
 
 @test "aube install preserves pnpm workspace link targets in hoisted mode" {
@@ -356,8 +1194,7 @@ EOF
 	assert_success
 
 	[ -L pkg-a/node_modules/pkg-b ]
-	run readlink pkg-a/node_modules/pkg-b
-	assert_output "../../gems/pkg-b-parent/pkg-b"
+	_assert_link_target pkg-a/node_modules/pkg-b "../../gems/pkg-b-parent/pkg-b"
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
 }
 
@@ -401,8 +1238,7 @@ EOF
 	assert_success
 
 	[ -L pkg-a/node_modules/pkg-b ]
-	run readlink pkg-a/node_modules/pkg-b
-	assert_output "../../pkg-b"
+	_assert_link_target pkg-a/node_modules/pkg-b "../../pkg-b"
 	assert_file_exists pkg-a/node_modules/pkg-b/package.json
 }
 
@@ -435,11 +1271,18 @@ EOF
 	run cat libs/foo/node_modules/@company/bar/package.json
 	assert_output --partial '"version":"9.9.9"'
 
-	# Lockfile records the canonical project-root-relative form, not
-	# the importer-rebased form.
+	# The importer version points at the override target relative to the
+	# consumer, as pnpm records it, not at a phantom path under it.
 	run cat aube-lock.yaml
-	assert_output --partial 'version: link:./libs/bar'
+	assert_output --partial 'version: link:../bar'
 	refute_output --partial 'libs/foo/libs/bar'
+
+	# Reading it back keeps the override root-relative too.
+	rm -rf node_modules libs/foo/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run cat libs/foo/node_modules/@company/bar/package.json
+	assert_output --partial '"version":"9.9.9"'
 }
 
 @test "aube install: pnpm.overrides redirects a registry parent's transitive to link: (GVS)" {

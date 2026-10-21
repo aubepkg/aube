@@ -104,8 +104,12 @@ pub async fn run(
             }
         }
 
-        let (policy, warnings) =
-            super::install::build_policy_from_sources(&manifest, &workspace, false);
+        let (policy, warnings) = super::install::build_policy_from_sources(
+            &manifest,
+            &workspace,
+            false,
+            aube_settings::resolved::use_default_trusted_dependencies(&settings_ctx),
+        );
         for warning in warnings {
             eprintln!("warn: {warning}");
         }

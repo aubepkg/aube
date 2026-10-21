@@ -727,6 +727,10 @@ async fn write_fix_lockfile_update(
     }
 
     sync_root_dep_specifiers(&mut new_graph, &output_manifest);
+    // Carry forward what a fresh resolve can't recover from the lockfile
+    // on disk (bun's version stamp, licenses, per-entry extras), the same
+    // overlay the main install path does.
+    new_graph.overlay_metadata_from(graph);
     crate::commands::install::finalize_lockfile_graph(
         cwd,
         &mut new_graph,

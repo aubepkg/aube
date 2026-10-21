@@ -40,6 +40,33 @@ pub fn write(
             continue;
         }
         canonical.entry(pkg.spec_key()).or_insert(pkg);
+        // The hoist tree looks packages up by their dep_path, which for
+        // `file:` packages carries the path hash instead of the version.
+        if matches!(
+            pkg.local_source,
+            Some(LocalSource::Directory(_) | LocalSource::Tarball(_))
+        ) {
+            canonical
+                .entry(crate::npm::canonical_key_from_dep_path(&pkg.dep_path))
+                .or_insert(pkg);
+        }
+    }
+
+    // Non-root workspaces are read fresh from disk because the caller
+    // doesn't thread them through — the root manifest is the only one
+    // that might carry unsaved edits (from `aube add` / `remove`).
+    // Silently falling back to an empty manifest when a read fails
+    // keeps the writer best-effort: a missing workspace package.json
+    // is odd but not fatal.
+    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut workspace_manifests: BTreeMap<String, aube_manifest::PackageJson> = BTreeMap::new();
+    for importer_path in graph.importers.keys() {
+        if importer_path == "." {
+            continue;
+        }
+        let pj_path = project_dir.join(importer_path).join("package.json");
+        let pj = aube_manifest::PackageJson::from_path(&pj_path).unwrap_or_default();
+        workspace_manifests.insert(importer_path.clone(), pj);
     }
 
     // Build the hoist tree from every importer's direct deps (not just
@@ -57,9 +84,33 @@ pub fn write(
     // single top-level entry (the first-seen version); a proper fix
     // would emit `<workspace>/<dep>` nested entries per-workspace,
     // which is out of scope here.
+    // bun gives the top-level slot of a member the root asks for with
+    // `workspace:` to that member, nesting a registry package of the same
+    // name under whatever depends on it.
+    let reserved_roots: BTreeSet<String> = [
+        &manifest.dependencies,
+        &manifest.dev_dependencies,
+        &manifest.optional_dependencies,
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|(_, spec)| spec.starts_with("workspace:"))
+    .map(|(name, _)| name.clone())
+    .collect();
+    // A member's own direct dep on a reserved name goes under the member
+    // (`app/is-number`), as bun writes it, unless a package or another
+    // member's path shares the member's name: the reader would hand the
+    // nested entry to them too.
+    let scope_of = |importer_path: &str| -> Option<&str> {
+        let name = workspace_manifests.get(importer_path)?.name.as_deref()?;
+        let shared = canonical.values().any(|pkg| pkg.name == name)
+            || (importer_path != name && workspace_manifests.contains_key(name));
+        (!shared).then_some(name)
+    };
     let mut all_roots: Vec<DirectDep> = Vec::new();
+    let mut scoped_roots: Vec<(&str, DirectDep)> = Vec::new();
     let mut seen_names: BTreeSet<String> = BTreeSet::new();
-    for deps in graph.importers.values() {
+    for (importer_path, deps) in &graph.importers {
         for d in deps {
             if matches!(
                 graph
@@ -70,29 +121,39 @@ pub fn write(
             ) {
                 continue;
             }
+            if importer_path != "."
+                && reserved_roots.contains(&d.name)
+                && let Some(scope) = scope_of(importer_path)
+            {
+                scoped_roots.push((scope, d.clone()));
+                continue;
+            }
             if !seen_names.insert(d.name.clone()) {
                 continue;
             }
             all_roots.push(d.clone());
         }
     }
-    let tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None);
-
-    // Non-root workspaces are read fresh from disk because the caller
-    // doesn't thread them through — the root manifest is the only one
-    // that might carry unsaved edits (from `aube add` / `remove`).
-    // Silently falling back to an empty manifest when a read fails
-    // keeps the writer best-effort: a missing workspace package.json
-    // is odd but not fatal.
-    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut workspace_manifests: BTreeMap<String, aube_manifest::PackageJson> = BTreeMap::new();
-    for importer_path in graph.importers.keys() {
-        if importer_path == "." {
-            continue;
+    let mut tree = crate::npm::build_hoist_tree(&canonical, &all_roots, None, &reserved_roots);
+    for (scope, dep) in scoped_roots {
+        let subtree = crate::npm::build_hoist_tree(
+            &canonical,
+            std::slice::from_ref(&dep),
+            None,
+            &BTreeSet::new(),
+        );
+        // Its own deps go below it (`app/is-odd/is-number`), as bun writes
+        // them, so they can't shadow the member's other direct deps.
+        for (segs, key) in subtree {
+            let mut scoped = vec![scope.to_string()];
+            // Paths starting with the dep's name are the dep itself or
+            // already nested beneath it.
+            if segs.first() != Some(&dep.name) {
+                scoped.push(dep.name.clone());
+            }
+            scoped.extend(segs);
+            tree.entry(scoped).or_insert(key);
         }
-        let pj_path = project_dir.join(importer_path).join("package.json");
-        let pj = aube_manifest::PackageJson::from_path(&pj_path).unwrap_or_default();
-        workspace_manifests.insert(importer_path.clone(), pj);
     }
 
     // Build the `workspaces[path]` object for each importer.
@@ -226,10 +287,25 @@ pub fn write(
             if !canonical.contains_key(&key) {
                 continue;
             }
+            // A resolved peer sits in `dependencies` so the linker can
+            // wire it, but bun lists only the package's declared
+            // dependencies here. Writing the peer's pin makes bun treat
+            // it as a hard dependency and nest the old copy once the
+            // root's version moves. Without the full declared set (a
+            // local package, or one read from pnpm-lock.yaml) the
+            // writer can't tell the two apart, so it keeps the entry
+            // rather than lose a real dependency.
+            if pkg.declared_dependencies_known()
+                && pkg.peer_dependencies.contains_key(dep_name)
+                && !pkg.declared_dependencies.contains_key(dep_name)
+            {
+                continue;
+            }
             let rendered = pkg
                 .declared_dependencies
                 .get(dep_name)
                 .cloned()
+                .or_else(|| local_child_spec(project_dir, pkg, canonical.get(&key).copied()?))
                 .unwrap_or_else(|| {
                     crate::npm::dep_value_as_version(dep_name, dep_value).to_string()
                 });
@@ -335,7 +411,13 @@ pub fn write(
             "libc",
         ];
         for (k, v) in &pkg.extra_meta {
-            if MODELED_META_KEYS.contains(&k.as_str()) || k == crate::EXTRA_PRESERVE_TARBALL_URL {
+            if MODELED_META_KEYS.contains(&k.as_str())
+                || k == crate::EXTRA_PRESERVE_TARBALL_URL
+                || k == crate::EXTRA_YARN_RESOLVED
+                || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
+                || k == crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS
+                || k == crate::EXTRA_YARN_BERRY_CONDITIONS
+            {
                 continue;
             }
             meta.insert(k.clone(), v.clone());
@@ -348,14 +430,35 @@ pub fn write(
         // collapsed to the alias name and produced a gratuitous diff
         // against bun's own output.
         let ident_name = pkg.alias_of.as_deref().unwrap_or(&pkg.name);
-        let ident = format!("{}@{}", ident_name, pkg.version);
         let integrity = pkg.integrity.clone().unwrap_or_default();
-        let entry = Value::Array(vec![
-            Value::String(ident),
-            Value::String(String::new()),
-            Value::Object(meta),
-            Value::String(integrity),
-        ]);
+        // bun identifies `file:` packages by their root-relative path:
+        // `[name@file:dir, meta]` for a directory and
+        // `[name@./file.tgz, meta, integrity]` for a tarball.
+        let entry = match &pkg.local_source {
+            Some(LocalSource::Directory(dir)) => Value::Array(vec![
+                Value::String(format!("{ident_name}@file:{}", bun_local_path(dir))),
+                Value::Object(meta),
+            ]),
+            Some(LocalSource::Tarball(tarball)) => {
+                let tarball = bun_local_path(tarball);
+                let prefix = if tarball.starts_with("..") || Path::new(&tarball).is_absolute() {
+                    ""
+                } else {
+                    "./"
+                };
+                Value::Array(vec![
+                    Value::String(format!("{ident_name}@{prefix}{tarball}")),
+                    Value::Object(meta),
+                    Value::String(integrity),
+                ])
+            }
+            _ => Value::Array(vec![
+                Value::String(format!("{}@{}", ident_name, pkg.version)),
+                Value::String(String::new()),
+                Value::Object(meta),
+                Value::String(integrity),
+            ]),
+        };
         package_entries.push((bun_key, entry));
     }
 
@@ -453,6 +556,56 @@ pub fn write(
         };
         package_entries.push((key, entry));
     }
+    // A freshly resolved graph has no `link:` package for a member that
+    // nothing depends on, or whose dependents reach it by version. bun
+    // still lists every member; without the entry the reader can't wire
+    // workspace deps, and installs from the lockfile skip those links.
+    // When a package already takes a member's name, bun nests the member
+    // under each member that asks for it with `workspace:` instead.
+    let taken: BTreeSet<String> = package_entries
+        .iter()
+        .map(|(key, _)| key.clone())
+        .filter(|key| !emitted_workspace_keys.contains(key))
+        .collect();
+    for (importer_path, pj) in &workspace_manifests {
+        let Some(name) = pj.name.as_deref() else {
+            continue;
+        };
+        let ident = Value::Array(vec![Value::String(format!(
+            "{name}@workspace:{importer_path}"
+        ))]);
+        if !taken.contains(name) {
+            if emitted_workspace_keys.insert(name.to_string()) {
+                package_entries.push((name.to_string(), ident));
+            }
+            continue;
+        }
+        for (dependent_path, dependent) in &workspace_manifests {
+            let Some(dependent_name) = dependent.name.as_deref() else {
+                continue;
+            };
+            let asks = [
+                &dependent.dependencies,
+                &dependent.dev_dependencies,
+                &dependent.optional_dependencies,
+            ]
+            .into_iter()
+            .any(|deps| {
+                deps.get(name)
+                    .is_some_and(|spec| spec.starts_with("workspace:"))
+            });
+            // The reader also looks up `<dependent>/<name>` from a package
+            // keyed `<dependent>` and from a member whose path is
+            // `<dependent>`; nesting there would hand them the member.
+            let shared = taken.contains(dependent_name)
+                || (dependent_path != dependent_name
+                    && workspace_manifests.contains_key(dependent_name));
+            let key = format!("{dependent_name}/{name}");
+            if asks && !shared && !taken.contains(&key) {
+                package_entries.push((key, ident.clone()));
+            }
+        }
+    }
     package_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Echo back the parsed `configVersion` (default 1 for older v1.1
@@ -539,7 +692,7 @@ pub fn write(
         "catalogs",
     ];
     for (k, v) in &graph.extra_fields {
-        if MODELED_TOP_KEYS.contains(&k.as_str()) {
+        if MODELED_TOP_KEYS.contains(&k.as_str()) || k == crate::EXTRA_YARN_BERRY_METADATA {
             continue;
         }
         top_level_extras.push((k.clone(), v.clone()));
@@ -554,6 +707,48 @@ pub fn write(
     );
     crate::atomic_write_lockfile(path, body.as_bytes())?;
     Ok(())
+}
+
+/// A local path in the form bun writes it: normalized, with forward
+/// slashes. A relative path is root-relative and has no leading `./`; an
+/// absolute one stays absolute.
+fn bun_local_path(path: &Path) -> String {
+    aube_util::path::normalize_lexical(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The `file:` spec a local package declares for a local child, as bun
+/// writes it: relative to the parent's directory, or absolute when the
+/// child's path is. A fresh resolve keeps no declared specs for local
+/// packages, only the child's dep_path. Both paths are anchored at
+/// `project_dir`, so a parent outside the project still gets a path that
+/// leads to the child.
+pub(super) fn local_child_spec(
+    project_dir: &Path,
+    parent: &LockedPackage,
+    child: &LockedPackage,
+) -> Option<String> {
+    let Some(LocalSource::Directory(child_path) | LocalSource::Tarball(child_path)) =
+        &child.local_source
+    else {
+        return None;
+    };
+    let relative = match &parent.local_source {
+        Some(LocalSource::Directory(parent_dir)) if !child_path.is_absolute() => {
+            // `diff_paths` finds no relative path between an absolute and a
+            // relative path, so anchor at an absolute project directory.
+            let project_dir =
+                std::path::absolute(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+            let anchored = |p: &Path| aube_util::path::normalize_lexical(&project_dir.join(p));
+            let child_path = anchored(child_path);
+            pathdiff::diff_paths(&child_path, anchored(parent_dir))
+                .map(|relative| bun_local_path(&relative))
+                .unwrap_or_else(|| bun_local_path(&child_path))
+        }
+        _ => bun_local_path(child_path),
+    };
+    Some(format!("file:{relative}"))
 }
 
 /// Hand-written JSONC emitter matching bun 1.2's `bun.lock` style.

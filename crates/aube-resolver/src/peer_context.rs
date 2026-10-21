@@ -478,6 +478,73 @@ pub fn apply_peer_contexts(
     Ok(result)
 }
 
+/// pnpm's `dedupe-peer-dependents` also folds a variant's *optional*
+/// peers together with those of every other variant of the same package
+/// that does not disagree with it: a variant resolved with `jiti` and one
+/// resolved with `yaml` both end up as `(jiti@…)(yaml@…)`. Required peers
+/// already converge through the graph-wide scan, so only optional peers
+/// need this. Each variant, in key order, takes the optional peers it
+/// declares but lacks from every other variant whose already-resolved
+/// peers all match its own (variants with more resolved dependencies
+/// first). The next fixed-point pass reads the added
+/// entries back through `pkg.dependencies` and renames the key.
+fn absorb_compatible_optional_peers(graph: &mut LockfileGraph, keys: &[String]) {
+    let original: BTreeMap<&String, BTreeMap<String, String>> = keys
+        .iter()
+        .map(|k| (k, graph.packages[k].dependencies.clone()))
+        .collect();
+    for key in keys {
+        let mut absorbed: Vec<(String, String)> = Vec::new();
+        let mut current = graph.packages[key].dependencies.clone();
+        let optional_peers: Vec<String> = graph.packages[key]
+            .peer_dependencies_meta
+            .iter()
+            .filter(|(name, meta)| {
+                meta.optional && graph.packages[key].peer_dependencies.contains_key(*name)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        if optional_peers.is_empty() {
+            continue;
+        }
+        let mut others: Vec<&String> = keys.iter().filter(|k| *k != key).collect();
+        // Richer variants first: `(jiti@2)(yaml@2)` outranks `(jiti@1)`.
+        others.sort_by_key(|k| std::cmp::Reverse(original[*k].len()));
+        for other_key in others {
+            let other = &graph.packages[other_key];
+            let other_deps = &original[other_key];
+            let peer_names = || {
+                graph.packages[key]
+                    .peer_dependencies
+                    .keys()
+                    .chain(other.peer_dependencies.keys())
+            };
+            let conflicts = peer_names().any(|name| {
+                matches!(
+                    (current.get(name), other_deps.get(name)),
+                    (Some(a), Some(b)) if canonical_tail(a) != canonical_tail(b)
+                )
+            });
+            if conflicts {
+                continue;
+            }
+            for name in &optional_peers {
+                if current.contains_key(name) {
+                    continue;
+                }
+                if let Some(tail) = other_deps.get(name) {
+                    current.insert(name.clone(), tail.clone());
+                    absorbed.push((name.clone(), tail.clone()));
+                }
+            }
+        }
+        if let Some(pkg) = graph.packages.get_mut(key) {
+            pkg.optional_dependencies.extend(absorbed.iter().cloned());
+            pkg.dependencies.extend(absorbed);
+        }
+    }
+}
+
 /// Cross-subtree peer-variant dedupe. When `dedupe-peer-dependents` is
 /// on, packages that landed at different contextualized dep_paths but
 /// resolved every declared peer to the *same* version (ignoring the
@@ -490,7 +557,7 @@ pub fn apply_peer_contexts(
 ///
 /// Packages whose `peer_dependencies` map is empty — i.e. the canonical
 /// base already has only one variant — are skipped.
-pub(crate) fn dedupe_peer_variants(graph: LockfileGraph) -> LockfileGraph {
+pub(crate) fn dedupe_peer_variants(mut graph: LockfileGraph) -> LockfileGraph {
     let canonical_base = |key: &str| -> String { canonical_tail(key).to_string() };
     // Only the peer-bearing part of the resolved peer tail is
     // comparable across subtrees — the nested suffix could differ even
@@ -514,6 +581,7 @@ pub(crate) fn dedupe_peer_variants(graph: LockfileGraph) -> LockfileGraph {
         }
         // Deterministic order for canonical selection + stable hashing.
         keys.sort();
+        absorb_compatible_optional_peers(&mut graph, &keys);
         // Union-find over equivalence classes. Two variants are
         // equivalent when each declared peer name resolves to the same
         // peer base in both (or is missing from both).
@@ -1299,7 +1367,7 @@ fn propagate_peer_suffixes_to_ancestors(
 
     // Build rewrite map. A package's new key is its canonical_base
     // (`name@version`) plus the cumulative segments concatenated in
-    // peer-name lex order — same order `apply_peer_contexts_once`
+    // full-segment lex order — same order `apply_peer_contexts_once`
     // already produces for self segments, so when a package's
     // cumulative is identical to its self set the rewrite is a no-op
     // and we skip it.
@@ -1352,7 +1420,9 @@ fn propagate_peer_suffixes_to_ancestors(
             // leave the key untouched.
             continue;
         }
-        let suffix: String = segments.values().cloned().collect();
+        let mut parts: Vec<&str> = segments.values().map(String::as_str).collect();
+        parts.sort_unstable();
+        let suffix: String = parts.concat();
         let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
         let new_key = format!("{canonical}{effective_suffix}");
         if new_key != *key {
@@ -1832,22 +1902,29 @@ fn visit_peer_context<'g>(
                 .map(|(_, provider)| provider)
         };
 
-        // pnpm resolves an *optional* peer (one flagged
-        // `peerDependenciesMeta.optional`) only from the resolution path it
-        // is actually on — the nearest ancestor, the package's own
-        // auto-installed deps, or the workspace root — and otherwise leaves
-        // it unresolved so it surfaces under `transitivePeerDependencies`.
-        // It never reaches for a range-incompatible version or scans the
-        // whole graph for an unrelated copy. Mirroring that is what lets
-        // `typescript` (an optional peer the root provides) take a dep-path
-        // suffix while debug's optional `supports-color` (which nothing on
-        // the path provides) bubbles up instead of binding to a cousin.
+        // pnpm 11 resolves an *optional* peer (one flagged
+        // `peerDependenciesMeta.optional`) from the nearest ancestor, the
+        // package's own auto-installed deps, or the workspace root, and
+        // otherwise from any version already resolved elsewhere in the
+        // graph that satisfies the range (even in an unrelated importer's
+        // subtree). Unlike a required peer it never binds to a
+        // range-incompatible version. That graph-wide lookup is part of
+        // pnpm's `dedupe-peer-dependents` pass, so it is off with the
+        // setting off. A package nothing in the graph
+        // satisfies (debug's `supports-color` when no `chalk@4` is
+        // installed) stays unresolved and surfaces under
+        // `transitivePeerDependencies`.
         let is_optional = pkg
             .peer_dependencies_meta
             .get(peer_name)
             .is_some_and(|m| m.optional);
         let resolved = if is_optional {
-            from_ancestor.or(from_pkg_deps).or(from_root)
+            from_ancestor.or(from_pkg_deps).or(from_root).or_else(|| {
+                options
+                    .dedupe_peer_dependents
+                    .then(from_graph_scan)
+                    .flatten()
+            })
         } else {
             from_ancestor
                 .or(from_pkg_deps)
@@ -1882,7 +1959,7 @@ fn visit_peer_context<'g>(
     // the same version would false-positive). `dedupe-peers` is
     // applied as a post-pass over the final graph in
     // `dedupe_peer_suffixes` after cycle detection is done.
-    let suffix: String = peer_context
+    let mut suffix_parts: Vec<String> = peer_context
         .iter()
         .map(|(n, provider)| {
             let cycles_back = refers_back_through_hashes(
@@ -1898,6 +1975,11 @@ fn visit_peer_context<'g>(
             format!("({n}@{display_v})")
         })
         .collect();
+    // pnpm orders the suffix by the full `name@version(...)` string, not by
+    // peer name alone, so `react-dom@19(react@19)` sorts before `react@19`
+    // ('-' < '@'). Scope propagation keeps the name-sorted `peer_context`.
+    suffix_parts.sort_unstable();
+    let suffix = suffix_parts.concat();
     // pnpm's `peersSuffixMaxLength`: when the suffix body exceeds the
     // cap, `effective_peer_suffix` replaces the whole suffix with a
     // parenthesized short hash `(<hash>)` so the lockfile key stays
@@ -2028,9 +2110,18 @@ fn visit_peer_context<'g>(
     }
 
     visiting.remove(&contextualized);
+    // pnpm lists a resolved *optional* peer under the snapshot's
+    // `optionalDependencies`, next to the package's real optional deps.
+    // A name the package already lists as a plain dependency stays required.
     let new_optional_dependencies: BTreeMap<String, String> = pkg
         .optional_dependencies
         .keys()
+        .chain(peer_context.iter().map(|(name, _)| name).filter(|name| {
+            pkg.peer_dependencies_meta
+                .get(*name)
+                .is_some_and(|m| m.optional)
+                && !pkg.dependencies.contains_key(*name)
+        }))
         .filter_map(|name| {
             new_dependencies
                 .get(name)
@@ -2116,7 +2207,66 @@ mod tests {
     }
 
     #[test]
-    fn optional_peer_is_not_bound_via_graph_scan() {
+    fn suffix_orders_peers_by_full_name_at_version_string() {
+        let versioned = |name: &str, version: &str, deps: &[(&str, &str)]| LockedPackage {
+            version: version.to_string(),
+            dep_path: format!("{name}@{version}"),
+            ..locked(name, deps)
+        };
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            ".".to_string(),
+            ["editor", "monaco-editor", "react", "react-dom"]
+                .iter()
+                .map(|name| DirectDep {
+                    name: (*name).to_string(),
+                    dep_path: match *name {
+                        "editor" => "editor@4.7.0".to_string(),
+                        "monaco-editor" => "monaco-editor@0.57.0".to_string(),
+                        _ => format!("{name}@19.3.0"),
+                    },
+                    dep_type: DepType::Production,
+                    specifier: Some("*".to_string()),
+                })
+                .collect(),
+        );
+        let mut editor = versioned("editor", "4.7.0", &[]);
+        let mut react_dom = versioned("react-dom", "19.3.0", &[]);
+        for peer in ["monaco-editor", "react", "react-dom"] {
+            editor
+                .peer_dependencies
+                .insert(peer.to_string(), "*".to_string());
+        }
+        react_dom
+            .peer_dependencies
+            .insert("react".to_string(), "*".to_string());
+        for p in [
+            editor,
+            react_dom,
+            versioned("monaco-editor", "0.57.0", &[]),
+            versioned("react", "19.3.0", &[]),
+        ] {
+            g.packages.insert(p.dep_path.clone(), p);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        // `react-dom@…` sorts before `react@…` because '-' < '@', matching
+        // pnpm; a name-only sort would put `react` first.
+        assert!(
+            out.packages.contains_key(
+                "editor@4.7.0(monaco-editor@0.57.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)"
+            ),
+            "got keys: {:?}",
+            out.packages.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn optional_peer_binds_via_graph_scan_and_lists_under_optional_dependencies() {
+        // pnpm 11 resolves an optional peer from any satisfying version
+        // already in the graph (here `theme`, a cousin of `plugin`) and
+        // records it under the snapshot's `optionalDependencies`.
         let mut g = graph_with_cousin_peer();
         let plugin = g.packages.get_mut("plugin@1.0.0").expect("plugin present");
         plugin
@@ -2128,15 +2278,137 @@ mod tests {
 
         let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
 
-        assert!(
-            out.packages.contains_key("plugin@1.0.0"),
-            "plugin keeps bare key"
+        let plugin = out
+            .packages
+            .get("plugin@1.0.0(theme@1.0.0)")
+            .expect("optional peer present in the graph takes a suffix");
+        assert!(plugin.optional_dependencies.contains_key("theme"));
+    }
+
+    #[test]
+    fn absorb_copies_compatible_optional_peers_and_keeps_conflicts_apart() {
+        let peer_meta = PeerDepMeta { optional: true };
+        let variant = |key: &str, deps: &[(&str, &str)]| {
+            let mut p = LockedPackage {
+                version: "1.0.0".to_string(),
+                dep_path: key.to_string(),
+                ..locked("vite", deps)
+            };
+            for peer in ["jiti", "yaml"] {
+                p.peer_dependencies
+                    .insert(peer.to_string(), "*".to_string());
+                p.peer_dependencies_meta
+                    .insert(peer.to_string(), peer_meta.clone());
+            }
+            p
+        };
+        let mut g = LockfileGraph::default();
+        let keys = [
+            "vite@1.0.0(jiti@1.0.0)",
+            "vite@1.0.0(jiti@2.0.0)",
+            "vite@1.0.0(yaml@1.0.0)",
+        ];
+        for (key, deps) in keys.iter().zip([
+            vec![("jiti", "1.0.0")],
+            vec![("jiti", "2.0.0")],
+            vec![("yaml", "1.0.0")],
+        ]) {
+            g.packages.insert((*key).to_string(), variant(key, &deps));
+        }
+        let keys: Vec<String> = keys.iter().map(|k| (*k).to_string()).collect();
+
+        absorb_compatible_optional_peers(&mut g, &keys);
+
+        let deps = |key: &str| g.packages[key].dependencies.clone();
+        let expect = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(n, v)| ((*n).to_string(), (*v).to_string()))
+                .collect()
+        };
+        assert_eq!(
+            deps("vite@1.0.0(jiti@1.0.0)"),
+            expect(&[("jiti", "1.0.0"), ("yaml", "1.0.0")])
+        );
+        assert_eq!(
+            deps("vite@1.0.0(jiti@2.0.0)"),
+            expect(&[("jiti", "2.0.0"), ("yaml", "1.0.0")])
+        );
+        // `yaml`-only absorbs the first compatible variant, never both.
+        assert_eq!(
+            deps("vite@1.0.0(yaml@1.0.0)"),
+            expect(&[("jiti", "1.0.0"), ("yaml", "1.0.0")])
         );
         assert!(
-            !out.packages.contains_key("plugin@1.0.0(theme@1.0.0)"),
-            "an optional peer reachable only via the graph scan must stay \
-             unresolved so it surfaces under transitivePeerDependencies"
+            g.packages["vite@1.0.0(jiti@1.0.0)"]
+                .optional_dependencies
+                .contains_key("yaml")
         );
+    }
+
+    #[test]
+    fn optional_peer_variants_absorb_each_others_compatible_peers() {
+        // importer a resolves vite with `jiti`, importer b with `yaml`;
+        // pnpm's dedupe-peer-dependents folds both into `(jiti)(yaml)`.
+        let versioned = |name: &str| LockedPackage {
+            version: "1.0.0".to_string(),
+            ..locked(name, &[])
+        };
+        let mut vite = versioned("vite");
+        for peer in ["jiti", "yaml"] {
+            vite.peer_dependencies
+                .insert(peer.to_string(), "*".to_string());
+            vite.peer_dependencies_meta
+                .insert(peer.to_string(), PeerDepMeta { optional: true });
+        }
+        let mut g = LockfileGraph::default();
+        for (importer, peer) in [("a", "jiti"), ("b", "yaml")] {
+            g.importers.insert(
+                importer.to_string(),
+                ["vite", peer]
+                    .iter()
+                    .map(|n| DirectDep {
+                        name: (*n).to_string(),
+                        dep_path: format!("{n}@1.0.0"),
+                        dep_type: DepType::Production,
+                        specifier: Some("*".to_string()),
+                    })
+                    .collect(),
+            );
+        }
+        for p in [vite, versioned("jiti"), versioned("yaml")] {
+            g.packages.insert(p.dep_path.clone(), p);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        let vites: Vec<&String> = out
+            .packages
+            .keys()
+            .filter(|k| k.starts_with("vite@"))
+            .collect();
+        assert_eq!(vites, ["vite@1.0.0(jiti@1.0.0)(yaml@1.0.0)"]);
+    }
+
+    #[test]
+    fn optional_peer_graph_scan_is_off_without_dedupe_peer_dependents() {
+        let mut g = graph_with_cousin_peer();
+        let plugin = g.packages.get_mut("plugin@1.0.0").expect("plugin present");
+        plugin
+            .peer_dependencies
+            .insert("theme".to_string(), "*".to_string());
+        plugin
+            .peer_dependencies_meta
+            .insert("theme".to_string(), PeerDepMeta { optional: true });
+        let options = PeerContextOptions {
+            dedupe_peer_dependents: false,
+            ..PeerContextOptions::default()
+        };
+
+        let out = apply_peer_contexts(g, &options).expect("peer pass");
+
+        assert!(out.packages.contains_key("plugin@1.0.0"));
+        assert!(!out.packages.contains_key("plugin@1.0.0(theme@1.0.0)"));
     }
 
     #[test]

@@ -635,6 +635,164 @@ fn test_link_all_creates_pnpm_virtual_store() {
 }
 
 #[test]
+fn force_relink_restores_deleted_files_in_both_virtual_store_modes() {
+    for global in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let (store, indices) = setup_store_with_files(dir.path());
+        let graph = make_graph();
+        Linker::new_with_gvs(&store, LinkStrategy::Copy, global)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+
+        let foo_index = project_dir.join("node_modules/foo/index.js");
+        std::fs::remove_file(&foo_index).unwrap();
+
+        Linker::new_with_gvs(&store, LinkStrategy::Copy, global)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+        assert!(
+            !foo_index.exists(),
+            "a plain relink trusts the existing entry (global={global})"
+        );
+
+        let stats = Linker::new_with_gvs(&store, LinkStrategy::Copy, global)
+            .with_force(true)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&foo_index).unwrap(),
+            "module.exports = 'foo';",
+            "force restores the deleted file (global={global})"
+        );
+        assert_eq!(stats.packages_linked, 2, "global={global}");
+        assert!(
+            project_dir
+                .join("node_modules/.aube/foo@1.0.0/node_modules/bar")
+                .exists(),
+            "sibling dependency link survives the rebuild (global={global})"
+        );
+        let leftovers = std::fs::read_dir(store.virtual_store_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"))
+            .count();
+        assert_eq!(
+            leftovers, 0,
+            "no staging dirs left behind (global={global})"
+        );
+    }
+}
+
+#[test]
+fn gvs_link_replaces_a_real_directory_at_a_virtual_store_entry() {
+    // Copying a project in a way that follows links (Windows Explorer,
+    // `cp -rL`) leaves real directories where the `.aube/<dep_path>` links
+    // into the shared store belong. The next install must replace them
+    // instead of failing to create the link over a non-empty directory.
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    let graph = make_graph();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let entry = project_dir.join("node_modules/.aube/foo@1.0.0");
+    std::fs::remove_dir(&entry)
+        .or_else(|_| std::fs::remove_file(&entry))
+        .unwrap();
+    std::fs::create_dir_all(entry.join("node_modules/foo")).unwrap();
+    std::fs::write(entry.join("node_modules/foo/index.js"), "stale copy").unwrap();
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    assert!(entry.symlink_metadata().unwrap().is_symlink());
+    assert_eq!(
+        std::fs::read_to_string(entry.join("node_modules/foo/index.js")).unwrap(),
+        "module.exports = 'foo';"
+    );
+}
+
+#[test]
+fn gvs_workspace_link_replaces_a_real_directory_at_a_virtual_store_entry() {
+    // `link_workspace` clears stale entries on its own path; cover it too.
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(project_dir.join("packages/app")).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let workspace_dirs = BTreeMap::new();
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    linker
+        .link_workspace(&project_dir, &graph, &indices, &workspace_dirs)
+        .unwrap();
+
+    let entry = project_dir.join("node_modules/.aube/foo@1.0.0");
+    std::fs::remove_dir(&entry)
+        .or_else(|_| std::fs::remove_file(&entry))
+        .unwrap();
+    std::fs::create_dir_all(entry.join("node_modules/foo")).unwrap();
+    std::fs::write(entry.join("node_modules/foo/index.js"), "stale copy").unwrap();
+
+    linker
+        .link_workspace(&project_dir, &graph, &indices, &workspace_dirs)
+        .unwrap();
+
+    assert!(entry.symlink_metadata().unwrap().is_symlink());
+    assert_eq!(
+        std::fs::read_to_string(entry.join("node_modules/foo/index.js")).unwrap(),
+        "module.exports = 'foo';"
+    );
+}
+
+#[test]
+fn gvs_link_replacing_a_stale_entry_link_keeps_its_target() {
+    // Removing a stale `.aube/<dep_path>` link must drop only the link, never
+    // the directory it points at (which may be another shared-store entry).
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    let graph = make_graph();
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let decoy = dir.path().join("decoy");
+    std::fs::create_dir_all(decoy.join("node_modules/foo")).unwrap();
+    std::fs::write(decoy.join("node_modules/foo/keep.js"), "keep").unwrap();
+    let entry = project_dir.join("node_modules/.aube/foo@1.0.0");
+    std::fs::remove_dir(&entry)
+        .or_else(|_| std::fs::remove_file(&entry))
+        .unwrap();
+    crate::sys::create_dir_link(&decoy, &entry).unwrap();
+
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(decoy.join("node_modules/foo/keep.js")).unwrap(),
+        "keep",
+        "the stale link's target must survive"
+    );
+    assert_eq!(
+        std::fs::read_to_string(entry.join("node_modules/foo/index.js")).unwrap(),
+        "module.exports = 'foo';"
+    );
+}
+
+#[test]
 fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
@@ -675,6 +833,44 @@ fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
     let second = linker.link_all(&project_dir, &graph, &indices).unwrap();
     assert_eq!(second.packages_linked, 0);
     assert_eq!(second.packages_cached, 2);
+}
+
+#[cfg(windows)]
+#[test]
+fn dedupe_reports_a_member_link_it_cannot_remove() {
+    // A member entry the linker dedupes must go, or it shadows the root's
+    // link while install state only tracks the root's. A file held open
+    // without delete sharing keeps it from being removed.
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    let stale = project_dir.join("packages/app/node_modules/foo");
+    std::fs::create_dir_all(&stale).unwrap();
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let _held = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .share_mode(0)
+        .open(stale.join("index.js"))
+        .unwrap();
+
+    let result = Linker::new(&store, LinkStrategy::Copy)
+        .with_dedupe_direct_deps(true)
+        .link_workspace(&project_dir, &graph, &indices, &BTreeMap::new());
+
+    assert!(stale.exists(), "the held entry should have survived");
+    assert!(result.is_err(), "surviving stale link must fail the link");
 }
 
 #[test]
@@ -2107,4 +2303,114 @@ fn test_recorded_gvs_dep_link_targets_match_disk() {
         assert!(recorded["bar@2.0.0"].is_empty());
         std::fs::remove_dir_all(project_dir.join("node_modules")).unwrap();
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_relative_root_links_a_member_behind_a_symlink_from_where_it_really_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("ws");
+    std::fs::create_dir_all(project_dir.join("packages")).unwrap();
+    std::fs::create_dir_all(dir.path().join("outside/app")).unwrap();
+    std::os::unix::fs::symlink("../../outside/app", project_dir.join("packages/app")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let cwd = std::env::current_dir().unwrap();
+    let relative_root = pathdiff::diff_paths(&project_dir, &cwd).unwrap();
+    assert!(relative_root.is_relative());
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_workspace(&relative_root, &graph, &indices, &BTreeMap::new())
+        .unwrap();
+
+    assert!(
+        dir.path()
+            .join("outside/app/node_modules/foo/index.js")
+            .exists()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_verbatim_root_links_a_member_behind_a_junction_from_where_it_really_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("ws");
+    std::fs::create_dir_all(project_dir.join("packages")).unwrap();
+    std::fs::create_dir_all(dir.path().join("outside/app")).unwrap();
+    junction::create(
+        dir.path().join("outside/app"),
+        project_dir.join("packages/app"),
+    )
+    .unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "foo".to_string(),
+            dep_path: "foo@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    // `std::fs::canonicalize` returns a `\?\` path, the same form as
+    // the member's real location.
+    let verbatim_root = std::fs::canonicalize(&project_dir).unwrap();
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_workspace(&verbatim_root, &graph, &indices, &BTreeMap::new())
+        .unwrap();
+
+    assert!(
+        dir.path()
+            .join("outside/app/node_modules/foo/index.js")
+            .exists()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn relative_workspace_dirs_link_a_member_behind_a_symlink_to_its_sibling() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("ws");
+    std::fs::create_dir_all(project_dir.join("packages/sib")).unwrap();
+    std::fs::write(project_dir.join("packages/sib/package.json"), b"{}").unwrap();
+    std::fs::create_dir_all(dir.path().join("outside/app")).unwrap();
+    std::os::unix::fs::symlink("../../outside/app", project_dir.join("packages/app")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "packages/app".to_string(),
+        vec![DirectDep {
+            name: "sib".to_string(),
+            dep_path: "sib@link:../sib".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let cwd = std::env::current_dir().unwrap();
+    let relative_root = pathdiff::diff_paths(&project_dir, &cwd).unwrap();
+    let workspace_dirs = BTreeMap::from([("sib".to_string(), relative_root.join("packages/sib"))]);
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_workspace(&relative_root, &graph, &indices, &workspace_dirs)
+        .unwrap();
+
+    assert!(
+        dir.path()
+            .join("outside/app/node_modules/sib/package.json")
+            .exists()
+    );
 }

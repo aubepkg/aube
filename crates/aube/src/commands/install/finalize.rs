@@ -1,6 +1,6 @@
 use super::bin_linking::{
-    LinkAllBinsInput, ManagedBinLinks, link_all_bins, remove_managed_bin_links,
-    remove_unclaimed_preserved_bin_links,
+    BinLinkSnapshot, LinkAllBinsInput, ManagedBinLinks, commit_bin_links, link_all_bins,
+    remove_managed_bin_links, remove_unclaimed_preserved_bin_links, snapshot_bin_links,
 };
 use super::dep_selection::DepSelection;
 use super::lifecycle::{
@@ -32,6 +32,7 @@ pub(super) struct FinalizePhaseInput<'a> {
     pub(super) jail_policy: &'a JailBuildPolicy,
     pub(super) stats: &'a aube_linker::LinkStats,
     pub(super) managed_bin_links: &'a ManagedBinLinks,
+    pub(super) bin_link_snapshot: BinLinkSnapshot,
     /// The linker's record of global virtual-store dependency links, used by
     /// the state writer unless a lifecycle script ran and could have
     /// changed them.
@@ -79,6 +80,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
         jail_policy,
         stats,
         managed_bin_links,
+        mut bin_link_snapshot,
         mut gvs_dep_link_targets,
         node_linker,
         has_workspace,
@@ -248,6 +250,9 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                 preserved: Some(&preserved),
             })?;
             remove_unclaimed_preserved_bin_links(managed_bin_links, &preserved, &relinked)?;
+            // The relinked set is what this install ends up claiming.
+            bin_link_snapshot =
+                snapshot_bin_links(cwd, bin_link_snapshot.dirs().to_vec(), &relinked)?;
             tracing::debug!("phase:relink_bins {:.1?}", phase_start.elapsed());
             phase_timings.record("relink_bins", phase_start.elapsed());
         }
@@ -277,6 +282,13 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
             }
         }
         phase_timings.record("root_lifecycle", phase_start.elapsed());
+    }
+
+    // Only now, with builds and root hooks done, save the bins this install
+    // linked (as snapshotted before the hooks ran): a failed install leaves
+    // the install state untouched.
+    if !virtual_store_only {
+        commit_bin_links(cwd, &bin_link_snapshot)?;
     }
 
     // 8. Write state file for auto-install tracking.
@@ -471,6 +483,7 @@ pub(super) async fn run_finalize_phase(input: FinalizePhaseInput<'_>) -> miette:
                     virtual_store_dir_max_length,
                     placements: placements_ref,
                     use_global_virtual_store: planned_gvs,
+                    dedupe_direct_deps: aube_settings::resolved::dedupe_direct_deps(settings_ctx),
                     gvs_dep_link_targets: gvs_dep_link_targets.as_ref(),
                 },
                 unreviewed_builds: unreviewed_builds_for_state,

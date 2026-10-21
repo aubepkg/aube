@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
-use super::raw::RawNpmLockfile;
+use super::raw::{HAS_INSTALL_SCRIPT_KEY, RawNpmLockfile};
 
 #[derive(Debug, Serialize)]
 struct WriteNpmLockfile<'a> {
@@ -36,6 +36,8 @@ struct WriteNpmPackage<'a> {
     resolved: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     integrity: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    has_install_script: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     license: Option<&'a str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -66,6 +68,10 @@ struct WriteNpmPackage<'a> {
     libc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     funding: Option<WriteNpmFunding<'a>>,
+    /// The root manifest's `workspaces` field, copied verbatim as npm
+    /// does, so npm and aube rewrites don't flip it back and forth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspaces: Option<&'a aube_manifest::Workspaces>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     link: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -124,9 +130,11 @@ struct WriteNpmPeerDepMeta {
 ///  - Registry `resolved` tarball URLs are emitted when they were
 ///    present in the parsed graph. Graphs synthesized without
 ///    `tarball_url` fall back to npm's tolerated no-`resolved` form.
-///  - Path-backed local source entries (`file:`, `link:`) aren't
-///    emitted yet. Git and remote-tarball sources emit their pinned
-///    `resolved:` URL.
+///  - `file:` directory deps are emitted as npm does: a `link: true`
+///    entry at `node_modules/<name>` plus a target entry at the
+///    directory's path. `file:` tarballs emit `resolved: file:<path>`.
+///    `link:` deps aren't emitted. Git and remote-tarball sources emit
+///    their pinned `resolved:` URL.
 ///    Workspace `link:` packages are emitted as importer entries plus
 ///    a root `node_modules/<name>` link record.
 pub fn write(
@@ -141,7 +149,12 @@ pub fn write(
     for pkg in graph.packages.values().filter(|pkg| {
         matches!(
             pkg.local_source,
-            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+            Some(
+                LocalSource::Git(_)
+                    | LocalSource::RemoteTarball(_)
+                    | LocalSource::Directory(_)
+                    | LocalSource::Tarball(_)
+            )
         )
     }) {
         canonical
@@ -160,9 +173,10 @@ pub fn write(
         .values()
         .flat_map(|deps| deps.iter().cloned())
         .collect();
-    let prod_reach = reachable_from(&canonical, &all_roots, DepType::Production);
-    let dev_reach = reachable_from(&canonical, &all_roots, DepType::Dev);
-    let opt_reach = reachable_from(&canonical, &all_roots, DepType::Optional);
+    let prod_reach = reachable_from(&canonical, &all_roots, DepType::Production, true);
+    let dev_reach = reachable_from(&canonical, &all_roots, DepType::Dev, false);
+    let dev_required_reach = reachable_from(&canonical, &all_roots, DepType::Dev, true);
+    let opt_reach = optional_reach(&canonical, &all_roots, &prod_reach);
 
     // Build a hoist/nest tree keyed by a sequence of "node_modules"
     // path segments — e.g. `["foo"]` for `node_modules/foo`,
@@ -170,7 +184,12 @@ pub fn write(
     // with bun (which renders the same segment list as `foo/bar`).
     let root_tree_roots = non_link_roots(graph, &roots);
     let preferred_roots = preferred_root_placements(path, &canonical);
-    let tree = super::build_hoist_tree(&canonical, &root_tree_roots, Some(&preferred_roots));
+    let tree = super::build_hoist_tree(
+        &canonical,
+        &root_tree_roots,
+        Some(&preferred_roots),
+        &BTreeSet::new(),
+    );
     // For the npm writer, re-key the tree by install_path strings.
     let mut placed: BTreeMap<String, String> = tree
         .into_iter()
@@ -192,48 +211,104 @@ pub fn write(
             dev_dependencies: borrow_map(&manifest.dev_dependencies),
             optional_dependencies: borrow_map(&manifest.optional_dependencies),
             peer_dependencies: borrow_map(&manifest.peer_dependencies),
+            workspaces: manifest.workspaces.as_ref(),
             ..Default::default()
         },
     );
 
+    // A freshly resolved graph has no `link:` package for a member that
+    // nothing depends on, so read the members' own package.json, as the
+    // bun writer does. It also says whether a member has a version, which
+    // a `link:` package read from npm's lockfile records as `0.0.0`.
+    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let member_manifests: BTreeMap<&str, aube_manifest::PackageJson> = graph
+        .importers
+        .keys()
+        .filter(|importer| *importer != ".")
+        .filter_map(|importer| {
+            let manifest_path = project_dir.join(importer).join("package.json");
+            let manifest = aube_manifest::PackageJson::from_path(&manifest_path).ok()?;
+            Some((importer.as_str(), manifest))
+        })
+        .collect();
+
     for (importer_path, importer_roots) in graph.importers.iter().filter(|(path, _)| *path != ".") {
-        let Some(workspace_pkg) = workspace_package_for_importer(graph, importer_path) else {
-            continue;
-        };
+        let (name, version, peer_dependencies, peer_dependencies_meta, declared) =
+            if let Some(pkg) = workspace_package_for_importer(graph, importer_path) {
+                (
+                    pkg.name.as_str(),
+                    member_manifests
+                        .get(importer_path.as_str())
+                        .map_or(Some(pkg.version.as_str()), |manifest| {
+                            manifest.version.as_deref()
+                        }),
+                    &pkg.peer_dependencies,
+                    optional_peers_meta(
+                        pkg.peer_dependencies_meta
+                            .iter()
+                            .filter(|(_, meta)| meta.optional)
+                            .map(|(name, _)| name.as_str()),
+                    ),
+                    &pkg.declared_dependencies,
+                )
+            } else if let Some(manifest) = member_manifests.get(importer_path.as_str()) {
+                // npm links a nameless member under its folder name.
+                let Some(name) = manifest.name.as_deref().or_else(|| {
+                    importer_path
+                        .rsplit('/')
+                        .next()
+                        .filter(|segment| !segment.is_empty() && *segment != "..")
+                }) else {
+                    continue;
+                };
+                (
+                    name,
+                    manifest.version.as_deref(),
+                    &manifest.peer_dependencies,
+                    optional_peers_meta(
+                        manifest
+                            .extra
+                            .get("peerDependenciesMeta")
+                            .and_then(serde_json::Value::as_object)
+                            .into_iter()
+                            .flat_map(|meta| meta.keys())
+                            .map(String::as_str)
+                            .filter(|peer| manifest.peer_dependency_is_optional(peer)),
+                    ),
+                    &manifest.dependencies,
+                )
+            } else {
+                continue;
+            };
         let (mut dependencies, dev_dependencies, optional_dependencies) =
             dep_sections_from_direct_deps(importer_roots);
         // Required importer peers become production direct deps (both on
         // resolve under autoInstallPeers and on npm read), but npm keeps
         // a peer-only declaration in `peerDependencies` alone. A matching
         // peer spec marks the peer-derived entry, unless the workspace's
-        // recorded `declared_dependencies` show it also owns that name.
-        let declared = &workspace_pkg.declared_dependencies;
+        // declared dependencies show it also owns that name.
         dependencies.retain(|name, spec| {
             declared.get(*name).map(String::as_str) == Some(*spec)
-                || workspace_pkg
-                    .peer_dependencies
-                    .get(*name)
-                    .map(String::as_str)
-                    != Some(*spec)
+                || peer_dependencies.get(*name).map(String::as_str) != Some(*spec)
         });
+        let importer_has_install_script =
+            workspace_package_for_importer(graph, importer_path).is_some_and(has_install_script);
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
-                name: Some(workspace_pkg.name.as_str()),
-                version: Some(workspace_pkg.version.as_str()),
+                name: Some(name),
+                version,
+                has_install_script: importer_has_install_script,
                 dependencies,
                 dev_dependencies,
                 optional_dependencies,
-                peer_dependencies: workspace_pkg
-                    .peer_dependencies
-                    .iter()
-                    .map(|(n, v)| (n.as_str(), v.as_str()))
-                    .collect(),
+                peer_dependencies: borrow_map(peer_dependencies),
+                peer_dependencies_meta,
                 ..Default::default()
             },
         );
         packages.insert(
-            format!("node_modules/{}", workspace_pkg.name),
+            format!("node_modules/{name}"),
             WriteNpmPackage {
                 resolved: Some(importer_path.clone()),
                 link: true,
@@ -242,7 +317,8 @@ pub fn write(
         );
 
         let workspace_tree_roots = non_link_roots(graph, importer_roots);
-        let workspace_tree = super::build_hoist_tree(&canonical, &workspace_tree_roots, None);
+        let workspace_tree =
+            super::build_hoist_tree(&canonical, &workspace_tree_roots, None, &BTreeSet::new());
         // Skip subtrees whose top-level segment is already hoisted to
         // `node_modules/<name>` at the same canonical version: Node's
         // upward `node_modules` walk from `<importer>/...` resolves to
@@ -268,6 +344,25 @@ pub fn write(
             placed.entry(install_path).or_insert(canonical_key);
         }
     }
+
+    // npm links a `file:` directory to its target, so the link's nested
+    // `node_modules` live under the target path, where the reader looks.
+    let placed: BTreeMap<String, String> = placed
+        .iter()
+        .map(|(install_path, key)| {
+            let remapped = install_path
+                .match_indices("/node_modules/")
+                .find_map(|(idx, _)| {
+                    let pkg = canonical.get(placed.get(&install_path[..idx])?)?;
+                    let Some(LocalSource::Directory(dir)) = &pkg.local_source else {
+                        return None;
+                    };
+                    Some(format!("{}{}", directory_target(dir), &install_path[idx..]))
+                })
+                .unwrap_or_else(|| install_path.clone());
+            (remapped, key.clone())
+        })
+        .collect();
 
     for (install_path, canonical_key) in &placed {
         let Some(pkg) = canonical.get(canonical_key).copied() else {
@@ -335,11 +430,22 @@ pub fn write(
         // chains would get removed under either omit even though the
         // other chain still needs it.
         let is_prod = prod_reach.contains(canonical_key);
-        let is_dev = !is_prod && dev_reach.contains(canonical_key);
-        let is_opt = !is_prod && opt_reach.contains(canonical_key);
-        let dev_optional = is_dev && is_opt;
-        let dev = is_dev && !dev_optional;
-        let optional = is_opt && !dev_optional;
+        let dev_required = dev_required_reach.contains(canonical_key);
+        let optional_from_non_dev = opt_reach.contains(canonical_key);
+        let dev_any = dev_reach.contains(canonical_key);
+        let (dev, optional, dev_optional) = if is_prod {
+            (false, false, false)
+        } else if optional_from_non_dev {
+            // Kept by a non-dev optional chain: never `dev`. A required
+            // dev path on top makes it `devOptional`.
+            (false, !dev_required, dev_required)
+        } else if dev_any {
+            // Reached only through dev roots; an optional edge on
+            // every path (esbuild's `@esbuild/*`) also makes it optional.
+            (true, !dev_required, false)
+        } else {
+            (false, false, false)
+        };
 
         // Aliased deps (`"h3-v2": "npm:h3@..."` in package.json)
         // round-trip as `node_modules/h3-v2` with an explicit
@@ -381,6 +487,53 @@ pub fn write(
             })
             .collect();
 
+        if let Some(LocalSource::Directory(dir)) = &pkg.local_source {
+            let target = directory_target(dir);
+            packages.insert(
+                install_path.clone(),
+                WriteNpmPackage {
+                    resolved: Some(target.clone()),
+                    link: true,
+                    dev,
+                    optional,
+                    dev_optional,
+                    ..Default::default()
+                },
+            );
+            packages.insert(
+                target,
+                WriteNpmPackage {
+                    name: Some(pkg.name.as_str()),
+                    version: Some(pkg.version.as_str()),
+                    dependencies: deps,
+                    optional_dependencies: optional_deps,
+                    peer_dependencies: peer_deps,
+                    peer_dependencies_meta: peer_deps_meta,
+                    bin: pkg
+                        .bin
+                        .iter()
+                        .filter(|(k, _)| !k.is_empty())
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect(),
+                    engines: pkg
+                        .engines
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect(),
+                    has_install_script: has_install_script(pkg),
+                    license: pkg.license.as_deref(),
+                    os: pkg.os.to_vec(),
+                    cpu: pkg.cpu.to_vec(),
+                    libc: pkg.libc.to_vec(),
+                    dev,
+                    optional,
+                    dev_optional,
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
+
         packages.insert(
             install_path.clone(),
             WriteNpmPackage {
@@ -388,6 +541,7 @@ pub fn write(
                 version: Some(pkg.version.as_str()),
                 resolved,
                 integrity: pkg.integrity.as_deref(),
+                has_install_script: has_install_script(pkg),
                 license: pkg.license.as_deref(),
                 dependencies: deps,
                 optional_dependencies: optional_deps,
@@ -474,6 +628,18 @@ fn preferred_root_placements(
     preferred
 }
 
+fn directory_target(dir: &Path) -> String {
+    aube_util::path::normalize_lexical(dir)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn has_install_script(pkg: &LockedPackage) -> bool {
+    pkg.extra_meta
+        .get(HAS_INSTALL_SCRIPT_KEY)
+        .is_some_and(|v| v.as_bool() == Some(true))
+}
+
 fn workspace_package_for_importer<'a>(
     graph: &'a LockfileGraph,
     importer_path: &str,
@@ -537,6 +703,7 @@ fn reachable_from(
     canonical: &BTreeMap<String, &LockedPackage>,
     roots: &[DirectDep],
     dep_type: DepType,
+    required_edges_only: bool,
 ) -> BTreeSet<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -554,6 +721,9 @@ fn reachable_from(
             continue;
         };
         for (child_name, child_value) in &pkg.dependencies {
+            if required_edges_only && pkg.optional_dependencies.contains_key(child_name) {
+                continue;
+            }
             let child_key = super::child_canonical_key(child_name, child_value);
             if canonical.contains_key(&child_key) && out.insert(child_key.clone()) {
                 queue.push_back(child_key);
@@ -562,6 +732,75 @@ fn reachable_from(
     }
     out
 }
+
+/// Packages reached through an optional edge from the non-dev side: an
+/// `optionalDependencies` root, or an optional edge out of a package in
+/// `prod_reach`. This is what puts `optional: true` on `esbuild`'s
+/// `@esbuild/*` platform packages.
+fn optional_reach(
+    canonical: &BTreeMap<String, &LockedPackage>,
+    roots: &[DirectDep],
+    prod_reach: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    let mut enqueue = |key: String, queue: &mut VecDeque<String>| {
+        if canonical.contains_key(&key) && seen.insert(key.clone()) {
+            queue.push_back(key);
+        }
+    };
+    for dep in roots {
+        if dep.dep_type == DepType::Optional {
+            enqueue(
+                super::canonical_key_from_dep_path(&dep.dep_path),
+                &mut queue,
+            );
+        }
+    }
+    let mut required_seen: BTreeSet<String> = BTreeSet::new();
+    let mut required_queue: VecDeque<String> = VecDeque::new();
+    for key in prod_reach.iter().cloned() {
+        if canonical.contains_key(&key) && required_seen.insert(key.clone()) {
+            required_queue.push_back(key);
+        }
+    }
+    while let Some(key) = required_queue.pop_front() {
+        let Some(pkg) = canonical.get(&key).copied() else {
+            continue;
+        };
+        for (child_name, child_value) in &pkg.dependencies {
+            let child_key = super::child_canonical_key(child_name, child_value);
+            if pkg.optional_dependencies.contains_key(child_name) {
+                enqueue(child_key, &mut queue);
+            } else if canonical.contains_key(&child_key) && required_seen.insert(child_key.clone())
+            {
+                required_queue.push_back(child_key);
+            }
+        }
+    }
+    while let Some(key) = queue.pop_front() {
+        let Some(pkg) = canonical.get(&key).copied() else {
+            continue;
+        };
+        for (child_name, child_value) in &pkg.dependencies {
+            enqueue(
+                super::child_canonical_key(child_name, child_value),
+                &mut queue,
+            );
+        }
+    }
+    seen
+}
+/// `peerDependenciesMeta` for a workspace member's optional peers. Without
+/// it, rereading the lockfile turns those peers into required ones.
+fn optional_peers_meta<'a>(
+    optional_peers: impl Iterator<Item = &'a str>,
+) -> BTreeMap<&'a str, WriteNpmPeerDepMeta> {
+    optional_peers
+        .map(|peer| (peer, WriteNpmPeerDepMeta { optional: true }))
+        .collect()
+}
+
 fn borrow_map(m: &BTreeMap<String, String>) -> BTreeMap<&str, &str> {
     m.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
 }

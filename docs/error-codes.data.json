@@ -181,6 +181,12 @@
       "exit_code": null
     },
     {
+      "name": "ERR_AUBE_INVALID_CAFILE",
+      "category": "Registry / network",
+      "description": "A configured CA file is unreadable, empty, or not a usable PEM certificate bundle (reported by `aube doctor`).",
+      "exit_code": null
+    },
+    {
       "name": "ERR_AUBE_PACKAGE_NOT_FOUND",
       "category": "Registry / network",
       "description": "Registry returned 404 for the package name.",
@@ -708,6 +714,12 @@
       "name": "WARN_AUBE_GVS_CROSS_VOLUME",
       "category": "Install lifecycle",
       "description": "The global virtual store (`globalVirtualStoreDir`, by default under `cacheDir`) and `storeDir` are on different volumes, so linking falls back to per-file copy.",
+      "exit_code": null
+    },
+    {
+      "name": "WARN_AUBE_LINK_DEP_MANIFEST_UNREADABLE",
+      "category": "Install lifecycle",
+      "description": "A `link:` dependency's `package.json` couldn't be read or parsed, so install skipped linking its bins into `node_modules/.bin`.",
       "exit_code": null
     },
     {

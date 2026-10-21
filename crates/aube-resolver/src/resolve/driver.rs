@@ -795,7 +795,12 @@ impl<'a> ResolveDriver<'a> {
                                     .fetch_packument_with_time_cached(&registry_name, dir)
                                     .await
                             }
-                            None => self.resolver.client.fetch_packument(&registry_name).await,
+                            None => {
+                                self.resolver
+                                    .client
+                                    .fetch_packument_with_time(&registry_name)
+                                    .await
+                            }
                         }
                     } else {
                         match self.resolver.client.fetch_packument(&registry_name).await {
@@ -1173,12 +1178,11 @@ impl<'a> ResolveDriver<'a> {
         // range (debug's optional `supports-color`, typescript-eslint's
         // optional `typescript`, …). Synthesize the same `*` so peer
         // context resolves these exactly like pnpm: an optional peer that
-        // a real ancestor / the workspace root provides (typescript) gets
-        // a dep-path suffix, while one nothing on the path provides
-        // (supports-color) is left unresolved and surfaces under
-        // `transitivePeerDependencies`. The optional-peer branch in
-        // `visit_peer_context` is what keeps the graph-wide scan from
-        // binding the latter to an unrelated copy in the tree.
+        // an ancestor, the workspace root, or any satisfying version
+        // elsewhere in the graph provides gets a dep-path suffix, while
+        // one nothing in the graph satisfies is left unresolved and
+        // surfaces under `transitivePeerDependencies`. See the
+        // optional-peer branch in `visit_peer_context`.
         let mut peer_deps = version_meta.peer_dependencies.clone();
         for name in version_meta.peer_dependencies_meta.keys() {
             peer_deps
@@ -1310,7 +1314,8 @@ impl<'a> ResolveDriver<'a> {
                         )])
                     })
                     .unwrap_or_default(),
-            },
+            }
+            .with_declared_dependencies_known(),
         );
 
         // Enqueue transitive deps. Kick off a background
@@ -1893,16 +1898,18 @@ impl<'a> ResolveDriver<'a> {
         // loop, so overrides can still target a catalog dep by bare
         // name. The raw `catalog:...` text stays in `original_specifier`;
         // the separate lockfile field changes only if an override fires.
+        //
+        // The pick is only recorded in the lockfile's `catalogs:` block
+        // when the catalog value survives the override pass below: pnpm
+        // drops entries whose range an override replaced.
+        let mut catalog_pick: Option<(String, String)> = None;
         if let Some((catalog_name, real_range)) = self
             .resolver
             .resolve_catalog_spec(&task.name, &task.range)?
         {
             tracing::trace!("catalog: {} {} -> {}", task.name, task.range, real_range);
-            self.catalog_picks
-                .entry(catalog_name)
-                .or_default()
-                .insert(task.name.clone(), real_range.clone());
-            task.range = real_range;
+            task.range = real_range.clone();
+            catalog_pick = Some((catalog_name, real_range));
         }
 
         for _ in 0..2 {
@@ -1943,29 +1950,34 @@ impl<'a> ResolveDriver<'a> {
                 // importer dependencies. Keep ordinary `catalog:` dependencies
                 // verbatim, but once an override fires use its effective value
                 // (including catalog expansion) in the lockfile importer.
+                // A `link:`/`file:` override is recorded relative to the
+                // importer, as pnpm records it.
                 if task.is_root {
-                    task.lockfile_override_specifier = Some(effective_spec.clone());
+                    task.lockfile_override_specifier = Some(
+                        aube_lockfile::importer_relative_override(&effective_spec, &task.importer)
+                            .unwrap_or_else(|| effective_spec.clone()),
+                    );
                 }
+                // Overrides are declared at the project root, so a
+                // substituted `link:`/`file:` path is project-root-relative
+                // — mark the task so the local-source branch anchors it
+                // correctly. That holds even when the override's value
+                // equals the declaration: pnpm applies the override then
+                // too, and resolves the path from the root.
+                if is_non_registry_specifier(&effective_spec) {
+                    task.range_from_override = true;
+                }
+                // The override replaced the catalog reference, so the
+                // pre-pass pick no longer drives resolution. Only the
+                // override's own catalog target (if any) is recorded.
+                catalog_pick = pending_pick;
                 if task.range != effective_spec {
-                    if let Some((catalog_name, real_range)) = pending_pick {
-                        self.catalog_picks
-                            .entry(catalog_name)
-                            .or_default()
-                            .insert(task.name.clone(), real_range);
-                    }
                     tracing::trace!(
                         "override: {}@{} -> {}",
                         task.name,
                         task.range,
                         effective_spec
                     );
-                    // Overrides are declared at the project root, so
-                    // a substituted `link:`/`file:` path is
-                    // project-root-relative — mark the task so the
-                    // local-source branch anchors it correctly.
-                    if is_non_registry_specifier(&effective_spec) {
-                        task.range_from_override = true;
-                    }
                     task.range = effective_spec;
                     // If the override replaced the spec with a bare
                     // range (not itself an `npm:`/`jsr:` alias), it's
@@ -2059,6 +2071,12 @@ impl<'a> ResolveDriver<'a> {
             if !changed {
                 break;
             }
+        }
+        if let Some((catalog_name, real_range)) = catalog_pick {
+            self.catalog_picks
+                .entry(catalog_name)
+                .or_default()
+                .insert(task.name.clone(), real_range);
         }
         Ok(true)
     }
@@ -2327,7 +2345,37 @@ impl<'a> ResolveDriver<'a> {
             for (dep_name, dep_version) in &locked_pkg.dependencies {
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);
-                let canonical_version = stripped.split('(').next().unwrap_or(stripped).to_string();
+                let mut canonical_version =
+                    stripped.split('(').next().unwrap_or(stripped).to_string();
+                // A peer supplied by the importer or an ancestor through a
+                // `file:`/`link:`/git dep records that specifier as the
+                // snapshot edge. Re-resolving it here would be a transitive
+                // local source; the peer pass re-wires it instead. A name
+                // the package also declares as a dependency resolves from
+                // its declared range, and peers nothing else supplies keep
+                // resolving.
+                if locked_pkg.peer_dependencies.contains_key(dep_name)
+                    && is_non_registry_specifier(&canonical_version)
+                    && (task.ancestors.iter().any(|(name, _)| name == dep_name)
+                        || self
+                            .importer_declared_dep_names
+                            .get(&task.importer)
+                            .is_some_and(|names| names.contains(dep_name))
+                        || self.resolver.resolve_peers_from_workspace_root
+                            && self
+                                .importer_declared_dep_names
+                                .get(".")
+                                .is_some_and(|names| names.contains(dep_name)))
+                {
+                    let declared = locked_pkg
+                        .declared_dependencies_known()
+                        .then(|| locked_pkg.declared_dependencies.get(dep_name))
+                        .flatten();
+                    let Some(declared) = declared else {
+                        continue;
+                    };
+                    canonical_version = declared.clone();
+                }
                 let dep_type = if locked_pkg.optional_dependencies.contains_key(dep_name) {
                     DepType::Optional
                 } else {

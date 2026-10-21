@@ -114,13 +114,25 @@ pub(crate) fn segments_to_install_path(segs: &[String]) -> String {
 ///      if that slot is occupied by a different version, nest at
 ///      `[...parent, child]`.
 ///   3. Cycles terminate because each segment-list is placed at most once.
+///
+/// `reserved_roots` names top-level slots held for something outside
+/// `canonical` (a workspace member the root asks for): a package that
+/// would hoist there nests under its parent instead, and the slot is
+/// left out of the result. A root direct dep of the same name still
+/// takes the slot.
 pub(crate) fn build_hoist_tree(
     canonical: &BTreeMap<String, &LockedPackage>,
     roots: &[DirectDep],
     preferred_roots: Option<&BTreeMap<String, String>>,
+    reserved_roots: &BTreeSet<String>,
 ) -> BTreeMap<Vec<String>, String> {
     let mut placed: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let mut queue: VecDeque<(Vec<String>, String)> = VecDeque::new();
+    // An empty key never equals a child's, so `ancestor_resolution` sees
+    // a reserved slot as a different version.
+    for name in reserved_roots {
+        placed.insert(vec![name.clone()], String::new());
+    }
 
     for dep in roots {
         let key = canonical_key_from_dep_path(&dep.dep_path);
@@ -128,7 +140,10 @@ pub(crate) fn build_hoist_tree(
             continue;
         }
         let segs = vec![dep.name.clone()];
-        if placed.insert(segs.clone(), key.clone()).is_none() {
+        if placed
+            .insert(segs.clone(), key.clone())
+            .is_none_or(|previous| previous.is_empty())
+        {
             queue.push_back((segs, key));
         }
     }
@@ -206,6 +221,7 @@ pub(crate) fn build_hoist_tree(
         }
     }
 
+    placed.retain(|_, key| !key.is_empty());
     placed
 }
 

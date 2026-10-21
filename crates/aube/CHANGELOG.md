@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/v2.8.0...v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(lockfile)* omit unreferenced catalog entries from pnpm-lock.yaml ([#1788](https://github.com/aubepkg/aube/pull/1788))
+- *(install)* treat an empty CI env var as not CI ([#1786](https://github.com/aubepkg/aube/pull/1786))
+- *(workspace)* install a non-member subdirectory on its own ([#1787](https://github.com/aubepkg/aube/pull/1787))
+- *(install)* make --force re-materialize linked packages ([#1789](https://github.com/aubepkg/aube/pull/1789))
+- *(npm)* translate min release age ([#1770](https://github.com/aubepkg/aube/pull/1770))
+
+## [2.8.0](https://github.com/aubepkg/aube/compare/v2.7.2...v2.8.0) - 2026-10-19
+
+### Added
+
+- *(install)* add useDefaultTrustedDependencies to opt out of the built-in trust list ([#1767](https://github.com/aubepkg/aube/pull/1767))
+
+### Fixed
+
+- *(install)* strip default shim dir from PATH when AUBE_SHIM_DIR is unset ([#1761](https://github.com/aubepkg/aube/pull/1761))
+
+## [2.7.2](https://github.com/aubepkg/aube/compare/v2.7.1...v2.7.2) - 2026-10-17
+
+### Fixed
+
+- *(deps)* bump zip to 9 ([#1756](https://github.com/aubepkg/aube/pull/1756))
+- *(workspace)* let --filter select the root project by name ([#1754](https://github.com/aubepkg/aube/pull/1754))
+
+## [2.7.1](https://github.com/aubepkg/aube/compare/v2.7.0...v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(pack)* honor files negations and dir/** patterns ([#1752](https://github.com/aubepkg/aube/pull/1752))
+- *(add)* treat -C/--dir/--prefix as the exact project directory ([#1751](https://github.com/aubepkg/aube/pull/1751))
+- *(install)* link a symlinked member's deps from its real location ([#1748](https://github.com/aubepkg/aube/pull/1748))
+- *(install)* record the bins aube links so cleanup removes only those ([#1734](https://github.com/aubepkg/aube/pull/1734))
+- *(lockfile)* keep bun.lock lockfileVersion when re-resolving outside install ([#1732](https://github.com/aubepkg/aube/pull/1732))
+- *(install)* remove stale symlinked bins of link: and workspace deps ([#1731](https://github.com/aubepkg/aube/pull/1731))
+- *(install)* map npm's --legacy-peer-deps instead of treating it as a package ([#1730](https://github.com/aubepkg/aube/pull/1730))
+- *(install)* show the member directory for workspace deps in aube ll ([#1725](https://github.com/aubepkg/aube/pull/1725))
+- *(install)* show a workspace dep's version in the install summary ([#1724](https://github.com/aubepkg/aube/pull/1724))
+- *(lockfile)* accept file: deps of npm workspace members when frozen ([#1714](https://github.com/aubepkg/aube/pull/1714))
+
+## [2.7.0](https://github.com/aubepkg/aube/compare/v2.6.1...v2.7.0) - 2026-10-07
+
+### Added
+
+- *(update)* show project name in interactive picker title ([#1702](https://github.com/aubepkg/aube/pull/1702))
+
+### Fixed
+
+- *(lockfile)* report the real version of file: and link: deps ([#1645](https://github.com/aubepkg/aube/pull/1645))
+- *(dlx)* resolve relative file: specs from the invoking directory ([#1708](https://github.com/aubepkg/aube/pull/1708))
+- *(install)* keep local deps installable from a relocated lockfile ([#1703](https://github.com/aubepkg/aube/pull/1703))
+- *(dlx)* accept Windows paths in file: package specs ([#1642](https://github.com/aubepkg/aube/pull/1642))
+- *(install)* keep the warm path when dedupe-direct-deps skips a member link ([#1688](https://github.com/aubepkg/aube/pull/1688))
+- *(install)* link the bins of link: dependencies ([#1684](https://github.com/aubepkg/aube/pull/1684))
+- *(lockfile)* read and write workspace members' link: deps relative to the member ([#1680](https://github.com/aubepkg/aube/pull/1680))
+- *(registry)* expose transport causes and validate CA files ([#1681](https://github.com/aubepkg/aube/pull/1681))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+- *(install)* remove stale .bin shims for dependencies dropped from the graph ([#1673](https://github.com/aubepkg/aube/pull/1673))
+
+### Other
+
+- *(deps)* bump sigstore crates to 0.14 and adapt provenance signing ([#1706](https://github.com/aubepkg/aube/pull/1706))
+- *(deps)* bump sigstore crates and adapt provenance digest to 0.13 ([#1705](https://github.com/aubepkg/aube/pull/1705))
+- *(run)* guard synchronized incremental script picker redraws ([#1682](https://github.com/aubepkg/aube/pull/1682))
+- run clippy on Windows and fix the warnings only it finds ([#1640](https://github.com/aubepkg/aube/pull/1640))
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/v2.6.0...v2.6.1) - 2026-09-29
 
 ### Fixed

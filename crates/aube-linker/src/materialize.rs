@@ -75,6 +75,44 @@ fn place_materialized_entry(src: &Path, dst: &Path) -> io::Result<MaterializePla
     }
 }
 
+/// Swap a freshly staged entry over an existing one (`install --force`).
+/// The old entry is renamed aside first, so the shared path is never
+/// half-written; if the final rename fails the old entry is put back.
+fn replace_materialized_entry(
+    src: &Path,
+    dst: &Path,
+    aside: &Path,
+) -> io::Result<MaterializePlacement> {
+    match std::fs::rename(dst, aside) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return place_materialized_entry(src, dst);
+        }
+        Err(e) => return Err(e),
+    }
+    match place_materialized_entry(src, dst) {
+        Ok(MaterializePlacement::Placed) => {
+            let _ = std::fs::remove_dir_all(aside);
+            Ok(MaterializePlacement::Placed)
+        }
+        other => {
+            if dst.exists() {
+                // Another installer published its entry first; ours is stale.
+                let _ = std::fs::remove_dir_all(aside);
+                return other;
+            }
+            match std::fs::rename(aside, dst) {
+                Ok(()) => other,
+                Err(rollback) => Err(io::Error::other(format!(
+                    "could not place the new entry and could not restore the previous one \
+                     (kept at {}): {rollback}",
+                    aside.display()
+                ))),
+            }
+        }
+    }
+}
+
 fn is_transient_rename_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
@@ -271,7 +309,10 @@ impl Linker {
             .join("node_modules")
             .join(&pkg.name);
 
-        if pkg_nm_dir.exists() {
+        // Under `--force` an existing entry is only trusted when this very
+        // install just placed it.
+        let trust_existing = !self.force || self.fresh_virtual_store_entries.contains(dep_path);
+        if trust_existing && pkg_nm_dir.exists() {
             if !self.fresh_virtual_store_entries.contains(dep_path) {
                 self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
             }
@@ -312,7 +353,16 @@ impl Linker {
             return Err(e);
         }
 
-        match place_materialized_entry(&tmp_entry, &final_entry) {
+        let placement = if self.force && final_entry.exists() {
+            replace_materialized_entry(
+                &tmp_entry,
+                &final_entry,
+                &self.virtual_store.join(materialize_tmp_name()),
+            )
+        } else {
+            place_materialized_entry(&tmp_entry, &final_entry)
+        };
+        match placement {
             Ok(MaterializePlacement::Placed) => {
                 trace!("atomically placed {subdir} in virtual store");
             }
@@ -420,6 +470,54 @@ impl Linker {
         Ok(targets)
     }
 
+    /// Materialize a per-project `.aube` entry. Under `--force` an existing
+    /// entry is set aside first and only deleted once the replacement is
+    /// complete; if materializing fails, the partial entry is dropped and
+    /// the original is restored.
+    pub(crate) fn materialize_replacing(
+        &self,
+        aube_dir: &Path,
+        dep_path: &str,
+        pkg: &LockedPackage,
+        index: &PackageIndex,
+        stats: &mut LinkStats,
+        nested_link_targets: Option<&BTreeMap<String, PathBuf>>,
+    ) -> Result<(), Error> {
+        let entry = &aube_dir.join(self.aube_dir_entry_name(dep_path));
+        let aside = if self.force && entry.symlink_metadata().is_ok() {
+            let aside = aube_dir.join(materialize_tmp_name());
+            std::fs::rename(entry, &aside).map_err(|e| Error::Io(entry.to_path_buf(), e))?;
+            Some(aside)
+        } else {
+            None
+        };
+        let result = self.materialize_at(
+            entry,
+            aube_dir,
+            dep_path,
+            pkg,
+            index,
+            stats,
+            false,
+            nested_link_targets,
+        );
+        if let Some(aside) = aside {
+            if result.is_ok() {
+                let _ = std::fs::remove_dir_all(&aside);
+            } else {
+                try_remove_entry(entry);
+                if let Err(e) = std::fs::rename(&aside, entry) {
+                    tracing::warn!(
+                        "could not restore {} after a failed --force relink (kept at {}): {e}",
+                        entry.display(),
+                        aside.display()
+                    );
+                }
+            }
+        }
+        result
+    }
+
     /// Materialize a globally-reproducible local source (a `git`
     /// dependency or a remote `.tgz`) into the shared virtual store and
     /// point the per-project `.aube/<dep_path>` entry at it — the exact
@@ -448,7 +546,7 @@ impl Linker {
     ) -> Result<(), Error> {
         let local_aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
         let global_entry = self.virtual_store.join(self.virtual_store_subdir(dep_path));
-        let state = classify_entry_state(&local_aube_entry, &global_entry);
+        let state = self.forced_entry_state(classify_entry_state(&local_aube_entry, &global_entry));
         if matches!(state, EntryState::Fresh) {
             self.reconcile_virtual_store_entry(dep_path, pkg, nested_link_targets)?;
             stats.packages_cached += 1;

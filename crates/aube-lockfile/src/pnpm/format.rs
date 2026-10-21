@@ -167,6 +167,9 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
     out
 }
 
+/// YAML's limit on implicit (single-line) mapping keys.
+const MAX_IMPLICIT_KEY_LEN: usize = 1024;
+
 /// Fold `yaml_serde`'s explicit-key form back into pnpm's inline form.
 ///
 /// Past ~128 bytes yaml_serde emits a mapping entry as
@@ -194,6 +197,10 @@ pub(super) fn reformat_for_pnpm_parity(yaml: &str) -> String {
 /// `? ` indicator, and replace the `: ` indicator with two spaces (or keep
 /// an inline `{}` value on the key line). Later passes then collapse/
 /// re-indent the value block exactly as they do for inline-key entries.
+///
+/// Keys past 1024 bytes stay in explicit form: js-yaml (and so pnpm) emits
+/// them that way, and YAML parsers, including libyaml, reject implicit
+/// keys that long.
 fn fold_explicit_keys(lines: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
     let mut i = 0;
@@ -201,7 +208,9 @@ fn fold_explicit_keys(lines: &[&str]) -> Vec<String> {
         let line = lines[i];
         let stripped = line.trim_start();
         let indent = line.len() - stripped.len();
-        if let Some(key) = stripped.strip_prefix("? ") {
+        if let Some(key) = stripped.strip_prefix("? ")
+            && key.len() <= MAX_IMPLICIT_KEY_LEN
+        {
             // The value indicator is the next non-blank line at the same
             // indent (yaml_serde never separates them, but skip blanks
             // defensively).

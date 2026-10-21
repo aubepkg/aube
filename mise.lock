@@ -75,6 +75,11 @@ checksum = "sha256:e437443331865218763d44089680f4d36547353e8c3c8b394c24859203e6c
 url = "https://github.com/foresterre/cargo-msrv/releases/download/v0.19.3/cargo-msrv-x86_64-pc-windows-msvc-v0.19.3.zip"
 url_api = "https://api.github.com/repos/foresterre/cargo-msrv/releases/assets/380851496"
 
+[[tools."cargo:cargo-deny"]]
+version = "0.20.2"
+backend = "cargo:cargo-deny"
+specifiers = ["0.20.2"]
+
 [[tools."cargo:cargo-machete"]]
 version = "0.9.1"
 backend = "cargo:cargo-machete"
@@ -92,9 +97,9 @@ specifiers = ["0.19.3"]
 bin = "cargo-msrv"
 
 [[tools."cargo:cargo-semver-checks"]]
-version = "0.49.0"
+version = "0.51.0"
 backend = "cargo:cargo-semver-checks"
-specifiers = ["0.49.0"]
+specifiers = ["0.51.0"]
 
 [tools."cargo:cargo-semver-checks".options]
 bin = "cargo-semver-checks"
@@ -209,39 +214,86 @@ checksum = "sha256:c0344c09c76f7e25985c4770148130881b19313393d238949e5512ec3691f
 url = "https://github.com/jdx/hk/releases/download/v2.1.0/hk-x86_64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/hk/.github/workflows/release.yml"
 
+[[tools.jactionlint]]
+version = "2.2.0"
+backend = "github:jdx/jactionlint"
+specifiers = ["latest"]
+
+[tools.jactionlint."platforms.linux-arm64"]
+checksum = "sha256:6d4c3831cc360b14550fb2f4605b4de9d2761515cd3fd5c1da718528b314647d"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875713"
+provenance = "github-attestations"
+
+[tools.jactionlint."platforms.linux-arm64-musl"]
+checksum = "sha256:6d4c3831cc360b14550fb2f4605b4de9d2761515cd3fd5c1da718528b314647d"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875713"
+provenance = "github-attestations"
+
+[tools.jactionlint."platforms.linux-x64"]
+checksum = "sha256:8137d5bfe266dd5e48d2af2306827785ce07c6988e04b1c3d6ad4776e97d27d2"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875708"
+provenance = "github-attestations"
+
+[tools.jactionlint."platforms.linux-x64-musl"]
+checksum = "sha256:8137d5bfe266dd5e48d2af2306827785ce07c6988e04b1c3d6ad4776e97d27d2"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875708"
+provenance = "github-attestations"
+
+[tools.jactionlint."platforms.macos-arm64"]
+checksum = "sha256:622b29b15a59618bc032163073209ffc434252e9a19eafd451e69207a50f266a"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875646"
+provenance = "github-attestations"
+
+[tools.jactionlint."platforms.macos-x64"]
+checksum = "sha256:74efa76b1c200a2b7778c28e9aa0c3ba1c843863006a2f8916f252f8c048d42b"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875655"
+provenance = "github-attestations"
+
+[tools.jactionlint."platforms.windows-x64"]
+checksum = "sha256:97300770d2bea28110736e34edfc9a21d80840090af64dc4b6116b6467f537a4"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.2.0/jactionlint_2.2.0_windows_amd64.zip"
+url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/640875792"
+provenance = "github-attestations"
+
 [[tools.mr-boxington]]
-version = "1.19.0"
+version = "1.24.0"
 backend = "packslip:github.com/jdx/mr-boxington"
 specifiers = ["latest"]
 
 [tools.mr-boxington."platforms.linux-arm64"]
-checksum = "sha256:6f75b5351cc0489b93033611d5fd2cf863b9d70ab53adfcb8d33fefd8e5e870f"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.19.0/mbx-aarch64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:80a2909eff63aaf5b9901f923d68ab8b70056bb11d5fd025535614033e48dfcf"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.24.0/mbx-aarch64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.linux-arm64-musl"]
-checksum = "sha256:b5574ba12954bf128303ef8b10b6b9daec459fbb26de7d63173b3da32f595828"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.19.0/mbx-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:9e63b57eea37c97d1b1eb47801a92a73337e4a537d2678d761244fbc8434b123"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.24.0/mbx-aarch64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.linux-x64"]
-checksum = "sha256:c41238298b30d7c7da53dfe850f06036dd103b65865cc9dc986077eaf3e565d2"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.19.0/mbx-x86_64-unknown-linux-gnu.tar.gz"
+checksum = "sha256:3e35b12dd105875fa0505c45224eaf7e2fd7103d86199ffca97c0cd4093e708f"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.24.0/mbx-x86_64-unknown-linux-gnu.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.linux-x64-musl"]
-checksum = "sha256:6424fb1a4e28f4bea2db06d33b1a0126955c23723eee26b6856db91deb980f01"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.19.0/mbx-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:823626ca1246a6df1c20f83cfc49522f062bfa772b266f86614651483cea1c62"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.24.0/mbx-x86_64-unknown-linux-musl.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.macos-arm64"]
-checksum = "sha256:dbaad252f9a483be80f6d00ad315f4957d8f9b9d19213ca05171b25a8dba6748"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.19.0/mbx-aarch64-apple-darwin.tar.gz"
+checksum = "sha256:60c646b7ce5ae9cfdb67b1565a4ec81ec3a07290f1e7000a026a6db7fa247440"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.24.0/mbx-aarch64-apple-darwin.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [tools.mr-boxington."platforms.windows-x64"]
-checksum = "sha256:9d56896b47ab7f509266d4ac99170c27f75b209a52fa6a40420e60efcebc4b14"
-url = "https://github.com/jdx/mr-boxington/releases/download/v1.19.0/mbx-x86_64-pc-windows-msvc.zip"
+checksum = "sha256:ced45f3dfd66649b2cea0b48ad01e13d1d7f7796c1182cc77d56ef4829af1d5b"
+url = "https://github.com/jdx/mr-boxington/releases/download/v1.24.0/mbx-x86_64-pc-windows-msvc.zip"
 signer = "sigstore-oidc:https://github.com/jdx/mr-boxington/.github/workflows/release.yml"
 
 [[tools.node]]

@@ -148,6 +148,7 @@ Use `aube config find <words>` to search from your terminal, or `aube config exp
 | [`strictDepBuilds`](#setting-strictdepbuilds) | `bool` | Exit with an error if dependencies have unreviewed build scripts. |
 | [`allowBuilds`](#setting-allowbuilds) | `object` | Explicitly allow or disallow script execution per package. |
 | [`dangerouslyAllowAllBuilds`](#setting-dangerouslyallowallbuilds) | `bool` | Allow all dependency build scripts automatically. |
+| [`useDefaultTrustedDependencies`](#setting-usedefaulttrusteddependencies) | `bool` | Seed the build allowlist with aube's built-in trusted-dependencies list. |
 | [`nodeVersion`](#setting-nodeversion) | `string` | Node.js version aube reports when evaluating `engines` checks. |
 | [`nodeDownloadMirrors`](#setting-nodedownloadmirrors) | `object` | Custom Node.js download mirror URLs. |
 | [`runtimeInstaller`](#setting-runtimeinstaller) | `"auto" \| "mise" \| "aube"` | Who installs a missing runtime: Node.js versions and, with `managePackageManagerVersions`, pinned aube versions. |
@@ -2594,6 +2595,27 @@ Examples:
 
 - `aube install --dangerously-allow-all-builds`
 
+### `useDefaultTrustedDependencies` {#setting-usedefaulttrusteddependencies}
+
+Seed the build allowlist with aube's built-in trusted-dependencies list.
+
+- Type: `bool`
+- Default: `true`
+- Environment: `npm_config_use_default_trusted_dependencies`, `NPM_CONFIG_USE_DEFAULT_TRUSTED_DEPENDENCIES`, `AUBE_USE_DEFAULT_TRUSTED_DEPENDENCIES`
+- .npmrc keys: `useDefaultTrustedDependencies`, `use-default-trusted-dependencies`
+
+aube ships a snapshot of pnpm's trusted-dependencies list and merges it
+into the dependency lifecycle-script allowlist whenever scripts run. Set
+this to `false` to approve only the packages named in `allowBuilds`,
+`onlyBuiltDependencies`, and `trustedDependencies`, so an explicit
+allowlist means exactly what it lists. Bun treats an explicit
+`trustedDependencies` the same way. `neverBuiltDependencies` and
+`allowBuilds: { pkg: false }` still win over any approval.
+
+Examples:
+
+- `useDefaultTrustedDependencies: false`
+
 ## Node.js
 
 ### `nodeVersion` {#setting-nodeversion}
@@ -3179,8 +3201,9 @@ Explicitly mark the environment as CI.
 - .npmrc keys: `ci`
 
 aube treats the environment as CI when the `CI` environment variable
-is set. CI mode disables the global virtual store and flips the default
-install mode to `--frozen-lockfile`.
+is set to a non-empty value (an empty `CI=` is treated as not CI, matching
+pnpm; `CI=0` and `CI=false` still count as CI). CI mode disables the
+global virtual store and flips the default install mode to `--frozen-lockfile`.
 
 Examples:
 

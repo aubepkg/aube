@@ -271,7 +271,57 @@ pub(super) fn maybe_cleanup_unused_catalogs(
     let Some(ws_path) = aube_manifest::workspace::workspace_yaml_existing(cwd) else {
         return Ok(());
     };
-    let dropped = super::super::catalogs::prune_unused_catalog_entries(&ws_path, declared, used)?;
+    // Overridden entries are omitted from the lockfile's `catalogs:` block
+    // but their `catalog:` references remain in package.json, so a later
+    // forced resolve still needs them in the workspace yaml.
+    let mut used = used.clone();
+    let mut manifest_dirs = vec![cwd.to_path_buf()];
+    match aube_workspace::find_workspace_packages(cwd) {
+        Ok(members) => manifest_dirs.extend(members),
+        Err(e) => {
+            tracing::debug!("catalogPrune: skipped, workspace discovery failed: {e}");
+            return Ok(());
+        }
+    }
+    for dir in manifest_dirs {
+        let manifest = match aube_manifest::PackageJson::from_path(&dir.join("package.json")) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!(
+                    "catalogPrune: skipped, could not read {}: {e}",
+                    dir.display()
+                );
+                return Ok(());
+            }
+        };
+        let deps = manifest
+            .dependencies
+            .iter()
+            .chain(&manifest.dev_dependencies)
+            .chain(&manifest.optional_dependencies)
+            .chain(&manifest.peer_dependencies);
+        for (name, spec) in deps {
+            let Some(catalog) = spec.strip_prefix("catalog:") else {
+                continue;
+            };
+            let catalog = if catalog.is_empty() {
+                "default"
+            } else {
+                catalog
+            };
+            let Some(range) = declared.get(catalog).and_then(|c| c.get(name)) else {
+                continue;
+            };
+            used.entry(catalog.to_string()).or_default().insert(
+                name.clone(),
+                aube_lockfile::CatalogEntry {
+                    specifier: range.clone(),
+                    version: range.clone(),
+                },
+            );
+        }
+    }
+    let dropped = super::super::catalogs::prune_unused_catalog_entries(&ws_path, declared, &used)?;
     if !dropped.is_empty() {
         let filename = ws_path
             .file_name()

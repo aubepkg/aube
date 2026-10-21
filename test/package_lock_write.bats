@@ -56,13 +56,15 @@ teardown() {
 	# exists and that known packages appear as block headers.
 	run grep -c '# yarn lockfile v1' yarn.lock
 	assert_success
-	run grep -c '"is-odd@3.0.1"' yarn.lock
+	run grep -c '^is-odd@3.0.1:$' yarn.lock
+	assert_success
+	# Every entry keeps a `resolved` line through the rewrite.
+	run grep -c '^  resolved "' yarn.lock
 	assert_success
 
 	# Second install from the regenerated yarn.lock must succeed.
-	# The writer emits multi-spec block headers (exact `name@version`
-	# *plus* the manifest range), so reparse finds direct deps via
-	# the manifest lookup even when the fixture uses range specs.
+	# The writer emits yarn's own multi-spec block headers, so reparse
+	# finds direct deps via the manifest lookup.
 	rm -rf node_modules
 	run aube install --frozen-lockfile
 	assert_success
@@ -87,6 +89,116 @@ teardown() {
 	run aube install --frozen-lockfile
 	assert_success
 	assert_dir_exists node_modules/is-odd
+}
+
+# A project with file: directory and tarball deps, and the bun.lock
+# bun 1.4 writes for it.
+_bun_file_packages_project() {
+	mkdir -p vendor/x vendor/y vendor/t/package
+	echo '{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y"}}' >vendor/x/package.json
+	echo '{"name":"y","version":"0.1.0"}' >vendor/y/package.json
+	echo '{"name":"t","version":"3.0.0"}' >vendor/t/package/package.json
+	tar -czf vendor/t.tgz -C vendor/t package
+	echo '{"name":"root","private":true,"dependencies":{"x":"file:./vendor/x","t":"file:./vendor/t.tgz"}}' >package.json
+	# The shapes bun 1.4 writes for these packages.
+	cat >bun.lock <<'EOF'
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "t": "file:./vendor/t.tgz",
+        "x": "file:./vendor/x",
+      },
+    },
+  },
+  "packages": {
+    "t": ["t@./vendor/t.tgz", {}, ""],
+
+    "x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }],
+
+    "x/y": ["y@file:vendor/y", {}],
+  }
+}
+EOF
+}
+
+@test "aube install keeps file: packages in bun.lock on re-resolve" {
+	_bun_file_packages_project
+
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	run grep -F '"x": ["x@file:vendor/x", { "dependencies": { "y": "file:../y" } }]' bun.lock
+	assert_success
+	run grep -F '["y@file:vendor/y", {}]' bun.lock
+	assert_success
+	run grep -F '"t": ["t@./vendor/t.tgz", {}, ""]' bun.lock
+	assert_success
+
+	rm -rf node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_file_exists node_modules/x/package.json
+	assert_file_exists node_modules/t/package.json
+}
+
+@test "bun accepts the bun.lock aube rewrites for file: packages" {
+	command -v bun >/dev/null || skip "bun is not installed"
+	_bun_file_packages_project
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	rm -rf node_modules
+	run bun install --frozen-lockfile
+	assert_success
+}
+
+@test "aube install keeps bun workspace members in bun.lock on re-resolve" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*"}}' >packages/a/package.json
+	echo '{"name":"b","version":"1.0.0"}' >packages/b/package.json
+	# What bun 1.4 writes for this workspace.
+	cat >bun.lock <<'EOF'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "workspace:*",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "b": ["b@workspace:packages/b"],
+  }
+}
+EOF
+	cp bun.lock bun.lock.orig
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run diff bun.lock.orig bun.lock
+	assert_success
+
+	rm -rf node_modules packages/*/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_link_exists packages/a/node_modules/b
 }
 
 @test "aube install preserves pnpm-lock.yaml format on re-resolve (does not create aube-lock.yaml)" {
@@ -146,6 +258,236 @@ teardown() {
 	assert [ ! -f pnpm-lock.yaml ]
 	assert [ ! -f aube-lock.yaml ]
 	run grep -c '"lockfileVersion": 3' package-lock.json
+	assert_success
+}
+
+@test "aube install --frozen-lockfile accepts a file: dep of an npm workspace member" {
+	mkdir -p packages/app/vendor/x packages/app/vendor/y packages/app/vendor/z
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}' >packages/app/package.json
+	echo '{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y"}}' >packages/app/vendor/x/package.json
+	echo '{"name":"y","version":"0.1.0"}' >packages/app/vendor/y/package.json
+	echo '{"name":"z","version":"9.0.0"}' >packages/app/vendor/z/package.json
+	# What npm 11 writes for this workspace.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/app": {
+      "resolved": "packages/app",
+      "link": true
+    },
+    "node_modules/x": {
+      "resolved": "packages/app/vendor/x",
+      "link": true
+    },
+    "node_modules/y": {
+      "resolved": "packages/app/vendor/y",
+      "link": true
+    },
+    "packages/app": {
+      "version": "1.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x"
+      }
+    },
+    "packages/app/vendor/x": {
+      "version": "1.2.3",
+      "dependencies": {
+        "y": "file:../y"
+      }
+    },
+    "packages/app/vendor/y": {
+      "version": "0.1.0"
+    }
+  }
+}
+EOF
+
+	run aube install --frozen-lockfile
+	assert_success
+	cd packages/app
+	run node -e 'console.log(require(require.resolve("y/package.json", { paths: [require("path").dirname(require.resolve("x/package.json"))] })).version)'
+	assert_success
+	assert_output "0.1.0"
+	cd ../..
+
+	# A dependency added to a file: target is drift, as `npm ci` reports.
+	echo '{"name":"x","version":"1.2.3","dependencies":{"y":"file:../y","z":"file:../z"}}' >packages/app/vendor/x/package.json
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "packages/app/vendor/x: manifest"
+}
+
+@test "aube install --frozen-lockfile reports a root file: dep removed while a member keeps it" {
+	mkdir -p packages/app/vendor/x
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"app","version":"1.0.0","dependencies":{"x":"file:./vendor/x"}}' >packages/app/package.json
+	echo '{"name":"x","version":"1.2.3"}' >packages/app/vendor/x/package.json
+	# What npm 11 writes while the root still depends on `x` too.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ],
+      "dependencies": {
+        "x": "file:./packages/app/vendor/x"
+      }
+    },
+    "node_modules/app": {
+      "resolved": "packages/app",
+      "link": true
+    },
+    "node_modules/x": {
+      "resolved": "packages/app/vendor/x",
+      "link": true
+    },
+    "packages/app": {
+      "version": "1.0.0",
+      "dependencies": {
+        "x": "file:./vendor/x"
+      }
+    },
+    "packages/app/vendor/x": {
+      "version": "1.2.3"
+    }
+  }
+}
+EOF
+
+	# `x` is a file: target, not a workspace member the root links.
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "manifest removed x"
+}
+
+@test "aube install keeps npm workspace members in package-lock.json on re-resolve" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"a","version":"1.0.0","dependencies":{"b":"1.0.0"}}' >packages/a/package.json
+	echo '{"name":"b","version":"1.0.0"}' >packages/b/package.json
+	# What npm 11 writes for this workspace. Nothing in the root depends
+	# on a member, so a fresh resolve has no link: package for them.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/a": {
+      "resolved": "packages/a",
+      "link": true
+    },
+    "node_modules/b": {
+      "resolved": "packages/b",
+      "link": true
+    },
+    "packages/a": {
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "1.0.0"
+      }
+    },
+    "packages/b": {
+      "version": "1.0.0"
+    }
+  }
+}
+EOF
+
+	run aube install --no-frozen-lockfile
+	assert_success
+
+	run node -e '
+const p = require("./package-lock.json").packages;
+const ok = JSON.stringify(p[""].workspaces) === JSON.stringify(["packages/*"])
+  && p["node_modules/a"]?.resolved === "packages/a" && p["node_modules/a"].link
+  && p["node_modules/b"]?.resolved === "packages/b" && p["node_modules/b"].link
+  && p["packages/a"]?.version === "1.0.0" && p["packages/a"].dependencies?.b === "1.0.0"
+  && p["packages/b"]?.version === "1.0.0";
+if (!ok) { console.log(JSON.stringify(p, null, 2)); process.exit(1); }'
+	assert_success
+
+	rm -rf node_modules packages/*/node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	assert_link_exists packages/a/node_modules/b
+}
+
+@test "aube install keeps a versionless npm workspace member and optional peers across a rewrite" {
+	mkdir -p packages/a packages/b
+	echo '{"name":"root","private":true,"workspaces":["packages/*"]}' >package.json
+	echo '{"name":"a","version":"1.0.0","peerDependencies":{"is-odd":"^3.0.0"},"peerDependenciesMeta":{"is-odd":{"optional":true}}}' >packages/a/package.json
+	echo '{"name":"b"}' >packages/b/package.json
+	echo 'strict-peer-dependencies=true' >.npmrc
+	# What npm 11 writes for this workspace.
+	cat >package-lock.json <<'EOF'
+{
+  "name": "root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "root",
+      "workspaces": [
+        "packages/*"
+      ]
+    },
+    "node_modules/a": {
+      "resolved": "packages/a",
+      "link": true
+    },
+    "node_modules/b": {
+      "resolved": "packages/b",
+      "link": true
+    },
+    "packages/a": {
+      "version": "1.0.0",
+      "peerDependencies": {
+        "is-odd": "^3.0.0"
+      },
+      "peerDependenciesMeta": {
+        "is-odd": {
+          "optional": true
+        }
+      }
+    },
+    "packages/b": {}
+  }
+}
+EOF
+
+	run aube install --no-frozen-lockfile
+	assert_success
+	run node -e '
+const p = require("./package-lock.json").packages;
+const ok = p["packages/a"]?.peerDependenciesMeta?.["is-odd"]?.optional === true
+  && p["packages/b"] && !("version" in p["packages/b"]);
+if (!ok) { console.log(JSON.stringify(p, null, 2)); process.exit(1); }'
+	assert_success
+
+	rm -rf node_modules packages/*/node_modules
+	run aube install --frozen-lockfile
 	assert_success
 }
 

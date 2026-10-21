@@ -89,10 +89,11 @@ teardown() {
 @test "aube dlx -p installs a different package than the bin name" {
 	# The `which` npm package ships a binary named `node-which`, not `which`.
 	# Running `node-which node` prints the absolute path of the `node`
-	# executable on PATH, so we assert the output contains `/node`.
+	# executable on PATH, so we assert the output ends in it (`\node.EXE`
+	# on Windows).
 	run aube dlx --package which node-which node
 	assert_success
-	assert_output --partial "/node"
+	assert_output --regexp '[/\\]node(\.[eE][xX][eE])?$'
 }
 
 @test "aube dlx falls back to the package's single bin when names differ" {
@@ -103,7 +104,7 @@ teardown() {
 	# what `npx which node` does.
 	run aube dlx which node
 	assert_success
-	assert_output --partial "/node"
+	assert_output --regexp '[/\\]node(\.[eE][xX][eE])?$'
 }
 
 @test "aube dlx accepts an @version suffix on the command" {
@@ -166,6 +167,7 @@ teardown() {
 	# waiting on, so the tool ran on and aube never exited. A line that is one
 	# plain command now skips the shell entirely, which puts the tool back
 	# where the forwarding expects it — as aube's direct child.
+	_skip_on_windows "signals are POSIX"
 	cat >dlx-signal-child.js <<-'JS'
 		process.on("SIGINT", () => {
 			console.log("CHILD GOT SIGINT")
@@ -227,6 +229,21 @@ teardown() {
 	# from under it.
 	assert_line "AUBE_EXIT=7"
 	assert_file_contains child.out "CHILD GOT SIGINT"
+}
+
+@test "aube dlx resolves a relative file: spec from the invoking directory" {
+	# dlx installs into a scratch dir under TMPDIR; a path the user wrote
+	# relative to where they ran dlx must not resolve against that dir.
+	mkdir -p tools/printer work
+	cat >tools/printer/package.json <<-'JSON'
+		{ "name": "np-printer", "version": "1.0.0", "bin": { "np-printer": "cli.js" } }
+	JSON
+	printf '#!/usr/bin/env node\nconsole.log("printer ran")\n' >tools/printer/cli.js
+	chmod +x tools/printer/cli.js
+	cd work
+	run aube dlx -p file:../tools/printer np-printer
+	assert_success
+	assert_line "printer ran"
 }
 
 @test "aube dlx -c infers the package from the first word when -p is omitted" {

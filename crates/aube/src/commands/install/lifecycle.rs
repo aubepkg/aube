@@ -74,6 +74,7 @@ pub(crate) fn build_policy_from_sources(
     manifest: &aube_manifest::PackageJson,
     workspace: &aube_manifest::WorkspaceConfig,
     dangerously_allow_all_builds: bool,
+    use_default_trusted_dependencies: bool,
 ) -> (
     aube_scripts::BuildPolicy,
     Vec<aube_scripts::BuildPolicyError>,
@@ -82,6 +83,7 @@ pub(crate) fn build_policy_from_sources(
         std::iter::once(manifest),
         workspace,
         dangerously_allow_all_builds,
+        use_default_trusted_dependencies,
     )
 }
 
@@ -89,12 +91,17 @@ pub(crate) fn build_policy_from_manifest_sources<'a>(
     manifests: impl IntoIterator<Item = &'a aube_manifest::PackageJson>,
     workspace: &aube_manifest::WorkspaceConfig,
     dangerously_allow_all_builds: bool,
+    use_default_trusted_dependencies: bool,
 ) -> (
     aube_scripts::BuildPolicy,
     Vec<aube_scripts::BuildPolicyError>,
 ) {
     let mut merged = std::collections::BTreeMap::new();
-    let mut only_built = DEFAULT_TRUSTED_DEPENDENCIES.to_vec();
+    let mut only_built = if use_default_trusted_dependencies {
+        DEFAULT_TRUSTED_DEPENDENCIES.to_vec()
+    } else {
+        Vec::new()
+    };
     let mut never_built = Vec::new();
     for manifest in manifests {
         for (pattern, allow) in manifest.pnpm_allow_builds() {
@@ -1451,7 +1458,7 @@ mod tests {
     fn pnpm_trusted_dependencies_are_allowed_by_default() {
         let manifest = aube_manifest::PackageJson::default();
         let workspace = aube_manifest::WorkspaceConfig::default();
-        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false, true);
 
         assert!(warnings.is_empty());
         assert_eq!(
@@ -1472,7 +1479,7 @@ mod tests {
     fn explicit_deny_overrides_default_trust() {
         let manifest = manifest_with_allow_build("esbuild", false);
         let workspace = aube_manifest::WorkspaceConfig::default();
-        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false, true);
 
         assert!(warnings.is_empty());
         assert_eq!(
@@ -1488,7 +1495,7 @@ mod tests {
         workspace
             .allow_builds
             .insert("esbuild".to_string(), yaml_serde::Value::Bool(true));
-        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false, true);
 
         assert!(warnings.is_empty());
         assert_eq!(
@@ -1504,12 +1511,37 @@ mod tests {
         workspace
             .allow_builds
             .insert("esbuild".to_string(), yaml_serde::Value::Bool(false));
-        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false);
+        let (policy, warnings) = build_policy_from_sources(&manifest, &workspace, false, true);
 
         assert!(warnings.is_empty());
         assert_eq!(
             policy.decide("esbuild", "0.28.1"),
             aube_scripts::AllowDecision::Deny
+        );
+    }
+
+    #[test]
+    fn default_trusted_dependencies_can_be_disabled() {
+        let manifest = manifest_with_allow_build("native-dep", true);
+        let workspace = aube_manifest::WorkspaceConfig::default();
+        let trusted = DEFAULT_TRUSTED_DEPENDENCIES
+            .first()
+            .expect("bundled trust list is not empty");
+
+        let (policy, _) = build_policy_from_sources(&manifest, &workspace, false, true);
+        assert_eq!(
+            policy.decide(trusted, "1.0.0"),
+            aube_scripts::AllowDecision::Allow
+        );
+
+        let (policy, _) = build_policy_from_sources(&manifest, &workspace, false, false);
+        assert_eq!(
+            policy.decide(trusted, "1.0.0"),
+            aube_scripts::AllowDecision::Unspecified
+        );
+        assert_eq!(
+            policy.decide("native-dep", "1.0.0"),
+            aube_scripts::AllowDecision::Allow
         );
     }
 
@@ -1522,6 +1554,7 @@ mod tests {
             [&allow_manifest, &deny_manifest],
             &workspace,
             false,
+            true,
         );
 
         assert!(warnings.is_empty());

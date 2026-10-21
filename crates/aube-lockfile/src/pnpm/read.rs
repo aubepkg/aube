@@ -244,10 +244,32 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             let snapshot_key = format!("{name}@{}", local.specifier());
             let should_rebase = importer_path != "."
                 && (info.specifier == classify_version || info.specifier.starts_with("workspace:"));
-            let local = if should_rebase {
-                rebase_importer_local(local, importer_path)
-            } else {
-                local
+            // A member's `link:` version is relative to the member, as pnpm
+            // writes it (normalized, `link:./x` as `link:x`), which the
+            // equality check above misses. That holds for a target an
+            // override set too, so the version, not the specifier, settles
+            // the target. Older aube wrote a member's own link root-relative:
+            // a version equal to the specifier resolved from the member.
+            let member_link_spec = (importer_path != "." && matches!(local, LocalSource::Link(_)))
+                .then(|| LocalSource::parse(&info.specifier, Path::new("")))
+                .flatten()
+                .filter(|spec| matches!(spec, LocalSource::Link(_)));
+            let local = match member_link_spec {
+                Some(spec) => {
+                    let own = rebase_importer_local(spec, importer_path);
+                    let root_relative = matches!(
+                        (&own, &local),
+                        (LocalSource::Link(own), LocalSource::Link(version))
+                            if *own == normalize_lexical(version)
+                    );
+                    if root_relative {
+                        own
+                    } else {
+                        rebase_importer_local(local, importer_path)
+                    }
+                }
+                None if should_rebase => rebase_importer_local(local, importer_path),
+                None => local,
             };
             let dep_path = local.dep_path(name);
             deps.push(DirectDep {
@@ -892,9 +914,11 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     //      hashed→spec pass. Without it a registry package that peers with
     //      a git/tarball dep would re-key on the next install, busting the
     //      warm path (and emitting a churned lockfile).
-    let spec_peer_to_hashed = |head: &str| -> Option<String> {
-        let (name, value) = parse_dep_path(head)?;
-        crate::shared_local_dep_path(&name, &value)
+    let spec_peer_to_hashed = |reference: &str| -> Option<String> {
+        let (name, value) = parse_dep_path(reference)?;
+        let head = crate::shared_local_dep_path(&name, &value)?;
+        let suffix = reference.find('(').map_or("", |i| &reference[i..]);
+        Some(format!("{head}{suffix}"))
     };
     // Canonicalize a git/remote-tarball package's own `name@<url>` head to
     // the hashed form, preserving any peer suffix verbatim (URLs aube keys

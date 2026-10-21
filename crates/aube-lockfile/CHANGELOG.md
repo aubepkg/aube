@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.8.0...aube-lockfile-v2.8.1) - 2026-10-20
+
+### Fixed
+
+- *(lockfile)* keep yarn berry metadata and detect manifest drift ([#1798](https://github.com/aubepkg/aube/pull/1798))
+- *(lockfile)* keep root file: directory deps in package-lock.json ([#1799](https://github.com/aubepkg/aube/pull/1799))
+- *(lockfile)* keep npm optional flags and re-resolve file: peers on add ([#1775](https://github.com/aubepkg/aube/pull/1775))
+
+## [2.8.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.7.2...aube-lockfile-v2.8.0) - 2026-10-19
+
+### Fixed
+
+- *(lockfile)* keep snapshot keys over 1024 chars in explicit form ([#1765](https://github.com/aubepkg/aube/pull/1765))
+
+## [2.7.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.7.0...aube-lockfile-v2.7.1) - 2026-10-15
+
+### Fixed
+
+- *(lockfile)* keep resolved peers out of bun.lock dependencies ([#1727](https://github.com/aubepkg/aube/pull/1727))
+- *(resolver)* apply link: overrides to workspace members like pnpm ([#1729](https://github.com/aubepkg/aube/pull/1729))
+- *(install)* show a workspace dep's version in the install summary ([#1724](https://github.com/aubepkg/aube/pull/1724))
+- *(lockfile)* link the member a bun root asks for with workspace: ([#1723](https://github.com/aubepkg/aube/pull/1723))
+- *(lockfile)* keep bun workspace members in bun.lock on re-resolve ([#1721](https://github.com/aubepkg/aube/pull/1721))
+- *(lockfile)* write workspace dependencies as link: in pnpm-lock.yaml ([#1719](https://github.com/aubepkg/aube/pull/1719))
+- *(lockfile)* report real versions of bun.lock file: deps and members ([#1717](https://github.com/aubepkg/aube/pull/1717))
+- *(lockfile)* keep file: packages in bun.lock on re-resolve ([#1715](https://github.com/aubepkg/aube/pull/1715))
+- *(lockfile)* accept file: deps of npm workspace members when frozen ([#1714](https://github.com/aubepkg/aube/pull/1714))
+- *(lockfile)* keep npm workspace members in package-lock.json ([#1712](https://github.com/aubepkg/aube/pull/1712))
+
+## [2.7.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.6.1...aube-lockfile-v2.7.0) - 2026-10-07
+
+### Fixed
+
+- *(lockfile)* report the real version of file: and link: deps ([#1645](https://github.com/aubepkg/aube/pull/1645))
+- *(install)* notice the first dependency added after a lockfile with no deps ([#1707](https://github.com/aubepkg/aube/pull/1707))
+- *(install)* keep local deps installable from a relocated lockfile ([#1703](https://github.com/aubepkg/aube/pull/1703))
+- *(lockfile)* preserve patch hashes in peer references ([#1685](https://github.com/aubepkg/aube/pull/1685))
+- *(lockfile)* read and write workspace members' link: deps relative to the member ([#1680](https://github.com/aubepkg/aube/pull/1680))
+- *(install)* link workspace peers of file: dependencies ([#1679](https://github.com/aubepkg/aube/pull/1679))
+
+### Other
+
+- refresh benchmarks for v2.6.1 ([#1675](https://github.com/aubepkg/aube/pull/1675))
+
 ## [2.6.1](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.6.0...aube-lockfile-v2.6.1) - 2026-09-29
 
 ### Fixed

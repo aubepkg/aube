@@ -31,6 +31,15 @@ env:
   MBX_DISABLE: "1"
   DEBIAN_FRONTEND: noninteractive
 
+concurrency:
+  # Every dispatch (different build_revision, distributions or version_suffix)
+  # must run, so queue them all instead of letting the newest pending run
+  # replace an older one. The key is the tag without inputs so a release and a
+  # manual dispatch for the same tag still run one at a time.
+  group: ${{ github.workflow }}-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   publish-ppa:
     # dput needs outbound FTP (port 21) to upload the source package to
@@ -154,6 +163,7 @@ jobs:
             jq
 
       - name: Resolve minimum supported Rust version
+        shell: bash
         run: |
           MSRV=$(cargo metadata --no-deps --format-version 1 |
             jq -er '

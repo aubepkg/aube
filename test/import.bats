@@ -382,6 +382,70 @@ EOF
 	assert_success
 }
 
+@test "aube install --lockfile-only keeps a bun 1.4 lockfileVersion 2" {
+	cp "$PROJECT_ROOT/fixtures/import-bun/package.json" .
+	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
+
+	cp bun.lock bun.lock.before
+
+	run aube install --lockfile-only --no-frozen-lockfile
+	assert_success
+	# The version stamp and everything else above `packages` stay as bun
+	# wrote them.
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
+	assert_success
+}
+
+@test "aube update keeps a bun 1.4 lockfileVersion 2" {
+	cp "$PROJECT_ROOT/fixtures/import-bun/package.json" .
+	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
+
+	cp bun.lock bun.lock.before
+
+	run aube update kind-of
+	assert_success
+	# The version stamp and everything else above `packages` stay as bun
+	# wrote them.
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
+	assert_success
+}
+
+@test "aube dedupe keeps a bun 1.4 lockfileVersion 2" {
+	cp "$PROJECT_ROOT/fixtures/import-bun/package.json" .
+	# An orphan entry gives dedupe something to remove, so it rewrites
+	# the lockfile.
+	sed -e 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		-e 's/^  "packages": {$/&\n    "orphan-pkg": ["orphan-pkg@1.0.0", "", {}, "sha512-0000"],/' \
+		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
+
+	cp bun.lock bun.lock.before
+
+	run aube dedupe
+	assert_success
+	assert_output --partial "- orphan-pkg@1.0.0"
+	run diff <(sed '/"packages"/q' bun.lock.before) <(sed '/"packages"/q' bun.lock)
+	assert_success
+}
+
+@test "aube remove keeps a bun 1.4 lockfileVersion 2 when it re-resolves" {
+	# Loosening the kept dependency's range makes the lockfile stale, so
+	# remove falls back to a fresh resolve instead of pruning.
+	sed 's/"kind-of": "6.0.3"/"kind-of": "^6.0.3"/' \
+		"$PROJECT_ROOT/fixtures/import-bun/package.json" >package.json
+	sed 's/"lockfileVersion": 1,/"lockfileVersion": 2,/' \
+		"$PROJECT_ROOT/fixtures/import-bun/bun.lock" >bun.lock
+
+	run aube remove is-odd
+	assert_success
+	assert_output --partial "Resolved"
+	run grep -F '"lockfileVersion": 2,' bun.lock
+	assert_success
+	run grep -F '"configVersion": 0,' bun.lock
+	assert_success
+}
+
 @test "aube import from a v3 bun.lock writes scoped overrides as parent>child" {
 	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/package.json" .
 	cp "$PROJECT_ROOT/fixtures/import-bun-scoped-overrides/bun.lock" .

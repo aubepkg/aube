@@ -287,6 +287,38 @@ JSON
 	assert_dir_exists node_modules
 }
 
+@test "aube install picks up the first dependency added after a lockfile with no deps" {
+	# A lockfile written while the project had no dependencies has an empty
+	# importer. That used to read as up to date, so the new dependency was
+	# never installed, even with node_modules removed.
+	mkdir -p tool
+	echo '{"name":"tool","version":"1.0.0"}' >tool/package.json
+	echo '{"name":"app","version":"0.0.0"}' >package.json
+	# As pnpm 12.8.1 writes it for this project.
+	cat >pnpm-lock.yaml <<'YAML'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+YAML
+	echo '{"name":"app","version":"0.0.0","dependencies":{"tool":"link:./tool"}}' >package.json
+
+	run aube install --frozen-lockfile
+	assert_failure
+	assert_output --partial "manifest adds tool@link:./tool"
+
+	run aube install
+	assert_success
+	assert_file_exists node_modules/tool/package.json
+	run cat pnpm-lock.yaml
+	assert_output --partial "specifier: link:./tool"
+}
+
 @test "aube install --frozen-lockfile errors when no lockfile is present" {
 	# pnpm parity: explicit --frozen-lockfile is ERR_PNPM_NO_LOCKFILE
 	# when the lockfile is absent. The auto-CI default (see next test)
@@ -1367,4 +1399,59 @@ JSON
 	# but the CAS root must still contain at least one file.
 	shard_count="$(find "$store_v1/files" -type f | wc -l | tr -d ' ')"
 	[ "$shard_count" -gt 0 ]
+}
+
+@test "aube install treats an empty CI env var as not CI" {
+	_setup_basic_fixture
+	# Loosen the range so the lockfile specifier no longer matches
+	node -e '
+		const fs = require("fs");
+		const pkg = JSON.parse(fs.readFileSync("package.json"));
+		pkg.dependencies["is-odd"] = "^3.0.0";
+		fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+	'
+	CI=1 run aube install
+	assert_failure
+	assert_output --partial "lockfile is out of date"
+	CI='' run aube install
+	assert_success
+	refute_output --partial "lockfile is out of date"
+}
+
+@test "aube install --force restores a deleted file in a per-project virtual store" {
+	_setup_basic_fixture
+	run aube --disable-global-virtual-store install
+	assert_success
+	rm node_modules/is-odd/index.js
+	run aube --disable-global-virtual-store install
+	assert_success
+	assert_file_not_exists node_modules/is-odd/index.js
+
+	run aube --disable-global-virtual-store install --force
+	assert_success
+	assert_file_exists node_modules/is-odd/index.js
+}
+
+@test "aube install --force restores a deleted file in the global virtual store" {
+	_setup_basic_fixture
+	run aube --enable-global-virtual-store install
+	assert_success
+	rm node_modules/is-odd/index.js
+	assert_file_not_exists node_modules/is-odd/index.js
+
+	run aube --enable-global-virtual-store install --force
+	assert_success
+	assert_file_exists node_modules/is-odd/index.js
+	assert_file_exists node_modules/is-odd/package.json
+}
+
+@test "aube install --force restores a deleted file with node-linker=hoisted" {
+	_setup_basic_fixture
+	run aube install --node-linker=hoisted
+	assert_success
+	rm node_modules/is-odd/index.js
+
+	run aube install --node-linker=hoisted --force
+	assert_success
+	assert_file_exists node_modules/is-odd/index.js
 }

@@ -162,7 +162,7 @@ _make_env_probe_project() {
 @test "stateDir in .npmrc changes state file location" {
 	_setup_basic_fixture
 	local custom_state="$TEST_TEMP_DIR/custom-state"
-	echo "stateDir=$custom_state" >>"$HOME/.npmrc"
+	echo "stateDir=$(_native_path "$custom_state")" >>"$HOME/.npmrc"
 	run aube install
 	assert_success
 	assert_dir_exists "$custom_state/.aube-state"
@@ -228,7 +228,7 @@ _assert_links_into_gvs() {
 @test "cacheDir in .npmrc relocates the global virtual store" {
 	_setup_basic_fixture
 	local custom_cache="$TEST_TEMP_DIR/npmrc-cache"
-	echo "cacheDir=$custom_cache" >>"$HOME/.npmrc"
+	echo "cacheDir=$(_native_path "$custom_cache")" >>"$HOME/.npmrc"
 
 	run aube install
 	assert_success
@@ -257,8 +257,8 @@ _assert_links_into_gvs() {
 	local custom_cache="$TEST_TEMP_DIR/split-cache"
 	local gvs="$TEST_TEMP_DIR/split-gvs"
 	cat >>"$HOME/.npmrc" <<RC
-cacheDir=$custom_cache
-globalVirtualStoreDir=$gvs
+cacheDir=$(_native_path "$custom_cache")
+globalVirtualStoreDir=$(_native_path "$gvs")
 RC
 
 	run aube install

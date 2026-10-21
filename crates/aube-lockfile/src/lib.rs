@@ -15,14 +15,15 @@ pub use io::{
     Error, LockfileKind, ParseOptions, active_lockfile_has_conflict_markers,
     active_lockfile_has_conflict_markers_selecting, active_lockfile_path_selecting,
     aube_lock_filename, build_canonical_map, detect_existing_lockfile_kind,
-    detect_existing_lockfile_kind_selecting, parse_for_import, parse_json, parse_lockfile,
-    parse_lockfile_selecting, parse_lockfile_with_kind, parse_lockfile_with_kind_and_options,
-    parse_lockfile_with_kind_and_options_selecting, parse_lockfile_with_kind_selecting,
-    pnpm_lock_filename, read_lockfile, write_lockfile, write_lockfile_as,
-    write_lockfile_preserving_existing,
+    detect_existing_lockfile_kind_selecting, fill_local_package_versions, parse_for_import,
+    parse_json, parse_lockfile, parse_lockfile_selecting, parse_lockfile_with_kind,
+    parse_lockfile_with_kind_and_options, parse_lockfile_with_kind_and_options_selecting,
+    parse_lockfile_with_kind_selecting, pnpm_lock_filename, read_lockfile, write_lockfile,
+    write_lockfile_as, write_lockfile_preserving_existing,
 };
 pub(crate) use io::{atomic_write_lockfile, current_git_branch};
 pub use merge::{MergeReport, merge_branch_lockfiles};
+pub use override_match::importer_relative_override;
 pub(crate) use source::normalize_git_fragment;
 pub use source::{
     GitSource, HostedGit, HostedGitHost, LocalSource, RemoteTarballSource, git_commits_match,
@@ -30,6 +31,23 @@ pub use source::{
 };
 
 pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url";
+/// Internal `extra_meta` key holding a yarn v1 block's verbatim `resolved`
+/// string (tarball URL plus `#sha1` fragment) so a rewrite keeps it.
+pub(crate) const EXTRA_YARN_RESOLVED: &str = "__aube_yarn_resolved";
+/// Internal `extra_meta` marker behind
+/// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
+pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
+
+/// `LockedPackage::extra_meta` key holding yarn berry blocks the parser
+/// skipped but the writer must re-emit verbatim (the `builtin<compat/…>`
+/// patch entries yarn adds for `typescript`, `resolve` and `fsevents`).
+pub(crate) const EXTRA_YARN_BERRY_METADATA: &str = "__aube_yarn_berry_metadata";
+
+/// `LockedPackage::extra_meta` key holding a berry block's `conditions:`
+/// value (`os=darwin & cpu=arm64`), written back verbatim.
+pub(crate) const EXTRA_YARN_BERRY_CONDITIONS: &str = "__aube_yarn_berry_conditions";
+
+pub(crate) const EXTRA_YARN_BERRY_PRESERVED_BLOCKS: &str = "__aube_yarn_berry_preserved_blocks";
 
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
@@ -431,7 +449,9 @@ pub struct LockedPackage {
     /// fall back to the resolved pin otherwise (e.g. when the source
     /// lockfile was pnpm, whose `snapshots:` only carries pins).
     ///
-    /// Empty means "unknown" — writers should fall back to pins.
+    /// Writers fall back to pins for a name missing here; whether a
+    /// missing name is known not to be declared is
+    /// [`Self::declared_dependencies_known`].
     /// Covers production *and* optional dependencies in one map since
     /// a package can't declare the same name twice across those
     /// sections.
@@ -469,11 +489,31 @@ pub struct LockedPackage {
     /// anything a future lockfile bump adds) so a parse/write cycle
     /// doesn't drop them. Each format's writer re-emits what makes
     /// sense there — bun inlines the extras back on the package-entry
-    /// meta object, pnpm / yarn / npm currently ignore them.
+    /// meta object, pnpm / yarn / npm currently ignore them. Also
+    /// holds aube's internal `__aube_*` markers, which writers skip.
     pub extra_meta: BTreeMap<String, serde_json::Value>,
 }
 
 impl LockedPackage {
+    /// True only when the source recorded every `dependencies` and
+    /// `optionalDependencies` name in [`Self::declared_dependencies`],
+    /// so a name missing from it is known not to be declared. False
+    /// by default, which keeps writers conservative.
+    pub fn declared_dependencies_known(&self) -> bool {
+        self.extra_meta
+            .contains_key(EXTRA_DECLARED_DEPENDENCIES_KNOWN)
+    }
+
+    /// Mark [`Self::declared_dependencies`] as the package's full
+    /// declared set (see [`Self::declared_dependencies_known`]).
+    pub fn with_declared_dependencies_known(mut self) -> Self {
+        self.extra_meta.insert(
+            EXTRA_DECLARED_DEPENDENCIES_KNOWN.to_string(),
+            serde_json::Value::Bool(true),
+        );
+        self
+    }
+
     /// The package name to use for registry / store operations — the real
     /// name behind an npm-alias when aliased, otherwise just `name`. Used
     /// at every site that derives a tarball URL, a packument URL, or an
@@ -595,6 +635,21 @@ mod locked_package_tests {
             transitive_peer_dependencies: Vec::new(),
             extra_meta: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn overlay_metadata_does_not_carry_declared_dependencies_known() {
+        let mut prior = LockfileGraph::default();
+        prior.packages.insert(
+            "pkg@1.0.0".to_string(),
+            pkg().with_declared_dependencies_known(),
+        );
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert("pkg@1.0.0".to_string(), pkg());
+
+        graph.overlay_metadata_from(&prior);
+
+        assert!(!graph.packages["pkg@1.0.0"].declared_dependencies_known());
     }
 
     #[test]
@@ -721,6 +776,57 @@ mod locked_package_tests {
             Some("pkg@git+ssh://git@github.com/acme/pkg.git".to_string())
         );
     }
+
+    #[test]
+    fn rebase_local_sources_rekeys_the_package_and_its_references() {
+        let old = LocalSource::Directory(PathBuf::from("../vendor/dep"));
+        let new = LocalSource::Directory(PathBuf::from("vendor/dep"));
+        let old_key = format!("{}(peer@1.0.0)", old.dep_path("dep"));
+        let new_key = format!("{}(peer@1.0.0)", new.dep_path("dep"));
+        let old_tail = old_key.strip_prefix("dep@").unwrap().to_string();
+
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "dep".to_string(),
+                dep_path: old_key.clone(),
+                dep_type: DepType::Production,
+                specifier: Some("file:./vendor/dep".to_string()),
+            }],
+        );
+        let mut dep = pkg();
+        dep.name = "dep".to_string();
+        dep.dep_path = old_key.clone();
+        dep.local_source = Some(old.clone());
+        graph.packages.insert(old_key.clone(), dep);
+        let mut tail_ref = pkg();
+        tail_ref.dependencies.insert("dep".to_string(), old_tail);
+        graph.packages.insert("pkg@1.0.0".to_string(), tail_ref);
+        let mut full_ref = pkg();
+        full_ref.name = "other".to_string();
+        full_ref.dep_path = "other@1.0.0".to_string();
+        full_ref
+            .optional_dependencies
+            .insert("dep".to_string(), old_key.clone());
+        graph.packages.insert("other@1.0.0".to_string(), full_ref);
+
+        graph.rebase_local_sources(|_, source| (*source == old).then(|| new.clone()));
+
+        let rebased = &graph.packages[&new_key];
+        assert_eq!(rebased.dep_path, new_key);
+        assert_eq!(rebased.local_source, Some(new));
+        assert!(!graph.packages.contains_key(&old_key));
+        assert_eq!(graph.root_deps()[0].dep_path, new_key);
+        assert_eq!(
+            format!("dep@{}", graph.packages["pkg@1.0.0"].dependencies["dep"]),
+            new_key
+        );
+        assert_eq!(
+            graph.packages["other@1.0.0"].optional_dependencies["dep"],
+            new_key
+        );
+    }
 }
 
 /// Metadata about a single declared peer dependency. Matches the shape of
@@ -740,6 +846,80 @@ impl LockfileGraph {
     /// Get a package by its dep_path key.
     pub fn get_package(&self, dep_path: &str) -> Option<&LockedPackage> {
         self.packages.get(dep_path)
+    }
+
+    /// The version a direct dep resolved to. A workspace dep has no
+    /// package entry, only a `name@version` dep_path naming the member's
+    /// version, so fall back to that.
+    pub fn direct_dep_version<'a>(&'a self, dep: &'a DirectDep) -> Option<&'a str> {
+        match self.get_package(&dep.dep_path) {
+            Some(pkg) => Some(pkg.version.as_str()),
+            None => dep
+                .dep_path
+                .strip_prefix(dep.name.as_str())
+                .and_then(|rest| rest.strip_prefix('@'))
+                .filter(|version| !version.is_empty()),
+        }
+    }
+
+    /// Replace the `local_source` of every package for which `rebase`
+    /// (given the package's dep_path and source) returns a new one. A
+    /// package keyed by the dep_path its old source hashes to is re-keyed
+    /// under the new source's dep_path, keeping any peer suffix, and the
+    /// importer and dependency references to it follow. Used when a
+    /// lockfile's local paths are relative to another directory than the
+    /// one the install resolves them against.
+    pub fn rebase_local_sources(
+        &mut self,
+        mut rebase: impl FnMut(&str, &LocalSource) -> Option<LocalSource>,
+    ) {
+        let mut renamed = BTreeMap::new();
+        for (key, mut pkg) in std::mem::take(&mut self.packages) {
+            let mut new_key = key.clone();
+            if let Some(old) = pkg.local_source.as_ref()
+                && let Some(new) = rebase(&key, old)
+            {
+                let base_end = key.find('(').unwrap_or(key.len());
+                if let Some((name, _)) = key[..base_end].rsplit_once('@')
+                    && old.dep_path(name) == key[..base_end]
+                {
+                    new_key = format!("{}{}", new.dep_path(name), &key[base_end..]);
+                    if pkg.dep_path == key {
+                        pkg.dep_path = new_key.clone();
+                    }
+                }
+                pkg.local_source = Some(new);
+            }
+            if new_key != key {
+                renamed.insert(key, new_key.clone());
+            }
+            self.packages.entry(new_key).or_insert(pkg);
+        }
+        if renamed.is_empty() {
+            return;
+        }
+        for dep in self.importers.values_mut().flatten() {
+            if let Some(new_key) = renamed.get(&dep.dep_path) {
+                dep.dep_path = new_key.clone();
+            }
+        }
+        for pkg in self.packages.values_mut() {
+            for (name, tail) in pkg
+                .dependencies
+                .iter_mut()
+                .chain(pkg.optional_dependencies.iter_mut())
+            {
+                // A value holds either the whole key or, as the pnpm
+                // reader stores it, the part after `name@`.
+                if let Some(new_key) = renamed.get(tail.as_str()) {
+                    *tail = new_key.clone();
+                } else if let Some(new_key) = renamed.get(&format!("{name}@{tail}"))
+                    && let Some(new_tail) = new_key.strip_prefix(&format!("{name}@"))
+                {
+                    *tail = new_tail.to_string();
+                }
+            }
+        }
     }
 
     /// BFS the transitive closure of `roots` through `self.packages`,
@@ -959,7 +1139,12 @@ impl LockfileGraph {
             // meta block) can't be recovered from a fresh resolve,
             // so carry them forward when the newer graph doesn't
             // already carry its own. `self`-side keys always win.
+            // The declared-set marker describes the prior entry's
+            // `declared_dependencies`, which isn't carried over.
             for (k, v) in &prior_pkg.extra_meta {
+                if k == EXTRA_DECLARED_DEPENDENCIES_KNOWN {
+                    continue;
+                }
                 pkg.extra_meta.entry(k.clone()).or_insert_with(|| v.clone());
             }
         }
@@ -986,5 +1171,40 @@ impl LockfileGraph {
         if self.workspace_extra_fields.is_empty() {
             self.workspace_extra_fields = prior.workspace_extra_fields.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_dep_version_tests {
+    use super::*;
+
+    fn direct(name: &str, dep_path: &str) -> DirectDep {
+        DirectDep {
+            name: name.to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }
+    }
+
+    #[test]
+    fn direct_dep_version_reads_the_package_or_a_workspace_dep_path() {
+        let mut graph = LockfileGraph::default();
+        graph.packages.insert(
+            "@scope/pkg@2.0.0(peer@1.0.0)".to_string(),
+            LockedPackage {
+                name: "@scope/pkg".to_string(),
+                version: "2.0.0".to_string(),
+                dep_path: "@scope/pkg@2.0.0(peer@1.0.0)".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let registry = direct("@scope/pkg", "@scope/pkg@2.0.0(peer@1.0.0)");
+        assert_eq!(graph.direct_dep_version(&registry), Some("2.0.0"));
+        let workspace = direct("@scope/lib", "@scope/lib@1.4.0");
+        assert_eq!(graph.direct_dep_version(&workspace), Some("1.4.0"));
+        let malformed = direct("lib", "other@1.0.0");
+        assert_eq!(graph.direct_dep_version(&malformed), None);
     }
 }

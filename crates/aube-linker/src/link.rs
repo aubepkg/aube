@@ -222,7 +222,7 @@ impl Linker {
             // materialization instead of treating the path-keyed entry as a
             // cache hit. The install-state warm path prevents this work when
             // the source fingerprint is unchanged.
-            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            if self.force || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -326,6 +326,7 @@ impl Linker {
                         } else {
                             classify_entry_state(&local_aube_entry, &global_entry)
                         };
+                        let state = self.forced_entry_state(state);
 
                         if matches!(state, EntryState::Fresh) {
                             local_stats.packages_cached += 1;
@@ -397,17 +398,17 @@ impl Linker {
                             nested_link_targets.as_ref(),
                         )?;
 
-                        // Only pay the `remove_dir`/`remove_file` syscalls
-                        // when we actually have something to remove.
-                        // On Windows, `.aube/<dep_path>` is an NTFS
-                        // junction (created via `sys::create_dir_link`);
-                        // `remove_file` can't unlink those, so try
-                        // `remove_dir` first and fall back to
-                        // `remove_file` for the unix case (where
-                        // `symlink` produces a file-style link).
+                        // Only pay the removal syscalls when we actually
+                        // have something to remove. Besides a stale link
+                        // (an NTFS junction on Windows), the entry can be a
+                        // real directory: a copy of the project that
+                        // followed its links (Windows Explorer, `cp -rL`)
+                        // leaves one, and creating the link over it fails
+                        // with EEXIST. `try_remove_entry` clears every
+                        // shape without following links, as
+                        // `materialize.rs` already does.
                         if matches!(state, EntryState::Stale) {
-                            let _ = std::fs::remove_dir(&local_aube_entry)
-                                .or_else(|_| std::fs::remove_file(&local_aube_entry));
+                            try_remove_entry(&local_aube_entry);
                         }
                         // Parent dirs were pre-created above the
                         // par_iter; no per-package `mkdirp` here.
@@ -473,7 +474,7 @@ impl Linker {
                         .map(|(dep_path, pkg)| {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-                            if aube_entry.exists() {
+                            if !self.force && aube_entry.exists() {
                                 // Already in place from a previous run —
                                 // count as cached. `install.rs`
                                 // deliberately omits this dep_path from
@@ -504,14 +505,12 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.materialize_at(
-                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
+                            self.materialize_replacing(
                                 &aube_dir,
                                 dep_path,
                                 pkg,
                                 index,
                                 &mut local_stats,
-                                false,
                                 nested_link_targets.as_ref(),
                             )?;
                             Ok(local_stats)
@@ -696,8 +695,12 @@ impl Linker {
                 // importer key (`../sibling`, possible when
                 // `pnpm-workspace.yaml#packages` uses `../**`) needs
                 // to land at the actual sibling dir before
-                // `pathdiff`/`strip_prefix` see it.
-                aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                // `pathdiff`/`strip_prefix` see it. A member a symlink
+                // relocates is planned where it really is, so Node can
+                // reach what lands in its `node_modules`.
+                crate::relocated_importer_dir(root_dir, importer_path).unwrap_or_else(|| {
+                    aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                })
             };
             // Workspace deps resolve through `workspace_dirs` rather
             // than going through the placement tree, so the hoisted
@@ -762,7 +765,9 @@ impl Linker {
             let importer_dir = if importer_path == "." {
                 root_dir.to_path_buf()
             } else {
-                aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                crate::relocated_importer_dir(root_dir, importer_path).unwrap_or_else(|| {
+                    aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                })
             };
             let nm = self.checked_modules_dir(&importer_dir)?;
             if !self.hoist_workspace_packages {
@@ -811,7 +816,23 @@ impl Linker {
         package_indices: &BTreeMap<String, PackageIndex>,
         workspace_dirs: &BTreeMap<String, PathBuf>,
     ) -> Result<LinkStats, Error> {
-        let root_dir = aube_util::path::normalize_lexical(root_dir);
+        // A member a symlink relocates links from its real, absolute
+        // location, which a relative root or workspace dir can't be
+        // diffed against.
+        let root_dir = aube_util::path::normalize_lexical(
+            &std::path::absolute(root_dir).map_err(|e| Error::Io(root_dir.to_path_buf(), e))?,
+        );
+        let workspace_dirs = &workspace_dirs
+            .iter()
+            .map(|(name, dir)| {
+                let dir = if dir.is_relative() {
+                    std::path::absolute(dir).map_err(|e| Error::Io(dir.clone(), e))?
+                } else {
+                    dir.clone()
+                };
+                Ok((name.clone(), dir))
+            })
+            .collect::<Result<BTreeMap<_, _>, Error>>()?;
         self.checked_modules_dir(&root_dir)?;
         for importer_path in graph.importers.keys() {
             if !is_physical_importer(importer_path) || importer_path == "." {
@@ -905,7 +926,7 @@ impl Linker {
                 continue;
             };
             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-            if matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            if self.force || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -1001,6 +1022,7 @@ impl Linker {
                             } else {
                                 classify_entry_state(&local_aube_entry, &global_entry)
                             };
+                            let state = self.forced_entry_state(state);
 
                             if matches!(state, EntryState::Fresh) {
                                 if !project_local {
@@ -1057,9 +1079,10 @@ impl Linker {
                                 nested_link_targets.as_ref(),
                             )?;
 
+                            // A real directory is possible here too; see
+                            // the `link_all` counterpart.
                             if matches!(state, EntryState::Stale) {
-                                let _ = std::fs::remove_dir(&local_aube_entry)
-                                    .or_else(|_| std::fs::remove_file(&local_aube_entry));
+                                try_remove_entry(&local_aube_entry);
                             }
                             // Parent dirs were pre-created above the
                             // par_iter; no per-package `mkdirp` here.
@@ -1098,7 +1121,7 @@ impl Linker {
                         .map(|(dep_path, pkg)| {
                             let mut local_stats = LinkStats::default();
                             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-                            if aube_entry.exists() {
+                            if !self.force && aube_entry.exists() {
                                 local_stats.packages_cached += 1;
                                 return Ok(local_stats);
                             }
@@ -1119,14 +1142,12 @@ impl Linker {
                                     &owned_index
                                 }
                             };
-                            self.materialize_at(
-                                &aube_dir.join(self.aube_dir_entry_name(dep_path)),
+                            self.materialize_replacing(
                                 &aube_dir,
                                 dep_path,
                                 pkg,
                                 index,
                                 &mut local_stats,
-                                false,
                                 nested_link_targets.as_ref(),
                             )?;
                             Ok(local_stats)
@@ -1185,24 +1206,6 @@ impl Linker {
             }
             return Ok(stats);
         }
-
-        // Precompute root importer's direct deps keyed by name so the
-        // per-importer loop below can short-circuit on `dedupeDirectDeps`
-        // without walking the root's dep list for every child entry.
-        // Empty when the root has no direct deps (lockfile-only workspaces)
-        // or when `dedupeDirectDeps=false` — skipping the build on the
-        // common path avoids an allocation the per-dep check would
-        // never consult.
-        let root_deps_by_name: std::collections::HashMap<&str, &aube_lockfile::DirectDep> =
-            if self.dedupe_direct_deps {
-                graph
-                    .importers
-                    .get(".")
-                    .map(|deps| deps.iter().map(|d| (d.name.as_str(), d)).collect())
-                    .unwrap_or_default()
-            } else {
-                std::collections::HashMap::new()
-            };
 
         // Step 2a: Per-importer setup — ensure each importer's
         // `node_modules/` exists and sweep entries no longer in that
@@ -1274,6 +1277,9 @@ impl Linker {
         struct Step2Task<'a> {
             importer_path: &'a str,
             nm: PathBuf,
+            /// `nm` where the importer really is, when a symlink puts it
+            /// somewhere other than its workspace path.
+            real_nm: Option<PathBuf>,
             dep: &'a aube_lockfile::DirectDep,
         }
         let tasks: Vec<Step2Task<'_>> = graph
@@ -1292,9 +1298,12 @@ impl Linker {
                         &root_dir.join(importer_path).join(&self.modules_dir_name),
                     )
                 };
+                let real_nm = crate::relocated_importer_dir(&root_dir, importer_path)
+                    .map(|dir| dir.join(&self.modules_dir_name));
                 deps.iter().map(move |dep| Step2Task {
                     importer_path: importer_path.as_str(),
                     nm: nm.clone(),
+                    real_nm: real_nm.clone(),
                     dep,
                 })
             })
@@ -1309,21 +1318,40 @@ impl Linker {
                     let Step2Task {
                         importer_path,
                         nm,
+                        real_nm,
                         dep,
                     } = task;
-
                     // `dedupeDirectDeps`: non-root importer dep
                     // already covered by the root symlink +
-                    // parent-directory walk.
+                    // parent-directory walk. A link the member kept
+                    // from an earlier, different version would shadow
+                    // the root's, so clear it. A member a symlink puts
+                    // elsewhere may never reach the root's link.
                     if self.dedupe_direct_deps
-                        && *importer_path != "."
-                        && let Some(root_dep) = root_deps_by_name.get(dep.name.as_str())
-                        && root_dep.dep_path == dep.dep_path
+                        && real_nm.is_none()
+                        && crate::dedupe_skips_member_link(&graph.importers, importer_path, dep)
                     {
+                        crate::validate_package_link_name(&dep.name)?;
+                        let link_path = nm.join(&dep.name);
+                        try_remove_entry(&link_path);
+                        // Nothing recreates it, and install state tracks
+                        // only the root's link, so a survivor would go
+                        // unnoticed.
+                        if link_path.symlink_metadata().is_ok() {
+                            return Err(Error::Io(
+                                link_path,
+                                std::io::Error::other(
+                                    "failed to remove a dependency link that dedupeDirectDeps replaces with the root's",
+                                ),
+                            ));
+                        }
                         return Ok(false);
                     }
 
                     crate::validate_package_link_name(&dep.name)?;
+                    // Node resolves from where the importer really is, so
+                    // its links are made there, relative to that location.
+                    let nm = real_nm.as_ref().unwrap_or(nm);
                     let link_path = nm.join(&dep.name);
 
                     // Workspace dep (`workspace:` protocol or bare

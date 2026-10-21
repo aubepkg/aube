@@ -16,6 +16,11 @@ structured field — no regex on stderr required.
 Use the search box and category chips below to filter the list
 directly from the registry.
 
+`aube doctor` reports `ERR_AUBE_INVALID_CAFILE` (exit 1) for configured CA
+files that cannot be read or contain no usable PEM certificates. It checks
+top-level and per-registry `cafile` settings and `NODE_EXTRA_CA_CERTS` locally;
+a successful check does not establish registry connectivity or server trust.
+
 ## How to read codes
 
 **Default text output**: errors include the code in their
