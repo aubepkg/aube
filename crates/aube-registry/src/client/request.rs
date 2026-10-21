@@ -229,14 +229,13 @@ impl RegistryClient {
     }
 
     /// Pick the right HTTP client for tarball body downloads. The
-    /// default registry uses the dedicated h1 client. Per-uri
-    /// authed registries (corporate Artifactory, GitHub Packages)
-    /// fall through to their h2 client because they're rare and
-    /// keeping a parallel h1 map for them is not worth the
-    /// complexity until measurement shows it matters.
+    /// default registry uses the dedicated h1 client; registries
+    /// with their own TLS material get a tarball client built from
+    /// it, so every tarball download gets the idle `fetchTimeout`
+    /// rather than the whole-response timeout metadata uses.
     pub(super) fn http_tarball_for(&self, registry_url: &str) -> &reqwest::Client {
         let uri_key = crate::config::registry_uri_key_pub(registry_url);
-        crate::config::lookup_by_uri_prefix(&self.http_by_uri, &uri_key)
+        crate::config::lookup_by_uri_prefix(&self.http_tarball_by_uri, &uri_key)
             .unwrap_or(&self.http_tarball)
     }
 
@@ -249,7 +248,7 @@ impl RegistryClient {
             .config
             .scoped_tls_config_for_package(registry_url, package_name)
             && let Some(client) = self
-                .http_by_uri_scope
+                .http_tarball_by_uri_scope
                 .get(prefix)
                 .and_then(|by_scope| by_scope.get(scope))
         {

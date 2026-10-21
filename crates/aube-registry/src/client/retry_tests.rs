@@ -675,12 +675,9 @@ async fn tarball_body_read_timeout_retries_at_most_once() {
     );
 }
 
-#[tokio::test]
-async fn tarball_download_slower_than_fetch_timeout_succeeds_while_data_flows() {
-    // `fetchTimeout` bounds inactivity for tarballs, not the whole
-    // transfer: a body that takes several times longer than the
-    // timeout in total still completes as long as every gap between
-    // chunks stays under it. Models a 100MB+ package on a slow link.
+/// Serve a 10-byte tarball one byte every 30ms, so the whole transfer takes
+/// longer than a 200ms `fetchTimeout` while no single gap does.
+async fn spawn_trickle_server() -> std::net::SocketAddr {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -709,15 +706,14 @@ async fn tarball_download_slower_than_fetch_timeout_succeeds_while_data_flows() 
             });
         }
     });
+    addr
+}
 
+async fn assert_steady_tarball_download_succeeds(config: NpmConfig, addr: std::net::SocketAddr) {
     let policy = FetchPolicy {
         timeout_ms: 200,
         retries: 0,
         ..FetchPolicy::default()
-    };
-    let config = NpmConfig {
-        registry: format!("http://{addr}/"),
-        ..Default::default()
     };
     let client = RegistryClient::from_config_with_policy(config, policy);
     let url = format!("http://{addr}/pkg.tgz");
@@ -731,6 +727,43 @@ async fn tarball_download_slower_than_fetch_timeout_succeeds_while_data_flows() 
         started.elapsed() > std::time::Duration::from_millis(200),
         "test must take longer than fetchTimeout to prove the point",
     );
+}
+
+#[tokio::test]
+async fn tarball_download_slower_than_fetch_timeout_succeeds_while_data_flows() {
+    // `fetchTimeout` bounds inactivity for tarballs, not the whole
+    // transfer: a body that takes several times longer than the
+    // timeout in total still completes as long as every gap between
+    // chunks stays under it. Models a 100MB+ package on a slow link.
+    let addr = spawn_trickle_server().await;
+    let config = NpmConfig {
+        registry: format!("http://{addr}/"),
+        ..Default::default()
+    };
+    assert_steady_tarball_download_succeeds(config, addr).await;
+}
+
+#[tokio::test]
+async fn tarball_download_from_registry_with_tls_material_gets_idle_timeout() {
+    // Registries with their own CA / client cert get dedicated clients;
+    // their tarball downloads must use the idle timeout too.
+    let addr = spawn_trickle_server().await;
+    let registry = format!("http://{addr}/");
+    let mut config = NpmConfig {
+        registry: registry.clone(),
+        ..Default::default()
+    };
+    config.auth_by_uri.insert(
+        crate::config::registry_uri_key_pub(&registry),
+        crate::config::AuthConfig {
+            tls: crate::config::TlsConfig {
+                ca: vec!["not a certificate".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_steady_tarball_download_succeeds(config, addr).await;
 }
 
 #[tokio::test]
