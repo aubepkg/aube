@@ -412,8 +412,9 @@ pub(super) fn parse_npm_alias_real_name(spec: &str) -> Option<String> {
 /// Peer-contextualized variants collapse to a single `name@version`
 /// entry (yarn v1's data model has no peer context). `resolved` keeps
 /// the verbatim string (with its `#sha1` fragment) read from an
-/// earlier yarn.lock; entries without one get the registry tarball
-/// URL minus the fragment, which yarn tolerates and fills in later.
+/// earlier yarn.lock; entries without one get the tarball URL the
+/// resolver recorded, minus the fragment, which yarn tolerates and
+/// fills in later.
 pub fn write_classic(
     path: &Path,
     graph: &LockfileGraph,
@@ -550,8 +551,9 @@ pub fn write_classic(
 
 /// The `resolved` value yarn would have written for `pkg`: the verbatim
 /// string from the yarn.lock it was read from (unless the package now
-/// comes from a different tarball URL or git commit), else its tarball URL, else the
-/// default registry's tarball URL for a plain registry package.
+/// comes from a different tarball URL or git commit), else its tarball URL
+/// or git ref. A package with neither gets no `resolved`: the registry it
+/// came from is unknown, so none is asserted.
 fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
     if let Some(resolved) = pkg
         .extra_meta
@@ -577,27 +579,24 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
         }
     }
     if let Some(url) = &pkg.tarball_url {
-        return Some(url.clone());
+        // Yarn spells the public registry `registry.yarnpkg.com`.
+        let url = url.strip_prefix("https://registry.npmjs.org/").map_or_else(
+            || url.clone(),
+            |rest| format!("https://registry.yarnpkg.com/{rest}"),
+        );
+        return Some(url);
     }
-    if let Some(local) = &pkg.local_source {
-        return match local {
-            LocalSource::Git(git) => {
-                let url = if git.url.starts_with("git://") || git.url.starts_with("git+") {
-                    git.url.clone()
-                } else {
-                    format!("git+{}", git.url)
-                };
-                Some(format!("{url}#{}", git.resolved))
-            }
-            _ => None,
-        };
+    match &pkg.local_source {
+        Some(LocalSource::Git(git)) => {
+            let url = if git.url.starts_with("git://") || git.url.starts_with("git+") {
+                git.url.clone()
+            } else {
+                format!("git+{}", git.url)
+            };
+            Some(format!("{url}#{}", git.resolved))
+        }
+        _ => None,
     }
-    let name = pkg.registry_name();
-    let base = name.rsplit('/').next().unwrap_or(name);
-    Some(format!(
-        "https://registry.yarnpkg.com/{name}/-/{base}-{}.tgz",
-        pkg.version
-    ))
 }
 
 /// Quote `value` the way yarn v1's stringifier does: bare unless it
