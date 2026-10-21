@@ -476,7 +476,8 @@ pub fn write_classic(
             Some(set) if !set.is_empty() => set.iter().map(String::as_str).collect(),
             _ => vec![canonical_key.as_str()],
         };
-        let sort_key = header_specs.join(", ");
+        // Yarn orders groups by their smallest spec; `specs` is sorted.
+        let sort_key = header_specs[0].to_string();
         let mut out = String::with_capacity(256);
         let header: Vec<String> = header_specs.iter().map(|s| yarn_scalar(s)).collect();
         out.push_str(&header.join(", "));
