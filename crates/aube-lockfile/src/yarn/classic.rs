@@ -560,7 +560,13 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
     {
         let saved_url = resolved.split_once('#').map_or(resolved, |(url, _)| url);
         let still_current = match &pkg.local_source {
-            Some(LocalSource::Git(git)) => resolved.contains(git.resolved.as_str()),
+            Some(LocalSource::Git(git)) => {
+                let bare = |url: &str| url.strip_prefix("git+").unwrap_or(url).to_string();
+                !git.resolved.is_empty()
+                    && resolved.rsplit_once('#').map(|(_, commit)| commit)
+                        == Some(git.resolved.as_str())
+                    && bare(saved_url) == bare(&git.url)
+            }
             _ => pkg
                 .tarball_url
                 .as_deref()
