@@ -5636,6 +5636,66 @@ fn peer_suffix_propagation_updates_nested_references_to_rewritten_peers() {
     );
 }
 
+// An ancestor that absorbs a consumer's nested peer reference must also
+// follow the rewritten key, whatever the length of the old keys.
+#[test]
+fn peer_suffix_propagation_updates_nested_references_in_ancestors() {
+    let ancestor = mk_locked("ancestor", "1.0.0", &[("consumer", "1.0.0")], &[]);
+    let mut consumer = mk_locked("consumer", "1.0.0", &[], &[("parent", "^1")]);
+    consumer.dep_path = "consumer@1.0.0".to_string();
+    let mut parent = mk_locked(
+        "parent",
+        "1.0.0",
+        &[("child", "1.0.0")],
+        &[("react", "^19")],
+    );
+    parent.dep_path = "parent@1.0.0".to_string();
+    let child = mk_locked("child", "1.0.0", &[], &[("zod", "^4")]);
+    let react = mk_locked("react", "19.0.0", &[], &[]);
+    let zod = mk_locked("zod", "4.0.0", &[], &[]);
+
+    let mut packages = BTreeMap::new();
+    for p in [ancestor, consumer, parent, child, react, zod] {
+        packages.insert(p.dep_path.clone(), p);
+    }
+    let dep = |name: &str, dep_path: &str| DirectDep {
+        name: name.to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some("*".to_string()),
+    };
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![
+            dep("ancestor", "ancestor@1.0.0"),
+            dep("parent", "parent@1.0.0"),
+            dep("react", "react@19.0.0"),
+            dep("zod", "zod@4.0.0"),
+        ],
+    );
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+
+    let keys: Vec<_> = out.packages.keys().collect();
+    assert!(
+        keys.iter()
+            .any(|k| k.starts_with("ancestor@1.0.0(parent@1.0.0(react@19.0.0)(zod@4.0.0))")),
+        "ancestor names the rewritten parent; got {keys:?}"
+    );
+    assert!(
+        !keys
+            .iter()
+            .any(|k| k.contains("(parent@1.0.0(react@19.0.0))")),
+        "no key keeps the stale parent reference; got {keys:?}"
+    );
+}
+
 // The `peersSuffixMaxLength` cap is applied after nested references are
 // updated, not before.
 #[test]

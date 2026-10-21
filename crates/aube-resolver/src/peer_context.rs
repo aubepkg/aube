@@ -1128,6 +1128,9 @@ fn peer_name_from_segment(seg: &str) -> Option<&str> {
     head.rfind('@').map(|idx| &head[..idx])
 }
 
+/// Cap on the passes that settle keys embedded in other keys' suffixes.
+const MAX_NESTED_REWRITE_PASSES: usize = 16;
+
 /// Walk the resolved graph from each node and accumulate the union of
 /// peer-suffix segments contributed by self + every reachable
 /// descendant, then rewrite each node's dep_path to embed that union.
@@ -1331,79 +1334,89 @@ fn propagate_peer_suffixes_to_ancestors(
     // If the propagated suffix itself exceeds the cap, hash it the
     // same way `visit_peer_context` does for self suffixes — keeps
     // dep_path keys bounded across the whole graph.
-    let mut rewrite: BTreeMap<String, String> = BTreeMap::new();
     // Peer names a package absorbed from its descendants (not its own
     // suffix names). They end up in `transitivePeerDependencies`, and are
     // recorded here because `dedupe_peers` later strips names from keys.
     let mut inherited_peers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // Shortest keys first: a key embedded in another key's suffix is always
-    // shorter than its host, so its final (possibly hashed) form is known
-    // by the time the host is built.
-    let mut by_length: Vec<&String> = pkg_keys.iter().collect();
-    by_length.sort_by_key(|k| k.len());
-    let mut nested: Vec<(String, String)> = Vec::new();
-    for key in by_length {
-        let Some(segments) = cumulative.get(key) else {
-            continue;
-        };
-        // Git / remote-tarball (globally-shareable) packages keep a bare
-        // dep_path keyed solely by their content-pinned URL — pnpm never
-        // appends a `(peer@ver)` suffix to a non-registry depPath. Every
-        // git/tarball key in a real pnpm-lock.yaml is bare even when its
-        // subtree resolves peers: e.g. `<pkg>@<url>` sits bare above a
-        // registry descendant like `<child>@6.5.1(@types/node@…)`.
-        // Absorbing a descendant's `(@types/node@…)` here would (a) diverge
-        // from the lockfile and (b) give the same content-identical tarball
-        // a different dep_path per consuming subtree, splitting the single
-        // shared global-virtual-store entry into duplicates (so one
-        // content-pinned singleton would load twice → "Cannot find
-        // module"). The descendant peers still propagate onto this node's
-        // *registry* ancestors through `cumulative`, so a registry parent
-        // keeps its own `(@types/node@…)` suffix; only the git/tarball node
-        // itself stays bare.
-        if graph
-            .packages
-            .get(key)
-            .and_then(|p| p.local_source.as_ref())
-            .is_some_and(|s| s.is_globally_shareable())
-        {
-            continue;
-        }
-        let canonical = canonical_tail(key);
-        if is_hashed_peer_suffix(&key[canonical.len()..]) {
-            // Original key already carries the hashed suffix `(…)` — see
-            // comment above. Its textual peer set is irrecoverable, so
-            // leave the key untouched.
-            continue;
-        }
-        let own: BTreeSet<&str> = suffix_peer_names(key).collect();
-        let inherited: Vec<String> = segments
-            .keys()
-            .filter(|n| !own.contains(n.as_str()))
-            .cloned()
+    // A key can embed another package's key in its suffix (and so can
+    // every ancestor that absorbs it), so the final form of a key depends
+    // on the final forms of the keys nested in it. Re-derive every key
+    // against the previous pass's rewrites until they stop changing.
+    // Nesting is finite, so this converges in about as many passes as the
+    // deepest chain of embedded keys.
+    let mut rewrite: BTreeMap<String, String> = BTreeMap::new();
+    for _ in 0..MAX_NESTED_REWRITE_PASSES {
+        let mut nested: Vec<(String, String)> = rewrite
+            .iter()
+            .map(|(old, new)| (format!("({old})"), format!("({new})")))
             .collect();
-        if !inherited.is_empty() {
-            inherited_peers.insert(key.clone(), inherited);
+        nested.sort_by_key(|(old, _)| std::cmp::Reverse(old.len()));
+        let mut next: BTreeMap<String, String> = BTreeMap::new();
+        for key in &pkg_keys {
+            let Some(segments) = cumulative.get(key) else {
+                continue;
+            };
+            // Git / remote-tarball (globally-shareable) packages keep a bare
+            // dep_path keyed solely by their content-pinned URL — pnpm never
+            // appends a `(peer@ver)` suffix to a non-registry depPath. Every
+            // git/tarball key in a real pnpm-lock.yaml is bare even when its
+            // subtree resolves peers: e.g. `<pkg>@<url>` sits bare above a
+            // registry descendant like `<child>@6.5.1(@types/node@…)`.
+            // Absorbing a descendant's `(@types/node@…)` here would (a) diverge
+            // from the lockfile and (b) give the same content-identical tarball
+            // a different dep_path per consuming subtree, splitting the single
+            // shared global-virtual-store entry into duplicates (so one
+            // content-pinned singleton would load twice → "Cannot find
+            // module"). The descendant peers still propagate onto this node's
+            // *registry* ancestors through `cumulative`, so a registry parent
+            // keeps its own `(@types/node@…)` suffix; only the git/tarball node
+            // itself stays bare.
+            if graph
+                .packages
+                .get(key)
+                .and_then(|p| p.local_source.as_ref())
+                .is_some_and(|s| s.is_globally_shareable())
+            {
+                continue;
+            }
+            let canonical = canonical_tail(key);
+            if is_hashed_peer_suffix(&key[canonical.len()..]) {
+                // Original key already carries the hashed suffix `(…)` — see
+                // comment above. Its textual peer set is irrecoverable, so
+                // leave the key untouched.
+                continue;
+            }
+            let own: BTreeSet<&str> = suffix_peer_names(key).collect();
+            let inherited: Vec<String> = segments
+                .keys()
+                .filter(|n| !own.contains(n.as_str()))
+                .cloned()
+                .collect();
+            if !inherited.is_empty() {
+                inherited_peers.insert(key.clone(), inherited);
+            }
+            let mut parts: Vec<&str> = segments.values().map(String::as_str).collect();
+            parts.sort_unstable();
+            // A package this key embeds in its suffix, e.g.
+            // `consumer@1(parent@1(react@19))`, may itself have gained peers
+            // (`parent@1(react@19)(zod@4)`). Point at its final key before the
+            // length cap is applied to the whole suffix.
+            let mut suffix = parts.concat();
+            if !suffix.is_empty() {
+                suffix = nested
+                    .iter()
+                    .fold(suffix, |acc, (old, new)| acc.replace(old, new));
+            }
+            let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
+            let new_key = format!("{canonical}{effective_suffix}");
+            if new_key != *key {
+                next.insert(key.clone(), new_key);
+            }
         }
-        let mut parts: Vec<&str> = segments.values().map(String::as_str).collect();
-        parts.sort_unstable();
-        // A package this key embeds in its suffix, e.g.
-        // `consumer@1(parent@1(react@19))`, may itself have gained peers
-        // (`parent@1(react@19)(zod@4)`). Point at its final key before the
-        // length cap is applied to the whole suffix.
-        let mut suffix = parts.concat();
-        if !suffix.is_empty() {
-            suffix = nested
-                .iter()
-                .rev()
-                .fold(suffix, |acc, (old, new)| acc.replace(old, new));
+        if next == rewrite {
+            break;
         }
-        let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
-        let new_key = format!("{canonical}{effective_suffix}");
-        if new_key != *key {
-            nested.push((format!("({key})"), format!("({new_key})")));
-            rewrite.insert(key.clone(), new_key);
-        }
+        rewrite = next;
     }
 
     if rewrite.is_empty() {
