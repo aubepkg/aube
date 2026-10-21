@@ -5466,8 +5466,8 @@ fn peer_suffix_propagation_skips_self_in_mutual_cycle() {
 // Nested self-suffix: when a package's own peer suffix already encodes
 // a peer name transitively (e.g. `consumer@1(helper@1(core@1))`), the
 // propagation must not double-emit `(core@…)` as a separate flat
-// segment. `peer_names_in_segments_recursive` covers names at any
-// depth in the self set.
+// segment. `consumer -> helper` is an edge to its own peer, so nothing
+// bubbles through it.
 #[test]
 fn peer_suffix_propagation_dedupes_nested_self_segments() {
     // consumer peers on helper. helper peers on core. consumer's
@@ -5516,6 +5516,60 @@ fn peer_suffix_propagation_dedupes_nested_self_segments() {
         !out.packages
             .contains_key("consumer@1.0.0(core@1.0.0)(helper@1.0.0(core@1.0.0))"),
         "propagation must not double-emit a peer name already covered transitively in the self suffix"
+    );
+}
+
+// A package that declares its own peers still picks up a peer that one
+// of its real dependencies resolved from above it. pnpm 11 writes
+// `@ai-sdk/react@4(react@19)(zod@4)` when `react` is its own peer and
+// `zod` is only a peer of its child `@ai-sdk/mcp`.
+#[test]
+fn peer_suffix_propagates_descendant_peer_through_peer_declaring_parent() {
+    let mut parent = mk_locked(
+        "parent",
+        "1.0.0",
+        &[("child", "1.0.0")],
+        &[("react", "^19")],
+    );
+    parent.dep_path = "parent@1.0.0".to_string();
+    let child = mk_locked("child", "1.0.0", &[], &[("zod", "^4")]);
+    let react = mk_locked("react", "19.0.0", &[], &[]);
+    let zod = mk_locked("zod", "4.0.0", &[], &[]);
+
+    let mut packages = BTreeMap::new();
+    for p in [parent, child, react, zod] {
+        packages.insert(p.dep_path.clone(), p);
+    }
+
+    let dep = |name: &str, dep_path: &str| DirectDep {
+        name: name.to_string(),
+        dep_path: dep_path.to_string(),
+        dep_type: DepType::Production,
+        specifier: Some("*".to_string()),
+    };
+    let mut importers = BTreeMap::new();
+    importers.insert(
+        ".".to_string(),
+        vec![
+            dep("parent", "parent@1.0.0"),
+            dep("react", "react@19.0.0"),
+            dep("zod", "zod@4.0.0"),
+        ],
+    );
+
+    let graph = LockfileGraph {
+        importers,
+        packages,
+        ..Default::default()
+    };
+    let out = apply_peer_contexts(graph, &PeerContextOptions::default())
+        .expect("test graph should converge");
+
+    assert!(
+        out.packages
+            .contains_key("parent@1.0.0(react@19.0.0)(zod@4.0.0)"),
+        "parent carries its own peer and its child's resolved peer; got {:?}",
+        out.packages.keys().collect::<Vec<_>>()
     );
 }
 

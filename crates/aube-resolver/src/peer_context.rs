@@ -868,6 +868,14 @@ fn apply_peer_contexts_once(
     }
 }
 
+/// Peer package names carried by the outer `(name@version)` segments of
+/// a dep_path key.
+pub(crate) fn suffix_peer_names(key: &str) -> impl Iterator<Item = &str> {
+    outer_paren_segments(key)
+        .into_iter()
+        .filter_map(peer_name_from_segment)
+}
+
 /// DFS helper for `apply_peer_contexts`. Returns the peer-contextualized
 /// dep_path of the visited package, or `None` if the canonical package is
 /// missing (shouldn't happen in practice but we degrade gracefully).
@@ -1120,38 +1128,9 @@ fn peer_name_from_segment(seg: &str) -> Option<&str> {
     head.rfind('@').map(|idx| &head[..idx])
 }
 
-/// Collect every peer name reachable from a set of outer-paren segments,
-/// recursing into nested `(name@version(...))` forms so that a self
-/// segment like `(helper@1.0.0(core@1.0.0))` reports both `helper` and
-/// `core`. Used by `propagate_peer_suffixes_to_ancestors` to suppress
-/// flat-segment additions for peer names already encoded transitively
-/// in a package's own (possibly nested) self-suffix.
-fn peer_names_in_segments_recursive(segments: &[&str]) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    for seg in segments {
-        if let Some(name) = peer_name_from_segment(seg) {
-            names.insert(name.to_string());
-        }
-        // Recurse into the nested portion (everything after the first
-        // inner `(` and before the final `)`).
-        let Some(inner) = seg.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
-            continue;
-        };
-        if let Some(open) = inner.find('(') {
-            let nested = &inner[open..];
-            let nested_segments = outer_paren_segments(nested);
-            for nested_name in peer_names_in_segments_recursive(&nested_segments) {
-                names.insert(nested_name);
-            }
-        }
-    }
-    names
-}
-
 /// Walk the resolved graph from each node and accumulate the union of
 /// peer-suffix segments contributed by self + every reachable
-/// descendant (gated on the package having no declared peers of its
-/// own), then rewrite each node's dep_path to embed that union.
+/// descendant, then rewrite each node's dep_path to embed that union.
 ///
 /// Why: pnpm's lockfile shape tags non-peer-declaring intermediaries
 /// with the same `(peer@version)` suffix their peer-declaring
@@ -1162,28 +1141,17 @@ fn peer_names_in_segments_recursive(segments: &[&str]) -> BTreeSet<String> {
 /// for `parent → leaf(peer)` would render `parent: 1.0.0` (no
 /// suffix) where pnpm renders `parent: 1.0.0(peer@v)`.
 ///
-/// pnpm-parity gate (inferred from observed lockfile shape): **a
-/// package gets descendant-peer propagation only if its own
-/// `peerDependencies` map is empty.** Packages that declare their
-/// own peers have an authoritative self-suffix encoding exactly the
-/// peers they care about; descendant peers don't bubble through
-/// because the descendant peers belong to a NESTED child, which the
-/// snapshot already encodes via the nested-tail form (see
-/// `apply_peer_contexts_once`'s nested-suffix handling). Two
-/// observable shapes this gate lines up with:
-///   - `@testing-library/react@14.0.0(react@18.2.0)(react-dom@18.2.0(react@18.2.0))`
-///     — declares peers, gets self-suffix only; `@types/react` from a
-///     descendant doesn't bubble up.
-///   - `abc-parent-with-missing-peers@1.0.0(peer-a@…)(peer-b@…)(peer-c@…)`
-///     — no declared peers, picks up descendant peers from `abc`.
+/// A package that declares its own peers still absorbs the peers its
+/// descendants resolved from above it (pnpm 11): e.g.
+/// `@testing-library/react@14.0.0(@types/react@…)(react@…)(react-dom@…)`
+/// carries `@types/react`, which only its child `@types/react-dom` needs.
 ///
 /// Algorithm:
 ///  1. Build a forward dep map: `pkg_key → [child_key]` from each
 ///     LockedPackage's `dependencies`.
 ///  2. Memoized DFS. For each node, compute
-///     `cumulative_segments = outer_paren_segments(node.key)`. If the
-///     node has no declared peers, also union in
-///     `⋃ cumulative(child)` (gated by the rule above).
+///     `cumulative_segments = outer_paren_segments(node.key)` and union
+///     in `⋃ cumulative(child)`.
 ///  3. Cycles short-circuit via a `visiting` guard — cycle members
 ///     can't add new peers from each other beyond what reaches them
 ///     through non-cycle paths, so returning the empty set on
@@ -1204,10 +1172,6 @@ fn propagate_peer_suffixes_to_ancestors(
     // (e.g. an unresolved peer that `detect_unmet_peers` will warn
     // about) are dropped — they can't contribute cumulative peers.
     let mut forward: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // Per-package "has declared peers" lookup. Packages that declare
-    // their own peers don't accept descendant-peer propagation (see
-    // the rule in the doc comment above).
-    let mut has_own_peers: BTreeMap<String, bool> = BTreeMap::new();
     // Per-package set of dependency names a package supplies itself
     // (regular or optional). A peer a descendant needs is *resolved* at
     // the nearest ancestor that supplies it, so the `(peer@version)`
@@ -1218,14 +1182,20 @@ fn propagate_peer_suffixes_to_ancestors(
     // suffix leaks onto every ancestor up to the importer.
     let mut provides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (key, pkg) in &graph.packages {
+        // Edges to the package's own declared peers are mirrored deps,
+        // not subtrees it owns: pnpm doesn't bubble the peer's own
+        // peers through them.
         let children: Vec<String> = pkg
             .dependencies
             .iter()
+            .filter(|(n, _)| {
+                !pkg.peer_dependencies.contains_key(*n)
+                    && !pkg.peer_dependencies_meta.contains_key(*n)
+            })
             .map(|(n, t)| format!("{n}@{t}"))
             .filter(|k| graph.packages.contains_key(k))
             .collect();
         forward.insert(key.clone(), children);
-        has_own_peers.insert(key.clone(), !pkg.peer_dependencies.is_empty());
         let supplied: BTreeSet<String> = pkg
             .dependencies
             .keys()
@@ -1243,7 +1213,6 @@ fn propagate_peer_suffixes_to_ancestors(
     fn collect(
         key: &str,
         forward: &BTreeMap<String, Vec<String>>,
-        has_own_peers: &BTreeMap<String, bool>,
         provides: &BTreeMap<String, BTreeSet<String>>,
         cumulative: &mut BTreeMap<String, BTreeMap<String, String>>,
         visiting: &mut BTreeSet<String>,
@@ -1274,34 +1243,21 @@ fn propagate_peer_suffixes_to_ancestors(
             }
         }
 
-        // Pnpm-parity gate: only packages with no declared peers absorb
-        // descendant-peer propagation. The cycle-break visiting guard
-        // is still released for symmetry with the non-gated branch.
-        if has_own_peers.get(key).copied().unwrap_or(false) {
-            visiting.remove(key);
-            cumulative.insert(key.to_string(), acc.clone());
-            return acc;
-        }
-
         // Names suppressed when merging child contributions:
-        //   1. Every peer name reachable transitively in self segments —
-        //      e.g. a self segment `(helper@1.0.0(core@1.0.0))` covers
-        //      both `helper` and `core`, so a descendant flat-listing
-        //      `(core@1.0.0)` shouldn't double-emit. Pnpm lists each
-        //      peer name once; we match.
+        //   1. Every peer name already listed at the top level of the
+        //      self segments, so a descendant doesn't flat-list it twice.
+        //      Names only nested inside another segment, like `zod` in
+        //      `(ai@7(zod@4))`, are still listed flat, as pnpm does.
         //   2. The package's own canonical name — for mutual-peer
         //      cycles `a` peers on `b` and `b` peers on `a`, the
         //      descendant set lifts `(a@…)` back up onto `a` itself,
         //      which would write `a@1.0.0(a@…)(b@…)`. Self-listing
-        //      isn't valid pnpm shape; suppress it. (Reachable here
-        //      only when this branch handles a node with no declared
-        //      peers — but defensive in case future graph shapes
-        //      surface a self-cycle through a peer-less node.)
+        //      isn't valid pnpm shape; suppress it.
         let canonical_name = canonical_tail(key)
             .rsplit_once('@')
             .map(|(name, _ver)| name.to_string())
             .unwrap_or_default();
-        let mut suppressed: BTreeSet<String> = peer_names_in_segments_recursive(&self_segments);
+        let mut suppressed: BTreeSet<String> = acc.keys().cloned().collect();
         if !canonical_name.is_empty() {
             suppressed.insert(canonical_name);
         }
@@ -1317,14 +1273,7 @@ fn propagate_peer_suffixes_to_ancestors(
         // Child contributions.
         if let Some(children) = forward.get(key) {
             for child in children {
-                let child_peers = collect(
-                    child,
-                    forward,
-                    has_own_peers,
-                    provides,
-                    cumulative,
-                    visiting,
-                );
+                let child_peers = collect(child, forward, provides, cumulative, visiting);
                 for (name, seg) in child_peers {
                     if suppressed.contains(&name) {
                         continue;
@@ -1343,21 +1292,13 @@ fn propagate_peer_suffixes_to_ancestors(
     // below is deterministic.
     let pkg_keys: Vec<String> = graph.packages.keys().cloned().collect();
     for key in &pkg_keys {
-        collect(
-            key,
-            &forward,
-            &has_own_peers,
-            &provides,
-            &mut cumulative,
-            &mut visiting,
-        );
+        collect(key, &forward, &provides, &mut cumulative, &mut visiting);
     }
     for deps in graph.importers.values() {
         for dep in deps {
             collect(
                 &dep.dep_path,
                 &forward,
-                &has_own_peers,
                 &provides,
                 &mut cumulative,
                 &mut visiting,

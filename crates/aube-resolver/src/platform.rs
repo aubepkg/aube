@@ -482,10 +482,22 @@ pub fn mark_transitive_peer_dependencies(graph: &mut aube_lockfile::LockfileGrap
     }
 
     for (dep_path, pkg) in graph.packages.iter_mut() {
-        pkg.transitive_peer_dependencies = acc
-            .get(dep_path)
-            .map(|s| s.iter().cloned().collect())
-            .unwrap_or_default();
+        let mut names = acc.remove(dep_path).unwrap_or_default();
+        // A peer a descendant resolved from above this package rides in
+        // this package's suffix without being declared by it (e.g.
+        // `@testing-library/react@14(@types/react@18)` because its child
+        // `@types/react-dom` needs `@types/react`). pnpm lists it here too.
+        names.extend(
+            crate::peer_context::suffix_peer_names(dep_path)
+                .filter(|n| {
+                    !pkg.peer_dependencies.contains_key(*n)
+                        && !pkg.peer_dependencies_meta.contains_key(*n)
+                        && !pkg.dependencies.contains_key(*n)
+                        && !pkg.optional_dependencies.contains_key(*n)
+                })
+                .map(str::to_string),
+        );
+        pkg.transitive_peer_dependencies = names.into_iter().collect();
     }
 }
 
@@ -805,6 +817,27 @@ mod tests {
         // `host` resolves its `core` peer → nothing unresolved to bubble.
         assert!(tp("host@1.0.0").is_empty());
         assert!(tp("core@1.0.0").is_empty());
+    }
+
+    #[test]
+    fn transitive_peer_dependencies_include_peers_resolved_from_above() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        let (key, mut parent) = pkg_with_peers("parent", &["child"], &["react"]);
+        let key = format!("{key}(react@18.0.0)(zod@4.0.0)");
+        parent.dep_path = key.clone();
+        graph.packages.insert(key.clone(), parent);
+        graph
+            .packages
+            .extend([pkg_with_peers("child", &[], &["zod"])]);
+
+        mark_transitive_peer_dependencies(&mut graph);
+
+        // `zod` rides in the suffix only because `child` needs it; `react`
+        // is `parent`'s own peer and is not repeated.
+        assert_eq!(
+            graph.packages[&key].transitive_peer_dependencies,
+            vec!["zod".to_string()]
+        );
     }
 
     #[test]

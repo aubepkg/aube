@@ -362,8 +362,10 @@ JSON
 	# `react-dom` itself peers on `react`. pnpm writes
 	# `@testing-library/react@14.0.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)`
 	# (sorted by the full `name@version` string, so `react-dom` precedes
-	# `react`) — the inner `react-dom@18.2.0(react@18.2.0)` is nested. aube's
-	# peer-context fixed-point loop should produce the same shape.
+	# `react`) — the inner `react-dom@18.2.0(react@18.2.0)` is nested. pnpm 11
+	# also adds `@types/react`, which only the child `@types/react-dom`
+	# peers on. aube's peer-context fixed-point loop should produce the
+	# same shape.
 	cat >package.json <<'JSON'
 {
   "name": "nested-peer",
@@ -379,7 +381,7 @@ JSON
 	assert_success
 
 	# Lockfile must contain the nested snapshot key.
-	run grep -F "@testing-library/react@14.0.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)" aube-lock.yaml
+	run grep -E "@testing-library/react@14.0.0\(@types/react@[0-9.]+\)\(react-dom@18.2.0\(react@18.2.0\)\)\(react@18.2.0\)" aube-lock.yaml
 	assert_success
 }
 
