@@ -870,7 +870,7 @@ fn apply_peer_contexts_once(
 
 /// Peer package names carried by the outer `(name@version)` segments of
 /// a dep_path key.
-pub(crate) fn suffix_peer_names(key: &str) -> impl Iterator<Item = &str> {
+fn suffix_peer_names(key: &str) -> impl Iterator<Item = &str> {
     outer_paren_segments(key)
         .into_iter()
         .filter_map(peer_name_from_segment)
@@ -1327,6 +1327,10 @@ fn propagate_peer_suffixes_to_ancestors(
     // same way `visit_peer_context` does for self suffixes — keeps
     // dep_path keys bounded across the whole graph.
     let mut rewrite: BTreeMap<String, String> = BTreeMap::new();
+    // Peer names a package absorbed from its descendants (not its own
+    // suffix names). They end up in `transitivePeerDependencies`, and are
+    // recorded here because `dedupe_peers` later strips names from keys.
+    let mut inherited_peers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for key in &pkg_keys {
         let Some(segments) = cumulative.get(key) else {
             continue;
@@ -1367,6 +1371,15 @@ fn propagate_peer_suffixes_to_ancestors(
         let effective_suffix = effective_peer_suffix(&suffix, options.peers_suffix_max_length);
         let new_key = format!("{canonical}{effective_suffix}");
         if new_key != *key {
+            let own: BTreeSet<&str> = suffix_peer_names(key).collect();
+            let inherited: Vec<String> = segments
+                .keys()
+                .filter(|n| !own.contains(n.as_str()))
+                .cloned()
+                .collect();
+            if !inherited.is_empty() {
+                inherited_peers.insert(key.clone(), inherited);
+            }
             rewrite.insert(key.clone(), new_key);
         }
     }
@@ -1374,6 +1387,30 @@ fn propagate_peer_suffixes_to_ancestors(
     if rewrite.is_empty() {
         return graph;
     }
+
+    // A package whose key changed may also be embedded in another key's
+    // suffix, e.g. `consumer@1(parent@1(react@19))` once `parent` gains
+    // `(zod@4)`. Rewrite those nested references too (longest first, so an
+    // outer key is replaced before the keys nested inside it), which also
+    // renames keys that only changed through such a reference.
+    let mut nested: Vec<(String, String)> = rewrite
+        .iter()
+        .map(|(old, new)| (format!("({old})"), format!("({new})")))
+        .collect();
+    nested.sort_by_key(|(old, _)| std::cmp::Reverse(old.len()));
+    let fix_nested = |key: &str| -> String {
+        nested
+            .iter()
+            .fold(key.to_string(), |acc, (old, new)| acc.replace(old, new))
+    };
+    let rewrite: BTreeMap<String, String> = pkg_keys
+        .iter()
+        .filter_map(|key| {
+            let base = rewrite.get(key).map_or(key.as_str(), String::as_str);
+            let fixed = fix_nested(base);
+            (fixed != *key).then(|| (key.clone(), fixed))
+        })
+        .collect();
 
     // Helper: rewrite a `dependencies` tail (the part after `name@`).
     // Reconstruct the target's old full key, look up its rewrite, and
@@ -1411,6 +1448,11 @@ fn propagate_peer_suffixes_to_ancestors(
 
     let mut new_packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
     for (old_key, mut pkg) in packages {
+        if let Some(names) = inherited_peers.remove(&old_key) {
+            pkg.transitive_peer_dependencies.extend(names);
+            pkg.transitive_peer_dependencies.sort();
+            pkg.transitive_peer_dependencies.dedup();
+        }
         let new_key = rewrite.get(&old_key).cloned().unwrap_or(old_key);
         for (name, tail) in pkg.dependencies.iter_mut() {
             *tail = rewrite_tail(name, tail);
