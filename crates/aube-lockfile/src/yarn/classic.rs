@@ -549,15 +549,23 @@ pub fn write_classic(
 }
 
 /// The `resolved` value yarn would have written for `pkg`: the verbatim
-/// string from the yarn.lock it was read from, else its tarball URL, else
-/// the default registry's tarball URL for a plain registry package.
+/// string from the yarn.lock it was read from (unless the package now
+/// comes from a different tarball URL), else its tarball URL, else the
+/// default registry's tarball URL for a plain registry package.
 fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
     if let Some(resolved) = pkg
         .extra_meta
         .get(EXTRA_YARN_RESOLVED)
         .and_then(|v| v.as_str())
     {
-        return Some(resolved.to_string());
+        let saved_url = resolved.split_once('#').map_or(resolved, |(url, _)| url);
+        if pkg
+            .tarball_url
+            .as_deref()
+            .is_none_or(|url| url == saved_url)
+        {
+            return Some(resolved.to_string());
+        }
     }
     if let Some(url) = &pkg.tarball_url {
         return Some(url.clone());
