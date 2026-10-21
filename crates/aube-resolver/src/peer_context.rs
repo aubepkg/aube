@@ -868,14 +868,6 @@ fn apply_peer_contexts_once(
     }
 }
 
-/// Peer package names carried by the outer `(name@version)` segments of
-/// a dep_path key.
-fn suffix_peer_names(key: &str) -> impl Iterator<Item = &str> {
-    outer_paren_segments(key)
-        .into_iter()
-        .filter_map(peer_name_from_segment)
-}
-
 /// DFS helper for `apply_peer_contexts`. Returns the peer-contextualized
 /// dep_path of the visited package, or `None` if the canonical package is
 /// missing (shouldn't happen in practice but we degrade gracefully).
@@ -1377,21 +1369,28 @@ fn propagate_peer_suffixes_to_ancestors(
             {
                 continue;
             }
+            // Recorded before the hashed-key skip below: a key that can't be
+            // rewritten still inherits the peers its dependencies resolved.
+            let pkg = graph.packages.get(key);
+            let inherited: Vec<String> = segments
+                .keys()
+                .filter(|n| {
+                    !pkg.is_some_and(|p| {
+                        p.peer_dependencies.contains_key(n.as_str())
+                            || p.peer_dependencies_meta.contains_key(n.as_str())
+                    })
+                })
+                .cloned()
+                .collect();
+            if !inherited.is_empty() {
+                inherited_peers.insert(key.clone(), inherited);
+            }
             let canonical = canonical_tail(key);
             if is_hashed_peer_suffix(&key[canonical.len()..]) {
                 // Original key already carries the hashed suffix `(…)` — see
                 // comment above. Its textual peer set is irrecoverable, so
                 // leave the key untouched.
                 continue;
-            }
-            let own: BTreeSet<&str> = suffix_peer_names(key).collect();
-            let inherited: Vec<String> = segments
-                .keys()
-                .filter(|n| !own.contains(n.as_str()))
-                .cloned()
-                .collect();
-            if !inherited.is_empty() {
-                inherited_peers.insert(key.clone(), inherited);
             }
             let mut parts: Vec<&str> = segments.values().map(String::as_str).collect();
             parts.sort_unstable();
