@@ -164,12 +164,48 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     // resolver-fresh path emits so the linker stays single-shape.
     // Tuple: (alias_dep_path, real_dep_path, alias_name, real_name).
     let mut alias_remaps: Vec<(String, String, String, String)> = Vec::new();
-    let registry_packages = raw
+    let mut reserved_package_keys = raw
         .packages
         .iter()
-        .filter(|(_, package)| package.alias_of.is_none())
+        .filter(|(key, package)| package.alias_of.is_none() || key.contains("@npm:"))
         .map(|(key, _)| key.clone())
         .collect::<BTreeSet<_>>();
+    // Reserve ambiguous keys before assigning aliases so traversal order cannot select a target.
+    let importer_references = raw.importers.values().flat_map(|importer| {
+        [
+            &importer.dependencies,
+            &importer.dev_dependencies,
+            &importer.optional_dependencies,
+        ]
+        .into_iter()
+        .flatten()
+        .flat_map(|dependencies| dependencies.iter())
+        .map(|(name, dependency)| (name, &dependency.version))
+    });
+    let snapshot_references = raw.snapshots.values().flat_map(|snapshot| {
+        [&snapshot.dependencies, &snapshot.optional_dependencies]
+            .into_iter()
+            .flatten()
+            .flat_map(|dependencies| dependencies.iter())
+    });
+    let mut alias_targets = BTreeMap::new();
+    for (name, reference) in importer_references.chain(snapshot_references) {
+        let reference = reference.strip_prefix("npm:").unwrap_or(reference);
+        let Some((real_name, version)) =
+            parse_dep_path(reference.split('(').next().unwrap_or(reference))
+        else {
+            continue;
+        };
+        if real_name == *name {
+            continue;
+        }
+        let key = version_to_dep_path(name, &version);
+        if let Some(previous_target) = alias_targets.insert(key.clone(), real_name.clone())
+            && previous_target != real_name
+        {
+            reserved_package_keys.insert(key);
+        }
+    }
 
     // pnpm 10.14+ records `devEngines.runtime` pins as synthetic
     // importer deps whose specifier/version carry a `runtime:` prefix
@@ -326,7 +362,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             {
                 let real_dep_path = reference.to_string();
                 let alias_dep_path =
-                    alias_dep_path(name, &real_dep_path, &resolved, &registry_packages);
+                    alias_dep_path(name, &real_dep_path, &resolved, &reserved_package_keys);
                 alias_remaps.push((
                     alias_dep_path.clone(),
                     real_dep_path,
@@ -497,13 +533,17 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             if let Some(snap) = snap
                 && let Some(mut deps) = snap.dependencies.clone()
             {
-                rewrite_snapshot_alias_deps(&mut deps, &mut alias_remaps, &registry_packages);
+                rewrite_snapshot_alias_deps(&mut deps, &mut alias_remaps, &reserved_package_keys);
                 local_pkg.dependencies = deps;
             }
             if let Some(snap) = snap
                 && let Some(mut opt_deps) = snap.optional_dependencies.clone()
             {
-                rewrite_snapshot_alias_deps(&mut opt_deps, &mut alias_remaps, &registry_packages);
+                rewrite_snapshot_alias_deps(
+                    &mut opt_deps,
+                    &mut alias_remaps,
+                    &reserved_package_keys,
+                );
                 local_pkg.dependencies.extend(opt_deps.clone());
                 local_pkg.optional_dependencies = opt_deps;
             }
@@ -717,11 +757,11 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         let mut dependencies = snapshot
             .and_then(|s| s.dependencies.clone())
             .unwrap_or_default();
-        rewrite_snapshot_alias_deps(&mut dependencies, &mut alias_remaps, &registry_packages);
+        rewrite_snapshot_alias_deps(&mut dependencies, &mut alias_remaps, &reserved_package_keys);
         rewrite_snapshot_alias_deps(
             &mut optional_dependencies,
             &mut alias_remaps,
-            &registry_packages,
+            &reserved_package_keys,
         );
         dependencies.extend(optional_dependencies.clone());
         let bundled_dependencies = snapshot

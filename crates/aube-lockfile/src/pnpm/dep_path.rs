@@ -22,10 +22,13 @@ pub(super) fn alias_dep_path(
     name: &str,
     real_dep_path: &str,
     version: &str,
-    registry_packages: &BTreeSet<String>,
+    reserved_package_keys: &BTreeSet<String>,
 ) -> String {
-    if registry_packages.contains(&format!("{name}@{version}")) {
-        format!("{name}@npm:{real_dep_path}")
+    let qualified = format!("{name}@npm:{real_dep_path}");
+    if reserved_package_keys.contains(&format!("{name}@{version}"))
+        || reserved_package_keys.contains(qualified.split('(').next().unwrap_or(&qualified))
+    {
+        qualified
     } else {
         let peer_suffix = real_dep_path
             .find('(')
@@ -237,7 +240,7 @@ pub(super) fn registry_name_from_qualified_version(version: &str) -> Option<&str
 pub(super) fn rewrite_snapshot_alias_deps(
     deps: &mut BTreeMap<String, String>,
     alias_remaps: &mut Vec<(String, String, String, String)>,
-    registry_packages: &BTreeSet<String>,
+    reserved_package_keys: &BTreeSet<String>,
 ) {
     for (dep_name, dep_value) in deps.iter_mut() {
         let reference = dep_value.strip_prefix("npm:").unwrap_or(dep_value);
@@ -249,7 +252,8 @@ pub(super) fn rewrite_snapshot_alias_deps(
             continue;
         }
         let real_dep_path = reference.to_string();
-        let alias_dep_path = alias_dep_path(dep_name, &real_dep_path, &resolved, registry_packages);
+        let alias_dep_path =
+            alias_dep_path(dep_name, &real_dep_path, &resolved, reserved_package_keys);
         *dep_value = alias_dep_path[dep_name.len() + 1..].to_string();
         alias_remaps.push((alias_dep_path, real_dep_path, dep_name.clone(), real_name));
     }

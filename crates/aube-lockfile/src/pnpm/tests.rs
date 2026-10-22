@@ -5409,11 +5409,11 @@ fn snapshot_key_over_1024_chars_round_trips() {
 
 proptest::proptest! {
 #[test]
-fn parse_keeps_alias_distinct_from_same_name_and_version_registry_package(major in 0u16..1000) {
+fn parse_keeps_alias_distinct_from_same_name_and_version_registry_package(major in 0u16..1000, second_alias in proptest::bool::ANY) {
     let version = format!("{major}.0.0");
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("pnpm-lock.yaml");
-    std::fs::write(&path, r#"
+    let mut fixture = r#"
 lockfileVersion: '9.0'
 importers:
   .:
@@ -5441,13 +5441,19 @@ snapshots:
       compiler: '@test/compiler@1.0.0'
     optionalDependencies:
       compiler: '@test/compiler@1.0.0'
-"#.replace("1.0.0", &version)).unwrap();
+"#.to_string();
+    if second_alias {
+        fixture = fixture.replace("specifier: '1.0.0'", "specifier: 'npm:@other/compiler@1.0.0'")
+            .replace("version: '1.0.0'", "version: '@other/compiler@1.0.0'")
+            .replace("  compiler@1.0.0:", "  '@other/compiler@1.0.0':");
+    }
+    std::fs::write(&path, fixture.replace("1.0.0", &version)).unwrap();
     let graph = parse(&path).unwrap();
     let aliased = &graph.packages[&graph.importers["."][0].dep_path];
     let plain = &graph.packages[&graph.importers["packages/plain"][0].dep_path];
     assert_eq!(aliased.alias_of.as_deref(), Some("@test/compiler"));
     assert_eq!(aliased.integrity.as_deref(), Some("sha512-aliased"));
-    assert_eq!(plain.alias_of, None);
+    assert_eq!(plain.alias_of.as_deref(), second_alias.then_some("@other/compiler"));
     assert_eq!(plain.integrity.as_deref(), Some("sha512-plain"));
     let parent = &graph.packages[&format!("parent@{version}")];
     let alias_tail = &parent.dependencies["compiler"];
@@ -5465,6 +5471,16 @@ snapshots:
             assert_eq!(restored.integrity, original.integrity);
         }
         assert_eq!(reparsed.packages[&format!("parent@{version}")].dependencies, parent.dependencies);
+        for importer in [".", "packages/plain"] {
+            let subset = graph.subset_to_importer(importer, |_| true).unwrap();
+            assert_eq!(subset.packages.len(), 1);
+            super::write(&output_path, &subset, &PackageJson::default()).unwrap();
+            let restored = parse(&output_path).unwrap();
+            let original = &graph.packages[&graph.importers[importer][0].dep_path];
+            let package = &restored.packages[&restored.importers["."][0].dep_path];
+            assert_eq!(package.alias_of, original.alias_of);
+            assert_eq!(package.integrity, original.integrity);
+        }
     }
 }
 }
