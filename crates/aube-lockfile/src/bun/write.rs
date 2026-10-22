@@ -415,6 +415,7 @@ pub fn write(
                 || k == crate::EXTRA_PRESERVE_TARBALL_URL
                 || k == crate::EXTRA_YARN_RESOLVED
                 || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
+                || k == crate::EXTRA_NPM_FUNDING
                 || k == crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS
                 || k == crate::EXTRA_YARN_BERRY_CONDITIONS
             {

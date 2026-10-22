@@ -2827,3 +2827,261 @@ fn test_write_npm_object_form_workspaces_as_declared() {
         assert_eq!(json["packages"][""]["workspaces"], expected);
     }
 }
+
+fn dev_funding_manifest(with_is_number: bool) -> aube_manifest::PackageJson {
+    aube_manifest::PackageJson {
+        name: Some("x".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: with_is_number
+            .then(|| ("is-number".to_string(), "^7.0.0".to_string()))
+            .into_iter()
+            .collect(),
+        dev_dependencies: [("ajv".to_string(), "8.17.1".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn read_fixture(name: &str) -> (PathBuf, String) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    // LF-normalize like `test_write_byte_identical_to_native_npm`.
+    let original = std::fs::read_to_string(&fixture)
+        .unwrap()
+        .replace("\r\n", "\n");
+    (fixture, original)
+}
+
+/// npm 11 output for a lone `ajv@8.17.1` dev dependency: `dev: true`
+/// sits before `license`, funding objects keep `type`, and `fast-uri`'s
+/// two-element funding array sits before `license` (npm orders array
+/// values with scalars). A parse → write round-trip must keep every byte.
+#[test]
+fn test_write_keeps_native_npm_dev_flags_and_funding() {
+    let (fixture, original) = read_fixture("npm-native-dev-funding.json");
+    let graph = parse(&fixture).unwrap();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    write(tmp.path(), &graph, &dev_funding_manifest(false)).unwrap();
+    let written = std::fs::read_to_string(tmp.path()).unwrap();
+    assert_eq!(written, original);
+}
+
+/// The `aube add is-number@7.0.0` case from discussion #1810: adding a
+/// freshly resolved package (URL-only metadata, no funding) to the graph
+/// read from npm's lockfile must match what `npm install is-number@7.0.0`
+/// writes, which leaves every existing entry untouched.
+#[test]
+fn test_write_added_package_leaves_existing_npm_entries_untouched() {
+    let (fixture, _) = read_fixture("npm-native-dev-funding.json");
+    let (_, expected) = read_fixture("npm-native-dev-funding-added.json");
+    let mut graph = parse(&fixture).unwrap();
+    graph.packages.insert(
+        "is-number@7.0.0".to_string(),
+        LockedPackage {
+            name: "is-number".to_string(),
+            version: "7.0.0".to_string(),
+            dep_path: "is-number@7.0.0".to_string(),
+            integrity: Some(
+                "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="
+                    .to_string(),
+            ),
+            tarball_url: Some(
+                "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz".to_string(),
+            ),
+            license: Some("MIT".to_string()),
+            engines: [("node".to_string(), ">=0.12.0".to_string())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+    );
+    graph.importers.get_mut(".").unwrap().push(DirectDep {
+        name: "is-number".to_string(),
+        dep_path: "is-number@7.0.0".to_string(),
+        dep_type: DepType::Production,
+        specifier: Some("^7.0.0".to_string()),
+    });
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    write(tmp.path(), &graph, &dev_funding_manifest(true)).unwrap();
+    let written = std::fs::read_to_string(tmp.path()).unwrap();
+    assert_eq!(written, expected);
+}
+
+/// Spot checks against `keys.sort((a, b) => a.localeCompare(b, 'en'))`
+/// as Node evaluates it.
+#[test]
+fn test_npm_key_order_matches_locale_compare() {
+    let mut value = serde_json::json!({
+        "JSONStream": 1, "abab": 1, "Ab": 1, "aB": 1, "a/b": 1, "a@b": 1,
+        "a.b": 1, "a-b": 1, "a_b": 1, "a1": 1, "a": 1, "ab": 1, "AB": 1,
+    });
+    super::write::sort_keys_like_npm(&mut value);
+    let keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "a",
+            "a_b",
+            "a-b",
+            "a.b",
+            "a@b",
+            "a/b",
+            "a1",
+            "ab",
+            "aB",
+            "Ab",
+            "AB",
+            "abab",
+            "JSONStream"
+        ]
+    );
+}
+
+fn arb_funding() -> impl proptest::strategy::Strategy<Value = serde_json::Value> {
+    use proptest::prelude::*;
+    let url = "https://[a-z]{1,8}\\.example/[a-z]{0,6}";
+    let object = (proptest::option::of("[a-z]{1,8}"), url).prop_map(|(kind, url)| match kind {
+        Some(kind) => serde_json::json!({ "type": kind, "url": url }),
+        None => serde_json::json!({ "url": url }),
+    });
+    let element = prop_oneof![url.prop_map(serde_json::Value::from), object.clone()];
+    prop_oneof![
+        url.prop_map(serde_json::Value::from),
+        object,
+        proptest::collection::vec(element, 1..4).prop_map(serde_json::Value::Array),
+    ]
+}
+
+/// One generated package entry: how the root depends on it, plus the
+/// optional fields npm copies from its manifest.
+type ArbEntry = (
+    DepType,
+    Option<&'static str>,
+    Option<serde_json::Value>,
+    Option<&'static str>,
+);
+
+/// Lay a package-lock.json out in npm's key order, inserting keys by
+/// hand (serde_json keeps insertion order) so the expectation doesn't
+/// lean on the writer's sort: scalars and arrays first, led by
+/// `version`/`resolved`/`integrity`, the rest alphabetical; objects after.
+fn npm_ordered_lockfile(entries: &[ArbEntry]) -> String {
+    use serde_json::{Map, Value, json};
+    let mut root = Map::new();
+    root.insert("name".into(), json!("x"));
+    root.insert("version".into(), json!("1.0.0"));
+    for (dep_type, field) in [
+        (DepType::Production, "dependencies"),
+        (DepType::Dev, "devDependencies"),
+        (DepType::Optional, "optionalDependencies"),
+    ] {
+        let deps: Map<String, Value> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.0 == dep_type)
+            .map(|(idx, _)| (format!("pkg-{idx}"), json!(format!("1.0.{idx}"))))
+            .collect();
+        if !deps.is_empty() {
+            root.insert(field.into(), Value::Object(deps));
+        }
+    }
+    let mut packages = Map::new();
+    packages.insert(String::new(), Value::Object(root));
+    for (idx, (dep_type, license, funding, engine)) in entries.iter().enumerate() {
+        let mut entry = Map::new();
+        entry.insert("version".into(), json!(format!("1.0.{idx}")));
+        entry.insert(
+            "resolved".into(),
+            json!(format!(
+                "https://registry.npmjs.org/pkg-{idx}/-/pkg-{idx}-1.0.{idx}.tgz"
+            )),
+        );
+        entry.insert("integrity".into(), json!(format!("sha512-{idx}")));
+        if *dep_type == DepType::Dev {
+            entry.insert("dev".into(), json!(true));
+        }
+        let object_funding = funding.as_ref().filter(|f| f.is_object());
+        if let Some(funding) = funding.as_ref().filter(|f| !f.is_object()) {
+            entry.insert("funding".into(), funding.clone());
+        }
+        if let Some(license) = license {
+            entry.insert("license".into(), json!(license));
+        }
+        if *dep_type == DepType::Optional {
+            entry.insert("optional".into(), json!(true));
+        }
+        if let Some(engine) = engine {
+            entry.insert("engines".into(), json!({ "node": engine }));
+        }
+        if let Some(funding) = object_funding {
+            entry.insert("funding".into(), funding.clone());
+        }
+        packages.insert(format!("node_modules/pkg-{idx}"), Value::Object(entry));
+    }
+    let lock = json!({
+        "name": "x",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "requires": true,
+        "packages": packages,
+    });
+    let mut text = serde_json::to_string_pretty(&lock).unwrap();
+    text.push('\n');
+    text
+}
+
+proptest::proptest! {
+    /// read → write → read: an npm-ordered lockfile with dev/optional
+    /// flags, licenses, engines and every funding shape is written back
+    /// byte-identical, and re-reading it yields the same metadata.
+    #[test]
+    fn npm_ordered_entries_roundtrip_byte_identical(
+        entries in proptest::collection::vec(
+            (
+                proptest::sample::select(vec![DepType::Production, DepType::Dev, DepType::Optional]),
+                proptest::option::of(proptest::sample::select(vec!["MIT", "ISC", "BSD-3-Clause"])),
+                proptest::option::of(arb_funding()),
+                proptest::option::of(proptest::sample::select(vec![">=12", ">=0.10.0"])),
+            ),
+            1..8,
+        )
+    ) {
+        let original = npm_ordered_lockfile(&entries);
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), &original).unwrap();
+        let graph = parse(tmp.path()).unwrap();
+        let mut manifest = aube_manifest::PackageJson {
+            name: Some("x".to_string()),
+            version: Some("1.0.0".to_string()),
+            ..Default::default()
+        };
+        for (idx, entry) in entries.iter().enumerate() {
+            let section = match entry.0 {
+                DepType::Production => &mut manifest.dependencies,
+                DepType::Dev => &mut manifest.dev_dependencies,
+                DepType::Optional => &mut manifest.optional_dependencies,
+            };
+            section.insert(format!("pkg-{idx}"), format!("1.0.{idx}"));
+        }
+        write(tmp.path(), &graph, &manifest).unwrap();
+        let written = std::fs::read_to_string(tmp.path()).unwrap();
+        proptest::prop_assert_eq!(&written, &original);
+
+        let reparsed = parse(tmp.path()).unwrap();
+        proptest::prop_assert_eq!(reparsed.packages.len(), graph.packages.len());
+        for (key, pkg) in &graph.packages {
+            let again = &reparsed.packages[key];
+            proptest::prop_assert_eq!(&again.funding_url, &pkg.funding_url);
+            proptest::prop_assert_eq!(&again.extra_meta, &pkg.extra_meta);
+            proptest::prop_assert_eq!(&again.license, &pkg.license);
+        }
+    }
+}

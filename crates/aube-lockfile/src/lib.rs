@@ -37,6 +37,10 @@ pub(crate) const EXTRA_YARN_RESOLVED: &str = "__aube_yarn_resolved";
 /// Internal `extra_meta` marker behind
 /// [`LockedPackage::declared_dependencies_known`]. Writers never emit it.
 pub(crate) const EXTRA_DECLARED_DEPENDENCIES_KNOWN: &str = "__aube_declared_dependencies_known";
+/// Internal `extra_meta` key holding a package-lock.json entry's `funding`
+/// value verbatim (`type` keys and arrays included), so the npm writer
+/// re-emits it instead of the URL-only form `funding_url` models.
+pub(crate) const EXTRA_NPM_FUNDING: &str = "__aube_npm_funding";
 
 /// `LockedPackage::extra_meta` key holding yarn berry blocks the parser
 /// skipped but the writer must re-emit verbatim (the `builtin<compat/…>`

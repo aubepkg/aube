@@ -239,6 +239,12 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                     .has_install_script
                     .then(|| (HAS_INSTALL_SCRIPT_KEY.to_string(), true.into()))
                     .into_iter()
+                    .chain(
+                        package_entry
+                            .funding
+                            .as_ref()
+                            .map(|f| (crate::EXTRA_NPM_FUNDING.to_string(), f.raw.clone())),
+                    )
                     .collect(),
                 ..Default::default()
             }
