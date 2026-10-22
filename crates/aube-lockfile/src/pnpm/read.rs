@@ -1,5 +1,5 @@
 use super::dep_path::{
-    parse_dep_path, peerless_alias_target, registry_name_from_qualified_version,
+    alias_dep_path, parse_dep_path, peerless_alias_target, registry_name_from_qualified_version,
     rewrite_peer_suffix, rewrite_snapshot_alias_deps, version_to_dep_path,
 };
 use super::raw::{
@@ -164,6 +164,12 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     // resolver-fresh path emits so the linker stays single-shape.
     // Tuple: (alias_dep_path, real_dep_path, alias_name, real_name).
     let mut alias_remaps: Vec<(String, String, String, String)> = Vec::new();
+    let registry_packages = raw
+        .packages
+        .iter()
+        .filter(|(_, package)| package.alias_of.is_none())
+        .map(|(key, _)| key.clone())
+        .collect::<BTreeSet<_>>();
 
     // pnpm 10.14+ records `devEngines.runtime` pins as synthetic
     // importer deps whose specifier/version carry a `runtime:` prefix
@@ -313,21 +319,14 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             // Strip any peer suffix before parsing so `version:
             // 18.2.0(react@18.2.0)` (a regular dep with peers) does
             // not parse as `name="18.2.0(react"`.
-            let bare_version = info
-                .version
-                .split('(')
-                .next()
-                .unwrap_or(info.version.as_str());
+            let reference = info.version.strip_prefix("npm:").unwrap_or(&info.version);
+            let bare_version = reference.split('(').next().unwrap_or(reference);
             let dep_path = if let Some((real_name, resolved)) = parse_dep_path(bare_version)
                 && real_name != name
             {
-                let peer_suffix = info
-                    .version
-                    .find('(')
-                    .map(|i| &info.version[i..])
-                    .unwrap_or("");
-                let alias_dep_path = format!("{name}@{resolved}{peer_suffix}");
-                let real_dep_path = info.version.clone();
+                let real_dep_path = reference.to_string();
+                let alias_dep_path =
+                    alias_dep_path(name, &real_dep_path, &resolved, &registry_packages);
                 alias_remaps.push((
                     alias_dep_path.clone(),
                     real_dep_path,
@@ -498,13 +497,13 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             if let Some(snap) = snap
                 && let Some(mut deps) = snap.dependencies.clone()
             {
-                rewrite_snapshot_alias_deps(&mut deps, &mut alias_remaps);
+                rewrite_snapshot_alias_deps(&mut deps, &mut alias_remaps, &registry_packages);
                 local_pkg.dependencies = deps;
             }
             if let Some(snap) = snap
                 && let Some(mut opt_deps) = snap.optional_dependencies.clone()
             {
-                rewrite_snapshot_alias_deps(&mut opt_deps, &mut alias_remaps);
+                rewrite_snapshot_alias_deps(&mut opt_deps, &mut alias_remaps, &registry_packages);
                 local_pkg.dependencies.extend(opt_deps.clone());
                 local_pkg.optional_dependencies = opt_deps;
             }
@@ -626,8 +625,12 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         if local_canonical_keys.contains(&dep_path) {
             continue;
         }
-        let (name, version) = parse_dep_path(&dep_path)
+        let (name, mut version) = parse_dep_path(&dep_path)
             .ok_or_else(|| Error::parse(path, format!("invalid dep path: {dep_path}")))?;
+        let qualified_alias = version.strip_prefix("npm:").and_then(parse_dep_path);
+        if let Some((_, resolved)) = &qualified_alias {
+            version = resolved.clone();
+        }
         if let Some(registry_name) = registry_name_from_qualified_version(&version) {
             return Err(Error::UnsupportedNamedRegistry {
                 path: path.to_path_buf(),
@@ -654,10 +657,14 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
 
         // Look up the canonical package entry by stripping any peer suffix.
         let canonical_key = version_to_dep_path(&name, &version);
-        let pkg_info = raw
-            .packages
-            .get(&canonical_key)
-            .or_else(|| raw.packages.get(&dep_path));
+        let pkg_info = if qualified_alias.is_some() {
+            raw.packages
+                .get(dep_path.split('(').next().unwrap_or(&dep_path))
+        } else {
+            raw.packages
+                .get(&canonical_key)
+                .or_else(|| raw.packages.get(&dep_path))
+        };
 
         let integrity = pkg_info
             .and_then(|p| p.resolution.as_ref())
@@ -710,8 +717,12 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         let mut dependencies = snapshot
             .and_then(|s| s.dependencies.clone())
             .unwrap_or_default();
-        rewrite_snapshot_alias_deps(&mut dependencies, &mut alias_remaps);
-        rewrite_snapshot_alias_deps(&mut optional_dependencies, &mut alias_remaps);
+        rewrite_snapshot_alias_deps(&mut dependencies, &mut alias_remaps, &registry_packages);
+        rewrite_snapshot_alias_deps(
+            &mut optional_dependencies,
+            &mut alias_remaps,
+            &registry_packages,
+        );
         dependencies.extend(optional_dependencies.clone());
         let bundled_dependencies = snapshot
             .and_then(|s| s.bundled_dependencies.clone())
@@ -774,7 +785,9 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         // — ordinary pnpm lockfiles never carry it, so this stays
         // `None` on pnpm-authored input and round-trips the resolver-
         // emitted value for aliased packages.
-        let alias_of = pkg_info.and_then(|p| p.alias_of.clone());
+        let alias_of = pkg_info
+            .and_then(|p| p.alias_of.clone())
+            .or_else(|| qualified_alias.map(|(name, _)| name));
 
         // Reclassify transitive URL-keyed entries — github forks,
         // pkg.pr.new, `file:` targets — so they round-trip with the

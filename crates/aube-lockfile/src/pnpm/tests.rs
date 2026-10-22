@@ -5406,3 +5406,65 @@ fn snapshot_key_over_1024_chars_round_trips() {
     let raw = super::raw::parse_raw_lockfile_serde(&content).unwrap();
     assert!(raw.snapshots.contains_key(&long_dep_path));
 }
+
+proptest::proptest! {
+#[test]
+fn parse_keeps_alias_distinct_from_same_name_and_version_registry_package(major in 0u16..1000) {
+    let version = format!("{major}.0.0");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, r#"
+lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      compiler:
+        specifier: 'npm:@test/compiler@1.0.0'
+        version: '@test/compiler@1.0.0'
+  packages/plain:
+    dependencies:
+      compiler:
+        specifier: '1.0.0'
+        version: '1.0.0'
+packages:
+  parent@1.0.0:
+    resolution: {integrity: sha512-parent}
+  compiler@1.0.0:
+    resolution: {integrity: sha512-plain}
+  '@test/compiler@1.0.0':
+    resolution: {integrity: sha512-aliased}
+snapshots:
+  compiler@1.0.0: {}
+  '@test/compiler@1.0.0': {}
+  parent@1.0.0:
+    dependencies:
+      compiler: '@test/compiler@1.0.0'
+    optionalDependencies:
+      compiler: '@test/compiler@1.0.0'
+"#.replace("1.0.0", &version)).unwrap();
+    let graph = parse(&path).unwrap();
+    let aliased = &graph.packages[&graph.importers["."][0].dep_path];
+    let plain = &graph.packages[&graph.importers["packages/plain"][0].dep_path];
+    assert_eq!(aliased.alias_of.as_deref(), Some("@test/compiler"));
+    assert_eq!(aliased.integrity.as_deref(), Some("sha512-aliased"));
+    assert_eq!(plain.alias_of, None);
+    assert_eq!(plain.integrity.as_deref(), Some("sha512-plain"));
+    let parent = &graph.packages[&format!("parent@{version}")];
+    let alias_tail = &parent.dependencies["compiler"];
+    assert_eq!(format!("compiler@{alias_tail}"), graph.importers["."][0].dep_path);
+    assert_eq!(parent.optional_dependencies["compiler"], *alias_tail);
+    for filename in ["pnpm-lock.yaml", "aube-lock.yaml"] {
+        let output_path = directory.path().join(filename);
+        super::write(&output_path, &graph, &PackageJson::default()).unwrap();
+        let reparsed = parse(&output_path).unwrap();
+        for importer in [".", "packages/plain"] {
+            let original = &graph.packages[&graph.importers[importer][0].dep_path];
+            let restored = &reparsed.packages[&reparsed.importers[importer][0].dep_path];
+            assert_eq!(restored.alias_of, original.alias_of);
+            assert_eq!(restored.version, original.version);
+            assert_eq!(restored.integrity, original.integrity);
+        }
+        assert_eq!(reparsed.packages[&format!("parent@{version}")].dependencies, parent.dependencies);
+    }
+}
+}

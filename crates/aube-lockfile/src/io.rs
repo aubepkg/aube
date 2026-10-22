@@ -89,15 +89,11 @@ pub fn write_lockfile(
     Ok(())
 }
 
-/// Collapse peer-context variants from `graph` into a single map keyed
-/// by `"name@version"`, pointing at the first-seen package. Several
-/// writers (npm, yarn, …) share this shape: one canonical entry per
-/// `(name, version)` pair regardless of how many peer suffixes the
-/// full graph emits.
+/// Collapse peer contexts while retaining distinct registry alias targets.
 pub fn build_canonical_map(graph: &LockfileGraph) -> BTreeMap<String, &LockedPackage> {
     let mut canonical: BTreeMap<String, &LockedPackage> = BTreeMap::new();
     for pkg in graph.packages.values() {
-        canonical.entry(pkg.spec_key()).or_insert(pkg);
+        canonical.entry(pkg.canonical_dep_path()).or_insert(pkg);
     }
     canonical
 }

@@ -490,6 +490,10 @@ pub fn write_with_project_root(
             None => {
                 if native_pnpm_aliases && let Some(real_name) = pkg.alias_of.as_deref() {
                     version_to_dep_path(real_name, &pkg.version)
+                } else if pkg.alias_of.is_some()
+                    && pkg.dep_path.starts_with(&format!("{}@npm:", pkg.name))
+                {
+                    pkg.canonical_dep_path()
                 } else if url_keyed {
                     // Strip any peer suffix; the packages section keys the
                     // canonical form (no peer contexts), the snapshots
@@ -820,7 +824,7 @@ pub fn write_with_project_root(
                     && let Some(target) = target
                     && let Some(real_name) = target.alias_of.as_deref()
                 {
-                    format!("{real_name}@{value}")
+                    format!("{real_name}@{}", dep_path_tail(&dp, &name))
                 } else {
                     value
                 };

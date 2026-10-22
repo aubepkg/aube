@@ -346,7 +346,7 @@ pub(super) async fn run_gvs_prewarm_materializer(
         if pkg.local_source.is_some() {
             continue;
         }
-        let canonical = pkg.spec_key();
+        let canonical = pkg.canonical_dep_path();
         if canonical != *dep_path {
             canonical_to_contextualized
                 .entry(canonical)
@@ -549,7 +549,7 @@ async fn run_aube_dir_materializer(
         if pkg.local_source.is_some() {
             continue;
         }
-        let canonical = pkg.spec_key();
+        let canonical = pkg.canonical_dep_path();
         if canonical != *dep_path {
             canonical_to_contextualized
                 .entry(canonical)

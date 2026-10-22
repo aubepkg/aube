@@ -530,6 +530,19 @@ impl LockedPackage {
         format!("{}@{}", self.name, self.version)
     }
 
+    /// Peer-free package identity, retaining the registry target of a colliding alias.
+    pub fn canonical_dep_path(&self) -> String {
+        if self.alias_of.is_some() && self.dep_path.starts_with(&format!("{}@npm:", self.name)) {
+            self.dep_path
+                .split('(')
+                .next()
+                .unwrap_or(&self.dep_path)
+                .to_string()
+        } else {
+            self.spec_key()
+        }
+    }
+
     /// Resolve a patch entry for this package from a `name@version`-keyed
     /// map, returning the matched key alongside the value.
     ///
@@ -1124,7 +1137,7 @@ impl LockfileGraph {
         // the same prior entry.
         let prior_index = build_canonical_map(prior);
         for pkg in self.packages.values_mut() {
-            let key = pkg.spec_key();
+            let key = pkg.canonical_dep_path();
             let Some(prior_pkg) = prior_index.get(&key) else {
                 continue;
             };

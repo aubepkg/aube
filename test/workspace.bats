@@ -1106,3 +1106,50 @@ _setup_shared_direct_dep_workspace() {
 	assert_failure
 	assert_output --partial "workspace importer packages/b"
 }
+
+@test "aube install: frozen registry alias does not collide with ordinary package" {
+	mkdir -p packages/plain
+	echo '{"private":true,"dependencies":{"is-positive":"npm:@pnpm.e2e/hello-world-js-bin@1.0.0"}}' >package.json
+	echo '{"name":"plain-consumer","dependencies":{"is-positive":"1.0.0"}}' >packages/plain/package.json
+	printf 'packages:\n  - packages/*\n' >pnpm-workspace.yaml
+	cat >pnpm-lock.yaml <<-'EOF'
+		lockfileVersion: '9.0'
+		importers:
+		  .:
+		    dependencies:
+		      is-positive:
+		        specifier: npm:@pnpm.e2e/hello-world-js-bin@1.0.0
+		        version: '@pnpm.e2e/hello-world-js-bin@1.0.0'
+		  packages/plain:
+		    dependencies:
+		      is-positive:
+		        specifier: 1.0.0
+		        version: 1.0.0
+		packages:
+		  is-positive@1.0.0:
+		    resolution: {integrity: sha512-xxzPGZ4P2uN6rROUa5N9Z7zTX6ERuE0hs6GUOc/cKBLF2NqKc16UwqHMt3tFg4CO6EBTE5UecUasg+3jZx3Ckg==}
+		  '@pnpm.e2e/hello-world-js-bin@1.0.0':
+		    resolution: {integrity: sha512-3f6ugQfqFW9GR36OSeTfsSNlup7hIslT23haX3dvT/e5GyU3iInat3+0GI+MqvRcwcNzsBrTJq7yDWp3wk7O/Q==}
+		    hasBin: true
+		snapshots:
+		  is-positive@1.0.0: {}
+		  '@pnpm.e2e/hello-world-js-bin@1.0.0': {}
+	EOF
+
+	for install_mode in cold warm ci; do
+		if [[ "$install_mode" == ci ]]; then
+			export CI=1
+		fi
+		run aube install --frozen-lockfile
+		assert_success
+		run node -p "require('./node_modules/is-positive/package.json').name"
+		assert_success
+		assert_output '@pnpm.e2e/hello-world-js-bin'
+		run node -p "require('./packages/plain/node_modules/is-positive/package.json').name"
+		assert_success
+		assert_output 'is-positive'
+		run node_modules/.bin/is-positive
+		assert_success
+		rm -rf node_modules packages/plain/node_modules
+	done
+}

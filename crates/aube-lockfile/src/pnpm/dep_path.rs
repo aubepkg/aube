@@ -1,14 +1,38 @@
 use crate::LockedPackage;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn version_to_dep_path(name: &str, version: &str) -> String {
     format!("{name}@{version}")
 }
 
 pub(super) fn dep_path_tail<'a>(dep_path: &'a str, name: &str) -> &'a str {
-    dep_path
+    let tail = dep_path
         .strip_prefix(&format!("{name}@"))
-        .unwrap_or(dep_path)
+        .unwrap_or(dep_path);
+    if tail.starts_with("npm:") {
+        let head = tail.split('(').next().unwrap_or(tail);
+        if let Some(separator) = head.rfind('@') {
+            return &tail[separator + 1..];
+        }
+    }
+    tail
+}
+
+pub(super) fn alias_dep_path(
+    name: &str,
+    real_dep_path: &str,
+    version: &str,
+    registry_packages: &BTreeSet<String>,
+) -> String {
+    if registry_packages.contains(&format!("{name}@{version}")) {
+        format!("{name}@npm:{real_dep_path}")
+    } else {
+        let peer_suffix = real_dep_path
+            .find('(')
+            .map(|index| &real_dep_path[index..])
+            .unwrap_or("");
+        format!("{name}@{version}{peer_suffix}")
+    }
 }
 
 pub(super) fn peerless_dep_path(name: &str, value: &str) -> String {
@@ -209,38 +233,25 @@ pub(super) fn registry_name_from_qualified_version(version: &str) -> Option<&str
     Some(registry_name)
 }
 
-/// Detect npm-aliased entries inside a snapshot's `dependencies` /
-/// `optionalDependencies` map and rewrite them to aube's internal shape.
-///
-/// pnpm encodes a transitive npm alias as `<alias>: <real>@<resolved>(peers…)`
-/// (e.g. `@isaacs/cliui@8.0.2` records `string-width-cjs: string-width@4.2.3`
-/// for its `"string-width-cjs": "npm:string-width@^4.2.0"` dep). Aube's
-/// linker keys sibling symlinks against `<dep_name>@<dep_value>`, so a raw
-/// pnpm value yields a broken `string-width-cjs@string-width@4.2.3` virtual
-/// store path. This helper rewrites the value to the bare resolved version
-/// (preserving any peer-context suffix) and pushes onto `alias_remaps` so
-/// the synthesis loop creates a `<alias>@<resolved>` `LockedPackage` with
-/// `alias_of=Some(real)`. After that the linker resolves the alias symlink
-/// to the synthetic dir and the resolver's lockfile-reuse path enqueues
-/// transitives with `range = <resolved>` (not the malformed
-/// `<real>@<resolved>` that no `<alias>` packument can satisfy).
+/// Rewrite registry alias references to synthetic graph keys, preserving colliding targets.
 pub(super) fn rewrite_snapshot_alias_deps(
     deps: &mut BTreeMap<String, String>,
     alias_remaps: &mut Vec<(String, String, String, String)>,
+    registry_packages: &BTreeSet<String>,
 ) {
     for (dep_name, dep_value) in deps.iter_mut() {
-        let bare = dep_value.split('(').next().unwrap_or(dep_value);
+        let reference = dep_value.strip_prefix("npm:").unwrap_or(dep_value);
+        let bare = reference.split('(').next().unwrap_or(reference);
         let Some((real_name, resolved)) = parse_dep_path(bare) else {
             continue;
         };
         if real_name == *dep_name {
             continue;
         }
-        let peer_suffix = dep_value.find('(').map(|i| &dep_value[i..]).unwrap_or("");
-        let alias_dep_path = format!("{dep_name}@{resolved}{peer_suffix}");
-        let real_dep_path = dep_value.clone();
+        let real_dep_path = reference.to_string();
+        let alias_dep_path = alias_dep_path(dep_name, &real_dep_path, &resolved, registry_packages);
+        *dep_value = alias_dep_path[dep_name.len() + 1..].to_string();
         alias_remaps.push((alias_dep_path, real_dep_path, dep_name.clone(), real_name));
-        *dep_value = format!("{resolved}{peer_suffix}");
     }
 }
 

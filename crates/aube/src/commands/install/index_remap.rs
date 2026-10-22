@@ -10,7 +10,7 @@ pub(super) fn remap_indices_to_contextualized(
 ) -> BTreeMap<String, aube_store::PackageIndex> {
     let mut placements: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for (dep_path, pkg) in &graph.packages {
-        let canonical_key = pkg.spec_key();
+        let canonical_key = pkg.canonical_dep_path();
         // The peer-context pass appends a `(peer@ver)` suffix (or a
         // parenthesized `(<short-hash>)` when it exceeds the cap) onto a
         // package's canonical dep_path. Source-backed deps (git /
