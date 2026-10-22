@@ -1330,6 +1330,9 @@ fn test_hidden_hoist_reconciles_on_relink() {
 
     let (store, mut indices) = setup_store_with_files(dir.path());
     let mut graph = make_graph();
+    // Root direct deps never enter the hidden hoist, so drop the importer
+    // to keep `foo` eligible.
+    graph.importers.clear();
     // A scoped package exercises the `@scope/` directories created ahead
     // of the parallel pass; `Bar` collides with `bar` by case and takes
     // the serial pass.
@@ -1413,7 +1416,6 @@ fn test_hidden_hoist_reconciles_on_relink() {
     new_foo.version = "2.0.0".to_string();
     new_foo.dep_path = "foo@2.0.0".to_string();
     graph.packages.insert(new_foo.dep_path.clone(), new_foo);
-    graph.importers.get_mut(".").unwrap()[0].dep_path = "foo@2.0.0".to_string();
 
     linker.link_all(&project_dir, &graph, &indices).unwrap();
     assert!(hidden.join(&old_foo_target).exists());
@@ -1444,7 +1446,10 @@ fn hidden_hoist_drops_link_when_package_source_is_missing() {
     std::fs::create_dir_all(&project_dir).unwrap();
     let (store, indices) = setup_store_with_files(dir.path());
     let linker = Linker::new(&store, LinkStrategy::Copy);
-    let graph = make_graph();
+    let mut graph = make_graph();
+    // Root direct deps never enter the hidden hoist, so drop the importer
+    // to keep `foo` eligible.
+    graph.importers.clear();
     linker.link_all(&project_dir, &graph, &indices).unwrap();
 
     let aube_dir = project_dir.join("node_modules/.aube");
@@ -2412,5 +2417,106 @@ fn relative_workspace_dirs_link_a_member_behind_a_symlink_to_its_sibling() {
         dir.path()
             .join("outside/app/node_modules/sib/package.json")
             .exists()
+    );
+}
+
+/// The discussion #1811 graph: `is-odd@3.0.1 -> is-number@6.0.0` sits
+/// at depth 1, `is-even@1.0.0 -> is-odd@0.1.2 -> is-number@3.0.0` at
+/// depth 2, and the root declares `is-even` and `is-odd@3.0.1`.
+fn two_version_hidden_hoist_fixture(
+    store: &Store,
+) -> (LockfileGraph, BTreeMap<String, aube_store::PackageIndex>) {
+    let mut graph = LockfileGraph::default();
+    let mut indices = BTreeMap::new();
+    for (dep_path, deps) in [
+        ("is-even@1.0.0", &[("is-odd", "0.1.2")][..]),
+        ("is-odd@0.1.2", &[("is-number", "3.0.0")]),
+        ("is-odd@3.0.1", &[("is-number", "6.0.0")]),
+        ("is-number@3.0.0", &[]),
+        ("is-number@6.0.0", &[]),
+    ] {
+        let (name, version) = dep_path.rsplit_once('@').unwrap();
+        let stored = store
+            .import_bytes(format!("module.exports = '{dep_path}';").as_bytes(), false)
+            .unwrap();
+        let mut index = PackageIndex::default();
+        index.insert("index.js".to_string(), stored);
+        indices.insert(dep_path.to_string(), index);
+        graph.packages.insert(
+            dep_path.to_string(),
+            LockedPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dep_path: dep_path.to_string(),
+                dependencies: deps
+                    .iter()
+                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+    let root = ["is-even@1.0.0", "is-odd@3.0.1"]
+        .into_iter()
+        .map(|dep_path| DirectDep {
+            name: dep_path.rsplit_once('@').unwrap().0.to_string(),
+            dep_path: dep_path.to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        })
+        .collect();
+    graph.importers.insert(".".to_string(), root);
+    (graph, indices)
+}
+
+#[test]
+fn hidden_hoist_prefers_shallowest_version_and_skips_root_deps() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store);
+    let linker = Linker::new(&store, LinkStrategy::Copy);
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let hidden = project_dir.join("node_modules/.aube/node_modules");
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("is-number/index.js")).unwrap(),
+        "module.exports = 'is-number@6.0.0';",
+        "the depth-1 version must win over the depth-2 one"
+    );
+    for name in ["is-odd", "is-even"] {
+        assert!(
+            std::fs::symlink_metadata(hidden.join(name)).is_err(),
+            "root direct dep {name} must not be hidden-hoisted"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("node_modules/is-odd/index.js")).unwrap(),
+        "module.exports = 'is-odd@3.0.1';"
+    );
+}
+
+#[test]
+fn gvs_hidden_hoist_mirror_prefers_root_dep_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store);
+    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    // The shared mirror sits outside the project, where a store
+    // package's parent walk never reaches the root `node_modules/`, so
+    // the root's own versions (depth 0) take the names there.
+    let mirror = store.virtual_store_dir().join("node_modules");
+    assert_eq!(
+        std::fs::read_to_string(mirror.join("is-odd/index.js")).unwrap(),
+        "module.exports = 'is-odd@3.0.1';"
+    );
+    assert_eq!(
+        std::fs::read_to_string(mirror.join("is-number/index.js")).unwrap(),
+        "module.exports = 'is-number@6.0.0';"
     );
 }

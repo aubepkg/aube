@@ -963,10 +963,13 @@ everything, which mirrors pnpm's default of hoisting every
 transitive dep into the hidden tree. Only consulted when
 `hoist=true`.
 
-Matching is case-insensitive; first-writer-wins on name clashes
-across versions, using BTree iteration order for determinism. Set
-to `[]` or a list of only `!` negations to hoist nothing while
-leaving `hoist=true` (equivalent to setting `hoist=false`).
+Matching is case-insensitive. The root project's direct
+dependencies are never hidden-hoisted: Node already finds them in
+the root `node_modules/`. When a name has several versions in the
+graph, the one closest to an importer wins, with ties broken by
+dep path, matching pnpm's choice. Set to `[]` or a list of only
+`!` negations to hoist nothing while leaving `hoist=true`
+(equivalent to setting `hoist=false`).
 
 ### `publicHoistPattern` {#setting-publichoistpattern}
 

@@ -34,8 +34,9 @@ JSON
 	run aube install
 	assert_success
 	# Default hoistPattern=["*"]: every non-local package in the graph
-	# (direct deps and transitives) gets a hidden-hoist symlink.
-	assert_link_exists node_modules/.aube/node_modules/is-odd
+	# gets a hidden-hoist symlink, except the root's direct deps, which
+	# the parent walk already finds in the root `node_modules/`.
+	assert_not_exists node_modules/.aube/node_modules/is-odd
 	assert_link_exists node_modules/.aube/node_modules/is-number
 	# The user-visible root still contains only the direct dep.
 	assert_link_exists node_modules/is-odd
@@ -87,7 +88,7 @@ JSON
   "name": "hoist-pattern-yaml",
   "version": "1.0.0",
   "dependencies": {
-    "is-odd": "3.0.1"
+    "is-even": "1.0.0"
   }
 }
 JSON
@@ -98,9 +99,34 @@ hoistPattern:
 YAML
 	run aube install
 	assert_success
-	# Everything except is-number makes it into the hidden tree.
+	# Every transitive except is-number makes it into the hidden tree.
 	assert_link_exists node_modules/.aube/node_modules/is-odd
 	assert_not_exists node_modules/.aube/node_modules/is-number
+}
+
+@test "hidden hoist picks the shallowest version and skips root deps like pnpm" {
+	# is-odd@3.0.1 -> is-number@6.0.0 is at depth 1, while
+	# is-even@1.0.0 -> is-odd@0.1.2 -> is-number@3.0.0 is at depth 2.
+	cat >package.json <<'JSON'
+{
+  "name": "hidden-hoist-version-choice",
+  "version": "1.0.0",
+  "dependencies": {
+    "is-even": "1.0.0",
+    "is-odd": "3.0.1"
+  }
+}
+JSON
+	run aube install
+	assert_success
+	run node -p 'require("./node_modules/.aube/node_modules/is-number/package.json").version'
+	assert_success
+	assert_output "6.0.0"
+	# Root direct deps stay out, so an undeclared `require("is-odd")`
+	# from the virtual store walks up to the root's is-odd@3.0.1
+	# rather than a hidden is-odd@0.1.2.
+	assert_not_exists node_modules/.aube/node_modules/is-odd
+	assert_not_exists node_modules/.aube/node_modules/is-even
 }
 
 @test "flipping hoist=true -> false wipes the previous hidden tree" {

@@ -1533,16 +1533,32 @@ impl Linker {
         // `String` clone the `HashSet<String>` version forced.
         let mut claimed: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
         let packages: Vec<_> = if self.hoist {
-            graph
+            // Match pnpm's `hoistGraph`: the project-local tree never
+            // shadows the root importer's direct deps, since a store
+            // package's parent walk reaches the root `node_modules/`
+            // after `.aube/node_modules/`. The GVS mirror lives outside
+            // the project, so that walk never gets there and the
+            // direct deps (depth 0) stay eligible.
+            if !use_hashed_subdirs {
+                claimed.extend(graph.root_deps().iter().map(|d| d.name.as_str()));
+            }
+            let depths = hidden_hoist_depths(graph);
+            let mut candidates: Vec<_> = graph
                 .packages
                 .iter()
-                .filter_map(|(dep_path, pkg)| {
-                    if pkg.local_source.is_some() || !self.hoist_matches(&pkg.name) {
-                        return None;
-                    }
-                    // First-writer-wins on name clashes across versions.
-                    // BTree iteration over `graph.packages` gives a
-                    // deterministic tiebreaker across runs.
+                .filter(|(_, pkg)| pkg.local_source.is_none() && self.hoist_matches(&pkg.name))
+                .map(|(dep_path, pkg)| {
+                    let depth = depths.get(dep_path.as_str()).copied().unwrap_or(u32::MAX);
+                    (depth, dep_path, pkg)
+                })
+                .collect();
+            // Shallowest version wins a name, ties broken by dep path
+            // (BTree order is already sorted, so a stable sort on depth
+            // keeps it), like pnpm's depth-then-node-id ordering.
+            candidates.sort_by_key(|(depth, _, _)| *depth);
+            candidates
+                .into_iter()
+                .filter_map(|(_, dep_path, pkg)| {
                     claimed.insert(pkg.name.as_str()).then_some((dep_path, pkg))
                 })
                 .collect()
@@ -1811,6 +1827,36 @@ pub fn build_workspace_nested_link_targets(
         map.insert(key, dir.clone());
     }
     if map.is_empty() { None } else { Some(map) }
+}
+
+/// Shortest distance of each dep path from any importer: an importer's
+/// direct deps are depth 0, their deps depth 1, and so on. Packages no
+/// importer reaches are absent.
+fn hidden_hoist_depths(graph: &LockfileGraph) -> rustc_hash::FxHashMap<&str, u32> {
+    let mut depths: rustc_hash::FxHashMap<&str, u32> = rustc_hash::FxHashMap::default();
+    let mut queue = std::collections::VecDeque::new();
+    for dep in graph.importers.values().flatten() {
+        if let Some((dep_path, _)) = graph.packages.get_key_value(&dep.dep_path)
+            && !depths.contains_key(dep_path.as_str())
+        {
+            depths.insert(dep_path, 0);
+            queue.push_back(dep_path);
+        }
+    }
+    while let Some(parent) = queue.pop_front() {
+        let depth = depths[parent.as_str()] + 1;
+        for (name, tail) in &graph.packages[parent].dependencies {
+            let child = aube_lockfile::shared_local_dep_path(name, tail)
+                .unwrap_or_else(|| format!("{name}@{tail}"));
+            if let Some((child, _)) = graph.packages.get_key_value(&child)
+                && !depths.contains_key(child.as_str())
+            {
+                depths.insert(child, depth);
+                queue.push_back(child);
+            }
+        }
+    }
+    depths
 }
 
 /// Dependency edges of per-project local packages whose target is a
