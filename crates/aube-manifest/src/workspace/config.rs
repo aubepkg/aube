@@ -655,17 +655,95 @@ pub struct WorkspaceConfig {
 /// pnpm-workspace.yaml. Same three-axis shape pnpm uses; each entry
 /// can be a concrete token (`"linux"`) or the literal `"current"`,
 /// which the resolver expands to the host triple.
-#[derive(Debug, Clone, Default, Deserialize)]
+///
+/// pnpm 12.5 also accepts a flat platform list (`linux-x64`,
+/// `linux-x64-musl`, `aarch64-apple-darwin`, `current`). Aube's
+/// filter works on the three axes, so a list is folded into the union
+/// of its entries' axes.
+#[derive(Debug, Clone, Default)]
 pub struct SupportedArchitectures {
-    #[serde(default)]
     pub os: Vec<String>,
-    #[serde(default)]
     pub cpu: Vec<String>,
-    #[serde(default)]
     pub libc: Vec<String>,
 }
 
+impl<'de> Deserialize<'de> for SupportedArchitectures {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Axes {
+                #[serde(default)]
+                os: Vec<String>,
+                #[serde(default)]
+                cpu: Vec<String>,
+                #[serde(default)]
+                libc: Vec<String>,
+            },
+            List(Vec<String>),
+        }
+        Ok(match Raw::deserialize(deserializer)? {
+            Raw::Axes { os, cpu, libc } => Self { os, cpu, libc },
+            Raw::List(entries) => Self::from_platforms(&entries),
+        })
+    }
+}
+
 impl SupportedArchitectures {
+    /// Fold pnpm's platform-list form into per-axis sets. Entries are
+    /// `<os>-<cpu>[-<libc>]` or Rust target triples; unrecognized
+    /// entries are skipped.
+    fn from_platforms(entries: &[String]) -> Self {
+        fn push(axis: &mut Vec<String>, value: &str) {
+            if !axis.iter().any(|v| v == value) {
+                axis.push(value.to_string());
+            }
+        }
+        fn libc_token(token: &str) -> Option<&'static str> {
+            match token {
+                "musl" => Some("musl"),
+                "gnu" | "glibc" => Some("glibc"),
+                t if t.starts_with("manylinux") => Some("glibc"),
+                _ => None,
+            }
+        }
+        let mut out = Self::default();
+        for entry in entries {
+            if entry == "current" {
+                for axis in [&mut out.os, &mut out.cpu, &mut out.libc] {
+                    push(axis, "current");
+                }
+                continue;
+            }
+            let parts: Vec<&str> = entry.split('-').collect();
+            let (os, cpu, libc) =
+                if parts.len() >= 3 && matches!(parts[1], "unknown" | "apple" | "pc") {
+                    // Rust triple: <arch>-<vendor>-<os>[-<env>]
+                    let cpu = match parts[0] {
+                        "x86_64" => "x64",
+                        "aarch64" => "arm64",
+                        "i686" | "i586" => "ia32",
+                        other => other,
+                    };
+                    let os = match parts[2] {
+                        "windows" => "win32",
+                        other => other,
+                    };
+                    (os, cpu, parts.get(3).and_then(|t| libc_token(t)))
+                } else if parts.len() >= 2 {
+                    (parts[0], parts[1], parts.get(2).and_then(|t| libc_token(t)))
+                } else {
+                    continue;
+                };
+            push(&mut out.os, os);
+            push(&mut out.cpu, cpu);
+            if os == "linux" {
+                push(&mut out.libc, libc.unwrap_or("glibc"));
+            }
+        }
+        out
+    }
+
     pub fn is_empty(&self) -> bool {
         self.os.is_empty() && self.cpu.is_empty() && self.libc.is_empty()
     }

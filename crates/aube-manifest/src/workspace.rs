@@ -145,6 +145,24 @@ supportedArchitectures:
     }
 
     #[test]
+    fn test_supported_architectures_platform_list() {
+        let yaml = r#"
+supportedArchitectures:
+  - darwin-arm64
+  - linux-x64-manylinux_2_28
+  - linux-arm64-musl
+  - x86_64-pc-windows-msvc
+  - aarch64-unknown-linux-gnu
+  - current
+"#;
+        let config: WorkspaceConfig = yaml_serde::from_str(yaml).unwrap();
+        let sa = config.supported_architectures.as_ref().unwrap();
+        assert_eq!(sa.os, vec!["darwin", "linux", "win32", "current"]);
+        assert_eq!(sa.cpu, vec!["arm64", "x64", "current"]);
+        assert_eq!(sa.libc, vec!["glibc", "musl", "current"]);
+    }
+
+    #[test]
     fn test_ignored_optional_dependencies() {
         let yaml = r#"
 ignoredOptionalDependencies:
