@@ -5035,7 +5035,9 @@ async fn catalog_override_value_is_not_recorded_in_lockfile_catalogs() {
         .get_mut("3.0.1")
         .unwrap()
         .dependencies
-        .insert("is-number".to_string(), "^6.0.0".to_string());
+        .insert("is-number".to_string(), "^7.0.0".to_string());
+    // The transitive range differs from the catalog entry, so the
+    // resolved 6.0.0 proves the override applied.
     let mut resolver = catalog_override_resolver(
         &[("is-odd", "3.0.1"), ("is-number", "^6.0.0")],
         &[("is-number", "catalog:")],
@@ -5052,6 +5054,7 @@ async fn catalog_override_value_is_not_recorded_in_lockfile_catalogs() {
     let graph = resolver.resolve(&manifest, None).await.unwrap();
 
     assert!(graph.packages.contains_key("is-number@6.0.0"));
+    assert!(!graph.packages.contains_key("is-number@7.0.0"));
     let default = &graph.catalogs["default"];
     assert!(default.contains_key("is-odd"));
     assert!(!default.contains_key("is-number"));

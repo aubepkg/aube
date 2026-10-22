@@ -155,7 +155,7 @@ fn strip_alias_prefix(spec: &str) -> &str {
 /// Extract the final package target from any supported pnpm/yarn override key.
 /// Unlike [`compile`], this accepts ancestor chains because catalog expansion
 /// needs the target name even when the override cannot apply to an importer.
-pub(crate) fn target_package_name(key: &str) -> Option<String> {
+pub fn target_package_name(key: &str) -> Option<String> {
     let target = split_segments(key)?.pop()?;
     parse_segment(target).map(|(name, _)| name)
 }
