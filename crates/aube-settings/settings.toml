@@ -867,12 +867,15 @@ transitive dep into the hidden tree. Only consulted when
 `hoist=true`.
 
 Matching is case-insensitive. The root project's direct
-dependencies are never hidden-hoisted: Node already finds them in
-the root `node_modules/`. When a name has several versions in the
-graph, the one closest to an importer wins, with ties broken by
-dep path, matching pnpm's choice. Set to `[]` or a list of only
-`!` negations to hoist nothing while leaving `hoist=true`
-(equivalent to setting `hoist=false`).
+dependencies are left out of the hidden tree when packages in the
+virtual store can reach the root `node_modules/` (the default
+layout). The shared global-virtual-store mirror and a
+`virtualStoreDir` outside the project keep them eligible. When a
+name has several versions in the graph, the one closest to an
+importer wins, and equal-depth ties go to the version whose dep
+path sorts first. Set to `[]` or a list of only `!` negations to
+hoist nothing while leaving `hoist=true` (equivalent to setting
+`hoist=false`).
 """
 sources.cli = []
 sources.env = ["npm_config_hoist_pattern", "NPM_CONFIG_HOIST_PATTERN", "AUBE_HOIST_PATTERN"]

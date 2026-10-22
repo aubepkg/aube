@@ -2423,8 +2423,11 @@ fn relative_workspace_dirs_link_a_member_behind_a_symlink_to_its_sibling() {
 /// The discussion #1811 graph: `is-odd@3.0.1 -> is-number@6.0.0` sits
 /// at depth 1, `is-even@1.0.0 -> is-odd@0.1.2 -> is-number@3.0.0` at
 /// depth 2, and the root declares `is-even` and `is-odd@3.0.1`.
+/// `full_path_edges` stores dependency values as full dep paths, the way
+/// the Yarn Berry, npm and bun readers do, instead of pnpm's version tails.
 fn two_version_hidden_hoist_fixture(
     store: &Store,
+    full_path_edges: bool,
 ) -> (LockfileGraph, BTreeMap<String, aube_store::PackageIndex>) {
     let mut graph = LockfileGraph::default();
     let mut indices = BTreeMap::new();
@@ -2450,7 +2453,14 @@ fn two_version_hidden_hoist_fixture(
                 dep_path: dep_path.to_string(),
                 dependencies: deps
                     .iter()
-                    .map(|(n, v)| (n.to_string(), v.to_string()))
+                    .map(|(n, v)| {
+                        let value = if full_path_edges {
+                            format!("{n}@{v}")
+                        } else {
+                            v.to_string()
+                        };
+                        (n.to_string(), value)
+                    })
                     .collect(),
                 ..Default::default()
             },
@@ -2475,7 +2485,7 @@ fn hidden_hoist_prefers_shallowest_version_and_skips_root_deps() {
     let project_dir = dir.path().join("project");
     std::fs::create_dir_all(&project_dir).unwrap();
     let store = Store::at(dir.path().join("store/files"));
-    let (graph, indices) = two_version_hidden_hoist_fixture(&store);
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store, false);
     let linker = Linker::new(&store, LinkStrategy::Copy);
     linker.link_all(&project_dir, &graph, &indices).unwrap();
 
@@ -2503,7 +2513,7 @@ fn gvs_hidden_hoist_mirror_prefers_root_dep_versions() {
     let project_dir = dir.path().join("project");
     std::fs::create_dir_all(&project_dir).unwrap();
     let store = Store::at(dir.path().join("store/files"));
-    let (graph, indices) = two_version_hidden_hoist_fixture(&store);
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store, false);
     let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true);
     linker.link_all(&project_dir, &graph, &indices).unwrap();
 
@@ -2517,6 +2527,47 @@ fn gvs_hidden_hoist_mirror_prefers_root_dep_versions() {
     );
     assert_eq!(
         std::fs::read_to_string(mirror.join("is-number/index.js")).unwrap(),
+        "module.exports = 'is-number@6.0.0';"
+    );
+}
+
+#[test]
+fn hidden_hoist_depths_follow_full_dep_path_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store, true);
+    let linker = Linker::new(&store, LinkStrategy::Copy);
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    let hidden = project_dir.join("node_modules/.aube/node_modules");
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("is-number/index.js")).unwrap(),
+        "module.exports = 'is-number@6.0.0';"
+    );
+}
+
+#[test]
+fn hidden_hoist_keeps_root_deps_for_virtual_store_outside_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store, false);
+    let external = dir.path().join("external-store");
+    let linker = Linker::new(&store, LinkStrategy::Copy).with_aube_dir_override(external.clone());
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    // Packages under the external store never walk up to the project's
+    // root `node_modules/`, so the root's own versions take the names.
+    let hidden = external.join("node_modules");
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("is-odd/index.js")).unwrap(),
+        "module.exports = 'is-odd@3.0.1';"
+    );
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("is-number/index.js")).unwrap(),
         "module.exports = 'is-number@6.0.0';"
     );
 }
