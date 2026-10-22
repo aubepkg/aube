@@ -1902,13 +1902,21 @@ impl<'a> ResolveDriver<'a> {
         // The pick is only recorded in the lockfile's `catalogs:` block
         // when the catalog value survives the override pass below: pnpm
         // drops entries whose range an override replaced.
+        //
+        // pnpm applies overrides to the declared specifier before it
+        // expands catalogs, so a version-qualified selector such as
+        // `foo@^3` is tested against the literal `catalog:` text, never
+        // intersects it, and leaves the dependency on its catalog entry.
+        // `catalog_declaration` keeps that text for override matching
+        // until an override replaces the declaration.
         let mut catalog_pick: Option<(String, String)> = None;
+        let mut catalog_declaration: Option<String> = None;
         if let Some((catalog_name, real_range)) = self
             .resolver
             .resolve_catalog_spec(&task.name, &task.range)?
         {
             tracing::trace!("catalog: {} {} -> {}", task.name, task.range, real_range);
-            task.range = real_range.clone();
+            catalog_declaration = Some(std::mem::replace(&mut task.range, real_range.clone()));
             catalog_pick = Some((catalog_name, real_range));
         }
 
@@ -1917,7 +1925,7 @@ impl<'a> ResolveDriver<'a> {
             if let Some(override_spec) = pick_override_spec(
                 &self.resolver.override_rules,
                 &task.name,
-                &task.range,
+                catalog_declaration.as_deref().unwrap_or(&task.range),
                 &task.ancestors,
             ) {
                 // pnpm's removal marker: an override value of `"-"`
@@ -1937,14 +1945,12 @@ impl<'a> ResolveDriver<'a> {
                 // original range, so resolve the indirection here
                 // before assigning — otherwise `catalog:` leaks
                 // through to the registry resolver.
-                let (effective_spec, pending_pick) = match self
+                let effective_spec = match self
                     .resolver
                     .resolve_catalog_spec(&task.name, &override_spec)?
                 {
-                    Some((catalog_name, real_range)) => {
-                        (real_range.clone(), Some((catalog_name, real_range)))
-                    }
-                    None => (override_spec, None),
+                    Some((_, real_range)) => real_range,
+                    None => override_spec,
                 };
                 // pnpm records the override-applied specifier for direct
                 // importer dependencies. Keep ordinary `catalog:` dependencies
@@ -1968,9 +1974,11 @@ impl<'a> ResolveDriver<'a> {
                     task.range_from_override = true;
                 }
                 // The override replaced the catalog reference, so the
-                // pre-pass pick no longer drives resolution. Only the
-                // override's own catalog target (if any) is recorded.
-                catalog_pick = pending_pick;
+                // pre-pass pick no longer drives resolution. pnpm expands
+                // a `catalog:` override value when it reads the config and
+                // never records it in `catalogs:`, so neither does aube.
+                catalog_pick = None;
+                catalog_declaration = None;
                 if task.range != effective_spec {
                     tracing::trace!(
                         "override: {}@{} -> {}",

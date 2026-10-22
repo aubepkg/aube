@@ -655,20 +655,22 @@ YAML
 	assert_output --partial '"root-x"'
 }
 
-@test "a frozen reinstall accepts a range-scoped link: override applied to a catalog: dep" {
+@test "a range-scoped link: override leaves a catalog: dep on its catalog entry" {
 	mkdir -p pkg-a vendor/x
 	echo '{"name":"root-x","version":"1.0.0"}' >vendor/x/package.json
 	echo '{"name":"root","version":"0.0.0","private":true}' >package.json
-	printf 'packages:\n  - "pkg-a"\ncatalog:\n  x: ^1.0.0\noverrides:\n  "x@^1": "link:./vendor/x"\n' >pnpm-workspace.yaml
-	echo '{"name":"pkg-a","version":"0.0.0","dependencies":{"x":"catalog:"}}' >pkg-a/package.json
+	printf 'packages:\n  - "pkg-a"\ncatalog:\n  is-odd: ^3.0.1\noverrides:\n  "is-odd@^3": "link:./vendor/x"\n' >pnpm-workspace.yaml
+	echo '{"name":"pkg-a","version":"0.0.0","dependencies":{"is-odd":"catalog:"}}' >pkg-a/package.json
+	# pnpm tests a range-scoped selector against the declared `catalog:`
+	# text, which no range intersects, so the override does not apply.
 	run aube install
 	assert_success
 
 	rm -rf node_modules pkg-a/node_modules
 	run aube install --frozen-lockfile
 	assert_success
-	run cat pkg-a/node_modules/x/package.json
-	assert_output --partial '"root-x"'
+	run cat pkg-a/node_modules/is-odd/package.json
+	assert_output --partial '"version": "3.0.1"'
 }
 
 @test "a lockfile from older aube that skipped an override equal to a member's link: is re-resolved" {

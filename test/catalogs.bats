@@ -822,3 +822,58 @@ _setup_catalog_workspace() {
 	run aube install --no-frozen-lockfile
 	assert_success
 }
+
+@test "aube install: ranged override keeps the catalog: importer specifier" {
+	cat >pnpm-workspace.yaml <<-'EOF'
+		catalog:
+		  is-odd: 3.0.1
+		overrides:
+		  "is-odd@^3": "catalog:"
+		  "is-odd@>=3": 0.1.2
+	EOF
+	cat >package.json <<-'EOF'
+		{ "name": "aube-test", "version": "0.0.0", "dependencies": { "is-odd": "catalog:" } }
+	EOF
+	printf "lockfileVersion: '9.0'\\n" >pnpm-lock.yaml
+
+	run aube install --lockfile-only
+	assert_success
+	# pnpm matches version-qualified selectors against the declared
+	# `catalog:` text, which no range intersects, so neither override
+	# applies and pnpm's frozen install accepts only `'catalog:'` here.
+	run grep -A2 -E '^      is-odd:$' pnpm-lock.yaml
+	assert_output --partial "specifier: 'catalog:'"
+	assert_output --partial "version: 3.0.1"
+	catalogs_block=$(awk '/^catalogs:/{f=1;next} /^[^ ]/{f=0} f' pnpm-lock.yaml)
+	[[ "$catalogs_block" == *"is-odd:"* ]]
+
+	run aube install --frozen-lockfile
+	assert_success
+	run cat node_modules/is-odd/package.json
+	assert_output --partial '"version": "3.0.1"'
+}
+
+@test "aube install: a catalog: override value stays out of pnpm-lock.yaml catalogs" {
+	cat >pnpm-workspace.yaml <<-'EOF'
+		catalog:
+		  is-odd: 3.0.1
+		  is-number: ^6.0.0
+		overrides:
+		  is-number: "catalog:"
+	EOF
+	cat >package.json <<-'EOF'
+		{ "name": "aube-test", "version": "0.0.0", "dependencies": { "is-odd": "catalog:" } }
+	EOF
+	printf "lockfileVersion: '9.0'\\n" >pnpm-lock.yaml
+
+	run aube install
+	assert_success
+	run grep -Fx "  is-number: ^6.0.0" pnpm-lock.yaml
+	assert_success
+	catalogs_block=$(awk '/^catalogs:/{f=1;next} /^[^ ]/{f=0} f' pnpm-lock.yaml)
+	[[ "$catalogs_block" == *"is-odd:"* ]]
+	[[ "$catalogs_block" != *"is-number:"* ]]
+
+	run aube install --frozen-lockfile
+	assert_success
+}

@@ -4952,6 +4952,129 @@ async fn equal_valued_override_still_drops_catalog_entry_from_lockfile_catalogs(
     assert!(!graph.catalogs.contains_key("default"));
 }
 
+fn catalog_override_resolver(
+    catalog: &[(&str, &str)],
+    overrides: &[(&str, &str)],
+    packuments: Vec<Packument>,
+) -> Resolver {
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let catalogs = BTreeMap::from([(
+        "default".to_string(),
+        catalog
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )]);
+    let overrides = overrides
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let mut resolver = Resolver::new(client)
+        .with_catalogs(catalogs)
+        .with_overrides(overrides);
+    for p in packuments {
+        resolver.cache.insert(p.name.clone(), p.into());
+    }
+    resolver
+}
+
+// pnpm matches override selectors against the declared specifier before
+// expanding catalogs, so `is-odd@^3` never intersects `catalog:` and the
+// importer keeps `specifier: 'catalog:'` (pnpm 12.9.1 rejects a lockfile
+// recording `3.0.1` there as outdated).
+#[tokio::test]
+async fn ranged_catalog_override_keeps_catalog_specifier() {
+    let mut resolver = catalog_override_resolver(
+        &[("is-odd", "3.0.1")],
+        &[("is-odd@^3", "catalog:")],
+        vec![make_packument("is-odd", &["3.0.1"], "3.0.1")],
+    );
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    let dep = &graph.importers["."][0];
+    assert_eq!(dep.specifier.as_deref(), Some("catalog:"));
+    assert_eq!(graph.catalogs["default"]["is-odd"].version, "3.0.1");
+}
+
+#[tokio::test]
+async fn ranged_override_does_not_replace_catalog_declaration() {
+    let mut resolver = catalog_override_resolver(
+        &[("is-odd", "3.0.1")],
+        &[("is-odd@^3", "3.0.0")],
+        vec![make_packument("is-odd", &["3.0.0", "3.0.1"], "3.0.1")],
+    );
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    let dep = &graph.importers["."][0];
+    assert_eq!(dep.specifier.as_deref(), Some("catalog:"));
+    assert!(graph.packages.contains_key("is-odd@3.0.1"));
+    assert!(!graph.packages.contains_key("is-odd@3.0.0"));
+    assert!(graph.catalogs["default"].contains_key("is-odd"));
+}
+
+// pnpm expands a `catalog:` override value when it reads the config, so
+// the catalog entry it points at only lands in `catalogs:` when a
+// `catalog:` dependency references it.
+#[tokio::test]
+async fn catalog_override_value_is_not_recorded_in_lockfile_catalogs() {
+    let mut is_odd = make_packument("is-odd", &["3.0.1"], "3.0.1");
+    is_odd
+        .versions
+        .get_mut("3.0.1")
+        .unwrap()
+        .dependencies
+        .insert("is-number".to_string(), "^6.0.0".to_string());
+    let mut resolver = catalog_override_resolver(
+        &[("is-odd", "3.0.1"), ("is-number", "^6.0.0")],
+        &[("is-number", "catalog:")],
+        vec![
+            is_odd,
+            make_packument("is-number", &["6.0.0", "7.0.0"], "7.0.0"),
+        ],
+    );
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    assert!(graph.packages.contains_key("is-number@6.0.0"));
+    let default = &graph.catalogs["default"];
+    assert!(default.contains_key("is-odd"));
+    assert!(!default.contains_key("is-number"));
+}
+
+#[tokio::test]
+async fn unranged_catalog_override_on_catalog_dep_drops_catalog_entry() {
+    let mut resolver = catalog_override_resolver(
+        &[("is-odd", "3.0.1")],
+        &[("is-odd", "catalog:")],
+        vec![make_packument("is-odd", &["3.0.1"], "3.0.1")],
+    );
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("is-odd".to_string(), "catalog:".to_string());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    assert_eq!(graph.importers["."][0].specifier.as_deref(), Some("3.0.1"));
+    assert!(!graph.catalogs.contains_key("default"));
+}
+
 #[tokio::test]
 async fn skipped_optional_override_keeps_raw_manifest_specifier() {
     let mut optional = make_packument("platform-only", &["7.0.0"], "7.0.0");
@@ -4987,15 +5110,16 @@ async fn skipped_optional_override_keeps_raw_manifest_specifier() {
     );
 }
 
-// Catalog-aliased dep + selector override targeting the original
-// (alias) name with a bare-range replacement. Reproduces the
-// pnpm/pnpm `js-yaml: npm:@zkochan/js-yaml@0.0.11` + `js-yaml@<3.14.2:
-// ^3.14.2` shape: the catalog rewrites js-yaml to the @zkochan
-// package, then the override fires by user-facing name and
-// replaces the range with `^3.14.2`. Without clearing
-// `task.real_name` in the override path, the resolver kept fetching
-// `@zkochan/js-yaml`'s packument and bailed with "no version of
-// js-yaml matches range ^3.14.2".
+// Catalog-aliased dep + override targeting the original (alias) name
+// with a bare-range replacement. Based on the pnpm/pnpm
+// `js-yaml: npm:@zkochan/js-yaml@0.0.11` catalog: the catalog rewrites
+// js-yaml to the @zkochan package, then the override fires by
+// user-facing name and replaces the range with `^3.14.2`. Without
+// clearing `task.real_name` in the override path, the resolver kept
+// fetching `@zkochan/js-yaml`'s packument and bailed with "no version
+// of js-yaml matches range ^3.14.2". The selector is unversioned: a
+// version-qualified one never matches a `catalog:` declaration (see
+// `ranged_override_does_not_replace_catalog_declaration`).
 #[tokio::test]
 async fn override_with_bare_range_undoes_prior_catalog_alias() {
     let real_js_yaml = make_packument("js-yaml", &["3.14.2"], "3.14.2");
@@ -5010,7 +5134,7 @@ async fn override_with_bare_range_undoes_prior_catalog_alias() {
         "npm:@zkochan/js-yaml@0.0.11".to_string(),
     );
     let mut overrides: BTreeMap<String, String> = BTreeMap::new();
-    overrides.insert("js-yaml@<3.14.2".to_string(), "^3.14.2".to_string());
+    overrides.insert("js-yaml".to_string(), "^3.14.2".to_string());
 
     let mut resolver = Resolver::new(client)
         .with_catalogs(catalogs)
@@ -5048,7 +5172,7 @@ async fn override_with_bare_range_undoes_prior_catalog_alias() {
     assert_eq!(
         graph.importers["."][0].specifier.as_deref(),
         Some("^3.14.2"),
-        "version-keyed overrides rewrite direct importer specifiers"
+        "a firing override rewrites the direct importer specifier"
     );
 }
 
