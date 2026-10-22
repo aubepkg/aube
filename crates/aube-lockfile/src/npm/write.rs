@@ -276,14 +276,22 @@ pub fn write(
             declared.get(*name).map(String::as_str) == Some(*spec)
                 || peer_dependencies.get(*name).map(String::as_str) != Some(*spec)
         });
-        let importer_has_install_script =
-            workspace_package_for_importer(graph, importer_path).is_some_and(has_install_script);
+        let workspace_pkg = workspace_package_for_importer(graph, importer_path);
+        let importer_has_install_script = workspace_pkg.is_some_and(has_install_script);
+        // npm copies the member's own `funding` verbatim; fall back to
+        // what the lockfile read carried for the link target.
+        let funding = member_manifests
+            .get(importer_path.as_str())
+            .and_then(|manifest| manifest.extra.get("funding"))
+            .cloned()
+            .or_else(|| workspace_pkg.and_then(npm_funding));
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
                 name: Some(name),
                 version,
                 has_install_script: importer_has_install_script,
+                funding,
                 dependencies,
                 dev_dependencies,
                 optional_dependencies,
@@ -510,6 +518,7 @@ pub fn write(
                     os: pkg.os.to_vec(),
                     cpu: pkg.cpu.to_vec(),
                     libc: pkg.libc.to_vec(),
+                    funding: npm_funding(pkg),
                     dev,
                     optional,
                     dev_optional,
@@ -546,17 +555,7 @@ pub fn write(
                 os: pkg.os.to_vec(),
                 cpu: pkg.cpu.to_vec(),
                 libc: pkg.libc.to_vec(),
-                // The verbatim value read from an existing package-lock.json
-                // wins; a freshly resolved entry only knows the URL.
-                funding: pkg
-                    .extra_meta
-                    .get(crate::EXTRA_NPM_FUNDING)
-                    .cloned()
-                    .or_else(|| {
-                        pkg.funding_url
-                            .as_deref()
-                            .map(|url| serde_json::json!({ "url": url }))
-                    }),
+                funding: npm_funding(pkg),
                 dev,
                 optional,
                 dev_optional,
@@ -611,16 +610,37 @@ pub(super) fn sort_keys_like_npm(value: &mut serde_json::Value) {
                     (key, child)
                 })
                 .collect();
-            entries.sort_by(|(ak, av), (bk, bv)| {
-                av.is_object()
-                    .cmp(&bv.is_object())
-                    .then_with(|| compare_npm_keys(ak, bk))
-            });
+            // npm builds the sorted object in JavaScript, which always
+            // lists array-index keys (`"2"`, `"10"`) first in numeric
+            // order, whatever order they were inserted in.
+            entries.sort_by(
+                |(ak, av), (bk, bv)| match (array_index(ak), array_index(bk)) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => av
+                        .is_object()
+                        .cmp(&bv.is_object())
+                        .then_with(|| compare_npm_keys(ak, bk)),
+                },
+            );
             map.extend(entries);
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(sort_keys_like_npm),
         _ => {}
     }
+}
+
+/// The value of a JavaScript array-index key: the canonical decimal form
+/// (no sign, no leading zero) of an integer below 2^32 - 1.
+fn array_index(key: &str) -> Option<u32> {
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if key.len() > 1 && key.starts_with('0') {
+        return None;
+    }
+    key.parse::<u32>().ok().filter(|n| *n != u32::MAX)
 }
 
 fn compare_npm_keys(a: &str, b: &str) -> std::cmp::Ordering {
@@ -708,6 +728,19 @@ fn directory_target(dir: &Path) -> String {
     aube_util::path::normalize_lexical(dir)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// The `funding` value to write: the verbatim value read from an existing
+/// package-lock.json wins, since a freshly resolved entry only knows the URL.
+fn npm_funding(pkg: &LockedPackage) -> Option<serde_json::Value> {
+    pkg.extra_meta
+        .get(crate::EXTRA_NPM_FUNDING)
+        .cloned()
+        .or_else(|| {
+            pkg.funding_url
+                .as_deref()
+                .map(|url| serde_json::json!({ "url": url }))
+        })
 }
 
 fn has_install_script(pkg: &LockedPackage) -> bool {

@@ -3085,3 +3085,144 @@ proptest::proptest! {
         }
     }
 }
+
+/// JavaScript lists array-index keys (`"2"`, `"10"`) before every other
+/// key, in numeric order, so npm writes numeric package names that way.
+/// Expected bytes come from npm's `json-stringify-nice` with arborist's
+/// key order. `"01"` isn't an array index and sorts as text.
+#[test]
+fn test_write_numeric_dependency_names_round_trip_in_js_key_order() {
+    let original = r#"{
+  "name": "x",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "x",
+      "version": "1.0.0",
+      "dependencies": {
+        "2": "1.0.0",
+        "10": "1.0.0",
+        "01": "1.0.0",
+        "a": "1.0.0"
+      }
+    },
+    "node_modules/01": {
+      "version": "1.0.0",
+      "integrity": "sha512-01"
+    },
+    "node_modules/10": {
+      "version": "1.0.0",
+      "integrity": "sha512-10"
+    },
+    "node_modules/2": {
+      "version": "1.0.0",
+      "integrity": "sha512-2"
+    },
+    "node_modules/a": {
+      "version": "1.0.0",
+      "integrity": "sha512-a"
+    }
+  }
+}
+"#;
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), original).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        name: Some("x".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: ["2", "10", "01", "a"]
+            .into_iter()
+            .map(|name| (name.to_string(), "1.0.0".to_string()))
+            .collect(),
+        ..Default::default()
+    };
+    write(tmp.path(), &graph, &manifest).unwrap();
+    assert_eq!(std::fs::read_to_string(tmp.path()).unwrap(), original);
+}
+
+/// The target entries of a `file:` directory and of a workspace member
+/// keep the verbatim `funding` read from package-lock.json too.
+#[test]
+fn test_write_preserves_funding_on_local_targets() {
+    let funding = serde_json::json!([
+        { "type": "github", "url": "https://github.com/sponsors/a" },
+        "https://example.com/b"
+    ]);
+    let with_funding = |mut pkg: LockedPackage| {
+        pkg.funding_url = Some("https://github.com/sponsors/a".to_string());
+        pkg.extra_meta
+            .insert(crate::EXTRA_NPM_FUNDING.to_string(), funding.clone());
+        pkg
+    };
+    let dir = LocalSource::Directory(PathBuf::from("vendor/local-dir"));
+    let dir_dep_path = dir.dep_path("local-dir");
+    let link = LocalSource::Link(PathBuf::from("web"));
+    let link_dep_path = link.dep_path("web");
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        dir_dep_path.clone(),
+        with_funding(LockedPackage {
+            name: "local-dir".to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: dir_dep_path.clone(),
+            local_source: Some(dir),
+            ..Default::default()
+        }),
+    );
+    graph.packages.insert(
+        link_dep_path.clone(),
+        with_funding(LockedPackage {
+            name: "web".to_string(),
+            version: "0.0.1".to_string(),
+            dep_path: link_dep_path.clone(),
+            local_source: Some(link),
+            ..Default::default()
+        }),
+    );
+    graph.importers.insert(
+        ".".to_string(),
+        vec![
+            DirectDep {
+                name: "local-dir".to_string(),
+                dep_path: dir_dep_path,
+                dep_type: DepType::Production,
+                specifier: Some("file:vendor/local-dir".to_string()),
+            },
+            DirectDep {
+                name: "web".to_string(),
+                dep_path: link_dep_path,
+                dep_type: DepType::Production,
+                specifier: None,
+            },
+        ],
+    );
+    graph.importers.insert("web".to_string(), Vec::new());
+    let manifest = aube_manifest::PackageJson {
+        name: Some("test".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: [("local-dir".to_string(), "file:vendor/local-dir".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("package-lock.json");
+    write(&path, &graph, &manifest).unwrap();
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(lock["packages"]["vendor/local-dir"]["funding"], funding);
+    assert_eq!(lock["packages"]["web"]["funding"], funding);
+
+    let reparsed = parse(&path).unwrap();
+    for pkg in reparsed
+        .packages
+        .values()
+        .filter(|pkg| pkg.name == "local-dir" || pkg.name == "web")
+    {
+        assert_eq!(pkg.extra_meta.get(crate::EXTRA_NPM_FUNDING), Some(&funding));
+    }
+}
