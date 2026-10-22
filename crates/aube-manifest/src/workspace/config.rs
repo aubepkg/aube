@@ -728,20 +728,27 @@ impl SupportedArchitectures {
                 continue;
             }
             let parts: Vec<&str> = entry.split('-').collect();
-            let (os, cpu, libc) =
-                if parts.len() >= 3 && matches!(parts[1], "unknown" | "apple" | "pc") {
-                    // Rust triple: <arch>-<vendor>-<os>[-<env>]
-                    let cpu = rust_cpu(parts[0]);
-                    let os = match parts[2] {
-                        "windows" => "win32",
-                        other => other,
-                    };
-                    (os, cpu, parts.get(3).and_then(|t| libc_token(t)))
-                } else if parts.len() >= 2 {
-                    (parts[0], parts[1], parts.get(2).and_then(|t| libc_token(t)))
-                } else {
-                    continue;
+            let (os, cpu, libc) = if parts.len() >= 3
+                && matches!(parts[1], "unknown" | "apple" | "pc")
+            {
+                // Rust triple: <arch>-<vendor>-<os>[-<env>]
+                let os = match parts[2] {
+                    "windows" => "win32",
+                    other => other,
                 };
+                (
+                    os,
+                    rust_cpu(parts[0]),
+                    parts.get(3).and_then(|t| libc_token(t)),
+                )
+            } else if parts.len() >= 3 && parts[1] == "linux" && parts[2].starts_with("android") {
+                // Vendorless Android triple: <arch>-linux-android[eabi]
+                ("android", rust_cpu(parts[0]), None)
+            } else if parts.len() >= 2 {
+                (parts[0], parts[1], parts.get(2).and_then(|t| libc_token(t)))
+            } else {
+                continue;
+            };
             push(&mut out.os, os);
             push(&mut out.cpu, cpu);
             if os == "linux" {

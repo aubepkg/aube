@@ -188,6 +188,19 @@ supportedArchitectures:
     }
 
     #[test]
+    fn test_supported_architectures_vendorless_android_triple() {
+        let yaml = r#"
+supportedArchitectures:
+  - aarch64-linux-android
+"#;
+        let config: WorkspaceConfig = yaml_serde::from_str(yaml).unwrap();
+        let sa = config.supported_architectures.as_ref().unwrap();
+        assert_eq!(sa.os, vec!["android"]);
+        assert_eq!(sa.cpu, vec!["arm64"]);
+        assert!(sa.libc.is_empty());
+    }
+
+    #[test]
     fn test_ignored_optional_dependencies() {
         let yaml = r#"
 ignoredOptionalDependencies:
