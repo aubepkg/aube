@@ -197,6 +197,7 @@ pub fn write(
             optional_dependencies: borrow_map(&manifest.optional_dependencies),
             peer_dependencies: borrow_map(&manifest.peer_dependencies),
             workspaces: manifest.workspaces.as_ref(),
+            funding: manifest_funding(manifest),
             ..Default::default()
         },
     );
@@ -278,13 +279,12 @@ pub fn write(
         });
         let workspace_pkg = workspace_package_for_importer(graph, importer_path);
         let importer_has_install_script = workspace_pkg.is_some_and(has_install_script);
-        // npm copies the member's own `funding` verbatim; fall back to
-        // what the lockfile read carried for the link target.
+        // npm copies the member's own `funding` verbatim, so a loaded
+        // manifest is authoritative (no `funding` there means none). The
+        // lockfile's value only stands in when the manifest is missing.
         let funding = member_manifests
             .get(importer_path.as_str())
-            .and_then(|manifest| manifest.extra.get("funding"))
-            .cloned()
-            .or_else(|| workspace_pkg.and_then(npm_funding));
+            .map_or_else(|| workspace_pkg.and_then(npm_funding), manifest_funding);
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
@@ -741,6 +741,24 @@ fn npm_funding(pkg: &LockedPackage) -> Option<serde_json::Value> {
                 .as_deref()
                 .map(|url| serde_json::json!({ "url": url }))
         })
+}
+
+/// A project manifest's `funding`, verbatim, skipped the way npm's
+/// `metaFieldFromPkg` skips it: falsy values and empty objects or arrays.
+fn manifest_funding(manifest: &aube_manifest::PackageJson) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    manifest
+        .extra
+        .get("funding")
+        .filter(|value| match value {
+            Value::Null | Value::Bool(false) => false,
+            Value::String(s) => !s.is_empty(),
+            Value::Number(n) => n.as_f64() != Some(0.0),
+            Value::Array(items) => !items.is_empty(),
+            Value::Object(map) => !map.is_empty(),
+            Value::Bool(true) => true,
+        })
+        .cloned()
 }
 
 fn has_install_script(pkg: &LockedPackage) -> bool {

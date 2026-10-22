@@ -3226,3 +3226,80 @@ fn test_write_preserves_funding_on_local_targets() {
         assert_eq!(pkg.extra_meta.get(crate::EXTRA_NPM_FUNDING), Some(&funding));
     }
 }
+
+/// npm takes `funding` for the root and each workspace member from their
+/// own package.json (skipping empty values), so a loaded manifest
+/// overrides what the old lockfile recorded, including removing it. The
+/// lockfile value only stands in for a member whose manifest is missing.
+#[test]
+fn test_write_takes_project_funding_from_manifests() {
+    let stale = serde_json::json!({ "url": "https://example.com/stale" });
+    let member_funding =
+        serde_json::json!({ "type": "github", "url": "https://github.com/sponsors/docs" });
+    let root_funding = serde_json::json!([
+        { "type": "github", "url": "https://github.com/sponsors/root" },
+        "https://example.com/root"
+    ]);
+    let mut graph = LockfileGraph::default();
+    let mut root_deps = Vec::new();
+    for member in ["web", "docs", "gone"] {
+        let link = LocalSource::Link(PathBuf::from(member));
+        let dep_path = link.dep_path(member);
+        let mut pkg = LockedPackage {
+            name: member.to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: dep_path.clone(),
+            local_source: Some(link),
+            ..Default::default()
+        };
+        pkg.extra_meta
+            .insert(crate::EXTRA_NPM_FUNDING.to_string(), stale.clone());
+        graph.packages.insert(dep_path.clone(), pkg);
+        graph.importers.insert(member.to_string(), Vec::new());
+        root_deps.push(DirectDep {
+            name: member.to_string(),
+            dep_path,
+            dep_type: DepType::Production,
+            specifier: None,
+        });
+    }
+    graph.importers.insert(".".to_string(), root_deps);
+
+    let tmp = tempfile::tempdir().unwrap();
+    for (member, funding) in [("web", None), ("docs", Some(&member_funding))] {
+        let dir = tmp.path().join(member);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut manifest = serde_json::json!({ "name": member, "version": "1.0.0" });
+        if let Some(funding) = funding {
+            manifest["funding"] = funding.clone();
+        }
+        std::fs::write(dir.join("package.json"), manifest.to_string()).unwrap();
+    }
+    let path = tmp.path().join("package-lock.json");
+    let mut manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        version: Some("1.0.0".to_string()),
+        ..Default::default()
+    };
+    manifest
+        .extra
+        .insert("funding".to_string(), root_funding.clone());
+    write(&path, &graph, &manifest).unwrap();
+
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let packages = &lock["packages"];
+    assert_eq!(packages[""]["funding"], root_funding);
+    assert!(packages["web"].get("funding").is_none());
+    assert_eq!(packages["docs"]["funding"], member_funding);
+    assert_eq!(packages["gone"]["funding"], stale);
+
+    // npm drops an empty `funding`, like any other empty manifest value.
+    manifest
+        .extra
+        .insert("funding".to_string(), serde_json::json!([]));
+    write(&path, &graph, &manifest).unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(lock["packages"][""].get("funding").is_none());
+}
