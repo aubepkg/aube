@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.1...aube-linker-v2.8.2) - 2026-10-22
+
+### Fixed
+
+- *(linker)* hidden-hoist shallowest version first like pnpm ([#1815](https://github.com/aubepkg/aube/pull/1815))
+
 ## [2.8.1](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.0...aube-linker-v2.8.1) - 2026-10-20
 
 ### Fixed

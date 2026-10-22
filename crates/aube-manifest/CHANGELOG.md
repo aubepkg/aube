@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2](https://github.com/aubepkg/aube/compare/aube-manifest-v2.8.1...aube-manifest-v2.8.2) - 2026-10-22
+
+### Fixed
+
+- *(manifest)* accept pnpm platform-list supportedArchitectures ([#1813](https://github.com/aubepkg/aube/pull/1813))
+
 ## [2.7.1](https://github.com/aubepkg/aube/compare/aube-manifest-v2.7.0...aube-manifest-v2.7.1) - 2026-10-15
 
 ### Fixed

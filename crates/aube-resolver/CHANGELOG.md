@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.1...aube-resolver-v2.8.2) - 2026-10-22
+
+### Fixed
+
+- *(resolver)* keep catalog: specifier when a ranged override targets a catalog ([#1816](https://github.com/aubepkg/aube/pull/1816))
+- *(lockfile)* carry descendant peers through peer-declaring packages like pnpm 11 ([#1805](https://github.com/aubepkg/aube/pull/1805))
+
 ## [2.8.1](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.0...aube-resolver-v2.8.1) - 2026-10-20
 
 ### Fixed

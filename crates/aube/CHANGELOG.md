@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2](https://github.com/aubepkg/aube/compare/v2.8.1...v2.8.2) - 2026-10-22
+
+### Fixed
+
+- *(resolver)* keep catalog: specifier when a ranged override targets a catalog ([#1816](https://github.com/aubepkg/aube/pull/1816))
+- *(install)* preserve colliding registry aliases in frozen installs ([#1812](https://github.com/aubepkg/aube/pull/1812))
+- *(outdated)* stop blaming prerelease latest on minimumReleaseAge ([#1807](https://github.com/aubepkg/aube/pull/1807))
+
 ## [2.8.1](https://github.com/aubepkg/aube/compare/v2.8.0...v2.8.1) - 2026-10-20
 
 ### Fixed
