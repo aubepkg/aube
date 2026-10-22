@@ -163,6 +163,31 @@ supportedArchitectures:
     }
 
     #[test]
+    fn test_supported_architectures_rust_triple_cpu_names() {
+        let yaml = r#"
+supportedArchitectures:
+  - armv7-unknown-linux-gnueabihf
+  - powerpc64le-unknown-linux-gnu
+"#;
+        let config: WorkspaceConfig = yaml_serde::from_str(yaml).unwrap();
+        let sa = config.supported_architectures.as_ref().unwrap();
+        assert_eq!(sa.cpu, vec!["arm", "ppc64"]);
+        assert_eq!(sa.libc, vec!["glibc"]);
+    }
+
+    #[test]
+    fn test_supported_architectures_rust_musl_suffixes() {
+        let yaml = r#"
+supportedArchitectures:
+  - arm-unknown-linux-musleabihf
+"#;
+        let config: WorkspaceConfig = yaml_serde::from_str(yaml).unwrap();
+        let sa = config.supported_architectures.as_ref().unwrap();
+        assert_eq!(sa.cpu, vec!["arm"]);
+        assert_eq!(sa.libc, vec!["musl"]);
+    }
+
+    #[test]
     fn test_ignored_optional_dependencies() {
         let yaml = r#"
 ignoredOptionalDependencies:

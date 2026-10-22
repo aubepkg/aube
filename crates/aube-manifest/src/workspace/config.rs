@@ -701,10 +701,22 @@ impl SupportedArchitectures {
         }
         fn libc_token(token: &str) -> Option<&'static str> {
             match token {
-                "musl" => Some("musl"),
-                "gnu" | "glibc" => Some("glibc"),
+                t if t.starts_with("musl") => Some("musl"),
+                t if t.starts_with("gnu") || t == "glibc" => Some("glibc"),
                 t if t.starts_with("manylinux") => Some("glibc"),
                 _ => None,
+            }
+        }
+        fn rust_cpu(arch: &str) -> &str {
+            match arch {
+                "x86_64" => "x64",
+                "aarch64" => "arm64",
+                "i386" | "i486" | "i586" | "i686" => "ia32",
+                "powerpc" => "ppc",
+                "powerpc64" | "powerpc64le" => "ppc64",
+                "riscv64gc" | "riscv64imac" => "riscv64",
+                a if a.starts_with("arm") || a.starts_with("thumb") => "arm",
+                other => other,
             }
         }
         let mut out = Self::default();
@@ -719,12 +731,7 @@ impl SupportedArchitectures {
             let (os, cpu, libc) =
                 if parts.len() >= 3 && matches!(parts[1], "unknown" | "apple" | "pc") {
                     // Rust triple: <arch>-<vendor>-<os>[-<env>]
-                    let cpu = match parts[0] {
-                        "x86_64" => "x64",
-                        "aarch64" => "arm64",
-                        "i686" | "i586" => "ia32",
-                        other => other,
-                    };
+                    let cpu = rust_cpu(parts[0]);
                     let os = match parts[2] {
                         "windows" => "win32",
                         other => other,
