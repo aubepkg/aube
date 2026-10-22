@@ -2571,3 +2571,23 @@ fn hidden_hoist_keeps_root_deps_for_virtual_store_outside_project() {
         "module.exports = 'is-number@6.0.0';"
     );
 }
+
+#[test]
+fn hidden_hoist_keeps_root_deps_when_root_links_are_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let store = Store::at(dir.path().join("store/files"));
+    let (graph, indices) = two_version_hidden_hoist_fixture(&store, false);
+    let linker = Linker::new(&store, LinkStrategy::Copy).with_virtual_store_only(true);
+    linker.link_all(&project_dir, &graph, &indices).unwrap();
+
+    // `virtualStoreOnly` creates no root links, so the hidden tree is
+    // the only place an undeclared root-dep import can resolve.
+    assert!(std::fs::symlink_metadata(project_dir.join("node_modules/is-odd")).is_err());
+    let hidden = project_dir.join("node_modules/.aube/node_modules");
+    assert_eq!(
+        std::fs::read_to_string(hidden.join("is-odd/index.js")).unwrap(),
+        "module.exports = 'is-odd@3.0.1';"
+    );
+}

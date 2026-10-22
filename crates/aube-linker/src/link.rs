@@ -1511,7 +1511,10 @@ impl Linker {
         root_nm: &Path,
         graph: &LockfileGraph,
     ) -> Result<(), Error> {
-        let reserve_root_deps = root_links_reachable_from(aube_dir, root_nm);
+        // `virtual_store_only` never creates the root links, so the
+        // parent walk would find nothing there for the root deps.
+        let reserve_root_deps =
+            !self.virtual_store_only && root_links_reachable_from(aube_dir, root_nm);
         self.link_hidden_hoist_at(aube_dir, aube_dir, graph, false, true, reserve_root_deps)?;
         if self.use_global_virtual_store {
             // The GVS mirror lives outside the project, so its packages
