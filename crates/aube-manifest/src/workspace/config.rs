@@ -728,22 +728,44 @@ impl SupportedArchitectures {
                 continue;
             }
             let parts: Vec<&str> = entry.split('-').collect();
-            let (os, cpu, libc) = if parts.len() >= 3
-                && matches!(parts[1], "unknown" | "apple" | "pc")
-            {
-                // Rust triple: <arch>-<vendor>-<os>[-<env>]
-                let os = match parts[2] {
+            let is_node_os = matches!(
+                parts[0],
+                "linux"
+                    | "darwin"
+                    | "win32"
+                    | "freebsd"
+                    | "openbsd"
+                    | "netbsd"
+                    | "sunos"
+                    | "aix"
+                    | "android"
+            );
+            let (os, cpu, libc) = if parts.len() >= 3 && !is_node_os {
+                // Rust triple: <arch>[-<vendor>]-<os>[-<env>], vendor free-form
+                let Some(at) = parts[1..].iter().position(|p| {
+                    matches!(
+                        *p,
+                        "linux"
+                            | "darwin"
+                            | "windows"
+                            | "freebsd"
+                            | "openbsd"
+                            | "netbsd"
+                            | "solaris"
+                            | "illumos"
+                    )
+                }) else {
+                    continue;
+                };
+                let at = at + 1;
+                let env = parts.get(at + 1).copied();
+                let os = match parts[at] {
                     "windows" => "win32",
+                    "solaris" | "illumos" => "sunos",
+                    "linux" if env.is_some_and(|e| e.starts_with("android")) => "android",
                     other => other,
                 };
-                (
-                    os,
-                    rust_cpu(parts[0]),
-                    parts.get(3).and_then(|t| libc_token(t)),
-                )
-            } else if parts.len() >= 3 && parts[1] == "linux" && parts[2].starts_with("android") {
-                // Vendorless Android triple: <arch>-linux-android[eabi]
-                ("android", rust_cpu(parts[0]), None)
+                (os, rust_cpu(parts[0]), env.and_then(libc_token))
             } else if parts.len() >= 2 {
                 (parts[0], parts[1], parts.get(2).and_then(|t| libc_token(t)))
             } else {

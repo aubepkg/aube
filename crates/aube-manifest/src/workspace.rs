@@ -201,6 +201,20 @@ supportedArchitectures:
     }
 
     #[test]
+    fn test_supported_architectures_nonstandard_vendor_triple() {
+        let yaml = r#"
+supportedArchitectures:
+  - x86_64-oe-linux-gnu
+  - linux-x64-musl
+"#;
+        let config: WorkspaceConfig = yaml_serde::from_str(yaml).unwrap();
+        let sa = config.supported_architectures.as_ref().unwrap();
+        assert_eq!(sa.os, vec!["linux"]);
+        assert_eq!(sa.cpu, vec!["x64"]);
+        assert_eq!(sa.libc, vec!["glibc", "musl"]);
+    }
+
+    #[test]
     fn test_ignored_optional_dependencies() {
         let yaml = r#"
 ignoredOptionalDependencies:
