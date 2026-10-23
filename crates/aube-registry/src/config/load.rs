@@ -69,11 +69,13 @@ impl NpmConfig {
         // loader so tests that drive `load_with_env` can exercise the
         // same code path without mutating process-wide env.
         let user_rc_override = userconfig_override_from_env(env, home.as_deref());
-        let mut tagged = load_npmrc_entries_tagged_with_home(
+        let global_rc_override = globalconfig_override_from_env(env, home.as_deref());
+        let mut tagged = load_npmrc_entries_tagged_with_globalconfig(
             home.as_deref(),
             xdg.as_deref(),
             project_dir,
             user_rc_override.as_deref(),
+            global_rc_override.as_deref(),
         );
         // `npm_config_*` / `NPM_CONFIG_*` env vars beat file config in
         // npm/pnpm. Apply them after `.npmrc` so last-write-wins gives
@@ -117,11 +119,16 @@ pub fn load_npmrc_entries_split(project_dir: &Path) -> SplitNpmrcEntries {
         .ok()
         .or_else(|| std::env::var("npm_config_userconfig").ok())
         .and_then(|raw| expand_userconfig_path(&raw, home.as_deref()));
-    let tagged = load_npmrc_entries_tagged_with_home(
+    let global_rc_override = std::env::var("NPM_CONFIG_GLOBALCONFIG")
+        .ok()
+        .or_else(|| std::env::var("npm_config_globalconfig").ok())
+        .and_then(|raw| expand_userconfig_path(&raw, home.as_deref()));
+    let tagged = load_npmrc_entries_tagged_with_globalconfig(
         home.as_deref(),
         xdg.as_deref(),
         project_dir,
         user_rc_override.as_deref(),
+        global_rc_override.as_deref(),
     );
     let mut split = SplitNpmrcEntries::default();
     for (src, k, v) in tagged {
@@ -190,12 +197,20 @@ pub fn load_npmrc_entries(project_dir: &Path) -> Vec<(String, String)> {
         .ok()
         .or_else(|| std::env::var("npm_config_userconfig").ok())
         .and_then(|raw| expand_userconfig_path(&raw, home.as_deref()));
-    let entries = load_npmrc_entries_with_home(
+    let global_rc_override = std::env::var("NPM_CONFIG_GLOBALCONFIG")
+        .ok()
+        .or_else(|| std::env::var("npm_config_globalconfig").ok())
+        .and_then(|raw| expand_userconfig_path(&raw, home.as_deref()));
+    let entries = load_npmrc_entries_tagged_with_globalconfig(
         home.as_deref(),
         xdg.as_deref(),
         project_dir,
         user_rc_override.as_deref(),
-    );
+        global_rc_override.as_deref(),
+    )
+    .into_iter()
+    .map(|(_, k, v)| (k, v))
+    .collect::<Vec<_>>();
     if let Ok(mut map) = cache.lock() {
         map.insert(project_dir.to_path_buf(), entries.clone());
     }
@@ -206,13 +221,42 @@ pub fn load_npmrc_entries(project_dir: &Path) -> Vec<(String, String)> {
 /// with the file it came from. `apply_tagged` uses the tag to refuse
 /// high-privilege settings (currently `tokenHelper`) that originated
 /// from a project-scope `.npmrc` a hostile repo can commit.
+#[cfg(test)]
 pub(super) fn load_npmrc_entries_tagged_with_home(
     home: Option<&Path>,
     xdg_config_home: Option<&Path>,
     project_dir: &Path,
     user_rc_override: Option<&Path>,
 ) -> Vec<(NpmrcSource, String, String)> {
+    load_npmrc_entries_tagged_with_globalconfig(
+        home,
+        xdg_config_home,
+        project_dir,
+        user_rc_override,
+        None,
+    )
+}
+
+/// [`load_npmrc_entries_tagged_with_home`] plus npm's global config
+/// (`NPM_CONFIG_GLOBALCONFIG`). The global rc is the lowest-precedence
+/// file, so its entries come first and any user, project, or env value
+/// overrides them. Organizations that point npm at an internal registry
+/// only through the global config rely on this. Tagged `User`: the
+/// developer chose the file location, same as `NPM_CONFIG_USERCONFIG`.
+pub(super) fn load_npmrc_entries_tagged_with_globalconfig(
+    home: Option<&Path>,
+    xdg_config_home: Option<&Path>,
+    project_dir: &Path,
+    user_rc_override: Option<&Path>,
+    global_rc_override: Option<&Path>,
+) -> Vec<(NpmrcSource, String, String)> {
     let mut out: Vec<(NpmrcSource, String, String)> = Vec::new();
+    if let Some(global_rc) = global_rc_override
+        && global_rc.exists()
+        && let Ok(entries) = parse_npmrc(global_rc)
+    {
+        out.extend(entries.into_iter().map(|(k, v)| (NpmrcSource::User, k, v)));
+    }
     // User-level rc: explicit override (from `NPM_CONFIG_USERCONFIG`)
     // wins over `$HOME/.npmrc`. Keeps the `User` source tag either
     // way — the user chose the file location, so `apply_tagged`'s
@@ -278,6 +322,7 @@ pub(super) fn load_npmrc_entries_tagged_with_home(
 /// directory and XDG config-home override. Used by tests that need to
 /// isolate from the developer's real `~/.npmrc` and pnpm config dir
 /// without mutating process-wide environment variables.
+#[cfg(test)]
 pub(super) fn load_npmrc_entries_with_home(
     home: Option<&Path>,
     xdg_config_home: Option<&Path>,
@@ -360,10 +405,33 @@ pub(super) fn userconfig_override_from_env(
     env: &[(String, String)],
     home: Option<&Path>,
 ) -> Option<PathBuf> {
+    config_path_from_env(env, home, "NPM_CONFIG_USERCONFIG", "npm_config_userconfig")
+}
+
+/// `NPM_CONFIG_GLOBALCONFIG` / `npm_config_globalconfig` counterpart of
+/// [`userconfig_override_from_env`], with the same casing precedence.
+pub(super) fn globalconfig_override_from_env(
+    env: &[(String, String)],
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    config_path_from_env(
+        env,
+        home,
+        "NPM_CONFIG_GLOBALCONFIG",
+        "npm_config_globalconfig",
+    )
+}
+
+fn config_path_from_env(
+    env: &[(String, String)],
+    home: Option<&Path>,
+    upper: &str,
+    lower: &str,
+) -> Option<PathBuf> {
     let raw = env
         .iter()
-        .find(|(name, _)| name == "NPM_CONFIG_USERCONFIG")
-        .or_else(|| env.iter().find(|(name, _)| name == "npm_config_userconfig"))?;
+        .find(|(name, _)| name == upper)
+        .or_else(|| env.iter().find(|(name, _)| name == lower))?;
     expand_userconfig_path(&raw.1, home)
 }
 pub(super) fn home_dir() -> Option<PathBuf> {

@@ -1735,6 +1735,94 @@ fn load_with_env_honors_npm_config_userconfig() {
 }
 
 #[test]
+fn globalconfig_override_from_env_prefers_screaming_casing() {
+    let home = PathBuf::from("/h");
+    let both = vec![
+        (
+            "npm_config_globalconfig".to_string(),
+            "/tmp/lower".to_string(),
+        ),
+        (
+            "NPM_CONFIG_GLOBALCONFIG".to_string(),
+            "/tmp/upper".to_string(),
+        ),
+    ];
+    assert_eq!(
+        globalconfig_override_from_env(&both, Some(&home)),
+        Some(PathBuf::from("/tmp/upper")),
+    );
+    let lower = vec![("npm_config_globalconfig".to_string(), "~/gc".to_string())];
+    assert_eq!(
+        globalconfig_override_from_env(&lower, Some(&home)),
+        Some(PathBuf::from("/h/gc")),
+    );
+    // A userconfig override is not a globalconfig override.
+    let user_only = vec![("NPM_CONFIG_USERCONFIG".to_string(), "/tmp/u".to_string())];
+    assert_eq!(
+        globalconfig_override_from_env(&user_only, Some(&home)),
+        None
+    );
+}
+
+#[test]
+fn load_with_env_honors_npm_config_globalconfig() {
+    // An org that points npm at an internal registry only through
+    // `NPM_CONFIG_GLOBALCONFIG` (no `~/.npmrc`) must still get that
+    // registry and its scoped auth token.
+    let proj_dir = tempfile::tempdir().unwrap();
+    let global_dir = tempfile::tempdir().unwrap();
+    let global_rc = global_dir.path().join("global-npmrc");
+    std::fs::write(
+        &global_rc,
+        "registry=https://globalconfig-test.example/\n//globalconfig-test.example/:_authToken=from-global\n",
+    )
+    .unwrap();
+    let env = vec![(
+        "NPM_CONFIG_GLOBALCONFIG".to_string(),
+        global_rc.display().to_string(),
+    )];
+    let config = NpmConfig::load_with_env(proj_dir.path(), &env);
+    assert_eq!(config.registry, "https://globalconfig-test.example/");
+    assert_eq!(
+        config.auth_token_for("https://globalconfig-test.example/"),
+        Some("from-global"),
+    );
+}
+
+#[test]
+fn globalconfig_has_lowest_file_precedence() {
+    // npm order: project > user > global. Keys the user rc sets
+    // override the global rc; keys only the global rc sets survive.
+    let home_dir = tempfile::tempdir().unwrap();
+    let proj_dir = tempfile::tempdir().unwrap();
+    let global_dir = tempfile::tempdir().unwrap();
+    let global_rc = global_dir.path().join("npmrc");
+    std::fs::write(
+        &global_rc,
+        "registry=https://global.example/\n@acme:registry=https://acme-global.example/\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home_dir.path().join(".npmrc"),
+        "registry=https://user.example/\n",
+    )
+    .unwrap();
+    let mut config = NpmConfig::default();
+    config.apply_tagged(load_npmrc_entries_tagged_with_globalconfig(
+        Some(home_dir.path()),
+        None,
+        proj_dir.path(),
+        None,
+        Some(&global_rc),
+    ));
+    assert_eq!(config.registry, "https://user.example/");
+    assert_eq!(
+        config.scoped_registries.get("@acme").map(String::as_str),
+        Some("https://acme-global.example/"),
+    );
+}
+
+#[test]
 fn fetch_policy_default_matches_settings_toml_declared_defaults() {
     // `settings.toml` declares these defaults; `FetchPolicy::default`
     // must match them verbatim so callers that skip
