@@ -237,7 +237,7 @@ pub(super) fn load_npmrc_entries_tagged_with_home(
     )
 }
 
-/// [`load_npmrc_entries_tagged_with_home`] plus npm's global config
+/// Load tagged npmrc entries, including npm's global config
 /// (`NPM_CONFIG_GLOBALCONFIG`). The global rc is the lowest-precedence
 /// file, so its entries come first and any user, project, or env value
 /// overrides them. Organizations that point npm at an internal registry

@@ -1774,7 +1774,7 @@ fn load_with_env_honors_npm_config_globalconfig() {
     let global_rc = global_dir.path().join("global-npmrc");
     std::fs::write(
         &global_rc,
-        "registry=https://globalconfig-test.example/\n//globalconfig-test.example/:_authToken=from-global\n",
+        "@globalconfig-test:registry=https://globalconfig-test.example/\n//globalconfig-test.example/:_authToken=from-global\n",
     )
     .unwrap();
     let env = vec![(
@@ -1782,7 +1782,15 @@ fn load_with_env_honors_npm_config_globalconfig() {
         global_rc.display().to_string(),
     )];
     let config = NpmConfig::load_with_env(proj_dir.path(), &env);
-    assert_eq!(config.registry, "https://globalconfig-test.example/");
+    // Test-specific scope and host: the developer's real `~/.npmrc` is
+    // read too, and must not be able to shadow what is asserted here.
+    assert_eq!(
+        config
+            .scoped_registries
+            .get("@globalconfig-test")
+            .map(String::as_str),
+        Some("https://globalconfig-test.example/"),
+    );
     assert_eq!(
         config.auth_token_for("https://globalconfig-test.example/"),
         Some("from-global"),
