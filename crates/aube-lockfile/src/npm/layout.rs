@@ -1,16 +1,14 @@
 use crate::{DirectDep, LockedPackage};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use super::raw::InstallPathInfo;
-
 /// Resolve a transitive dep name from the perspective of a package at
 /// `pkg_install_path` using npm's nested-resolution walk: look first inside
 /// the package's own `node_modules`, then walk up each ancestor's
 /// `node_modules`, finally falling back to the root `node_modules`.
-pub(super) fn resolve_nested(
+pub(super) fn resolve_nested<T>(
     pkg_install_path: &str,
     dep_name: &str,
-    install_paths: &BTreeMap<String, InstallPathInfo>,
+    install_paths: &BTreeMap<String, T>,
 ) -> Option<String> {
     let mut base = pkg_install_path.to_string();
     loop {
@@ -33,6 +31,99 @@ pub(super) fn resolve_nested(
             base.clear();
         }
     }
+}
+
+// Peer flags belong to installed copies, which can have different incoming
+// edges even when the resolver collapses them to the same name and version.
+pub(super) fn non_peer_placements(packages: &serde_json::Value) -> BTreeSet<String> {
+    reachable_placements(packages, false)
+}
+
+pub(super) fn reachable_placements(
+    packages: &serde_json::Value,
+    include_peers: bool,
+) -> BTreeSet<String> {
+    let entries: BTreeMap<_, _> = packages
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(path, entry)| (path.clone(), entry))
+        .collect();
+    let mut queue: VecDeque<_> = entries
+        .keys()
+        .filter(|path| !path.split('/').any(|part| part == "node_modules"))
+        .cloned()
+        .collect();
+    let mut reached = BTreeSet::new();
+    while let Some(path) = queue.pop_front() {
+        if !reached.insert(path.clone()) {
+            continue;
+        }
+        let Some(entry) = entries.get(&path) else {
+            continue;
+        };
+        if entry["link"] == true {
+            if let Some(target) = entry["resolved"].as_str() {
+                queue.push_back(target.to_owned());
+            }
+            continue;
+        }
+        for section in ["dependencies", "devDependencies", "optionalDependencies"]
+            .into_iter()
+            .chain(include_peers.then_some("peerDependencies"))
+        {
+            for name in entry[section]
+                .as_object()
+                .into_iter()
+                .flat_map(|deps| deps.keys())
+            {
+                if let Some(target) = resolve_nested(&path, name, &entries) {
+                    queue.push_back(target);
+                }
+            }
+        }
+    }
+    reached
+}
+
+// Ignore peer-context suffixes, which resolution may add without changing
+// the package identities or dependency declarations imported from npm.
+pub(super) fn dependency_signature(pkg: &LockedPackage) -> serde_json::Value {
+    let dependencies: BTreeMap<_, _> = pkg
+        .dependencies
+        .iter()
+        .map(|(name, value)| (name, child_canonical_key(name, value)))
+        .collect();
+    serde_json::json!({
+        "dependencies": dependencies,
+        "declared": pkg.declared_dependencies,
+        "optional": pkg.optional_dependencies.keys().collect::<Vec<_>>(),
+        "peers": pkg.peer_dependencies,
+        "bundled": pkg.bundled_dependencies,
+    })
+}
+
+pub(super) fn dependency_snapshot(
+    canonical: &BTreeMap<String, &LockedPackage>,
+    roots: Vec<String>,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut snapshot = BTreeMap::new();
+    let mut queue: VecDeque<_> = roots.into();
+    while let Some(key) = queue.pop_front() {
+        if snapshot.contains_key(&key) {
+            continue;
+        }
+        let Some(pkg) = canonical.get(&key) else {
+            continue;
+        };
+        snapshot.insert(key, dependency_signature(pkg));
+        queue.extend(
+            pkg.dependencies
+                .iter()
+                .map(|(name, value)| child_canonical_key(name, value)),
+        );
+    }
+    snapshot
 }
 
 /// Extract a package name from an install path like `node_modules/foo`,
@@ -123,7 +214,7 @@ pub(crate) fn segments_to_install_path(segs: &[String]) -> String {
 pub(crate) fn build_hoist_tree(
     canonical: &BTreeMap<String, &LockedPackage>,
     roots: &[DirectDep],
-    preferred_roots: Option<&BTreeMap<String, String>>,
+    preferred_placements: Option<&BTreeMap<Vec<String>, String>>,
     reserved_roots: &BTreeSet<String>,
 ) -> BTreeMap<Vec<String>, String> {
     let mut placed: BTreeMap<Vec<String>, String> = BTreeMap::new();
@@ -154,13 +245,13 @@ pub(crate) fn build_hoist_tree(
     // arbitrarily replace the version npm had already hoisted. Direct roots
     // above remain authoritative, and the reachability gate prevents stale
     // lockfile entries from surviving after their last edge is removed.
-    if let Some(preferred_roots) = preferred_roots {
+    if let Some(preferred_placements) = preferred_placements {
         let reachable = reachable_canonical_keys(canonical, roots);
-        for (name, key) in preferred_roots {
-            if !reachable.contains(key) {
+        for (segs, key) in preferred_placements {
+            if segs.len() != 1 || !reachable.contains(key) {
                 continue;
             }
-            let root_slot = vec![name.clone()];
+            let root_slot = segs.clone();
             if placed.contains_key(&root_slot) {
                 continue;
             }
@@ -173,6 +264,31 @@ pub(crate) fn build_hoist_tree(
         let Some(pkg) = canonical.get(&parent_key).copied() else {
             continue;
         };
+        // An existing dependency may live beside its consumer under an
+        // ancestor, rather than directly inside the consumer's node_modules.
+        if let Some(preferred) = preferred_placements {
+            for (child_name, child_value) in &pkg.dependencies {
+                let child_key = child_canonical_key(child_name, child_value);
+                let root_slot = vec![child_name.clone()];
+                let root_unchanged = preferred
+                    .get(&root_slot)
+                    .is_none_or(|key| placed.get(&root_slot) == Some(key));
+                if !root_unchanged || !canonical.contains_key(&child_key) {
+                    continue;
+                }
+                for depth in (1..=parent_segs.len()).rev() {
+                    let mut nested = parent_segs[..depth].to_vec();
+                    nested.push(child_name.clone());
+                    if let Some(preferred_key) = preferred.get(&nested) {
+                        if preferred_key == &child_key && !placed.contains_key(&nested) {
+                            placed.insert(nested.clone(), child_key.clone());
+                            queue.push_back((nested, child_key.clone()));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
         let mut child_entries: Vec<(String, String)> = Vec::new();
         for (child_name, child_value) in &pkg.dependencies {
             let child_key = child_canonical_key(child_name, child_value);

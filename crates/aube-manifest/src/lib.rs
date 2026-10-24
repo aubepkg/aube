@@ -228,7 +228,8 @@ impl PackageJson {
 /// `deserialize_with = "deps_tolerant"` here would make the deserialize
 /// path strict on dep-map shapes the public type silently tolerates.
 /// When adding or modifying a field on `PackageJson`, update this
-/// struct in lockstep.
+/// struct in lockstep. `engines` additionally retains legacy metadata in
+/// `extra` while keeping the same tolerant map for runtime checks.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PackageJsonRaw {
@@ -250,8 +251,8 @@ struct PackageJsonRaw {
     bundle_dependencies_alias: Option<BundledDependencies>,
     #[serde(default, deserialize_with = "scripts_tolerant")]
     scripts: BTreeMap<String, String>,
-    #[serde(default, deserialize_with = "engines_tolerant")]
-    engines: BTreeMap<String, String>,
+    #[serde(default, deserialize_with = "engines_with_legacy_form")]
+    engines: EnginesWithLegacyForm,
     #[serde(default, deserialize_with = "dev_engines_tolerant")]
     dev_engines: Option<DevEngines>,
     #[serde(default)]
@@ -261,7 +262,10 @@ struct PackageJsonRaw {
 }
 
 impl From<PackageJsonRaw> for PackageJson {
-    fn from(raw: PackageJsonRaw) -> Self {
+    fn from(mut raw: PackageJsonRaw) -> Self {
+        if let Some(legacy) = raw.engines.legacy {
+            raw.extra.insert("engines".into(), legacy);
+        }
         Self {
             name: raw.name,
             version: raw.version,
@@ -272,12 +276,36 @@ impl From<PackageJsonRaw> for PackageJson {
             update_config: raw.update_config,
             bundled_dependencies: raw.bundled_dependencies.or(raw.bundle_dependencies_alias),
             scripts: raw.scripts,
-            engines: raw.engines,
+            engines: raw.engines.map,
             dev_engines: raw.dev_engines,
             workspaces: raw.workspaces,
             extra: raw.extra,
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct EnginesWithLegacyForm {
+    map: BTreeMap<String, String>,
+    legacy: Option<serde_json::Value>,
+}
+
+// Keep legacy metadata for npm serialization while engine checks use the map.
+fn engines_with_legacy_form<'de, D>(de: D) -> Result<EnginesWithLegacyForm, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(de)?;
+    let engines = engines_tolerant(&value).map_err(serde::de::Error::custom)?;
+    let legacy = match &value {
+        serde_json::Value::Array(array) => !array.is_empty(),
+        serde_json::Value::String(string) => !string.is_empty(),
+        _ => false,
+    };
+    Ok(EnginesWithLegacyForm {
+        map: engines,
+        legacy: legacy.then_some(value),
+    })
 }
 
 /// `bundledDependencies` shape from package.json. npm/pnpm accept
@@ -1554,6 +1582,10 @@ mod tests {
     fn engines_legacy_array_form_parses_as_empty_map() {
         let p = parse(r#"{"name":"x","engines":["node >=0.6.0"]}"#);
         assert!(p.engines.is_empty());
+        assert_eq!(
+            serde_json::to_value(&p).unwrap()["engines"],
+            serde_json::json!(["node >=0.6.0"])
+        );
     }
 
     /// Some old npm packument entries (e.g. `qs`) ship `engines` as a

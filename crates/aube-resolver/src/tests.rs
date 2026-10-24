@@ -6469,3 +6469,59 @@ fn deferred_age_report_matches_complete_packument() {
         );
     }
 }
+
+#[tokio::test]
+async fn review_round12_npm_nested_override_below_direct_parent_is_kept() {
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    // npm `{"overrides": {"host": {"child": "2.0.0"}}}` applies to every
+    // child below host; aube compiles it to `host>child` (direct parent only).
+    let mut resolver =
+        Resolver::new(client).with_overrides([("host>child".into(), "2.0.0".into())].into());
+    resolver.cache.insert(
+        "child".into(),
+        make_packument("child", &["1.0.0", "2.0.0"], "2.0.0").into(),
+    );
+    let mut existing = LockfileGraph::default();
+    existing.packages.insert(
+        "host@1.0.0".into(),
+        LockedPackage {
+            name: "host".into(),
+            version: "1.0.0".into(),
+            dep_path: "host@1.0.0".into(),
+            dependencies: [("mid".into(), "1.0.0".into())].into(),
+            declared_dependencies: [("mid".into(), "1.0.0".into())].into(),
+            ..Default::default()
+        }
+        .with_declared_dependencies_known(),
+    );
+    existing.packages.insert(
+        "mid@1.0.0".into(),
+        LockedPackage {
+            name: "mid".into(),
+            version: "1.0.0".into(),
+            dep_path: "mid@1.0.0".into(),
+            dependencies: [("child".into(), "2.0.0".into())].into(),
+            declared_dependencies: [("child".into(), "^1".into())].into(),
+            ..Default::default()
+        }
+        .with_declared_dependencies_known(),
+    );
+    existing.packages.insert(
+        "child@2.0.0".into(),
+        LockedPackage {
+            name: "child".into(),
+            version: "2.0.0".into(),
+            dep_path: "child@2.0.0".into(),
+            ..Default::default()
+        },
+    );
+    let manifest = PackageJson {
+        dependencies: [("host".into(), "1.0.0".into())].into(),
+        ..Default::default()
+    };
+    let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+    assert_eq!(graph.packages["mid@1.0.0"].dependencies["child"], "2.0.0");
+    assert!(!graph.packages.contains_key("child@1.0.0"));
+}

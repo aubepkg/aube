@@ -3303,3 +3303,654 @@ fn test_write_takes_project_funding_from_manifests() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(lock["packages"][""].get("funding").is_none());
 }
+
+proptest::proptest! {
+    #[test]
+    fn npm_peers_keep_runtime_edges_and_declared_shape(
+        peer_flag in proptest::bool::ANY,
+        declared_peer in proptest::bool::ANY,
+        optional_peer in proptest::bool::ANY,
+        peer_version in 1u8..20,
+    ) {
+        let version = format!("{peer_version}.0.0");
+        let mut host = serde_json::json!({
+            "version": "1.0.0",
+            "peerDependencies": { "peer": "*" }
+        });
+        if declared_peer {
+            host["optionalDependencies"] = serde_json::json!({ "peer": "*" });
+        }
+        if optional_peer {
+            host["peerDependenciesMeta"] = serde_json::json!({ "peer": { "optional": true } });
+        }
+        let mut peer = serde_json::json!({ "version": version });
+        if peer_flag {
+            peer["peer"] = true.into();
+        }
+        if declared_peer || optional_peer {
+            peer["optional"] = true.into();
+        }
+        let original = serde_json::json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "dependencies": { "host": "1.0.0" } },
+                "node_modules/host": host,
+                "node_modules/peer": peer
+            }
+        });
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), original.to_string()).unwrap();
+        let graph = parse(file.path()).unwrap();
+        let host = &graph.packages["host@1.0.0"];
+        proptest::prop_assert_eq!(host.dependencies.get("peer"), Some(&version));
+        proptest::prop_assert_eq!(host.optional_dependencies.contains_key("peer"), declared_peer || optional_peer);
+        let manifest = aube_manifest::PackageJson {
+            dependencies: [("host".into(), "1.0.0".into())].into(),
+            ..Default::default()
+        };
+        write(file.path(), &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(file.path()).unwrap()).unwrap();
+        proptest::prop_assert_eq!(&written["packages"], &original["packages"]);
+    }
+}
+
+#[test]
+fn npm_new_auto_installed_peers_are_flagged_without_becoming_declared_deps() {
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(
+        ".".into(),
+        vec![DirectDep {
+            name: "host".into(),
+            dep_path: "host@1.0.0".into(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".into()),
+        }],
+    );
+    for (name, dependencies, peer_dependencies) in [
+        (
+            "host",
+            [("peer".into(), "1.0.0".into())].into(),
+            [("peer".into(), "*".into())].into(),
+        ),
+        (
+            "peer",
+            [("child".into(), "1.0.0".into())].into(),
+            BTreeMap::new(),
+        ),
+        ("child", BTreeMap::new(), BTreeMap::new()),
+    ] {
+        graph.packages.insert(
+            format!("{name}@1.0.0"),
+            LockedPackage {
+                name: name.into(),
+                version: "1.0.0".into(),
+                dep_path: format!("{name}@1.0.0"),
+                declared_dependencies: if name == "peer" {
+                    dependencies.clone()
+                } else {
+                    BTreeMap::new()
+                },
+                dependencies,
+                peer_dependencies,
+                ..Default::default()
+            }
+            .with_declared_dependencies_known(),
+        );
+    }
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("host".into(), "1.0.0".into())].into(),
+        ..Default::default()
+    };
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    let packages = &written["packages"];
+    assert_eq!(packages["node_modules/peer"]["peer"], true);
+    assert_eq!(packages["node_modules/child"]["peer"], true);
+    assert!(packages["node_modules/host"].get("dependencies").is_none());
+    assert_eq!(
+        packages["node_modules/host"]["peerDependencies"]["peer"],
+        "*"
+    );
+}
+
+#[test]
+fn npm_preserves_nested_copies_until_their_resolution_changes() {
+    let original = serde_json::json!({
+        "lockfileVersion": 3,
+        "packages": {
+            "": { "dependencies": { "a": "1.0.0", "b": "1.0.0" } },
+            "node_modules/a": { "version": "1.0.0", "dependencies": { "child": "*" } },
+            "node_modules/b": { "version": "1.0.0", "dependencies": { "child": "*" } },
+            "node_modules/a/node_modules/child": { "version": "1.0.0" },
+            "node_modules/b/node_modules/child": { "version": "1.0.0" }
+        }
+    });
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let mut graph = parse(file.path()).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("a".into(), "1.0.0".into()), ("b".into(), "1.0.0".into())].into(),
+        ..Default::default()
+    };
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert_eq!(written["packages"], original["packages"]);
+
+    graph
+        .packages
+        .get_mut("a@1.0.0")
+        .unwrap()
+        .dependencies
+        .insert("child".into(), "2.0.0".into());
+    graph.packages.insert(
+        "child@2.0.0".into(),
+        LockedPackage {
+            name: "child".into(),
+            version: "2.0.0".into(),
+            dep_path: "child@2.0.0".into(),
+            ..Default::default()
+        },
+    );
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert!(
+        written["packages"]
+            .get("node_modules/a/node_modules/child")
+            .is_none()
+    );
+    assert_eq!(
+        written["packages"]["node_modules/child"]["version"],
+        "2.0.0"
+    );
+    assert_eq!(
+        written["packages"]["node_modules/b/node_modules/child"]["version"],
+        "1.0.0"
+    );
+}
+
+#[test]
+fn npm_clears_peer_flag_when_a_regular_dependency_starts_reaching_it() {
+    let original = serde_json::json!({
+        "lockfileVersion": 3,
+        "packages": {
+            "": { "dependencies": { "host": "1.0.0" } },
+            "node_modules/host": { "version": "1.0.0", "peerDependencies": { "peer": "*" } },
+            "node_modules/peer": { "version": "1.0.0", "peer": true }
+        }
+    });
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let mut graph = parse(file.path()).unwrap();
+    graph.importers.get_mut(".").unwrap().push(DirectDep {
+        name: "peer".into(),
+        dep_path: "peer@1.0.0".into(),
+        dep_type: DepType::Production,
+        specifier: Some("1.0.0".into()),
+    });
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [
+            ("host".into(), "1.0.0".into()),
+            ("peer".into(), "1.0.0".into()),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert!(
+        written["packages"]["node_modules/peer"]
+            .get("peer")
+            .is_none()
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn npm_bundled_entries_stay_with_their_owner(version in 1u8..20, dev in proptest::bool::ANY, optional in proptest::bool::ANY) {
+        let version = format!("{version}.0.0");
+        let mut owner = serde_json::json!({
+            "version": "1.0.0", "bundleDependencies": ["child"],
+            "dependencies": {"child": "*"}
+        });
+        let mut child = serde_json::json!({
+            "version": version, "inBundle": true, "license": "MIT",
+            "dependencies": {"grandchild": "*"}
+        });
+        let mut grandchild = serde_json::json!({"version": "1.0.0", "inBundle": true});
+        if dev {
+            owner["dev"] = true.into();
+            child["dev"] = true.into();
+            grandchild["dev"] = true.into();
+        }
+        if optional {
+            owner.as_object_mut().unwrap().remove("dependencies");
+            owner["optionalDependencies"] = serde_json::json!({"child": "*"});
+            child["optional"] = true.into();
+            grandchild["optional"] = true.into();
+        }
+        let section = if dev {"devDependencies"} else {"dependencies"};
+        let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+            "": {section: {"owner": "1.0.0"}},
+            "node_modules/owner": owner,
+            "node_modules/owner/node_modules/child": child,
+            "node_modules/owner/node_modules/grandchild": grandchild
+        }});
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), original.to_string()).unwrap();
+        let graph = parse(file.path()).unwrap();
+        proptest::prop_assert_eq!(graph.packages.len(), 1);
+        proptest::prop_assert!(graph.packages["owner@1.0.0"].dependencies.is_empty());
+        proptest::prop_assert_eq!(&graph.packages["owner@1.0.0"].bundled_dependencies, &["child"]);
+        let manifest: aube_manifest::PackageJson = serde_json::from_value(original["packages"][""].clone()).unwrap();
+        write(file.path(), &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+        proptest::prop_assert_eq!(&written["packages"], &original["packages"]);
+
+        let mut graph = graph;
+        graph.importers.get_mut(".").unwrap()[0].dep_type = DepType::Production;
+        let manifest = aube_manifest::PackageJson {
+            dependencies: [("owner".into(), "1.0.0".into())].into(), ..Default::default()
+        };
+        write(file.path(), &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+        for name in ["child", "grandchild"] {
+            let child = &written["packages"][format!("node_modules/owner/node_modules/{name}")];
+            proptest::prop_assert!(child.get("dev").is_none());
+            proptest::prop_assert_eq!(child["optional"].as_bool().unwrap_or(false), optional);
+            proptest::prop_assert_eq!(child["inBundle"].as_bool(), Some(true));
+        }
+    }
+}
+
+#[test]
+fn npm_fresh_bundled_dependencies_keep_declarations_without_registry_entries() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(
+        ".".into(),
+        vec![DirectDep {
+            name: "owner".into(),
+            dep_path: "owner@1.0.0".into(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".into()),
+        }],
+    );
+    graph.packages.insert(
+        "owner@1.0.0".into(),
+        LockedPackage {
+            name: "owner".into(),
+            version: "1.0.0".into(),
+            dep_path: "owner@1.0.0".into(),
+            bundled_dependencies: vec!["child".into()],
+            declared_dependencies: [("child".into(), "^2.0.0".into())].into(),
+            ..Default::default()
+        }
+        .with_declared_dependencies_known(),
+    );
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("owner".into(), "1.0.0".into())].into(),
+        ..Default::default()
+    };
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert_eq!(
+        written["packages"]["node_modules/owner"]["bundleDependencies"],
+        serde_json::json!(["child"])
+    );
+    assert_eq!(
+        written["packages"]["node_modules/owner"]["dependencies"]["child"],
+        "^2.0.0"
+    );
+    assert_eq!(written["packages"].as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn npm_optional_peers_merge_dev_and_optional_reachability() {
+    let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+        "": {"dependencies": {"host": "1.0.0"}, "devDependencies": {"peer": "1.0.0"}},
+        "node_modules/host": {"version": "1.0.0", "peerDependencies": {"peer": "*"},
+            "peerDependenciesMeta": {"peer": {"optional": true}}},
+        "node_modules/peer": {"version": "1.0.0", "devOptional": true, "dependencies": {"child": "*"}},
+        "node_modules/child": {"version": "1.0.0", "devOptional": true}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let mut graph = parse(file.path()).unwrap();
+    let mut manifest: aube_manifest::PackageJson =
+        serde_json::from_value(original["packages"][""].clone()).unwrap();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert_eq!(written["packages"], original["packages"]);
+
+    // Freshly resolved peer edges need the same classification without the
+    // reader's optional-edge map.
+    graph
+        .packages
+        .get_mut("host@1.0.0")
+        .unwrap()
+        .optional_dependencies
+        .clear();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert_eq!(written["packages"], original["packages"]);
+
+    // A required production root clears devOptional through its dependencies.
+    graph
+        .importers
+        .get_mut(".")
+        .unwrap()
+        .iter_mut()
+        .find(|dep| dep.name == "peer")
+        .unwrap()
+        .dep_type = DepType::Production;
+    manifest.dev_dependencies.remove("peer");
+    manifest.dependencies.insert("peer".into(), "1.0.0".into());
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    for name in ["peer", "child"] {
+        let entry = &written["packages"][format!("node_modules/{name}")];
+        for flag in ["dev", "optional", "devOptional"] {
+            assert!(entry.get(flag).is_none(), "{name}: {flag}");
+        }
+    }
+}
+
+#[test]
+fn npm_preserves_nested_dependencies_beside_their_consumer() {
+    let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+        "": {"dependencies": {"a": "1.0.0", "child": "1.0.0"}},
+        "node_modules/a": {"version": "1.0.0", "dependencies": {"consumer": "*"}},
+        "node_modules/a/node_modules/consumer": {"version": "1.0.0", "dependencies": {"child": "2.0.0"}},
+        "node_modules/a/node_modules/child": {"version": "2.0.0"},
+        "node_modules/child": {"version": "1.0.0"}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let graph = parse(file.path()).unwrap();
+    let manifest: aube_manifest::PackageJson =
+        serde_json::from_value(original["packages"][""].clone()).unwrap();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    assert_eq!(written["packages"], original["packages"]);
+}
+
+proptest::proptest! {
+    #[test]
+    fn npm_preserves_peer_flags_on_each_installed_copy(
+        first_peer in proptest::bool::ANY,
+        second_peer in proptest::bool::ANY,
+        version in 1u8..20,
+    ) {
+        let version = format!("{version}.0.0");
+        let mut original = serde_json::json!({"lockfileVersion": 3, "packages": {
+            "": {"dependencies": {"a": "1.0.0", "b": "1.0.0"}},
+            "node_modules/a": {"version": "1.0.0", "dependencies": {"child": "*"}},
+            "node_modules/b": {"version": "1.0.0", "peerDependencies": {"child": "*"}},
+            "node_modules/a/node_modules/child": {"version": version},
+            "node_modules/b/node_modules/child": {"version": version}
+        }});
+        for (name, peer) in [("a", first_peer), ("b", second_peer)] {
+            if peer {
+                original["packages"][format!("node_modules/{name}/node_modules/child")]["peer"] = true.into();
+            }
+        }
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), original.to_string()).unwrap();
+        let graph = parse(file.path()).unwrap();
+        let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+        write(file.path(), &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+        proptest::prop_assert_eq!(&written["packages"], &original["packages"]);
+    }
+
+    #[test]
+    fn npm_preserves_installed_package_workspaces(object_form in proptest::bool::ANY) {
+        let workspaces = if object_form {
+            serde_json::json!({"packages": ["packages/*"], "nohoist": ["**/child"]})
+        } else {
+            serde_json::json!(["tests/*", "packages/*"])
+        };
+        let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+            "": {"dependencies": {"host": "1.0.0"}},
+            "node_modules/host": {"version": "1.0.0", "workspaces": workspaces}
+        }});
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), original.to_string()).unwrap();
+        let graph = parse(file.path()).unwrap();
+        let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+        let output = tempfile::NamedTempFile::new().unwrap();
+        write(output.path(), &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(output.path()).unwrap()).unwrap();
+        proptest::prop_assert_eq!(&written["packages"], &original["packages"]);
+    }
+}
+
+#[test]
+fn npm_reclassifies_only_the_copy_gaining_a_regular_incoming_edge() {
+    let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+        "": {"dependencies": {"a": "1.0.0", "b": "1.0.0"}},
+        "node_modules/a": {"version": "1.0.0", "peerDependencies": {"child": "*"}},
+        "node_modules/b": {"version": "1.0.0", "peerDependencies": {"child": "*"}},
+        "node_modules/a/node_modules/child": {"version": "1.0.0", "peer": true},
+        "node_modules/b/node_modules/child": {"version": "1.0.0", "peer": true}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let mut graph = parse(file.path()).unwrap();
+    graph
+        .packages
+        .get_mut("a@1.0.0")
+        .unwrap()
+        .declared_dependencies
+        .insert("child".into(), "*".into());
+    let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    assert!(
+        written["packages"]["node_modules/a/node_modules/child"]
+            .get("peer")
+            .is_none()
+    );
+    assert_eq!(
+        written["packages"]["node_modules/b/node_modules/child"]["peer"],
+        true
+    );
+}
+
+#[test]
+fn npm_preserves_nested_optional_placements_with_an_unchanged_ancestor() {
+    let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+        "": {"devDependencies": {"host": "1.0.0", "provider": "2.0.0"}},
+        "node_modules/host": {"version": "1.0.0", "dev": true, "optionalDependencies": {"platform": "1.0.0"}},
+        "node_modules/platform": {"version": "1.0.0", "dev": true, "optional": true, "cpu": ["wasm32"], "dependencies": {"provider": "1.0.0"}},
+        "node_modules/platform/node_modules/child": {"version": "1.0.0", "dev": true, "optional": true},
+        "node_modules/provider": {"version": "2.0.0", "dev": true, "dependencies": {"child": "2.0.0"}},
+        "node_modules/child": {"version": "2.0.0", "dev": true}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let graph = parse(file.path()).unwrap();
+    let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    for (path, entry) in original["packages"].as_object().unwrap() {
+        assert_eq!(&written["packages"][path], entry, "{path}");
+    }
+    assert_eq!(written["packages"], original["packages"]);
+}
+
+#[test]
+fn review_round12_bundled_child_does_not_make_hoisted_peer_copy_ordinary() {
+    let original = serde_json::json!({"lockfileVersion": 3, "requires": true, "packages": {
+        "": {"dependencies": {"owner": "1.0.0", "peerhost": "1.0.0"}},
+        "node_modules/b": {"version": "2.0.0", "peer": true},
+        "node_modules/owner": {"version": "1.0.0", "bundleDependencies": ["b"], "dependencies": {"b": "1.0.0"}},
+        "node_modules/owner/node_modules/b": {"version": "1.0.0", "inBundle": true},
+        "node_modules/peerhost": {"version": "1.0.0", "peerDependencies": {"b": "2.0.0"}}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let graph = parse(file.path()).unwrap();
+    let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    assert_eq!(written["packages"], original["packages"], "{written:#}");
+}
+
+proptest::proptest! {
+    #[test]
+    fn npm_retains_only_unchanged_optional_orphans(version in "[1-9]\\.[0-9]\\.[0-9]") {
+        for change in ["none", "owner-removed", "owner-edge", "dependent-edge", "dependent-removed", "child-edge"] {
+            let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+                "": {"optionalDependencies": {"owner": "1.0.0"}},
+                "node_modules/owner": {"version": "1.0.0", "optional": true, "dependencies": {"dep": "1.0.0"}},
+                "node_modules/dep": {"version": "1.0.0", "optional": true},
+                "node_modules/owner/node_modules/child": {"version": version, "optional": true}
+            }});
+            let file = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(file.path(), original.to_string()).unwrap();
+            let mut graph = parse(file.path()).unwrap();
+            // Resolution prunes the orphan; only the owner's imported metadata survives.
+            let key = format!("child@{version}");
+            if change == "child-edge" {
+                graph.packages.get_mut(&key).unwrap().dependencies.insert("dep".into(), "1.0.0".into());
+            } else {
+                graph.packages.remove(&key);
+            }
+            match change {
+                "owner-removed" => { graph.importers.get_mut(".").unwrap().clear(); },
+                "owner-edge" => { graph.packages.get_mut("owner@1.0.0").unwrap().dependencies.clear(); },
+                "dependent-removed" => { graph.packages.remove("dep@1.0.0"); },
+                "dependent-edge" => { graph.packages.get_mut("dep@1.0.0").unwrap().declared_dependencies.insert("new".into(), "1.0.0".into()); },
+                _ => {},
+            }
+            let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+            write(file.path(), &graph, &manifest).unwrap();
+            let written: serde_json::Value = serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+            proptest::prop_assert_eq!(written["packages"].get("node_modules/owner/node_modules/child").is_some(), change == "none", "{}", change);
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn npm_preserves_root_engines(node in proptest::option::of(">=[0-9]{1,2}\\.[0-9]\\.[0-9]")) {
+        let engines: BTreeMap<String, String> = node.into_iter().map(|version| ("node".into(), version)).collect();
+        let manifest = aube_manifest::PackageJson { engines, ..Default::default() };
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("package-lock.json");
+        write(&file, &LockfileGraph::default(), &manifest).unwrap();
+        let original = std::fs::read(&file).unwrap();
+        let graph = parse(&file).unwrap();
+        write(&file, &graph, &manifest).unwrap();
+        proptest::prop_assert_eq!(std::fs::read(&file).unwrap(), original);
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        let expected = if manifest.engines.is_empty() { serde_json::Value::Null } else { serde_json::json!(manifest.engines) };
+        proptest::prop_assert_eq!(&written["packages"][""]["engines"], &expected);
+    }
+}
+
+#[test]
+fn review_round13_retained_orphan_does_not_shadow_newly_nested_dependent() {
+    let original = serde_json::json!({"lockfileVersion": 3, "packages": {
+        "": {"dependencies": {"mid": "1.0.0", "owner": "1.0.0"}},
+        "node_modules/mid": {"version": "1.0.0", "dependencies": {"x": "2.0.0"}},
+        "node_modules/owner": {"version": "1.0.0", "dependencies": {"mid": "1.0.0"}},
+        "node_modules/owner/node_modules/x": {"version": "1.0.0", "optional": true},
+        "node_modules/x": {"version": "2.0.0"}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let mut graph = parse(file.path()).unwrap();
+    assert!(graph.packages.contains_key("x@1.0.0"));
+    graph.packages.remove("x@1.0.0");
+    // Root upgrades its own mid to 3.0.0, pushing owner's mid@1 below owner.
+    let mut mid3 = graph.packages["mid@1.0.0"].clone();
+    mid3.version = "3.0.0".into();
+    mid3.dep_path = "mid@3.0.0".into();
+    mid3.dependencies.clear();
+    mid3.declared_dependencies.clear();
+    graph.packages.insert("mid@3.0.0".into(), mid3);
+    for dep in graph.importers.get_mut(".").unwrap() {
+        if dep.name == "mid" {
+            dep.dep_path = "mid@3.0.0".into();
+            dep.specifier = Some("3.0.0".into());
+        }
+    }
+    let mut manifest: aube_manifest::PackageJson =
+        serde_json::from_value(original["packages"][""].clone()).unwrap();
+    manifest.dependencies.insert("mid".into(), "3.0.0".into());
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    assert_eq!(
+        written["packages"]["node_modules/owner/node_modules/mid"]["version"],
+        "1.0.0"
+    );
+    assert!(
+        written["packages"]
+            .get("node_modules/owner/node_modules/x")
+            .is_none(),
+        "retained x@1 shadows owner/node_modules/mid's x@2: {:#}",
+        written["packages"]
+    );
+    assert_ne!(written["packages"]["node_modules/x"]["peer"], true);
+    let reloaded = parse(file.path()).unwrap();
+    assert_eq!(reloaded.packages["mid@1.0.0"].dependencies["x"], "2.0.0");
+}
+
+proptest::proptest! {
+    #[test]
+    fn npm_preserves_root_and_workspace_engine_forms(major in 18u8..30, form in 0u8..7) {
+        let engines = match form {
+            0 => serde_json::json!({"node": format!(">={major}")}),
+            1 => serde_json::json!([format!("node >={major}")]),
+            2 => serde_json::json!(format!("node >={major}")),
+            3 => serde_json::json!([]),
+            4 => serde_json::json!({}),
+            5 => serde_json::json!(""),
+            _ => serde_json::Value::Null,
+        };
+        let mut source = serde_json::json!({"name": "member", "version": "1.0.0", "engines": engines});
+        let manifest: aube_manifest::PackageJson = serde_json::from_value(source.clone()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let member = dir.path().join("packages/a");
+        std::fs::create_dir_all(&member).unwrap();
+        let member_file = member.join("package.json");
+        std::fs::write(&member_file, source.to_string()).unwrap();
+        let file = dir.path().join("package-lock.json");
+        let mut graph = LockfileGraph::default();
+        graph.importers.insert(".".into(), vec![]);
+        graph.importers.insert("packages/a".into(), vec![]);
+        write(&file, &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        let expected = if form < 3 { engines } else { serde_json::Value::Null };
+        for importer in ["", "packages/a"] {
+            proptest::prop_assert_eq!(&written["packages"][importer]["engines"], &expected);
+        }
+        // Current manifests also remove stale metadata on the next write.
+        let graph = parse(&file).unwrap();
+        source.as_object_mut().unwrap().remove("engines");
+        std::fs::write(&member_file, source.to_string()).unwrap();
+        let manifest = serde_json::from_value(source).unwrap();
+        write(&file, &graph, &manifest).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for importer in ["", "packages/a"] {
+            proptest::prop_assert!(written["packages"][importer].get("engines").is_none());
+        }
+    }
+}
