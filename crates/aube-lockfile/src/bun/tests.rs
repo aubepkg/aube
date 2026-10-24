@@ -2727,3 +2727,73 @@ fn test_write_keeps_a_nested_packages_same_name_dep_one_level_below() {
     assert_eq!(reparsed.importers["packages/app"][0].dep_path, "foo@2.0.0");
     assert_eq!(reparsed.packages["foo@2.0.0"].dependencies["foo"], "1.0.0");
 }
+
+proptest::proptest! {
+    #[test]
+    fn parse_restores_provided_peers_at_their_bun_placement(
+        major in 1u16..1000,
+        optional in proptest::bool::ANY,
+        scoped in proptest::bool::ANY,
+        local in proptest::bool::ANY,
+    ) {
+        let name = if scoped { "@scope/consumer" } else { "consumer" };
+        let peer = if scoped { "@scope/peer" } else { "peer" };
+        let version = if local { "file:provider.tgz".to_string() } else { format!("{major}.0.0") };
+        let metadata = serde_json::json!({
+            "peerDependencies": {peer: "*", "missing": "*"},
+            "optionalPeers": if optional { vec![peer, "missing"] } else { vec![] },
+        });
+        let mut packages = serde_json::Map::new();
+        packages.insert(name.into(), serde_json::json!([format!("{name}@1.0.0"), "", metadata, fake_sri('a')]));
+        packages.insert(peer.into(), serde_json::json!([format!("{peer}@0.0.0"), "", {}, fake_sri('b')]));
+        packages.insert(format!("{name}/{peer}"), serde_json::json!([format!("{peer}@{version}"), "", {}, fake_sri('c')]));
+        let input = serde_json::json!({"lockfileVersion": 2, "packages": packages});
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), input.to_string()).unwrap();
+        let graph = parse(tmp.path()).unwrap();
+        let consumer = &graph.packages[&format!("{name}@1.0.0")];
+        proptest::prop_assert_eq!(&consumer.dependencies[peer], &version);
+        proptest::prop_assert!(!consumer.dependencies.contains_key("missing"));
+        proptest::prop_assert!(!consumer.declared_dependencies.contains_key(peer));
+        proptest::prop_assert!(consumer.optional_dependencies.is_empty());
+        proptest::prop_assert_eq!(consumer.peer_dependencies_meta.get(peer).is_some_and(|m| m.optional), optional);
+    }
+}
+
+#[test]
+fn write_preserves_conflicting_workspace_direct_providers() {
+    let mut graph = LockfileGraph::default();
+    for version in ["18.0.0", "19.0.0"] {
+        let key = format!("react@{version}");
+        graph.packages.insert(
+            key.clone(),
+            LockedPackage {
+                name: "react".into(),
+                version: version.into(),
+                dep_path: key,
+                ..Default::default()
+            },
+        );
+    }
+    let direct = |version: &str| DirectDep {
+        name: "react".into(),
+        dep_path: format!("react@{version}"),
+        dep_type: DepType::Production,
+        specifier: Some(version.into()),
+    };
+    graph.importers.insert(".".into(), vec![direct("18.0.0")]);
+    graph
+        .importers
+        .insert("apps/app".into(), vec![direct("19.0.0")]);
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[(
+            "apps/app",
+            r#"{"name":"@scope/app","dependencies":{"react":"19.0.0"}}"#,
+        )],
+        &[("react", "18.0.0")],
+    );
+    let reloaded = parse(&path).unwrap();
+    assert_eq!(reloaded.importers["."][0].dep_path, "react@18.0.0");
+    assert_eq!(reloaded.importers["apps/app"][0].dep_path, "react@19.0.0");
+}

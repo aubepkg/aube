@@ -74,16 +74,9 @@ pub fn write(
     // workspace still appear in the `packages` section. Skip
     // workspace-link deps for the same reason as the canonical filter.
     //
-    // Dedupe by package name so duplicate direct deps across
-    // workspaces don't confuse `build_hoist_tree` — its root-seeding
-    // loop silently drops any queue entry whose segs already exist in
-    // `placed`, which would mean the second workspace's transitive
-    // deps never get walked. `graph.importers` is a BTreeMap, so `.`
-    // iterates first and wins conflicts. When two workspaces declare
-    // the same dep at different versions we still collapse to a
-    // single top-level entry (the first-seen version); a proper fix
-    // would emit `<workspace>/<dep>` nested entries per-workspace,
-    // which is out of scope here.
+    // Root dependencies keep the hoisted slot. A member with a different
+    // provider needs a member-scoped placement so a clean reload can restore
+    // its direct dependencies and peer scope independently of the root.
     // bun gives the top-level slot of a member the root asks for with
     // `workspace:` to that member, nesting a registry package of the same
     // name under whatever depends on it.
@@ -97,7 +90,7 @@ pub fn write(
     .filter(|(_, spec)| spec.starts_with("workspace:"))
     .map(|(name, _)| name.clone())
     .collect();
-    // A member's own direct dep on a reserved name goes under the member
+    // A member's conflicting direct dep goes under the member
     // (`app/is-number`), as bun writes it, unless a package or another
     // member's path shares the member's name: the reader would hand the
     // nested entry to them too.
@@ -109,7 +102,7 @@ pub fn write(
     };
     let mut all_roots: Vec<DirectDep> = Vec::new();
     let mut scoped_roots: Vec<(&str, DirectDep)> = Vec::new();
-    let mut seen_names: BTreeSet<String> = BTreeSet::new();
+    let mut root_targets: BTreeMap<&str, &str> = BTreeMap::new();
     for (importer_path, deps) in &graph.importers {
         for d in deps {
             if matches!(
@@ -122,15 +115,19 @@ pub fn write(
                 continue;
             }
             if importer_path != "."
-                && reserved_roots.contains(&d.name)
+                && (reserved_roots.contains(&d.name)
+                    || root_targets
+                        .get(d.name.as_str())
+                        .is_some_and(|target| *target != d.dep_path))
                 && let Some(scope) = scope_of(importer_path)
             {
                 scoped_roots.push((scope, d.clone()));
                 continue;
             }
-            if !seen_names.insert(d.name.clone()) {
+            if root_targets.contains_key(d.name.as_str()) {
                 continue;
             }
+            root_targets.insert(&d.name, &d.dep_path);
             all_roots.push(d.clone());
         }
     }
