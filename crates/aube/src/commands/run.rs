@@ -1157,14 +1157,31 @@ async fn build_script_command(
     // spliced shell command line.
     let lifecycle_script = cmd.to_string();
 
+    let script_dir = if cwd.is_absolute() {
+        cwd.to_path_buf()
+    } else {
+        crate::dirs::cwd()?.join(cwd)
+    };
+    let node_gyp_project_dir =
+        crate::dirs::find_workspace_root(&script_dir).unwrap_or_else(|| script_dir.clone());
     let bin_dir = super::project_modules_dir(cwd).join(".bin");
     let node_gyp_bin_dir = super::install::node_gyp_bootstrap::lazy_shim_bin_dir(&bin_dir)?;
     let activated_shim_dir = crate::tool_shims::activated_shim_dir();
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let mut project_bins = Vec::with_capacity(1 + usize::from(node_gyp_bin_dir.is_some()));
+    let has_workspace_bins = node_gyp_project_dir != script_dir;
+    let mut project_bins = Vec::with_capacity(
+        1 + usize::from(node_gyp_bin_dir.is_some()) + usize::from(has_workspace_bins),
+    );
     project_bins.push(bin_dir);
     if let Some(dir) = node_gyp_bin_dir {
         project_bins.push(dir);
+    }
+    // Reuse node-gyp's root discovery; pnpm orders member, node-gyp, then root.
+    if has_workspace_bins {
+        let root_bin = super::project_modules_dir(&node_gyp_project_dir).join(".bin");
+        if root_bin != project_bins[0] {
+            project_bins.push(root_bin);
+        }
     }
     let mut entries = crate::runtime::path_entries_with_project_bins(project_bins);
     entries
@@ -1179,13 +1196,6 @@ async fn build_script_command(
     }
     entries.extend(std::env::split_paths(&path));
     let new_path = std::env::join_paths(entries).unwrap_or(path);
-    let script_dir = if cwd.is_absolute() {
-        cwd.to_path_buf()
-    } else {
-        crate::dirs::cwd()?.join(cwd)
-    };
-    let node_gyp_project_dir =
-        crate::dirs::find_workspace_root(&script_dir).unwrap_or_else(|| script_dir.clone());
 
     // npm-compat env vars. Whichever spawn helper runs below already
     // stamped the invocation-level vars (`npm_execpath`,
