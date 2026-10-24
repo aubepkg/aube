@@ -14,7 +14,7 @@ use crate::sweep::{
 use crate::{Error, HoistedPlacements, LinkStats, Linker, NodeLinker, hoisted, sys};
 use aube_lockfile::{LocalSource, LockedPackage, LockfileGraph};
 use aube_store::PackageIndex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 impl Linker {
@@ -153,6 +153,7 @@ impl Linker {
             );
         }
 
+        let project_local_dep_paths = self.project_local_dep_paths_for_graph(graph);
         let nested_link_targets = build_nested_link_targets(&project_dir, graph);
 
         // Step 1: Populate .aube virtual store
@@ -164,13 +165,9 @@ impl Linker {
         // any `.aube/` entry at all; their top-level symlink points
         // directly at the target.
         //
-        // Git and remote-tarball sources are the exception: they're
-        // pinned to immutable content and shared across projects like
-        // registry packages. Under the global virtual store they must
-        // be materialized into the shared store (and have their
-        // `.aube/<dep_path>` entry symlinked at it) so a registry
-        // dependent that also lives in the shared store doesn't get a
-        // dangling sibling symlink to them.
+        // Git and remote-tarball sources can be shared when their
+        // dependency closure contains no project-relative source. Their
+        // registry dependents then link to the same shared-store paths.
         for (dep_path, pkg) in &graph.packages {
             let Some(ref local) = pkg.local_source else {
                 continue;
@@ -178,7 +175,10 @@ impl Linker {
             if matches!(local, LocalSource::Link(_)) {
                 continue;
             }
-            if self.use_global_virtual_store && local.is_globally_shareable() {
+            if self.use_global_virtual_store
+                && local.is_globally_shareable()
+                && !project_local_dep_paths.contains(dep_path)
+            {
                 // A git / remote-tarball dep shared globally must be
                 // materialized into its content-addressed GVS path so a
                 // registry dependent's sibling symlink resolves. The
@@ -222,7 +222,12 @@ impl Linker {
             // materialization instead of treating the path-keyed entry as a
             // cache hit. The install-state warm path prevents this work when
             // the source fingerprint is unchanged.
-            if self.force || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            if self.force
+                || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_))
+                || aube_entry
+                    .symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+            {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -311,7 +316,7 @@ impl Linker {
                         let mut local_stats = LinkStats::default();
                         let local_aube_entry = aube_dir.join(entry_name);
                         let global_entry = self.virtual_store.join(subdir);
-                        let project_local = self.project_local_dep_paths.contains(dep_path);
+                        let project_local = project_local_dep_paths.contains(dep_path);
 
                         // Single readlink classifies the entry into one of
                         // three states and drives the whole per-package
@@ -872,6 +877,7 @@ impl Linker {
             );
         }
 
+        let project_local_dep_paths = self.project_local_dep_paths_for_graph(graph);
         let nested_link_targets =
             build_workspace_nested_link_targets(&root_dir, graph, workspace_dirs);
         let mut workspace_peer_links: BTreeMap<&str, Vec<(&str, &PathBuf)>> = BTreeMap::new();
@@ -889,12 +895,8 @@ impl Linker {
         // project. `link:` deps get no `.aube/` entry at all — step 2
         // symlinks directly to the target.
         //
-        // Git and remote-tarball sources are content-pinned and shared
-        // across projects like registry packages, so under the global
-        // virtual store they're materialized into the shared store with
-        // a `.aube/<dep_path>` symlink pointing at it — otherwise a
-        // registry dependent in the shared store would get a dangling
-        // sibling symlink to them.
+        // Git and remote-tarball sources use the shared store unless
+        // their dependency closure reaches a project-relative source.
         for (dep_path, pkg) in &graph.packages {
             let Some(ref local) = pkg.local_source else {
                 continue;
@@ -902,7 +904,10 @@ impl Linker {
             if matches!(local, LocalSource::Link(_)) {
                 continue;
             }
-            if self.use_global_virtual_store && local.is_globally_shareable() {
+            if self.use_global_virtual_store
+                && local.is_globally_shareable()
+                && !project_local_dep_paths.contains(dep_path)
+            {
                 // See the matching block in `link_isolated`: a globally
                 // shared git/tarball dep's index defines its
                 // content-addressed GVS path, so a missing index must
@@ -926,7 +931,12 @@ impl Linker {
                 continue;
             };
             let aube_entry = aube_dir.join(self.aube_dir_entry_name(dep_path));
-            if self.force || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_)) {
+            if self.force
+                || matches!(local, LocalSource::Directory(_) | LocalSource::Portal(_))
+                || aube_entry
+                    .symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+            {
                 try_remove_entry(&aube_entry);
                 if aube_entry.exists() {
                     return Err(Error::Io(
@@ -1015,7 +1025,7 @@ impl Linker {
                             let mut local_stats = LinkStats::default();
                             let local_aube_entry = aube_dir.join(entry_name);
                             let global_entry = self.virtual_store.join(subdir);
-                            let project_local = self.project_local_dep_paths.contains(dep_path);
+                            let project_local = project_local_dep_paths.contains(dep_path);
 
                             let state = if project_local {
                                 classify_local_entry_state(&local_aube_entry)
@@ -1804,6 +1814,76 @@ impl Linker {
         }
         Ok(())
     }
+    fn project_local_dep_paths_for_graph(
+        &self,
+        graph: &LockfileGraph,
+    ) -> std::borrow::Cow<'_, BTreeSet<String>> {
+        if !self.use_global_virtual_store {
+            return std::borrow::Cow::Owned(BTreeSet::new());
+        }
+        let mut selected = match &self.precomputed_project_local_dep_paths {
+            Some(selected) => std::borrow::Cow::Borrowed(selected.as_ref()),
+            None => std::borrow::Cow::Owned(project_local_dependency_closure(graph)),
+        };
+        if !self.project_local_dep_paths.is_empty() {
+            selected
+                .to_mut()
+                .extend(self.project_local_dep_paths.iter().cloned());
+        }
+        selected
+    }
+}
+
+/// Packages with project-relative sources and all their dependents must stay
+/// in the project. Their source paths do not identify content across projects,
+/// and a shared dependent cannot link back into one project's virtual store.
+pub fn project_local_dependency_closure(graph: &LockfileGraph) -> BTreeSet<String> {
+    project_local_dependency_closure_with_seeds(graph, std::iter::empty())
+}
+
+/// Include additional project-local packages and their dependents, for
+/// compatibility transforms that cannot operate on shared store entries.
+pub fn project_local_dependency_closure_with_seeds(
+    graph: &LockfileGraph,
+    additional_seeds: impl IntoIterator<Item = String>,
+) -> BTreeSet<String> {
+    let mut selected: BTreeSet<String> = additional_seeds.into_iter().collect();
+    selected.extend(
+        graph
+            .packages
+            .iter()
+            .filter(|(_, pkg)| {
+                pkg.local_source
+                    .as_ref()
+                    .is_some_and(|s| !s.is_globally_shareable())
+            })
+            .map(|(key, _)| key.clone()),
+    );
+    if selected.is_empty() {
+        return selected;
+    }
+
+    let mut parents = rustc_hash::FxHashMap::default();
+    for (key, pkg) in &graph.packages {
+        for (name, tail) in &pkg.dependencies {
+            let child =
+                aube_lockfile::resolve_dep_edge(name, tail, |k| graph.packages.contains_key(k))
+                    .unwrap_or_else(|| crate::materialize::dependency_link_key(name, tail));
+            parents.entry(child).or_insert_with(Vec::new).push(key);
+        }
+    }
+    let mut pending: VecDeque<_> = selected.iter().cloned().collect();
+    while let Some(child) = pending.pop_front() {
+        if let Some(dependents) = parents.get(&child) {
+            for parent in dependents {
+                if !selected.contains(*parent) {
+                    selected.insert((*parent).clone());
+                    pending.push_back((*parent).clone());
+                }
+            }
+        }
+    }
+    selected
 }
 
 /// Build a `dep_path → absolute on-disk target` map for every
