@@ -24,14 +24,16 @@ updates:
     exclude-paths:
       - "fixtures/**"
 
-  # exclude-paths only covers version updates; a limit of 0 also stops
-  # security update PRs for the fixture lockfiles.
+  # exclude-paths only covers version updates; ignoring every dependency
+  # also skips security update PRs for the fixture lockfiles.
   - package-ecosystem: "npm"
     directories:
       - "/fixtures/**"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
