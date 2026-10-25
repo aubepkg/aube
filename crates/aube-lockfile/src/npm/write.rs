@@ -61,6 +61,8 @@ struct WriteNpmPackage<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     libc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    deprecated: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     funding: Option<serde_json::Value>,
     /// The root manifest's `workspaces` field, copied verbatim as npm
     /// does, so npm and aube rewrites don't flip it back and forth.
@@ -518,6 +520,7 @@ pub fn write(
                     os: pkg.os.to_vec(),
                     cpu: pkg.cpu.to_vec(),
                     libc: pkg.libc.to_vec(),
+                    deprecated: deprecated(pkg),
                     funding: npm_funding(pkg),
                     dev,
                     optional,
@@ -555,6 +558,7 @@ pub fn write(
                 os: pkg.os.to_vec(),
                 cpu: pkg.cpu.to_vec(),
                 libc: pkg.libc.to_vec(),
+                deprecated: deprecated(pkg),
                 funding: npm_funding(pkg),
                 dev,
                 optional,
@@ -759,6 +763,12 @@ fn manifest_funding(manifest: &aube_manifest::PackageJson) -> Option<serde_json:
             Value::Bool(true) => true,
         })
         .cloned()
+}
+
+fn deprecated(pkg: &LockedPackage) -> Option<&str> {
+    pkg.extra_meta
+        .get("deprecated")
+        .and_then(serde_json::Value::as_str)
 }
 
 fn has_install_script(pkg: &LockedPackage) -> bool {

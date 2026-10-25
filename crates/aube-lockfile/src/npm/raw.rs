@@ -86,6 +86,8 @@ pub(super) struct RawNpmPackage {
     pub(super) funding: Option<RawNpmFunding>,
     #[serde(default)]
     pub(super) has_install_script: bool,
+    #[serde(default)]
+    pub(super) deprecated: Option<String>,
 }
 
 /// `LockedPackage::extra_meta` key carrying npm's `hasInstallScript: true`

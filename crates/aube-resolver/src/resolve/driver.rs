@@ -1256,27 +1256,18 @@ impl<'a> ResolveDriver<'a> {
                 yarn_checksum: None,
                 engines: version_meta.engines.clone(),
                 // Rehydrate a string-form bin (`"bin": "cli.js"`)
-                // into `{<package_name>: "cli.js"}` — registry
-                // packuments leave the name off, expecting
-                // consumers to default it to the package name.
-                // Doing it here keeps bun's per-entry meta
-                // byte-identical to bun's own output without
-                // pushing the fixup into every writer.
+                // into `{<command>: "cli.js"}` — registry packuments
+                // leave the name off, expecting consumers to default
+                // it to the package name. The command is named after
+                // the real registry package (not an alias), without
+                // its scope: `@scope/tool` installs a `tool` command,
+                // which is the key npm and bun write.
                 bin: {
                     let mut m = version_meta.bin.clone();
                     if let Some(path) = m.remove("") {
-                        // String-form `bin` in a packument
-                        // (`"bin": "cli.js"`) is implicitly
-                        // named after the real registry
-                        // package — not the alias. For an
-                        // aliased dep (`"h3-v2": "npm:h3@…"`)
-                        // the bun writer must emit the bin
-                        // under `h3`, not `h3-v2`, or the
-                        // map drifts against bun's own
-                        // output (and the shim install path
-                        // creates the wrong binary name).
-                        let bin_name = task.real_name.as_deref().unwrap_or(&task.name).to_string();
-                        m.insert(bin_name, path);
+                        let real_name = task.real_name.as_deref().unwrap_or(&task.name);
+                        let bin_name = real_name.rsplit('/').next().unwrap_or(real_name);
+                        m.insert(bin_name.to_string(), path);
                     }
                     m
                 },
