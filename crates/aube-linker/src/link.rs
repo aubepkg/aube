@@ -861,6 +861,10 @@ impl Linker {
         mkdirp(&aube_dir)?;
         mkdirp(&root_nm)?;
 
+        // Reclaim `.tmp-<pid>-*` dirs left by aborted installs, as
+        // `link_all` does for a single project.
+        sweep_stale_tmp_dirs(&aube_dir);
+
         let mut stats = LinkStats::default();
 
         // Patch reconciliation. Mirrors `link_all`'s logic: wipe

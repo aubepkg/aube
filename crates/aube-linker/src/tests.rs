@@ -909,6 +909,26 @@ fn link_all_links_dependencies_of_physical_file_link_importers() {
 }
 
 #[test]
+fn link_all_sweeps_stale_tmp_dirs_when_delegating_to_the_workspace_linker() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(project_dir.join("vendor/host")).unwrap();
+    let stale = project_dir.join("node_modules/.aube/.tmp-1-0");
+    std::fs::create_dir_all(&stale).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph
+        .importers
+        .insert("vendor/host".to_string(), Vec::new());
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_all(&project_dir, &graph, &indices)
+        .unwrap();
+
+    assert!(!stale.exists());
+}
+
+#[test]
 fn virtual_store_only_sweeps_visible_links_of_physical_file_link_importers() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");
