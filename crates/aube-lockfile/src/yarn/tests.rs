@@ -1800,3 +1800,132 @@ fn berry_write_escapes_conditions_that_would_inject_fields() {
     assert!(!written.contains("\n  injected:"), "{written}");
     assert!(parse(out.path(), &manifest).is_ok());
 }
+
+#[test]
+fn berry_rewrite_keeps_requested_descriptors_optional_meta_and_bare_peer_ranges() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@npm:^1.0.0":
+  version: 1.2.3
+  resolution: "foo@npm:1.2.3"
+  dependencies:
+    bar: "npm:^2.0.0"
+    native: "npm:^3.0.0"
+  peerDependencies:
+    core: ^1.7.1 || ^2.0.0-alpha.4
+    any: "*"
+  dependenciesMeta:
+    native:
+      optional: true
+  checksum: 10c0/foohash
+  languageName: node
+  linkType: hard
+
+"bar@npm:^2.0.0":
+  version: 2.5.0
+  resolution: "bar@npm:2.5.0"
+  checksum: 10c0/barhash
+  languageName: node
+  linkType: hard
+
+"native@npm:^3.0.0":
+  version: 3.1.0
+  resolution: "native@npm:3.1.0"
+  checksum: 10c0/nativehash
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    assert!(
+        graph.packages["foo@1.2.3"]
+            .optional_dependencies
+            .contains_key("native")
+    );
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+
+    assert!(written.contains("\n\"bar@npm:^2.0.0\":\n"), "{written}");
+    assert!(!written.contains("bar@npm:2.5.0, "), "{written}");
+    assert!(
+        written.contains("    core: ^1.7.1 || ^2.0.0-alpha.4\n"),
+        "{written}"
+    );
+    assert!(written.contains("    any: \"*\"\n"), "{written}");
+    assert!(
+        written.contains("  dependenciesMeta:\n    native:\n      optional: true\n"),
+        "{written}"
+    );
+    assert!(!written.contains("optionalDependencies"), "{written}");
+}
+
+#[test]
+fn berry_header_keeps_exact_descriptor_when_requested_exactly() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@npm:1.2.3, foo@npm:^1.0.0":
+  version: 1.2.3
+  resolution: "foo@npm:1.2.3"
+  checksum: 10c0/foohash
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("foo", "1.2.3")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(written.contains("\n\"foo@npm:1.2.3\":\n"), "{written}");
+}
+
+#[test]
+fn berry_rewrite_header_covers_optional_edges_and_unicode_peer_ranges() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@npm:^1.0.0":
+  version: 1.2.3
+  resolution: "foo@npm:1.2.3"
+  dependencies:
+    native: "npm:^3.0.0"
+  peerDependencies:
+    core: "é x"
+  dependenciesMeta:
+    native:
+      optional: true
+  languageName: node
+  linkType: hard
+
+"native@npm:^3.0.0":
+  version: 3.1.0
+  resolution: "native@npm:3.1.0"
+  languageName: node
+  linkType: hard
+"#;
+    std::fs::write(tmp.path(), content).unwrap();
+    let manifest = make_manifest(&[("foo", "^1.0.0")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_berry(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(written.contains("\n\"native@npm:^3.0.0\":\n"), "{written}");
+    assert!(written.contains("    core: é x\n"), "{written}");
+    let reparsed = parse(out.path(), &manifest).unwrap();
+    assert!(
+        reparsed.packages["foo@1.2.3"]
+            .optional_dependencies
+            .contains_key("native")
+    );
+}

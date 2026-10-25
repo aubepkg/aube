@@ -294,17 +294,21 @@ impl LockfileGraph {
             let Some(deps) = self.importers.get(&importer) else {
                 continue;
             };
-            for spec in deps.iter().filter_map(|dep| dep.specifier.as_deref()) {
-                let Some(rel) = spec
-                    .strip_prefix("file:")
-                    .or_else(|| spec.strip_prefix("link:"))
+            for dep in deps.iter().filter(|dep| {
+                dep.specifier
+                    .as_deref()
+                    .is_some_and(|spec| spec.starts_with("file:") || spec.starts_with("link:"))
+            }) {
+                let Some(crate::LocalSource::Link(path)) = self
+                    .packages
+                    .get(&dep.dep_path)
+                    .and_then(|pkg| pkg.local_source.as_ref())
                 else {
                     continue;
                 };
-                let target =
-                    aube_util::path::normalize_lexical(&std::path::Path::new(&importer).join(rel))
-                        .to_string_lossy()
-                        .replace('\\', "/");
+                let target = aube_util::path::normalize_lexical(path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 if self.importers.contains_key(&target) && reached.insert(target.clone()) {
                     queue.push(target);
                 }

@@ -4375,6 +4375,107 @@ async fn lockfile_reuse_preserves_transitive_optional_edges() {
 }
 
 #[tokio::test]
+async fn lockfile_reuse_keeps_required_peer_missing_from_locked_edges() {
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+
+    // npm lockfiles list a hoisted peer as its own package entry with no
+    // edge from the dependent, so the dependent's locked `dependencies`
+    // omit it. An optional peer stays out, as on a fresh resolve.
+    let mut existing_pkgs: BTreeMap<String, LockedPackage> = BTreeMap::new();
+    existing_pkgs.insert(
+        "host@1.0.0".to_string(),
+        LockedPackage {
+            name: "host".to_string(),
+            version: "1.0.0".to_string(),
+            dep_path: "host@1.0.0".to_string(),
+            peer_dependencies: [
+                ("react".to_string(), "^18".to_string()),
+                ("extra".to_string(), "^1".to_string()),
+            ]
+            .into(),
+            peer_dependencies_meta: [(
+                "extra".to_string(),
+                aube_lockfile::PeerDepMeta { optional: true },
+            )]
+            .into(),
+            ..Default::default()
+        },
+    );
+    for (name, version) in [
+        ("react", "18.2.0"),
+        ("extra", "1.0.0"),
+        ("loose-envify", "1.4.0"),
+    ] {
+        let dependencies = if name == "react" {
+            [("loose-envify".to_string(), "1.4.0".to_string())].into()
+        } else {
+            BTreeMap::new()
+        };
+        existing_pkgs.insert(
+            format!("{name}@{version}"),
+            LockedPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dep_path: format!("{name}@{version}"),
+                dependencies,
+                ..Default::default()
+            },
+        );
+    }
+    let existing = LockfileGraph {
+        packages: existing_pkgs,
+        importers: BTreeMap::new(),
+        settings: Default::default(),
+        overrides: BTreeMap::new(),
+        package_extensions_checksum: None,
+        pnpmfile_checksum: None,
+        ignored_optional_dependencies: BTreeSet::new(),
+        times: BTreeMap::new(),
+        skipped_optional_dependencies: BTreeMap::new(),
+        catalogs: BTreeMap::new(),
+        bun_config_version: None,
+        patched_dependencies: BTreeMap::new(),
+        trusted_dependencies: Vec::new(),
+        runtimes: BTreeMap::new(),
+        extra_fields: BTreeMap::new(),
+        workspace_extra_fields: BTreeMap::new(),
+    };
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("host".to_string(), "1.0.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, Some(&existing))
+        .await
+        .expect("resolve failed");
+
+    assert!(
+        graph_has_package(&graph, "react", "18.2.0"),
+        "required peer must survive lockfile reuse"
+    );
+    assert!(
+        graph_has_package(&graph, "loose-envify", "1.4.0"),
+        "the peer's own dependencies must survive too"
+    );
+    assert_eq!(
+        graph.packages["react@18.2.0"]
+            .dependencies
+            .get("loose-envify")
+            .map(String::as_str),
+        Some("1.4.0"),
+    );
+    assert!(
+        !graph_has_package(&graph, "extra", "1.0.0"),
+        "optional peer must not be pulled in"
+    );
+}
+
+#[tokio::test]
 async fn tarball_parent_resolves_absolute_file_children() {
     for tarball in [false, true] {
         for exclude in [false, true] {
@@ -4648,6 +4749,42 @@ async fn fresh_resolve_records_deprecated_reason_on_extra_meta() {
         Some("use bar instead"),
         "fresh resolve must record the deprecation reason on extra_meta"
     );
+}
+
+// A string-form `bin` is named after the real package without its scope,
+// the key npm and bun write (`@scope/tool` -> `tool`), and an alias keeps
+// the registry name rather than the alias.
+#[tokio::test]
+async fn string_bin_is_named_after_unscoped_real_package() {
+    let mut scoped = make_packument("@fixture/metadata", &["1.0.0"], "1.0.0");
+    scoped
+        .versions
+        .get_mut("1.0.0")
+        .unwrap()
+        .bin
+        .insert(String::new(), "./cli.js".to_string());
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    resolver
+        .cache
+        .insert("@fixture/metadata".to_string(), scoped.into());
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("@fixture/metadata".to_string(), "1.0.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("resolve failed");
+
+    let bin = &graph.packages["@fixture/metadata@1.0.0"].bin;
+    assert_eq!(bin.len(), 1);
+    assert_eq!(bin.get("metadata").map(String::as_str), Some("./cli.js"));
 }
 
 // A fresh resolve must carry the packument's `hasInstallScript` onto the

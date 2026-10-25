@@ -239,13 +239,17 @@ where
 /// Manifest fields, other than the tool's own namespace, that shape the
 /// install. The active embedder's `manifest_namespace` is folded in at the
 /// digest site (it sorts ahead of these for standalone aube → `"aube"`).
+/// `bin` and `directories` (whose `bin` names a directory of commands)
+/// decide the `.bin` entries install links for a package's dependents.
 pub const INSTALL_SHAPE_FIELDS: &[&str] = &[
+    "bin",
     "bundleDependencies",
     "bundledDependencies",
     "catalog",
     "catalogs",
     "dependencies",
     "devDependencies",
+    "directories",
     "engines",
     "name",
     "optionalDependencies",
@@ -430,6 +434,24 @@ mod tests {
             manifest_install_shape_digest(&a),
             manifest_install_shape_digest(&b)
         );
+    }
+
+    #[test]
+    fn manifest_digest_reacts_to_bin_change() {
+        for (a, b) in [
+            (r#"{"bin":{"a":"cli.js"}}"#, r#"{"bin":{"b":"cli.js"}}"#),
+            (
+                r#"{"directories":{"bin":"bin"}}"#,
+                r#"{"directories":{"bin":"scripts"}}"#,
+            ),
+        ] {
+            let a: serde_json::Value = serde_json::from_str(a).unwrap();
+            let b: serde_json::Value = serde_json::from_str(b).unwrap();
+            assert_ne!(
+                manifest_install_shape_digest(&a),
+                manifest_install_shape_digest(&b)
+            );
+        }
     }
 
     #[test]

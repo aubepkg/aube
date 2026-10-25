@@ -61,6 +61,8 @@ struct WriteNpmPackage<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     libc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    deprecated: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     funding: Option<serde_json::Value>,
     /// The root manifest's `workspaces` field, copied verbatim as npm
     /// does, so npm and aube rewrites don't flip it back and forth.
@@ -338,6 +340,78 @@ pub fn write(
         }
     }
 
+    // A directory link resolves children from its source, which can be outside
+    // the importing member's ancestor chain. Give that source its own tree.
+    let mut directory_queue: Vec<String> = placed.values().cloned().collect();
+    let mut visited_directories = BTreeSet::new();
+    let enclosing_dirs: Vec<String> = graph
+        .importers
+        .keys()
+        .filter(|importer| *importer != ".")
+        .cloned()
+        .chain(
+            canonical
+                .values()
+                .filter_map(|pkg| match &pkg.local_source {
+                    Some(LocalSource::Directory(dir)) => Some(directory_target(project_dir, dir)),
+                    _ => None,
+                }),
+        )
+        .collect();
+    while let Some(key) = directory_queue.pop() {
+        let Some(pkg) = canonical.get(&key) else {
+            continue;
+        };
+        let Some(LocalSource::Directory(dir)) = &pkg.local_source else {
+            continue;
+        };
+        if !visited_directories.insert(key) {
+            continue;
+        }
+        let roots: Vec<DirectDep> = pkg
+            .dependencies
+            .iter()
+            .map(|(name, value)| DirectDep {
+                name: name.clone(),
+                dep_path: super::child_canonical_key(name, value),
+                dep_type: DepType::Production,
+                specifier: pkg.declared_dependencies.get(name).cloned(),
+            })
+            .collect();
+        let tree = super::build_hoist_tree(&canonical, &roots, None, &BTreeSet::new());
+        // Only the root copy is a shortcut when no other linked directory or
+        // member encloses this one; an enclosing directory's own
+        // `node_modules` is searched first and may hold another version.
+        let target = directory_target(project_dir, dir);
+        let enclosed = enclosing_dirs
+            .iter()
+            .any(|outer| target.starts_with(&format!("{outer}/")));
+        let redundant_tops: BTreeSet<_> = tree
+            .iter()
+            .filter(|(segments, child_key)| {
+                !enclosed
+                    && !dir.is_absolute()
+                    && !dir.starts_with("..")
+                    && segments.len() == 1
+                    && placed.get(&format!("node_modules/{}", segments[0])) == Some(*child_key)
+            })
+            .map(|(segments, _)| segments[0].clone())
+            .collect();
+        for (segments, child_key) in tree {
+            if redundant_tops.contains(&segments[0]) {
+                continue;
+            }
+            let install_path = format!(
+                "{}/{}",
+                directory_target(project_dir, dir),
+                super::segments_to_install_path(&segments)
+            );
+            if placed.insert(install_path, child_key.clone()).is_none() {
+                directory_queue.push(child_key);
+            }
+        }
+    }
+
     // npm links a `file:` directory to its target, so the link's nested
     // `node_modules` live under the target path, where the reader looks.
     let placed: BTreeMap<String, String> = placed
@@ -522,6 +596,7 @@ pub fn write(
                     os: pkg.os.to_vec(),
                     cpu: pkg.cpu.to_vec(),
                     libc: pkg.libc.to_vec(),
+                    deprecated: deprecated(pkg),
                     funding: npm_funding(pkg),
                     dev,
                     optional,
@@ -559,6 +634,7 @@ pub fn write(
                 os: pkg.os.to_vec(),
                 cpu: pkg.cpu.to_vec(),
                 libc: pkg.libc.to_vec(),
+                deprecated: deprecated(pkg),
                 funding: npm_funding(pkg),
                 dev,
                 optional,
@@ -772,6 +848,13 @@ fn manifest_funding(manifest: &aube_manifest::PackageJson) -> Option<serde_json:
             Value::Bool(true) => true,
         })
         .cloned()
+}
+
+fn deprecated(pkg: &LockedPackage) -> Option<&str> {
+    pkg.extra_meta
+        .get("deprecated")
+        .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.is_empty())
 }
 
 fn has_install_script(pkg: &LockedPackage) -> bool {
