@@ -286,6 +286,10 @@ pub struct LockfileSettings {
     /// `settings:` header so it survives parse/write cycles without
     /// re-reading `.npmrc`.
     pub lockfile_include_tarball_url: bool,
+    /// Other `settings:` entries (pnpm's `peersSuffixMaxLength`, …),
+    /// kept verbatim so a rewrite doesn't change what pnpm checks a
+    /// frozen install against.
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for LockfileSettings {
@@ -294,6 +298,7 @@ impl Default for LockfileSettings {
             auto_install_peers: true,
             exclude_links_from_lockfile: false,
             lockfile_include_tarball_url: false,
+            extra: BTreeMap::new(),
         }
     }
 }
@@ -1136,6 +1141,12 @@ impl LockfileGraph {
     /// on any pair of graphs — parsing the old lockfile is the
     /// caller's concern.
     pub fn overlay_metadata_from(&mut self, prior: &LockfileGraph) {
+        for (key, value) in &prior.settings.extra {
+            self.settings
+                .extra
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
         // Build a canonical `name@version → prior pkg` lookup once so
         // repeated peer-context variants in `self.packages` all hit
         // the same prior entry.

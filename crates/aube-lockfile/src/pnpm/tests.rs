@@ -2538,6 +2538,7 @@ fn exclude_links_from_lockfile_drops_link_deps_from_importer() {
             auto_install_peers: true,
             exclude_links_from_lockfile: true,
             lockfile_include_tarball_url: false,
+            extra: BTreeMap::new(),
         },
         ..Default::default()
     };
@@ -5483,4 +5484,62 @@ snapshots:
         }
     }
 }
+}
+
+#[test]
+fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let mut graph = LockfileGraph::default();
+    graph
+        .settings
+        .extra
+        .insert("peersSuffixMaxLength".into(), 80.into());
+    let source = LocalSource::Tarball("deps/bundler.tgz".into());
+    let dep_path = source.dep_path("bundler");
+    graph.importers.insert(
+        ".".into(),
+        vec![DirectDep {
+            name: "bundler".into(),
+            dep_path: dep_path.clone(),
+            dep_type: DepType::Production,
+            specifier: Some("file:deps/bundler.tgz".into()),
+        }],
+    );
+    graph.packages.insert(
+        dep_path.clone(),
+        LockedPackage {
+            name: "bundler".into(),
+            version: "1.0.0".into(),
+            integrity: Some("sha512-bundler".into()),
+            dep_path,
+            local_source: Some(source),
+            bundled_dependencies: vec!["is-number".into()],
+            ..Default::default()
+        },
+    );
+    write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+    let out: yaml_serde::Value =
+        yaml_serde::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(out["settings"]["peersSuffixMaxLength"].as_u64(), Some(80));
+    let package = &out["packages"]["bundler@file:deps/bundler.tgz"];
+    assert_eq!(package["version"].as_str(), Some("1.0.0"));
+    assert_eq!(
+        package["resolution"]["integrity"].as_str(),
+        Some("sha512-bundler")
+    );
+    assert_eq!(
+        package["bundledDependencies"][0].as_str(),
+        Some("is-number")
+    );
+    assert!(out["snapshots"]["bundler@file:deps/bundler.tgz"]["bundledDependencies"].is_null());
+
+    let parsed = parse(&path).unwrap();
+    assert_eq!(parsed.settings.extra["peersSuffixMaxLength"], 80);
+    let reparsed = parsed
+        .packages
+        .values()
+        .find(|p| p.name == "bundler")
+        .unwrap();
+    assert_eq!(reparsed.bundled_dependencies, ["is-number"]);
 }

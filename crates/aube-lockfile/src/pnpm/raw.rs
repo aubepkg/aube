@@ -265,6 +265,8 @@ pub(super) struct RawSettings {
     pub(super) exclude_links_from_lockfile: Option<bool>,
     #[serde(default)]
     pub(super) lockfile_include_tarball_url: Option<bool>,
+    #[serde(flatten)]
+    pub(super) extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -304,6 +306,8 @@ pub(super) struct RawPackageInfo {
     pub(super) libc: Vec<String>,
     #[serde(default)]
     pub(super) has_bin: bool,
+    #[serde(default)]
+    pub(super) bundled_dependencies: Option<aube_manifest::BundledDependencies>,
     /// Registry deprecation message pnpm records on a `packages:` entry
     /// (`deprecated: <reason>`). Round-tripped so a parse/write cycle
     /// keeps the field pnpm wrote; carried on the shared graph via

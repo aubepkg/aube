@@ -570,7 +570,7 @@ pub fn write_with_project_root(
                 variants: None,
             }),
             Some(local @ LocalSource::Tarball(_)) => Some(WritableResolution {
-                integrity: None,
+                integrity: native_pnpm_aliases.then(|| pkg.integrity.clone()).flatten(),
                 git_hosted: false,
                 directory: None,
                 tarball: Some(format!("file:{}", local.path_posix())),
@@ -686,8 +686,10 @@ pub fn write_with_project_root(
         // resolution (`node-expat@https://codeload…: { …, version: 2.4.3 }`),
         // so emit it for `RemoteTarball` too — otherwise a fresh resolve
         // drops the field and drifts from a re-read lockfile (and pnpm).
+        // pnpm also records the manifest semver next to a local tarball.
         let write_version = (url_keyed
-            || matches!(pkg.local_source, Some(LocalSource::RemoteTarball(_))))
+            || matches!(pkg.local_source, Some(LocalSource::RemoteTarball(_)))
+            || native_pnpm_aliases && matches!(pkg.local_source, Some(LocalSource::Tarball(_))))
         .then(|| pkg.version.clone());
         packages.insert(
             canonical,
@@ -721,6 +723,8 @@ pub fn write_with_project_root(
                 has_bin: !pkg.bin.is_empty(),
                 peer_dependencies: peer_deps,
                 peer_dependencies_meta: peer_meta,
+                bundled_dependencies: (native_pnpm_aliases && !pkg.bundled_dependencies.is_empty())
+                    .then(|| pkg.bundled_dependencies.clone()),
                 alias_of: (!native_pnpm_aliases)
                     .then(|| pkg.alias_of.clone())
                     .flatten(),
@@ -793,6 +797,7 @@ pub fn write_with_project_root(
                 has_bin: pin.has_bin,
                 peer_dependencies: None,
                 peer_dependencies_meta: None,
+                bundled_dependencies: None,
                 alias_of: None,
             },
         );
@@ -875,7 +880,8 @@ pub fn write_with_project_root(
                     Some(pkg.transitive_peer_dependencies.clone())
                 },
                 optional: if pkg.optional { Some(true) } else { None },
-                bundled_dependencies: if pkg.bundled_dependencies.is_empty() {
+                bundled_dependencies: if native_pnpm_aliases || pkg.bundled_dependencies.is_empty()
+                {
                     None
                 } else {
                     Some(pkg.bundled_dependencies.clone())
@@ -933,6 +939,11 @@ pub fn write_with_project_root(
             auto_install_peers: graph.settings.auto_install_peers,
             exclude_links_from_lockfile: graph.settings.exclude_links_from_lockfile,
             lockfile_include_tarball_url: graph.settings.lockfile_include_tarball_url,
+            extra: if native_pnpm_aliases {
+                graph.settings.extra.clone()
+            } else {
+                BTreeMap::new()
+            },
         },
         catalogs,
         // Skipped at serialization time when empty so the YAML stays
@@ -1122,6 +1133,10 @@ struct WritableSettings {
     /// byte-identical lockfiles.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     lockfile_include_tarball_url: bool,
+    /// Settings aube doesn't model (pnpm's `peersSuffixMaxLength`, …),
+    /// written back verbatim into pnpm-lock.yaml.
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -1293,6 +1308,8 @@ struct WritablePackageInfo {
     peer_dependencies: Option<BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     peer_dependencies_meta: Option<BTreeMap<String, WritablePeerDepMeta>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bundled_dependencies: Option<Vec<String>>,
     /// Real registry name for npm-alias deps. Aube-specific extension
     /// (pnpm encodes aliases in the snapshot key itself — e.g.
     /// `odd-alias@npm:is-odd@3.0.1` — but aube keys by `alias@version`

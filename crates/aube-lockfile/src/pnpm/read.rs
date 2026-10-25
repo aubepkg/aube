@@ -547,6 +547,24 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
                 local_pkg.dependencies.extend(opt_deps.clone());
                 local_pkg.optional_dependencies = opt_deps;
             }
+            // pnpm records a local tarball's semver, SHA-512 and bundled
+            // children on its `packages:` entry; carry them so a rewrite
+            // writes them back instead of the importer's `file:` version.
+            if matches!(local, LocalSource::Tarball(_))
+                && let Some(info) = raw.packages.get(&canonical)
+            {
+                if let Some(version) = &info.version {
+                    local_pkg.version = version.clone();
+                }
+                local_pkg.integrity = info.resolution.as_ref().and_then(|r| r.integrity.clone());
+                if let Some(bundled) = &info.bundled_dependencies {
+                    local_pkg.bundled_dependencies = bundled
+                        .names(&local_pkg.dependencies)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect();
+                }
+            }
             // Prefer the authoritative LocalSource classification
             // from the `resolution:` block over the guess the
             // importers loop made from the bare specifier. For git
@@ -764,8 +782,18 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             &reserved_package_keys,
         );
         dependencies.extend(optional_dependencies.clone());
-        let bundled_dependencies = snapshot
-            .and_then(|s| s.bundled_dependencies.clone())
+        // pnpm records `bundledDependencies` on the package entry; older
+        // aube lockfiles wrote it on the snapshot instead.
+        let bundled_dependencies = pkg_info
+            .and_then(|p| p.bundled_dependencies.as_ref())
+            .map(|bundled| {
+                bundled
+                    .names(&dependencies)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .or_else(|| snapshot.and_then(|s| s.bundled_dependencies.clone()))
             .unwrap_or_default();
         let optional = snapshot.and_then(|s| s.optional).unwrap_or(false);
         let transitive_peer_dependencies = snapshot
@@ -1028,6 +1056,7 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             auto_install_peers: s.auto_install_peers.unwrap_or(true),
             exclude_links_from_lockfile: s.exclude_links_from_lockfile.unwrap_or(false),
             lockfile_include_tarball_url: s.lockfile_include_tarball_url.unwrap_or(false),
+            extra: s.extra,
         })
         .unwrap_or_default();
 

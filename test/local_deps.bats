@@ -749,6 +749,62 @@ EOF
 	assert_file_exists "$nested/package.json"
 }
 
+@test "add keeps pnpm settings and a local tarball's bundled metadata in pnpm-lock.yaml" {
+	mkdir -p staging/package/node_modules/bundled-child app/deps
+	cat >staging/package/package.json <<'EOF'
+{"name":"bundler","version":"1.0.0","dependencies":{"bundled-child":"1.0.0"},"bundledDependencies":["bundled-child"]}
+EOF
+	cat >staging/package/node_modules/bundled-child/package.json <<'EOF'
+{"name":"bundled-child","version":"1.0.0"}
+EOF
+	(cd staging && tar -czf ../app/deps/bundler.tgz package)
+	cd app
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"bundler":"file:deps/bundler.tgz"}}
+EOF
+	cat >pnpm-lock.yaml <<'EOF'
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+  peersSuffixMaxLength: 80
+
+importers:
+
+  .:
+    dependencies:
+      bundler:
+        specifier: file:deps/bundler.tgz
+        version: file:deps/bundler.tgz
+
+packages:
+
+  bundler@file:deps/bundler.tgz:
+    resolution: {integrity: sha512-stale, tarball: file:deps/bundler.tgz}
+    version: 1.0.0
+    bundledDependencies:
+      - bundled-child
+
+snapshots:
+
+  bundler@file:deps/bundler.tgz: {}
+EOF
+
+	run aube add is-number@7.0.0
+	assert_success
+	assert_file_contains pnpm-lock.yaml 'peersSuffixMaxLength: 80'
+	assert_file_contains pnpm-lock.yaml 'bundler@file:deps/bundler.tgz:'
+	assert_file_contains pnpm-lock.yaml 'version: 1.0.0'
+	assert_file_contains pnpm-lock.yaml 'bundled-child$'
+	run grep -F 'bundled-child@' pnpm-lock.yaml
+	assert_failure
+	local integrity
+	integrity="sha512-$(openssl dgst -sha512 -binary deps/bundler.tgz | base64 -w0)"
+	assert_file_contains pnpm-lock.yaml "integrity: $integrity"
+}
+
 @test "file: tarball optional dependencies honor ignore and exotic policies" {
 	mkdir -p staging/package app/local-child
 	cat >staging/package/package.json <<'EOF'

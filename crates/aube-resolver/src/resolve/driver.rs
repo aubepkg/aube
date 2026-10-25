@@ -1634,6 +1634,8 @@ impl<'a> ResolveDriver<'a> {
         }
         let mut local_peers = BTreeMap::new();
         let mut local_peers_meta = BTreeMap::new();
+        let mut local_integrity = None;
+        let mut local_bundles = Vec::new();
         let (mut local, real_version, mut target_deps, mut target_optional_deps, integrity) =
             if let LocalSource::Git(ref g) = raw_local {
                 let shallow =
@@ -1696,12 +1698,16 @@ impl<'a> ResolveDriver<'a> {
                         let manifest = read_local_manifest(&raw_local, &importer_root)
                             .unwrap_or_else(|_| crate::local_source::LocalManifest {
                                 name: task.name.clone(),
+                                integrity: None,
+                                bundled_dependencies: Vec::new(),
                                 version: "0.0.0".to_string(),
                                 dependencies: BTreeMap::new(),
                                 optional_dependencies: BTreeMap::new(),
                                 peer_dependencies: BTreeMap::new(),
                                 peer_dependencies_meta: BTreeMap::new(),
                             });
+                        local_integrity = manifest.integrity;
+                        local_bundles = manifest.bundled_dependencies;
                         local_peers = manifest.peer_dependencies;
                         local_peers_meta = manifest.peer_dependencies_meta;
                         (
@@ -1710,8 +1716,12 @@ impl<'a> ResolveDriver<'a> {
                             manifest.optional_dependencies,
                         )
                     };
-                (local, version, deps, optional_deps, None)
+                (local, version, deps, optional_deps, local_integrity)
             };
+        for name in &local_bundles {
+            target_deps.remove(name);
+            target_optional_deps.remove(name);
+        }
         attach_integrity_to_git_source(&mut local, integrity.as_deref());
         // Apply `packageExtensions` to non-registry packages too. The
         // registry path applies them to the picked VersionMetadata; git /
@@ -1786,6 +1796,7 @@ impl<'a> ResolveDriver<'a> {
                     local_source: Some(local.clone()),
                     peer_dependencies: local_peers,
                     peer_dependencies_meta: local_peers_meta,
+                    bundled_dependencies: local_bundles,
                     ..Default::default()
                 },
             );

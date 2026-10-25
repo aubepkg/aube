@@ -139,6 +139,12 @@ fn read_tarball_package_json(bytes: &[u8]) -> Result<Vec<u8>, String> {
 /// extracting the rest of the archive.
 pub(crate) struct LocalManifest {
     pub name: String,
+    /// SHA-512 of the `.tgz` for [`LocalSource::Tarball`] sources.
+    pub integrity: Option<String>,
+    /// `bundledDependencies` names, set only for tarballs: they ship the
+    /// bundled children inside the archive, while a directory import
+    /// leaves `node_modules` out.
+    pub bundled_dependencies: Vec<String>,
     pub version: String,
     pub dependencies: BTreeMap<String, String>,
     pub optional_dependencies: BTreeMap<String, String>,
@@ -158,6 +164,7 @@ pub(crate) fn read_local_manifest(
     };
     let path = importer_root.join(local_path);
 
+    let mut integrity = None;
     let content = match local {
         LocalSource::Directory(_) | LocalSource::Link(_) | LocalSource::Portal(_) => {
             std::fs::read(path.join("package.json"))
@@ -166,6 +173,7 @@ pub(crate) fn read_local_manifest(
         LocalSource::Tarball(_) => {
             let bytes = std::fs::read(&path)
                 .map_err(|e| Error::Registry(local.specifier(), e.to_string()))?;
+            integrity = Some(aube_store::sha512_integrity(&bytes));
             read_tarball_package_json(&bytes).map_err(|e| Error::Registry(local.specifier(), e))?
         }
         LocalSource::Exec(_) | LocalSource::Git(_) | LocalSource::RemoteTarball(_) => {
@@ -198,7 +206,17 @@ pub(crate) fn read_local_manifest(
             .entry(name.clone())
             .or_insert_with(|| "*".to_string());
     }
+    let bundled_dependencies = match (&pj.bundled_dependencies, local) {
+        (Some(bundled), LocalSource::Tarball(_)) => bundled
+            .names(&pj.dependencies)
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
     Ok(LocalManifest {
+        integrity,
+        bundled_dependencies,
         name: pj.name.unwrap_or_default(),
         version: pj.version.unwrap_or_else(|| "0.0.0".to_string()),
         dependencies: pj.dependencies,
@@ -1054,5 +1072,56 @@ mod git_package_manifest_tests {
                 .contains("stat git package root in clone at /packages/missing"),
             "{err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod local_tarball_manifest_tests {
+    use super::*;
+
+    fn tarball_with_manifest(manifest: &[u8]) -> Vec<u8> {
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "package/package.json", manifest)
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn local_tarball_manifest_reports_integrity_and_bundled_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = tarball_with_manifest(
+            br#"{"name":"pkg","version":"2.3.4","dependencies":{"a":"1","b":"1"},"bundledDependencies":["a"]}"#,
+        );
+        std::fs::write(dir.path().join("pkg.tgz"), &bytes).unwrap();
+        let manifest =
+            read_local_manifest(&LocalSource::Tarball("pkg.tgz".into()), dir.path()).unwrap();
+        assert_eq!(
+            manifest.integrity,
+            Some(aube_store::sha512_integrity(&bytes))
+        );
+        assert_eq!(manifest.bundled_dependencies, ["a"]);
+    }
+
+    #[test]
+    fn local_directory_manifest_ignores_bundled_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("pkg")).unwrap();
+        std::fs::write(
+            dir.path().join("pkg/package.json"),
+            r#"{"name":"pkg","version":"1.0.0","dependencies":{"a":"1"},"bundledDependencies":true}"#,
+        )
+        .unwrap();
+        let manifest =
+            read_local_manifest(&LocalSource::Directory("pkg".into()), dir.path()).unwrap();
+        assert!(manifest.integrity.is_none());
+        assert!(manifest.bundled_dependencies.is_empty());
     }
 }
