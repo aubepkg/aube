@@ -1201,21 +1201,25 @@ fn propagate_peer_suffixes_to_ancestors(
             .collect();
         forward.insert(key.clone(), children);
         // Peer suffix segments name the registry package, so an aliased
-        // supplier (or an aliased package's own name) must be recognized
-        // by that name too.
+        // supplier is also recorded by its `registry-name@version`
+        // identity. Matching the version keeps an unrelated provider of the
+        // same registry package (another version) from being suppressed.
         let mut supplied: BTreeSet<String> = pkg
             .dependencies
             .iter()
             .chain(pkg.optional_dependencies.iter())
             .flat_map(|(name, tail)| {
-                let registry_name = graph
+                let identity = graph
                     .packages
                     .get(&format!("{name}@{tail}"))
-                    .map(|dep| dep.registry_name().to_string());
-                std::iter::once(name.clone()).chain(registry_name)
+                    .filter(|dep| dep.alias_of.is_some())
+                    .map(|dep| format!("{}@{}", dep.registry_name(), dep.version));
+                std::iter::once(name.clone()).chain(identity)
             })
             .collect();
-        supplied.insert(pkg.registry_name().to_string());
+        if pkg.alias_of.is_some() {
+            supplied.insert(format!("{}@{}", pkg.registry_name(), pkg.version));
+        }
         provides.insert(key.clone(), supplied);
     }
 
@@ -1290,7 +1294,12 @@ fn propagate_peer_suffixes_to_ancestors(
             for child in children {
                 let child_peers = collect(child, forward, provides, cumulative, visiting);
                 for (name, seg) in child_peers {
-                    if suppressed.contains(&name) {
+                    let identity = seg
+                        .strip_prefix('(')
+                        .and_then(|inner| inner.split(['(', ')']).next());
+                    if suppressed.contains(&name)
+                        || identity.is_some_and(|identity| suppressed.contains(identity))
+                    {
                         continue;
                     }
                     acc.entry(name).or_insert(seg);
@@ -2543,6 +2552,58 @@ mod tests {
                 .contains_key("lib@1.0.0(@tsc-rs/typescript@1.0.0)")
         );
         assert!(out.packages.contains_key("parent@1.0.0"));
+    }
+
+    #[test]
+    fn aliased_supplier_does_not_hide_another_version_of_its_registry_package() {
+        // `compat` is `real@1`; the root provides `real@2` to `lib`, so the
+        // child's `(real@2)` suffix must still reach `parent`.
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            ".".to_string(),
+            vec![
+                DirectDep {
+                    name: "parent".to_string(),
+                    dep_path: "parent@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                },
+                DirectDep {
+                    name: "real".to_string(),
+                    dep_path: "real@2.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("2.0.0".to_string()),
+                },
+            ],
+        );
+        let mut lib = locked("lib", &[]);
+        lib.peer_dependencies
+            .insert("real".to_string(), "*".to_string());
+        let compat = LockedPackage {
+            alias_of: Some("real".to_string()),
+            ..locked("compat", &[])
+        };
+        let real2 = LockedPackage {
+            version: "2.0.0".to_string(),
+            dep_path: "real@2.0.0".to_string(),
+            ..locked("real", &[])
+        };
+        for p in [
+            locked("parent", &[("lib", "1.0.0"), ("compat", "1.0.0")]),
+            lib,
+            compat,
+            real2,
+        ] {
+            g.packages.insert(p.dep_path.clone(), p);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        assert!(
+            out.packages.contains_key("parent@1.0.0(real@2.0.0)"),
+            "got keys: {:?}",
+            out.packages.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
