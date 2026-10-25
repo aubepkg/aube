@@ -3353,6 +3353,7 @@ fn test_write_deprecated_round_trips_and_writes_new_entries() {
         json["packages"]["node_modules/new"]["deprecated"],
         "fixture deprecation"
     );
+}
 
 #[test]
 fn test_write_absolute_directory_targets_relative_to_lockfile() {
