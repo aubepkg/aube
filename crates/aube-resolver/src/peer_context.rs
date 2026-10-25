@@ -781,6 +781,8 @@ fn apply_peer_contexts_once(
         name_index.entry(pkg.name.as_str()).or_default().push(pkg);
     }
 
+    let cyclic_peer_names = cyclic_peer_names(&canonical);
+
     // Root-importer scope used by `resolve-peers-from-workspace-root`.
     // Computed once from the canonical input so it reflects the
     // contextualized state of every root dep on fixed-point iterations
@@ -830,6 +832,7 @@ fn apply_peer_contexts_once(
                 &mut visiting,
                 options,
                 hashed_suffixes,
+                &cyclic_peer_names,
             )
             .unwrap_or_else(|| dep.dep_path.clone());
             new_deps.push(DirectDep {
@@ -1730,6 +1733,83 @@ fn apply_dedupe_peers_to_tail(tail: &str) -> String {
     apply_dedupe_peers_to_key(tail)
 }
 
+/// Names that sit on a cycle of declared peer dependencies (`a` peers on
+/// `b` and `b` on `a`, or a name peering on itself through versions).
+/// pnpm writes such a provider as a bare `name@version` in a consumer's
+/// suffix, since its own suffix would embed the consumer chain again.
+fn cyclic_peer_names(graph: &LockfileGraph) -> FxHashSet<String> {
+    let mut edges: FxHashMap<&str, FxHashSet<&str>> = FxHashMap::default();
+    for pkg in graph.packages.values() {
+        if pkg.peer_dependencies.is_empty() {
+            continue;
+        }
+        edges
+            .entry(pkg.name.as_str())
+            .or_default()
+            .extend(pkg.peer_dependencies.keys().map(String::as_str));
+    }
+
+    struct Tarjan<'a> {
+        edges: &'a FxHashMap<&'a str, FxHashSet<&'a str>>,
+        index: FxHashMap<&'a str, usize>,
+        low: FxHashMap<&'a str, usize>,
+        stack: Vec<&'a str>,
+        on_stack: FxHashSet<&'a str>,
+        cyclic: FxHashSet<String>,
+    }
+
+    impl<'a> Tarjan<'a> {
+        fn visit(&mut self, node: &'a str) {
+            let id = self.index.len();
+            self.index.insert(node, id);
+            self.low.insert(node, id);
+            self.stack.push(node);
+            self.on_stack.insert(node);
+            for &next in self.edges.get(node).into_iter().flatten() {
+                if !self.index.contains_key(next) {
+                    self.visit(next);
+                    let low = self.low[node].min(self.low[next]);
+                    self.low.insert(node, low);
+                } else if self.on_stack.contains(next) {
+                    let low = self.low[node].min(self.index[next]);
+                    self.low.insert(node, low);
+                }
+            }
+            if self.low[node] != self.index[node] {
+                return;
+            }
+            let mut component = Vec::new();
+            while let Some(member) = self.stack.pop() {
+                self.on_stack.remove(member);
+                component.push(member);
+                if member == node {
+                    break;
+                }
+            }
+            let self_loop = self.edges.get(node).is_some_and(|e| e.contains(node));
+            if component.len() > 1 || self_loop {
+                self.cyclic
+                    .extend(component.into_iter().map(str::to_string));
+            }
+        }
+    }
+
+    let mut tarjan = Tarjan {
+        edges: &edges,
+        index: FxHashMap::default(),
+        low: FxHashMap::default(),
+        stack: Vec::new(),
+        on_stack: FxHashSet::default(),
+        cyclic: FxHashSet::default(),
+    };
+    for &name in edges.keys() {
+        if !tarjan.index.contains_key(name) {
+            tarjan.visit(name);
+        }
+    }
+    tarjan.cyclic
+}
+
 #[allow(clippy::too_many_arguments)]
 fn visit_peer_context<'g>(
     input_dep_path: &str,
@@ -1741,6 +1821,7 @@ fn visit_peer_context<'g>(
     visiting: &mut FxHashSet<String>,
     options: &PeerContextOptions,
     hashed_suffixes: &mut HashedSuffixes,
+    cyclic_peer_names: &FxHashSet<String>,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
 
@@ -1958,7 +2039,7 @@ fn visit_peer_context<'g>(
                 &canonical_base,
                 hashed_suffixes,
             );
-            let display_v = if cycles_back {
+            let display_v = if cycles_back || cyclic_peer_names.contains(n.as_str()) {
                 canonical_tail(&provider.context_tail).to_string()
             } else {
                 provider.context_tail.clone()
@@ -2047,6 +2128,7 @@ fn visit_peer_context<'g>(
             visiting,
             options,
             hashed_suffixes,
+            cyclic_peer_names,
         );
         let new_tail = match child_new {
             Some(new_dep_path) => new_dep_path
@@ -2078,6 +2160,7 @@ fn visit_peer_context<'g>(
             visiting,
             options,
             hashed_suffixes,
+            cyclic_peer_names,
         );
         // A peer provider with no `packages:` entry is a workspace
         // package (the resolver only records a `DirectDep` for those).
@@ -2400,6 +2483,61 @@ mod tests {
 
         assert!(out.packages.contains_key("plugin@1.0.0"));
         assert!(!out.packages.contains_key("plugin@1.0.0(theme@1.0.0)"));
+    }
+
+    #[test]
+    fn peer_cycle_providers_use_bare_identities_for_outside_consumers() {
+        let mut g = LockfileGraph::default();
+        for (name, peers) in [
+            ("r2-host", vec!["r2-color", "r2-plugin"]),
+            ("r2-plugin", vec!["r2-color", "r2-host"]),
+            ("r2-consumer", vec!["r2-host"]),
+            ("r2-color", vec![]),
+        ] {
+            let mut pkg = locked(name, &[]);
+            pkg.peer_dependencies = peers
+                .into_iter()
+                .map(|name| (name.to_string(), "*".to_string()))
+                .collect();
+            g.importers
+                .entry(".".to_string())
+                .or_default()
+                .push(DirectDep {
+                    name: name.to_string(),
+                    dep_path: pkg.dep_path.clone(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                });
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+        let graph = g.clone();
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+        assert_eq!(
+            out.packages.keys().cloned().collect::<Vec<_>>(),
+            [
+                "r2-color@1.0.0",
+                "r2-consumer@1.0.0(r2-host@1.0.0)",
+                "r2-host@1.0.0(r2-color@1.0.0)(r2-plugin@1.0.0)",
+                "r2-plugin@1.0.0(r2-color@1.0.0)(r2-host@1.0.0)",
+            ]
+        );
+
+        let hashed = apply_peer_contexts(
+            graph,
+            &PeerContextOptions {
+                peers_suffix_max_length: 1,
+                ..Default::default()
+            },
+        )
+        .expect("hashed peer pass");
+        // Hashes taken from pnpm 12.14.0 and 11.10.0 on the same shape.
+        assert!(
+            hashed
+                .packages
+                .contains_key("r2-consumer@1.0.0(113cafeb2fbd38e575aa85615239a287)"),
+            "got keys: {:?}",
+            hashed.packages.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
