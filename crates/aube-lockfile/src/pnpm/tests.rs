@@ -5484,3 +5484,40 @@ snapshots:
     }
 }
 }
+
+#[test]
+fn rewrite_preserves_leading_package_manager_document() {
+    let environment = "---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.14.0\n        version: 12.14.0\n\npackages: {}\n\nsnapshots: {}\n\n---\n";
+    let project = "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n";
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["pnpm-lock.yaml", "pnpm-lock.feature.yaml"] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("{environment}{project}")).unwrap();
+        let graph = parse(&path).unwrap();
+        super::write::write(&path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+        let output = std::fs::read_to_string(&path).unwrap();
+        assert!(output.starts_with(environment), "{name}: {output}");
+        assert_eq!(output.matches("\n---\n").count(), 1, "{name}: {output}");
+        parse(&path).unwrap();
+    }
+}
+
+#[test]
+fn rewrite_does_not_add_environment_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n";
+    for name in ["pnpm-lock.yaml", "aube-lock.yaml"] {
+        let path = dir.path().join(name);
+        let environment = "---\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.14.0\n        version: 12.14.0\n---\n";
+        let original = if name == "aube-lock.yaml" {
+            format!("{environment}{project}")
+        } else {
+            project.to_string()
+        };
+        std::fs::write(&path, original).unwrap();
+        let graph = parse(&path).unwrap();
+        super::write::write(&path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+        let output = std::fs::read_to_string(&path).unwrap();
+        assert!(!output.contains("packageManagerDependencies"), "{name}");
+    }
+}

@@ -188,6 +188,42 @@ pub fn write(path: &Path, graph: &LockfileGraph, manifest: &PackageJson) -> Resu
     write_with_project_root(path, lockfile_dir, graph, manifest)
 }
 
+/// The leading pnpm environment document (`packageManagerDependencies` /
+/// `configDependencies`) of an existing `pnpm-lock*.yaml`, through its closing
+/// `---` line. pnpm owns that document; dropping it makes `pnpm install
+/// --frozen-lockfile` reject the rewritten lockfile.
+fn leading_environment_document(path: &Path) -> Option<String> {
+    let is_pnpm_lockfile = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("pnpm-lock.") && name.ends_with(".yaml"));
+    if !is_pnpm_lockfile {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut lines = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&content)
+        .split_inclusive('\n');
+    if lines.next()?.trim_end_matches(['\r', '\n']) != "---" {
+        return None;
+    }
+    let mut end = content.len() - lines.clone().map(str::len).sum::<usize>();
+    let body_start = end;
+    for line in lines {
+        end += line.len();
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            let body = &content[body_start..end - line.len()];
+            let document: yaml_serde::Value = yaml_serde::from_str(body).ok()?;
+            let importer = &document["importers"]["."];
+            let owned = importer.get("packageManagerDependencies").is_some()
+                || importer.get("configDependencies").is_some();
+            return owned.then(|| content[..end].to_string());
+        }
+    }
+    None
+}
+
 /// Write a LockfileGraph as pnpm-lock.yaml v9 format to `path`.
 /// `project_root` is the directory the graph's importer keys and local
 /// paths are relative to: the lockfile's own directory for a project
@@ -198,6 +234,7 @@ pub fn write_with_project_root(
     graph: &LockfileGraph,
     manifest: &PackageJson,
 ) -> Result<(), Error> {
+    let environment = leading_environment_document(path);
     let native_pnpm_aliases = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -969,6 +1006,10 @@ pub fn write_with_project_root(
 
     let yaml = yaml_serde::to_string(&lockfile).map_err(|e| Error::parse(path, e.to_string()))?;
     let yaml = reformat_for_pnpm_parity(&yaml);
+    let yaml = match environment {
+        Some(environment) => environment + &yaml,
+        None => yaml,
+    };
     // Atomic via tempfile + persist. Crash, Ctrl+C, or AV
     // quarantine during the write used to leave the user with a
     // truncated pnpm-lock.yaml on disk, next install failed to
