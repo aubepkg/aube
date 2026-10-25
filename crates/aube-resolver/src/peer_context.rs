@@ -1200,12 +1200,22 @@ fn propagate_peer_suffixes_to_ancestors(
             .filter(|k| graph.packages.contains_key(k))
             .collect();
         forward.insert(key.clone(), children);
-        let supplied: BTreeSet<String> = pkg
+        // Peer suffix segments name the registry package, so an aliased
+        // supplier (or an aliased package's own name) must be recognized
+        // by that name too.
+        let mut supplied: BTreeSet<String> = pkg
             .dependencies
-            .keys()
-            .chain(pkg.optional_dependencies.keys())
-            .cloned()
+            .iter()
+            .chain(pkg.optional_dependencies.iter())
+            .flat_map(|(name, tail)| {
+                let registry_name = graph
+                    .packages
+                    .get(&format!("{name}@{tail}"))
+                    .map(|dep| dep.registry_name().to_string());
+                std::iter::once(name.clone()).chain(registry_name)
+            })
             .collect();
+        supplied.insert(pkg.registry_name().to_string());
         provides.insert(key.clone(), supplied);
     }
 
@@ -1265,6 +1275,7 @@ fn propagate_peer_suffixes_to_ancestors(
         if !canonical_name.is_empty() {
             suppressed.insert(canonical_name);
         }
+
         // A peer this package supplies itself is resolved here, so it must
         // neither decorate this package's dep_path nor propagate above it
         // (pnpm stops the suffix at the supplier). This is what keeps a
@@ -1763,6 +1774,13 @@ fn visit_peer_context<'g>(
     // pass would re-hash the already-hashed key and grow it (covered
     // by the `peer_suffix_is_hashed_when_exceeding_cap` unit test).
     let canonical_base = canonical_tail(input_dep_path).to_string();
+    // Suffixes name aliased packages by registry name, so a cycle back to
+    // this package appears under that name.
+    let registry_base = pkg
+        .alias_of
+        .as_deref()
+        .zip(canonical_base.strip_prefix(pkg.name.as_str()))
+        .map(|(registry_name, rest)| format!("{registry_name}{rest}"));
 
     // Compute peer context: walk declared peers, resolve from ancestors
     // (nearest wins — the scope is rebuilt as we recurse) or from the
@@ -1971,7 +1989,9 @@ fn visit_peer_context<'g>(
                 &provider.context_tail,
                 &canonical_base,
                 hashed_suffixes,
-            );
+            ) || registry_base.as_deref().is_some_and(|base| {
+                refers_back_through_hashes(&provider.context_tail, base, hashed_suffixes)
+            });
             let display_v = if cycles_back {
                 canonical_tail(&provider.context_tail).to_string()
             } else {
@@ -2457,6 +2477,72 @@ mod tests {
             "got keys: {:?}",
             out.packages.keys().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn aliased_peer_cycle_converges_with_registry_names() {
+        let mut g = LockfileGraph::default();
+        for (alias, real) in [("a", "real-a"), ("b", "real-b")] {
+            let other = if alias == "a" { "b" } else { "a" };
+            let mut pkg = LockedPackage {
+                alias_of: Some(real.to_string()),
+                ..locked(alias, &[])
+            };
+            pkg.peer_dependencies
+                .insert(other.to_string(), "*".to_string());
+            g.importers
+                .entry(".".to_string())
+                .or_default()
+                .push(DirectDep {
+                    name: alias.to_string(),
+                    dep_path: pkg.dep_path.clone(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                });
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default())
+            .expect("aliased peer cycle converges");
+
+        assert!(out.packages.contains_key("a@1.0.0(real-b@1.0.0)"));
+        assert!(out.packages.contains_key("b@1.0.0(real-a@1.0.0)"));
+    }
+
+    #[test]
+    fn parent_supplying_an_aliased_peer_stays_bare() {
+        let mut g = LockfileGraph::default();
+        g.importers.insert(
+            ".".to_string(),
+            vec![DirectDep {
+                name: "parent".to_string(),
+                dep_path: "parent@1.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: Some("1.0.0".to_string()),
+            }],
+        );
+        let mut lib = locked("lib", &[]);
+        lib.peer_dependencies
+            .insert("typescript".to_string(), "*".to_string());
+        let ts = LockedPackage {
+            alias_of: Some("@tsc-rs/typescript".to_string()),
+            ..locked("typescript", &[])
+        };
+        for p in [
+            locked("parent", &[("lib", "1.0.0"), ("typescript", "1.0.0")]),
+            lib,
+            ts,
+        ] {
+            g.packages.insert(p.dep_path.clone(), p);
+        }
+
+        let out = apply_peer_contexts(g, &PeerContextOptions::default()).expect("peer pass");
+
+        assert!(
+            out.packages
+                .contains_key("lib@1.0.0(@tsc-rs/typescript@1.0.0)")
+        );
+        assert!(out.packages.contains_key("parent@1.0.0"));
     }
 
     #[test]
