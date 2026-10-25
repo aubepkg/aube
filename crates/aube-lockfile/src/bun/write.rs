@@ -94,16 +94,27 @@ pub fn write(
     // (`app/is-number`), as bun writes it, unless a package or another
     // member's path shares the member's name: the reader would hand the
     // nested entry to them too.
-    let scope_of = |importer_path: &str| -> Option<&str> {
-        let name = workspace_manifests.get(importer_path)?.name.as_deref()?;
+    let scope_of = |importer_path: &str| -> Option<String> {
+        let name = workspace_manifests
+            .get(importer_path)?
+            .name
+            .as_deref()
+            .unwrap_or(importer_path);
         let shared = canonical.values().any(|pkg| pkg.name == name)
             || (importer_path != name && workspace_manifests.contains_key(name));
-        (!shared).then_some(name)
+        (!shared).then(|| name.to_string())
     };
     let mut all_roots: Vec<DirectDep> = Vec::new();
-    let mut scoped_roots: Vec<(&str, DirectDep)> = Vec::new();
+    let mut scoped_roots: Vec<(String, DirectDep)> = Vec::new();
     let mut root_targets: BTreeMap<&str, &str> = BTreeMap::new();
-    for (importer_path, deps) in &graph.importers {
+    // The root importer goes first so its providers win the hoisted slot
+    // whatever the members' paths sort like.
+    let root_first = graph
+        .importers
+        .iter()
+        .filter(|(path, _)| *path == ".")
+        .chain(graph.importers.iter().filter(|(path, _)| *path != "."));
+    for (importer_path, deps) in root_first {
         for d in deps {
             if matches!(
                 graph
@@ -142,7 +153,7 @@ pub fn write(
         // Its own deps go below it (`app/is-odd/is-number`), as bun writes
         // them, so they can't shadow the member's other direct deps.
         for (segs, key) in subtree {
-            let mut scoped = vec![scope.to_string()];
+            let mut scoped = vec![scope.clone()];
             // Paths starting with the dep's name are the dep itself or
             // already nested beneath it.
             if segs.first() != Some(&dep.name) {

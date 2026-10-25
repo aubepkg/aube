@@ -129,6 +129,16 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         for n in entry.meta.optional_dependencies.keys() {
             optional_deps.insert(n.clone(), String::new());
         }
+        // An optional peer must stay skippable with its provider, so
+        // filtering doesn't keep it alive through the consumer's edge.
+        for n in entry
+            .meta
+            .optional_peers
+            .iter()
+            .filter(|n| !entry.meta.dependencies.contains_key(*n))
+        {
+            optional_deps.insert(n.clone(), String::new());
+        }
         // Preserve bun's per-entry meta ranges (`"^4.1.0"`) so re-emit
         // doesn't collapse them to the resolved pin.
         let mut declared: BTreeMap<String, String> = BTreeMap::new();
