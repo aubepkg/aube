@@ -782,6 +782,7 @@ fn deprecated(pkg: &LockedPackage) -> Option<&str> {
     pkg.extra_meta
         .get("deprecated")
         .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.is_empty())
 }
 
 fn has_install_script(pkg: &LockedPackage) -> bool {
