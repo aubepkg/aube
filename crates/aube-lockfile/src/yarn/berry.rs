@@ -217,10 +217,17 @@ pub(super) fn parse_berry_str(
         // Transitive deps: `name: "protocol:range"`. We store the raw
         // header-style spec (`name@protocol:range`) and rewrite to a
         // dep_path in pass two.
-        let raw_deps = collect_dep_map(block, "dependencies");
+        let mut raw_deps = collect_dep_map(block, "dependencies");
         let peer_deps = collect_dep_map(block, "peerDependencies");
         let peer_deps_meta = collect_peer_meta(block);
-        let optional_deps = collect_dep_map(block, "optionalDependencies");
+        let mut optional_deps = collect_dep_map(block, "optionalDependencies");
+        // Berry has no `optionalDependencies` section: optional edges sit
+        // in `dependencies` and `dependenciesMeta` flags them.
+        for name in collect_optional_dep_names(block) {
+            if let Some(range) = raw_deps.remove(&name) {
+                optional_deps.insert(name, range);
+            }
+        }
 
         // Declared ranges — same source as `raw_deps` / `optional_deps`
         // but kept as the bare range string (no `name@` prefix) so
@@ -529,6 +536,17 @@ fn collect_dep_map(block: &yaml_serde::Mapping, key: &str) -> BTreeMap<String, S
         .unwrap_or_default()
 }
 
+/// Names `dependenciesMeta` flags `optional: true`.
+fn collect_optional_dep_names(block: &yaml_serde::Mapping) -> Vec<String> {
+    let Some(meta) = block.get("dependenciesMeta").and_then(|v| v.as_mapping()) else {
+        return Vec::new();
+    };
+    meta.iter()
+        .filter(|(_, v)| v.get("optional").and_then(|o| o.as_bool()) == Some(true))
+        .filter_map(|(k, _)| k.as_str().map(str::to_string))
+        .collect()
+}
+
 /// Pull `peerDependenciesMeta` into our structured form. Only the
 /// `optional` flag round-trips through aube's model; other keys in
 /// the meta block (if any) are ignored.
@@ -732,13 +750,11 @@ pub fn write_berry(
     // specifiers in the same map.
     let canonical = crate::build_canonical_map(graph);
 
-    // `extra_specs[canonical_key]` is the set of range-form
-    // specifiers (e.g. `"foo@npm:^1.0.0"`) that should appear in the
-    // block header alongside the exact `foo@npm:1.2.3` one. Collecting
-    // them keeps the header compatible with what yarn itself would
-    // produce: every spec that resolves to the same (name, version)
-    // gets folded into one block, so transitive lookups of a declared
-    // range find a matching header.
+    // `extra_specs[canonical_key]` is the set of descriptors
+    // (e.g. `"foo@npm:^1.0.0"`) something in the graph requests. Yarn
+    // keys a block by exactly those, so the header is that set; the
+    // exact `foo@npm:1.2.3` form is only a fallback for graphs that
+    // carry no declared ranges.
     let mut extra_specs: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
     let mut patch_specs: BTreeMap<String, String> = BTreeMap::new();
     let manifest_ranges: Vec<(String, String)> = manifest
@@ -769,13 +785,10 @@ pub fn write_berry(
         if patch_spec_matches(&manifest_spec, pkg, &graph.patched_dependencies) {
             patch_specs.insert(canonical_key.clone(), manifest_spec.clone());
         }
-        let exact_spec = berry_exact_spec(pkg, &graph.patched_dependencies, &patch_specs);
-        if manifest_spec != exact_spec {
-            extra_specs
-                .entry(canonical_key)
-                .or_default()
-                .insert(manifest_spec);
-        }
+        extra_specs
+            .entry(canonical_key)
+            .or_default()
+            .insert(manifest_spec);
     }
     // Harvest transitive declared ranges, same shape as the classic
     // writer. Berry specs always carry a protocol (`npm:`, `workspace:`,
@@ -793,11 +806,7 @@ pub fn write_berry(
             if patch_spec_matches(&manifest_spec, target_pkg, &graph.patched_dependencies) {
                 patch_specs.insert(target.clone(), manifest_spec.clone());
             }
-            let exact_spec =
-                berry_exact_spec(target_pkg, &graph.patched_dependencies, &patch_specs);
-            if manifest_spec != exact_spec {
-                extra_specs.entry(target).or_default().insert(manifest_spec);
-            }
+            extra_specs.entry(target).or_default().insert(manifest_spec);
         }
     }
 
@@ -831,19 +840,11 @@ pub fn write_berry(
 
     for (canonical_key, pkg) in &canonical {
         let mut out = String::with_capacity(256);
-        // Every block starts with the exact `name@protocol:version`
-        // specifier so transitive lookups (which parse emits as
-        // `"name@npm:version"`) find a header match, then appends the
-        // manifest range specs collected above.
         let exact_spec = berry_exact_spec(pkg, &graph.patched_dependencies, &patch_specs);
-        let mut header_specs: Vec<String> = vec![exact_spec.clone()];
-        if let Some(extras) = extra_specs.get(canonical_key) {
-            for s in extras {
-                if !header_specs.contains(s) {
-                    header_specs.push(s.clone());
-                }
-            }
-        }
+        let header_specs: Vec<String> = match extra_specs.get(canonical_key) {
+            Some(requested) => requested.iter().cloned().collect(),
+            None => vec![exact_spec.clone()],
+        };
         // Header and `resolution:` both carry spec strings that may
         // contain `:`, `/`, `@`, `#`, or — for `patch:` / file-path
         // sources — backslashes and quotes. Route both through
@@ -868,25 +869,38 @@ pub fn write_berry(
         // transitive deps collapse to the exact version of the target
         // block (the resolver produced the graph, so the key always
         // exists in `canonical`).
+        // Berry has no `optionalDependencies` section: optional edges are
+        // folded into `dependencies` and flagged in `dependenciesMeta`.
+        let all_deps: BTreeMap<String, String> = pkg
+            .dependencies
+            .iter()
+            .chain(&pkg.optional_dependencies)
+            .map(|(n, v)| (n.clone(), v.clone()))
+            .collect();
         write_berry_dep_map(
             &mut out,
             "dependencies",
-            &pkg.dependencies,
-            &pkg.declared_dependencies,
-            &canonical,
-            &graph.patched_dependencies,
-            &patch_specs,
-        );
-        write_berry_dep_map(
-            &mut out,
-            "optionalDependencies",
-            &pkg.optional_dependencies,
+            &all_deps,
             &pkg.declared_dependencies,
             &canonical,
             &graph.patched_dependencies,
             &patch_specs,
         );
         write_berry_peer_deps(&mut out, &pkg.peer_dependencies);
+        let optional_names: Vec<&String> = pkg
+            .optional_dependencies
+            .iter()
+            .filter(|(n, v)| canonical.contains_key(&crate::npm::child_canonical_key(n, v)))
+            .map(|(n, _)| n)
+            .collect();
+        if !optional_names.is_empty() {
+            out.push_str("  dependenciesMeta:\n");
+            for name in optional_names {
+                out.push_str("    ");
+                out.push_str(&quote_yaml_key(name));
+                out.push_str(":\n      optional: true\n");
+            }
+        }
         write_berry_peer_meta(&mut out, &pkg.peer_dependencies_meta);
         if !pkg.bin.is_empty() {
             out.push_str("  bin:\n");
@@ -1105,8 +1119,52 @@ fn write_berry_peer_deps(out: &mut String, peer: &BTreeMap<String, String>) {
         out.push_str("    ");
         out.push_str(&quote_yaml_key(name));
         out.push_str(": ");
-        out.push_str(&quote_yaml_scalar(range));
+        out.push_str(&quote_peer_range(range));
         out.push('\n');
+    }
+}
+
+/// Yarn writes a peer range bare unless YAML needs it quoted, so
+/// `^1.7.1 || ^2.0.0-alpha.4` stays plain while `*` and `>=1 <2: x` don't.
+fn quote_peer_range(s: &str) -> String {
+    let first_ok = s.chars().next().is_some_and(|c| {
+        !matches!(
+            c,
+            '-' | '?'
+                | ':'
+                | ','
+                | ']'
+                | '['
+                | '{'
+                | '}'
+                | '#'
+                | '&'
+                | '*'
+                | '!'
+                | '|'
+                | '>'
+                | '\''
+                | '"'
+                | '%'
+                | '@'
+                | '`'
+                | ' '
+                | '\t'
+                | '\r'
+                | '\n'
+        )
+    });
+    let rest_ok = s.chars().enumerate().all(|(i, c)| {
+        i == 0
+            || !matches!(
+                c,
+                ',' | ']' | '[' | '{' | '}' | ':' | '#' | '\t' | '\r' | '\n'
+            ) && !(c == ' ' && s[i..].trim_start_matches(' ').is_empty())
+    });
+    if first_ok && rest_ok && !s.chars().all(|c| c.is_ascii_digit()) && !is_yaml_special_word(s) {
+        s.to_string()
+    } else {
+        quote_yaml_scalar(s)
     }
 }
 
