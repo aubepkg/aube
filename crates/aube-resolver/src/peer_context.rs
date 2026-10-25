@@ -781,7 +781,7 @@ fn apply_peer_contexts_once(
         name_index.entry(pkg.name.as_str()).or_default().push(pkg);
     }
 
-    let cyclic_peer_names = cyclic_peer_names(&canonical);
+    let cyclic_peer_identities = cyclic_peer_identities(&canonical);
 
     // Root-importer scope used by `resolve-peers-from-workspace-root`.
     // Computed once from the canonical input so it reflects the
@@ -832,7 +832,7 @@ fn apply_peer_contexts_once(
                 &mut visiting,
                 options,
                 hashed_suffixes,
-                &cyclic_peer_names,
+                &cyclic_peer_identities,
             )
             .unwrap_or_else(|| dep.dep_path.clone());
             new_deps.push(DirectDep {
@@ -1733,81 +1733,99 @@ fn apply_dedupe_peers_to_tail(tail: &str) -> String {
     apply_dedupe_peers_to_key(tail)
 }
 
-/// Names that sit on a cycle of declared peer dependencies (`a` peers on
-/// `b` and `b` on `a`, or a name peering on itself through versions).
-/// pnpm writes such a provider as a bare `name@version` in a consumer's
-/// suffix, since its own suffix would embed the consumer chain again.
-fn cyclic_peer_names(graph: &LockfileGraph) -> FxHashSet<String> {
-    let mut edges: FxHashMap<&str, FxHashSet<&str>> = FxHashMap::default();
-    for pkg in graph.packages.values() {
-        if pkg.peer_dependencies.is_empty() {
-            continue;
-        }
-        edges
-            .entry(pkg.name.as_str())
-            .or_default()
-            .extend(pkg.peer_dependencies.keys().map(String::as_str));
+/// `name@version` identities that sit on a cycle of declared peer
+/// dependencies (`a` peers on `b` and `b` on `a`). pnpm writes such a
+/// provider as a bare `name@version` in a consumer's suffix, since its own
+/// suffix would embed the consumer chain again. Versions are tracked
+/// separately: a cycle through `host@1` says nothing about `host@2`.
+fn cyclic_peer_identities(graph: &LockfileGraph) -> FxHashSet<String> {
+    let nodes: Vec<&LockedPackage> = graph.packages.values().collect();
+    let mut by_name: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
+    for (i, pkg) in nodes.iter().enumerate() {
+        by_name.entry(pkg.name.as_str()).or_default().push(i);
     }
+    let edges: Vec<Vec<usize>> = nodes
+        .iter()
+        .map(|pkg| {
+            pkg.peer_dependencies
+                .iter()
+                .flat_map(|(peer, range)| {
+                    by_name
+                        .get(peer.as_str())
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .filter(|&i| version_satisfies(&nodes[i].version, range))
+                })
+                .collect()
+        })
+        .collect();
 
     struct Tarjan<'a> {
-        edges: &'a FxHashMap<&'a str, FxHashSet<&'a str>>,
-        index: FxHashMap<&'a str, usize>,
-        low: FxHashMap<&'a str, usize>,
-        stack: Vec<&'a str>,
-        on_stack: FxHashSet<&'a str>,
-        cyclic: FxHashSet<String>,
+        edges: &'a [Vec<usize>],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        stack: Vec<usize>,
+        on_stack: Vec<bool>,
+        next: usize,
+        cyclic: Vec<usize>,
     }
 
-    impl<'a> Tarjan<'a> {
-        fn visit(&mut self, node: &'a str) {
-            let id = self.index.len();
-            self.index.insert(node, id);
-            self.low.insert(node, id);
+    impl Tarjan<'_> {
+        fn visit(&mut self, node: usize) {
+            self.index[node] = Some(self.next);
+            self.low[node] = self.next;
+            self.next += 1;
             self.stack.push(node);
-            self.on_stack.insert(node);
-            for &next in self.edges.get(node).into_iter().flatten() {
-                if !self.index.contains_key(next) {
-                    self.visit(next);
-                    let low = self.low[node].min(self.low[next]);
-                    self.low.insert(node, low);
-                } else if self.on_stack.contains(next) {
-                    let low = self.low[node].min(self.index[next]);
-                    self.low.insert(node, low);
+            self.on_stack[node] = true;
+            for &next in &self.edges[node] {
+                match self.index[next] {
+                    None => {
+                        self.visit(next);
+                        self.low[node] = self.low[node].min(self.low[next]);
+                    }
+                    Some(order) if self.on_stack[next] => {
+                        self.low[node] = self.low[node].min(order);
+                    }
+                    Some(_) => {}
                 }
             }
-            if self.low[node] != self.index[node] {
+            if Some(self.low[node]) != self.index[node] {
                 return;
             }
             let mut component = Vec::new();
             while let Some(member) = self.stack.pop() {
-                self.on_stack.remove(member);
+                self.on_stack[member] = false;
                 component.push(member);
                 if member == node {
                     break;
                 }
             }
-            let self_loop = self.edges.get(node).is_some_and(|e| e.contains(node));
-            if component.len() > 1 || self_loop {
-                self.cyclic
-                    .extend(component.into_iter().map(str::to_string));
+            if component.len() > 1 || self.edges[node].contains(&node) {
+                self.cyclic.extend(component);
             }
         }
     }
 
     let mut tarjan = Tarjan {
         edges: &edges,
-        index: FxHashMap::default(),
-        low: FxHashMap::default(),
+        index: vec![None; nodes.len()],
+        low: vec![0; nodes.len()],
         stack: Vec::new(),
-        on_stack: FxHashSet::default(),
-        cyclic: FxHashSet::default(),
+        on_stack: vec![false; nodes.len()],
+        next: 0,
+        cyclic: Vec::new(),
     };
-    for &name in edges.keys() {
-        if !tarjan.index.contains_key(name) {
-            tarjan.visit(name);
+    for node in 0..nodes.len() {
+        if tarjan.index[node].is_none() {
+            tarjan.visit(node);
         }
     }
-    tarjan.cyclic
+    tarjan
+        .cyclic
+        .into_iter()
+        .map(|i| format!("{}@{}", nodes[i].name, nodes[i].version))
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1821,7 +1839,7 @@ fn visit_peer_context<'g>(
     visiting: &mut FxHashSet<String>,
     options: &PeerContextOptions,
     hashed_suffixes: &mut HashedSuffixes,
-    cyclic_peer_names: &FxHashSet<String>,
+    cyclic_peer_identities: &FxHashSet<String>,
 ) -> Option<String> {
     let pkg = graph.packages.get(input_dep_path)?;
 
@@ -2039,7 +2057,15 @@ fn visit_peer_context<'g>(
                 &canonical_base,
                 hashed_suffixes,
             );
-            let display_v = if cycles_back || cyclic_peer_names.contains(n.as_str()) {
+            let in_peer_cycle = !cyclic_peer_identities.is_empty()
+                && aube_lockfile::resolve_dep_edge(n, &provider.target_tail, |key| {
+                    graph.packages.contains_key(key)
+                })
+                .and_then(|key| graph.packages.get(&key))
+                .is_some_and(|dep| {
+                    cyclic_peer_identities.contains(&format!("{}@{}", dep.name, dep.version))
+                });
+            let display_v = if cycles_back || in_peer_cycle {
                 canonical_tail(&provider.context_tail).to_string()
             } else {
                 provider.context_tail.clone()
@@ -2128,7 +2154,7 @@ fn visit_peer_context<'g>(
             visiting,
             options,
             hashed_suffixes,
-            cyclic_peer_names,
+            cyclic_peer_identities,
         );
         let new_tail = match child_new {
             Some(new_dep_path) => new_dep_path
@@ -2160,7 +2186,7 @@ fn visit_peer_context<'g>(
             visiting,
             options,
             hashed_suffixes,
-            cyclic_peer_names,
+            cyclic_peer_identities,
         );
         // A peer provider with no `packages:` entry is a workspace
         // package (the resolver only records a `DirectDep` for those).
@@ -2483,6 +2509,61 @@ mod tests {
 
         assert!(out.packages.contains_key("plugin@1.0.0"));
         assert!(!out.packages.contains_key("plugin@1.0.0(theme@1.0.0)"));
+    }
+
+    #[test]
+    fn peer_cycle_bare_identity_applies_only_to_the_cyclic_version() {
+        let mut g = LockfileGraph::default();
+        let versioned = |name: &str, version: &str, peers: &[&str]| {
+            let mut pkg = LockedPackage {
+                version: version.to_string(),
+                dep_path: format!("{name}@{version}"),
+                ..locked(name, &[])
+            };
+            pkg.peer_dependencies = peers
+                .iter()
+                .map(|peer| ((*peer).to_string(), "*".to_string()))
+                .collect();
+            pkg
+        };
+        // host@1 <-> plugin is a cycle; host@2 only peers on color.
+        let host2 = versioned("host", "2.0.0", &["color"]);
+        let mut consumer = versioned("consumer", "1.0.0", &[]);
+        consumer
+            .dependencies
+            .insert("host".to_string(), "2.0.0".to_string());
+        for pkg in [
+            versioned("host", "1.0.0", &["plugin"]),
+            versioned("plugin", "1.0.0", &["host"]),
+            host2,
+            versioned("color", "1.0.0", &[]),
+            consumer,
+        ] {
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+        g.importers.insert(
+            ".".to_string(),
+            vec![
+                DirectDep {
+                    name: "consumer".to_string(),
+                    dep_path: "consumer@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                },
+                DirectDep {
+                    name: "color".to_string(),
+                    dep_path: "color@1.0.0".to_string(),
+                    dep_type: DepType::Production,
+                    specifier: Some("1.0.0".to_string()),
+                },
+            ],
+        );
+
+        let identities = cyclic_peer_identities(&g);
+
+        assert!(identities.contains("host@1.0.0"));
+        assert!(identities.contains("plugin@1.0.0"));
+        assert!(!identities.contains("host@2.0.0"));
     }
 
     #[test]
