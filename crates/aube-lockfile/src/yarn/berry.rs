@@ -794,12 +794,17 @@ pub fn write_berry(
     // writer. Berry specs always carry a protocol (`npm:`, `workspace:`,
     // `patch:` …); bare ranges get the default `npm:` prefix.
     for pkg in canonical.values() {
-        for (dep_name, range) in &pkg.declared_dependencies {
-            let Some(resolved_value) = pkg.dependencies.get(dep_name) else {
-                continue;
-            };
+        for (dep_name, resolved_value) in pkg.dependencies.iter().chain(&pkg.optional_dependencies)
+        {
             let target = crate::npm::child_canonical_key(dep_name, resolved_value);
             let Some(target_pkg) = canonical.get(&target) else {
+                continue;
+            };
+            let Some(range) = pkg.declared_dependencies.get(dep_name) else {
+                // No declared range: the edge is written as the exact
+                // descriptor, so the target's header must carry it.
+                let exact = berry_exact_spec(target_pkg, &graph.patched_dependencies, &patch_specs);
+                extra_specs.entry(target).or_default().insert(exact);
                 continue;
             };
             let manifest_spec = format_berry_spec(dep_name, range);
@@ -1154,13 +1159,13 @@ fn quote_peer_range(s: &str) -> String {
                 | '\n'
         )
     });
-    let rest_ok = s.chars().enumerate().all(|(i, c)| {
-        i == 0
-            || !matches!(
+    let rest_ok = !s.ends_with(' ')
+        && !s.chars().skip(1).any(|c| {
+            matches!(
                 c,
                 ',' | ']' | '[' | '{' | '}' | ':' | '#' | '\t' | '\r' | '\n'
-            ) && !(c == ' ' && s[i..].trim_start_matches(' ').is_empty())
-    });
+            )
+        });
     if first_ok && rest_ok && !s.chars().all(|c| c.is_ascii_digit()) && !is_yaml_special_word(s) {
         s.to_string()
     } else {
