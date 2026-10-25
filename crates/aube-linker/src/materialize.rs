@@ -7,7 +7,7 @@ use crate::sweep::{
     try_remove_entry,
 };
 use crate::{Error, LinkStats, LinkStrategy, Linker, sys};
-use aube_lockfile::{LockedPackage, shared_local_dep_path};
+use aube_lockfile::{LocalSource, LockedPackage, shared_local_dep_path};
 use aube_store::{PackageIndex, StoredFile};
 use std::collections::BTreeMap;
 use std::io;
@@ -437,8 +437,7 @@ impl Linker {
                 continue;
             }
             validate_package_link_name(dep_name)?;
-            let dep_dep_path = shared_local_dep_path(dep_name, dep_version)
-                .unwrap_or_else(|| format!("{dep_name}@{dep_version}"));
+            let dep_dep_path = dependency_link_key(dep_name, dep_version);
             let target = if let Some(abs_target) =
                 nested_link_targets.and_then(|targets| targets.get(&dep_dep_path))
             {
@@ -523,18 +522,10 @@ impl Linker {
     /// point the per-project `.aube/<dep_path>` entry at it — the exact
     /// arrangement Step 1 produces for a registry package.
     ///
-    /// Used by the isolated linker in global-virtual-store mode. Plain
-    /// `file:` / `link:` / `portal:` / `exec:` sources resolve against
-    /// a path inside the project and are materialized per-project
-    /// instead (see `materialize_at` with `apply_hashes = false`),
-    /// but git and remote-tarball sources are content-pinned and shared
-    /// like registry packages. They MUST live in the shared store when
-    /// it is enabled: a registry dependent in the shared store links
-    /// its dependency siblings to the hashed global path
-    /// (`virtual_store_subdir(dep_path)`), so a git/tarball dep that
-    /// only existed in the per-project `.aube/` would leave that
-    /// sibling symlink dangling — and Node would resolve whatever
-    /// unrelated `<name>` it found walking up the tree.
+    /// Used when both the source and its dependency closure are globally
+    /// shareable, so shared dependents can link to the same global paths.
+    /// Project-relative sources and their dependents instead materialize
+    /// per-project with `apply_hashes = false`.
     pub(crate) fn ensure_shared_local_in_global_store(
         &self,
         aube_dir: &Path,
@@ -845,13 +836,7 @@ impl Linker {
         // a per-project `.aube/<dep_path>` that the caller just
         // ensured is empty), so nothing can be in the way.
         for (dep_name, dep_version) in &pkg.dependencies {
-            // Git / remote-tarball deps are recorded by their resolved
-            // URL spec but keyed in the graph under the short
-            // `name@git+<hash>` / `name@url+<hash>` form. Translate so the
-            // sibling symlink targets the same `dep_path` the package was
-            // materialized under; everything else keeps `name@version`.
-            let dep_dep_path = shared_local_dep_path(dep_name, dep_version)
-                .unwrap_or_else(|| format!("{dep_name}@{dep_version}"));
+            let dep_dep_path = dependency_link_key(dep_name, dep_version);
             // Skip any dep whose name matches the package being
             // materialized, regardless of version. The symlink would
             // land at `pkg_nm_parent.join(dep_name)` which is exactly
@@ -1284,6 +1269,15 @@ fn is_safe_package_component(component: &str) -> bool {
                 | std::path::Component::Prefix(_)
         )
     })
+}
+
+// Keep serialized file: edges intact for lockfile reuse. Only link targets
+// use the path-hashed key, shared by local directories and tarballs.
+pub(crate) fn dependency_link_key(name: &str, tail: &str) -> String {
+    if let Some(path) = tail.split('(').next().and_then(|s| s.strip_prefix("file:")) {
+        return LocalSource::Directory(path.into()).dep_path(name);
+    }
+    shared_local_dep_path(name, tail).unwrap_or_else(|| format!("{name}@{tail}"))
 }
 
 #[cfg(test)]
