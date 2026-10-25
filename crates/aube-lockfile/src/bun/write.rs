@@ -29,6 +29,21 @@ pub fn write(
     graph: &LockfileGraph,
     manifest: &aube_manifest::PackageJson,
 ) -> Result<(), Error> {
+    write_with_project_root(
+        path,
+        path.parent().unwrap_or_else(|| Path::new(".")),
+        graph,
+        manifest,
+    )
+}
+
+/// Write a relocated lockfile without changing project-relative manifest and source paths.
+pub fn write_with_project_root(
+    path: &Path,
+    project_dir: &Path,
+    graph: &LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
+) -> Result<(), Error> {
     use serde_json::{Value, json};
 
     // Canonicalize to one entry per (name, version). Skip workspace
@@ -58,7 +73,6 @@ pub fn write(
     // Silently falling back to an empty manifest when a read fails
     // keeps the writer best-effort: a missing workspace package.json
     // is odd but not fatal.
-    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut workspace_manifests: BTreeMap<String, aube_manifest::PackageJson> = BTreeMap::new();
     for importer_path in graph.importers.keys() {
         if importer_path == "." {

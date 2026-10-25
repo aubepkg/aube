@@ -18,9 +18,10 @@ pub(super) fn resolve_install_layout(
     settings_ctx: &aube_settings::ResolveCtx<'_>,
     lockfile_only: bool,
     strict_no_lockfile: bool,
+    mode: super::FrozenMode,
 ) -> miette::Result<InstallLayoutConfig> {
     let (lockfile_dir, lockfile_importer_key) =
-        resolve_lockfile_location(cwd, manifest, settings_ctx)?;
+        resolve_lockfile_location(cwd, manifest, settings_ctx, mode)?;
 
     let modules_dir_name = aube_settings::resolved::modules_dir(settings_ctx);
     let aube_dir = super::super::resolve_virtual_store_dir(settings_ctx, cwd);
@@ -62,6 +63,7 @@ pub(super) fn resolve_lockfile_location(
     cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
+    mode: super::FrozenMode,
 ) -> miette::Result<(std::path::PathBuf, String)> {
     let location = match aube_settings::resolved::lockfile_dir(settings_ctx) {
         Some(raw) => {
@@ -105,9 +107,11 @@ pub(super) fn resolve_lockfile_location(
     };
 
     guard_lockfile_location(
+        cwd,
         manifest,
         &location,
         crate::commands::selected_lockfile_kind_with_ctx(settings_ctx)?,
+        matches!(mode, super::FrozenMode::Frozen),
     )?;
     Ok(location)
 }
@@ -115,17 +119,40 @@ pub(super) fn resolve_lockfile_location(
 /// Reject multi-project shared lockfiles before the resolver can rewrite
 /// someone else's importer entries.
 fn guard_lockfile_location(
+    cwd: &std::path::Path,
     manifest: &aube_manifest::PackageJson,
     (lockfile_dir, lockfile_importer_key): &(std::path::PathBuf, String),
     selected: Option<aube_lockfile::LockfileKind>,
+    frozen: bool,
 ) -> miette::Result<()> {
     if lockfile_importer_key == "." {
         return Ok(());
     }
-    match aube_lockfile::parse_lockfile_selecting(lockfile_dir, manifest, selected) {
-        Ok(graph) => {
-            guard_against_foreign_importers(lockfile_dir, lockfile_importer_key, &graph)
-                .map_err(miette::Report::new)?;
+    let mut workspace_importers = vec![".".to_string()];
+    if !crate::dirs::ignore_workspace() {
+        for member in aube_workspace::find_workspace_packages(cwd).into_diagnostic()? {
+            if let Some(relative) = pathdiff::diff_paths(member, cwd) {
+                workspace_importers.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    match aube_lockfile::parse_lockfile_with_project_root(
+        lockfile_dir,
+        cwd,
+        manifest,
+        aube_lockfile::ParseOptions::default(),
+        selected,
+    ) {
+        Ok((graph, kind)) => {
+            guard_against_foreign_importers(
+                lockfile_dir,
+                lockfile_importer_key,
+                &graph,
+                kind,
+                &workspace_importers,
+                frozen,
+            )
+            .map_err(miette::Report::new)?;
         }
         Err(aube_lockfile::Error::NotFound(_)) => {}
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),

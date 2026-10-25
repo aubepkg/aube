@@ -42,7 +42,7 @@ mod write;
 mod tests;
 
 pub use read::parse;
-pub use write::write;
+pub use write::{write, write_with_project_root};
 
 /// `lockfileVersion` values the parser reads. bun 1.4 writes v2, which has
 /// the same content as v1 and only makes bun's own parser stricter (npm

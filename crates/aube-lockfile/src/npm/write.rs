@@ -127,6 +127,21 @@ pub fn write(
     graph: &LockfileGraph,
     manifest: &aube_manifest::PackageJson,
 ) -> Result<(), Error> {
+    write_with_project_root(
+        path,
+        path.parent().unwrap_or_else(|| Path::new(".")),
+        graph,
+        manifest,
+    )
+}
+
+/// Write a relocated lockfile without changing project-relative manifest and source paths.
+pub fn write_with_project_root(
+    path: &Path,
+    project_dir: &Path,
+    graph: &LockfileGraph,
+    manifest: &aube_manifest::PackageJson,
+) -> Result<(), Error> {
     // Key packages by `name@version` (ignore peer-context suffix) so
     // lookups from parent deps resolve to one canonical entry even if
     // the graph has several contextualized variants.
@@ -206,7 +221,6 @@ pub fn write(
     // nothing depends on, so read the members' own package.json, as the
     // bun writer does. It also says whether a member has a version, which
     // a `link:` package read from npm's lockfile records as `0.0.0`.
-    let project_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let member_manifests: BTreeMap<&str, aube_manifest::PackageJson> = graph
         .importers
         .keys()

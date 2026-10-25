@@ -185,7 +185,7 @@ pub(super) async fn run_lockfile_only(input: LockfileOnlyInput<'_>) -> miette::R
                         if matches!(
                             g.check_drift_workspace_with_local_targets_for_kind(
         manifests,
-        &npm_local_target_manifests(g, k, lockfile_dir, manifests, is_workspace_project),
+        &npm_local_target_manifests(g, k, cwd, manifests, is_workspace_project),
                                 &ws_config.overrides,
                                 &ws_config.ignored_optional_dependencies,
                                 workspace_catalogs,
@@ -485,7 +485,7 @@ pub(super) fn select_lockfile_result(
                         &npm_local_target_manifests(
                             graph,
                             kind,
-                            lockfile_dir,
+                            cwd,
                             manifests,
                             is_workspace_project,
                         ),
@@ -535,7 +535,7 @@ pub(super) fn select_lockfile_result(
                             &npm_local_target_manifests(
                                 graph,
                                 *kind,
-                                lockfile_dir,
+                                cwd,
                                 manifests,
                                 is_workspace_project,
                             ),
@@ -568,7 +568,7 @@ pub(super) fn select_lockfile_result(
 fn npm_local_target_manifests(
     graph: &LockfileGraph,
     kind: LockfileKind,
-    lockfile_dir: &Path,
+    project_root: &Path,
     manifests: &[(String, aube_manifest::PackageJson)],
     is_workspace_project: bool,
 ) -> Vec<(String, aube_manifest::PackageJson)> {
@@ -581,7 +581,7 @@ fn npm_local_target_manifests(
         .into_iter()
         .filter_map(|importer| {
             let manifest = aube_manifest::PackageJson::from_path(
-                &lockfile_dir.join(&importer).join("package.json"),
+                &project_root.join(&importer).join("package.json"),
             )
             .ok()?;
             Some((importer, manifest))

@@ -25,7 +25,7 @@ pub(crate) use layout::{
     dep_value_as_version, segments_to_install_path,
 };
 pub use read::parse;
-pub use write::write;
+pub use write::{write, write_with_project_root};
 
 #[cfg(test)]
 mod tests;

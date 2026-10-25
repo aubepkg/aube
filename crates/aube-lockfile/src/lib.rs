@@ -18,8 +18,9 @@ pub use io::{
     detect_existing_lockfile_kind_selecting, fill_local_package_versions, parse_for_import,
     parse_json, parse_lockfile, parse_lockfile_selecting, parse_lockfile_with_kind,
     parse_lockfile_with_kind_and_options, parse_lockfile_with_kind_and_options_selecting,
-    parse_lockfile_with_kind_selecting, pnpm_lock_filename, read_lockfile, write_lockfile,
-    write_lockfile_as, write_lockfile_preserving_existing,
+    parse_lockfile_with_kind_selecting, parse_lockfile_with_project_root, pnpm_lock_filename,
+    read_lockfile, write_lockfile, write_lockfile_as, write_lockfile_as_with_project_root,
+    write_lockfile_preserving_existing,
 };
 pub(crate) use io::{atomic_write_lockfile, current_git_branch};
 pub use merge::{MergeReport, merge_branch_lockfiles};

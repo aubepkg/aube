@@ -70,7 +70,8 @@ pub(crate) fn resolve_active_lockfile_dir(
     manifest: &aube_manifest::PackageJson,
     settings_ctx: &aube_settings::ResolveCtx<'_>,
 ) -> miette::Result<std::path::PathBuf> {
-    layout::resolve_lockfile_location(cwd, manifest, settings_ctx).map(|(dir, _)| dir)
+    layout::resolve_lockfile_location(cwd, manifest, settings_ctx, FrozenMode::No)
+        .map(|(dir, _)| dir)
 }
 use lockfile_dir::{
     parse_lockfile_dir_remapped_with_kind_and_options, write_lockfile_dir_remapped,
@@ -456,6 +457,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         &settings_ctx,
         opts.lockfile_only,
         opts.strict_no_lockfile,
+        mode,
     )?;
 
     if !opts.dry_run {
