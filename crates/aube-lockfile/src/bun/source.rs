@@ -1,7 +1,7 @@
-use crate::{Error, GitSource, LocalSource, RemoteTarballSource};
+use crate::{DirectDep, Error, GitSource, LocalSource, LockedPackage, RemoteTarballSource};
 use aube_util::path::normalize_lexical;
-use std::collections::BTreeMap;
-use std::path::{Component, Path};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// Extract the alias name bun uses as the hoist key. bun's `packages`
 /// key is `<alias_name>` hoisted or `<parent>/<alias_name>` nested,
@@ -150,38 +150,36 @@ pub(super) fn classify_bun_ident(
     Ok((name, raw_version.to_string(), None, alias_of))
 }
 
-pub(super) fn rebase_workspace_scoped_local_source(
-    key: &str,
-    local: LocalSource,
-    workspace_scopes: &[(&str, &str)],
-) -> LocalSource {
-    let Some(local_path) = local.path() else {
-        return local;
-    };
-    // Bun may write workspace-name-scoped local entries with
-    // root-relative bare paths (`vendor/local-dir`) or
-    // importer-relative climbs (`../../vendor/local.tgz`). Only the
-    // latter needs rebasing to project-root form.
-    if !local_path
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return local;
-    }
-    let Some((_, ws_path)) = workspace_scopes.iter().find(|(name, _)| {
-        key.strip_prefix(*name)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-    }) else {
-        return local;
-    };
-    let rebased = normalize_lexical(&Path::new(ws_path).join(local_path));
-    match local {
-        LocalSource::Directory(_) => LocalSource::Directory(rebased),
-        LocalSource::Tarball(_) => LocalSource::Tarball(rebased),
-        LocalSource::Link(_) => LocalSource::Link(rebased),
-        LocalSource::Portal(_) => LocalSource::Portal(rebased),
-        LocalSource::Exec(_) => LocalSource::Exec(rebased),
-        LocalSource::Git(_) | LocalSource::RemoteTarball(_) => local,
+pub(super) fn rebase_workspace_local_tarballs(
+    packages: &mut BTreeMap<String, LockedPackage>,
+    importers: &BTreeMap<String, Vec<DirectDep>>,
+) {
+    let mut rebased = BTreeSet::new();
+    for (ws_path, deps) in importers {
+        for dep in deps {
+            let Some(pkg) = packages.get_mut(&dep.dep_path) else {
+                continue;
+            };
+            let Some(LocalSource::Tarball(local_path)) = &pkg.local_source else {
+                continue;
+            };
+            let Some(specifier) = &dep.specifier else {
+                continue;
+            };
+            // Bun resolves a local tarball relative to its declaring workspace,
+            // even when hoisting erased that workspace from the package key.
+            // Rewritten root-relative idents and root overrides do not match
+            // the member's declaration and must keep their existing base.
+            if local_path.is_absolute()
+                || Path::new(specifier.strip_prefix("file:").unwrap_or(specifier)) != local_path
+                || !rebased.insert(dep.dep_path.clone())
+            {
+                continue;
+            }
+            pkg.local_source = Some(LocalSource::Tarball(normalize_lexical(
+                &Path::new(ws_path).join(local_path),
+            )));
+        }
     }
 }
 
