@@ -1760,11 +1760,12 @@ fn apply_dedupe_peers_to_tail(tail: &str) -> String {
     apply_dedupe_peers_to_key(tail)
 }
 
-/// `name@version` identities that sit on a cycle of declared peer
-/// dependencies (`a` peers on `b` and `b` on `a`). pnpm writes such a
-/// provider as a bare `name@version` in a consumer's suffix, since its own
-/// suffix would embed the consumer chain again. Versions are tracked
-/// separately: a cycle through `host@1` says nothing about `host@2`.
+/// Graph keys that sit on a cycle of declared peer dependencies (`a` peers
+/// on `b` and `b` on `a`). pnpm writes such a provider as a bare
+/// `name@version` in a consumer's suffix, since its own suffix would embed
+/// the consumer chain again. Membership is per graph key, peer context
+/// included: a cycle through one `host@1` context says nothing about
+/// another `host@1` context or about `host@2`.
 fn cyclic_peer_identities(graph: &LockfileGraph) -> FxHashSet<String> {
     let nodes: Vec<&LockedPackage> = graph.packages.values().collect();
     let index_of: FxHashMap<&str, usize> = graph
@@ -1856,7 +1857,7 @@ fn cyclic_peer_identities(graph: &LockfileGraph) -> FxHashSet<String> {
     tarjan
         .cyclic
         .into_iter()
-        .map(|i| format!("{}@{}", nodes[i].name, nodes[i].version))
+        .map(|i| nodes[i].dep_path.clone())
         .collect()
 }
 
@@ -2109,10 +2110,7 @@ fn visit_peer_context<'g>(
                 && aube_lockfile::resolve_dep_edge(n, &provider.target_tail, |key| {
                     graph.packages.contains_key(key)
                 })
-                .and_then(|key| graph.packages.get(&key))
-                .is_some_and(|dep| {
-                    cyclic_peer_identities.contains(&format!("{}@{}", dep.name, dep.version))
-                });
+                .is_some_and(|key| cyclic_peer_identities.contains(&key));
             let display_v = if cycles_back || in_peer_cycle {
                 canonical_tail(&provider.context_tail).to_string()
             } else {
@@ -2781,6 +2779,37 @@ mod tests {
 
         assert!(identities.contains("host@1.0.0"));
         assert!(identities.contains("plugin@1.0.0"));
+    }
+
+    #[test]
+    fn peer_cycle_membership_is_per_peer_context() {
+        let mut g = LockfileGraph::default();
+        let host = |color: &str| {
+            let dep_path = format!("host@1.0.0(color@{color})");
+            let mut pkg = LockedPackage {
+                dep_path,
+                ..locked("host", &[])
+            };
+            pkg.peer_dependencies
+                .insert("plugin".to_string(), "*".to_string());
+            pkg
+        };
+        let mut plugin = locked("plugin", &[("host", "1.0.0(color@1.0.0)")]);
+        plugin
+            .peer_dependencies
+            .insert("host".to_string(), "*".to_string());
+        let mut host_one = host("1.0.0");
+        host_one
+            .dependencies
+            .insert("plugin".to_string(), "1.0.0".to_string());
+        for pkg in [host_one, host("2.0.0"), plugin] {
+            g.packages.insert(pkg.dep_path.clone(), pkg);
+        }
+
+        let identities = cyclic_peer_identities(&g);
+
+        assert!(identities.contains("host@1.0.0(color@1.0.0)"));
+        assert!(!identities.contains("host@1.0.0(color@2.0.0)"));
     }
 
     #[test]
