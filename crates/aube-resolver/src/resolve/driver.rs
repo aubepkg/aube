@@ -2420,7 +2420,11 @@ impl<'a> ResolveDriver<'a> {
                         || locked_pkg.dependencies.contains_key(dep_name)
                         || locked_pkg.bundled_dependencies.contains(dep_name)
                         || self.peer_supplied_by_scope(task, dep_name)
-                        || is_non_registry_specifier(dep_range)
+                        || (self
+                            .resolver
+                            .dependency_policy
+                            .blocks_exotic_subdep(dep_name)
+                            && is_non_registry_specifier(dep_range))
                     {
                         continue;
                     }
