@@ -487,6 +487,13 @@ pub fn mark_transitive_peer_dependencies(graph: &mut aube_lockfile::LockfileGrap
         // recorded by the peer-context pass (the suffix names are gone
         // once `dedupe_peers` runs); pnpm lists them here too.
         names.extend(pkg.transitive_peer_dependencies.iter().cloned());
+        // A peer the package declares itself is already part of its own
+        // contract, so pnpm leaves it out even when a dependency bubbles
+        // the same name up (e.g. `remix` and `@remix-run/test` both
+        // declaring an optional `playwright`).
+        for own in pkg.peer_dependencies_with_meta_defaults().keys() {
+            names.remove(own);
+        }
         pkg.transitive_peer_dependencies = names.into_iter().collect();
     }
 }
@@ -821,6 +828,24 @@ mod tests {
         assert_eq!(
             graph.packages[&key].transitive_peer_dependencies,
             vec!["zod".to_string()]
+        );
+    }
+
+    #[test]
+    fn transitive_peer_dependencies_skip_peers_the_package_declares_itself() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.packages.extend([
+            // `parent` declares `pg` itself and its dep `child` leaves the
+            // same `pg` peer unresolved; `other` is not declared by parent.
+            pkg_with_peers("parent", &["child"], &["pg"]),
+            pkg_with_peers("child", &[], &["pg", "other"]),
+        ]);
+
+        mark_transitive_peer_dependencies(&mut graph);
+
+        assert_eq!(
+            graph.packages["parent@1.0.0"].transitive_peer_dependencies,
+            vec!["other".to_string()]
         );
     }
 
