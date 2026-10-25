@@ -132,6 +132,8 @@ pub(super) fn guard_against_foreign_importers(
     let project_relative = records_project_relative_importers(kind);
     let project = resolve_physical_path(&lockfile_dir.join(importer_key))
         .map_err(|err| aube_lockfile::Error::Parse(lockfile_dir.to_path_buf(), err.to_string()))?;
+    // Importer keys are lexical; only ownership checks follow symlinks.
+    let lexical_project = project_dir(lockfile_dir, importer_key);
     let physical_lockfile_dir = resolve_physical_path(lockfile_dir)
         .map_err(|err| aube_lockfile::Error::Parse(lockfile_dir.to_path_buf(), err.to_string()))?;
     // Native formats record an implicit project root, not a physical owner.
@@ -141,6 +143,14 @@ pub(super) fn guard_against_foreign_importers(
         resolve_physical_path(&base.join(key)).is_ok_and(|path| {
             path.starts_with(&project) && (!pnpm || path != physical_lockfile_dir)
         })
+    };
+    // An older aube kept members project-relative while the root was
+    // lock-relative; those keys are the current workspace's own members.
+    let legacy_member = |key: &str| {
+        pnpm && key != "."
+            && workspace_importers.iter().any(|member| member == key)
+            && resolve_physical_path(&project.join(key))
+                .is_ok_and(|path| path.starts_with(&project))
     };
     let local_importers = if matches!(
         kind,
@@ -165,11 +175,11 @@ pub(super) fn guard_against_foreign_importers(
             if key == "." || !graph.importers.contains_key(key) {
                 return false;
             }
-            let expected = rebase_relative(Path::new(key), &project, lockfile_dir)
+            let expected = rebase_relative(Path::new(key), &lexical_project, lockfile_dir)
                 .unwrap_or_else(|| key.into())
                 .to_string_lossy()
                 .replace('\\', "/");
-            let recorded = rebase_relative(Path::new(key), lockfile_dir, &project)
+            let recorded = rebase_relative(Path::new(key), lockfile_dir, &lexical_project)
                 .unwrap_or_else(|| key.into())
                 .to_string_lossy()
                 .replace('\\', "/");
@@ -192,7 +202,7 @@ pub(super) fn guard_against_foreign_importers(
         .map(String::as_str)
         .filter(|key| {
             if pnpm || project_relative {
-                !owned_path(key) && !local_importers.contains(*key)
+                !owned_path(key) && !legacy_member(key) && !local_importers.contains(*key)
             } else {
                 *key != importer_key
             }
@@ -432,6 +442,39 @@ mod tests {
             true,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn relocated_mixed_workspace_coordinates_migrate_with_sibling_lock_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        let locks = dir.path().join("locks");
+        std::fs::create_dir_all(&locks).unwrap();
+        std::fs::create_dir_all(project.join("apps/app")).unwrap();
+        std::fs::write(project.join("apps/app/package.json"), r#"{"name":"app"}"#).unwrap();
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        graph.importers.insert("../project".into(), vec![]);
+        graph.importers.insert("apps/app".into(), vec![]);
+        let members = [".".into(), "apps/app".into()];
+        let guard = |graph: &aube_lockfile::LockfileGraph, frozen| {
+            guard_against_foreign_importers(
+                &locks,
+                "../project",
+                graph,
+                aube_lockfile::LockfileKind::Aube,
+                &members,
+                frozen,
+            )
+        };
+        guard(&graph, false).unwrap();
+        assert!(
+            guard(&graph, true)
+                .unwrap_err()
+                .to_string()
+                .contains("older aube wrote mixed workspace coordinates")
+        );
+        graph.importers.insert("other".into(), vec![]);
+        assert!(guard(&graph, false).is_err());
     }
 
     #[cfg(unix)]

@@ -1599,13 +1599,26 @@ type = "path"
 default = "null"
 docs = """
 By default the lockfile lives at `<project_root>/aube-lock.yaml`. Set
-this to relocate it. When the resolved path differs from the project
-root, the project becomes an importer keyed by its relative path
-(e.g. `project` if the lockfile is one directory above).
+this to relocate it for a single project or a workspace. In aube/pnpm
+lockfiles, every importer is keyed relative to the lockfile directory
+(e.g. `project` if the lockfile is one directory above). npm and Bun keep their
+native project-relative root and member paths; local dependency paths still
+resolve from the project root.
 
-Single-project relocation only — multi-project shared lockfiles
-require a `pnpm-workspace.yaml` workspace. Pointing two unrelated
-projects at the same `lockfileDir` is rejected at install time.
+In aube/pnpm formats, the guard rejects importer paths outside the workspace
+root and rejects a physical `.` root belonging to the lockfile directory.
+Stale member importers within the workspace can be pruned during normal
+resolution. Older relocated workspace lockfiles with mixed coordinates migrate
+on the next normal install. Frozen installs that require this repair report
+guidance to regenerate the lockfile.
+
+For npm and Bun, the unrelated-project guard is best-effort: their native
+formats record no physical owner. A relocated file's implicit root is treated
+as the current project, and its members follow the native path conventions.
+The guard rejects a lockfile directory containing a separate project's
+`package.json`, but cannot distinguish unrelated projects with compatible
+native lockfiles in a manifest-free shared directory. Use a separate lockfile
+directory for each project or workspace.
 
 Mirrors pnpm's `--lockfile-dir` / `lockfile-dir`. A relative path is
 resolved against the project root, not the current working directory.
