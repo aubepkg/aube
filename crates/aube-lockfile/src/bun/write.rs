@@ -437,7 +437,10 @@ pub fn write(
         // `[name@./file.tgz, meta, integrity]` for a tarball.
         let entry = match &pkg.local_source {
             Some(LocalSource::Directory(dir)) => Value::Array(vec![
-                Value::String(format!("{ident_name}@file:{}", bun_local_path(dir))),
+                Value::String(format!(
+                    "{ident_name}@file:{}",
+                    bun_directory_path(project_dir, dir)
+                )),
                 Value::Object(meta),
             ]),
             Some(LocalSource::Tarball(tarball)) => {
@@ -708,6 +711,18 @@ pub fn write(
     );
     crate::atomic_write_lockfile(path, body.as_bytes())?;
     Ok(())
+}
+
+// Bun folder identifiers are root-relative even when the declared spec is absolute.
+fn bun_directory_path(project_dir: &Path, dir: &Path) -> String {
+    let relative = if dir.is_absolute() {
+        let project_dir =
+            std::path::absolute(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+        pathdiff::diff_paths(dir, aube_util::path::normalize_lexical(&project_dir))
+    } else {
+        None
+    };
+    bun_local_path(relative.as_deref().unwrap_or(dir))
 }
 
 /// A local path in the form bun writes it: normalized, with forward

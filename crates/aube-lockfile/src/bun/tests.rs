@@ -2727,3 +2727,94 @@ fn test_write_keeps_a_nested_packages_same_name_dep_one_level_below() {
     assert_eq!(reparsed.importers["packages/app"][0].dep_path, "foo@2.0.0");
     assert_eq!(reparsed.packages["foo@2.0.0"].dependencies["foo"], "1.0.0");
 }
+
+#[test]
+fn test_write_absolute_directory_idents_relative_to_lockfile() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    for target in ["assets/child", "../child"] {
+        for direct in [false, true] {
+            let directory = LocalSource::Directory(project.join(target));
+            let child_key = directory.dep_path("child");
+            let spec = format!("file:{}", project.join(target).display());
+            let tarball = LocalSource::Tarball(project.join("host.tgz"));
+            let host_key = tarball.dep_path("host");
+            let mut graph = LockfileGraph::default();
+            graph.packages.insert(
+                child_key.clone(),
+                LockedPackage {
+                    name: "child".to_string(),
+                    version: "1.0.0".to_string(),
+                    dep_path: child_key.clone(),
+                    local_source: Some(directory),
+                    ..Default::default()
+                },
+            );
+            graph.packages.insert(
+                host_key.clone(),
+                LockedPackage {
+                    name: "host".to_string(),
+                    version: "1.0.0".to_string(),
+                    dep_path: host_key.clone(),
+                    local_source: Some(tarball),
+                    dependencies: BTreeMap::from([(
+                        "child".to_string(),
+                        child_key.strip_prefix("child@").unwrap().to_string(),
+                    )]),
+                    declared_dependencies: BTreeMap::from([("child".to_string(), spec.clone())]),
+                    ..Default::default()
+                },
+            );
+            let (name, dep_path, declared) = if direct {
+                ("child", child_key, spec.clone())
+            } else {
+                ("host", host_key, "file:host.tgz".to_string())
+            };
+            graph.importers.insert(
+                ".".to_string(),
+                vec![DirectDep {
+                    name: name.to_string(),
+                    dep_path,
+                    dep_type: DepType::Production,
+                    specifier: Some(declared.clone()),
+                }],
+            );
+            let manifest = aube_manifest::PackageJson {
+                dependencies: BTreeMap::from([(name.to_string(), declared)]),
+                ..Default::default()
+            };
+            let lock = project.join("bun.lock");
+            write(&lock, &graph, &manifest).unwrap();
+            let packages = written_packages(&lock);
+            assert_eq!(packages["child"][0], format!("child@file:{target}"));
+            if !direct {
+                assert_eq!(packages["host"][1]["dependencies"]["child"], spec);
+                assert_eq!(
+                    packages["host"][0],
+                    format!(
+                        "host@{}",
+                        project
+                            .join("host.tgz")
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    )
+                );
+            }
+            let relative_lock =
+                pathdiff::diff_paths(&lock, std::env::current_dir().unwrap()).unwrap();
+            write(&relative_lock, &graph, &manifest).unwrap();
+            assert_eq!(written_packages(&lock), packages);
+            let reread = parse(&lock).unwrap();
+            let child = reread
+                .packages
+                .values()
+                .find(|pkg| pkg.name == "child")
+                .unwrap();
+            assert_eq!(
+                child.local_source,
+                Some(LocalSource::Directory(target.into()))
+            );
+        }
+    }
+}
