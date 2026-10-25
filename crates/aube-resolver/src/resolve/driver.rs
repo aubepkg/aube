@@ -316,6 +316,24 @@ impl<'a> ResolveDriver<'a> {
     /// Fire prefetches for every seeded root dep up front, so their
     /// packuments are already in flight by the time the first task is
     /// popped.
+    /// True when the importer, the workspace root (if peers resolve
+    /// from it), or an ancestor of `task` already supplies `dep_name`,
+    /// so the peer needs no auto-install task of its own.
+    fn peer_supplied_by_scope(&self, task: &ResolveTask, dep_name: &str) -> bool {
+        let importer_declares_peer = self
+            .importer_declared_dep_names
+            .get(&task.importer)
+            .is_some_and(|names| names.contains(dep_name));
+        let root_declares_peer = self.resolver.resolve_peers_from_workspace_root
+            && task.importer != "."
+            && self
+                .importer_declared_dep_names
+                .get(".")
+                .is_some_and(|names| names.contains(dep_name));
+        let peer_dep_is_ancestor = task.ancestors.iter().any(|(name, _)| name == dep_name);
+        importer_declares_peer || root_declares_peer || peer_dep_is_ancestor
+    }
+
     fn seed_initial_prefetches(&mut self) {
         for task in self.queue.iter() {
             // Time-aware resolution needs publish times and trust evidence
@@ -1462,18 +1480,7 @@ impl<'a> ResolveDriver<'a> {
                 if peer_optional {
                     continue;
                 }
-                let importer_declares_peer = self
-                    .importer_declared_dep_names
-                    .get(&task.importer)
-                    .is_some_and(|names| names.contains(dep_name));
-                let root_declares_peer = self.resolver.resolve_peers_from_workspace_root
-                    && task.importer != "."
-                    && self
-                        .importer_declared_dep_names
-                        .get(".")
-                        .is_some_and(|names| names.contains(dep_name));
-                let peer_dep_is_ancestor = task.ancestors.iter().any(|(name, _)| name == dep_name);
-                if importer_declares_peer || root_declares_peer || peer_dep_is_ancestor {
+                if self.peer_supplied_by_scope(&task, dep_name) {
                     continue;
                 }
                 if version_meta.dependencies.contains_key(dep_name)
@@ -2397,6 +2404,37 @@ impl<'a> ResolveDriver<'a> {
                     task.importer.clone(),
                     child_ancestors.clone(),
                 ));
+            }
+
+            // npm lockfiles record a hoisted peer as a plain package
+            // entry rather than an edge on the dependent, so the locked
+            // `dependencies` above never reach it. Without an edge the
+            // peer, and anything only it reaches, would vanish on the
+            // next write; queue required peers the same way a fresh
+            // resolve does.
+            if self.resolver.auto_install_peers {
+                for (dep_name, dep_range) in &locked_pkg.peer_dependencies {
+                    let peer_optional = locked_pkg
+                        .peer_dependencies_meta
+                        .get(dep_name)
+                        .is_some_and(|m| m.optional);
+                    if peer_optional
+                        || locked_pkg.dependencies.contains_key(dep_name)
+                        || locked_pkg.bundled_dependencies.contains(dep_name)
+                        || self.peer_supplied_by_scope(task, dep_name)
+                        || is_non_registry_specifier(dep_range)
+                    {
+                        continue;
+                    }
+                    self.queue.push_back(ResolveTask::transitive(
+                        dep_name.clone(),
+                        dep_range.clone(),
+                        DepType::Production,
+                        dep_path.clone(),
+                        task.importer.clone(),
+                        child_ancestors.clone(),
+                    ));
+                }
             }
         }
         self.lockfile_reuse_count += 1;
