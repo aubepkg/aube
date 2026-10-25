@@ -450,7 +450,9 @@ pub fn write(
                 Value::Array(vec![
                     Value::String(format!("{ident_name}@{prefix}{tarball}")),
                     Value::Object(meta),
-                    Value::String(integrity),
+                    // The resolver now hashes local tarballs for pnpm; bun's
+                    // lockfile keeps the slot empty for them.
+                    Value::String(String::new()),
                 ])
             }
             _ => Value::Array(vec![
