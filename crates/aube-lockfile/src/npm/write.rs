@@ -713,18 +713,18 @@ pub fn write(
         if let Some(workspaces) = pkg.extra_meta.get(super::raw::WORKSPACES_KEY) {
             value["packages"][install_path]["workspaces"] = workspaces.clone();
         }
-        let Some(metadata) = pkg
+        let is_ordinary = ordinary.contains(install_path);
+        // A placement with no imported metadata (new or moved) takes the
+        // per-path result rather than the name-and-version-wide flag.
+        let peer = match pkg
             .extra_meta
             .get(super::raw::ENTRY_METADATA_KEY)
             .and_then(|entries| entries.get(install_path))
-        else {
-            continue;
-        };
-        let is_ordinary = ordinary.contains(install_path);
-        let peer = if metadata["nonPeer"].as_bool() == Some(is_ordinary) {
-            metadata["peer"] == true
-        } else {
-            !is_ordinary
+        {
+            Some(metadata) if metadata["nonPeer"].as_bool() == Some(is_ordinary) => {
+                metadata["peer"] == true
+            }
+            _ => !is_ordinary,
         };
         let entry = value["packages"][install_path]
             .as_object_mut()

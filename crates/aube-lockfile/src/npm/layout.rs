@@ -285,7 +285,7 @@ pub(crate) fn build_hoist_tree(
                         // slot first under Node's lookup. A nearer copy, placed or a
                         // preferred one of the version it needs, protects it.
                         let shadows_descendant = placed.iter().any(|(path, key)| {
-                            path.len() > depth
+                            path.len() >= depth
                                 && path[..depth] == nested[..depth]
                                 && canonical
                                     .get(key)
