@@ -1,8 +1,8 @@
 use super::jsonc::strip_jsonc;
 use super::raw::{BunEntry, RawBunLockfile};
 use super::source::{
-    bin_value_to_map, bun_key_to_alias_name, classify_bun_ident,
-    rebase_workspace_scoped_local_source, resolve_nested_bun, resolve_workspace_dep, split_ident,
+    bin_value_to_map, bun_key_to_alias_name, classify_bun_ident, rebase_workspace_local_tarballs,
+    resolve_nested_bun, resolve_workspace_dep, split_ident,
 };
 use super::{LOCKFILE_VERSION_KEY, SUPPORTED_LOCKFILE_VERSIONS};
 use crate::{DepType, DirectDep, Error, LockedPackage, LockfileGraph, PeerDepMeta};
@@ -46,19 +46,6 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         let entry = BunEntry::from_array(key, value).map_err(|e| Error::parse(path, e))?;
         entries.insert(key.clone(), entry);
     }
-    let mut workspace_scopes: Vec<(&str, &str)> = raw
-        .workspaces
-        .iter()
-        .filter(|(ws_path, _)| !ws_path.is_empty())
-        .filter_map(|(ws_path, ws)| {
-            ws.extra
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(|name| (name, ws_path.as_str()))
-        })
-        .collect();
-    workspace_scopes.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
-
     // First pass: parse (name, version) for each entry. bun.lock keys look
     // like the package name ("foo") for the hoisted version, or a nested
     // path ("parent/foo") when multiple versions exist.
@@ -92,16 +79,14 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             &raw_version,
             entry.integrity.as_deref(),
         )?;
-        let local_source = local_source
-            .map(|local| rebase_workspace_scoped_local_source(key, local, &workspace_scopes))
-            // A member path without a `/` (`workspace:lib`) reads as `.`;
-            // take it from the spec when bun lists it as a workspace.
-            .map(|local| match version.strip_prefix("workspace:") {
-                Some(ws_path) if !ws_path.is_empty() && raw.workspaces.contains_key(ws_path) => {
-                    crate::LocalSource::Link(ws_path.into())
-                }
-                _ => local,
-            });
+        // A member path without a `/` (`workspace:lib`) reads as `.`;
+        // take it from the spec when bun lists it as a workspace.
+        let local_source = local_source.map(|local| match version.strip_prefix("workspace:") {
+            Some(ws_path) if !ws_path.is_empty() && raw.workspaces.contains_key(ws_path) => {
+                crate::LocalSource::Link(ws_path.into())
+            }
+            _ => local,
+        });
         key_info.insert(key.clone(), (name.clone(), version.clone()));
 
         let dep_path = format!("{name}@{version}");
@@ -118,6 +103,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             .dependencies
             .keys()
             .chain(entry.meta.optional_dependencies.keys())
+            .chain(entry.meta.peer_dependencies.keys())
         {
             deps.insert(n.clone(), String::new());
         }
@@ -126,6 +112,16 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         // everything under `dependencies:` on re-emit.
         let mut optional_deps: BTreeMap<String, String> = BTreeMap::new();
         for n in entry.meta.optional_dependencies.keys() {
+            optional_deps.insert(n.clone(), String::new());
+        }
+        // An optional peer must stay skippable with its provider, so
+        // filtering doesn't keep it alive through the consumer's edge.
+        for n in entry
+            .meta
+            .optional_peers
+            .iter()
+            .filter(|n| !entry.meta.dependencies.contains_key(*n))
+        {
             optional_deps.insert(n.clone(), String::new());
         }
         // Preserve bun's per-entry meta ranges (`"^4.1.0"`) so re-emit
@@ -198,6 +194,8 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         );
     }
 
+    // Peers, including provided optional peers, need runtime edges before
+    // filtering and linking. Their declarations stay separate from hard deps.
     // Second pass: resolve transitive deps by walking the bun nesting
     // hierarchy — for an entry at key "parent/foo", dep "bar" resolves to
     // "parent/foo/bar" → "parent/bar" → "bar".
@@ -217,6 +215,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             .dependencies
             .keys()
             .chain(entry.meta.optional_dependencies.keys())
+            .chain(entry.meta.peer_dependencies.keys())
         {
             if let Some(target_key) = resolve_nested_bun(key, dep_name, &key_info)
                 && let Some((dname, dver)) = key_info.get(&target_key)
@@ -318,6 +317,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     // lockfile omits the `""` workspace entirely (hand-authored
     // fixtures sometimes do).
     importers.entry(".".to_string()).or_default();
+    rebase_workspace_local_tarballs(&mut packages, &importers);
 
     // Translate bun's unnamed `catalog:` / named `catalogs:` blocks
     // into the shared `LockfileGraph.catalogs` shape — outer key is

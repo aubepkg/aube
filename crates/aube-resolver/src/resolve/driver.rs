@@ -1304,16 +1304,22 @@ impl<'a> ResolveDriver<'a> {
                 // `deprecated_msg`: that one is gated by
                 // `allowedDeprecatedVersions`, which only silences the
                 // install warning — pnpm still records the field.
-                extra_meta: version_meta
-                    .deprecated
-                    .as_deref()
-                    .map(|msg| {
-                        BTreeMap::from([(
+                // `hasInstallScript` rides along the same way so the npm
+                // writer can flag new entries: `npm ci` only runs a
+                // dependency's install scripts when the lock entry says so.
+                extra_meta: {
+                    let mut meta = BTreeMap::new();
+                    if let Some(msg) = version_meta.deprecated.as_deref() {
+                        meta.insert(
                             "deprecated".to_string(),
                             serde_json::Value::String(msg.to_string()),
-                        )])
-                    })
-                    .unwrap_or_default(),
+                        );
+                    }
+                    if version_meta.has_install_script {
+                        meta.insert("hasInstallScript".to_string(), true.into());
+                    }
+                    meta
+                },
             }
             .with_declared_dependencies_known(),
         );
@@ -1534,8 +1540,8 @@ impl<'a> ResolveDriver<'a> {
     /// transitives (and the project root for override-substituted
     /// paths, since overrides are declared at the root). Git +
     /// remote-tarball specs anchor on nothing. Transitive
-    /// `link:`/`file:` from a registry-hosted parent errors out —
-    /// there's no on-disk path to resolve against.
+    /// relative `link:`/`file:` from a registry-hosted parent errors
+    /// out because there is no on-disk path to resolve against.
     ///
     /// Side effects: wires the importer + parent edges, inserts the
     /// package into `resolved`, streams to the early-fetch consumer,
@@ -1609,20 +1615,12 @@ impl<'a> ResolveDriver<'a> {
         };
         // Git and remote-tarball specifiers don't reference a path,
         // so they pass through regardless of parent shape.
-        // `link:`/`file:` transitives only resolve when we either
-        // (a) located a parent source root or (b) inherited the
-        // path from a project-root-anchored override.
+        // Absolute paths need no parent anchor. Relative local paths
+        // require a parent source root or a project-root override.
         if !task.is_root
             && parent_source_root.is_none()
             && !task.range_from_override
-            && matches!(
-                raw_local,
-                LocalSource::Directory(_)
-                    | LocalSource::Tarball(_)
-                    | LocalSource::Link(_)
-                    | LocalSource::Portal(_)
-                    | LocalSource::Exec(_)
-            )
+            && raw_local.path().is_some_and(|path| !path.is_absolute())
         {
             return Err(Error::Registry(
                 task.name.clone(),

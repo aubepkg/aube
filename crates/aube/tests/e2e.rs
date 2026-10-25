@@ -232,6 +232,131 @@ fn run_executes_a_simple_script() {
         .stdout(predicates::str::contains("aube-e2e-ok"));
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_scripts_and_exec_find_root_bins_after_member_bins() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(r#"{"name":"root","private":true}"#);
+    fs::write(
+        sbx.project.join("pnpm-workspace.yaml"),
+        "packages:\n  - 'apps/*'\n",
+    )
+    .unwrap();
+    let member = sbx.project.join("apps/mobile");
+    fs::create_dir_all(&member).unwrap();
+    fs::write(
+        member.join("package.json"),
+        r#"{"name":"mobile","scripts":{
+            "probe":"workspace-root-probe main && workspace-order-probe",
+            "direct":"workspace-root-probe direct",
+            "path":"printf '%s\\n' \"$PATH\"",
+            "preprobe":"workspace-root-probe pre",
+            "postprobe":"workspace-root-probe post",
+            "test":"workspace-root-probe test",
+            "pretest":"workspace-root-probe pretest",
+            "posttest":"workspace-root-probe posttest",
+            "start":"workspace-root-probe start",
+            "prestart":"workspace-root-probe prestart",
+            "poststart":"workspace-root-probe poststart"
+        }}"#,
+    )
+    .unwrap();
+    for (dir, name, body) in [
+        (&sbx.project, "workspace-root-probe", "echo root-$1"),
+        (&sbx.project, "workspace-order-probe", "echo WRONG_ROOT"),
+        (&member, "workspace-order-probe", "echo member"),
+    ] {
+        let bins = dir.join("node_modules/.bin");
+        fs::create_dir_all(&bins).unwrap();
+        let tool = bins.join(name);
+        fs::write(&tool, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    for args in [
+        vec!["run", "--no-install", "probe"],
+        vec!["--filter", "mobile", "run", "--no-install", "probe"],
+        vec!["-r", "run", "--no-install", "probe"],
+        vec!["-r", "run", "--no-install", "--parallel", "probe"],
+    ] {
+        sbx.cmd()
+            .current_dir(&member)
+            .args(args)
+            .assert()
+            .success()
+            .stdout(predicates::str::contains("root-pre"))
+            .stdout(predicates::str::contains("root-main"))
+            .stdout(predicates::str::contains("root-post"))
+            .stdout(predicates::str::contains("member"))
+            .stdout(predicates::str::contains("WRONG_ROOT").not());
+    }
+    sbx.cmd()
+        .current_dir(&member)
+        .args(["run", "--no-install", "direct"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("root-direct"));
+    for script in ["test", "start"] {
+        sbx.cmd()
+            .current_dir(&member)
+            .args([script, "--no-install"])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(format!("root-pre{script}")))
+            .stdout(predicates::str::contains(format!("root-{script}")))
+            .stdout(predicates::str::contains(format!("root-post{script}")));
+    }
+    for (bin, expected) in [
+        ("workspace-root-probe", "root-"),
+        ("workspace-order-probe", "member"),
+    ] {
+        sbx.cmd()
+            .current_dir(&member)
+            .args(["exec", "--no-install", bin])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(expected));
+    }
+
+    let root_bin = sbx.project.join("node_modules/.bin");
+    let output = sbx
+        .cmd()
+        .current_dir(&member)
+        .env("AUBE_MODULES_DIR", sbx.project.join("node_modules"))
+        .args(["run", "--no-install", "path"])
+        .assert()
+        .success();
+    let path = String::from_utf8_lossy(&output.get_output().stdout);
+    assert_eq!(
+        std::env::split_paths(path.trim())
+            .filter(|dir| dir == &root_bin)
+            .count(),
+        1,
+        "a shared absolute modules directory should appear only once"
+    );
+
+    // An ordinary parent package must not contribute binaries.
+    fs::remove_file(sbx.project.join("pnpm-workspace.yaml")).unwrap();
+    sbx.cmd()
+        .current_dir(&member)
+        .args(["run", "--no-install", "direct"])
+        .assert()
+        .failure();
+
+    sbx.write_manifest(r#"{"name":"root","private":true,"workspaces":["apps/*"]}"#);
+    let subdir = member.join("src");
+    fs::create_dir_all(&subdir).unwrap();
+    sbx.cmd()
+        .current_dir(&subdir)
+        .args(["run", "--no-install", "direct"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("root-direct"));
+}
+
 // --- standalone exit-code contract ---------------------------------------
 //
 // The command layer (`aube::commands::*::run`) no longer calls
@@ -517,4 +642,111 @@ fn npm_nested_linked_directories_keep_their_own_dependency_versions() {
         lock["packages"]["vendor/host/node_modules/leaf"]["resolved"],
         "leaf1"
     );
+}
+
+#[test]
+fn bun_member_peer_survives_clean_frozen_install_and_add() {
+    use assert_cmd::assert::OutputAssertExt;
+
+    let _guard = e2e_lock();
+    for linker in ["isolated", "hoisted"] {
+        for gvs in [false, true] {
+            for optional in [false, true] {
+                let sbx = Sandbox::new();
+                for (file, manifest, script) in [
+                    (
+                        "react18",
+                        serde_json::json!({"name":"react","version":"18.0.0"}),
+                        "module.exports = '18.0.0';",
+                    ),
+                    (
+                        "react19",
+                        serde_json::json!({"name":"react","version":"19.0.0"}),
+                        "module.exports = '19.0.0';",
+                    ),
+                    (
+                        "consumer",
+                        serde_json::json!({"name":"consumer","version":"1.0.0","peerDependencies":{"react":"^19.0.0"},"peerDependenciesMeta":{"react":{"optional":optional}}}),
+                        "module.exports = require('react');",
+                    ),
+                    (
+                        "unrelated",
+                        serde_json::json!({"name":"unrelated","version":"1.0.0"}),
+                        "module.exports = 'unrelated';",
+                    ),
+                ] {
+                    let gzip =
+                        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                    let mut tar = tar::Builder::new(gzip);
+                    for (name, contents) in [
+                        ("package.json", manifest.to_string()),
+                        ("index.js", script.into()),
+                    ] {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(contents.len() as u64);
+                        header.set_mode(0o644);
+                        header.set_cksum();
+                        tar.append_data(
+                            &mut header,
+                            format!("package/{name}"),
+                            contents.as_bytes(),
+                        )
+                        .unwrap();
+                    }
+                    fs::write(
+                        sbx.project.join(format!("{file}.tgz")),
+                        tar.into_inner().unwrap().finish().unwrap(),
+                    )
+                    .unwrap();
+                }
+                sbx.write_manifest(r#"{"name":"root","private":true,"workspaces":["apps/*"],"dependencies":{"react":"file:react18.tgz"}}"#);
+                let member = sbx.project.join("apps/app");
+                fs::create_dir_all(&member).unwrap();
+                fs::write(member.join("package.json"), r#"{"name":"app","dependencies":{"react":"file:../../react19.tgz","consumer":"file:../../consumer.tgz"}}"#).unwrap();
+                fs::write(
+                    sbx.project.join(".npmrc"),
+                    format!("node-linker={linker}\nenable-global-virtual-store={gvs}\n"),
+                )
+                .unwrap();
+                let lockfile_path = sbx.project.join("bun.lock");
+                fs::write(
+                    &lockfile_path,
+                    r#"{"lockfileVersion":1,"workspaces":{},"packages":{}}"#,
+                )
+                .unwrap();
+                sbx.cmd()
+                    .args(["install", "--no-frozen-lockfile", "--ignore-scripts"])
+                    .assert()
+                    .success();
+                let runtime = || {
+                    std::process::Command::new("node").current_dir(&sbx.project)
+                        .args(["-e", "console.log(require('module').createRequire(process.cwd() + '/apps/app/package.json')('consumer'))"])
+                        .assert().success().stdout("19.0.0\n");
+                };
+                runtime();
+                let original = fs::read(&lockfile_path).unwrap();
+                for _ in 0..2 {
+                    fs::remove_dir_all(sbx.project.join("node_modules")).unwrap();
+                    fs::remove_dir_all(member.join("node_modules")).unwrap();
+                    sbx.cmd()
+                        .args(["install", "--frozen-lockfile", "--ignore-scripts"])
+                        .assert()
+                        .success();
+                    runtime();
+                    assert_eq!(fs::read(&lockfile_path).unwrap(), original);
+                }
+                sbx.cmd()
+                    .args([
+                        "add",
+                        "file:unrelated.tgz",
+                        "--workspace-root",
+                        "--ignore-workspace-root-check",
+                        "--ignore-scripts",
+                    ])
+                    .assert()
+                    .success();
+                runtime();
+            }
+        }
+    }
 }
