@@ -1304,25 +1304,30 @@ impl<'a> ResolveDriver<'a> {
                 // `deprecated_msg`: that one is gated by
                 // `allowedDeprecatedVersions`, which only silences the
                 // install warning — pnpm still records the field.
-                extra_meta: version_meta
-                    .deprecated
-                    .as_deref()
-                    .map(|msg| {
-                        (
+                // `hasInstallScript` rides along the same way so the npm
+                // writer can flag new entries: `npm ci` only runs a
+                // dependency's install scripts when the lock entry says so.
+                extra_meta: {
+                    let mut meta = BTreeMap::new();
+                    if let Some(msg) = version_meta.deprecated.as_deref() {
+                        meta.insert(
                             "deprecated".to_string(),
                             serde_json::Value::String(msg.to_string()),
-                        )
-                    })
-                    .into_iter()
-                    // Bundled children are not resolved, so remember which
-                    // were optional for the npm writer to keep that section.
-                    .chain((!bundled_names.is_empty()).then(|| {
-                        (
+                        );
+                    }
+                    if version_meta.has_install_script {
+                        meta.insert("hasInstallScript".to_string(), true.into());
+                    }
+                    if !bundled_names.is_empty() {
+                        // Bundled children are not resolved, so remember which
+                        // were optional for the npm writer to keep that section.
+                        meta.insert(
                             aube_lockfile::npm::BUNDLED_OPTIONAL_KEY.to_string(),
                             serde_json::json!(version_meta.optional_dependencies),
-                        )
-                    }))
-                    .collect(),
+                        );
+                    }
+                    meta
+                },
             }
             .with_declared_dependencies_known(),
         );
