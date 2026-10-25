@@ -5523,6 +5523,16 @@ fn write_preserves_bootstrap_with_separator_comment_and_branch_file() {
     assert!(written.starts_with(prefix), "got:\n{written}");
 }
 
+#[test]
+fn bootstrap_prefix_ignores_trailing_separator() {
+    let content = "---\nboot: 1\n---\nproj: 2\n---\n";
+    assert_eq!(
+        super::raw::bootstrap_prefix(content),
+        Some("---\nboot: 1\n---\n")
+    );
+    assert!(super::raw::bootstrap_prefix("proj: 2\n---\n").is_none());
+}
+
 proptest::proptest! {
     #[test]
     fn bootstrap_prefix_is_a_prefix_ending_at_separator(body in "[a-z: ]{0,40}", rest in "[a-z: ]{0,40}") {

@@ -148,6 +148,7 @@ pub(super) fn parse_raw_lockfile_serde(
 pub(super) fn bootstrap_prefix(content: &str) -> Option<&str> {
     let mut offset = 0;
     let mut has_body = false;
+    let mut pending_separator = None;
     let mut prefix_end = None;
     for line in content.split_inclusive('\n') {
         offset += line.len();
@@ -155,10 +156,14 @@ pub(super) fn bootstrap_prefix(content: &str) -> Option<&str> {
             .strip_prefix("---")
             .is_some_and(|rest| rest.trim().is_empty() || rest.starts_with([' ', '\t']));
         if is_separator {
-            if has_body {
-                prefix_end = Some(offset);
-            }
+            pending_separator = Some(offset);
         } else if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
+            // Only a separator followed by content opens the project
+            // document; a trailing `---` must not swallow it into the prefix.
+            if has_body && let Some(end) = pending_separator {
+                prefix_end = Some(end);
+            }
+            pending_separator = None;
             has_body = true;
         }
     }
