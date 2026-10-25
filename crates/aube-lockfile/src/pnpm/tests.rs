@@ -5484,3 +5484,37 @@ snapshots:
     }
 }
 }
+
+#[test]
+fn write_preserves_pnpm_bootstrap_document() {
+    let bootstrap = "---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    configDependencies: {}\n    packageManagerDependencies:\n      pnpm:\n        specifier: 11.0.0\n        version: 11.0.0\n\npackages:\n\n  'pnpm@11.0.0':\n    resolution: {integrity: sha512-aaa}\n\nsnapshots:\n\n  'pnpm@11.0.0': {}\n\n---\n";
+    let project = "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      lodash:\n        specifier: ^4.17.0\n        version: 4.17.21\n\npackages:\n\n  'lodash@4.17.21':\n    resolution: {integrity: sha512-bbb}\n\nsnapshots:\n\n  'lodash@4.17.21': {}\n";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, format!("{bootstrap}{project}")).unwrap();
+    let graph = parse(&path).unwrap();
+
+    super::write::write(&path, &graph, &PackageJson::default()).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.starts_with(bootstrap), "got:\n{written}");
+    let reparsed = parse(&path).unwrap();
+    assert_eq!(reparsed.packages.len(), graph.packages.len());
+    assert!(!reparsed.packages.keys().any(|k| k.starts_with("pnpm@")));
+
+    // A second write must not stack another copy of the prefix.
+    super::write::write(&path, &reparsed, &PackageJson::default()).unwrap();
+    let again = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(again, written);
+}
+
+proptest::proptest! {
+    #[test]
+    fn bootstrap_prefix_is_a_prefix_ending_at_separator(body in "[a-z: ]{0,40}", rest in "[a-z: ]{0,40}") {
+        let content = format!("---\nboot: {body}x\n---\nproj: {rest}\n");
+        let prefix = super::raw::bootstrap_prefix(&content).unwrap();
+        proptest::prop_assert!(content.starts_with(prefix));
+        proptest::prop_assert!(prefix.ends_with("---\n"));
+        proptest::prop_assert!(super::raw::bootstrap_prefix(&content[prefix.len()..]).is_none());
+    }
+}

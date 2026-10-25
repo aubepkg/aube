@@ -974,6 +974,17 @@ pub fn write_with_project_root(
     // truncated pnpm-lock.yaml on disk, next install failed to
     // parse and the user thought their lockfile was gone. See
     // atomic_write_lockfile for full rationale.
+    // pnpm v11 keeps its own pin in a leading bootstrap document. The graph
+    // only models the project document, so carry the existing prefix over
+    // or pnpm rejects the result under `--frozen-lockfile`.
+    let bootstrap = native_pnpm_aliases
+        .then(|| std::fs::read_to_string(path).ok())
+        .flatten()
+        .and_then(|existing| super::raw::bootstrap_prefix(&existing).map(str::to_owned));
+    let yaml = match bootstrap {
+        Some(prefix) => format!("{prefix}{yaml}"),
+        None => yaml,
+    };
     crate::atomic_write_lockfile(path, yaml.as_bytes())?;
     Ok(())
 }

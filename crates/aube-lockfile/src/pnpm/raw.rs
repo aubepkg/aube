@@ -140,6 +140,28 @@ pub(super) fn parse_raw_lockfile_serde(
     }
 }
 
+/// Text of the leading pnpm v11 bootstrap document(s) of a multi-document
+/// `pnpm-lock.yaml`, up to and including the `---` line that opens the
+/// project document. `None` for a single-document lockfile. The writer
+/// carries this prefix through verbatim so a re-resolve keeps pnpm's own
+/// `packageManagerDependencies` / `configDependencies` pin.
+pub(super) fn bootstrap_prefix(content: &str) -> Option<&str> {
+    let mut offset = 0;
+    let mut has_body = false;
+    let mut prefix_end = None;
+    for line in content.split_inclusive('\n') {
+        offset += line.len();
+        if line.trim_end() == "---" {
+            if has_body {
+                prefix_end = Some(offset);
+            }
+        } else if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
+            has_body = true;
+        }
+    }
+    prefix_end.map(|end| &content[..end])
+}
+
 /// Score for picking the "main" document out of a multi-document
 /// `pnpm-lock.yaml`. Weighted so a document with real importer
 /// dependencies beats one with only `packageManagerDependencies`
