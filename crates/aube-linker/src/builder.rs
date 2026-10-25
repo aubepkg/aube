@@ -25,6 +25,7 @@ impl Linker {
             store: store.clone(),
             use_global_virtual_store,
             project_local_dep_paths: rustc_hash::FxHashSet::default(),
+            precomputed_project_local_dep_paths: None,
             fresh_virtual_store_entries: rustc_hash::FxHashSet::default(),
             gvs_dep_link_targets: std::sync::Mutex::new(None),
             strategy,
@@ -146,6 +147,17 @@ impl Linker {
         dep_paths: impl IntoIterator<Item = String>,
     ) -> Self {
         self.project_local_dep_paths = dep_paths.into_iter().collect();
+        self
+    }
+
+    /// Reuse the complete project-local selection computed for the graph
+    /// passed to `link_all` or `link_workspace`, including local sources and
+    /// all their dependents. Explicit compatibility selections remain additive.
+    pub fn with_precomputed_project_local_dep_paths(
+        mut self,
+        dep_paths: std::sync::Arc<std::collections::BTreeSet<String>>,
+    ) -> Self {
+        self.precomputed_project_local_dep_paths = Some(dep_paths);
         self
     }
 
