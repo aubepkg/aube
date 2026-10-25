@@ -1531,8 +1531,8 @@ impl<'a> ResolveDriver<'a> {
     /// transitives (and the project root for override-substituted
     /// paths, since overrides are declared at the root). Git +
     /// remote-tarball specs anchor on nothing. Transitive
-    /// `link:`/`file:` from a registry-hosted parent errors out —
-    /// there's no on-disk path to resolve against.
+    /// relative `link:`/`file:` from a registry-hosted parent errors
+    /// out because there is no on-disk path to resolve against.
     ///
     /// Side effects: wires the importer + parent edges, inserts the
     /// package into `resolved`, streams to the early-fetch consumer,
@@ -1606,20 +1606,12 @@ impl<'a> ResolveDriver<'a> {
         };
         // Git and remote-tarball specifiers don't reference a path,
         // so they pass through regardless of parent shape.
-        // `link:`/`file:` transitives only resolve when we either
-        // (a) located a parent source root or (b) inherited the
-        // path from a project-root-anchored override.
+        // Absolute paths need no parent anchor. Relative local paths
+        // require a parent source root or a project-root override.
         if !task.is_root
             && parent_source_root.is_none()
             && !task.range_from_override
-            && matches!(
-                raw_local,
-                LocalSource::Directory(_)
-                    | LocalSource::Tarball(_)
-                    | LocalSource::Link(_)
-                    | LocalSource::Portal(_)
-                    | LocalSource::Exec(_)
-            )
+            && raw_local.path().is_some_and(|path| !path.is_absolute())
         {
             return Err(Error::Registry(
                 task.name.clone(),

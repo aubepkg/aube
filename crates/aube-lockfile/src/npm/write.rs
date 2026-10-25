@@ -352,7 +352,11 @@ pub fn write(
                     let Some(LocalSource::Directory(dir)) = &pkg.local_source else {
                         return None;
                     };
-                    Some(format!("{}{}", directory_target(dir), &install_path[idx..]))
+                    Some(format!(
+                        "{}{}",
+                        directory_target(project_dir, dir),
+                        &install_path[idx..]
+                    ))
                 })
                 .unwrap_or_else(|| install_path.clone());
             (remapped, key.clone())
@@ -483,7 +487,7 @@ pub fn write(
             .collect();
 
         if let Some(LocalSource::Directory(dir)) = &pkg.local_source {
-            let target = directory_target(dir);
+            let target = directory_target(project_dir, dir);
             packages.insert(
                 install_path.clone(),
                 WriteNpmPackage {
@@ -728,8 +732,17 @@ fn preferred_root_placements(
     preferred
 }
 
-fn directory_target(dir: &Path) -> String {
-    aube_util::path::normalize_lexical(dir)
+fn directory_target(project_dir: &Path, dir: &Path) -> String {
+    // npm keys linked targets relative to the lockfile, even for absolute specs.
+    let relative = dir
+        .is_absolute()
+        .then(|| {
+            let project_dir =
+                std::path::absolute(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+            pathdiff::diff_paths(dir, aube_util::path::normalize_lexical(&project_dir))
+        })
+        .flatten();
+    aube_util::path::normalize_lexical(relative.as_deref().unwrap_or(dir))
         .to_string_lossy()
         .replace('\\', "/")
 }
