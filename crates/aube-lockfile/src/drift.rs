@@ -2037,7 +2037,6 @@ mod drift_tests {
                 auto_install_peers: false,
                 exclude_links_from_lockfile: true,
                 lockfile_include_tarball_url: false,
-                extra: BTreeMap::new(),
             },
             ..Default::default()
         };
@@ -2271,7 +2270,6 @@ mod drift_tests {
                 auto_install_peers: false,
                 exclude_links_from_lockfile: true,
                 lockfile_include_tarball_url: true,
-                extra: BTreeMap::new(),
             },
             ..Default::default()
         };

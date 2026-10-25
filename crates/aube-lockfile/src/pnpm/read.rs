@@ -1056,7 +1056,6 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             auto_install_peers: s.auto_install_peers.unwrap_or(true),
             exclude_links_from_lockfile: s.exclude_links_from_lockfile.unwrap_or(false),
             lockfile_include_tarball_url: s.lockfile_include_tarball_url.unwrap_or(false),
-            extra: s.extra,
         })
         .unwrap_or_default();
 

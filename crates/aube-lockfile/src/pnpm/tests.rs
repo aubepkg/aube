@@ -2538,7 +2538,6 @@ fn exclude_links_from_lockfile_drops_link_deps_from_importer() {
             auto_install_peers: true,
             exclude_links_from_lockfile: true,
             lockfile_include_tarball_url: false,
-            extra: BTreeMap::new(),
         },
         ..Default::default()
     };
@@ -5490,11 +5489,12 @@ snapshots:
 fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n  peersSuffixMaxLength: 80\nimporters:\n  .: {}\n",
+    )
+    .unwrap();
     let mut graph = LockfileGraph::default();
-    graph
-        .settings
-        .extra
-        .insert("peersSuffixMaxLength".into(), 80.into());
     let source = LocalSource::Tarball("deps/bundler.tgz".into());
     let dep_path = source.dep_path("bundler");
     graph.importers.insert(
@@ -5535,7 +5535,6 @@ fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
     assert!(out["snapshots"]["bundler@file:deps/bundler.tgz"]["bundledDependencies"].is_null());
 
     let parsed = parse(&path).unwrap();
-    assert_eq!(parsed.settings.extra["peersSuffixMaxLength"], 80);
     let reparsed = parsed
         .packages
         .values()

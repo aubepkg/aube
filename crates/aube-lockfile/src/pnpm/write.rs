@@ -940,7 +940,7 @@ pub fn write_with_project_root(
             exclude_links_from_lockfile: graph.settings.exclude_links_from_lockfile,
             lockfile_include_tarball_url: graph.settings.lockfile_include_tarball_url,
             extra: if native_pnpm_aliases {
-                graph.settings.extra.clone()
+                existing_unmodeled_settings(path)
             } else {
                 BTreeMap::new()
             },
@@ -1137,6 +1137,20 @@ struct WritableSettings {
     /// written back verbatim into pnpm-lock.yaml.
     #[serde(flatten)]
     extra: BTreeMap<String, serde_json::Value>,
+}
+
+/// `settings:` entries of the lockfile being replaced that aube doesn't
+/// model. pnpm compares them on a frozen install, so dropping them on a
+/// rewrite makes pnpm reject the file.
+fn existing_unmodeled_settings(path: &Path) -> BTreeMap<String, serde_json::Value> {
+    let Ok(content) = crate::read_lockfile(path) else {
+        return BTreeMap::new();
+    };
+    super::raw::parse_raw_lockfile(&content)
+        .ok()
+        .and_then(|raw| raw.settings)
+        .map(|settings| settings.extra)
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Default, Serialize)]
