@@ -282,39 +282,16 @@ fn legacy_vite_dep_paths(
         .collect()
 }
 
-/// Select each legacy Vite package plus every package ancestor needed
-/// to make the root/importer resolution path reach that local copy.
+/// Select project-relative sources, legacy Vite, and every ancestor needed
+/// to make the root/importer resolution path reach those local copies.
 ///
 /// Other branches of the graph remain in the GVS. Dependencies of a
 /// selected ancestor that are not themselves selected still resolve
 /// through the ordinary local `.aube` symlinks into the shared store.
-pub(super) fn legacy_vite_project_local_closure(
+pub(super) fn project_local_closure(
     graph: &aube_lockfile::LockfileGraph,
 ) -> std::collections::BTreeSet<String> {
-    let mut selected = legacy_vite_dep_paths(graph);
-    if selected.is_empty() {
-        return selected;
-    }
-    loop {
-        let mut added = false;
-        for (parent_path, parent) in &graph.packages {
-            if selected.contains(parent_path) {
-                continue;
-            }
-            let reaches_selected = parent.dependencies.iter().any(|(name, tail)| {
-                aube_lockfile::resolve_dep_edge(name, tail, |key| graph.packages.contains_key(key))
-                    .is_some_and(|child| selected.contains(&child))
-            });
-            if reaches_selected {
-                selected.insert(parent_path.clone());
-                added = true;
-            }
-        }
-        if !added {
-            break;
-        }
-    }
-    selected
+    aube_linker::project_local_dependency_closure_with_seeds(graph, legacy_vite_dep_paths(graph))
 }
 
 fn vite_needs_modules_metadata_backport(version: &str) -> bool {
@@ -821,7 +798,7 @@ mod tests {
         );
 
         assert_eq!(
-            legacy_vite_project_local_closure(&graph),
+            project_local_closure(&graph),
             ["vite@5.4.21".to_string(), "vitepress@1.6.4".to_string()]
                 .into_iter()
                 .collect()

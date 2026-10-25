@@ -513,3 +513,110 @@ fn completion_bin_selects_one_program_and_rejects_install() {
             .exists()
     );
 }
+
+#[test]
+fn bun_member_peer_survives_clean_frozen_install_and_add() {
+    use assert_cmd::assert::OutputAssertExt;
+
+    let _guard = e2e_lock();
+    for linker in ["isolated", "hoisted"] {
+        for gvs in [false, true] {
+            for optional in [false, true] {
+                let sbx = Sandbox::new();
+                for (file, manifest, script) in [
+                    (
+                        "react18",
+                        serde_json::json!({"name":"react","version":"18.0.0"}),
+                        "module.exports = '18.0.0';",
+                    ),
+                    (
+                        "react19",
+                        serde_json::json!({"name":"react","version":"19.0.0"}),
+                        "module.exports = '19.0.0';",
+                    ),
+                    (
+                        "consumer",
+                        serde_json::json!({"name":"consumer","version":"1.0.0","peerDependencies":{"react":"^19.0.0"},"peerDependenciesMeta":{"react":{"optional":optional}}}),
+                        "module.exports = require('react');",
+                    ),
+                    (
+                        "unrelated",
+                        serde_json::json!({"name":"unrelated","version":"1.0.0"}),
+                        "module.exports = 'unrelated';",
+                    ),
+                ] {
+                    let gzip =
+                        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                    let mut tar = tar::Builder::new(gzip);
+                    for (name, contents) in [
+                        ("package.json", manifest.to_string()),
+                        ("index.js", script.into()),
+                    ] {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_size(contents.len() as u64);
+                        header.set_mode(0o644);
+                        header.set_cksum();
+                        tar.append_data(
+                            &mut header,
+                            format!("package/{name}"),
+                            contents.as_bytes(),
+                        )
+                        .unwrap();
+                    }
+                    fs::write(
+                        sbx.project.join(format!("{file}.tgz")),
+                        tar.into_inner().unwrap().finish().unwrap(),
+                    )
+                    .unwrap();
+                }
+                sbx.write_manifest(r#"{"name":"root","private":true,"workspaces":["apps/*"],"dependencies":{"react":"file:react18.tgz"}}"#);
+                let member = sbx.project.join("apps/app");
+                fs::create_dir_all(&member).unwrap();
+                fs::write(member.join("package.json"), r#"{"name":"app","dependencies":{"react":"file:../../react19.tgz","consumer":"file:../../consumer.tgz"}}"#).unwrap();
+                fs::write(
+                    sbx.project.join(".npmrc"),
+                    format!("node-linker={linker}\nenable-global-virtual-store={gvs}\n"),
+                )
+                .unwrap();
+                let lockfile_path = sbx.project.join("bun.lock");
+                fs::write(
+                    &lockfile_path,
+                    r#"{"lockfileVersion":1,"workspaces":{},"packages":{}}"#,
+                )
+                .unwrap();
+                sbx.cmd()
+                    .args(["install", "--no-frozen-lockfile", "--ignore-scripts"])
+                    .assert()
+                    .success();
+                let runtime = || {
+                    std::process::Command::new("node").current_dir(&sbx.project)
+                        .args(["-e", "console.log(require('module').createRequire(process.cwd() + '/apps/app/package.json')('consumer'))"])
+                        .assert().success().stdout("19.0.0\n");
+                };
+                runtime();
+                let original = fs::read(&lockfile_path).unwrap();
+                for _ in 0..2 {
+                    fs::remove_dir_all(sbx.project.join("node_modules")).unwrap();
+                    fs::remove_dir_all(member.join("node_modules")).unwrap();
+                    sbx.cmd()
+                        .args(["install", "--frozen-lockfile", "--ignore-scripts"])
+                        .assert()
+                        .success();
+                    runtime();
+                    assert_eq!(fs::read(&lockfile_path).unwrap(), original);
+                }
+                sbx.cmd()
+                    .args([
+                        "add",
+                        "file:unrelated.tgz",
+                        "--workspace-root",
+                        "--ignore-workspace-root-check",
+                        "--ignore-scripts",
+                    ])
+                    .assert()
+                    .success();
+                runtime();
+            }
+        }
+    }
+}

@@ -5484,3 +5484,117 @@ snapshots:
     }
 }
 }
+
+#[test]
+fn rewrite_preserves_leading_package_manager_document() {
+    let environment = "---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.14.0\n        version: 12.14.0\n\npackages: {}\n\nsnapshots: {}\n\n---\n";
+    let project = "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n";
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["pnpm-lock.yaml", "pnpm-lock.feature.yaml"] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("{environment}{project}")).unwrap();
+        let graph = parse(&path).unwrap();
+        super::write::write(&path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+        let output = std::fs::read_to_string(&path).unwrap();
+        assert!(output.starts_with(environment), "{name}: {output}");
+        assert_eq!(output.matches("\n---\n").count(), 1, "{name}: {output}");
+        parse(&path).unwrap();
+    }
+}
+
+#[test]
+fn rewrite_does_not_add_environment_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n";
+    for name in ["pnpm-lock.yaml", "aube-lock.yaml"] {
+        let path = dir.path().join(name);
+        let environment = "---\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.14.0\n        version: 12.14.0\n---\n";
+        let original = if name == "aube-lock.yaml" {
+            format!("{environment}{project}")
+        } else {
+            project.to_string()
+        };
+        std::fs::write(&path, original).unwrap();
+        let graph = parse(&path).unwrap();
+        super::write::write(&path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+        let output = std::fs::read_to_string(&path).unwrap();
+        assert!(!output.contains("packageManagerDependencies"), "{name}");
+    }
+}
+
+#[test]
+fn rewrite_preserves_environment_document_with_comments_around_markers() {
+    let environment = "# generated\n\n--- # environment\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.14.0\n        version: 12.14.0\n--- # project\n";
+    let project = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, format!("{environment}{project}")).unwrap();
+    let graph = parse(&path).unwrap();
+    super::write::write(&path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+    let output = std::fs::read_to_string(&path).unwrap();
+    assert!(output.starts_with(environment), "{output}");
+}
+
+proptest::proptest! {
+    #[test]
+    fn file_peer_edges_preserve_pnpm_spelling(
+        leaf in "[a-z]{1,12}",
+        tarball in proptest::bool::ANY,
+        own_peer in proptest::bool::ANY,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        let local_path = format!("app/deps/{leaf}{}", if tarball { ".tgz" } else { "" });
+        let source = if tarball {
+            LocalSource::Tarball(local_path.clone().into())
+        } else {
+            LocalSource::Directory(local_path.clone().into())
+        };
+        let suffix = if own_peer { "(bar@2.0.0)" } else { "" };
+        let resolution = if tarball {
+            format!("{{tarball: file:{local_path}}}")
+        } else {
+            format!("{{directory: {local_path}, type: directory}}")
+        };
+        let fixture = format!(r#"lockfileVersion: '9.0'
+importers:
+  .: {{}}
+  app:
+    dependencies:
+      react:
+        specifier: file:deps/{leaf}{extension}
+        version: file:{local_path}{suffix}
+      consumer:
+        specifier: 1.0.0
+        version: 1.0.0(react@file:{local_path}{suffix})
+packages:
+  react@file:{local_path}:
+    resolution: {resolution}
+  consumer@1.0.0:
+    resolution: {{integrity: sha512-consumer}}
+snapshots:
+  react@file:{local_path}{suffix}:
+    dependencies:
+      bar: 2.0.0
+  consumer@1.0.0(react@file:{local_path}{suffix}):
+    dependencies:
+      react: file:{local_path}{suffix}
+    optionalDependencies:
+      react: file:{local_path}{suffix}
+"#, extension = if tarball { ".tgz" } else { "" });
+        std::fs::write(&path, fixture).unwrap();
+        let graph = parse(&path).unwrap();
+        let key = source.dep_path("react");
+        let consumer = graph.packages.values().find(|p| p.name == "consumer").unwrap();
+        proptest::prop_assert!(graph.packages.contains_key(&key));
+        proptest::prop_assert_eq!(&graph.importers["app"].iter().find(|d| d.name == "react").unwrap().dep_path, &key);
+        let edge = format!("file:{local_path}{suffix}");
+        proptest::prop_assert_eq!(&consumer.dependencies["react"], &edge);
+        proptest::prop_assert_eq!(&consumer.optional_dependencies["react"], &edge);
+        write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+        let roundtrip = parse(&path).unwrap();
+        let consumer = roundtrip.packages.values().find(|p| p.name == "consumer").unwrap();
+        proptest::prop_assert_eq!(&consumer.dependencies["react"], &edge);
+        proptest::prop_assert_eq!(&consumer.optional_dependencies["react"], &edge);
+    }
+}

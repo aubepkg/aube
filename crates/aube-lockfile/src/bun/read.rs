@@ -103,6 +103,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             .dependencies
             .keys()
             .chain(entry.meta.optional_dependencies.keys())
+            .chain(entry.meta.peer_dependencies.keys())
         {
             deps.insert(n.clone(), String::new());
         }
@@ -111,6 +112,16 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         // everything under `dependencies:` on re-emit.
         let mut optional_deps: BTreeMap<String, String> = BTreeMap::new();
         for n in entry.meta.optional_dependencies.keys() {
+            optional_deps.insert(n.clone(), String::new());
+        }
+        // An optional peer must stay skippable with its provider, so
+        // filtering doesn't keep it alive through the consumer's edge.
+        for n in entry
+            .meta
+            .optional_peers
+            .iter()
+            .filter(|n| !entry.meta.dependencies.contains_key(*n))
+        {
             optional_deps.insert(n.clone(), String::new());
         }
         // Preserve bun's per-entry meta ranges (`"^4.1.0"`) so re-emit
@@ -183,6 +194,8 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         );
     }
 
+    // Peers, including provided optional peers, need runtime edges before
+    // filtering and linking. Their declarations stay separate from hard deps.
     // Second pass: resolve transitive deps by walking the bun nesting
     // hierarchy — for an entry at key "parent/foo", dep "bar" resolves to
     // "parent/foo/bar" → "parent/bar" → "bar".
@@ -202,6 +215,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             .dependencies
             .keys()
             .chain(entry.meta.optional_dependencies.keys())
+            .chain(entry.meta.peer_dependencies.keys())
         {
             if let Some(target_key) = resolve_nested_bun(key, dep_name, &key_info)
                 && let Some((dname, dver)) = key_info.get(&target_key)

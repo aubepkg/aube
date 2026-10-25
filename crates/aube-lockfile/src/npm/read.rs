@@ -251,6 +251,13 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                     }))
                     .chain(
                         package_entry
+                            .deprecated
+                            .as_ref()
+                            .filter(|msg| !msg.is_empty())
+                            .map(|msg| ("deprecated".to_string(), msg.as_str().into())),
+                    )
+                    .chain(
+                        package_entry
                             .funding
                             .as_ref()
                             .map(|f| (crate::EXTRA_NPM_FUNDING.to_string(), f.raw.clone())),

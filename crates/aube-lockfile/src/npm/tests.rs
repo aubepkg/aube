@@ -4062,6 +4062,57 @@ proptest::proptest! {
     }
 }
 
+/// `deprecated` on a package-lock.json entry must survive a parse/write
+/// cycle, and a freshly resolved package's recorded reason must be written.
+#[test]
+fn test_write_deprecated_round_trips_and_writes_new_entries() {
+    let lock = r#"{
+  "name": "t", "version": "1.0.0", "lockfileVersion": 3, "requires": true,
+  "packages": {
+    "": {"name": "t", "version": "1.0.0", "dependencies": {"old": "1.0.0", "new": "1.0.0"}},
+    "node_modules/old": {
+      "version": "1.0.0", "resolved": "https://r/o.tgz", "integrity": "sha512-o",
+      "deprecated": "use new instead"
+    },
+    "node_modules/new": {
+      "version": "1.0.0", "resolved": "https://r/n.tgz", "integrity": "sha512-n"
+    }
+  }
+}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("package-lock.json");
+    std::fs::write(&path, lock).unwrap();
+    let manifest = aube_manifest::PackageJson {
+        name: Some("t".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: [
+            ("old".to_string(), "1.0.0".to_string()),
+            ("new".to_string(), "1.0.0".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut graph = parse(&path).unwrap();
+    graph
+        .packages
+        .get_mut("new@1.0.0")
+        .unwrap()
+        .extra_meta
+        .insert("deprecated".to_string(), "fixture deprecation".into());
+    write(&path, &graph, &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        json["packages"]["node_modules/old"]["deprecated"],
+        "use new instead"
+    );
+    assert_eq!(
+        json["packages"]["node_modules/new"]["deprecated"],
+        "fixture deprecation"
+    );
+}
+
 #[test]
 fn test_write_absolute_directory_targets_relative_to_lockfile() {
     let temp = tempfile::tempdir().unwrap();
