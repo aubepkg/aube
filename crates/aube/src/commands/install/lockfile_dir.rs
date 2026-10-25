@@ -145,9 +145,11 @@ pub(super) fn guard_against_foreign_importers(
         })
     };
     // An older aube kept members project-relative while the root was
-    // lock-relative; those keys are the current workspace's own members.
+    // lock-relative; those keys are this workspace's members, but only when
+    // the lockfile also records this project's root.
     let legacy_member = |key: &str| {
         pnpm && key != "."
+            && graph.importers.contains_key(importer_key)
             && workspace_importers.iter().any(|member| member == key)
             && resolve_physical_path(&project.join(key))
                 .is_ok_and(|path| path.starts_with(&project))
@@ -474,6 +476,9 @@ mod tests {
                 .contains("older aube wrote mixed workspace coordinates")
         );
         graph.importers.insert("other".into(), vec![]);
+        assert!(guard(&graph, false).is_err());
+        graph.importers.remove("other");
+        graph.importers.remove("../project");
         assert!(guard(&graph, false).is_err());
     }
 
