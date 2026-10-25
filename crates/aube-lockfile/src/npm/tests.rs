@@ -4042,6 +4042,8 @@ proptest::proptest! {
         for importer in ["", "packages/a"] {
             proptest::prop_assert!(written["packages"][importer].get("engines").is_none());
         }
+    }
+}
 
 #[test]
 fn test_write_absolute_directory_targets_relative_to_lockfile() {
