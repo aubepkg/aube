@@ -1750,12 +1750,23 @@ fn cyclic_peer_identities(graph: &LockfileGraph) -> FxHashSet<String> {
             pkg.peer_dependencies
                 .iter()
                 .flat_map(|(peer, range)| {
-                    by_name
-                        .get(peer.as_str())
-                        .into_iter()
-                        .flatten()
+                    let candidates = by_name.get(peer.as_str()).map_or(&[][..], Vec::as_slice);
+                    let compatible: Vec<usize> = candidates
+                        .iter()
                         .copied()
                         .filter(|&i| version_satisfies(&nodes[i].version, range))
+                        .collect();
+                    // A required peer with no compatible version still binds
+                    // to whatever is provided, so the edge exists anyway.
+                    let optional = pkg
+                        .peer_dependencies_meta
+                        .get(peer)
+                        .is_some_and(|meta| meta.optional);
+                    if compatible.is_empty() && !optional {
+                        candidates.to_vec()
+                    } else {
+                        compatible
+                    }
                 })
                 .collect()
         })
@@ -2509,6 +2520,25 @@ mod tests {
 
         assert!(out.packages.contains_key("plugin@1.0.0"));
         assert!(!out.packages.contains_key("plugin@1.0.0(theme@1.0.0)"));
+    }
+
+    #[test]
+    fn peer_cycle_through_incompatible_required_peer_is_detected() {
+        let mut g = LockfileGraph::default();
+        let mut host = locked("host", &[]);
+        host.peer_dependencies
+            .insert("plugin".to_string(), "*".to_string());
+        let mut plugin = locked("plugin", &[]);
+        plugin
+            .peer_dependencies
+            .insert("host".to_string(), "^2".to_string());
+        g.packages.insert(host.dep_path.clone(), host);
+        g.packages.insert(plugin.dep_path.clone(), plugin);
+
+        let identities = cyclic_peer_identities(&g);
+
+        assert!(identities.contains("host@1.0.0"));
+        assert!(identities.contains("plugin@1.0.0"));
     }
 
     #[test]
