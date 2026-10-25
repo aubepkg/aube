@@ -475,3 +475,46 @@ fn npm_workspace_local_dependency_specs_survive_clean_frozen_install() {
         );
     }
 }
+
+#[test]
+fn npm_nested_linked_directories_keep_their_own_dependency_versions() {
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    for (dir, manifest) in [
+        ("leaf1", r#"{"name":"leaf","version":"1.0.0"}"#),
+        ("leaf2", r#"{"name":"leaf","version":"2.0.0"}"#),
+        (
+            "vendor",
+            r#"{"name":"outer","version":"1.0.0","dependencies":{"leaf":"file:../leaf2"}}"#,
+        ),
+        (
+            "vendor/host",
+            r#"{"name":"host","version":"1.0.0","dependencies":{"leaf":"file:../../leaf1"}}"#,
+        ),
+    ] {
+        fs::create_dir_all(sbx.project.join(dir)).unwrap();
+        fs::write(sbx.project.join(dir).join("package.json"), manifest).unwrap();
+    }
+    sbx.write_manifest(
+        r#"{"name":"root","private":true,"dependencies":{"outer":"file:vendor","host":"file:vendor/host","leaf":"file:leaf1"}}"#,
+    );
+    fs::write(
+        sbx.project.join("package-lock.json"),
+        r#"{"lockfileVersion":3,"packages":{"":{"name":"root"}}}"#,
+    )
+    .unwrap();
+    sbx.cmd()
+        .args(["install", "--ignore-scripts", "--no-frozen-lockfile"])
+        .assert()
+        .success();
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(sbx.project.join("package-lock.json")).unwrap()).unwrap();
+    assert_eq!(
+        lock["packages"]["vendor/node_modules/leaf"]["resolved"],
+        "leaf2"
+    );
+    assert_eq!(
+        lock["packages"]["vendor/host/node_modules/leaf"]["resolved"],
+        "leaf1"
+    );
+}

@@ -342,6 +342,20 @@ pub fn write(
     // the importing member's ancestor chain. Give that source its own tree.
     let mut directory_queue: Vec<String> = placed.values().cloned().collect();
     let mut visited_directories = BTreeSet::new();
+    let enclosing_dirs: Vec<String> = graph
+        .importers
+        .keys()
+        .filter(|importer| *importer != ".")
+        .cloned()
+        .chain(
+            canonical
+                .values()
+                .filter_map(|pkg| match &pkg.local_source {
+                    Some(LocalSource::Directory(dir)) => Some(directory_target(dir)),
+                    _ => None,
+                }),
+        )
+        .collect();
     while let Some(key) = directory_queue.pop() {
         let Some(pkg) = canonical.get(&key) else {
             continue;
@@ -363,10 +377,18 @@ pub fn write(
             })
             .collect();
         let tree = super::build_hoist_tree(&canonical, &roots, None, &BTreeSet::new());
+        // Only the root copy is a shortcut when no other linked directory or
+        // member encloses this one; an enclosing directory's own
+        // `node_modules` is searched first and may hold another version.
+        let target = directory_target(dir);
+        let enclosed = enclosing_dirs
+            .iter()
+            .any(|outer| target.starts_with(&format!("{outer}/")));
         let redundant_tops: BTreeSet<_> = tree
             .iter()
             .filter(|(segments, child_key)| {
-                !dir.is_absolute()
+                !enclosed
+                    && !dir.is_absolute()
                     && !dir.starts_with("..")
                     && segments.len() == 1
                     && placed.get(&format!("node_modules/{}", segments[0])) == Some(*child_key)
