@@ -2729,7 +2729,7 @@ fn test_write_keeps_a_nested_packages_same_name_dep_one_level_below() {
 }
 
 #[test]
-fn test_write_absolute_directory_idents_relative_to_lockfile() {
+fn test_write_absolute_directory_idents_relative_to_lockfile_inside_project() {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
     std::fs::create_dir(&project).unwrap();
@@ -2787,7 +2787,15 @@ fn test_write_absolute_directory_idents_relative_to_lockfile() {
             let lock = project.join("bun.lock");
             write(&lock, &graph, &manifest).unwrap();
             let packages = written_packages(&lock);
-            assert_eq!(packages["child"][0], format!("child@file:{target}"));
+            let expected = if target.starts_with("..") {
+                temp.path()
+                    .join("child")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            } else {
+                target.to_string()
+            };
+            assert_eq!(packages["child"][0], format!("child@file:{expected}"));
             if !direct {
                 assert_eq!(packages["host"][1]["dependencies"]["child"], spec);
                 assert_eq!(
@@ -2813,7 +2821,7 @@ fn test_write_absolute_directory_idents_relative_to_lockfile() {
                 .unwrap();
             assert_eq!(
                 child.local_source,
-                Some(LocalSource::Directory(target.into()))
+                Some(LocalSource::Directory(expected.clone().into()))
             );
         }
     }
