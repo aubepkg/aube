@@ -4375,6 +4375,119 @@ async fn lockfile_reuse_preserves_transitive_optional_edges() {
 }
 
 #[tokio::test]
+async fn tarball_parent_resolves_absolute_file_children() {
+    for tarball in [false, true] {
+        for exclude in [false, true] {
+            let (dir, manifest) = tarball_parent_fixture(tarball, true);
+            let policy = DependencyPolicy {
+                block_exotic_subdeps: exclude,
+                block_exotic_subdeps_exclude: if exclude {
+                    crate::trust::ExoticSubdepAllowlist::parse_lossy(["child"]).0
+                } else {
+                    Default::default()
+                },
+                ..Default::default()
+            };
+            let client = Arc::new(aube_registry::client::RegistryClient::new(
+                "http://127.0.0.1:0",
+            ));
+            let mut resolver = Resolver::new(client)
+                .with_project_root(dir.path().to_path_buf())
+                .with_dependency_policy(policy);
+            let graph = resolver.resolve(&manifest, None).await.unwrap();
+            let host = graph.packages.values().find(|p| p.name == "host").unwrap();
+            let child = graph.packages.values().find(|p| p.name == "child").unwrap();
+            assert_eq!(child.version, "1.0.0");
+            assert_eq!(
+                host.dependencies["child"],
+                child.dep_path.strip_prefix("child@").unwrap()
+            );
+            assert_eq!(
+                matches!(child.local_source, Some(LocalSource::Tarball(_))),
+                tarball
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn tarball_parent_blocks_untrusted_absolute_file_child() {
+    let (dir, manifest) = tarball_parent_fixture(true, true);
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client).with_project_root(dir.path().to_path_buf());
+    assert!(matches!(
+        resolver.resolve(&manifest, None).await,
+        Err(Error::BlockedExoticSubdep(details)) if details.name == "child"
+    ));
+}
+
+#[tokio::test]
+async fn tarball_parent_rejects_unanchored_relative_file_child() {
+    for tarball in [false, true] {
+        let (dir, manifest) = tarball_parent_fixture(tarball, false);
+        let client = Arc::new(aube_registry::client::RegistryClient::new(
+            "http://127.0.0.1:0",
+        ));
+        let mut resolver = Resolver::new(client)
+            .with_project_root(dir.path().to_path_buf())
+            .with_dependency_policy(DependencyPolicy {
+                block_exotic_subdeps: false,
+                ..Default::default()
+            });
+        assert!(matches!(
+            resolver.resolve(&manifest, None).await,
+            Err(Error::Registry(name, message))
+                if name == "child" && message.contains("without the parent package source root")
+        ));
+    }
+}
+
+fn tarball_parent_fixture(tarball: bool, absolute: bool) -> (tempfile::TempDir, PackageJson) {
+    let dir = tempfile::tempdir().unwrap();
+    let child_manifest = r#"{"name":"child","version":"1.0.0"}"#;
+    let child = if tarball {
+        let path = dir.path().join("child.tgz");
+        write_manifest_tarball(&path, child_manifest);
+        path
+    } else {
+        let path = dir.path().join("child");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("package.json"), child_manifest).unwrap();
+        path
+    };
+    let child_path = if absolute {
+        child.as_path()
+    } else {
+        std::path::Path::new(child.file_name().unwrap())
+    };
+    let host_manifest = serde_json::json!({
+        "name": "host", "version": "1.0.0",
+        "dependencies": {"child": format!("file:{}", child_path.display())}
+    });
+    write_manifest_tarball(&dir.path().join("host.tgz"), &host_manifest.to_string());
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("host".into(), "file:host.tgz".into());
+    (dir, manifest)
+}
+
+fn write_manifest_tarball(path: &std::path::Path, manifest: &str) {
+    let archive = std::fs::File::create(path).unwrap();
+    let gzip = flate2::write::GzEncoder::new(archive, flate2::Compression::default());
+    let mut tar = tar::Builder::new(gzip);
+    let mut header = tar::Header::new_gnu();
+    header.set_size(manifest.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    tar.append_data(&mut header, "package/package.json", manifest.as_bytes())
+        .unwrap();
+    tar.into_inner().unwrap().finish().unwrap();
+}
+
+#[tokio::test]
 async fn lockfile_reuse_skips_local_peer_edge_supplied_by_importer() {
     let dir = tempfile::tempdir().unwrap();
     let react_dir = dir.path().join("deps/react");
