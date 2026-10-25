@@ -1740,33 +1740,27 @@ fn apply_dedupe_peers_to_tail(tail: &str) -> String {
 /// separately: a cycle through `host@1` says nothing about `host@2`.
 fn cyclic_peer_identities(graph: &LockfileGraph) -> FxHashSet<String> {
     let nodes: Vec<&LockedPackage> = graph.packages.values().collect();
-    let mut by_name: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
-    for (i, pkg) in nodes.iter().enumerate() {
-        by_name.entry(pkg.name.as_str()).or_default().push(i);
-    }
+    let index_of: FxHashMap<&str, usize> = graph
+        .packages
+        .keys()
+        .enumerate()
+        .map(|(i, key)| (key.as_str(), i))
+        .collect();
+    // Edges follow the providers a package is actually wired to for its
+    // declared peers (auto-installed on the first pass, resolved by the
+    // peer-context pass afterwards), so unrelated installed versions of a
+    // peer never join a cycle.
     let edges: Vec<Vec<usize>> = nodes
         .iter()
         .map(|pkg| {
             pkg.peer_dependencies
-                .iter()
-                .flat_map(|(peer, range)| {
-                    let candidates = by_name.get(peer.as_str()).map_or(&[][..], Vec::as_slice);
-                    let compatible: Vec<usize> = candidates
-                        .iter()
-                        .copied()
-                        .filter(|&i| version_satisfies(&nodes[i].version, range))
-                        .collect();
-                    // A required peer with no compatible version still binds
-                    // to whatever is provided, so the edge exists anyway.
-                    let optional = pkg
-                        .peer_dependencies_meta
-                        .get(peer)
-                        .is_some_and(|meta| meta.optional);
-                    if compatible.is_empty() && !optional {
-                        candidates.to_vec()
-                    } else {
-                        compatible
-                    }
+                .keys()
+                .filter_map(|peer| {
+                    let tail = pkg.dependencies.get(peer)?;
+                    let key = aube_lockfile::resolve_dep_edge(peer, tail, |key| {
+                        graph.packages.contains_key(key)
+                    })?;
+                    index_of.get(key.as_str()).copied()
                 })
                 .collect()
         })
@@ -2525,10 +2519,11 @@ mod tests {
     #[test]
     fn peer_cycle_through_incompatible_required_peer_is_detected() {
         let mut g = LockfileGraph::default();
-        let mut host = locked("host", &[]);
+        // `plugin` requires `host@^2` but is still wired to `host@1`.
+        let mut host = locked("host", &[("plugin", "1.0.0")]);
         host.peer_dependencies
             .insert("plugin".to_string(), "*".to_string());
-        let mut plugin = locked("plugin", &[]);
+        let mut plugin = locked("plugin", &[("host", "1.0.0")]);
         plugin
             .peer_dependencies
             .insert("host".to_string(), "^2".to_string());
@@ -2548,6 +2543,10 @@ mod tests {
             let mut pkg = LockedPackage {
                 version: version.to_string(),
                 dep_path: format!("{name}@{version}"),
+                dependencies: peers
+                    .iter()
+                    .map(|peer| ((*peer).to_string(), "1.0.0".to_string()))
+                    .collect(),
                 ..locked(name, &[])
             };
             pkg.peer_dependencies = peers
@@ -2556,7 +2555,8 @@ mod tests {
                 .collect();
             pkg
         };
-        // host@1 <-> plugin is a cycle; host@2 only peers on color.
+        // host@1 <-> plugin is a cycle; host@2 only peers on color and
+        // plugin is never wired to it.
         let host2 = versioned("host", "2.0.0", &["color"]);
         let mut consumer = versioned("consumer", "1.0.0", &[]);
         consumer
