@@ -3816,7 +3816,7 @@ fn npm_bundled_child_keeps_external_peer_reachable() {
     let original = serde_json::json!({"lockfileVersion": 3, "requires": true, "packages": {
         "": {"dependencies": {"owner": "1.0.0"}},
         "node_modules/owner": {"version": "1.0.0", "bundleDependencies": ["plugin"], "dependencies": {"plugin": "1.0.0"}},
-        "node_modules/owner/node_modules/plugin": {"version": "1.0.0", "inBundle": true, "peerDependencies": {"react": "*", "tslib": "*"}},
+        "node_modules/owner/node_modules/plugin": {"version": "1.0.0", "inBundle": true, "peerDependencies": {"react": "*", "tslib": "*"}, "peerDependenciesMeta": {"tslib": {"optional": true}}},
         "node_modules/owner/node_modules/tslib": {"version": "1.0.0", "inBundle": true},
         "node_modules/react": {"version": "19.0.0", "peer": true},
         "node_modules/tslib": {"version": "2.3.0", "peer": true}
@@ -3838,6 +3838,25 @@ fn npm_bundled_child_keeps_external_peer_reachable() {
         written["packages"]["node_modules/react"],
         original["packages"]["node_modules/react"]
     );
+}
+
+#[test]
+fn npm_bundled_optional_peer_does_not_demote_required_owner_edge() {
+    let original = serde_json::json!({"lockfileVersion": 3, "requires": true, "packages": {
+        "": {"dependencies": {"owner": "1.0.0"}},
+        "node_modules/owner": {"version": "1.0.0", "bundleDependencies": ["plugin"], "dependencies": {"plugin": "1.0.0", "react": "*"}},
+        "node_modules/owner/node_modules/plugin": {"version": "1.0.0", "inBundle": true, "peerDependencies": {"react": "*"}, "peerDependenciesMeta": {"react": {"optional": true}}},
+        "node_modules/react": {"version": "19.0.0"}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let graph = parse(file.path()).unwrap();
+    let owner = &graph.packages["owner@1.0.0"];
+    assert_eq!(
+        owner.dependencies.get("react").map(String::as_str),
+        Some("19.0.0")
+    );
+    assert!(!owner.optional_dependencies.contains_key("react"));
 }
 
 #[test]

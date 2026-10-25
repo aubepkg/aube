@@ -413,13 +413,14 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 continue;
             };
             let tail = crate::npm::dep_path_tail(&target_info.name, &target_info.dep_path);
-            resolved
-                .entry(dep_name.clone())
-                .or_insert_with(|| tail.to_string());
+            // An edge the owner already declares keeps the owner's own
+            // required/optional classification.
+            if resolved.contains_key(dep_name) {
+                continue;
+            }
+            resolved.insert(dep_name.clone(), tail.to_string());
             if is_optional {
-                resolved_optional
-                    .entry(dep_name.clone())
-                    .or_insert_with(|| tail.to_string());
+                resolved_optional.insert(dep_name.clone(), tail.to_string());
             }
         }
     }
