@@ -151,7 +151,10 @@ pub(super) fn bootstrap_prefix(content: &str) -> Option<&str> {
     let mut prefix_end = None;
     for line in content.split_inclusive('\n') {
         offset += line.len();
-        if line.trim_end() == "---" {
+        let is_separator = line
+            .strip_prefix("---")
+            .is_some_and(|rest| rest.trim().is_empty() || rest.starts_with([' ', '\t']));
+        if is_separator {
             if has_body {
                 prefix_end = Some(offset);
             }

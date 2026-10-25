@@ -5508,6 +5508,21 @@ fn write_preserves_pnpm_bootstrap_document() {
     assert_eq!(again, written);
 }
 
+#[test]
+fn write_preserves_bootstrap_with_separator_comment_and_branch_file() {
+    let content = "---\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 11.0.0\n        version: 11.0.0\n--- # project lockfile\nlockfileVersion: '9.0'\n";
+    let prefix = super::raw::bootstrap_prefix(content).unwrap();
+    assert!(prefix.ends_with("--- # project lockfile\n"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.feature.yaml");
+    std::fs::write(&path, content).unwrap();
+    let graph = parse(&path).unwrap();
+    super::write::write(&path, &graph, &PackageJson::default()).unwrap();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.starts_with(prefix), "got:\n{written}");
+}
+
 proptest::proptest! {
     #[test]
     fn bootstrap_prefix_is_a_prefix_ending_at_separator(body in "[a-z: ]{0,40}", rest in "[a-z: ]{0,40}") {

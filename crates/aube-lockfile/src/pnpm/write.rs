@@ -977,7 +977,11 @@ pub fn write_with_project_root(
     // pnpm v11 keeps its own pin in a leading bootstrap document. The graph
     // only models the project document, so carry the existing prefix over
     // or pnpm rejects the result under `--frozen-lockfile`.
-    let bootstrap = native_pnpm_aliases
+    let is_pnpm_lockfile = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("pnpm-lock.") && name.ends_with(".yaml"));
+    let bootstrap = is_pnpm_lockfile
         .then(|| std::fs::read_to_string(path).ok())
         .flatten()
         .and_then(|existing| super::raw::bootstrap_prefix(&existing).map(str::to_owned));
