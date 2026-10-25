@@ -594,7 +594,6 @@ fn relocated_workspace_lockfiles_prune_stale_members() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn relocated_native_lockfile_rejects_lock_dir_with_another_manifest_before_writing() {
     let _guard = e2e_lock();
@@ -618,6 +617,7 @@ fn relocated_native_lockfile_rejects_lock_dir_with_another_manifest_before_writi
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn relocated_workspace_lockfiles_reject_physically_external_importers() {
     let _guard = e2e_lock();
