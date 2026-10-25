@@ -934,6 +934,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
         Vec<String>,
     )>;
+    let prewarm_project_local_dep_paths;
     // The cold-install lockfile write runs on a `spawn_blocking` task so it
     // overlaps `filter_graph` + the link phase (see
     // `lockfile_write_overlap`). The handle escapes the resolve match arm
@@ -1120,6 +1121,8 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 build_policy: lock_build_policy,
             })
             .await?;
+            prewarm_project_local_dep_paths =
+                lock_virtual_store_plan.project_local_dep_paths().cloned();
             let lock_prewarm_inputs = GvsPrewarmInputs {
                 graph: lock_materialize_graph,
                 store: store.clone(),
@@ -1134,10 +1137,14 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             };
             let lock_materialize_handle =
                 spawn_gvs_prewarm(lock_prewarm_inputs, lock_materialize_rx);
-            let lock_project_local_dep_paths = if planned_gvs {
-                gvs::legacy_vite_project_local_closure(&graph)
+            let lock_project_local_dep_paths = if planned_gvs
+                && (opts.dep_selection.is_filtered()
+                    || !opts.workspace_filter.is_empty()
+                    || (has_workspace && !link_all_workspace_importers))
+            {
+                std::sync::Arc::new(gvs::project_local_closure(&graph))
             } else {
-                Default::default()
+                prewarm_project_local_dep_paths.clone().unwrap_or_default()
             };
 
             let fetch_result = fetch_packages_with_root(
@@ -2161,6 +2168,11 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 &install_ignored_optional,
             );
 
+            // Platform pruning can remove an edge while keeping its target
+            // via another importer. Recompute the final selection on this
+            // surviving graph rather than reusing the prewarm closure.
+            prewarm_project_local_dep_paths = None;
+
             // Reconcile the progress denominator and the running
             // estimated-download total. The streaming pass bumped
             // `inc_total` once per *resolved* package and recorded
@@ -2214,7 +2226,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                 let cwd_for_catchup_client = cwd.clone();
                 let catchup_network_mode = opts.network_mode;
                 let project_local_dep_paths = if planned_gvs {
-                    gvs::legacy_vite_project_local_closure(&graph)
+                    gvs::project_local_closure(&graph)
                 } else {
                     Default::default()
                 };
@@ -2428,6 +2440,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
         node_version: node_version.as_deref(),
         prewarm_graph_hashes: prewarm_graph_hashes.as_ref(),
         prewarm_placed: prewarm_placed.as_ref(),
+        project_local_dep_paths: prewarm_project_local_dep_paths,
         aube_dir: &aube_dir,
         modules_dir_name: &modules_dir_name,
         virtual_store_dir_max_length,
