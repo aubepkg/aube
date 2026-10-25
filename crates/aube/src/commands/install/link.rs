@@ -27,6 +27,7 @@ pub(super) struct LinkPhaseInput<'a> {
         std::sync::Arc<aube_lockfile::graph_hash::GraphHashes>,
         Vec<String>,
     )>,
+    pub(super) project_local_dep_paths: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
     pub(super) aube_dir: &'a std::path::Path,
     pub(super) modules_dir_name: &'a str,
     pub(super) virtual_store_dir_max_length: usize,
@@ -70,6 +71,7 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         node_version,
         prewarm_graph_hashes,
         prewarm_placed,
+        project_local_dep_paths,
         aube_dir,
         modules_dir_name,
         virtual_store_dir_max_length,
@@ -154,8 +156,9 @@ pub(super) fn run_link_phase(input: LinkPhaseInput<'_>) -> miette::Result<LinkPh
         .with_modules_dir_name(modules_dir_name.to_string())
         .with_aube_dir_override(aube_dir.to_path_buf());
     if planned_gvs && node_linker == aube_linker::NodeLinker::Isolated {
-        linker = linker
-            .with_project_local_dep_paths(gvs::legacy_vite_project_local_closure(graph_for_link));
+        let selected = project_local_dep_paths
+            .unwrap_or_else(|| std::sync::Arc::new(gvs::project_local_closure(graph_for_link)));
+        linker = linker.with_precomputed_project_local_dep_paths(selected);
     }
     if let Some(enabled) = use_global_virtual_store_override {
         linker = linker.with_use_global_virtual_store(enabled);

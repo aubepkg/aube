@@ -25,7 +25,10 @@ mod tests;
 
 pub use error::Error;
 pub use hoisted::HoistedPlacements;
-pub use link::{build_nested_link_targets, build_workspace_nested_link_targets};
+pub use link::{
+    build_nested_link_targets, build_workspace_nested_link_targets,
+    project_local_dependency_closure, project_local_dependency_closure_with_seeds,
+};
 pub(crate) use materialize::{
     invalidate_stale_index_for_package, validate_index_key, validate_package_link_name,
 };
@@ -103,6 +106,7 @@ pub struct Linker {
     /// virtual store. This is reserved for compatibility transforms
     /// that need to mutate one package without touching shared bytes.
     project_local_dep_paths: rustc_hash::FxHashSet<String>,
+    precomputed_project_local_dep_paths: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
     /// Dep paths whose global virtual-store entry this install placed
     /// itself moments earlier (the fetch-time prewarm), under the same
     /// graph hashes. Their dependency links were just written from the
