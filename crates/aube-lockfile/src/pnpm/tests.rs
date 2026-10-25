@@ -5485,63 +5485,6 @@ snapshots:
 }
 }
 
-#[test]
-fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("pnpm-lock.yaml");
-    std::fs::write(
-        &path,
-        "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n  peersSuffixMaxLength: 80\nimporters:\n  .: {}\n",
-    )
-    .unwrap();
-    let mut graph = LockfileGraph::default();
-    let source = LocalSource::Tarball("deps/bundler.tgz".into());
-    let dep_path = source.dep_path("bundler");
-    graph.importers.insert(
-        ".".into(),
-        vec![DirectDep {
-            name: "bundler".into(),
-            dep_path: dep_path.clone(),
-            dep_type: DepType::Production,
-            specifier: Some("file:deps/bundler.tgz".into()),
-        }],
-    );
-    graph.packages.insert(
-        dep_path.clone(),
-        LockedPackage {
-            name: "bundler".into(),
-            version: "1.0.0".into(),
-            integrity: Some("sha512-bundler".into()),
-            dep_path,
-            local_source: Some(source),
-            bundled_dependencies: vec!["is-number".into()],
-            ..Default::default()
-        },
-    );
-    write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
-    let out: yaml_serde::Value =
-        yaml_serde::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(out["settings"]["peersSuffixMaxLength"].as_u64(), Some(80));
-    let package = &out["packages"]["bundler@file:deps/bundler.tgz"];
-    assert_eq!(package["version"].as_str(), Some("1.0.0"));
-    assert_eq!(
-        package["resolution"]["integrity"].as_str(),
-        Some("sha512-bundler")
-    );
-    assert_eq!(
-        package["bundledDependencies"][0].as_str(),
-        Some("is-number")
-    );
-    assert!(out["snapshots"]["bundler@file:deps/bundler.tgz"]["bundledDependencies"].is_null());
-
-    let parsed = parse(&path).unwrap();
-    let reparsed = parsed
-        .packages
-        .values()
-        .find(|p| p.name == "bundler")
-        .unwrap();
-    assert_eq!(reparsed.bundled_dependencies, ["is-number"]);
-
 proptest::proptest! {
     #[test]
     fn file_peer_edges_preserve_pnpm_spelling(
@@ -5604,4 +5547,62 @@ snapshots:
         proptest::prop_assert_eq!(&consumer.dependencies["react"], &edge);
         proptest::prop_assert_eq!(&consumer.optional_dependencies["react"], &edge);
     }
+}
+
+#[test]
+fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(
+        &path,
+        "lockfileVersion: '9.0'\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n  peersSuffixMaxLength: 80\nimporters:\n  .: {}\n",
+    )
+    .unwrap();
+    let mut graph = LockfileGraph::default();
+    let source = LocalSource::Tarball("deps/bundler.tgz".into());
+    let dep_path = source.dep_path("bundler");
+    graph.importers.insert(
+        ".".into(),
+        vec![DirectDep {
+            name: "bundler".into(),
+            dep_path: dep_path.clone(),
+            dep_type: DepType::Production,
+            specifier: Some("file:deps/bundler.tgz".into()),
+        }],
+    );
+    graph.packages.insert(
+        dep_path.clone(),
+        LockedPackage {
+            name: "bundler".into(),
+            version: "1.0.0".into(),
+            integrity: Some("sha512-bundler".into()),
+            dep_path,
+            local_source: Some(source),
+            bundled_dependencies: vec!["is-number".into()],
+            ..Default::default()
+        },
+    );
+    write_with_project_root(&path, dir.path(), &graph, &PackageJson::default()).unwrap();
+    let out: yaml_serde::Value =
+        yaml_serde::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(out["settings"]["peersSuffixMaxLength"].as_u64(), Some(80));
+    let package = &out["packages"]["bundler@file:deps/bundler.tgz"];
+    assert_eq!(package["version"].as_str(), Some("1.0.0"));
+    assert_eq!(
+        package["resolution"]["integrity"].as_str(),
+        Some("sha512-bundler")
+    );
+    assert_eq!(
+        package["bundledDependencies"][0].as_str(),
+        Some("is-number")
+    );
+    assert!(out["snapshots"]["bundler@file:deps/bundler.tgz"]["bundledDependencies"].is_null());
+
+    let parsed = parse(&path).unwrap();
+    let reparsed = parsed
+        .packages
+        .values()
+        .find(|p| p.name == "bundler")
+        .unwrap();
+    assert_eq!(reparsed.bundled_dependencies, ["is-number"]);
 }
