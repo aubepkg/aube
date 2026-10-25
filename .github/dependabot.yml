@@ -1,0 +1,33 @@
+# Renovate owns version updates (see renovate.json). This file exists only so
+# Dependabot security updates stay scoped: version-update PRs are disabled with
+# open-pull-requests-limit: 0, which leaves security update PRs unaffected.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+
+  # Ignoring every dependency also skips security update PRs for the fixture
+  # lockfiles.
+  - package-ecosystem: "npm"
+    directories:
+      - "/fixtures/**"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
