@@ -388,3 +388,90 @@ fn completion_bin_selects_one_program_and_rejects_install() {
             .exists()
     );
 }
+
+#[test]
+fn npm_workspace_local_dependency_specs_survive_clean_frozen_install() {
+    let _guard = e2e_lock();
+    for tarball in [false, true] {
+        let sbx = Sandbox::new();
+        let host = sbx.project.join("vendor/host");
+        let leaf = sbx.project.join("vendor/leaf");
+        fs::create_dir_all(&host).unwrap();
+        fs::create_dir_all(&leaf).unwrap();
+        fs::write(
+            leaf.join("package.json"),
+            r#"{"name":"leaf","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(leaf.join("index.js"), "module.exports = 'leaf ok';").unwrap();
+        let leaf_path = if tarball {
+            let path = sbx.project.join("leaf.tgz");
+            let gzip = flate2::write::GzEncoder::new(
+                fs::File::create(&path).unwrap(),
+                flate2::Compression::default(),
+            );
+            let mut tar = tar::Builder::new(gzip);
+            tar.append_dir_all("package", &leaf).unwrap();
+            tar.into_inner().unwrap().finish().unwrap();
+            path
+        } else {
+            leaf
+        };
+        let spec = format!("file:{}", leaf_path.display());
+        fs::write(
+            host.join("package.json"),
+            serde_json::json!({"name": "host", "version": "1.0.0", "dependencies": {"leaf": spec}})
+                .to_string(),
+        )
+        .unwrap();
+        fs::write(host.join("index.js"), "module.exports = require('leaf');").unwrap();
+        sbx.write_manifest(r#"{"name":"root","private":true,"workspaces":["apps/*"]}"#);
+        let app = sbx.project.join("apps/app");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(
+            app.join("package.json"),
+            r#"{"name":"app","dependencies":{"host":"file:../../vendor/host"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            sbx.project.join("package-lock.json"),
+            r#"{"lockfileVersion":3,"packages":{"":{"name":"root"}}}"#,
+        )
+        .unwrap();
+
+        sbx.cmd()
+            .args(["install", "--ignore-scripts", "--no-frozen-lockfile"])
+            .assert()
+            .success();
+        let lock = fs::read(sbx.project.join("package-lock.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&lock).unwrap();
+        assert_eq!(
+            parsed["packages"]["vendor/host"]["dependencies"]["leaf"],
+            spec
+        );
+
+        for dir in [sbx.project.join("node_modules"), app.join("node_modules")] {
+            fs::remove_dir_all(dir).unwrap();
+        }
+        sbx.cmd()
+            .args(["install", "--ignore-scripts", "--frozen-lockfile"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read(sbx.project.join("package-lock.json")).unwrap(),
+            lock,
+            "frozen install rewrote the lockfile (tarball={tarball})"
+        );
+        let output = std::process::Command::new("node")
+            .current_dir(&app)
+            .args(["-e", "console.log(require('host'))"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "leaf ok",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}

@@ -338,6 +338,56 @@ pub fn write(
         }
     }
 
+    // A directory link resolves children from its source, which can be outside
+    // the importing member's ancestor chain. Give that source its own tree.
+    let mut directory_queue: Vec<String> = placed.values().cloned().collect();
+    let mut visited_directories = BTreeSet::new();
+    while let Some(key) = directory_queue.pop() {
+        let Some(pkg) = canonical.get(&key) else {
+            continue;
+        };
+        let Some(LocalSource::Directory(dir)) = &pkg.local_source else {
+            continue;
+        };
+        if !visited_directories.insert(key) {
+            continue;
+        }
+        let roots: Vec<DirectDep> = pkg
+            .dependencies
+            .iter()
+            .map(|(name, value)| DirectDep {
+                name: name.clone(),
+                dep_path: super::child_canonical_key(name, value),
+                dep_type: DepType::Production,
+                specifier: pkg.declared_dependencies.get(name).cloned(),
+            })
+            .collect();
+        let tree = super::build_hoist_tree(&canonical, &roots, None, &BTreeSet::new());
+        let redundant_tops: BTreeSet<_> = tree
+            .iter()
+            .filter(|(segments, child_key)| {
+                !dir.is_absolute()
+                    && !dir.starts_with("..")
+                    && segments.len() == 1
+                    && placed.get(&format!("node_modules/{}", segments[0])) == Some(*child_key)
+            })
+            .map(|(segments, _)| segments[0].clone())
+            .collect();
+        for (segments, child_key) in tree {
+            if redundant_tops.contains(&segments[0]) {
+                continue;
+            }
+            let install_path = format!(
+                "{}/{}",
+                directory_target(dir),
+                super::segments_to_install_path(&segments)
+            );
+            if placed.insert(install_path, child_key.clone()).is_none() {
+                directory_queue.push(child_key);
+            }
+        }
+    }
+
     // npm links a `file:` directory to its target, so the link's nested
     // `node_modules` live under the target path, where the reader looks.
     let placed: BTreeMap<String, String> = placed
