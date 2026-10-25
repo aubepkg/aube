@@ -2676,3 +2676,24 @@ fn hidden_hoist_keeps_root_deps_when_root_links_are_skipped() {
         "module.exports = 'is-odd@3.0.1';"
     );
 }
+
+#[test]
+fn virtual_store_only_keeps_a_virtual_store_dir_inside_a_physical_importer() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(project_dir.join("vendor/host")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph
+        .importers
+        .insert("vendor/host".to_string(), Vec::new());
+    let virtual_store = project_dir.join("vendor/host/node_modules/store");
+    Linker::new(&store, LinkStrategy::Copy)
+        .with_virtual_store_only(true)
+        .with_aube_dir_override(virtual_store.clone())
+        .link_all(&project_dir, &graph, &indices)
+        .unwrap();
+
+    assert!(virtual_store.join("foo@1.0.0").exists());
+}

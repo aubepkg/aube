@@ -1224,7 +1224,9 @@ impl Linker {
                     continue;
                 };
                 for entry in entries.flatten() {
-                    if !entry.file_name().to_string_lossy().starts_with('.') {
+                    if entry.path() != aube_dir
+                        && !entry.file_name().to_string_lossy().starts_with('.')
+                    {
                         try_remove_entry(&entry.path());
                     }
                 }
