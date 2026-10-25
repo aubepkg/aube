@@ -313,9 +313,6 @@ impl<'a> ResolveDriver<'a> {
         Ok(contextualized)
     }
 
-    /// Fire prefetches for every seeded root dep up front, so their
-    /// packuments are already in flight by the time the first task is
-    /// popped.
     /// True when the importer, the workspace root (if peers resolve
     /// from it), or an ancestor of `task` already supplies `dep_name`,
     /// so the peer needs no auto-install task of its own.
@@ -334,6 +331,9 @@ impl<'a> ResolveDriver<'a> {
         importer_declares_peer || root_declares_peer || peer_dep_is_ancestor
     }
 
+    /// Fire prefetches for every seeded root dep up front, so their
+    /// packuments are already in flight by the time the first task is
+    /// popped.
     fn seed_initial_prefetches(&mut self) {
         for task in self.queue.iter() {
             // Time-aware resolution needs publish times and trust evidence

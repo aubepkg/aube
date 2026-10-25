@@ -4404,13 +4404,23 @@ async fn lockfile_reuse_keeps_required_peer_missing_from_locked_edges() {
             ..Default::default()
         },
     );
-    for (name, version) in [("react", "18.2.0"), ("extra", "1.0.0")] {
+    for (name, version) in [
+        ("react", "18.2.0"),
+        ("extra", "1.0.0"),
+        ("loose-envify", "1.4.0"),
+    ] {
+        let dependencies = if name == "react" {
+            [("loose-envify".to_string(), "1.4.0".to_string())].into()
+        } else {
+            BTreeMap::new()
+        };
         existing_pkgs.insert(
             format!("{name}@{version}"),
             LockedPackage {
                 name: name.to_string(),
                 version: version.to_string(),
                 dep_path: format!("{name}@{version}"),
+                dependencies,
                 ..Default::default()
             },
         );
@@ -4447,6 +4457,17 @@ async fn lockfile_reuse_keeps_required_peer_missing_from_locked_edges() {
     assert!(
         graph_has_package(&graph, "react", "18.2.0"),
         "required peer must survive lockfile reuse"
+    );
+    assert!(
+        graph_has_package(&graph, "loose-envify", "1.4.0"),
+        "the peer's own dependencies must survive too"
+    );
+    assert_eq!(
+        graph.packages["react@18.2.0"]
+            .dependencies
+            .get("loose-envify")
+            .map(String::as_str),
+        Some("1.4.0"),
     );
     assert!(
         !graph_has_package(&graph, "extra", "1.0.0"),
