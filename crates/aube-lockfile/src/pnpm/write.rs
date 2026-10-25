@@ -201,24 +201,36 @@ fn leading_environment_document(path: &Path) -> Option<String> {
         return None;
     }
     let content = std::fs::read_to_string(path).ok()?;
-    let mut lines = content
-        .strip_prefix('\u{feff}')
-        .unwrap_or(&content)
-        .split_inclusive('\n');
-    if lines.next()?.trim_end_matches(['\r', '\n']) != "---" {
-        return None;
+    let is_marker = |line: &str| {
+        line.strip_prefix("---").is_some_and(|rest| {
+            rest.trim().is_empty()
+                || rest.trim_start().starts_with('#') && rest.starts_with([' ', '\t'])
+        })
+    };
+    let mut offset = content.len() - content.trim_start_matches('\u{feff}').len();
+    let mut lines = content[offset..].split_inclusive('\n');
+    // Comments and blank lines may precede the opening marker.
+    loop {
+        let line = lines.next()?;
+        offset += line.len();
+        let trimmed = line.trim();
+        if is_marker(line.trim_end_matches(['\r', '\n'])) {
+            break;
+        }
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            return None;
+        }
     }
-    let mut end = content.len() - lines.clone().map(str::len).sum::<usize>();
-    let body_start = end;
+    let body_start = offset;
     for line in lines {
-        end += line.len();
-        if line.trim_end_matches(['\r', '\n']) == "---" {
-            let body = &content[body_start..end - line.len()];
+        offset += line.len();
+        if is_marker(line.trim_end_matches(['\r', '\n'])) {
+            let body = &content[body_start..offset - line.len()];
             let document: yaml_serde::Value = yaml_serde::from_str(body).ok()?;
             let importer = &document["importers"]["."];
             let owned = importer.get("packageManagerDependencies").is_some()
                 || importer.get("configDependencies").is_some();
-            return owned.then(|| content[..end].to_string());
+            return owned.then(|| content[..offset].to_string());
         }
     }
     None

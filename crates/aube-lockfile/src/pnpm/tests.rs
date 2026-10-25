@@ -5521,3 +5521,16 @@ fn rewrite_does_not_add_environment_document() {
         assert!(!output.contains("packageManagerDependencies"), "{name}");
     }
 }
+
+#[test]
+fn rewrite_preserves_environment_document_with_comments_around_markers() {
+    let environment = "# generated\n\n--- # environment\nlockfileVersion: '9.0'\nimporters:\n  .:\n    packageManagerDependencies:\n      pnpm:\n        specifier: 12.14.0\n        version: 12.14.0\n--- # project\n";
+    let project = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, format!("{environment}{project}")).unwrap();
+    let graph = parse(&path).unwrap();
+    super::write::write(&path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+    let output = std::fs::read_to_string(&path).unwrap();
+    assert!(output.starts_with(environment), "{output}");
+}
