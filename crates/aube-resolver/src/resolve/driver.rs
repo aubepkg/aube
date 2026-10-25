@@ -1308,12 +1308,21 @@ impl<'a> ResolveDriver<'a> {
                     .deprecated
                     .as_deref()
                     .map(|msg| {
-                        BTreeMap::from([(
+                        (
                             "deprecated".to_string(),
                             serde_json::Value::String(msg.to_string()),
-                        )])
+                        )
                     })
-                    .unwrap_or_default(),
+                    .into_iter()
+                    // Bundled children are not resolved, so remember which
+                    // were optional for the npm writer to keep that section.
+                    .chain((!bundled_names.is_empty()).then(|| {
+                        (
+                            aube_lockfile::npm::BUNDLED_OPTIONAL_KEY.to_string(),
+                            serde_json::json!(version_meta.optional_dependencies),
+                        )
+                    }))
+                    .collect(),
             }
             .with_declared_dependencies_known(),
         );

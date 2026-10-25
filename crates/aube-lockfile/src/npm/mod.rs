@@ -24,6 +24,7 @@ pub(crate) use layout::{
     build_hoist_tree, canonical_key_from_dep_path, child_canonical_key, dep_path_tail,
     dep_value_as_version, segments_to_install_path,
 };
+pub use raw::BUNDLED_OPTIONAL_KEY;
 pub use read::parse;
 pub use write::write;
 

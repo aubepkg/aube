@@ -363,6 +363,66 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         }
         resolved_by_dep_path.insert(dep_path, (resolved, resolved_optional));
     }
+    // Bundled children are not resolved from the registry, but an edge that
+    // leaves the bundle (such as a peer on a root-level `react`) must keep its
+    // target reachable from the owning tarball.
+    for (install_path, entry) in raw.packages.iter().filter(|(_, e)| e.in_bundle) {
+        let mut owner_path = install_path.as_str();
+        let owner = loop {
+            let Some((parent, _)) = owner_path.rsplit_once("/node_modules/") else {
+                break None;
+            };
+            owner_path = parent;
+            if let Some(info) = install_path_info.get(owner_path) {
+                break Some(info);
+            }
+        };
+        let Some((resolved, resolved_optional)) =
+            owner.and_then(|info| resolved_by_dep_path.get_mut(&info.dep_path))
+        else {
+            continue;
+        };
+        for (dep_name, is_optional) in entry
+            .dependencies
+            .keys()
+            .map(|name| (name, false))
+            .chain(entry.optional_dependencies.keys().map(|name| (name, true)))
+            .chain(entry.peer_dependencies.keys().map(|name| {
+                (
+                    name,
+                    entry
+                        .peer_dependencies_meta
+                        .get(name)
+                        .is_some_and(|m| m.optional),
+                )
+            }))
+        {
+            let mut base = install_path.as_str();
+            let target = loop {
+                let candidate = format!("{base}/node_modules/{dep_name}");
+                if let Some(found) = raw.packages.get(&candidate) {
+                    break (!found.in_bundle).then_some(candidate);
+                }
+                let Some((parent, _)) = base.rsplit_once("/node_modules/") else {
+                    break Some(format!("node_modules/{dep_name}"))
+                        .filter(|path| raw.packages.get(path).is_some_and(|e| !e.in_bundle));
+                };
+                base = parent;
+            };
+            let Some(target_info) = target.and_then(|path| install_path_info.get(&path)) else {
+                continue;
+            };
+            let tail = crate::npm::dep_path_tail(&target_info.name, &target_info.dep_path);
+            resolved
+                .entry(dep_name.clone())
+                .or_insert_with(|| tail.to_string());
+            if is_optional {
+                resolved_optional
+                    .entry(dep_name.clone())
+                    .or_insert_with(|| tail.to_string());
+            }
+        }
+    }
     for (dep_path, (deps, optional_deps)) in resolved_by_dep_path {
         if let Some(pkg) = graph.packages.get_mut(&dep_path) {
             pkg.dependencies = deps;

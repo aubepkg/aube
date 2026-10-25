@@ -3811,6 +3811,77 @@ fn review_round12_bundled_child_does_not_make_hoisted_peer_copy_ordinary() {
     assert_eq!(written["packages"], original["packages"], "{written:#}");
 }
 
+#[test]
+fn npm_bundled_child_keeps_external_peer_reachable() {
+    let original = serde_json::json!({"lockfileVersion": 3, "requires": true, "packages": {
+        "": {"dependencies": {"owner": "1.0.0"}},
+        "node_modules/owner": {"version": "1.0.0", "bundleDependencies": ["plugin"], "dependencies": {"plugin": "1.0.0"}},
+        "node_modules/owner/node_modules/plugin": {"version": "1.0.0", "inBundle": true, "peerDependencies": {"react": "*", "tslib": "*"}},
+        "node_modules/owner/node_modules/tslib": {"version": "1.0.0", "inBundle": true},
+        "node_modules/react": {"version": "19.0.0", "peer": true},
+        "node_modules/tslib": {"version": "2.3.0", "peer": true}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let graph = parse(file.path()).unwrap();
+    let owner = &graph.packages["owner@1.0.0"];
+    assert_eq!(
+        owner.dependencies.get("react").map(String::as_str),
+        Some("19.0.0")
+    );
+    assert!(!owner.dependencies.contains_key("tslib"));
+    let manifest = serde_json::from_value(original["packages"][""].clone()).unwrap();
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    assert_eq!(
+        written["packages"]["node_modules/react"],
+        original["packages"]["node_modules/react"]
+    );
+}
+
+#[test]
+fn npm_fresh_bundled_optional_dependencies_stay_optional() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let mut graph = LockfileGraph::default();
+    graph.importers.insert(
+        ".".into(),
+        vec![DirectDep {
+            name: "owner".into(),
+            dep_path: "owner@1.0.0".into(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".into()),
+        }],
+    );
+    graph.packages.insert(
+        "owner@1.0.0".into(),
+        LockedPackage {
+            name: "owner".into(),
+            version: "1.0.0".into(),
+            dep_path: "owner@1.0.0".into(),
+            bundled_dependencies: vec!["child".into()],
+            declared_dependencies: [("child".into(), "^2.0.0".into())].into(),
+            extra_meta: [(
+                super::BUNDLED_OPTIONAL_KEY.to_string(),
+                serde_json::json!({"child": "^2.0.0"}),
+            )]
+            .into(),
+            ..Default::default()
+        }
+        .with_declared_dependencies_known(),
+    );
+    let manifest = aube_manifest::PackageJson {
+        dependencies: [("owner".into(), "1.0.0".into())].into(),
+        ..Default::default()
+    };
+    write(file.path(), &graph, &manifest).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    let owner = &written["packages"]["node_modules/owner"];
+    assert_eq!(owner["optionalDependencies"]["child"], "^2.0.0");
+    assert!(owner["dependencies"].get("child").is_none());
+}
+
 proptest::proptest! {
     #[test]
     fn npm_retains_only_unchanged_optional_orphans(version in "[1-9]\\.[0-9]\\.[0-9]") {

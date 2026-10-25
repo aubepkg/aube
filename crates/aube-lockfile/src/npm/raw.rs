@@ -96,7 +96,7 @@ pub(super) struct RawNpmPackage {
     pub(super) has_install_script: bool,
 }
 
-pub(super) const BUNDLED_OPTIONAL_KEY: &str = "__aube_npm_bundled_optional";
+pub const BUNDLED_OPTIONAL_KEY: &str = "__aube_npm_bundled_optional";
 
 pub(super) const BUNDLED_ENTRIES_KEY: &str = "__aube_npm_bundled_entries";
 
