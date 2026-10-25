@@ -874,6 +874,41 @@ fn dedupe_reports_a_member_link_it_cannot_remove() {
 }
 
 #[test]
+fn link_all_links_dependencies_of_physical_file_link_importers() {
+    for node_linker in [NodeLinker::Isolated, NodeLinker::Hoisted] {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        std::fs::create_dir_all(project_dir.join("vendor/host")).unwrap();
+
+        let (store, indices) = setup_store_with_files(dir.path());
+        let mut graph = make_graph();
+        graph.importers.insert(
+            "vendor/host".to_string(),
+            vec![DirectDep {
+                name: "bar".to_string(),
+                dep_path: "bar@2.0.0".to_string(),
+                dep_type: DepType::Production,
+                specifier: None,
+            }],
+        );
+        Linker::new(&store, LinkStrategy::Copy)
+            .with_node_linker(node_linker)
+            .link_all(&project_dir, &graph, &indices)
+            .unwrap();
+
+        // Hoisted may place the dependency at the root, which the linked
+        // directory still resolves through its parent `node_modules`.
+        assert!(
+            ["vendor/host/node_modules/bar", "node_modules/bar"]
+                .iter()
+                .any(|path| project_dir.join(path).join("index.js").exists()),
+            "{node_linker:?}: the linked directory must reach its own dependency"
+        );
+        assert!(project_dir.join("node_modules/foo/index.js").exists());
+    }
+}
+
+#[test]
 fn workspace_selected_package_materializes_locally_while_dependencies_use_gvs() {
     let dir = tempfile::tempdir().unwrap();
     let project_dir = dir.path().join("project");

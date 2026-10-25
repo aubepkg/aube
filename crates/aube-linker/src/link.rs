@@ -52,6 +52,15 @@ impl Linker {
         graph: &LockfileGraph,
         package_indices: &BTreeMap<String, PackageIndex>,
     ) -> Result<LinkStats, Error> {
+        // npm locks also carry physical importers for live file links in
+        // single-package projects. Their dependencies must reach the source.
+        if graph
+            .importers
+            .keys()
+            .any(|path| path != "." && is_physical_importer(path))
+        {
+            return self.link_workspace(project_dir, graph, package_indices, &BTreeMap::new());
+        }
         let project_dir = aube_util::path::normalize_lexical(project_dir);
         let modules_dir = self.checked_modules_dir(&project_dir)?;
         if matches!(self.node_linker, NodeLinker::Hoisted) {
