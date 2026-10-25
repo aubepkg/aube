@@ -1205,6 +1205,26 @@ impl Linker {
                     try_remove_entry(&entry.path());
                 }
             }
+            // Physical importers (workspace members, npm file links)
+            // keep their own visible `node_modules/<name>` links.
+            for importer_path in graph.importers.keys() {
+                if importer_path == "." || !is_physical_importer(importer_path) {
+                    continue;
+                }
+                let importer_dir = crate::relocated_importer_dir(&root_dir, importer_path)
+                    .unwrap_or_else(|| {
+                        aube_util::path::normalize_lexical(&root_dir.join(importer_path))
+                    });
+                let Ok(entries) = std::fs::read_dir(importer_dir.join(&self.modules_dir_name))
+                else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    if !entry.file_name().to_string_lossy().starts_with('.') {
+                        try_remove_entry(&entry.path());
+                    }
+                }
+            }
             self.link_hidden_hoist(&aube_dir, &root_nm, graph)?;
             if let Err(e) = write_applied_patches(&root_nm, &curr_applied) {
                 let sidecar = applied_patches_sidecar_name();

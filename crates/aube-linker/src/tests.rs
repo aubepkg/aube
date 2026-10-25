@@ -882,6 +882,7 @@ fn link_all_links_dependencies_of_physical_file_link_importers() {
 
         let (store, indices) = setup_store_with_files(dir.path());
         let mut graph = make_graph();
+        graph.importers.insert(".".to_string(), Vec::new());
         graph.importers.insert(
             "vendor/host".to_string(),
             vec![DirectDep {
@@ -904,8 +905,37 @@ fn link_all_links_dependencies_of_physical_file_link_importers() {
                 .any(|path| project_dir.join(path).join("index.js").exists()),
             "{node_linker:?}: the linked directory must reach its own dependency"
         );
-        assert!(project_dir.join("node_modules/foo/index.js").exists());
     }
+}
+
+#[test]
+fn virtual_store_only_sweeps_visible_links_of_physical_file_link_importers() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir_all(project_dir.join("vendor/host")).unwrap();
+
+    let (store, indices) = setup_store_with_files(dir.path());
+    let mut graph = make_graph();
+    graph.importers.insert(
+        "vendor/host".to_string(),
+        vec![DirectDep {
+            name: "bar".to_string(),
+            dep_path: "bar@2.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: None,
+        }],
+    );
+    let host_bar = project_dir.join("vendor/host/node_modules/bar");
+    Linker::new(&store, LinkStrategy::Copy)
+        .link_all(&project_dir, &graph, &indices)
+        .unwrap();
+    assert!(host_bar.join("index.js").exists());
+
+    Linker::new(&store, LinkStrategy::Copy)
+        .with_virtual_store_only(true)
+        .link_all(&project_dir, &graph, &indices)
+        .unwrap();
+    assert!(!host_bar.exists());
 }
 
 #[test]
