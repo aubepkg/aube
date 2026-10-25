@@ -4537,6 +4537,48 @@ async fn fresh_resolve_records_deprecated_reason_on_extra_meta() {
     );
 }
 
+// A fresh resolve must carry the packument's `hasInstallScript` onto the
+// LockedPackage (via `extra_meta`) so the npm writer flags new entries;
+// `npm ci` skips a dependency's postinstall when the flag is missing.
+#[tokio::test]
+async fn fresh_resolve_records_has_install_script_on_extra_meta() {
+    let mut foo = make_packument("foo", &["1.0.0"], "1.0.0");
+    foo.versions.get_mut("1.0.0").unwrap().has_install_script = true;
+    let bar = make_packument("bar", &["1.0.0"], "1.0.0");
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    resolver.cache.insert("foo".to_string(), foo.into());
+    resolver.cache.insert("bar".to_string(), bar.into());
+
+    let mut manifest = PackageJson::default();
+    manifest
+        .dependencies
+        .insert("foo".to_string(), "1.0.0".to_string());
+    manifest
+        .dependencies
+        .insert("bar".to_string(), "1.0.0".to_string());
+
+    let graph = resolver
+        .resolve(&manifest, None)
+        .await
+        .expect("resolve failed");
+
+    assert_eq!(
+        graph.packages["foo@1.0.0"]
+            .extra_meta
+            .get("hasInstallScript"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert!(
+        !graph.packages["bar@1.0.0"]
+            .extra_meta
+            .contains_key("hasInstallScript")
+    );
+}
+
 // `allowedDeprecatedVersions` only silences the install *warning* — it
 // must not strip the `deprecated:` field from the lockfile. pnpm keeps
 // recording the reason on the package entry regardless, so the resolver
