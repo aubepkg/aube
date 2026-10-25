@@ -551,7 +551,10 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             // children on its `packages:` entry; carry them so a rewrite
             // writes them back instead of the importer's `file:` version.
             if matches!(local, LocalSource::Tarball(_))
-                && let Some(info) = raw.packages.get(&canonical)
+                && let Some(info) = raw
+                    .packages
+                    .get(snapshot_key)
+                    .or_else(|| raw.packages.get(&canonical))
             {
                 if let Some(version) = &info.version {
                     local_pkg.version = version.clone();

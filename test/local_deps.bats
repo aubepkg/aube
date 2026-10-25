@@ -801,7 +801,7 @@ EOF
 	run grep -F 'bundled-child@' pnpm-lock.yaml
 	assert_failure
 	local integrity
-	integrity="sha512-$(openssl dgst -sha512 -binary deps/bundler.tgz | base64 -w0)"
+	integrity="sha512-$(openssl dgst -sha512 -binary deps/bundler.tgz | base64 | tr -d '\n')"
 	assert_file_contains pnpm-lock.yaml "integrity: $integrity"
 }
 
