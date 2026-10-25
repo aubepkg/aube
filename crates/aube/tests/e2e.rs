@@ -232,6 +232,131 @@ fn run_executes_a_simple_script() {
         .stdout(predicates::str::contains("aube-e2e-ok"));
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_scripts_and_exec_find_root_bins_after_member_bins() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = e2e_lock();
+    let sbx = Sandbox::new();
+    sbx.write_manifest(r#"{"name":"root","private":true}"#);
+    fs::write(
+        sbx.project.join("pnpm-workspace.yaml"),
+        "packages:\n  - 'apps/*'\n",
+    )
+    .unwrap();
+    let member = sbx.project.join("apps/mobile");
+    fs::create_dir_all(&member).unwrap();
+    fs::write(
+        member.join("package.json"),
+        r#"{"name":"mobile","scripts":{
+            "probe":"workspace-root-probe main && workspace-order-probe",
+            "direct":"workspace-root-probe direct",
+            "path":"printf '%s\\n' \"$PATH\"",
+            "preprobe":"workspace-root-probe pre",
+            "postprobe":"workspace-root-probe post",
+            "test":"workspace-root-probe test",
+            "pretest":"workspace-root-probe pretest",
+            "posttest":"workspace-root-probe posttest",
+            "start":"workspace-root-probe start",
+            "prestart":"workspace-root-probe prestart",
+            "poststart":"workspace-root-probe poststart"
+        }}"#,
+    )
+    .unwrap();
+    for (dir, name, body) in [
+        (&sbx.project, "workspace-root-probe", "echo root-$1"),
+        (&sbx.project, "workspace-order-probe", "echo WRONG_ROOT"),
+        (&member, "workspace-order-probe", "echo member"),
+    ] {
+        let bins = dir.join("node_modules/.bin");
+        fs::create_dir_all(&bins).unwrap();
+        let tool = bins.join(name);
+        fs::write(&tool, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    for args in [
+        vec!["run", "--no-install", "probe"],
+        vec!["--filter", "mobile", "run", "--no-install", "probe"],
+        vec!["-r", "run", "--no-install", "probe"],
+        vec!["-r", "run", "--no-install", "--parallel", "probe"],
+    ] {
+        sbx.cmd()
+            .current_dir(&member)
+            .args(args)
+            .assert()
+            .success()
+            .stdout(predicates::str::contains("root-pre"))
+            .stdout(predicates::str::contains("root-main"))
+            .stdout(predicates::str::contains("root-post"))
+            .stdout(predicates::str::contains("member"))
+            .stdout(predicates::str::contains("WRONG_ROOT").not());
+    }
+    sbx.cmd()
+        .current_dir(&member)
+        .args(["run", "--no-install", "direct"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("root-direct"));
+    for script in ["test", "start"] {
+        sbx.cmd()
+            .current_dir(&member)
+            .args([script, "--no-install"])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(format!("root-pre{script}")))
+            .stdout(predicates::str::contains(format!("root-{script}")))
+            .stdout(predicates::str::contains(format!("root-post{script}")));
+    }
+    for (bin, expected) in [
+        ("workspace-root-probe", "root-"),
+        ("workspace-order-probe", "member"),
+    ] {
+        sbx.cmd()
+            .current_dir(&member)
+            .args(["exec", "--no-install", bin])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(expected));
+    }
+
+    let root_bin = sbx.project.join("node_modules/.bin");
+    let output = sbx
+        .cmd()
+        .current_dir(&member)
+        .env("AUBE_MODULES_DIR", sbx.project.join("node_modules"))
+        .args(["run", "--no-install", "path"])
+        .assert()
+        .success();
+    let path = String::from_utf8_lossy(&output.get_output().stdout);
+    assert_eq!(
+        std::env::split_paths(path.trim())
+            .filter(|dir| dir == &root_bin)
+            .count(),
+        1,
+        "a shared absolute modules directory should appear only once"
+    );
+
+    // An ordinary parent package must not contribute binaries.
+    fs::remove_file(sbx.project.join("pnpm-workspace.yaml")).unwrap();
+    sbx.cmd()
+        .current_dir(&member)
+        .args(["run", "--no-install", "direct"])
+        .assert()
+        .failure();
+
+    sbx.write_manifest(r#"{"name":"root","private":true,"workspaces":["apps/*"]}"#);
+    let subdir = member.join("src");
+    fs::create_dir_all(&subdir).unwrap();
+    sbx.cmd()
+        .current_dir(&subdir)
+        .args(["run", "--no-install", "direct"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("root-direct"));
+}
+
 // --- standalone exit-code contract ---------------------------------------
 //
 // The command layer (`aube::commands::*::run`) no longer calls
