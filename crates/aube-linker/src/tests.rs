@@ -810,7 +810,10 @@ fn selected_package_materializes_locally_while_dependencies_keep_using_gvs() {
     );
 
     let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, true)
-        .with_project_local_dep_paths(["foo@1.0.0".to_string()]);
+        .with_project_local_dep_paths(["foo@1.0.0".to_string()])
+        .with_precomputed_project_local_dep_paths(std::sync::Arc::new(
+            project_local_dependency_closure(&graph),
+        ));
     linker.link_all(&project_dir, &graph, &indices).unwrap();
 
     let aube_dir = project_dir.join("node_modules/.aube");
@@ -2696,4 +2699,275 @@ fn virtual_store_only_keeps_a_virtual_store_dir_inside_a_physical_importer() {
         .unwrap();
 
     assert!(virtual_store.join("foo@1.0.0").exists());
+}
+
+#[test]
+fn project_local_closure_selects_chain_and_diamond_ancestors_only() {
+    let mut graph = project_local_chain(2_048);
+    for (name, dependencies) in [
+        ("diamond", vec!["left", "right"]),
+        ("left", vec!["p000000"]),
+        ("right", vec!["p000000"]),
+        ("cycle-a", vec!["cycle-b"]),
+        ("cycle-b", vec!["cycle-a", "diamond"]),
+        ("unrelated-a", vec!["unrelated-b"]),
+        ("unrelated-b", vec!["unrelated-a"]),
+    ] {
+        let key = format!("{name}@1.0.0");
+        graph.packages.insert(
+            key.clone(),
+            LockedPackage {
+                name: name.into(),
+                version: "1.0.0".into(),
+                dep_path: key,
+                dependencies: dependencies
+                    .into_iter()
+                    .map(|name| (name.into(), "1.0.0".into()))
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+    // A selected package's other children must remain shareable.
+    graph
+        .packages
+        .get_mut("diamond@1.0.0")
+        .unwrap()
+        .dependencies
+        .insert("unrelated-a".into(), "1.0.0".into());
+    let source = aube_lockfile::LocalSource::Directory("deps/local".into());
+    let mut expected: std::collections::BTreeSet<_> =
+        (0..2_048).map(|i| format!("p{i:06}@1.0.0")).collect();
+    expected.insert(source.dep_path("zlocal"));
+    expected.extend(
+        ["cycle-a", "cycle-b", "diamond", "left", "right"].map(|name| format!("{name}@1.0.0")),
+    );
+    assert_eq!(project_local_dependency_closure(&graph), expected);
+    expected.extend(["unrelated-a@1.0.0".into(), "unrelated-b@1.0.0".into()]);
+    assert_eq!(
+        project_local_dependency_closure_with_seeds(&graph, ["unrelated-a@1.0.0".into()]),
+        expected,
+    );
+}
+
+#[test]
+fn project_local_closure_handles_a_hundred_thousand_parent_first_packages() {
+    let graph = project_local_chain(100_000);
+    let expected: std::collections::BTreeSet<_> = graph.packages.keys().cloned().collect();
+    assert_eq!(project_local_dependency_closure(&graph), expected);
+}
+
+fn project_local_chain(length: usize) -> LockfileGraph {
+    let source = aube_lockfile::LocalSource::Directory("deps/local".into());
+    let key = source.dep_path("zlocal");
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        key.clone(),
+        LockedPackage {
+            name: "zlocal".into(),
+            version: "1.0.0".into(),
+            dep_path: key,
+            local_source: Some(source),
+            ..Default::default()
+        },
+    );
+    for i in 0..length {
+        let name = format!("p{i:06}");
+        let key = format!("{name}@1.0.0");
+        let child = if i + 1 == length {
+            ("zlocal".into(), "file:deps/./local".into())
+        } else {
+            (format!("p{:06}", i + 1), "1.0.0".into())
+        };
+        graph.packages.insert(
+            key.clone(),
+            LockedPackage {
+                name,
+                version: "1.0.0".into(),
+                dep_path: key,
+                dependencies: BTreeMap::from([child]),
+                ..Default::default()
+            },
+        );
+    }
+    graph
+}
+
+#[test]
+fn local_peer_dependents_stay_in_each_project() {
+    use aube_lockfile::LocalSource;
+
+    for gvs in [false, true] {
+        for workspace in [false, true] {
+            for source in [
+                LocalSource::Directory("app/deps/react".into()),
+                LocalSource::Tarball("app/deps/react.tgz".into()),
+                LocalSource::Link("app/deps/react".into()),
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let (store, mut indices) = setup_store_with_files(dir.path());
+                let peer_key = source.dep_path("react");
+                let peer_edge = match &source {
+                    LocalSource::Directory(_) => "file:app/deps/./react".to_string(),
+                    LocalSource::Tarball(_) => "file:app/deps/react.tgz(bar@2.0.0)".to_string(),
+                    _ => peer_key[6..].to_string(),
+                };
+                let consumer_key = format!("consumer@1.0.0(react@{peer_edge})");
+                let graph = LockfileGraph {
+                    importers: BTreeMap::from([
+                        (
+                            ".".into(),
+                            if workspace {
+                                vec![]
+                            } else {
+                                vec![DirectDep {
+                                    name: "foo".into(),
+                                    dep_path: "foo@1.0.0".into(),
+                                    dep_type: DepType::Production,
+                                    specifier: None,
+                                }]
+                            },
+                        ),
+                        (
+                            "app".into(),
+                            vec![DirectDep {
+                                name: "consumer".into(),
+                                dep_path: consumer_key.clone(),
+                                dep_type: DepType::Production,
+                                specifier: None,
+                            }],
+                        ),
+                    ]),
+                    packages: BTreeMap::from([
+                        (
+                            "foo@1.0.0".into(),
+                            LockedPackage {
+                                name: "foo".into(),
+                                version: "1.0.0".into(),
+                                dep_path: "foo@1.0.0".into(),
+                                dependencies: BTreeMap::from([(
+                                    "consumer".into(),
+                                    consumer_key[9..].into(),
+                                )]),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            consumer_key.clone(),
+                            LockedPackage {
+                                name: "consumer".into(),
+                                version: "1.0.0".into(),
+                                dep_path: consumer_key.clone(),
+                                dependencies: BTreeMap::from([("react".into(), peer_edge.clone())]),
+                                peer_dependencies: BTreeMap::from([("react".into(), "*".into())]),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            peer_key.clone(),
+                            LockedPackage {
+                                name: "react".into(),
+                                version: "1.0.0".into(),
+                                dep_path: peer_key.clone(),
+                                local_source: Some(source.clone()),
+                                dependencies: BTreeMap::from([("bar".into(), "2.0.0".into())]),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "bar@2.0.0".into(),
+                            LockedPackage {
+                                name: "bar".into(),
+                                version: "2.0.0".into(),
+                                dep_path: "bar@2.0.0".into(),
+                                ..Default::default()
+                            },
+                        ),
+                    ]),
+                    ..Default::default()
+                };
+                indices.insert(consumer_key.clone(), indices["foo@1.0.0"].clone());
+                let hashes =
+                    aube_lockfile::graph_hash::compute_graph_hashes(&graph, &|_| false, None);
+                let mut installed_peers = Vec::new();
+                for generation in ["first", "second"] {
+                    let linker = Linker::new_with_gvs(&store, LinkStrategy::Copy, gvs)
+                        .with_hoist(false)
+                        .with_graph_hashes(hashes.clone());
+                    let linker = if generation == "second" {
+                        linker.with_precomputed_project_local_dep_paths(std::sync::Arc::new(
+                            project_local_dependency_closure(&graph),
+                        ))
+                    } else {
+                        linker
+                    };
+                    let project = dir.path().join(generation);
+                    let peer_source = project.join("app/deps/react");
+                    std::fs::create_dir_all(&peer_source).unwrap();
+                    std::fs::write(peer_source.join("index.js"), generation).unwrap();
+                    let mut peer_index = PackageIndex::default();
+                    peer_index.insert(
+                        "index.js".into(),
+                        store.import_bytes(generation.as_bytes(), false).unwrap(),
+                    );
+                    indices.insert(peer_key.clone(), peer_index);
+                    for _ in 0..2 {
+                        if workspace {
+                            linker
+                                .link_workspace(&project, &graph, &indices, &BTreeMap::new())
+                                .unwrap();
+                        } else {
+                            linker.link_all(&project, &graph, &indices).unwrap();
+                        }
+                    }
+                    let aube_dir = project.join("node_modules/.aube");
+                    let consumer_entry = aube_dir.join(linker.aube_dir_entry_name(&consumer_key));
+                    let peer_link = consumer_entry.join("node_modules/react");
+                    assert_eq!(
+                        std::fs::read_to_string(peer_link.join("index.js")).unwrap(),
+                        generation
+                    );
+                    assert!(
+                        !std::fs::symlink_metadata(&consumer_entry)
+                            .unwrap()
+                            .file_type()
+                            .is_symlink()
+                    );
+                    assert!(
+                        !std::fs::symlink_metadata(aube_dir.join("foo@1.0.0"))
+                            .unwrap()
+                            .file_type()
+                            .is_symlink()
+                    );
+                    if !matches!(source, LocalSource::Link(_)) {
+                        assert!(
+                            aube_dir
+                                .join(linker.aube_dir_entry_name(&peer_key))
+                                .join("node_modules/bar/index.js")
+                                .exists()
+                        );
+                    }
+                    if gvs {
+                        assert!(
+                            std::fs::symlink_metadata(aube_dir.join("bar@2.0.0"))
+                                .unwrap()
+                                .file_type()
+                                .is_symlink()
+                        );
+                        assert!(
+                            !store
+                                .virtual_store_dir()
+                                .join(linker.virtual_store_subdir(&consumer_key))
+                                .exists()
+                        );
+                    }
+                    installed_peers.push(peer_link);
+                }
+                assert_eq!(
+                    std::fs::read_to_string(installed_peers[0].join("index.js")).unwrap(),
+                    "first"
+                );
+            }
+        }
+    }
 }
