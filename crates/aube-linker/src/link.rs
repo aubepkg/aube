@@ -143,15 +143,13 @@ impl Linker {
         // entries whenever the fingerprint changes.
         let prev_applied = read_applied_patches(&nm);
         let curr_applied = current_patch_hashes(&self.patches);
-        if !self.use_global_virtual_store {
-            wipe_changed_patched_entries(
-                &aube_dir,
-                graph,
-                &prev_applied,
-                &curr_applied,
-                self.virtual_store_dir_max_length,
-            );
-        }
+        wipe_changed_patched_entries(
+            &aube_dir,
+            graph,
+            &prev_applied,
+            &curr_applied,
+            self.virtual_store_dir_max_length,
+        );
 
         let project_local_dep_paths = self.project_local_dep_paths_for_graph(graph);
         let nested_link_targets = build_nested_link_targets(&project_dir, graph);
@@ -867,15 +865,13 @@ impl Linker {
         // name via `with_graph_hashes`.
         let prev_applied = read_applied_patches(&root_nm);
         let curr_applied = current_patch_hashes(&self.patches);
-        if !self.use_global_virtual_store {
-            wipe_changed_patched_entries(
-                &aube_dir,
-                graph,
-                &prev_applied,
-                &curr_applied,
-                self.virtual_store_dir_max_length,
-            );
-        }
+        wipe_changed_patched_entries(
+            &aube_dir,
+            graph,
+            &prev_applied,
+            &curr_applied,
+            self.virtual_store_dir_max_length,
+        );
 
         let project_local_dep_paths = self.project_local_dep_paths_for_graph(graph);
         let nested_link_targets =
