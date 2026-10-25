@@ -1308,6 +1308,116 @@ fn test_parse_rebases_workspace_scoped_local_tarball() {
     );
 }
 
+proptest::proptest! {
+    #[test]
+    fn parse_rebases_tarballs_from_the_declaring_workspace(
+        depth in 1usize..6,
+        scoped in proptest::bool::ANY,
+        nested in proptest::bool::ANY,
+        climbs in proptest::bool::ANY,
+        file_prefix in proptest::bool::ANY,
+        section in proptest::sample::select(vec!["dependencies", "devDependencies", "optionalDependencies"]),
+    ) {
+        let ws_path = format!("{}app", "projects/".repeat(depth - 1));
+        let name = if scoped { "@scope/local" } else { "local" };
+        let ws_name = "@members/app";
+        let relative = if climbs {
+            format!("{}vendor/local.tgz", "../".repeat(depth))
+        } else {
+            "assets/local.tgz".to_string()
+        };
+        let expected = if climbs {
+            PathBuf::from("vendor/local.tgz")
+        } else {
+            Path::new(&ws_path).join(&relative)
+        };
+        let ident = format!("{name}@{}{relative}", if file_prefix { "file:" } else { "" });
+        let key = if nested { format!("{ws_name}/{name}") } else { name.to_string() };
+        let mut packages = serde_json::json!({ws_name: [format!("{ws_name}@workspace:{ws_path}")]});
+        packages[&key] = serde_json::json!([ident, {}]);
+        if nested {
+            packages[name] = serde_json::json!([format!("{name}@1.0.0"), "", {}]);
+        }
+        let specifier = format!("file:{relative}");
+        let content = serde_json::json!({
+            "lockfileVersion": 2,
+            "workspaces": {
+                "": {"name": "root"},
+                ws_path.clone(): {"name": ws_name, section: {name: specifier}}
+            },
+            "packages": packages
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let lock_path = tmp.path().join("bun.lock");
+        let member = tmp.path().join(&ws_path);
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(member.join("package.json"), content["workspaces"][&ws_path].to_string()).unwrap();
+        std::fs::write(&lock_path, content.to_string()).unwrap();
+        let graph = parse(&lock_path).unwrap();
+        let dep = &graph.importers[&ws_path][0];
+        let pkg = &graph.packages[&dep.dep_path];
+        proptest::prop_assert_eq!(&pkg.local_source, &Some(LocalSource::Tarball(expected)));
+        proptest::prop_assert_eq!(dep.specifier.as_deref(), Some(specifier.as_str()));
+
+        write(&lock_path, &graph, &aube_manifest::PackageJson::default()).unwrap();
+        let reloaded = parse(&lock_path).unwrap();
+        let dep = &reloaded.importers[&ws_path][0];
+        let reloaded_path = reloaded.packages[&dep.dep_path].local_source.as_ref().unwrap().path().unwrap();
+        proptest::prop_assert_eq!(aube_util::path::normalize_lexical(reloaded_path), pkg.local_source.as_ref().unwrap().path().unwrap());
+    }
+}
+
+#[test]
+fn parse_local_sources_keep_their_native_base() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = serde_json::json!({
+        "lockfileVersion": 2,
+        "workspaces": {
+            "": {"dependencies": {"shared": "file:../shared.tgz"}},
+            "apps/a": {"name": "a", "dependencies": {
+                "shared": "file:../shared.tgz",
+                "same": "file:../../same.tgz",
+                "override": "*",
+                "rewritten": "file:../../rewritten.tgz",
+                "directory": "file:../../vendor/directory",
+                "absolute": "file:/vendor/absolute.tgz"
+            }},
+            "apps/b": {"name": "b", "dependencies": {"same": "file:../../same.tgz"}}
+        },
+        "packages": {
+            "shared": ["shared@../shared.tgz", {}],
+            "same": ["same@../../same.tgz", {}],
+            "a/override": ["override@../override.tgz", {}],
+            "a/rewritten": ["rewritten@rewritten.tgz", {}],
+            "a/directory": ["directory@file:../vendor/directory", {}],
+            "absolute": ["absolute@/vendor/absolute.tgz", {}]
+        }
+    });
+    std::fs::write(tmp.path(), content.to_string()).unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    for (name, expected) in [
+        ("shared", LocalSource::Tarball("../shared.tgz".into())),
+        ("same", LocalSource::Tarball("same.tgz".into())),
+        ("override", LocalSource::Tarball("../override.tgz".into())),
+        ("rewritten", LocalSource::Tarball("rewritten.tgz".into())),
+        (
+            "directory",
+            LocalSource::Directory("../vendor/directory".into()),
+        ),
+        (
+            "absolute",
+            LocalSource::Tarball("/vendor/absolute.tgz".into()),
+        ),
+    ] {
+        let pkg = graph
+            .packages
+            .values()
+            .find(|pkg| pkg.name == name)
+            .unwrap();
+        assert_eq!(pkg.local_source, Some(expected), "{name}");
+    }
+}
+
 /// Top-level `overrides` / `patchedDependencies` / `trustedDependencies`
 /// and the unnamed `catalog` / named `catalogs` blocks must round-trip
 /// verbatim — bun preserves all five on re-emit, so aube dropping any

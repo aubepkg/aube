@@ -4042,5 +4042,60 @@ proptest::proptest! {
         for importer in ["", "packages/a"] {
             proptest::prop_assert!(written["packages"][importer].get("engines").is_none());
         }
+
+#[test]
+fn test_write_absolute_directory_targets_relative_to_lockfile() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    for target in ["vendor/child", "../child"] {
+        let directory = LocalSource::Directory(project.join(target));
+        let directory_key = directory.dep_path("child");
+        let spec = format!("file:{}", project.join(target).display());
+        let graph = LockfileGraph {
+            importers: BTreeMap::from([(
+                ".".to_string(),
+                vec![DirectDep {
+                    name: "child".to_string(),
+                    dep_path: directory_key.clone(),
+                    dep_type: DepType::Production,
+                    specifier: Some(spec.clone()),
+                }],
+            )]),
+            packages: BTreeMap::from([(
+                directory_key.clone(),
+                LockedPackage {
+                    name: "child".to_string(),
+                    version: "1.0.0".to_string(),
+                    dep_path: directory_key,
+                    local_source: Some(directory),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let manifest = aube_manifest::PackageJson {
+            dependencies: BTreeMap::from([("child".to_string(), spec.clone())]),
+            ..Default::default()
+        };
+        let lock = project.join("package-lock.json");
+        write(&lock, &graph, &manifest).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&lock).unwrap()).unwrap();
+        let packages = value["packages"].as_object().unwrap();
+        assert_eq!(packages[""]["dependencies"]["child"], spec);
+        assert_eq!(packages["node_modules/child"]["resolved"], target);
+        assert_eq!(packages["node_modules/child"]["link"], true);
+        assert_eq!(packages[target]["version"], "1.0.0");
+        assert!(packages.keys().all(|key| !Path::new(key).is_absolute()));
+        let relative_lock = pathdiff::diff_paths(&lock, std::env::current_dir().unwrap()).unwrap();
+        write(&relative_lock, &graph, &manifest).unwrap();
+        let reread = parse(&lock).unwrap();
+        let child = reread
+            .packages
+            .values()
+            .find(|pkg| pkg.name == "child")
+            .unwrap();
+        assert_eq!(child.local_source, Some(LocalSource::Link(target.into())));
     }
 }
