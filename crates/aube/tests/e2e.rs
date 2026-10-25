@@ -596,6 +596,29 @@ fn relocated_workspace_lockfiles_prune_stale_members() {
 
 #[cfg(unix)]
 #[test]
+fn relocated_native_lockfile_rejects_lock_dir_with_another_manifest_before_writing() {
+    let _guard = e2e_lock();
+    for filename in ["package-lock.json", "bun.lock"] {
+        let sbx = Sandbox::new();
+        sbx.write_manifest(r#"{"name":"root","private":true}"#);
+        let locks = sbx.project.join("locks");
+        fs::create_dir_all(&locks).unwrap();
+        fs::write(locks.join("package.json"), r#"{"name":"other"}"#).unwrap();
+        fs::write(
+            sbx.project.join(".npmrc"),
+            format!("default-lockfile={filename}\nlockfile-dir=locks\n"),
+        )
+        .unwrap();
+        sbx.cmd()
+            .args(["install", "--ignore-scripts", "--no-frozen-lockfile"])
+            .assert()
+            .failure()
+            .stderr(wrapped_contains("another project's package.json"));
+        assert!(!locks.join(filename).exists());
+    }
+}
+
+#[test]
 fn relocated_workspace_lockfiles_reject_physically_external_importers() {
     let _guard = e2e_lock();
     for filename in ["aube-lock.yaml", "pnpm-lock.yaml"] {

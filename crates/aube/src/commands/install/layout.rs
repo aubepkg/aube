@@ -154,7 +154,25 @@ fn guard_lockfile_location(
             )
             .map_err(miette::Report::new)?;
         }
-        Err(aube_lockfile::Error::NotFound(_)) => {}
+        Err(aube_lockfile::Error::NotFound(_)) => {
+            // The first native write would otherwise be rejected as foreign
+            // on the next install.
+            if matches!(
+                selected,
+                Some(
+                    aube_lockfile::LockfileKind::Npm
+                        | aube_lockfile::LockfileKind::NpmShrinkwrap
+                        | aube_lockfile::LockfileKind::Bun
+                )
+            ) && lockfile_dir.join("package.json").exists()
+            {
+                return Err(miette!(
+                    "lockfile directory {} contains another project's package.json; \
+                     use a separate `--lockfile-dir` for each project or workspace",
+                    lockfile_dir.display()
+                ));
+            }
+        }
         Err(e) => return Err(miette::Report::new(e)).wrap_err("failed to parse lockfile"),
     }
     Ok(())
