@@ -1718,10 +1718,6 @@ impl<'a> ResolveDriver<'a> {
                     };
                 (local, version, deps, optional_deps, local_integrity)
             };
-        for name in &local_bundles {
-            target_deps.remove(name);
-            target_optional_deps.remove(name);
-        }
         attach_integrity_to_git_source(&mut local, integrity.as_deref());
         // Apply `packageExtensions` to non-registry packages too. The
         // registry path applies them to the picked VersionMetadata; git /
@@ -1736,6 +1732,11 @@ impl<'a> ResolveDriver<'a> {
             &mut target_deps,
             &self.resolver.dependency_policy.package_extensions,
         );
+        // After the extensions: one may re-add a child the tarball already ships.
+        for name in &local_bundles {
+            target_deps.remove(name);
+            target_optional_deps.remove(name);
+        }
         target_optional_deps.retain(|name, _| !target_deps.contains_key(name));
         let dep_path = local.dep_path(&task.name);
         let linked_name = task.name.clone();
