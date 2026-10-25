@@ -850,6 +850,28 @@ mod tests {
     }
 
     #[test]
+    fn transitive_peer_dependencies_skip_meta_only_peers_the_package_declares() {
+        let mut graph = aube_lockfile::LockfileGraph::default();
+        let (parent_key, mut parent) = pkg("parent", &["child"], &[]);
+        parent.peer_dependencies_meta.insert(
+            "playwright".to_string(),
+            aube_lockfile::PeerDepMeta { optional: true },
+        );
+        graph.packages.insert(parent_key, parent);
+        graph
+            .packages
+            .extend([pkg_with_peers("child", &[], &["playwright"])]);
+
+        mark_transitive_peer_dependencies(&mut graph);
+
+        assert!(
+            graph.packages["parent@1.0.0"]
+                .transitive_peer_dependencies
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn transitive_peer_dependencies_handle_cycles_without_self() {
         let mut graph = aube_lockfile::LockfileGraph::default();
         // a <-> b dependency cycle, each with a distinct unresolved peer.
