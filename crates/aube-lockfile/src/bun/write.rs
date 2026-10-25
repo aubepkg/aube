@@ -101,7 +101,10 @@ pub fn write(
             .as_deref()
             .unwrap_or(importer_path);
         let shared = canonical.values().any(|pkg| pkg.name == name)
-            || (importer_path != name && workspace_manifests.contains_key(name));
+            || (importer_path != name && workspace_manifests.contains_key(name))
+            || workspace_manifests
+                .iter()
+                .any(|(path, pj)| path != importer_path && pj.name.as_deref() == Some(name));
         (!shared).then(|| name.to_string())
     };
     let mut all_roots: Vec<DirectDep> = Vec::new();

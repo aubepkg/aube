@@ -2833,3 +2833,47 @@ fn write_preserves_conflicting_provider_of_nameless_member() {
     assert_eq!(reloaded.importers["."][0].dep_path, "react@18.0.0");
     assert_eq!(reloaded.importers["apps/app"][0].dep_path, "react@19.0.0");
 }
+
+#[test]
+fn write_keeps_path_scope_off_a_member_named_like_it() {
+    let mut graph = LockfileGraph::default();
+    for version in ["18.0.0", "19.0.0"] {
+        let key = format!("react@{version}");
+        graph.packages.insert(
+            key.clone(),
+            LockedPackage {
+                name: "react".into(),
+                version: version.into(),
+                dep_path: key,
+                ..Default::default()
+            },
+        );
+    }
+    let direct = |version: &str| DirectDep {
+        name: "react".into(),
+        dep_path: format!("react@{version}"),
+        dep_type: DepType::Production,
+        specifier: Some(version.into()),
+    };
+    graph.importers.insert(".".into(), vec![direct("18.0.0")]);
+    graph.importers.insert("foo".into(), vec![direct("19.0.0")]);
+    graph
+        .importers
+        .insert("packages/app".into(), vec![direct("18.0.0")]);
+    let (_tmp, path) = write_workspace(
+        &graph,
+        &[
+            ("foo", r#"{"dependencies":{"react":"19.0.0"}}"#),
+            (
+                "packages/app",
+                r#"{"name":"foo","dependencies":{"react":"18.0.0"}}"#,
+            ),
+        ],
+        &[("react", "18.0.0")],
+    );
+    let reloaded = parse(&path).unwrap();
+    assert_eq!(
+        reloaded.importers["packages/app"][0].dep_path,
+        "react@18.0.0"
+    );
+}
