@@ -282,24 +282,24 @@ pub(crate) fn build_hoist_tree(
                     if let Some(preferred_key) = preferred.get(&nested) {
                         // A placed descendant that resolves this name through a
                         // different (usually hoisted) copy would find the ancestor
-                        // slot first under Node's lookup. A nearer copy, placed or
-                        // still to be restored, protects it.
+                        // slot first under Node's lookup. A nearer copy, placed or a
+                        // preferred one of the version it needs, protects it.
                         let shadows_descendant = placed.iter().any(|(path, key)| {
                             path.len() > depth
                                 && path[..depth] == nested[..depth]
-                                && canonical.get(key).is_some_and(|descendant| {
-                                    descendant
-                                        .dependencies
-                                        .get(child_name)
-                                        .is_some_and(|value| {
-                                            child_canonical_key(child_name, value) != child_key
-                                        })
-                                })
-                                && !(depth + 1..=path.len()).any(|len| {
-                                    let mut slot = path[..len].to_vec();
-                                    slot.push(child_name.clone());
-                                    placed.contains_key(&slot) || preferred.contains_key(&slot)
-                                })
+                                && canonical
+                                    .get(key)
+                                    .and_then(|descendant| descendant.dependencies.get(child_name))
+                                    .map(|value| child_canonical_key(child_name, value))
+                                    .is_some_and(|needed| {
+                                        needed != child_key
+                                            && !(depth + 1..=path.len()).any(|len| {
+                                                let mut slot = path[..len].to_vec();
+                                                slot.push(child_name.clone());
+                                                placed.contains_key(&slot)
+                                                    || preferred.get(&slot) == Some(&needed)
+                                            })
+                                    })
                         });
                         if preferred_key == &child_key
                             && !placed.contains_key(&nested)
