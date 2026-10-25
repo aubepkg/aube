@@ -17,7 +17,9 @@ teardown() {
 	cat >package.json <<'EOF'
 {"name":"native-root","version":"1.0.0","bin":{"native-echo":"native-echo"}}
 EOF
-	ln -s /bin/echo native-echo
+	# A copy, not a symlink: Ubuntu's uutils `echo` refuses to run under a
+	# name other than the file it was executed from.
+	cp /bin/echo native-echo
 
 	run aube install
 	assert_success

@@ -1715,15 +1715,19 @@ process.exit(17);
             .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, b"shell works");
+        // A copy named like the command: Ubuntu's uutils `echo` refuses to
+        // run under a name other than the file it was executed from.
+        let native = tmp.path().join("native-echo");
+        std::fs::copy("/bin/echo", &native).unwrap();
         create_bin_shim_with_node(
             &bin,
-            "native",
-            Path::new("/bin/echo"),
+            "native-echo",
+            &native,
             BinShimOptions::default(),
             &runtime,
         )
         .unwrap();
-        let output = std::process::Command::new(bin.join("native"))
+        let output = std::process::Command::new(bin.join("native-echo"))
             .arg("native works")
             .output()
             .unwrap();
