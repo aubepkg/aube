@@ -562,7 +562,7 @@ fn relocated_workspace_lockfiles_prune_stale_members() {
                     kind,
                     aube_lockfile::LockfileKind::Aube | aube_lockfile::LockfileKind::Pnpm
                 ) {
-                    pathdiff::diff_paths(&sbx.project, &lock_dir).unwrap()
+                    pathdiff::diff_paths(sbx.project.canonicalize().unwrap(), &lock_dir).unwrap()
                 } else {
                     std::path::PathBuf::new()
                 };
@@ -766,8 +766,9 @@ fn relocated_workspace_lockfiles_allow_member_moves_with_colliding_keys() {
             let graph =
                 aube_lockfile::parse_lockfile(&locks, &aube_manifest::PackageJson::default())
                     .unwrap();
-            let old_key = pathdiff::diff_paths(&member, &locks).unwrap();
-            let new_key = pathdiff::diff_paths(&moved, &locks).unwrap();
+            let project = fs::canonicalize(&sbx.project).unwrap();
+            let old_key = pathdiff::diff_paths(project.join("locks/apps/app"), &locks).unwrap();
+            let new_key = pathdiff::diff_paths(project.join("apps/app"), &locks).unwrap();
             assert!(
                 !graph
                     .importers
