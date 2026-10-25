@@ -366,6 +366,7 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
     // Bundled children are not resolved from the registry, but an edge that
     // leaves the bundle (such as a peer on a root-level `react`) must keep its
     // target reachable from the owning tarball.
+    let mut bundle_added: BTreeSet<(String, String)> = BTreeSet::new();
     for (install_path, entry) in raw.packages.iter().filter(|(_, e)| e.in_bundle) {
         let mut owner_path = install_path.as_str();
         let owner = loop {
@@ -377,8 +378,10 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
                 break Some(info);
             }
         };
-        let Some((resolved, resolved_optional)) =
-            owner.and_then(|info| resolved_by_dep_path.get_mut(&info.dep_path))
+        let Some(info_dep_path) = owner.map(|info| info.dep_path.clone()) else {
+            continue;
+        };
+        let Some((resolved, resolved_optional)) = resolved_by_dep_path.get_mut(&info_dep_path)
         else {
             continue;
         };
@@ -416,8 +419,15 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
             // An edge the owner already declares keeps the owner's own
             // required/optional classification.
             if resolved.contains_key(dep_name) {
+                // A later bundled child that requires what an earlier one only
+                // optionally used makes the edge required again.
+                if !is_optional && bundle_added.contains(&(info_dep_path.clone(), dep_name.clone()))
+                {
+                    resolved_optional.remove(dep_name);
+                }
                 continue;
             }
+            bundle_added.insert((info_dep_path.clone(), dep_name.clone()));
             resolved.insert(dep_name.clone(), tail.to_string());
             if is_optional {
                 resolved_optional.insert(dep_name.clone(), tail.to_string());

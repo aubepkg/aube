@@ -280,7 +280,30 @@ pub(crate) fn build_hoist_tree(
                     let mut nested = parent_segs[..depth].to_vec();
                     nested.push(child_name.clone());
                     if let Some(preferred_key) = preferred.get(&nested) {
-                        if preferred_key == &child_key && !placed.contains_key(&nested) {
+                        // A placed descendant that resolves this name through a
+                        // different (usually hoisted) copy would find the ancestor
+                        // slot first under Node's lookup.
+                        let shadows_descendant = placed.iter().any(|(path, key)| {
+                            path.len() > depth
+                                && path[..depth] == nested[..depth]
+                                && canonical.get(key).is_some_and(|descendant| {
+                                    descendant
+                                        .dependencies
+                                        .get(child_name)
+                                        .is_some_and(|value| {
+                                            child_canonical_key(child_name, value) != child_key
+                                        })
+                                })
+                                && !(depth + 1..=path.len()).any(|len| {
+                                    let mut slot = path[..len].to_vec();
+                                    slot.push(child_name.clone());
+                                    placed.contains_key(&slot)
+                                })
+                        });
+                        if preferred_key == &child_key
+                            && !placed.contains_key(&nested)
+                            && !shadows_descendant
+                        {
                             placed.insert(nested.clone(), child_key.clone());
                             queue.push_back((nested, child_key.clone()));
                         }

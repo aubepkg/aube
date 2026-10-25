@@ -3860,6 +3860,23 @@ fn npm_bundled_optional_peer_does_not_demote_required_owner_edge() {
 }
 
 #[test]
+fn npm_required_bundled_peer_overrides_earlier_optional_bundled_peer() {
+    let original = serde_json::json!({"lockfileVersion": 3, "requires": true, "packages": {
+        "": {"dependencies": {"owner": "1.0.0"}},
+        "node_modules/owner": {"version": "1.0.0", "bundleDependencies": ["a", "b"], "dependencies": {"a": "1.0.0", "b": "1.0.0"}},
+        "node_modules/owner/node_modules/a": {"version": "1.0.0", "inBundle": true, "peerDependencies": {"react": "*"}, "peerDependenciesMeta": {"react": {"optional": true}}},
+        "node_modules/owner/node_modules/b": {"version": "1.0.0", "inBundle": true, "peerDependencies": {"react": "*"}},
+        "node_modules/react": {"version": "19.0.0", "peer": true}
+    }});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), original.to_string()).unwrap();
+    let graph = parse(file.path()).unwrap();
+    let owner = &graph.packages["owner@1.0.0"];
+    assert!(owner.dependencies.contains_key("react"));
+    assert!(!owner.optional_dependencies.contains_key("react"));
+}
+
+#[test]
 fn npm_fresh_bundled_optional_dependencies_stay_optional() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let mut graph = LockfileGraph::default();
