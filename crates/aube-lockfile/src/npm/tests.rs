@@ -1140,6 +1140,12 @@ fn test_write_npm_preserves_platform_optional_metadata() {
         dependencies: [("host".to_string(), "1.0.0".to_string())]
             .into_iter()
             .collect(),
+        extra: [(
+            "packageManager".to_string(),
+            serde_json::json!("npm@11.11.0"),
+        )]
+        .into_iter()
+        .collect(),
         ..Default::default()
     };
 
@@ -4257,5 +4263,117 @@ fn test_write_workspace_member_copies_os_cpu_and_omits_folder_name() {
             "os": ["linux", "darwin"],
             "cpu": ["x64"],
         })
+    );
+}
+
+fn libc_graph() -> LockfileGraph {
+    let mut graph = LockfileGraph::default();
+    graph.packages.insert(
+        "native@1.0.0".to_string(),
+        LockedPackage {
+            name: "native".to_string(),
+            version: "1.0.0".to_string(),
+            integrity: Some("sha512-native".to_string()),
+            dep_path: "native@1.0.0".to_string(),
+            libc: vec!["glibc".to_string()].into(),
+            ..Default::default()
+        },
+    );
+    graph.importers.insert(
+        ".".to_string(),
+        vec![DirectDep {
+            name: "native".to_string(),
+            dep_path: "native@1.0.0".to_string(),
+            dep_type: DepType::Production,
+            specifier: Some("1.0.0".to_string()),
+        }],
+    );
+    graph
+}
+
+fn written_libc(prior: Option<&str>, package_manager: Option<&str>) -> serde_json::Value {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("package-lock.json");
+    if let Some(prior) = prior {
+        std::fs::write(&path, prior).unwrap();
+    }
+    let mut manifest = aube_manifest::PackageJson {
+        name: Some("root".to_string()),
+        version: Some("1.0.0".to_string()),
+        dependencies: [("native".to_string(), "1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    if let Some(pm) = package_manager {
+        manifest
+            .extra
+            .insert("packageManager".to_string(), serde_json::json!(pm));
+    }
+    write(&path, &libc_graph(), &manifest).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    json["packages"]["node_modules/native"]
+        .get("libc")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
+}
+
+const PRIOR_WITH_LIBC: &str = r#"{"lockfileVersion":3,"requires":true,"packages":{
+    "":{"name":"root","version":"1.0.0"},
+    "node_modules/other":{"version":"2.0.0","libc":["glibc"]}}}"#;
+const PRIOR_WITHOUT_LIBC: &str = r#"{"lockfileVersion":3,"requires":true,"packages":{
+    "":{"name":"root","version":"1.0.0"},
+    "node_modules/native":{"version":"1.0.0"}}}"#;
+
+#[test]
+fn test_write_new_entry_libc_follows_existing_lockfile() {
+    assert_eq!(
+        written_libc(Some(PRIOR_WITH_LIBC), None),
+        serde_json::json!(["glibc"])
+    );
+}
+
+#[test]
+fn test_write_new_entry_libc_follows_pinned_npm_version() {
+    assert_eq!(
+        written_libc(None, Some("npm@11.11.0")),
+        serde_json::json!(["glibc"])
+    );
+    assert_eq!(
+        written_libc(None, Some("npm@11.20.0+sha512.abc")),
+        serde_json::json!(["glibc"])
+    );
+}
+
+#[test]
+fn test_write_new_entry_omits_libc_for_older_npm() {
+    assert_eq!(
+        written_libc(None, Some("npm@11.6.2")),
+        serde_json::Value::Null
+    );
+    assert_eq!(written_libc(None, None), serde_json::Value::Null);
+    assert_eq!(
+        written_libc(None, Some("pnpm@11.20.0")),
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn test_write_existing_entry_keeps_its_libc_presence() {
+    assert_eq!(
+        written_libc(Some(PRIOR_WITHOUT_LIBC), Some("npm@11.20.0")),
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn test_write_new_entry_is_not_confused_with_alias_of_same_package() {
+    let prior = r#"{"lockfileVersion":3,"requires":true,"packages":{
+        "":{"name":"root","version":"1.0.0"},
+        "node_modules/native-alias":{"name":"native","version":"1.0.0"}}}"#;
+    assert_eq!(
+        written_libc(Some(prior), Some("npm@11.20.0")),
+        serde_json::json!(["glibc"])
     );
 }
