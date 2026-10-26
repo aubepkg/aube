@@ -43,6 +43,15 @@ Rust version. Release and custom-profile builds continue through Cargo and
 mbx. To run another development command with the required tools, use
 `sh scripts/setup-blaze.sh cargo check`.
 
+For independent validation with the normal Rust compiler and mbx caching:
+
+```sh
+mise exec -- env MBX_BLAZE=0 cargo test
+```
+
+This explicit validation command does not change the required Blaze setup
+used by the development build and test tasks.
+
 The debug binary is `target/debug/aube`. BATS tests use that binary; release
 builds are for profiling and benchmarks.
 

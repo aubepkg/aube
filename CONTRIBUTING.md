@@ -13,21 +13,21 @@ mise run docs:dev
 
 ## mbx build cache
 
-mise wraps `cargo` with [mbx](https://mr-boxington.jdx.dev), so compiled work is
-shared across checkouts. `mise run` tasks and `mise exec -- cargo …` use the
-wrapper; plain `cargo` does too once mise is [activated in your
-shell](https://mise.jdx.dev/getting-started.html#activate-mise). Builds that set
-`MBX_DISABLE=1`, including CI, skip the cache.
+`mise run build` and `mise run test` provision the pinned Blaze and mbx
+prebuilts and their matching Rust compiler automatically. The shared setup
+fails if a verified archive is unavailable. Linux GNU x64/ARM64 prebuilts are
+available; Apple Silicon macOS remains a merge blocker until its archive
+is published. Windows CI retains its existing Rust build path.
 
-mbx also shares build results between worktrees and manages each checkout's
-`target/` directory, collecting inactive targets as the configured age and
-size limits are reached.
+mbx shares dependency compilation between checkouts and manages inactive
+`target/` directories. The build and Linux test CI jobs use its object cache.
+Release and custom-profile builds continue through Cargo and mbx.
 
-On Linux and macOS Apple silicon, install [Blaze](https://github.com/indexable-inc/blaze)
-to accelerate repeated development builds. mise enables mbx's Blaze routing by
-default; once Blaze's `ra-jit` executable is on `PATH`, ordinary dev
-`cargo build`, `cargo check`, `cargo test`, and `cargo run` commands use it.
-The first build loads the workspace, and later edits can rebuild quickly.
-Release and custom-profile builds continue through Cargo and mbx. Blaze is
-experimental and uses extra memory, so use the normal Cargo or CI build for
-final validation.
+For a final check with the normal Rust compiler while retaining mbx caching:
+
+```sh
+mise exec -- env MBX_BLAZE=0 cargo test
+```
+
+See [the contributor guide](docs/contributing.md) for the pinned toolchain,
+CI setup, supported platforms, and validation limits.
