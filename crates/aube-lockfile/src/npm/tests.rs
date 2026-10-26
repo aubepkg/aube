@@ -3518,3 +3518,14 @@ fn test_write_existing_entry_keeps_its_libc_presence() {
         serde_json::Value::Null
     );
 }
+
+#[test]
+fn test_write_new_entry_is_not_confused_with_alias_of_same_package() {
+    let prior = r#"{"lockfileVersion":3,"requires":true,"packages":{
+        "":{"name":"root","version":"1.0.0"},
+        "node_modules/native-alias":{"name":"native","version":"1.0.0"}}}"#;
+    assert_eq!(
+        written_libc(Some(prior), Some("npm@11.20.0")),
+        serde_json::json!(["glibc"])
+    );
+}

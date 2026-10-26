@@ -828,9 +828,10 @@ impl PriorLibc {
                 let Some(version) = entry.version else {
                     continue;
                 };
-                let Some(name) = entry
-                    .name
-                    .or_else(|| super::layout::package_name_from_install_path(&install_path))
+                // The reader names a package by its install path, so an alias
+                // matches `LockedPackage::name` only through that name.
+                let Some(name) =
+                    super::layout::package_name_from_install_path(&install_path).or(entry.name)
                 else {
                     continue;
                 };
