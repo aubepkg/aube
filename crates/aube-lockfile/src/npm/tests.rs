@@ -4287,3 +4287,27 @@ fn test_write_new_entry_is_not_confused_with_alias_of_same_package() {
         serde_json::json!(["glibc"])
     );
 }
+
+#[test]
+fn test_parse_skips_extraneous_entries_outside_node_modules() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let content = r#"{
+            "name": "test",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "name": "test", "version": "1.0.0", "workspaces": ["packages/*"] },
+                "../ext/b": { "version": "1.0.0", "extraneous": true },
+                "node_modules/b": { "resolved": "packages/b", "link": true },
+                "packages/b": { "version": "1.0.0" },
+                "packages/gone": { "version": "1.0.0", "extraneous": true },
+                "packages/gone/inner": { "name": "inner", "version": "1.0.0" }
+            }
+        }"#;
+    std::fs::write(tmp.path(), content).unwrap();
+
+    let graph = parse(tmp.path()).unwrap();
+    let mut names: Vec<_> = graph.packages.values().map(|p| p.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["b"]);
+}
