@@ -4301,7 +4301,8 @@ fn test_parse_skips_extraneous_entries_outside_node_modules() {
                 "node_modules/b": { "resolved": "packages/b", "link": true },
                 "packages/b": { "version": "1.0.0" },
                 "packages/gone": { "version": "1.0.0", "extraneous": true },
-                "packages/gone/inner": { "name": "inner", "version": "1.0.0" }
+                "packages/gone/inner": { "name": "inner", "version": "1.0.0" },
+                "packages/not_node_modules/gone": { "version": "1.0.0", "extraneous": true }
             }
         }"#;
     std::fs::write(tmp.path(), content).unwrap();

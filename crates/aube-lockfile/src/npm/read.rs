@@ -74,7 +74,10 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         // npm keeps entries outside `node_modules` for folders it never
         // installs: a symlinked member's real location, a deleted member, or
         // the parent of a nested workspace member. They are not packages.
-        if !install_path.contains("node_modules/") {
+        if !install_path
+            .split('/')
+            .any(|segment| segment == "node_modules")
+        {
             continue;
         }
 
