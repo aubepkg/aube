@@ -71,6 +71,15 @@ pub fn parse(path: &Path) -> Result<LockfileGraph, Error> {
         if link_targets.contains(install_path) {
             continue;
         }
+        // npm keeps entries outside `node_modules` for folders it never
+        // installs: a symlinked member's real location, a deleted member, or
+        // the parent of a nested workspace member. They are not packages.
+        if !install_path
+            .split('/')
+            .any(|segment| segment == "node_modules")
+        {
+            continue;
+        }
 
         // The install-path segment is what every other package in the
         // tree refers to. For non-aliased deps that's the real package
