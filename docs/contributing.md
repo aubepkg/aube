@@ -32,8 +32,7 @@ shim. `scripts/build-tools.ref` pins the shared installer and archive checksums.
 The tools are built once in the [shared release workflow](https://github.com/jdalton/blaze/actions/workflows/release.yaml),
 not during each project build. Setup fails if a matching artifact is missing.
 
-Linux GNU x64/ARM64 artifacts are available. Apple Silicon macOS is pending
-runner capacity and remains a merge blocker for this integration. Windows
+Linux GNU x64/ARM64 and Apple Silicon macOS artifacts are available. Windows
 CI retains its existing Rust path. Blaze is experimental; full-project checks
 remain required even when a small edited-program probe passes.
 

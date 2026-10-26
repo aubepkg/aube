@@ -16,8 +16,7 @@ mise run docs:dev
 `mise run build` and `mise run test` provision the pinned Blaze and mbx
 prebuilts and their matching Rust compiler automatically. The shared setup
 fails if a verified archive is unavailable. Linux GNU x64/ARM64 prebuilts are
-available; Apple Silicon macOS remains a merge blocker until its archive
-is published. Windows CI retains its existing Rust build path.
+available, along with Apple Silicon macOS prebuilts. Windows CI retains its existing Rust build path.
 
 mbx shares dependency compilation between checkouts and manages inactive
 `target/` directories. The build and Linux test CI jobs use its object cache.
