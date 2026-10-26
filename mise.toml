@@ -2,6 +2,7 @@ min_version = "2026.9.7"
 
 [env]
 _.path = ["./bin"]
+MBX_BLAZE = "1"
 
 [settings]
 experimental = true

@@ -22,6 +22,17 @@ mise run build
 Use the Rust toolchain declared by the project and the tools pinned in
 `mise.toml`. `mise run` activates the Cargo build-cache wrapper. If you run
 Cargo directly, activate mise in your shell first.
+mbx shares build results between worktrees and collects inactive managed
+`target/` directories when their age or size limits are reached.
+
+For faster repeated development builds on Linux or macOS Apple silicon,
+install [Blaze](https://github.com/indexable-inc/blaze). This project enables
+mbx's Blaze routing in mise. With Blaze's `ra-jit` executable on `PATH`,
+development `cargo build`, `cargo check`, `cargo test`, and `cargo run`
+commands use Blaze automatically. The first build loads the workspace; later
+edits can rebuild quickly. Release and custom-profile builds continue through
+Cargo and mbx. Blaze is experimental and uses extra memory, so use the normal
+Cargo or CI build for final validation.
 
 The debug binary is `target/debug/aube`. BATS tests use that binary; release
 builds are for profiling and benchmarks.
