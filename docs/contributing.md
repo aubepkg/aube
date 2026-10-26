@@ -25,14 +25,23 @@ Cargo directly, activate mise in your shell first.
 mbx shares build results between worktrees and collects inactive managed
 `target/` directories when their age or size limits are reached.
 
-For faster repeated development builds on Linux or macOS Apple silicon,
-install [Blaze](https://github.com/indexable-inc/blaze). This project enables
-mbx's Blaze routing in mise. With Blaze's `ra-jit` executable on `PATH`,
-development `cargo build`, `cargo check`, `cargo test`, and `cargo run`
-commands use Blaze automatically. The first build loads the workspace; later
-edits can rebuild quickly. Release and custom-profile builds continue through
-Cargo and mbx. Blaze is experimental and uses extra memory, so use the normal
-Cargo or CI build for final validation.
+`mise run build` and `mise run test` automatically provision verified
+[Blaze](https://github.com/indexable-inc/blaze) and mbx 1.28.0 prebuilts,
+select their matching `nightly-2026-10-25` compiler, and activate the Cargo
+shim. `scripts/build-tools.ref` pins the shared installer and archive checksums.
+The tools are built once in the [shared release workflow](https://github.com/jdalton/blaze/actions/workflows/release.yaml),
+not during each project build. Setup fails if a matching artifact is missing.
+
+Linux GNU x64/ARM64 artifacts are available. Apple Silicon macOS is pending
+runner capacity and remains a merge blocker for this integration. Windows
+CI retains its existing Rust path. Blaze is experimental; full-project checks
+remain required even when a small edited-program probe passes.
+
+The Linux/macOS build and Linux test jobs reuse mbx objects. The MSRV check
+clears the Blaze compiler selection so it still checks the minimum supported
+Rust version. Release and custom-profile builds continue through Cargo and
+mbx. To run another development command with the required tools, use
+`sh scripts/setup-blaze.sh cargo check`.
 
 The debug binary is `target/debug/aube`. BATS tests use that binary; release
 builds are for profiling and benchmarks.

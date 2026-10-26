@@ -53,10 +53,10 @@ run = "hk fix --all --slow"
 run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --allow-dirty --allow-staged"
 
 [tasks.build]
-run = "cargo build"
+run = "sh scripts/setup-blaze.sh cargo build"
 
 [tasks.test]
-run = "cargo test"
+run = "sh scripts/setup-blaze.sh cargo test"
 
 [tasks."docs:dev"]
 depends = ["build"]
