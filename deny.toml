@@ -5,6 +5,25 @@
 unmaintained = "all"
 unsound = "all"
 yanked = "deny"
+# zstd 0.13.3 / zstd-safe 7.3.0 are reached only through decmpfs, which pins
+# `zstd = "=0.13.3"` and has no newer release (0.1.5 is the latest). The fixes
+# need zstd >= 0.14.3 / zstd-safe >= 8.2.0, which aube already uses directly.
+# Drop these ignores once decmpfs releases against zstd 0.14.
+ignore = [
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0395",
+    "RUSTSEC-2026-0396",
+    "RUSTSEC-2026-0397",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0399",
+    "RUSTSEC-2026-0400",
+    "RUSTSEC-2026-0401",
+    "RUSTSEC-2026-0402",
+    "RUSTSEC-2026-0403",
+    "RUSTSEC-2026-0404",
+    "RUSTSEC-2026-0405",
+    "RUSTSEC-2026-0406",
+]
 
 [graph]
 all-features = true
