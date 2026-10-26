@@ -4169,3 +4169,93 @@ fn test_write_absolute_directory_targets_relative_to_lockfile() {
         assert_eq!(child.local_source, Some(LocalSource::Link(target.into())));
     }
 }
+
+fn workspace_members_lock(members: &[&str]) -> LockfileGraph {
+    let mut packages = serde_json::Map::new();
+    packages.insert(
+        String::new(),
+        serde_json::json!({"name": "root", "version": "1.0.0", "workspaces": ["packages/*"]}),
+    );
+    for member in members {
+        packages.insert(
+            format!("node_modules/{member}"),
+            serde_json::json!({"resolved": format!("packages/{member}"), "link": true}),
+        );
+        packages.insert(
+            format!("packages/{member}"),
+            serde_json::json!({"version": "1.0.0"}),
+        );
+    }
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        serde_json::json!({"lockfileVersion": 3, "requires": true, "packages": packages})
+            .to_string(),
+    )
+    .unwrap();
+    parse(tmp.path()).unwrap()
+}
+
+fn member_manifest(json: &str) -> aube_manifest::PackageJson {
+    serde_json::from_str(json).unwrap()
+}
+
+#[test]
+fn test_drift_flags_new_dependency_free_workspace_member() {
+    let graph = workspace_members_lock(&["a"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let check = |members: &[(&str, &str)]| {
+        let mut manifests = vec![(".".to_string(), root.clone())];
+        manifests.extend(
+            members
+                .iter()
+                .map(|(path, json)| (path.to_string(), member_manifest(json))),
+        );
+        graph.check_drift_workspace_for_kind(
+            &manifests,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    let a = ("packages/a", r#"{"name": "a", "version": "1.0.0"}"#);
+    let b = ("packages/b", r#"{"name": "b", "version": "1.0.0"}"#);
+    assert_eq!(check(&[a]), DriftStatus::Fresh);
+    assert!(matches!(check(&[a, b]), DriftStatus::Stale { .. }));
+}
+
+#[test]
+fn test_write_workspace_member_copies_os_cpu_and_omits_folder_name() {
+    let graph = workspace_members_lock(&["a", "c"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let dir = tempfile::tempdir().unwrap();
+    for (member, json) in [
+        ("a", r#"{"name": "a", "version": "1.0.0"}"#),
+        (
+            "c",
+            r#"{"name": "c", "version": "1.0.0", "os": ["linux", "darwin"], "cpu": "x64"}"#,
+        ),
+    ] {
+        let member_dir = dir.path().join("packages").join(member);
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(member_dir.join("package.json"), json).unwrap();
+    }
+    let path = dir.path().join("package-lock.json");
+    write(&path, &graph, &root).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        written["packages"]["packages/a"],
+        serde_json::json!({"version": "1.0.0"})
+    );
+    assert_eq!(
+        written["packages"]["packages/c"],
+        serde_json::json!({
+            "version": "1.0.0",
+            "os": ["linux", "darwin"],
+            "cpu": ["x64"],
+        })
+    );
+}
