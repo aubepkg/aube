@@ -54,9 +54,11 @@ run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --a
 
 [tasks.build]
 run = "sh scripts/setup-blaze.sh cargo build"
+run_windows = "cargo build"
 
 [tasks.test]
 run = "sh scripts/setup-blaze.sh cargo test"
+run_windows = "cargo test"
 
 [tasks."docs:dev"]
 depends = ["build"]

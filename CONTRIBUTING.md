@@ -24,8 +24,17 @@ Release and custom-profile builds continue through Cargo and mbx.
 
 For a final check with the normal Rust compiler while retaining mbx caching:
 
+On macOS and Linux:
+
 ```sh
-mise exec -- env MBX_BLAZE=0 cargo test
+MBX_BLAZE=0 mise exec -- cargo test
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:MBX_BLAZE = '0'
+mise exec -- cargo test
 ```
 
 See [the contributor guide](docs/contributing.md) for the pinned toolchain,

@@ -44,8 +44,17 @@ mbx. To run another development command with the required tools, use
 
 For independent validation with the normal Rust compiler and mbx caching:
 
+On macOS and Linux:
+
 ```sh
-mise exec -- env MBX_BLAZE=0 cargo test
+MBX_BLAZE=0 mise exec -- cargo test
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:MBX_BLAZE = '0'
+mise exec -- cargo test
 ```
 
 This explicit validation command does not change the required Blaze setup
