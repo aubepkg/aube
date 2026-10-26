@@ -187,6 +187,7 @@ pub fn write(
     let root_key = ""; // npm's root importer install path.
 
     let mut packages: BTreeMap<String, WriteNpmPackage> = BTreeMap::new();
+    let libc_for = PriorLibc::read(path, manifest).decider();
 
     // Root importer entry — mirrors the manifest's dep fields.
     packages.insert(
@@ -595,7 +596,7 @@ pub fn write(
                     license: pkg.license.as_deref(),
                     os: pkg.os.to_vec(),
                     cpu: pkg.cpu.to_vec(),
-                    libc: pkg.libc.to_vec(),
+                    libc: libc_for(pkg),
                     deprecated: deprecated(pkg),
                     funding: npm_funding(pkg),
                     dev,
@@ -633,7 +634,7 @@ pub fn write(
                     .collect(),
                 os: pkg.os.to_vec(),
                 cpu: pkg.cpu.to_vec(),
-                libc: pkg.libc.to_vec(),
+                libc: libc_for(pkg),
                 deprecated: deprecated(pkg),
                 funding: npm_funding(pkg),
                 dev,
@@ -802,6 +803,81 @@ fn preferred_root_placements(
         }
     }
     preferred
+}
+
+/// What the lockfile being replaced says about `libc`. npm only started
+/// writing it in 11.11.0 and older npm strips it on the next write, so a
+/// newly added entry gets it only when the project's npm would too.
+struct PriorLibc {
+    known: BTreeSet<String>,
+    with_libc: BTreeSet<String>,
+    write_new: bool,
+}
+
+impl PriorLibc {
+    fn read(path: &Path, manifest: &aube_manifest::PackageJson) -> Self {
+        let mut prior = Self {
+            known: BTreeSet::new(),
+            with_libc: BTreeSet::new(),
+            write_new: false,
+        };
+        if let Ok(content) = crate::read_lockfile(path)
+            && let Ok(raw) = crate::parse_json::<RawNpmLockfile>(path, content)
+        {
+            for (install_path, entry) in raw.packages {
+                let Some(version) = entry.version else {
+                    continue;
+                };
+                let Some(name) = entry
+                    .name
+                    .or_else(|| super::layout::package_name_from_install_path(&install_path))
+                else {
+                    continue;
+                };
+                let key = format!("{name}@{version}");
+                if !entry.libc.is_empty() {
+                    prior.with_libc.insert(key.clone());
+                }
+                prior.known.insert(key);
+            }
+        }
+        prior.write_new = !prior.with_libc.is_empty() || npm_writes_libc(manifest);
+        prior
+    }
+
+    fn decider(self) -> impl Fn(&LockedPackage) -> Vec<String> {
+        move |pkg| {
+            let key = format!("{}@{}", pkg.name, pkg.version);
+            let keep = if self.known.contains(&key) {
+                self.with_libc.contains(&key)
+            } else {
+                self.write_new
+            };
+            if keep { pkg.libc.to_vec() } else { Vec::new() }
+        }
+    }
+}
+
+/// Whether the root `packageManager` pins npm 11.11.0 or later.
+fn npm_writes_libc(manifest: &aube_manifest::PackageJson) -> bool {
+    let Some(pin) = manifest
+        .extra
+        .get("packageManager")
+        .and_then(|v| v.as_str())
+    else {
+        return false;
+    };
+    let Some(version) = pin.strip_prefix("npm@") else {
+        return false;
+    };
+    let version = version.split('+').next().unwrap_or(version);
+    let (Ok(version), Ok(floor)) = (
+        node_semver::Version::parse(version),
+        node_semver::Version::parse("11.11.0"),
+    ) else {
+        return false;
+    };
+    version >= floor
 }
 
 fn directory_target(project_dir: &Path, dir: &Path) -> String {
