@@ -308,12 +308,28 @@ pub fn write_with_project_root(
         let funding = member_manifests
             .get(importer_path.as_str())
             .map_or_else(|| workspace_pkg.and_then(npm_funding), manifest_funding);
+        // npm copies the member's own `os` / `cpu` as written, like `funding`.
+        let (os, cpu) = member_manifests.get(importer_path.as_str()).map_or_else(
+            || {
+                workspace_pkg
+                    .map_or_else(Default::default, |pkg| (pkg.os.to_vec(), pkg.cpu.to_vec()))
+            },
+            |manifest| {
+                (
+                    manifest_platform(manifest, "os"),
+                    manifest_platform(manifest, "cpu"),
+                )
+            },
+        );
         packages.insert(
             importer_path.clone(),
             WriteNpmPackage {
-                name: Some(name),
+                // npm names a member only when it differs from its folder.
+                name: (importer_path.rsplit('/').next() != Some(name)).then_some(name),
                 version,
                 has_install_script: importer_has_install_script,
+                os,
+                cpu,
                 engines: member_manifests.get(importer_path.as_str()).map_or_else(
                     || {
                         workspace_pkg
@@ -1076,6 +1092,18 @@ fn npm_funding(pkg: &LockedPackage) -> Option<serde_json::Value> {
 
 /// A project manifest's `funding`, verbatim, skipped the way npm's
 /// `metaFieldFromPkg` skips it: falsy values and empty objects or arrays.
+/// A manifest's `os` or `cpu`, which may be a string or an array.
+fn manifest_platform(manifest: &aube_manifest::PackageJson, key: &str) -> Vec<String> {
+    match manifest.extra.get(key) {
+        Some(serde_json::Value::String(value)) => vec![value.clone()],
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn manifest_funding(manifest: &aube_manifest::PackageJson) -> Option<serde_json::Value> {
     use serde_json::Value;
     manifest
