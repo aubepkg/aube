@@ -100,6 +100,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             true,
+            false,
         )
     }
 
@@ -120,6 +121,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             kind_records_resolution_metadata(kind),
+            kind == LockfileKind::Npm,
         )
     }
 
@@ -147,6 +149,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             kind_records_resolution_metadata(kind),
+            kind == LockfileKind::Npm,
         )
     }
 
@@ -185,6 +188,7 @@ impl LockfileGraph {
         workspace_catalogs: &BTreeMap<String, BTreeMap<String, String>>,
         is_workspace_install: bool,
         check_resolution_metadata: bool,
+        records_every_member: bool,
     ) -> DriftStatus {
         // Override drift is checked once at the workspace level, against
         // the root manifest. Workspace-package manifests may declare
@@ -222,10 +226,13 @@ impl LockfileGraph {
             // declares deps. A missing importer means the lockfile was
             // written without that project (the per-importer check below
             // treats an absent entry as "no specifiers" and says fresh).
-            if check_resolution_metadata
+            // npm records every member, dependency-free ones included, and
+            // `npm ci` fails on a member the lockfile lacks.
+            if (records_every_member
+                || check_resolution_metadata
+                    && manifest_declares_deps(manifest, self.settings.auto_install_peers))
                 && is_workspace_install
                 && !self.importers.contains_key(importer_path)
-                && manifest_declares_deps(manifest, self.settings.auto_install_peers)
             {
                 return DriftStatus::Stale {
                     reason: format!(
