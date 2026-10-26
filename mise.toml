@@ -9,7 +9,7 @@ experimental = true
 cargo.binstall_native = true
 
 [tools]
-mr-boxington = { version = "latest", minimum_release_age = "0s" }
+mr-boxington = { version = "1.28.0", minimum_release_age = "0s" }
 usage = { version = "latest", minimum_release_age = "0s" }
 communique = { version = "latest", minimum_release_age = "0s" }
 "github:bnjbvr/cargo-machete" = "latest"
