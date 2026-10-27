@@ -221,6 +221,10 @@ struct NpmDownloadsResponse {
     /// scoped packages, which the downloads API doesn't support.
     #[serde(default)]
     error: Option<String>,
+    /// Last day (`YYYY-MM-DD`) covered by the reported window. Used to
+    /// detect a stalled stats pipeline that keeps serving an old window.
+    #[serde(default)]
+    end: Option<String>,
 }
 
 /// Build the shared probe `reqwest::Client`. Centralized so the OSV
@@ -548,17 +552,59 @@ pub async fn fetch_weekly_downloads_with(
     }
     let bytes = resp.bytes().await?;
     let parsed: NpmDownloadsResponse = serde_json::from_slice(&bytes)?;
-    Ok(parse_downloads(&parsed))
+    Ok(parse_downloads(&parsed, today_epoch_days()))
 }
 
-fn parse_downloads(resp: &NpmDownloadsResponse) -> DownloadCount {
+/// How far behind `today` the reported window's `end` may be before the
+/// stats are considered stale. A healthy `last-week` window ends within a
+/// day or two of the request; a week leaves room for ordinary lag.
+const MAX_STATS_AGE_DAYS: i64 = 7;
+
+fn today_epoch_days() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    i64::try_from(secs / 86_400).unwrap_or(0)
+}
+
+/// Days since 1970-01-01 for a `YYYY-MM-DD` string, or `None` if it is
+/// not a valid calendar date.
+fn parse_epoch_days(date: &str) -> Option<i64> {
+    let mut parts = date.splitn(3, '-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Days-from-civil (proleptic Gregorian), shifting the year to start in March.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// `today_epoch_days` is injected so tests don't depend on the clock.
+fn parse_downloads(resp: &NpmDownloadsResponse, today_epoch_days: i64) -> DownloadCount {
     if resp.error.is_some() {
         return DownloadCount::Unknown;
     }
-    match resp.downloads {
-        Some(n) => DownloadCount::Known(n),
-        None => DownloadCount::Unknown,
+    let Some(downloads) = resp.downloads else {
+        return DownloadCount::Unknown;
+    };
+    // npm's stats pipeline can stall and keep serving an old window for
+    // every package; any package created after that window then reads as
+    // 0 downloads. Stale or unparseable windows carry no signal.
+    if let Some(end) = resp.end.as_deref() {
+        match parse_epoch_days(end) {
+            Some(end_days) if today_epoch_days - end_days <= MAX_STATS_AGE_DAYS => {}
+            _ => return DownloadCount::Unknown,
+        }
     }
+    DownloadCount::Known(downloads)
 }
 
 /// `https://osv.dev/vulnerability/<id>` — the user-facing URL for an
@@ -816,8 +862,9 @@ mod tests {
         let resp = NpmDownloadsResponse {
             downloads: None,
             error: Some("package @scope/name not found".to_string()),
+            end: None,
         };
-        assert_eq!(parse_downloads(&resp), DownloadCount::Unknown);
+        assert_eq!(parse_downloads(&resp, TODAY), DownloadCount::Unknown);
     }
 
     #[test]
@@ -825,8 +872,63 @@ mod tests {
         let resp = NpmDownloadsResponse {
             downloads: Some(42_000_000),
             error: None,
+            end: None,
         };
-        assert_eq!(parse_downloads(&resp), DownloadCount::Known(42_000_000));
+        assert_eq!(
+            parse_downloads(&resp, TODAY),
+            DownloadCount::Known(42_000_000)
+        );
+    }
+
+    /// 2026-10-27, the day the stale-window outage was observed.
+    const TODAY: i64 = 20_753;
+
+    fn downloads_with_end(downloads: u64, end: Option<&str>) -> NpmDownloadsResponse {
+        NpmDownloadsResponse {
+            downloads: Some(downloads),
+            error: None,
+            end: end.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn parse_epoch_days_matches_known_dates() {
+        assert_eq!(parse_epoch_days("1970-01-01"), Some(0));
+        assert_eq!(parse_epoch_days("2000-03-01"), Some(11_017));
+        assert_eq!(parse_epoch_days("2026-10-27"), Some(TODAY));
+        assert_eq!(parse_epoch_days("2026-13-01"), None);
+        assert_eq!(parse_epoch_days("not-a-date"), None);
+    }
+
+    #[test]
+    fn parse_downloads_treats_stale_window_as_unknown() {
+        // npm kept serving the 2026-06-25..2026-07-01 window for every
+        // package, so a package created later read as 0 downloads.
+        let resp = downloads_with_end(0, Some("2026-07-01"));
+        assert_eq!(parse_downloads(&resp, TODAY), DownloadCount::Unknown);
+    }
+
+    #[test]
+    fn parse_downloads_keeps_count_for_fresh_window() {
+        let resp = downloads_with_end(0, Some("2026-10-26"));
+        assert_eq!(parse_downloads(&resp, TODAY), DownloadCount::Known(0));
+        let edge = downloads_with_end(3, Some("2026-10-20"));
+        assert_eq!(parse_downloads(&edge, TODAY), DownloadCount::Known(3));
+        let just_stale = downloads_with_end(3, Some("2026-10-19"));
+        assert_eq!(parse_downloads(&just_stale, TODAY), DownloadCount::Unknown);
+    }
+
+    #[test]
+    fn parse_downloads_treats_unparseable_end_as_unknown() {
+        let resp = downloads_with_end(0, Some("yesterday"));
+        assert_eq!(parse_downloads(&resp, TODAY), DownloadCount::Unknown);
+    }
+
+    #[test]
+    fn parse_downloads_without_end_field_keeps_known_count() {
+        let resp: NpmDownloadsResponse =
+            serde_json::from_str(r#"{"downloads":0,"package":"left-pad"}"#).unwrap();
+        assert_eq!(parse_downloads(&resp, TODAY), DownloadCount::Known(0));
     }
 
     #[test]
