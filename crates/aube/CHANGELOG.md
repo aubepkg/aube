@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/v2.8.3...v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(install)* link the bins of a dependency's link: deps into its .bin ([#1873](https://github.com/aubepkg/aube/pull/1873))
+- *(install)* keep workspace and native lockfiles usable with --lockfile-dir ([#1856](https://github.com/aubepkg/aube/pull/1856))
+- *(install)* relink bins when a link: or workspace dep's bin changes ([#1839](https://github.com/aubepkg/aube/pull/1839))
+- *(lockfile)* keep npm local dependency specs of linked packages ([#1855](https://github.com/aubepkg/aube/pull/1855))
+- *(lockfile)* keep bun member peer providers on clean frozen install ([#1847](https://github.com/aubepkg/aube/pull/1847))
+- *(linker)* link peers satisfied by file: dependencies to the directory aube creates ([#1850](https://github.com/aubepkg/aube/pull/1850))
+- *(run)* add workspace root bins to member script PATH ([#1845](https://github.com/aubepkg/aube/pull/1845))
+
 ## [2.8.2](https://github.com/aubepkg/aube/compare/v2.8.1...v2.8.2) - 2026-10-22
 
 ### Fixed

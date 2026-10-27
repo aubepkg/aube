@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-manifest-v2.8.3...aube-manifest-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(lockfile)* keep existing npm lock entries intact on unrelated adds ([#1851](https://github.com/aubepkg/aube/pull/1851))
+
 ## [2.8.2](https://github.com/aubepkg/aube/compare/aube-manifest-v2.8.1...aube-manifest-v2.8.2) - 2026-10-22
 
 ### Fixed

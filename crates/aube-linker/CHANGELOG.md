@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.3...aube-linker-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(linker)* link dependencies of npm file-linked directories ([#1848](https://github.com/aubepkg/aube/pull/1848))
+- *(linker)* link peers satisfied by file: dependencies to the directory aube creates ([#1850](https://github.com/aubepkg/aube/pull/1850))
+
+### Other
+
+- run native bin tests on a copy of echo for Ubuntu 26.04 ([#1840](https://github.com/aubepkg/aube/pull/1840))
+
 ## [2.8.2](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.1...aube-linker-v2.8.2) - 2026-10-22
 
 ### Fixed

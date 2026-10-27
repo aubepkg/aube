@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.3...aube-resolver-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(lockfile)* keep existing npm lock entries intact on unrelated adds ([#1851](https://github.com/aubepkg/aube/pull/1851))
+- *(lockfile)* keep pnpm settings and local tarball metadata on rewrite ([#1857](https://github.com/aubepkg/aube/pull/1857))
+- *(resolver)* match pnpm peer suffixes for peer-cycle providers ([#1859](https://github.com/aubepkg/aube/pull/1859))
+- *(lockfile)* keep npm local dependency specs of linked packages ([#1855](https://github.com/aubepkg/aube/pull/1855))
+- *(lockfile)* write deprecated and unscoped string bin on npm lock entries ([#1858](https://github.com/aubepkg/aube/pull/1858))
+- *(resolver)* keep required peers of locked packages on re-resolve ([#1863](https://github.com/aubepkg/aube/pull/1863))
+- *(resolver)* match pnpm peer suffixes for aliased and out-of-range optional peers ([#1849](https://github.com/aubepkg/aube/pull/1849))
+- *(resolver)* omit a package's own peers from its transitivePeerDependencies ([#1860](https://github.com/aubepkg/aube/pull/1860))
+- *(resolver)* resolve absolute local children of tarball dependencies ([#1852](https://github.com/aubepkg/aube/pull/1852))
+- *(resolver)* write hasInstallScript on new npm lockfile entries ([#1846](https://github.com/aubepkg/aube/pull/1846))
+
 ## [2.8.2](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.1...aube-resolver-v2.8.2) - 2026-10-22
 
 ### Fixed

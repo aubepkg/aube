@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-util-v2.8.3...aube-util-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(install)* relink bins when a link: or workspace dep's bin changes ([#1839](https://github.com/aubepkg/aube/pull/1839))
+
 ## [2.8.1](https://github.com/aubepkg/aube/compare/aube-util-v2.8.0...aube-util-v2.8.1) - 2026-10-20
 
 ### Fixed
