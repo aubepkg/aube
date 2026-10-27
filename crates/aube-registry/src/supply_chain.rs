@@ -567,14 +567,29 @@ fn today_epoch_days() -> i64 {
     i64::try_from(secs / 86_400).unwrap_or(0)
 }
 
-/// Days since 1970-01-01 for a `YYYY-MM-DD` string, or `None` if it is
-/// not a valid calendar date.
+/// Days since 1970-01-01 for a zero-padded `YYYY-MM-DD` string, or
+/// `None` if it is not a valid calendar date.
 fn parse_epoch_days(date: &str) -> Option<i64> {
-    let mut parts = date.splitn(3, '-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    let bytes = date.as_bytes();
+    let digits_at = |range: std::ops::Range<usize>| -> Option<i64> {
+        let part = bytes.get(range)?;
+        part.iter()
+            .all(u8::is_ascii_digit)
+            .then(|| part.iter().fold(0, |n, d| n * 10 + i64::from(d - b'0')))
+    };
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    let (year, month, day) = (digits_at(0..4)?, digits_at(5..7)?, digits_at(8..10)?);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=days_in_month).contains(&day) {
         return None;
     }
     // Days-from-civil (proleptic Gregorian), shifting the year to start in March.
@@ -897,6 +912,11 @@ mod tests {
         assert_eq!(parse_epoch_days("2000-03-01"), Some(11_017));
         assert_eq!(parse_epoch_days("2026-10-27"), Some(TODAY));
         assert_eq!(parse_epoch_days("2026-13-01"), None);
+        assert_eq!(parse_epoch_days("2026-09-31"), None);
+        assert_eq!(parse_epoch_days("2026-02-29"), None);
+        assert_eq!(parse_epoch_days("2024-02-29"), Some(19_782));
+        assert_eq!(parse_epoch_days("2026-2-3"), None);
+        assert_eq!(parse_epoch_days("2026-10-27T00:00"), None);
         assert_eq!(parse_epoch_days("not-a-date"), None);
     }
 
