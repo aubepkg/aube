@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-settings-v2.8.3...aube-settings-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(install)* keep workspace and native lockfiles usable with --lockfile-dir ([#1856](https://github.com/aubepkg/aube/pull/1856))
+
 ## [2.8.2](https://github.com/aubepkg/aube/compare/aube-settings-v2.8.1...aube-settings-v2.8.2) - 2026-10-22
 
 ### Fixed

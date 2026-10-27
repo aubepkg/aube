@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.3...aube-registry-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(registry)* treat stale npm download stats as unknown ([#1881](https://github.com/aubepkg/aube/pull/1881))
+
 ## [2.8.3](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.2...aube-registry-v2.8.3) - 2026-10-23
 
 ### Fixed

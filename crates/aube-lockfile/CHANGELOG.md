@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.4](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.8.3...aube-lockfile-v2.8.4) - 2026-10-27
+
+### Fixed
+
+- *(lockfile)* parse npm lockfiles with extraneous entries outside node_modules ([#1878](https://github.com/aubepkg/aube/pull/1878))
+- *(lockfile)* record dependency-free workspace members in npm lockfiles ([#1876](https://github.com/aubepkg/aube/pull/1876))
+- *(lockfile)* write libc on new npm lock entries only when the project's npm does ([#1874](https://github.com/aubepkg/aube/pull/1874))
+- *(lockfile)* keep existing npm lock entries intact on unrelated adds ([#1851](https://github.com/aubepkg/aube/pull/1851))
+- *(lockfile)* keep pnpm settings and local tarball metadata on rewrite ([#1857](https://github.com/aubepkg/aube/pull/1857))
+- *(install)* keep workspace and native lockfiles usable with --lockfile-dir ([#1856](https://github.com/aubepkg/aube/pull/1856))
+- *(lockfile)* write bun folder identifiers relative to the lockfile ([#1854](https://github.com/aubepkg/aube/pull/1854))
+- *(lockfile)* keep npm local dependency specs of linked packages ([#1855](https://github.com/aubepkg/aube/pull/1855))
+- *(lockfile)* write deprecated and unscoped string bin on npm lock entries ([#1858](https://github.com/aubepkg/aube/pull/1858))
+- *(lockfile)* keep pnpm's leading environment document on rewrite ([#1842](https://github.com/aubepkg/aube/pull/1842))
+- *(lockfile)* make rewritten yarn berry lockfiles pass yarn install --immutable ([#1862](https://github.com/aubepkg/aube/pull/1862))
+- *(lockfile)* keep bun member peer providers on clean frozen install ([#1847](https://github.com/aubepkg/aube/pull/1847))
+- *(linker)* link peers satisfied by file: dependencies to the directory aube creates ([#1850](https://github.com/aubepkg/aube/pull/1850))
+- *(lockfile)* resolve hoisted bun tarballs from their declaring workspace ([#1844](https://github.com/aubepkg/aube/pull/1844))
+- *(lockfile)* write absolute npm directory targets as relative keys ([#1853](https://github.com/aubepkg/aube/pull/1853))
+
 ## [2.8.2](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.8.1...aube-lockfile-v2.8.2) - 2026-10-22
 
 ### Fixed
