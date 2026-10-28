@@ -44,12 +44,17 @@ jobs:
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - name: Activate prebuilt Rust build tools
+        if: runner.os == 'Linux'
         run: sh scripts/setup-blaze.sh --github-env
       - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
+        if: runner.os == 'Linux'
         with:
           github-cache-mode: objects
           cache-generation: blaze-nightly-2026-10-25
-      - run: mise run build
+      - if: runner.os == 'Linux'
+        run: mise run build
+      - if: runner.os == 'macOS'
+        run: cargo build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aube-${{ matrix.os }}

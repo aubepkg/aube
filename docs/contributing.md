@@ -20,8 +20,10 @@ mise run build
 ```
 
 Use the Rust toolchain declared by the project and the tools pinned in
-`mise.toml`. `mise run` activates the Cargo build-cache wrapper. If you run
-Cargo directly, activate mise in your shell first.
+`mise.toml`. `mise run` activates the Cargo build-cache wrapper. To run a
+standalone Cargo command with the pinned Blaze setup, use
+`sh scripts/setup-blaze.sh cargo <command>`; merely activating mise does not
+provision Blaze for a fresh checkout.
 mbx shares build results between worktrees and collects inactive managed
 `target/` directories when their age or size limits are reached.
 
@@ -32,11 +34,12 @@ shim. `scripts/build-tools.ref` pins the shared installer and archive checksums.
 The tools are built once in the [shared release workflow](https://github.com/jdalton/blaze/actions/workflows/release.yaml),
 not during each project build. Setup fails if a matching artifact is missing.
 
-Linux GNU x64/ARM64 and Apple Silicon macOS artifacts are available. Windows
-CI retains its existing Rust path. Blaze is experimental; full-project checks
+Linux GNU x64/ARM64 and Apple Silicon macOS artifacts are available for local
+development. The CI build uses Blaze on Linux and plain Cargo on macOS. Windows
+uses plain Cargo locally and in CI. Blaze is experimental; full-project checks
 remain required even when a small edited-program probe passes.
 
-The Linux/macOS build and Linux test jobs reuse mbx objects. The MSRV check
+The Linux build and test jobs reuse mbx objects. The MSRV check
 clears the Blaze compiler selection so it still checks the minimum supported
 Rust version. Release and custom-profile builds continue through Cargo and
 mbx. To run another development command with the required tools, use
