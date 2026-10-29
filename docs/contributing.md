@@ -75,14 +75,17 @@ mise run test:bats test/install.bats
 ```
 
 `mise run lint` runs the repository's hk checks, including formatting and
-Clippy. `mise run lint-fix` applies supported fixes. The equivalent core Cargo
-checks are:
+Clippy. `mise run lint-fix` applies supported fixes. On Blaze-supported hosts,
+prepare Blaze before running these Cargo commands directly:
 
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+sh scripts/setup-blaze.sh cargo test
+sh scripts/setup-blaze.sh cargo clippy --all-targets -- -D warnings
+sh scripts/setup-blaze.sh cargo fmt --check
 ```
+
+On Windows, use `MBX_BLAZE=0 mise exec -- cargo <command>` in PowerShell after
+setting `$env:MBX_BLAZE = '0'`, as shown above.
 
 BATS tests use the project's mise-managed Node and `rush` for parallel runs.
 Use `mise run test:bats` for the full shell suite. Supply specific `.bats` files
