@@ -26,7 +26,7 @@
 //! gives us alphabetized keys for free. BLAKE3 is the project default
 //! for non-crypto-verifying hashes (3-5x faster than SHA-256).
 
-use crate::{LockedPackage, LockfileGraph, shared_local_dep_path};
+use crate::{LockedPackage, LockfileGraph};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -47,8 +47,9 @@ use std::collections::BTreeMap;
 /// a URL-shaped git child, the parent's GVS hash would omit that child's
 /// content fingerprint and build/engine taint, and two materially
 /// different trees would collide on one virtual-store path.
-fn child_dep_path(alias: &str, tail: &str) -> String {
-    shared_local_dep_path(alias, tail).unwrap_or_else(|| format!("{alias}@{tail}"))
+fn child_dep_path(graph: &LockfileGraph, alias: &str, tail: &str) -> String {
+    crate::resolve_dep_edge(alias, tail, |key| graph.packages.contains_key(key))
+        .unwrap_or_else(|| crate::dep_edge_key(alias, tail))
 }
 
 use aube_util::collections::FxMap as FxHashMap;
@@ -284,7 +285,7 @@ fn calc_deps_hash(
             let id = full_pkg_id(pkg, patch_hash, content_hash(dep_path).as_deref());
             let mut deps: BTreeMap<String, String> = BTreeMap::new();
             for (alias, child_tail) in &pkg.dependencies {
-                let child_dep_path = child_dep_path(alias, child_tail);
+                let child_dep_path = child_dep_path(graph, alias, child_tail);
                 // The child might not be in the graph if the lockfile
                 // has a dangling reference (e.g. after manual edits);
                 // skip rather than panic.
@@ -335,7 +336,7 @@ fn transitively_requires_build(
     }
     let result = match graph.packages.get(dep_path) {
         Some(pkg) => pkg.dependencies.iter().any(|(alias, tail)| {
-            let child_dep_path = child_dep_path(alias, tail);
+            let child_dep_path = child_dep_path(graph, alias, tail);
             transitively_requires_build(graph, builds, &child_dep_path, cache, parents)
         }),
         None => false,
@@ -384,7 +385,7 @@ pub fn content_affected_dep_paths(graph: &LockfileGraph) -> FxHashSet<String> {
             stack.push(dep_path.clone());
         }
         for (alias, child_tail) in &pkg.dependencies {
-            let child = child_dep_path(alias, child_tail);
+            let child = child_dep_path(graph, alias, child_tail);
             if graph.packages.contains_key(&child) {
                 parents_of.entry(child).or_default().push(dep_path.clone());
             }
@@ -470,7 +471,7 @@ struct DepsHashInput<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DirectDep, LocalSource, LockedPackage, LockfileGraph};
+    use crate::{DirectDep, LocalSource, LockedPackage, LockfileGraph, shared_local_dep_path};
     use std::path::PathBuf;
 
     fn mk_pkg(name: &str, ver: &str, integrity: Option<&str>) -> LockedPackage {

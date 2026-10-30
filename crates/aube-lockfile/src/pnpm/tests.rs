@@ -5656,3 +5656,154 @@ fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
         .unwrap();
     assert_eq!(reparsed.bundled_dependencies, ["is-number"]);
 }
+
+/// A tarball's absolute `file:` child sits in a snapshot as a bare
+/// `name@file:/abs` key whose parent edge is the same spec. A fresh resolve
+/// keys it by its hashed path, so the reader must too, or the parent's
+/// sibling link points at a package the graph never had.
+#[test]
+fn transitive_file_child_is_keyed_by_its_hashed_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let host = "/abs/host/host-1.0.0.tgz";
+    let child = "/abs/child/child-1.0.0.tgz";
+    std::fs::write(
+        &lockfile_path,
+        format!(
+            r#"
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      host:
+        specifier: file:{host}
+        version: file:{host}
+
+packages:
+  child@file:{child}:
+    resolution: {{tarball: file:{child}}}
+
+  host@file:{host}:
+    resolution: {{tarball: file:{host}}}
+
+snapshots:
+  child@file:{child}: {{}}
+
+  host@file:{host}:
+    dependencies:
+      child: file:{child}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&lockfile_path).unwrap();
+    let tail = format!("file:{child}");
+    let key = crate::file_dep_path("child", &tail).expect("file: spec hashes");
+    assert!(key.starts_with("child@file+"), "unexpected key: {key}");
+    let pkg = graph.packages.get(&key).unwrap_or_else(|| {
+        panic!(
+            "child must be keyed by its hashed path, got keys: {:?}",
+            graph.packages.keys().collect::<Vec<_>>()
+        )
+    });
+    assert_eq!(pkg.dep_path, key);
+    assert_eq!(
+        pkg.local_source,
+        Some(LocalSource::Tarball(child.into())),
+        "child keeps its tarball source"
+    );
+    let host_dep_path = &graph.importers["."][0].dep_path;
+    let host_pkg = &graph.packages[host_dep_path];
+    assert_eq!(
+        crate::resolve_dep_edge("child", &host_pkg.dependencies["child"], |k| graph
+            .packages
+            .contains_key(k))
+        .as_deref(),
+        Some(key.as_str()),
+        "host's edge must resolve to the child's key"
+    );
+
+    // A `--prod` style prune walks the same edge and must keep the child.
+    let pruned = graph.filter_deps(|_| true);
+    assert!(
+        pruned.packages.contains_key(&key),
+        "pruned graph lost the file: child: {:?}",
+        pruned.packages.keys().collect::<Vec<_>>()
+    );
+
+    let out = dir.path().join("out.yaml");
+    write_with_project_root(&out, dir.path(), &graph, &PackageJson::default()).unwrap();
+    let rewritten = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        rewritten.contains(&format!("child@file:{child}:")),
+        "child keeps its spec key on rewrite:\n{rewritten}"
+    );
+}
+
+/// A `file:` child that peers on another package carries the peer context
+/// on its key and on the parent's edge; the edge must still find it.
+#[test]
+fn transitive_file_child_with_peer_context_stays_reachable() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let host = "/abs/host/host-1.0.0.tgz";
+    let child = "/abs/child/child-1.0.0.tgz";
+    std::fs::write(
+        &lockfile_path,
+        format!(
+            r#"
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      host:
+        specifier: file:{host}
+        version: file:{host}
+      react:
+        specifier: 18.2.0
+        version: 18.2.0
+
+packages:
+  child@file:{child}:
+    resolution: {{tarball: file:{child}}}
+    peerDependencies:
+      react: '*'
+
+  host@file:{host}:
+    resolution: {{tarball: file:{host}}}
+
+  react@18.2.0:
+    resolution: {{integrity: sha512-xxx}}
+
+snapshots:
+  child@file:{child}(react@18.2.0):
+    dependencies:
+      react: 18.2.0
+
+  host@file:{host}(react@18.2.0):
+    dependencies:
+      child: file:{child}(react@18.2.0)
+
+  react@18.2.0: {{}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&lockfile_path).unwrap();
+    let keys: Vec<_> = graph.packages.keys().collect();
+    let host_pkg = graph
+        .packages
+        .values()
+        .find(|p| p.name == "host")
+        .unwrap_or_else(|| panic!("host missing from {keys:?}"));
+    let tail = &host_pkg.dependencies["child"];
+    let found = crate::resolve_dep_edge("child", tail, |k| graph.packages.contains_key(k))
+        .unwrap_or_else(|| panic!("edge {tail} resolves to nothing in {keys:?}"));
+    assert!(found.starts_with("child@file+"), "unexpected key: {found}");
+    assert!(found.ends_with("(react@18.2.0)"), "unexpected key: {found}");
+    assert!(graph.filter_deps(|_| true).packages.contains_key(&found));
+}

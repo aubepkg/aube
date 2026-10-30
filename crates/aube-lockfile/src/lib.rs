@@ -27,8 +27,9 @@ pub use merge::{MergeReport, merge_branch_lockfiles};
 pub use override_match::{importer_relative_override, target_package_name};
 pub(crate) use source::normalize_git_fragment;
 pub use source::{
-    GitSource, HostedGit, HostedGitHost, LocalSource, RemoteTarballSource, git_commits_match,
-    parse_git_spec, parse_hosted_git, resolve_dep_edge, shared_local_dep_path,
+    GitSource, HostedGit, HostedGitHost, LocalSource, RemoteTarballSource, dep_edge_key,
+    file_dep_path, git_commits_match, parse_git_spec, parse_hosted_git, resolve_dep_edge,
+    shared_local_dep_path,
 };
 
 pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url";
@@ -952,7 +953,8 @@ impl LockfileGraph {
     /// filtered out on this platform).
     ///
     /// `LockedPackage.dependencies` maps `child_name → dep_path tail`,
-    /// so each child's full key reconstructs as `{child_name}@{tail}`.
+    /// which [`resolve_dep_edge`] turns into the child's key, so rekeyed
+    /// git, tarball and `file:` children stay reachable.
     fn transitive_closure<'a>(
         &self,
         roots: impl IntoIterator<Item = &'a str>,
@@ -969,7 +971,9 @@ impl LockfileGraph {
                 continue;
             };
             for (child_name, child_version) in &pkg.dependencies {
-                let child_key = format!("{child_name}@{child_version}");
+                let child_key =
+                    resolve_dep_edge(child_name, child_version, |k| self.packages.contains_key(k))
+                        .unwrap_or_else(|| format!("{child_name}@{child_version}"));
                 if reachable.insert(child_key.clone()) {
                     queue.push_back(child_key);
                 }

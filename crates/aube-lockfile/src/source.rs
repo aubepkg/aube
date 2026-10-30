@@ -383,7 +383,36 @@ pub fn resolve_dep_edge(name: &str, tail: &str, contains: impl Fn(&str) -> bool)
     if contains(&rejoined) {
         return Some(rejoined);
     }
+    if let Some(key) = file_dep_path(name, tail) {
+        // A peer-contextualized `file:` child keeps its suffix on the key.
+        let peers = tail.find('(').map_or("", |i| &tail[i..]);
+        let with_peers = format!("{key}{peers}");
+        if contains(&with_peers) {
+            return Some(with_peers);
+        }
+        if contains(&key) {
+            return Some(key);
+        }
+    }
     shared_local_dep_path(name, tail).filter(|key| contains(key))
+}
+
+/// The path-hashed key a `file:` child is stored under, for a `file:` spec
+/// `tail` from a dependency edge. A snapshot records the spec verbatim
+/// (`child: file:/abs/child.tgz`), while the package itself is keyed by
+/// [`LocalSource::dep_path`], which hashes the path, for directories and
+/// tarballs alike.
+pub fn file_dep_path(name: &str, tail: &str) -> Option<String> {
+    let path = tail.split('(').next()?.strip_prefix("file:")?;
+    Some(LocalSource::Directory(path.into()).dep_path(name))
+}
+
+/// The graph key a dependency edge `(name, tail)` is linked and hashed
+/// under, when the caller has no graph to check candidates against.
+pub fn dep_edge_key(name: &str, tail: &str) -> String {
+    file_dep_path(name, tail)
+        .or_else(|| shared_local_dep_path(name, tail))
+        .unwrap_or_else(|| format!("{name}@{tail}"))
 }
 
 /// Parse a git dependency specifier into `(clone_url, committish)`.

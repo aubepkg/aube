@@ -7,7 +7,7 @@ use crate::sweep::{
     try_remove_entry,
 };
 use crate::{Error, LinkStats, LinkStrategy, Linker, sys};
-use aube_lockfile::{LocalSource, LockedPackage, shared_local_dep_path};
+use aube_lockfile::LockedPackage;
 use aube_store::{PackageIndex, StoredFile};
 use std::collections::BTreeMap;
 use std::io;
@@ -437,7 +437,7 @@ impl Linker {
                 continue;
             }
             validate_package_link_name(dep_name)?;
-            let dep_dep_path = dependency_link_key(dep_name, dep_version);
+            let dep_dep_path = aube_lockfile::dep_edge_key(dep_name, dep_version);
             let target = if let Some(abs_target) =
                 nested_link_targets.and_then(|targets| targets.get(&dep_dep_path))
             {
@@ -836,7 +836,7 @@ impl Linker {
         // a per-project `.aube/<dep_path>` that the caller just
         // ensured is empty), so nothing can be in the way.
         for (dep_name, dep_version) in &pkg.dependencies {
-            let dep_dep_path = dependency_link_key(dep_name, dep_version);
+            let dep_dep_path = aube_lockfile::dep_edge_key(dep_name, dep_version);
             // Skip any dep whose name matches the package being
             // materialized, regardless of version. The symlink would
             // land at `pkg_nm_parent.join(dep_name)` which is exactly
@@ -1269,15 +1269,6 @@ fn is_safe_package_component(component: &str) -> bool {
                 | std::path::Component::Prefix(_)
         )
     })
-}
-
-// Keep serialized file: edges intact for lockfile reuse. Only link targets
-// use the path-hashed key, shared by local directories and tarballs.
-pub(crate) fn dependency_link_key(name: &str, tail: &str) -> String {
-    if let Some(path) = tail.split('(').next().and_then(|s| s.strip_prefix("file:")) {
-        return LocalSource::Directory(path.into()).dep_path(name);
-    }
-    shared_local_dep_path(name, tail).unwrap_or_else(|| format!("{name}@{tail}"))
 }
 
 #[cfg(test)]
