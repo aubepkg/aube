@@ -16,10 +16,13 @@ updates:
     open-pull-requests-limit: 0
 
   # Ignoring every dependency also skips security update PRs for the fixture
-  # lockfiles.
+  # lockfiles. "/fixtures/**" alone did not match nested fixtures (security
+  # jobs for /fixtures/vlt-benchmarks/svelte ran with no ignore conditions),
+  # so use the "**/*" form from the security updates docs.
   - package-ecosystem: "npm"
     directories:
-      - "/fixtures/**"
+      - "/fixtures/*"
+      - "/fixtures/**/*"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
