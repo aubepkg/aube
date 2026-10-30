@@ -2,13 +2,14 @@ min_version = "2026.9.7"
 
 [env]
 _.path = ["./bin"]
+MBX_BLAZE = "1"
 
 [settings]
 experimental = true
 cargo.binstall_native = true
 
 [tools]
-mr-boxington = { version = "latest", minimum_release_age = "0s" }
+mr-boxington = { version = "1.28.0", minimum_release_age = "0s" }
 usage = { version = "latest", minimum_release_age = "0s" }
 communique = { version = "latest", minimum_release_age = "0s" }
 "github:bnjbvr/cargo-machete" = "latest"
@@ -52,10 +53,12 @@ run = "hk fix --all --slow"
 run = "mise x cargo:cargo-fixit@0.1.15 -- cargo fixit --clippy --all-targets --allow-dirty --allow-staged"
 
 [tasks.build]
-run = "cargo build"
+run = "sh scripts/setup-blaze.sh cargo build"
+run_windows = "cargo build"
 
 [tasks.test]
-run = "cargo test"
+run = "sh scripts/setup-blaze.sh cargo test"
+run_windows = "cargo test"
 
 [tasks."docs:dev"]
 depends = ["build"]
