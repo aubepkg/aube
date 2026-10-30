@@ -27,8 +27,9 @@ pub use merge::{MergeReport, merge_branch_lockfiles};
 pub use override_match::{importer_relative_override, target_package_name};
 pub(crate) use source::normalize_git_fragment;
 pub use source::{
-    GitSource, HostedGit, HostedGitHost, LocalSource, RemoteTarballSource, git_commits_match,
-    parse_git_spec, parse_hosted_git, resolve_dep_edge, shared_local_dep_path,
+    GitSource, HostedGit, HostedGitHost, LocalSource, RemoteTarballSource, dep_edge_key,
+    file_dep_path, git_commits_match, parse_git_spec, parse_hosted_git, resolve_dep_edge,
+    shared_local_dep_path,
 };
 
 pub(crate) const EXTRA_PRESERVE_TARBALL_URL: &str = "__aube_preserve_tarball_url";

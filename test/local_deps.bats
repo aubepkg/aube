@@ -1725,3 +1725,37 @@ EOF
 	assert_success
 	assert_output "shared"
 }
+
+@test "aube install --frozen-lockfile links a tarball's absolute file: child" {
+	mkdir -p staging/child/package staging/host/package app
+	cat >staging/child/package/package.json <<'EOF'
+{"name":"child","version":"1.0.0","main":"index.js"}
+EOF
+	echo 'module.exports = "from child";' >staging/child/package/index.js
+	(cd staging/child && tar -czf ../child.tgz package)
+	cat >staging/host/package/package.json <<EOF
+{"name":"host","version":"1.0.0","main":"index.js","dependencies":{"child":"file:$PWD/staging/child.tgz"}}
+EOF
+	echo 'module.exports = require("child");' >staging/host/package/index.js
+	(cd staging/host && tar -czf ../../app/host.tgz package)
+	cd app
+
+	cat >package.json <<'EOF'
+{"name":"app","version":"0.0.0","dependencies":{"host":"file:./host.tgz"}}
+EOF
+	echo 'block-exotic-subdeps=false' >.npmrc
+
+	run aube install
+	assert_success
+	run node -e 'console.log(require("host"))'
+	assert_output "from child"
+
+	cp aube-lock.yaml lock.before
+	rm -rf node_modules
+	run aube install --frozen-lockfile
+	assert_success
+	run node -e 'console.log(require("host"))'
+	assert_output "from child"
+	run diff lock.before aube-lock.yaml
+	assert_success
+}

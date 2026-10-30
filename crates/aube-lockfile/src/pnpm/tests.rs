@@ -5656,3 +5656,80 @@ fn pnpm_lock_keeps_unmodeled_settings_and_local_tarball_metadata() {
         .unwrap();
     assert_eq!(reparsed.bundled_dependencies, ["is-number"]);
 }
+
+/// A tarball's absolute `file:` child sits in a snapshot as a bare
+/// `name@file:/abs` key whose parent edge is the same spec. A fresh resolve
+/// keys it by its hashed path, so the reader must too, or the parent's
+/// sibling link points at a package the graph never had.
+#[test]
+fn transitive_file_child_is_keyed_by_its_hashed_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile_path = dir.path().join("pnpm-lock.yaml");
+    let host = "/abs/host/host-1.0.0.tgz";
+    let child = "/abs/child/child-1.0.0.tgz";
+    std::fs::write(
+        &lockfile_path,
+        format!(
+            r#"
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      host:
+        specifier: file:{host}
+        version: file:{host}
+
+packages:
+  child@file:{child}:
+    resolution: {{tarball: file:{child}}}
+
+  host@file:{host}:
+    resolution: {{tarball: file:{host}}}
+
+snapshots:
+  child@file:{child}: {{}}
+
+  host@file:{host}:
+    dependencies:
+      child: file:{child}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&lockfile_path).unwrap();
+    let tail = format!("file:{child}");
+    let key = crate::file_dep_path("child", &tail).expect("file: spec hashes");
+    assert!(key.starts_with("child@file+"), "unexpected key: {key}");
+    let pkg = graph.packages.get(&key).unwrap_or_else(|| {
+        panic!(
+            "child must be keyed by its hashed path, got keys: {:?}",
+            graph.packages.keys().collect::<Vec<_>>()
+        )
+    });
+    assert_eq!(pkg.dep_path, key);
+    assert_eq!(
+        pkg.local_source,
+        Some(LocalSource::Tarball(child.into())),
+        "child keeps its tarball source"
+    );
+    let host_dep_path = &graph.importers["."][0].dep_path;
+    let host_pkg = &graph.packages[host_dep_path];
+    assert_eq!(
+        crate::resolve_dep_edge("child", &host_pkg.dependencies["child"], |k| graph
+            .packages
+            .contains_key(k))
+        .as_deref(),
+        Some(key.as_str()),
+        "host's edge must resolve to the child's key"
+    );
+
+    let out = dir.path().join("out.yaml");
+    write_with_project_root(&out, dir.path(), &graph, &PackageJson::default()).unwrap();
+    let rewritten = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        rewritten.contains(&format!("child@file:{child}:")),
+        "child keeps its spec key on rewrite:\n{rewritten}"
+    );
+}

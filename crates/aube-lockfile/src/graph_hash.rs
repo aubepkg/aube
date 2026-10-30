@@ -26,7 +26,7 @@
 //! gives us alphabetized keys for free. BLAKE3 is the project default
 //! for non-crypto-verifying hashes (3-5x faster than SHA-256).
 
-use crate::{LockedPackage, LockfileGraph, shared_local_dep_path};
+use crate::{LockedPackage, LockfileGraph};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -48,7 +48,7 @@ use std::collections::BTreeMap;
 /// content fingerprint and build/engine taint, and two materially
 /// different trees would collide on one virtual-store path.
 fn child_dep_path(alias: &str, tail: &str) -> String {
-    shared_local_dep_path(alias, tail).unwrap_or_else(|| format!("{alias}@{tail}"))
+    crate::dep_edge_key(alias, tail)
 }
 
 use aube_util::collections::FxMap as FxHashMap;
@@ -470,7 +470,7 @@ struct DepsHashInput<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DirectDep, LocalSource, LockedPackage, LockfileGraph};
+    use crate::{DirectDep, LocalSource, LockedPackage, LockfileGraph, shared_local_dep_path};
     use std::path::PathBuf;
 
     fn mk_pkg(name: &str, ver: &str, integrity: Option<&str>) -> LockedPackage {

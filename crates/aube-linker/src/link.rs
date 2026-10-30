@@ -1899,7 +1899,7 @@ pub fn project_local_dependency_closure_with_seeds(
         for (name, tail) in &pkg.dependencies {
             let child =
                 aube_lockfile::resolve_dep_edge(name, tail, |k| graph.packages.contains_key(k))
-                    .unwrap_or_else(|| crate::materialize::dependency_link_key(name, tail));
+                    .unwrap_or_else(|| aube_lockfile::dep_edge_key(name, tail));
             parents.entry(child).or_insert_with(Vec::new).push(key);
         }
     }

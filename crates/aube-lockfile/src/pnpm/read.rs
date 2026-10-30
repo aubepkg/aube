@@ -1004,12 +1004,16 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
         let suffix = reference.find('(').map_or("", |i| &reference[i..]);
         Some(format!("{head}{suffix}"))
     };
-    // Canonicalize a git/remote-tarball package's own `name@<url>` head to
-    // the hashed form, preserving any peer suffix verbatim (URLs aube keys
-    // never contain `(`, so the first `(` always starts the suffix).
+    // Canonicalize a git/remote-tarball/`file:` package's own `name@<spec>`
+    // head to the hashed form, preserving any peer suffix verbatim (specs
+    // aube keys never contain `(`, so the first `(` always starts the
+    // suffix). A transitive `file:` child is keyed by its path here as it is
+    // by a fresh resolve, and edges find it by `dep_edge_key`.
     let canonical_local_head = |key: &str, pkg: &LockedPackage| -> Option<String> {
-        let local @ (LocalSource::Git(_) | LocalSource::RemoteTarball(_)) =
-            pkg.local_source.as_ref()?
+        let local @ (LocalSource::Git(_)
+        | LocalSource::RemoteTarball(_)
+        | LocalSource::Directory(_)
+        | LocalSource::Tarball(_)) = pkg.local_source.as_ref()?
         else {
             return None;
         };
@@ -1020,7 +1024,12 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
     let has_local_source = packages.values().any(|p| {
         matches!(
             p.local_source,
-            Some(LocalSource::Git(_) | LocalSource::RemoteTarball(_))
+            Some(
+                LocalSource::Git(_)
+                    | LocalSource::RemoteTarball(_)
+                    | LocalSource::Directory(_)
+                    | LocalSource::Tarball(_)
+            )
         )
     });
     if has_local_source {
