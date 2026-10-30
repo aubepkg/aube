@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.5](https://github.com/aubepkg/aube/compare/v2.8.4...v2.8.5) - 2026-10-30
+
+### Other
+
+- *(deps)* bump taiki-e/install-action from 2.87.28 to 2.87.29 ([#1872](https://github.com/aubepkg/aube/pull/1872))
+
 ## [2.8.4](https://github.com/aubepkg/aube/compare/v2.8.3...v2.8.4) - 2026-10-27
 
 ### Fixed
