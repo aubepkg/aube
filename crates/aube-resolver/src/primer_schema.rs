@@ -92,6 +92,31 @@ pub(super) struct PrimerDist {
     pub(super) tarball: Option<String>,
     #[serde(default, rename = "i")]
     pub(super) integrity: Option<String>,
+    /// SHA-1 digest behind `dist.shasum`, kept as raw bytes: hex text
+    /// would cost ~35% more in the embedded blob, since a digest does
+    /// not compress. The generator emits it as 40 hex characters.
+    #[serde(default, rename = "s", deserialize_with = "deserialize_sha1_hex")]
+    pub(super) shasum: Option<[u8; 20]>,
     #[serde(default, rename = "a")]
     pub(super) provenance: bool,
+}
+
+fn deserialize_sha1_hex<'de, D>(deserializer: D) -> Result<Option<[u8; 20]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(hex) = <Option<String> as serde::Deserialize>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if hex.len() != 40 {
+        return Err(serde::de::Error::custom("shasum must be 40 hex characters"));
+    }
+    let mut digest = [0_u8; 20];
+    for (i, out) in digest.iter_mut().enumerate() {
+        *out = hex
+            .get(i * 2..i * 2 + 2)
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            .ok_or_else(|| serde::de::Error::custom("shasum must be hex"))?;
+    }
+    Ok(Some(digest))
 }

@@ -129,6 +129,9 @@ function trimVersion(v = {}) {
             // the field.
             t: deterministicTarball(v.name, v.version) === v.dist.tarball ? undefined : v.dist.tarball,
             i: typeof v.dist.integrity === 'string' ? v.dist.integrity : undefined,
+            // Hex SHA-1 the registry publishes as `dist.shasum`. Yarn Classic
+            // lockfiles append it to `resolved` as a `#<sha1>` fragment.
+            s: typeof v.dist.shasum === 'string' && /^[0-9a-f]{40}$/.test(v.dist.shasum) ? v.dist.shasum : undefined,
             a: hasProvenance(v.dist.attestations),
           }
         : undefined,
