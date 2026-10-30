@@ -4267,6 +4267,37 @@ fn test_drift_flags_workspace_member_renamed_in_place() {
 }
 
 #[test]
+fn test_drift_flags_workspace_members_that_swap_names() {
+    let graph = workspace_members_lock(&["a", "b"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let check = |a_name: &str, b_name: &str| {
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root.clone()),
+                (
+                    "packages/a".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{a_name}", "version": "1.0.0"}}"#)),
+                ),
+                (
+                    "packages/b".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{b_name}", "version": "1.0.0"}}"#)),
+                ),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    assert_eq!(check("a", "b"), DriftStatus::Fresh);
+    assert!(matches!(
+        check("b", "a"),
+        DriftStatus::Stale { reason } if reason.contains("linked to")
+    ));
+}
+
+#[test]
 fn test_drift_flags_new_workspace_member_under_npm_shrinkwrap() {
     let graph = workspace_members_lock(&["a"]);
     let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);

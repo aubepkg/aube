@@ -223,18 +223,36 @@ impl LockfileGraph {
             .collect();
         // npm links every member into the root `node_modules` under its
         // current `name`, so a member renamed in place leaves the importer
-        // path in the lockfile but not the link `npm ci` expects.
+        // path in the lockfile but not the link `npm ci` expects, and two
+        // members that swap names leave each link pointing at the other.
         if records_every_member
             && is_workspace_install
             && let Some(root_deps) = self.importers.get(".")
-            && let Some(missing) = workspace_link_names
-                .iter()
-                .filter(|name| !root_deps.iter().any(|dep| dep.name == **name))
-                .min()
         {
-            return DriftStatus::Stale {
-                reason: format!("workspace member {missing} is missing from the lockfile"),
-            };
+            for (member_path, member) in manifests.iter().filter(|(path, _)| path != ".") {
+                let Some(name) = member.name.as_deref() else {
+                    continue;
+                };
+                let Some(dep) = root_deps.iter().find(|dep| dep.name == name) else {
+                    return DriftStatus::Stale {
+                        reason: format!("workspace member {name} is missing from the lockfile"),
+                    };
+                };
+                if let Some(crate::LocalSource::Link(target)) = self
+                    .packages
+                    .get(&dep.dep_path)
+                    .and_then(|pkg| pkg.local_source.as_ref())
+                    && aube_util::path::normalize_lexical(target)
+                        != aube_util::path::normalize_lexical(std::path::Path::new(member_path))
+                {
+                    return DriftStatus::Stale {
+                        reason: format!(
+                            "workspace member {name} is linked to {} in the lockfile, not {member_path}",
+                            target.display()
+                        ),
+                    };
+                }
+            }
         }
         for (importer_path, manifest) in manifests.iter().chain(local_targets) {
             // pnpm-format lockfiles record every workspace project that
