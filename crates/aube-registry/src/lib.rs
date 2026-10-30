@@ -540,6 +540,15 @@ struct VersionMetadataRaw {
     bin: BTreeMap<String, String>,
     #[serde(default)]
     has_install_script: bool,
+    /// Full packuments omit `hasInstallScript`, so it is derived from
+    /// `scripts`. npm adds the implicit `node-gyp rebuild` install script
+    /// to published manifests, so `binding.gyp` packages are covered.
+    #[serde(
+        default,
+        rename = "scripts",
+        deserialize_with = "declares_install_script"
+    )]
+    declares_install_script: bool,
     #[serde(default, deserialize_with = "deprecated_string")]
     deprecated: Option<String>,
     #[serde(default)]
@@ -567,7 +576,7 @@ impl From<VersionMetadataRaw> for VersionMetadata {
             license: raw.license,
             funding_url: raw.funding_url,
             bin: raw.bin,
-            has_install_script: raw.has_install_script,
+            has_install_script: raw.has_install_script || raw.declares_install_script,
             deprecated: raw.deprecated,
             approver: raw.approver,
             npm_user: raw.npm_user,
@@ -664,6 +673,44 @@ where
 
         visit_primitives_to!('de, None);
         visit_seq_to!('de, None);
+    }
+    de.deserialize_any(V)
+}
+
+/// True when a packument's `scripts:` map has a non-empty `preinstall`,
+/// `install` or `postinstall` entry, the hooks npm runs for a dependency.
+/// Any other shape degrades to `false`.
+fn declares_install_script<'de, D>(de: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = bool;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a scripts object")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
+            let mut found = false;
+            while let Some(key) = access.next_key::<String>()? {
+                if matches!(key.as_str(), "preinstall" | "install" | "postinstall") {
+                    let MaybeString(script) = access.next_value()?;
+                    found |= script.is_some_and(|s| !s.trim().is_empty());
+                } else {
+                    let _: IgnoredAny = access.next_value()?;
+                }
+            }
+            Ok(found)
+        }
+
+        fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self::Value, E> {
+            Ok(false)
+        }
+
+        visit_primitives_to!('de, false);
+        visit_seq_to!('de, false);
     }
     de.deserialize_any(V)
 }
@@ -1045,6 +1092,31 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("requested version 2.0.0"));
+    }
+
+    #[test]
+    fn has_install_script_derives_from_install_hooks_when_flag_absent() {
+        for hook in ["preinstall", "install", "postinstall"] {
+            let meta = parse(&format!(
+                r#"{{"name":"x","version":"1.0.0","scripts":{{"test":"jest","{hook}":"node build.js"}}}}"#
+            ));
+            assert!(meta.has_install_script, "{hook}");
+        }
+        for json in [
+            r#"{"name":"x","version":"1.0.0"}"#,
+            r#"{"name":"x","version":"1.0.0","scripts":{"test":"jest","prepare":"tsc"}}"#,
+            r#"{"name":"x","version":"1.0.0","scripts":{"postinstall":""}}"#,
+            r#"{"name":"x","version":"1.0.0","scripts":{"postinstall":42}}"#,
+            r#"{"name":"x","version":"1.0.0","scripts":"nope"}"#,
+        ] {
+            assert!(!parse(json).has_install_script, "{json}");
+        }
+    }
+
+    #[test]
+    fn has_install_script_keeps_registry_flag() {
+        let meta = parse(r#"{"name":"x","version":"1.0.0","hasInstallScript":true}"#);
+        assert!(meta.has_install_script);
     }
 
     #[test]
