@@ -953,7 +953,8 @@ impl LockfileGraph {
     /// filtered out on this platform).
     ///
     /// `LockedPackage.dependencies` maps `child_name → dep_path tail`,
-    /// so each child's full key reconstructs as `{child_name}@{tail}`.
+    /// which [`resolve_dep_edge`] turns into the child's key, so rekeyed
+    /// git, tarball and `file:` children stay reachable.
     fn transitive_closure<'a>(
         &self,
         roots: impl IntoIterator<Item = &'a str>,
@@ -970,7 +971,9 @@ impl LockfileGraph {
                 continue;
             };
             for (child_name, child_version) in &pkg.dependencies {
-                let child_key = format!("{child_name}@{child_version}");
+                let child_key =
+                    resolve_dep_edge(child_name, child_version, |k| self.packages.contains_key(k))
+                        .unwrap_or_else(|| format!("{child_name}@{child_version}"));
                 if reachable.insert(child_key.clone()) {
                     queue.push_back(child_key);
                 }

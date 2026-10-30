@@ -383,9 +383,18 @@ pub fn resolve_dep_edge(name: &str, tail: &str, contains: impl Fn(&str) -> bool)
     if contains(&rejoined) {
         return Some(rejoined);
     }
-    shared_local_dep_path(name, tail)
-        .or_else(|| file_dep_path(name, tail))
-        .filter(|key| contains(key))
+    if let Some(key) = file_dep_path(name, tail) {
+        // A peer-contextualized `file:` child keeps its suffix on the key.
+        let peers = tail.find('(').map_or("", |i| &tail[i..]);
+        let with_peers = format!("{key}{peers}");
+        if contains(&with_peers) {
+            return Some(with_peers);
+        }
+        if contains(&key) {
+            return Some(key);
+        }
+    }
+    shared_local_dep_path(name, tail).filter(|key| contains(key))
 }
 
 /// The path-hashed key a `file:` child is stored under, for a `file:` spec
