@@ -121,7 +121,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             kind_records_resolution_metadata(kind),
-            kind == LockfileKind::Npm,
+            kind_records_every_workspace_member(kind),
         )
     }
 
@@ -149,7 +149,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             kind_records_resolution_metadata(kind),
-            kind == LockfileKind::Npm,
+            kind_records_every_workspace_member(kind),
         )
     }
 
@@ -221,6 +221,51 @@ impl LockfileGraph {
             .filter(|(path, _)| path != ".")
             .filter_map(|(_, manifest)| manifest.name.as_deref())
             .collect();
+        // npm links every member into the root `node_modules` under its
+        // current `name`, so a member renamed in place leaves the importer
+        // path in the lockfile but not the link `npm ci` expects, and two
+        // members that swap names leave each link pointing at the other.
+        if records_every_member
+            && is_workspace_install
+            && let Some(root_deps) = self.importers.get(".")
+        {
+            for (member_path, member) in manifests.iter().filter(|(path, _)| path != ".") {
+                let Some(name) = member.name.as_deref() else {
+                    continue;
+                };
+                let Some(dep) = root_deps.iter().find(|dep| dep.name == name) else {
+                    return DriftStatus::Stale {
+                        reason: format!("workspace member {name} is missing from the lockfile"),
+                    };
+                };
+                match self
+                    .packages
+                    .get(&dep.dep_path)
+                    .and_then(|pkg| pkg.local_source.as_ref())
+                {
+                    Some(crate::LocalSource::Link(target))
+                        if aube_util::path::normalize_lexical(target)
+                            == aube_util::path::normalize_lexical(std::path::Path::new(
+                                member_path,
+                            )) => {}
+                    Some(crate::LocalSource::Link(target)) => {
+                        return DriftStatus::Stale {
+                            reason: format!(
+                                "workspace member {name} is linked to {} in the lockfile, not {member_path}",
+                                target.display()
+                            ),
+                        };
+                    }
+                    _ => {
+                        return DriftStatus::Stale {
+                            reason: format!(
+                                "workspace member {name} is not linked to {member_path} in the lockfile"
+                            ),
+                        };
+                    }
+                }
+            }
+        }
         for (importer_path, manifest) in manifests.iter().chain(local_targets) {
             // pnpm-format lockfiles record every workspace project that
             // declares deps. A missing importer means the lockfile was
@@ -930,6 +975,10 @@ fn manifest_declares_deps(manifest: &aube_manifest::PackageJson, auto_install_pe
                 .peer_dependencies
                 .keys()
                 .any(|name| !manifest.peer_dependency_is_optional(name)))
+}
+
+fn kind_records_every_workspace_member(kind: LockfileKind) -> bool {
+    matches!(kind, LockfileKind::Npm | LockfileKind::NpmShrinkwrap)
 }
 
 fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {

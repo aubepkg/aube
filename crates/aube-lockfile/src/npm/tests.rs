@@ -4232,6 +4232,151 @@ fn test_drift_flags_new_dependency_free_workspace_member() {
     assert!(matches!(check(&[a, b]), DriftStatus::Stale { .. }));
 }
 
+/// `npm ci` links each member into the root `node_modules` by its
+/// `name`. A member renamed in place keeps its importer path, so the
+/// lockfile still records `packages/b` but links `b`, not `c`.
+#[test]
+fn test_drift_flags_workspace_member_renamed_in_place() {
+    let graph = workspace_members_lock(&["a", "b"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let check = |b_name: &str| {
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root.clone()),
+                (
+                    "packages/a".to_string(),
+                    member_manifest(r#"{"name": "a", "version": "1.0.0"}"#),
+                ),
+                (
+                    "packages/b".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{b_name}", "version": "1.0.0"}}"#)),
+                ),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    assert_eq!(check("b"), DriftStatus::Fresh);
+    assert!(matches!(
+        check("c"),
+        DriftStatus::Stale { reason } if reason.contains("workspace member c")
+    ));
+}
+
+#[test]
+fn test_drift_flags_workspace_members_that_swap_names() {
+    let graph = workspace_members_lock(&["a", "b"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let check = |a_name: &str, b_name: &str| {
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root.clone()),
+                (
+                    "packages/a".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{a_name}", "version": "1.0.0"}}"#)),
+                ),
+                (
+                    "packages/b".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{b_name}", "version": "1.0.0"}}"#)),
+                ),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    assert_eq!(check("a", "b"), DriftStatus::Fresh);
+    assert!(matches!(
+        check("b", "a"),
+        DriftStatus::Stale { reason } if reason.contains("linked to")
+    ));
+}
+
+/// A root registry dependency named like the renamed member is not the
+/// member's workspace link.
+#[test]
+fn test_drift_flags_member_renamed_to_a_root_registry_dependency() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        serde_json::json!({
+            "lockfileVersion": 3,
+            "requires": true,
+            "packages": {
+                "": {
+                    "name": "root",
+                    "workspaces": ["packages/*"],
+                    "dependencies": {"c": "^1.0.0"}
+                },
+                "node_modules/b": {"resolved": "packages/b", "link": true},
+                "node_modules/c": {
+                    "version": "1.0.0",
+                    "resolved": "https://registry.npmjs.org/c/-/c-1.0.0.tgz",
+                    "integrity": format!("sha512-{}", "A".repeat(86) + "=="),
+                },
+                "packages/b": {"version": "1.0.0"}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = member_manifest(
+        r#"{"name": "root", "workspaces": ["packages/*"], "dependencies": {"c": "^1.0.0"}}"#,
+    );
+    let check = |b_name: &str| {
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root.clone()),
+                (
+                    "packages/b".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{b_name}", "version": "1.0.0"}}"#)),
+                ),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    assert_eq!(check("b"), DriftStatus::Fresh);
+    assert!(matches!(
+        check("c"),
+        DriftStatus::Stale { reason } if reason.contains("not linked to packages/b")
+    ));
+}
+
+#[test]
+fn test_drift_flags_new_workspace_member_under_npm_shrinkwrap() {
+    let graph = workspace_members_lock(&["a"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let a = member_manifest(r#"{"name": "a", "version": "1.0.0"}"#);
+    let c = member_manifest(r#"{"name": "c", "version": "1.0.0"}"#);
+    let check = |members: &[(&str, &aube_manifest::PackageJson)]| {
+        let mut manifests = vec![(".".to_string(), root.clone())];
+        manifests.extend(members.iter().map(|(p, m)| (p.to_string(), (*m).clone())));
+        graph.check_drift_workspace_for_kind(
+            &manifests,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::NpmShrinkwrap,
+        )
+    };
+    assert_eq!(check(&[("packages/a", &a)]), DriftStatus::Fresh);
+    assert!(matches!(
+        check(&[("packages/a", &a), ("packages/c", &c)]),
+        DriftStatus::Stale { .. }
+    ));
+}
+
 #[test]
 fn test_write_workspace_member_copies_os_cpu_and_omits_folder_name() {
     let graph = workspace_members_lock(&["a", "c"]);
