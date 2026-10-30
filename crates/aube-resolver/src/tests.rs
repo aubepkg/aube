@@ -6831,12 +6831,15 @@ async fn primer_backed_resolve_yields_yarn_classic_shasum_fragment() {
             let leaf = meta.dependencies.is_empty()
                 && meta.peer_dependencies.is_empty()
                 && meta.optional_dependencies.is_empty();
-            let shasum = meta.dist.as_ref()?.shasum.clone()?;
-            leaf.then(|| (name.to_string(), version.clone(), shasum))
+            // Pick the package without regard to its shasum so a primer that
+            // lost every shasum fails the assertion below instead of skipping.
+            let dist = meta.dist.as_ref()?;
+            leaf.then(|| (name.to_string(), version.clone(), dist.shasum.clone()))
         })
     else {
         return;
     };
+    let shasum = shasum.expect("primer entry lost its dist.shasum");
 
     let client = Arc::new(aube_registry::client::RegistryClient::new(
         "https://registry.npmjs.org/",
