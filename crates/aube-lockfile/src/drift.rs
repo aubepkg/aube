@@ -238,19 +238,31 @@ impl LockfileGraph {
                         reason: format!("workspace member {name} is missing from the lockfile"),
                     };
                 };
-                if let Some(crate::LocalSource::Link(target)) = self
+                match self
                     .packages
                     .get(&dep.dep_path)
                     .and_then(|pkg| pkg.local_source.as_ref())
-                    && aube_util::path::normalize_lexical(target)
-                        != aube_util::path::normalize_lexical(std::path::Path::new(member_path))
                 {
-                    return DriftStatus::Stale {
-                        reason: format!(
-                            "workspace member {name} is linked to {} in the lockfile, not {member_path}",
-                            target.display()
-                        ),
-                    };
+                    Some(crate::LocalSource::Link(target))
+                        if aube_util::path::normalize_lexical(target)
+                            == aube_util::path::normalize_lexical(std::path::Path::new(
+                                member_path,
+                            )) => {}
+                    Some(crate::LocalSource::Link(target)) => {
+                        return DriftStatus::Stale {
+                            reason: format!(
+                                "workspace member {name} is linked to {} in the lockfile, not {member_path}",
+                                target.display()
+                            ),
+                        };
+                    }
+                    _ => {
+                        return DriftStatus::Stale {
+                            reason: format!(
+                                "workspace member {name} is not linked to {member_path} in the lockfile"
+                            ),
+                        };
+                    }
                 }
             }
         }

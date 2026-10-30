@@ -4297,6 +4297,61 @@ fn test_drift_flags_workspace_members_that_swap_names() {
     ));
 }
 
+/// A root registry dependency named like the renamed member is not the
+/// member's workspace link.
+#[test]
+fn test_drift_flags_member_renamed_to_a_root_registry_dependency() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        serde_json::json!({
+            "lockfileVersion": 3,
+            "requires": true,
+            "packages": {
+                "": {
+                    "name": "root",
+                    "workspaces": ["packages/*"],
+                    "dependencies": {"c": "^1.0.0"}
+                },
+                "node_modules/b": {"resolved": "packages/b", "link": true},
+                "node_modules/c": {
+                    "version": "1.0.0",
+                    "resolved": "https://registry.npmjs.org/c/-/c-1.0.0.tgz",
+                    "integrity": format!("sha512-{}", "A".repeat(86) + "=="),
+                },
+                "packages/b": {"version": "1.0.0"}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let graph = parse(tmp.path()).unwrap();
+    let root = member_manifest(
+        r#"{"name": "root", "workspaces": ["packages/*"], "dependencies": {"c": "^1.0.0"}}"#,
+    );
+    let check = |b_name: &str| {
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root.clone()),
+                (
+                    "packages/b".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{b_name}", "version": "1.0.0"}}"#)),
+                ),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    assert_eq!(check("b"), DriftStatus::Fresh);
+    assert!(matches!(
+        check("c"),
+        DriftStatus::Stale { reason } if reason.contains("not linked to packages/b")
+    ));
+}
+
 #[test]
 fn test_drift_flags_new_workspace_member_under_npm_shrinkwrap() {
     let graph = workspace_members_lock(&["a"]);
