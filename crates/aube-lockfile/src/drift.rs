@@ -121,7 +121,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             kind_records_resolution_metadata(kind),
-            kind == LockfileKind::Npm,
+            kind_records_every_workspace_member(kind),
         )
     }
 
@@ -149,7 +149,7 @@ impl LockfileGraph {
             workspace_catalogs,
             is_workspace_install,
             kind_records_resolution_metadata(kind),
-            kind == LockfileKind::Npm,
+            kind_records_every_workspace_member(kind),
         )
     }
 
@@ -221,6 +221,21 @@ impl LockfileGraph {
             .filter(|(path, _)| path != ".")
             .filter_map(|(_, manifest)| manifest.name.as_deref())
             .collect();
+        // npm links every member into the root `node_modules` under its
+        // current `name`, so a member renamed in place leaves the importer
+        // path in the lockfile but not the link `npm ci` expects.
+        if records_every_member
+            && is_workspace_install
+            && let Some(root_deps) = self.importers.get(".")
+            && let Some(missing) = workspace_link_names
+                .iter()
+                .filter(|name| !root_deps.iter().any(|dep| dep.name == **name))
+                .min()
+        {
+            return DriftStatus::Stale {
+                reason: format!("workspace member {missing} is missing from the lockfile"),
+            };
+        }
         for (importer_path, manifest) in manifests.iter().chain(local_targets) {
             // pnpm-format lockfiles record every workspace project that
             // declares deps. A missing importer means the lockfile was
@@ -930,6 +945,10 @@ fn manifest_declares_deps(manifest: &aube_manifest::PackageJson, auto_install_pe
                 .peer_dependencies
                 .keys()
                 .any(|name| !manifest.peer_dependency_is_optional(name)))
+}
+
+fn kind_records_every_workspace_member(kind: LockfileKind) -> bool {
+    matches!(kind, LockfileKind::Npm | LockfileKind::NpmShrinkwrap)
 }
 
 fn kind_records_resolution_metadata(kind: LockfileKind) -> bool {

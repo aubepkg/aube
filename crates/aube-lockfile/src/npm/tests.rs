@@ -4232,6 +4232,65 @@ fn test_drift_flags_new_dependency_free_workspace_member() {
     assert!(matches!(check(&[a, b]), DriftStatus::Stale { .. }));
 }
 
+/// `npm ci` links each member into the root `node_modules` by its
+/// `name`. A member renamed in place keeps its importer path, so the
+/// lockfile still records `packages/b` but links `b`, not `c`.
+#[test]
+fn test_drift_flags_workspace_member_renamed_in_place() {
+    let graph = workspace_members_lock(&["a", "b"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let check = |b_name: &str| {
+        graph.check_drift_workspace_for_kind(
+            &[
+                (".".to_string(), root.clone()),
+                (
+                    "packages/a".to_string(),
+                    member_manifest(r#"{"name": "a", "version": "1.0.0"}"#),
+                ),
+                (
+                    "packages/b".to_string(),
+                    member_manifest(&format!(r#"{{"name": "{b_name}", "version": "1.0.0"}}"#)),
+                ),
+            ],
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::Npm,
+        )
+    };
+    assert_eq!(check("b"), DriftStatus::Fresh);
+    assert!(matches!(
+        check("c"),
+        DriftStatus::Stale { reason } if reason.contains("workspace member c")
+    ));
+}
+
+#[test]
+fn test_drift_flags_new_workspace_member_under_npm_shrinkwrap() {
+    let graph = workspace_members_lock(&["a"]);
+    let root = member_manifest(r#"{"name": "root", "workspaces": ["packages/*"]}"#);
+    let a = member_manifest(r#"{"name": "a", "version": "1.0.0"}"#);
+    let c = member_manifest(r#"{"name": "c", "version": "1.0.0"}"#);
+    let check = |members: &[(&str, &aube_manifest::PackageJson)]| {
+        let mut manifests = vec![(".".to_string(), root.clone())];
+        manifests.extend(members.iter().map(|(p, m)| (p.to_string(), (*m).clone())));
+        graph.check_drift_workspace_for_kind(
+            &manifests,
+            &BTreeMap::new(),
+            &[],
+            &BTreeMap::new(),
+            true,
+            LockfileKind::NpmShrinkwrap,
+        )
+    };
+    assert_eq!(check(&[("packages/a", &a)]), DriftStatus::Fresh);
+    assert!(matches!(
+        check(&[("packages/a", &a), ("packages/c", &c)]),
+        DriftStatus::Stale { .. }
+    ));
+}
+
 #[test]
 fn test_write_workspace_member_copies_os_cpu_and_omits_folder_name() {
     let graph = workspace_members_lock(&["a", "c"]);
