@@ -539,7 +539,7 @@ struct VersionMetadataRaw {
     #[serde(default, rename = "bin", deserialize_with = "bin_map")]
     bin: BTreeMap<String, String>,
     #[serde(default)]
-    has_install_script: bool,
+    has_install_script: Option<bool>,
     /// Full packuments omit `hasInstallScript`, so it is derived from
     /// `scripts`. npm adds the implicit `node-gyp rebuild` install script
     /// to published manifests, so `binding.gyp` packages are covered.
@@ -576,7 +576,9 @@ impl From<VersionMetadataRaw> for VersionMetadata {
             license: raw.license,
             funding_url: raw.funding_url,
             bin: raw.bin,
-            has_install_script: raw.has_install_script || raw.declares_install_script,
+            has_install_script: raw
+                .has_install_script
+                .unwrap_or(raw.declares_install_script),
             deprecated: raw.deprecated,
             approver: raw.approver,
             npm_user: raw.npm_user,
@@ -1117,6 +1119,10 @@ mod tests {
     fn has_install_script_keeps_registry_flag() {
         let meta = parse(r#"{"name":"x","version":"1.0.0","hasInstallScript":true}"#);
         assert!(meta.has_install_script);
+        let meta = parse(
+            r#"{"name":"x","version":"1.0.0","hasInstallScript":false,"scripts":{"postinstall":"node build.js"}}"#,
+        );
+        assert!(!meta.has_install_script);
     }
 
     #[test]
