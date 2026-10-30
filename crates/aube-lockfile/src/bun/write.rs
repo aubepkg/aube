@@ -439,6 +439,7 @@ pub fn write_with_project_root(
             if MODELED_META_KEYS.contains(&k.as_str())
                 || k == crate::EXTRA_PRESERVE_TARBALL_URL
                 || k == crate::EXTRA_YARN_RESOLVED
+                || k == crate::EXTRA_REGISTRY_SHASUM
                 || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
                 || k == crate::EXTRA_NPM_FUNDING
                 || k == crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS

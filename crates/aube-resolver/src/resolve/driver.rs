@@ -1327,6 +1327,14 @@ impl<'a> ResolveDriver<'a> {
                     if version_meta.has_install_script {
                         meta.insert("hasInstallScript".to_string(), true.into());
                     }
+                    if let Some(shasum) =
+                        version_meta.dist.as_ref().and_then(|d| d.shasum.as_deref())
+                    {
+                        meta.insert(
+                            aube_lockfile::EXTRA_REGISTRY_SHASUM.to_string(),
+                            serde_json::Value::String(shasum.to_string()),
+                        );
+                    }
                     if !bundled_names.is_empty() {
                         // Bundled children are not resolved, so remember which
                         // were optional for the npm writer to keep that section.

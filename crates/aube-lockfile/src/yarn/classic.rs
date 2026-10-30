@@ -1,6 +1,6 @@
 use crate::{
-    DepType, DirectDep, EXTRA_PRESERVE_TARBALL_URL, EXTRA_YARN_RESOLVED, Error, LocalSource,
-    LockedPackage, LockfileGraph,
+    DepType, DirectDep, EXTRA_PRESERVE_TARBALL_URL, EXTRA_REGISTRY_SHASUM, EXTRA_YARN_RESOLVED,
+    Error, LocalSource, LockedPackage, LockfileGraph,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -413,8 +413,8 @@ pub(super) fn parse_npm_alias_real_name(spec: &str) -> Option<String> {
 /// entry (yarn v1's data model has no peer context). `resolved` keeps
 /// the verbatim string (with its `#sha1` fragment) read from an
 /// earlier yarn.lock; entries without one get the tarball URL the
-/// resolver recorded, minus the fragment, which yarn tolerates and
-/// fills in later.
+/// resolver recorded plus the registry's `dist.shasum` as the fragment,
+/// or no fragment when the registry sent none.
 pub fn write_classic(
     path: &Path,
     graph: &LockfileGraph,
@@ -555,6 +555,7 @@ pub fn write_classic(
 /// or git ref. A package with neither gets no `resolved`: the registry it
 /// came from is unknown, so none is asserted.
 fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
+    let registry_url = pkg.tarball_url.as_deref().map(yarn_registry_url);
     if let Some(resolved) = pkg
         .extra_meta
         .get(EXTRA_YARN_RESOLVED)
@@ -569,22 +570,23 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
                         == Some(git.resolved.as_str())
                     && bare(saved_url) == bare(&git.url)
             }
-            _ => pkg
-                .tarball_url
+            _ => registry_url
                 .as_deref()
-                .is_none_or(|url| url == saved_url),
+                .is_none_or(|url| url == yarn_registry_url(saved_url)),
         };
         if still_current {
             return Some(resolved.to_string());
         }
     }
-    if let Some(url) = &pkg.tarball_url {
-        // Yarn spells the public registry `registry.yarnpkg.com`.
-        let url = url.strip_prefix("https://registry.npmjs.org/").map_or_else(
-            || url.clone(),
-            |rest| format!("https://registry.yarnpkg.com/{rest}"),
-        );
-        return Some(url);
+    if let Some(url) = registry_url {
+        let shasum = pkg
+            .extra_meta
+            .get(EXTRA_REGISTRY_SHASUM)
+            .and_then(|v| v.as_str());
+        return Some(match shasum {
+            Some(sha) => format!("{url}#{sha}"),
+            None => url,
+        });
     }
     match &pkg.local_source {
         Some(LocalSource::Git(git)) => {
@@ -597,6 +599,14 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Yarn spells the public registry `registry.yarnpkg.com`.
+fn yarn_registry_url(url: &str) -> String {
+    url.strip_prefix("https://registry.npmjs.org/").map_or_else(
+        || url.to_string(),
+        |rest| format!("https://registry.yarnpkg.com/{rest}"),
+    )
 }
 
 /// Quote `value` the way yarn v1's stringifier does: bare unless it
