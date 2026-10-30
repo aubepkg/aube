@@ -6817,3 +6817,57 @@ async fn review_round12_npm_nested_override_below_direct_parent_is_kept() {
     assert_eq!(graph.packages["mid@1.0.0"].dependencies["child"], "2.0.0");
     assert!(!graph.packages.contains_key("child@1.0.0"));
 }
+
+/// Packuments served from the bundled primer must carry `dist.shasum`, or a
+/// newly resolved Yarn Classic entry loses its `#<sha1>` fragment.
+#[tokio::test]
+async fn primer_backed_resolve_yields_yarn_classic_shasum_fragment() {
+    let packuments: Vec<_> = primer::popular_package_names()
+        .lines()
+        .filter_map(|name| primer::get(name).map(|seed| (name, seed.packument())))
+        .collect();
+    if packuments.is_empty() {
+        return;
+    }
+    let (name, version, shasum) = packuments
+        .iter()
+        .find_map(|(name, packument)| {
+            let version = packument.dist_tags.get("latest")?;
+            let meta = packument.versions.get(version)?;
+            let leaf = meta.dependencies.is_empty()
+                && meta.peer_dependencies.is_empty()
+                && meta.optional_dependencies.is_empty();
+            // Pick the package without regard to its shasum so a primer that
+            // lost every shasum fails the assertion below instead of skipping.
+            let dist = meta.dist.as_ref()?;
+            leaf.then(|| (name.to_string(), version.clone(), dist.shasum.clone()))
+        })
+        .expect("bundled primer has no latest leaf package with dist metadata");
+    let shasum = shasum.expect("primer entry lost its dist.shasum");
+
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "https://registry.npmjs.org/",
+    ));
+    let mut resolver = Resolver::new(client).with_force_metadata_primer(true);
+    let mut manifest = PackageJson::default();
+    manifest.dependencies.insert(name.clone(), version.clone());
+
+    let graph = resolver.resolve(&manifest, None).await.unwrap();
+
+    let pkg = &graph.packages[&format!("{name}@{version}")];
+    assert_eq!(
+        pkg.extra_meta
+            .get(aube_lockfile::EXTRA_REGISTRY_SHASUM)
+            .and_then(|v| v.as_str()),
+        Some(shasum.as_str())
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let lockfile = dir.path().join("yarn.lock");
+    aube_lockfile::yarn::write_classic(&lockfile, &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&lockfile).unwrap();
+    assert!(
+        written.contains(&format!(".tgz#{shasum}\"")),
+        "yarn.lock lacks the sha1 fragment:\n{written}"
+    );
+}

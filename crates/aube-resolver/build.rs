@@ -16,7 +16,7 @@ const RELEASE_TOP: usize = 2000;
 // (aube-bench plus the vlt-benchmarks set: astro, babylon, large, next,
 // svelte, vue). Bumping back to v=1000 only buys ~1.1pp of aggregate
 // hit-rate for +10.6 MB on the embedded primer (9.04 MB vs ~19.6 MB,
-// both measured locally with PRIMER_DATA_SCHEMA=2). Misses fall back
+// both measured locally with PRIMER_DATA_SCHEMA=2, before shasums). Misses fall back
 // cleanly via `PickResult::NoMatch` in resolve.rs — one extra packument
 // fetch per long-tail version pick, typically old `react-is`, hoisted
 // `@typescript-eslint/*`, or stale `core-js@2.x` style versions.
@@ -29,7 +29,7 @@ const POPULAR_NAMES_FORMAT: u32 = 1;
 // in a layout-breaking way. The on-disk `primer-topN-vM-sK.rkyv.zst`
 // artifact is gitignored, so older `sK` files orphan harmlessly and
 // the new `sK+1` is regenerated on the next build.
-const PRIMER_DATA_SCHEMA: u32 = 2;
+const PRIMER_DATA_SCHEMA: u32 = 3;
 
 fn main() {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());

@@ -1,6 +1,7 @@
 use aube_manifest::BundledDependencies;
 use aube_registry::{Attestations, Dist, NpmUser, Packument, PeerDepMeta, VersionMetadata};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -121,7 +122,14 @@ impl PrimerDist {
                 .clone()
                 .unwrap_or_else(|| deterministic_tarball_url(name, version)),
             integrity: self.integrity.clone(),
-            shasum: None,
+            shasum: self.shasum.map(|digest| {
+                digest
+                    .iter()
+                    .fold(String::with_capacity(40), |mut hex, byte| {
+                        let _ = write!(hex, "{byte:02x}");
+                        hex
+                    })
+            }),
             unpacked_size: None,
             attestations: self.provenance.then(|| Attestations {
                 provenance: Some(serde_json::json!({
@@ -359,6 +367,42 @@ mod tests {
             "tarball {} missing version {version}",
             dist.tarball,
         );
+    }
+
+    #[test]
+    fn bundled_primer_carries_registry_shasums() {
+        let Some((name, _, _)) = PRIMER_INDEX.first() else {
+            return;
+        };
+        let packument = super::get(name).expect("primer hit").packument();
+        for (version, meta) in &packument.versions {
+            let Some(dist) = meta.dist.as_ref() else {
+                continue;
+            };
+            let shasum = dist
+                .shasum
+                .as_deref()
+                .unwrap_or_else(|| panic!("{name}@{version} lost its dist.shasum"));
+            assert!(
+                shasum.len() == 40 && shasum.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{name}@{version} shasum: {shasum}"
+            );
+        }
+    }
+
+    #[test]
+    fn primer_dist_returns_its_shasum() {
+        let seed: PrimerDist = serde_json::from_str(
+            r#"{"i":"sha512-abc","s":"0123456789abcdef0123456789abcdef01234567"}"#,
+        )
+        .unwrap();
+        let dist = seed.to_dist("foo", "1.0.0");
+        assert_eq!(
+            dist.shasum.as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        let legacy: PrimerDist = serde_json::from_str(r#"{"i":"sha512-abc"}"#).unwrap();
+        assert_eq!(legacy.to_dist("foo", "1.0.0").shasum, None);
     }
 
     #[test]
