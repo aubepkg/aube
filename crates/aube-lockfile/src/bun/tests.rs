@@ -3086,3 +3086,36 @@ fn write_keeps_path_scope_off_a_member_named_like_it() {
         "react@18.0.0"
     );
 }
+
+/// The resolver records a registry package's optional bundled children
+/// under `__aube_npm_bundled_optional` for the npm writer. bun never
+/// writes it, so it must not reach `bun.lock`.
+#[test]
+fn test_write_omits_internal_npm_bundled_optional_meta() {
+    let lock = format!(
+        r#"{{
+  "lockfileVersion": 1,
+  "workspaces": {{ "": {{ "dependencies": {{ "bundler": "1.0.0" }} }} }},
+  "packages": {{
+    "bundler": ["bundler@1.0.0", "", {{}}, "{}"]
+  }}
+}}"#,
+        fake_sri('b')
+    );
+    let (_project, pj, lock_path) = write_project(&lock);
+    let mut graph = parse(&lock_path).unwrap();
+    graph
+        .packages
+        .get_mut("bundler@1.0.0")
+        .unwrap()
+        .extra_meta
+        .insert(
+            crate::npm::BUNDLED_OPTIONAL_KEY.to_string(),
+            serde_json::json!({ "opt": "1.0.0" }),
+        );
+    let written = rewrite(&lock_path, &pj, &graph);
+    assert!(
+        !written.contains("__aube_"),
+        "internal metadata leaked into bun.lock:\n{written}"
+    );
+}

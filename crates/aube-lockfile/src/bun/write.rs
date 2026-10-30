@@ -436,15 +436,9 @@ pub fn write_with_project_root(
             "libc",
         ];
         for (k, v) in &pkg.extra_meta {
-            if MODELED_META_KEYS.contains(&k.as_str())
-                || k == crate::EXTRA_PRESERVE_TARBALL_URL
-                || k == crate::EXTRA_YARN_RESOLVED
-                || k == crate::EXTRA_REGISTRY_SHASUM
-                || k == crate::EXTRA_DECLARED_DEPENDENCIES_KNOWN
-                || k == crate::EXTRA_NPM_FUNDING
-                || k == crate::EXTRA_YARN_BERRY_PRESERVED_BLOCKS
-                || k == crate::EXTRA_YARN_BERRY_CONDITIONS
-            {
+            // `__aube_*` keys are aube's own bookkeeping for other
+            // lockfile formats; bun never writes them.
+            if MODELED_META_KEYS.contains(&k.as_str()) || k.starts_with("__aube_") {
                 continue;
             }
             meta.insert(k.clone(), v.clone());
