@@ -570,7 +570,9 @@ fn yarn_resolved_field(pkg: &LockedPackage) -> Option<String> {
                         == Some(git.resolved.as_str())
                     && bare(saved_url) == bare(&git.url)
             }
-            _ => registry_url.as_deref().is_none_or(|url| url == saved_url),
+            _ => registry_url
+                .as_deref()
+                .is_none_or(|url| url == yarn_registry_url(saved_url)),
         };
         if still_current {
             return Some(resolved.to_string());
