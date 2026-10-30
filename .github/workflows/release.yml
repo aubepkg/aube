@@ -852,7 +852,7 @@ jobs:
           gh release upload "$TAG" resources/* --repo "$REPO" --clobber
       # The jobs that built these archives already attested them as they went.
       # Link that provenance from the inventory without attesting them again.
-      - uses: jdx/packslip@2af36e792faa28130987c8af509e475c7458405d # v1.6.0
+      - uses: jdx/packslip@2187c31f8317b8548833baf60cfe93db1f42431d # v1.9.0
         with:
           tag: ${{ inputs.tag }}
           commit: ${{ steps.source.outputs.commit }}
