@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.6](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.5...aube-resolver-v2.8.6) - 2026-10-31
+
+### Fixed
+
+- *(resolver)* carry dist.shasum through the metadata primer ([#1892](https://github.com/aubepkg/aube/pull/1892))
+- *(lockfile)* keep yarn classic #sha1 fragments on update and new entries ([#1886](https://github.com/aubepkg/aube/pull/1886))
+
 ## [2.8.4](https://github.com/aubepkg/aube/compare/aube-resolver-v2.8.3...aube-resolver-v2.8.4) - 2026-10-27
 
 ### Fixed
