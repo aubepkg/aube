@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.6](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.5...aube-linker-v2.8.6) - 2026-10-31
+
+### Fixed
+
+- *(lockfile)* link a tarball's absolute file: child on frozen reinstall ([#1896](https://github.com/aubepkg/aube/pull/1896))
+
 ## [2.8.4](https://github.com/aubepkg/aube/compare/aube-linker-v2.8.3...aube-linker-v2.8.4) - 2026-10-27
 
 ### Fixed
