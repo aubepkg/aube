@@ -364,56 +364,17 @@ struct TolerantStringMap(
 );
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(
-    rename_all = "camelCase",
-    from = "VersionTrustMetadataRaw",
-    into = "VersionTrustMetadataRaw"
-)]
-pub struct VersionTrustMetadata {
-    /// npm staged-publish approval metadata, read from `_npmUser.approver`.
-    pub approver: Option<serde_json::Value>,
-    pub npm_user: Option<NpmUser>,
-    pub dist: Option<VersionTrustDist>,
-}
-
-/// Wire-shape mirror of [`VersionTrustMetadata`] that lifts
-/// `_npmUser.approver` into the top-level `approver` field on read and
-/// nests it back under `_npmUser` on write, so a serialized copy keeps the
-/// approval.
-#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct VersionTrustMetadataRaw {
+pub struct VersionTrustMetadata {
     #[serde(
         default,
         rename = "_npmUser",
         deserialize_with = "npm_user_tolerant",
-        skip_serializing_if = "NpmUserParts::is_empty"
+        skip_serializing_if = "Option::is_none"
     )]
-    npm_user: NpmUserParts,
+    pub npm_user: Option<NpmUser>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dist: Option<VersionTrustDist>,
-}
-
-impl From<VersionTrustMetadata> for VersionTrustMetadataRaw {
-    fn from(meta: VersionTrustMetadata) -> Self {
-        Self {
-            npm_user: NpmUserParts {
-                user: meta.npm_user,
-                approver: meta.approver,
-            },
-            dist: meta.dist,
-        }
-    }
-}
-
-impl From<VersionTrustMetadataRaw> for VersionTrustMetadata {
-    fn from(raw: VersionTrustMetadataRaw) -> Self {
-        Self {
-            approver: raw.npm_user.approver,
-            npm_user: raw.npm_user.user,
-            dist: raw.dist,
-        }
-    }
+    pub dist: Option<VersionTrustDist>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -431,11 +392,7 @@ pub struct VersionTrustDist {
 /// blocks installs of every version of every package that ships both
 /// keys (e.g. `@lingui/message-utils@>=5.2.0`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(
-    rename_all = "camelCase",
-    from = "VersionMetadataRaw",
-    into = "VersionMetadataRaw"
-)]
+#[serde(rename_all = "camelCase", from = "VersionMetadataRaw")]
 pub struct VersionMetadata {
     pub name: String,
     pub version: String,
@@ -514,17 +471,13 @@ pub struct VersionMetadata {
     /// Deprecation message from the registry, if this version is deprecated.
     #[serde(default, deserialize_with = "deprecated_string")]
     pub deprecated: Option<String>,
-    /// npm staged-publish approval metadata, read from `_npmUser.approver`.
-    /// When present, the resolver treats it as the strongest trust
-    /// evidence because the publish went through a registry-side
-    /// approval flow.
-    pub approver: Option<serde_json::Value>,
     /// `_npmUser` block from the packument, when present. The
-    /// trust-policy check reads `_npmUser.trustedPublisher` (npm's
-    /// OIDC-backed "trusted publishers") from it. Some old packuments
-    /// emit `_npmUser` as a `"name <email>"` string rather than an
-    /// object — that shape degrades to `None` instead of failing the
-    /// whole packument.
+    /// trust-policy check reads `_npmUser.approver` (npm staged-publish
+    /// approval) and `_npmUser.trustedPublisher` (OIDC-backed trusted
+    /// publishers) from it. Some old packuments emit `_npmUser` as
+    /// a `"name <email>"` string rather than an object — that shape
+    /// degrades to `None` instead of failing the whole packument.
+    #[serde(default, rename = "_npmUser", deserialize_with = "npm_user_tolerant")]
     pub npm_user: Option<NpmUser>,
 }
 
@@ -544,7 +497,7 @@ pub struct VersionMetadata {
 /// here makes the deserialize path strict on shapes the public type
 /// silently tolerates. When adding or modifying a field on
 /// `VersionMetadata`, update this struct in lockstep.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VersionMetadataRaw {
     name: String,
@@ -561,7 +514,7 @@ struct VersionMetadataRaw {
     optional_dependencies: BTreeMap<String, String>,
     #[serde(default, rename = "bundledDependencies")]
     bundled_dependencies: Option<BundledDependencies>,
-    #[serde(default, rename = "bundleDependencies", skip_serializing)]
+    #[serde(default, rename = "bundleDependencies")]
     bundle_dependencies_alias: Option<BundledDependencies>,
     dist: Option<Dist>,
     #[serde(default, deserialize_with = "aube_util::string_or_seq")]
@@ -586,50 +539,13 @@ struct VersionMetadataRaw {
     #[serde(
         default,
         rename = "scripts",
-        deserialize_with = "declares_install_script",
-        skip_serializing
+        deserialize_with = "declares_install_script"
     )]
     declares_install_script: bool,
     #[serde(default, deserialize_with = "deprecated_string")]
     deprecated: Option<String>,
-    #[serde(
-        default,
-        rename = "_npmUser",
-        deserialize_with = "npm_user_tolerant",
-        skip_serializing_if = "NpmUserParts::is_empty"
-    )]
-    npm_user: NpmUserParts,
-}
-
-impl From<VersionMetadata> for VersionMetadataRaw {
-    fn from(v: VersionMetadata) -> Self {
-        Self {
-            name: v.name,
-            version: v.version,
-            dependencies: v.dependencies,
-            dev_dependencies: v.dev_dependencies,
-            peer_dependencies: v.peer_dependencies,
-            peer_dependencies_meta: v.peer_dependencies_meta,
-            optional_dependencies: v.optional_dependencies,
-            bundled_dependencies: v.bundled_dependencies,
-            bundle_dependencies_alias: None,
-            dist: v.dist,
-            os: v.os,
-            cpu: v.cpu,
-            libc: v.libc,
-            engines: v.engines,
-            license: v.license,
-            funding_url: v.funding_url,
-            bin: v.bin,
-            has_install_script: Some(v.has_install_script),
-            declares_install_script: false,
-            deprecated: v.deprecated,
-            npm_user: NpmUserParts {
-                user: v.npm_user,
-                approver: v.approver,
-            },
-        }
-    }
+    #[serde(default, rename = "_npmUser", deserialize_with = "npm_user_tolerant")]
+    npm_user: Option<NpmUser>,
 }
 
 impl From<VersionMetadataRaw> for VersionMetadata {
@@ -655,8 +571,7 @@ impl From<VersionMetadataRaw> for VersionMetadata {
                 .has_install_script
                 .unwrap_or(raw.declares_install_script),
             deprecated: raw.deprecated,
-            approver: raw.npm_user.approver,
-            npm_user: raw.npm_user.user,
+            npm_user: raw.npm_user,
         }
     }
 }
@@ -669,6 +584,11 @@ pub struct PeerDepMeta {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct NpmUser {
+    /// npm staged-publish approval metadata (`_npmUser.approver`). When
+    /// present, the resolver treats it as the strongest trust evidence
+    /// because the publish went through a registry-side approval flow.
+    #[serde(default)]
+    pub approver: Option<serde_json::Value>,
     /// Structured npm trusted-publisher evidence for publishes that came
     /// through OIDC-backed automation (e.g. GitHub Actions). aube's
     /// trust-policy check requires an object with a non-empty `id`.
@@ -855,52 +775,19 @@ fn extract_url_from_map<'de, A: MapAccess<'de>>(mut access: A) -> Result<Option<
     Ok(found)
 }
 
-/// What the tolerant `_npmUser` parse yields: the [`NpmUser`] plus the
-/// `approver` that npm nests under it, which the public structs expose as a
-/// top-level `approver` field.
-#[derive(Debug, Default)]
-pub(crate) struct NpmUserParts {
-    pub(crate) user: Option<NpmUser>,
-    pub(crate) approver: Option<serde_json::Value>,
-}
-
-impl NpmUserParts {
-    fn is_empty(&self) -> bool {
-        self.user.is_none() && self.approver.is_none()
-    }
-}
-
-impl Serialize for NpmUserParts {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let trusted_publisher = self
-            .user
-            .as_ref()
-            .and_then(|u| u.trusted_publisher.as_ref());
-        let mut map = s.serialize_map(None)?;
-        if let Some(trusted_publisher) = trusted_publisher {
-            map.serialize_entry("trustedPublisher", trusted_publisher)?;
-        }
-        if let Some(approver) = &self.approver {
-            map.serialize_entry("approver", approver)?;
-        }
-        map.end()
-    }
-}
-
 /// Accept the packument's `_npmUser:` field in its documented shapes
 /// and degrade to `None` for anything else. Modern packuments emit an
 /// object (`{name, email, trustedPublisher?}`); pre-2010 publishes
 /// emit `"name <email>"` strings. We only care about
 /// `approver` and `trustedPublisher`, so unparseable shapes don't fail
 /// the packument — they just lose the trust signals for that version.
-fn npm_user_tolerant<'de, D>(de: D) -> Result<NpmUserParts, D::Error>
+fn npm_user_tolerant<'de, D>(de: D) -> Result<Option<NpmUser>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct V;
     impl<'de> Visitor<'de> for V {
-        type Value = NpmUserParts;
+        type Value = Option<NpmUser>;
 
         fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_str("an _npmUser object or any other JSON value")
@@ -926,15 +813,15 @@ where
                     let _: IgnoredAny = access.next_value()?;
                 }
             }
-            Ok(NpmUserParts {
-                user: Some(NpmUser { trusted_publisher }),
+            Ok(Some(NpmUser {
                 approver,
-            })
+                trusted_publisher,
+            }))
         }
 
-        visit_primitives_to!('de, NpmUserParts::default());
-        visit_seq_to!('de, NpmUserParts::default());
-        visit_strings_to!('de, NpmUserParts::default());
+        visit_primitives_to!('de, None);
+        visit_seq_to!('de, None);
+        visit_strings_to!('de, None);
     }
     de.deserialize_any(V)
 }
@@ -1301,49 +1188,13 @@ mod tests {
             }"#,
         );
         assert_eq!(
-            v.approver
+            v.npm_user
                 .as_ref()
+                .and_then(|u| u.approver.as_ref())
                 .and_then(|a| a.get("name"))
                 .and_then(serde_json::Value::as_str),
             Some("release-manager")
         );
-    }
-
-    #[test]
-    fn approver_survives_a_serialize_roundtrip() {
-        let v = parse(
-            r#"{
-                "name":"x",
-                "version":"1.0.0",
-                "_npmUser":{"approver":{"name":"release-manager"},"trustedPublisher":{"id":"gh"}}
-            }"#,
-        );
-        let again: VersionMetadata =
-            serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
-        assert_eq!(again.approver, v.approver);
-        assert!(again.approver.is_some());
-        assert!(
-            again
-                .npm_user
-                .and_then(|u| u.trusted_publisher)
-                .is_some_and(|t| t["id"] == "gh")
-        );
-        let trust: VersionTrustMetadata = serde_json::from_str(
-            &serde_json::to_string(&VersionTrustMetadata {
-                approver: v.approver.clone(),
-                npm_user: None,
-                dist: None,
-            })
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(trust.approver, v.approver);
-    }
-
-    #[test]
-    fn top_level_approver_is_not_read() {
-        let v = parse(r#"{"name":"x","version":"1.0.0","approver":{"name":"forged"}}"#);
-        assert!(v.approver.is_none());
     }
 
     #[test]
@@ -1393,7 +1244,6 @@ mod tests {
             bin,
             has_install_script: false,
             deprecated: None,
-            approver: None,
             npm_user: None,
         };
         let json = serde_json::to_string(&v).unwrap();

@@ -1487,7 +1487,9 @@ async fn concurrent_stale_resolution_lookups_share_revalidation_and_new_history(
         assert!(
             packument.versions["1.0.0"]
                 .trust_metadata()
-                .approver
+                .npm_user
+                .as_ref()
+                .and_then(|u| u.approver.as_ref())
                 .is_some()
         );
     }

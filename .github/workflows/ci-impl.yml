@@ -96,9 +96,10 @@ jobs:
           fi
       - run: mise run docs:build
 
-  # Check every published Rust library against main and guard the C ABI export
-  # set against the frozen crates/aube-ffi/abi-symbols.txt manifest. Any failure
-  # makes this job red, while `final` treats the job as advisory.
+  # Guard the C ABI export set against the frozen crates/aube-ffi/abi-symbols.txt
+  # manifest. Rust library crate APIs are not checked: major versions track the
+  # CLI, settings and C ABI only. A failure makes this job red, while `final`
+  # treats the job as advisory.
   api-stability:
     # Run on main as well so PRs can restore caches populated by trusted code.
     continue-on-error: true
@@ -125,40 +126,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          # Older archives contain baseline checkouts inside the repository.
           prefix-key: v1-rust-api-external
-          # Keep duplicate crate manifests outside repository discovery and
-          # preserve semver artifacts from the normal target cleanup.
-          cache-directories: ${{ runner.temp }}/aube-target-api
-      - name: Select semver baseline
-        env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          # Main compares against itself to warm the same build/cache paths.
-          echo "SEMVER_BASELINE=${PR_BASE_SHA:-$(git rev-parse HEAD)}" >> "$GITHUB_ENV"
-      # These checks share one runner. Run sequentially so Cargo builds do not
-      # compete for CPU/memory, and GitHub streams each step's logs normally.
-      - name: Published Rust APIs — cargo-semver-checks
-        id: rust
-        continue-on-error: true
-        env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/aube-target-api
-        run: |
-          /usr/bin/time -v ./bin/cargo-semver-checks semver-checks \
-            --baseline-rev "$SEMVER_BASELINE" \
-            --package aube \
-            --package aube-codes \
-            --package aube-linker \
-            --package aube-lockfile \
-            --package aube-manifest \
-            --package aube-registry \
-            --package aube-resolver \
-            --package aube-runtime \
-            --package aube-scripts \
-            --package aube-settings \
-            --package aube-store \
-            --package aube-util \
-            --package aube-workspace
       - name: C ABI — frozen export set
         id: ffi
         continue-on-error: true
@@ -175,23 +143,20 @@ jobs:
         id: report
         if: always()
         env:
-          RUST_OUTCOME: ${{ steps.rust.outcome }}
           FFI_OUTCOME: ${{ steps.ffi.outcome }}
         run: |
-          for outcome in "$RUST_OUTCOME" "$FFI_OUTCOME"; do
-            if [[ "$outcome" != success && "$outcome" != failure ]]; then
-              echo "results_present=false" >> "$GITHUB_OUTPUT"
-              echo "checks_passed=false" >> "$GITHUB_OUTPUT"
-              echo "::error::one or more API stability checks did not report a result"
-              exit 1
-            fi
-          done
+          if [[ "$FFI_OUTCOME" != success && "$FFI_OUTCOME" != failure ]]; then
+            echo "results_present=false" >> "$GITHUB_OUTPUT"
+            echo "checks_passed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::the C ABI check did not report a result"
+            exit 1
+          fi
           echo "results_present=true" >> "$GITHUB_OUTPUT"
-          if [[ "$RUST_OUTCOME" == success && "$FFI_OUTCOME" == success ]]; then
+          if [[ "$FFI_OUTCOME" == success ]]; then
             echo "checks_passed=true" >> "$GITHUB_OUTPUT"
           else
             echo "checks_passed=false" >> "$GITHUB_OUTPUT"
-            echo "::error::API compatibility check failed. Inspect the Rust and C ABI steps above."
+            echo "::error::C ABI export set changed. Inspect the C ABI step above."
             exit 1
           fi
 
@@ -343,7 +308,7 @@ jobs:
   # Aggregator that required-status-checks can target. If any upstream job
   # failed, was cancelled, or was skipped, this step exits non-zero so the PR is
   # blocked. Lets the branch-protection rule depend on one name instead of ten.
-  # API compatibility failures remain advisory; missing results still block.
+  # C ABI check failures remain advisory; missing results still block.
   final:
     needs:
       - build
@@ -378,11 +343,11 @@ jobs:
                   print(f"::error::{name}: one or more checks did not report a result")
                   failed = True
               elif name == "api-stability" and outputs.get("checks_passed") == "false":
-                  print(f"::warning::{name}: compatibility check failed (advisory; inspect for an unintended major bump)")
+                  print(f"::warning::{name}: C ABI check failed (advisory; inspect the export set)")
               elif result == "success":
                   print(f"::notice::{name}: {result}")
               elif result == "failure" and name in ADVISORY_FAILURE:
-                  print(f"::warning::{name}: {result} (advisory; inspect for an unintended major bump)")
+                  print(f"::warning::{name}: {result} (advisory; inspect the C ABI step)")
               else:
                   print(f"::error::{name}: {result}")
                   failed = True

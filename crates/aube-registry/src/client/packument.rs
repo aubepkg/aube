@@ -1347,8 +1347,8 @@ mod resolution_index_tests {
         assert_eq!(indexed.time, initial.time);
         assert_eq!(indexed.versions.len(), 2);
         assert_eq!(
-            indexed.versions["1.1.0"].trust_metadata().approver,
-            initial.versions["1.1.0"].trust_metadata().approver
+            serde_json::to_value(indexed.versions["1.1.0"].trust_metadata()).unwrap(),
+            serde_json::to_value(initial.versions["1.1.0"].trust_metadata()).unwrap()
         );
 
         let second: Packument = serde_json::from_value(serde_json::json!({
@@ -1367,7 +1367,7 @@ mod resolution_index_tests {
     }
 
     #[test]
-    fn stale_v1_index_without_approver_is_not_read() {
+    fn stale_v1_index_without_npm_user_approver_is_not_read() {
         let cache = tempfile::tempdir().unwrap();
         let client = RegistryClient::new("https://registry.npmjs.org/");
         let packument: Packument = serde_json::from_value(serde_json::json!({
@@ -1395,7 +1395,14 @@ mod resolution_index_tests {
             .cached_resolution_packument("index-demo", cache.path())
             .packument
             .unwrap();
-        assert!(lookup.versions["1.0.0"].trust_metadata().approver.is_some());
+        assert!(
+            lookup.versions["1.0.0"]
+                .trust_metadata()
+                .npm_user
+                .as_ref()
+                .and_then(|u| u.approver.as_ref())
+                .is_some()
+        );
         assert!(resolution_index_path(&path).exists());
     }
 

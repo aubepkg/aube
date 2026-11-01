@@ -192,7 +192,7 @@ struct Candidate {
         rename = "_npmUser",
         deserialize_with = "crate::npm_user_tolerant"
     )]
-    npm_user: crate::NpmUserParts,
+    npm_user: Option<crate::NpmUser>,
     #[serde(default)]
     dist: Option<crate::Dist>,
 }
@@ -200,8 +200,7 @@ struct Candidate {
 impl Candidate {
     fn trust(self) -> crate::VersionTrustMetadata {
         crate::VersionTrustMetadata {
-            approver: self.npm_user.approver,
-            npm_user: self.npm_user.user,
+            npm_user: self.npm_user,
             dist: self.dist.map(|dist| crate::VersionTrustDist {
                 attestations: dist.attestations,
             }),
@@ -269,7 +268,6 @@ impl From<VersionMetadata> for ResolutionVersion {
         Self {
             deprecated: metadata.deprecated.is_some(),
             trust: crate::VersionTrustMetadata {
-                approver: metadata.approver.clone(),
                 npm_user: metadata.npm_user.clone(),
                 dist: metadata.dist.as_ref().map(|d| crate::VersionTrustDist {
                     attestations: d.attestations.clone(),

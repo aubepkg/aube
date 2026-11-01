@@ -17,6 +17,10 @@
 # crates.io but is otherwise silent (no per-crate tag, no per-crate
 # GitHub release).
 publish = true
+# Rust library API changes do not bump the major version; see "Versioning" in
+# docs/contributing.md. Without this release-plz runs cargo-semver-checks and
+# cuts a major release for any public API break in a library crate.
+semver_check = false
 changelog_update = true
 git_tag_enable = false
 git_release_enable = false
