@@ -48,7 +48,8 @@ pub use control::{
     INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,
     InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallPrompt, InstallPromptDecision,
     InstallPromptDecisionFuture, InstallPromptDecisionHandler, InstallPromptFuture,
-    InstallPromptHandler, InstallReporter,
+    InstallPromptHandler, InstallProvenanceFuture, InstallProvenanceSubject,
+    InstallProvenanceVerifier, InstallReporter,
 };
 pub use dep_selection::DepSelection;
 pub(super) use fetch::fetch_packages;
@@ -1340,7 +1341,12 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             let fetch_ignore_scripts = opts.ignore_scripts;
             let fetch_git_prepare_depth = opts.git_prepare_depth;
             let fetch_inherited_build_policy = inherited_build_policy_for_git_prepare.clone();
-            let fetch_verify_integrity = verify_store_integrity_setting;
+            // The task-local control does not follow `tokio::spawn`, so the
+            // streaming loop holds its own handle to the host's verifier.
+            let fetch_control = opts.control.clone();
+            let fetch_scope_control = opts.control.clone();
+            let fetch_verify_integrity =
+                verify_store_integrity_setting || fetch_control.has_provenance_verifier();
             let fetch_strict_integrity = strict_store_integrity_setting;
             let fetch_strict_pkg_content_check = strict_store_pkg_content_check_setting;
             let fetch_git_shallow_hosts = resolve_git_shallow_hosts(&settings_ctx);
@@ -1544,6 +1550,16 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
                         }
                         continue;
                     }
+
+                    // Registry packages go past the host's provenance
+                    // verifier before anything is loaded or downloaded.
+                    fetch_control
+                        .verify_provenance(vec![control::InstallProvenanceSubject::registry(
+                            pkg.registry_name(),
+                            &pkg.version,
+                            pkg.integrity.as_deref(),
+                        )])
+                        .await?;
 
                     // Check index cache first. `registry_name()` is
                     // the real package name on the registry — equal
@@ -1777,6 +1793,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             });
             let fetch = crate::runtime::scope_current(fetch);
             let fetch = aube_scripts::scope_current(fetch);
+            let fetch = control::scope(fetch_scope_control, fetch);
             let fetch_handle = tokio::spawn(fetch);
 
             // Run resolution (this streams packages to the fetch coordinator).

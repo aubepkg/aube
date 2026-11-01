@@ -15,7 +15,8 @@ pub use crate::commands::install::{
     DepSelection, EmbedderInstallOverrides, FrozenMode, INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT,
     InstallControl, InstallEvent, InstallOutputLevel, InstallOutputMode, InstallPhase,
     InstallProgressSnapshot, InstallPrompt, InstallPromptDecision, InstallPromptDecisionFuture,
-    InstallPromptDecisionHandler, InstallPromptFuture, InstallPromptHandler, InstallReporter,
+    InstallPromptDecisionHandler, InstallPromptFuture, InstallPromptHandler,
+    InstallProvenanceFuture, InstallProvenanceSubject, InstallProvenanceVerifier, InstallReporter,
 };
 pub use crate::commands::pm_execpath::CLI_TRAMPOLINE_ARG;
 pub use crate::runtime::{EmbedderRuntime, set_embedder_runtime};
