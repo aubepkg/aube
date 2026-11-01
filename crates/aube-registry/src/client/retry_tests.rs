@@ -1460,7 +1460,7 @@ async fn concurrent_stale_resolution_lookups_share_revalidation_and_new_history(
     let second = client.cached_resolution_packument("demo", cache.path());
     let new = serde_json::json!({
         "name":"demo", "description":"new raw metadata", "versions":{
-            "1.0.0":{"name":"demo","version":"1.0.0","approver":{"name":"approved"}},
+            "1.0.0":{"name":"demo","version":"1.0.0","_npmUser":{"approver":{"name":"approved"}}},
             "2.0.0":{"name":"demo","version":"2.0.0"}
         }, "time":{"1.0.0":"2024-01-01", "2.0.0":"2024-02-01"}
     });
@@ -1487,7 +1487,9 @@ async fn concurrent_stale_resolution_lookups_share_revalidation_and_new_history(
         assert!(
             packument.versions["1.0.0"]
                 .trust_metadata()
-                .approver
+                .npm_user
+                .as_ref()
+                .and_then(|u| u.approver.as_ref())
                 .is_some()
         );
     }

@@ -2619,7 +2619,6 @@ mod tests {
         [(
             "0.9.0".to_string(),
             aube_registry::VersionTrustMetadata {
-                approver: None,
                 npm_user: None,
                 dist: None,
             },

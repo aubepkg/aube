@@ -89,8 +89,8 @@ impl PrimerVersionMetadata {
             bin: self.bin.clone(),
             has_install_script: self.has_install_script,
             deprecated: self.deprecated.clone(),
-            approver: None,
             npm_user: self.trusted_publisher.then(|| NpmUser {
+                approver: None,
                 trusted_publisher: Some(serde_json::json!({"id": "npm-primer"})),
             }),
         }

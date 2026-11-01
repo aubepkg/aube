@@ -1347,8 +1347,8 @@ mod resolution_index_tests {
         assert_eq!(indexed.time, initial.time);
         assert_eq!(indexed.versions.len(), 2);
         assert_eq!(
-            indexed.versions["1.1.0"].trust_metadata().approver,
-            initial.versions["1.1.0"].trust_metadata().approver
+            serde_json::to_value(indexed.versions["1.1.0"].trust_metadata()).unwrap(),
+            serde_json::to_value(initial.versions["1.1.0"].trust_metadata()).unwrap()
         );
 
         let second: Packument = serde_json::from_value(serde_json::json!({

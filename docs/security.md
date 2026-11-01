@@ -156,10 +156,12 @@ trust evidence than any earlier-published version of the same package. aube
 recognizes three tiers of evidence, strongest first, and only counts the
 structured metadata shapes npm emits after registry-side checks:
 
-1. **npm staged publish approval** — package metadata carries an `approver`
-   field from the registry-side approval flow.
+1. **npm staged publish approval** — package metadata carries an
+   `_npmUser.approver` field from the registry-side approval flow.
 2. **npm trusted-publisher** — package was published via OIDC from a trusted
-   CI provider (`_npmUser.trustedPublisher.id`).
+   CI provider (`_npmUser.trustedPublisher.id`) and
+   also carries Sigstore provenance; without the attestation the publisher flag
+   is just metadata.
 3. **Sigstore provenance** — package was published with `npm publish
    --provenance` (`dist.attestations.provenance.predicateType` with an SLSA
    provenance URI).
