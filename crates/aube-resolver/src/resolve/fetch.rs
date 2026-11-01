@@ -679,7 +679,7 @@ mod tests {
         let body = serde_json::json!({
             "name":"shared", "versions": {
                 "1.0.0":{"name":"shared","version":"1.0.0","dependencies":{"child":"^1"}},
-                "2.0.0":{"name":"shared","version":"2.0.0","approver":{"name":"approved"}}
+                "2.0.0":{"name":"shared","version":"2.0.0","_npmUser":{"approver":{"name":"approved"}}}
             }, "time":{"1.0.0":"2024-01-01","2.0.0":"2024-02-01"}
         });
         let (registry, requests, server) = serve_registry(serde_json::to_vec(&body).unwrap()).await;
@@ -695,7 +695,9 @@ mod tests {
         assert!(
             packument.versions["2.0.0"]
                 .trust_metadata()
-                .approver
+                .npm_user
+                .as_ref()
+                .and_then(|u| u.approver.as_ref())
                 .is_some()
         );
         assert_eq!(
@@ -725,7 +727,9 @@ mod tests {
         assert!(
             packument.versions["2.0.0"]
                 .trust_metadata()
-                .approver
+                .npm_user
+                .as_ref()
+                .and_then(|u| u.approver.as_ref())
                 .is_some()
         );
         assert_eq!(requests.load(Ordering::Relaxed), 1);

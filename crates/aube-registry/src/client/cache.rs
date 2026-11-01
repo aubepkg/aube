@@ -272,6 +272,12 @@ pub(super) fn packument_full_cache_path(
     Some(cache_dir.join(origin).join(format!("{safe_name}.json")))
 }
 
+/// Entries written before the schema field existed, or by an older schema, are
+/// treated as a cache miss. Schema 2 reads staged-publish approval from
+/// `_npmUser.approver`; older entries never recorded it, so serving them would
+/// hide earlier approvals from the downgrade check.
+pub(super) const TRUST_HISTORY_SCHEMA: u32 = 2;
+
 /// Disk-cached compact trust history ([`crate::PackumentTrustHistory`])
 /// for the lockfile trust-policy validator. Same revalidation envelope
 /// as the packument caches, but the payload keeps only the `time` map
@@ -279,6 +285,8 @@ pub(super) fn packument_full_cache_path(
 /// the raw full packument the validator previously cached.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct CachedTrustHistory {
+    #[serde(default)]
+    pub(super) schema: u32,
     pub(super) etag: Option<String>,
     pub(super) last_modified: Option<String>,
     /// Unix epoch seconds when this entry was written
@@ -290,7 +298,8 @@ pub(super) struct CachedTrustHistory {
 
 pub(super) fn read_cached_trust_history(path: &Path) -> Option<CachedTrustHistory> {
     let content = std::fs::read(path).ok()?;
-    sonic_rs::from_slice(&content).ok()
+    let cached: CachedTrustHistory = sonic_rs::from_slice(&content).ok()?;
+    (cached.schema == TRUST_HISTORY_SCHEMA).then_some(cached)
 }
 
 pub(super) fn write_cached_trust_history(
@@ -417,4 +426,38 @@ pub(super) fn write_cached_full_packument<T: Serialize>(
     })
     .map_err(std::io::Error::other)?;
     aube_util::fs_atomic::atomic_write(path, &json)
+}
+
+#[cfg(test)]
+mod trust_history_schema_tests {
+    use super::*;
+
+    fn entry(schema: u32) -> CachedTrustHistory {
+        CachedTrustHistory {
+            schema,
+            etag: None,
+            last_modified: None,
+            fetched_at: 1,
+            max_age_secs: None,
+            history: crate::PackumentTrustHistory {
+                time: Default::default(),
+                versions: Default::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn trust_history_from_an_older_schema_is_a_cache_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entry");
+        write_cached_trust_history(&path, &entry(TRUST_HISTORY_SCHEMA)).unwrap();
+        assert!(read_cached_trust_history(&path).is_some());
+
+        write_cached_trust_history(&path, &entry(1)).unwrap();
+        assert!(read_cached_trust_history(&path).is_none());
+
+        let legacy = br#"{"etag":null,"last_modified":null,"fetched_at":1,"history":{"time":{},"versions":{"1.0.0":{"approver":{"name":"x"}}}}}"#;
+        std::fs::write(&path, legacy).unwrap();
+        assert!(read_cached_trust_history(&path).is_none());
+    }
 }

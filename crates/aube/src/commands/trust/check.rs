@@ -259,7 +259,8 @@ mod tests {
                 "2.0.10": {
                     "name": "@hono/node-server",
                     "version": "2.0.10",
-                    "_npmUser": {"trustedPublisher": {"id": "github"}}
+                    "_npmUser": {"trustedPublisher": {"id": "github"}},
+                    "dist": {"tarball": "https://r/t.tgz", "attestations": {"provenance": {"predicateType": "https://slsa.dev/provenance/v1"}}}
                 },
                 "1.19.15": {
                     "name": "@hono/node-server",
@@ -268,7 +269,8 @@ mod tests {
                 "1.19.17": {
                     "name": "@hono/node-server",
                     "version": "1.19.17",
-                    "_npmUser": {"trustedPublisher": {"id": "github"}}
+                    "_npmUser": {"trustedPublisher": {"id": "github"}},
+                    "dist": {"tarball": "https://r/t.tgz", "attestations": {"provenance": {"predicateType": "https://slsa.dev/provenance/v1"}}}
                 }
             },
             "time": {

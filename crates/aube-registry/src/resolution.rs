@@ -187,8 +187,6 @@ impl ResolutionIndex {
 struct Candidate {
     #[serde(default, deserialize_with = "crate::deprecated_string")]
     deprecated: Option<String>,
-    #[serde(default)]
-    approver: Option<serde_json::Value>,
     #[serde(
         default,
         rename = "_npmUser",
@@ -202,7 +200,6 @@ struct Candidate {
 impl Candidate {
     fn trust(self) -> crate::VersionTrustMetadata {
         crate::VersionTrustMetadata {
-            approver: self.approver,
             npm_user: self.npm_user,
             dist: self.dist.map(|dist| crate::VersionTrustDist {
                 attestations: dist.attestations,
@@ -271,7 +268,6 @@ impl From<VersionMetadata> for ResolutionVersion {
         Self {
             deprecated: metadata.deprecated.is_some(),
             trust: crate::VersionTrustMetadata {
-                approver: metadata.approver.clone(),
                 npm_user: metadata.npm_user.clone(),
                 dist: metadata.dist.as_ref().map(|d| crate::VersionTrustDist {
                     attestations: d.attestations.clone(),
@@ -350,7 +346,7 @@ mod tests {
 
     #[test]
     fn full_materialization_keeps_historical_trust_evidence() {
-        let json = r#"{"name":"demo","versions":{"1":{"name":"demo","version":"1","_npmUser":{"name":"bot","trustedPublisher":{"id":"github","oidcConfigId":"id"}},"dist":{"tarball":"url","attestations":{"url":"https://example.com/attestation","provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}}},"2":{"name":"demo","version":"2","approver":{"name":"approved"}}},"time":{"1":"2024-01-01","2":"2024-02-01"}}"#;
+        let json = r#"{"name":"demo","versions":{"1":{"name":"demo","version":"1","_npmUser":{"name":"bot","trustedPublisher":{"id":"github","oidcConfigId":"id"}},"dist":{"tarball":"url","attestations":{"url":"https://example.com/attestation","provenance":{"predicateType":"https://slsa.dev/provenance/v1"}}}},"2":{"name":"demo","version":"2","_npmUser":{"approver":{"name":"approved"}}}},"time":{"1":"2024-01-01","2":"2024-02-01"}}"#;
         let full: Packument = sonic_rs::from_str(json).unwrap();
         let lazy: ResolutionPackument = sonic_rs::from_str(json).unwrap();
         let history: crate::PackumentTrustHistory = sonic_rs::from_str(json).unwrap();

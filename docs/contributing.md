@@ -96,6 +96,16 @@ PR titles determine release version bumps. Do not add tool branding or a PR
 number to the title. Open pull requests ready for review, and include the
 AI-assistance disclosure required by the repository instructions when applicable.
 
+### Versioning
+
+Major versions are reserved for breaking changes to what aube users depend on:
+CLI behavior, settings, lockfile and store formats, and the `aube-ffi` C ABI.
+The `aube-*` Rust crates are published in lockstep as implementation detail of
+the binary, so changing their public APIs is not a breaking change. Use a plain
+`fix` or `feat` type for those changes, and reserve `!` for the cases above.
+Planned breaking changes that should wait for the next major release go in
+[`V3.md`](https://github.com/aubepkg/aube/blob/main/V3.md).
+
 ## The offline Verdaccio test registry
 
 The BATS suite does not talk to `registry.npmjs.org`. Everything it installs

@@ -366,8 +366,6 @@ struct TolerantStringMap(
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionTrustMetadata {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approver: Option<serde_json::Value>,
     #[serde(
         default,
         rename = "_npmUser",
@@ -473,15 +471,10 @@ pub struct VersionMetadata {
     /// Deprecation message from the registry, if this version is deprecated.
     #[serde(default, deserialize_with = "deprecated_string")]
     pub deprecated: Option<String>,
-    /// npm staged-publish approval metadata. When present, the
-    /// resolver treats it as the strongest trust evidence because the
-    /// publish went through a registry-side approval flow.
-    #[serde(default)]
-    pub approver: Option<serde_json::Value>,
     /// `_npmUser` block from the packument, when present. The
-    /// trust-policy check reads `_npmUser.trustedPublisher` as the
-    /// strongest trust-evidence signal (npm's "trusted publishers"
-    /// feature, OIDC-backed). Some old packuments emit `_npmUser` as
+    /// trust-policy check reads `_npmUser.approver` (npm staged-publish
+    /// approval) and `_npmUser.trustedPublisher` (OIDC-backed trusted
+    /// publishers) from it. Some old packuments emit `_npmUser` as
     /// a `"name <email>"` string rather than an object — that shape
     /// degrades to `None` instead of failing the whole packument.
     #[serde(default, rename = "_npmUser", deserialize_with = "npm_user_tolerant")]
@@ -551,8 +544,6 @@ struct VersionMetadataRaw {
     declares_install_script: bool,
     #[serde(default, deserialize_with = "deprecated_string")]
     deprecated: Option<String>,
-    #[serde(default)]
-    approver: Option<serde_json::Value>,
     #[serde(default, rename = "_npmUser", deserialize_with = "npm_user_tolerant")]
     npm_user: Option<NpmUser>,
 }
@@ -580,7 +571,6 @@ impl From<VersionMetadataRaw> for VersionMetadata {
                 .has_install_script
                 .unwrap_or(raw.declares_install_script),
             deprecated: raw.deprecated,
-            approver: raw.approver,
             npm_user: raw.npm_user,
         }
     }
@@ -594,6 +584,11 @@ pub struct PeerDepMeta {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct NpmUser {
+    /// npm staged-publish approval metadata (`_npmUser.approver`). When
+    /// present, the resolver treats it as the strongest trust evidence
+    /// because the publish went through a registry-side approval flow.
+    #[serde(default)]
+    pub approver: Option<serde_json::Value>,
     /// Structured npm trusted-publisher evidence for publishes that came
     /// through OIDC-backed automation (e.g. GitHub Actions). aube's
     /// trust-policy check requires an object with a non-empty `id`.
@@ -784,8 +779,8 @@ fn extract_url_from_map<'de, A: MapAccess<'de>>(mut access: A) -> Result<Option<
 /// and degrade to `None` for anything else. Modern packuments emit an
 /// object (`{name, email, trustedPublisher?}`); pre-2010 publishes
 /// emit `"name <email>"` strings. We only care about
-/// `trustedPublisher`, so unparseable shapes don't fail the packument
-/// — they just lose the trusted-publisher signal for that version.
+/// `approver` and `trustedPublisher`, so unparseable shapes don't fail
+/// the packument — they just lose the trust signals for that version.
 fn npm_user_tolerant<'de, D>(de: D) -> Result<Option<NpmUser>, D::Error>
 where
     D: Deserializer<'de>,
@@ -798,8 +793,8 @@ where
             f.write_str("an _npmUser object or any other JSON value")
         }
 
-        // Object case: walk the map manually and pluck `trustedPublisher`
-        // — the only `NpmUser` field anyone reads (see `aube-resolver`'s
+        // Object case: walk the map manually and pluck `approver` and
+        // `trustedPublisher` — the only `NpmUser` fields anyone reads (see `aube-resolver`'s
         // trust-policy check). Deferring to `NpmUser::deserialize` on the
         // live `MapAccess` would propagate any deserialize error up and
         // fail the whole packument parse, which silently breaks the
@@ -807,15 +802,21 @@ where
         // field. New fields that need reading from the packument get
         // their extraction added here.
         fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
+            let mut approver: Option<serde_json::Value> = None;
             let mut trusted_publisher: Option<serde_json::Value> = None;
             while let Some(key) = access.next_key::<String>()? {
-                if key == "trustedPublisher" && trusted_publisher.is_none() {
+                if key == "approver" && approver.is_none() {
+                    approver = access.next_value::<Option<serde_json::Value>>()?;
+                } else if key == "trustedPublisher" && trusted_publisher.is_none() {
                     trusted_publisher = access.next_value::<Option<serde_json::Value>>()?;
                 } else {
                     let _: IgnoredAny = access.next_value()?;
                 }
             }
-            Ok(Some(NpmUser { trusted_publisher }))
+            Ok(Some(NpmUser {
+                approver,
+                trusted_publisher,
+            }))
         }
 
         visit_primitives_to!('de, None);
@@ -1055,7 +1056,7 @@ mod tests {
                     "name":"platform-package",
                     "version":"1.0.0",
                     "dependencies":{"discarded":"1"},
-                    "approver":{"name":"release-manager"}
+                    "_npmUser":{"approver":{"name":"release-manager"}}
                 },
                 "2.0.0":{
                     "name":"platform-package",
@@ -1183,12 +1184,13 @@ mod tests {
             r#"{
                 "name":"x",
                 "version":"1.0.0",
-                "approver":{"name":"release-manager"}
+                "_npmUser":{"approver":{"name":"release-manager"}}
             }"#,
         );
         assert_eq!(
-            v.approver
+            v.npm_user
                 .as_ref()
+                .and_then(|u| u.approver.as_ref())
                 .and_then(|a| a.get("name"))
                 .and_then(serde_json::Value::as_str),
             Some("release-manager")
@@ -1242,7 +1244,6 @@ mod tests {
             bin,
             has_install_script: false,
             deprecated: None,
-            approver: None,
             npm_user: None,
         };
         let json = serde_json::to_string(&v).unwrap();

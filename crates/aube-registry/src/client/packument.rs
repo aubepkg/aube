@@ -22,7 +22,7 @@ struct CachedResolutionIndex {
 
 fn resolution_index_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
-    name.push(".resolution-index-v1");
+    name.push(".resolution-index-v2");
     PathBuf::from(name)
 }
 
@@ -714,6 +714,7 @@ impl RegistryClient {
             match parse_full_response::<crate::PackumentTrustHistory>(resp).await {
                 Ok(history) => {
                     let to_cache = CachedTrustHistory {
+                        schema: TRUST_HISTORY_SCHEMA,
                         etag,
                         last_modified,
                         fetched_at: now_secs(),
@@ -1325,8 +1326,8 @@ mod resolution_index_tests {
         .unwrap();
         let dotted_package_path = packument_full_cache_path(
             cache.path(),
-            "index-demo.resolution-index-v1",
-            client.config.registry_for("index-demo.resolution-index-v1"),
+            "index-demo.resolution-index-v2",
+            client.config.registry_for("index-demo.resolution-index-v2"),
         )
         .unwrap();
         assert_ne!(resolution_index_path(&path), dotted_package_path);
@@ -1347,8 +1348,8 @@ mod resolution_index_tests {
         assert_eq!(indexed.time, initial.time);
         assert_eq!(indexed.versions.len(), 2);
         assert_eq!(
-            indexed.versions["1.1.0"].trust_metadata().approver,
-            initial.versions["1.1.0"].trust_metadata().approver
+            serde_json::to_value(indexed.versions["1.1.0"].trust_metadata()).unwrap(),
+            serde_json::to_value(initial.versions["1.1.0"].trust_metadata()).unwrap()
         );
 
         let second: Packument = serde_json::from_value(serde_json::json!({
@@ -1364,6 +1365,46 @@ mod resolution_index_tests {
             .unwrap();
         assert!(after_rewrite.versions.contains_key("2.0.0"));
         assert!(!after_rewrite.versions.contains_key("1.0.0"));
+    }
+
+    #[test]
+    fn stale_v1_index_without_npm_user_approver_is_not_read() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = RegistryClient::new("https://registry.npmjs.org/");
+        let packument: Packument = serde_json::from_value(serde_json::json!({
+            "name": "index-demo",
+            "versions": {"1.0.0": {
+                "name": "index-demo",
+                "version": "1.0.0",
+                "_npmUser": {"approver": {"name": "reviewer"}}
+            }},
+            "time": {"1.0.0": "2024-01-01T00:00:00.000Z"}
+        }))
+        .unwrap();
+        client.seed_full_packument_cache("index-demo", cache.path(), &packument, None, None, true);
+        let path = packument_full_cache_path(
+            cache.path(),
+            "index-demo",
+            client.config.registry_for("index-demo"),
+        )
+        .unwrap();
+        let mut v1 = path.as_os_str().to_owned();
+        v1.push(".resolution-index-v1");
+        std::fs::write(PathBuf::from(v1), b"stale index without approver").unwrap();
+
+        let lookup = client
+            .cached_resolution_packument("index-demo", cache.path())
+            .packument
+            .unwrap();
+        assert!(
+            lookup.versions["1.0.0"]
+                .trust_metadata()
+                .npm_user
+                .as_ref()
+                .and_then(|u| u.approver.as_ref())
+                .is_some()
+        );
+        assert!(resolution_index_path(&path).exists());
     }
 
     #[test]
