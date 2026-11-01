@@ -236,6 +236,17 @@ impl InstallControl {
         }
     }
 
+    /// The control for an install that aube runs on the host's behalf, such as
+    /// a git dependency's `prepare`. It keeps the host's provenance verifier
+    /// and nothing else: output, progress and cancellation stay the nested
+    /// install's own.
+    pub(crate) fn nested(&self) -> Self {
+        Self {
+            provenance_verifier: self.provenance_verifier.clone(),
+            ..Self::default()
+        }
+    }
+
     pub fn silent() -> Self {
         Self {
             output: InstallOutputMode::Silent,
@@ -514,6 +525,24 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("provenance rejected"));
+    }
+
+    #[tokio::test]
+    async fn nested_control_keeps_only_the_provenance_verifier() {
+        let verifier = Arc::new(RecordingVerifier {
+            seen: Mutex::default(),
+            reject: false,
+        });
+        let outer = InstallControl::events(Arc::new(RecordingReporter::default()))
+            .with_provenance_verifier(verifier.clone());
+        let nested = outer.nested();
+        assert_eq!(nested.output_mode(), InstallOutputMode::Human);
+        assert!(nested.reporter().is_none());
+        outer.cancel();
+        assert!(!nested.is_cancelled());
+        nested.verify_provenance(vec![subject("a")]).await.unwrap();
+        assert_eq!(*verifier.seen.lock().unwrap(), vec![subject("a")]);
+        assert!(!InstallControl::silent().nested().has_provenance_verifier());
     }
 
     #[test]

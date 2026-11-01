@@ -1344,6 +1344,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             // The task-local control does not follow `tokio::spawn`, so the
             // streaming loop holds its own handle to the host's verifier.
             let fetch_control = opts.control.clone();
+            let fetch_scope_control = opts.control.clone();
             let fetch_verify_integrity =
                 verify_store_integrity_setting || fetch_control.has_provenance_verifier();
             let fetch_strict_integrity = strict_store_integrity_setting;
@@ -1792,6 +1793,7 @@ async fn run_inner(mut opts: InstallOptions, cwd: std::path::PathBuf) -> miette:
             });
             let fetch = crate::runtime::scope_current(fetch);
             let fetch = aube_scripts::scope_current(fetch);
+            let fetch = control::scope(fetch_scope_control, fetch);
             let fetch_handle = tokio::spawn(fetch);
 
             // Run resolution (this streams packages to the fetch coordinator).

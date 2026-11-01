@@ -105,6 +105,9 @@ pub(super) async fn run_git_dep_prepare(
     }
     let mut opts = InstallOptions::with_mode(super::super::chained_frozen_mode(FrozenMode::Prefer));
     opts.project_dir = Some(clone_dir.to_path_buf());
+    // The registry packages this install fetches go past the host's
+    // provenance verifier like the outer install's do.
+    opts.control = super::control::current().nested();
     opts.ignore_scripts = ignore_scripts;
     opts.git_prepare_depth = depth + 1;
     opts.inherited_build_policy = inherited_build_policy;
