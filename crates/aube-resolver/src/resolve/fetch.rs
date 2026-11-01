@@ -695,9 +695,7 @@ mod tests {
         assert!(
             packument.versions["2.0.0"]
                 .trust_metadata()
-                .npm_user
-                .as_ref()
-                .and_then(|u| u.approver.as_ref())
+                .approver
                 .is_some()
         );
         assert_eq!(
@@ -727,9 +725,7 @@ mod tests {
         assert!(
             packument.versions["2.0.0"]
                 .trust_metadata()
-                .npm_user
-                .as_ref()
-                .and_then(|u| u.approver.as_ref())
+                .approver
                 .is_some()
         );
         assert_eq!(requests.load(Ordering::Relaxed), 1);

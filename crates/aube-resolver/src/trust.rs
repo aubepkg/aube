@@ -53,6 +53,7 @@ impl TrustEvidence {
 /// the publisher flag is just metadata.
 pub fn evidence_for(meta: &VersionMetadata) -> Option<TrustEvidence> {
     classify(
+        meta.approver.as_ref(),
         meta.npm_user.as_ref(),
         meta.dist
             .as_ref()
@@ -63,6 +64,7 @@ pub fn evidence_for(meta: &VersionMetadata) -> Option<TrustEvidence> {
 
 fn compact_evidence_for(meta: &aube_registry::VersionTrustMetadata) -> Option<TrustEvidence> {
     classify(
+        meta.approver.as_ref(),
         meta.npm_user.as_ref(),
         meta.dist
             .as_ref()
@@ -72,13 +74,11 @@ fn compact_evidence_for(meta: &aube_registry::VersionTrustMetadata) -> Option<Tr
 }
 
 fn classify(
+    approver: Option<&serde_json::Value>,
     npm_user: Option<&NpmUser>,
     provenance: Option<&serde_json::Value>,
 ) -> Option<TrustEvidence> {
-    if npm_user
-        .and_then(|u| u.approver.as_ref())
-        .is_some_and(is_approver)
-    {
+    if approver.is_some_and(is_approver) {
         return Some(TrustEvidence::StagedPublish);
     }
     let has_provenance = provenance.is_some_and(is_provenance);
@@ -938,6 +938,7 @@ mod tests {
             bin: BTreeMap::new(),
             has_install_script: false,
             deprecated: None,
+            approver: None,
             npm_user: None,
         }
     }
@@ -954,15 +955,13 @@ mod tests {
 
     fn with_trusted_publisher(mut v: VersionMetadata) -> VersionMetadata {
         v.npm_user = Some(NpmUser {
-            approver: None,
             trusted_publisher: Some(serde_json::json!({"id": "gh"})),
         });
         v
     }
 
     fn with_staged_publish(mut v: VersionMetadata) -> VersionMetadata {
-        v.npm_user.get_or_insert_with(NpmUser::default).approver =
-            Some(serde_json::json!({"name": "release-manager"}));
+        v.approver = Some(serde_json::json!({"name": "release-manager"}));
         v
     }
 
@@ -1005,7 +1004,6 @@ mod tests {
     fn evidence_npm_user_without_trusted_publisher_is_none() {
         let mut v = version("foo", "1.0.0");
         v.npm_user = Some(NpmUser {
-            approver: None,
             trusted_publisher: None,
         });
         assert_eq!(evidence_for(&v), None);
@@ -1025,7 +1023,6 @@ mod tests {
             serde_json::json!({"id": ""}),
         ] {
             v.npm_user = Some(NpmUser {
-                approver: None,
                 trusted_publisher: Some(malformed.clone()),
             });
             assert_eq!(
@@ -1056,10 +1053,7 @@ mod tests {
             serde_json::json!({"name": ""}),
             serde_json::json!({"nested": {}}),
         ] {
-            v.npm_user = Some(NpmUser {
-                approver: Some(malformed.clone()),
-                trusted_publisher: None,
-            });
+            v.approver = Some(malformed.clone());
             assert_eq!(
                 evidence_for(&v),
                 None,
@@ -1078,10 +1072,7 @@ mod tests {
             serde_json::json!(["release-manager"]),
             serde_json::json!({"name": "release-manager"}),
         ] {
-            v.npm_user = Some(NpmUser {
-                approver: Some(approver.clone()),
-                trusted_publisher: None,
-            });
+            v.approver = Some(approver.clone());
             assert_eq!(
                 evidence_for(&v),
                 Some(TrustEvidence::StagedPublish),
@@ -1121,7 +1112,6 @@ mod tests {
     fn evidence_structured_trusted_publisher_counts() {
         let mut v = with_provenance(version("foo", "1.0.0"));
         v.npm_user = Some(NpmUser {
-            approver: None,
             trusted_publisher: Some(serde_json::json!({
                 "id": "github",
                 "oidcConfigId": "oidc:example"
@@ -1236,6 +1226,7 @@ mod tests {
             (
                 "2.0.0".to_string(),
                 aube_registry::VersionTrustMetadata {
+                    approver: None,
                     npm_user: None,
                     dist: Some(aube_registry::VersionTrustDist {
                         attestations: Some(Attestations {
@@ -1249,6 +1240,7 @@ mod tests {
             (
                 "3.0.0".to_string(),
                 aube_registry::VersionTrustMetadata {
+                    approver: None,
                     npm_user: None,
                     dist: None,
                 },
@@ -1279,6 +1271,7 @@ mod tests {
     fn standalone_history_detects_downgrade_and_skips_picked_version() {
         let trust_meta =
             |dist: Option<aube_registry::VersionTrustDist>| aube_registry::VersionTrustMetadata {
+                approver: None,
                 npm_user: None,
                 dist,
             };
