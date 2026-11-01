@@ -75,6 +75,12 @@ pub(super) fn write_modules_metadata(
                     "virtualStoreDir".to_string(),
                     serde_json::Value::String(virtual_store_dir.clone()),
                 );
+                // `which-pm` (and VS Code's npm task provider) read this
+                // file as pnpm's state and crash without `packageManager`.
+                metadata.insert(
+                    "packageManager".to_string(),
+                    serde_json::Value::String(format!("aube@{}", env!("CARGO_PKG_VERSION"))),
+                );
                 serde_json::to_vec_pretty(&metadata)?
             }
             Err(err) => return Err(err),
@@ -563,6 +569,27 @@ mod tests {
 
         write_modules_metadata(root, &graph, "node_modules", &store)
             .expect("metadata should be written");
+
+        std::fs::remove_file(root.join("node_modules/.modules.yaml"))
+            .expect("root metadata should be removed");
+        write_modules_metadata(root, &graph, "node_modules", &store)
+            .expect("fresh metadata should be written");
+        let fresh: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("node_modules/.modules.yaml"))
+                .expect("fresh metadata should exist"),
+        )
+        .expect("fresh metadata should parse");
+        assert_eq!(
+            fresh["packageManager"],
+            format!("aube@{}", env!("CARGO_PKG_VERSION"))
+        );
+        std::fs::write(
+            root.join("node_modules/.modules.yaml"),
+            "{\"packageManager\":\"pnpm@11.0.0\"}",
+        )
+        .expect("existing metadata should be restored");
+        write_modules_metadata(root, &graph, "node_modules", &store)
+            .expect("metadata should be rewritten");
 
         for project in [root.to_path_buf(), root.join("packages/app")] {
             let bytes = std::fs::read(project.join("node_modules/.modules.yaml"))
