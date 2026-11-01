@@ -175,8 +175,10 @@ pub type InstallProvenanceFuture<'a> =
 /// decides which packages to check, where to fetch their bundles and what to
 /// record.
 ///
-/// With no verifier registered nothing changes. The call is skipped when an
-/// install has nothing to fetch, such as the up-to-date fast path.
+/// With no verifier registered nothing changes. Packages already in the store
+/// are passed too, since this host may never have checked them; the call is
+/// skipped only when the install never reaches the fetch step, such as the
+/// up-to-date fast path.
 pub trait InstallProvenanceVerifier: Send + Sync + 'static {
     fn verify(&self, packages: Vec<InstallProvenanceSubject>) -> InstallProvenanceFuture<'_>;
 }
