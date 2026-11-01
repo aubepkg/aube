@@ -714,6 +714,7 @@ impl RegistryClient {
             match parse_full_response::<crate::PackumentTrustHistory>(resp).await {
                 Ok(history) => {
                     let to_cache = CachedTrustHistory {
+                        schema: TRUST_HISTORY_SCHEMA,
                         etag,
                         last_modified,
                         fetched_at: now_secs(),
