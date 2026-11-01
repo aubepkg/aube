@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.5...aube-registry-v2.9.0) - 2026-11-01
+
+### Fixed
+
+- *(resolver)* read npm staged-publish approver from _npmUser, require provenance ([#1899](https://github.com/aubepkg/aube/pull/1899))
+- *(registry)* derive hasInstallScript from install hooks in full packuments ([#1894](https://github.com/aubepkg/aube/pull/1894))
+
 ## [2.8.4](https://github.com/aubepkg/aube/compare/aube-registry-v2.8.3...aube-registry-v2.8.4) - 2026-10-27
 
 ### Fixed
