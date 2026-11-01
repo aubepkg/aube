@@ -127,18 +127,34 @@ pub trait InstallPromptDecisionHandler: Send + Sync + 'static {
 }
 
 /// A registry package the install is about to fetch, with the integrity the
-/// lockfile pins for it.
+/// lockfile or packument pins for it.
 ///
-/// `integrity` is the lockfile's `sha512-...` string. aube checks every
-/// tarball against it before importing it into the store, so a host that
-/// verifies an attestation whose subject digest equals this value has
-/// verified the bytes aube will install.
+/// `name` is the package's name on the registry, which differs from the
+/// dependency alias for `npm:` aliases. `integrity` is the SRI string aube
+/// pins (`sha512-...`, or a legacy `sha1-...`, `sha256-...` or `sha384-...`),
+/// or `None` when nothing pins one; the host decides whether such a package is
+/// acceptable. While a verifier is registered aube always checks every tarball
+/// against `integrity` before importing it into the store, even when
+/// `verifyStoreIntegrity` is off, so a host that verifies an attestation whose
+/// subject digest equals this value has verified the bytes aube will install.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct InstallProvenanceSubject {
     pub name: String,
     pub version: String,
-    pub integrity: String,
+    pub integrity: Option<String>,
+}
+
+impl InstallProvenanceSubject {
+    /// The subject for a package fetched from a registry as `registry_name`.
+    /// Callers skip local, git and remote-tarball sources.
+    pub(crate) fn registry(registry_name: &str, version: &str, integrity: Option<&str>) -> Self {
+        Self {
+            name: registry_name.to_string(),
+            version: version.to_string(),
+            integrity: integrity.map(str::to_string),
+        }
+    }
 }
 
 /// Future returned by an [`InstallProvenanceVerifier`].
@@ -150,10 +166,14 @@ pub type InstallProvenanceFuture<'a> =
 /// `trustPolicy` validates the shape of registry attestation metadata but does
 /// not verify the attached Sigstore bundles. A host that already ships a
 /// Sigstore verifier can register one with
-/// [`InstallControl::with_provenance_verifier`]. aube then calls it once per
-/// fetch with every registry package of the install, before any tarball is
-/// downloaded, and an error aborts the install. The host decides which
-/// packages to check, where to fetch their bundles and what to record.
+/// [`InstallControl::with_provenance_verifier`]. aube then passes every
+/// registry package of the install to it before that package's tarball is
+/// downloaded or imported, and an error aborts the install. An install that
+/// installs from a lockfile makes one call with all packages. A fresh
+/// resolution calls it once per package as resolution finds them, one call at
+/// a time, so return quickly for packages the host does not check. The host
+/// decides which packages to check, where to fetch their bundles and what to
+/// record.
 ///
 /// With no verifier registered nothing changes. The call is skipped when an
 /// install has nothing to fetch, such as the up-to-date fast path.
@@ -293,6 +313,10 @@ impl InstallControl {
                 }
             } => result,
         })
+    }
+
+    pub(crate) fn has_provenance_verifier(&self) -> bool {
+        self.provenance_verifier.is_some()
     }
 
     pub(crate) async fn verify_provenance(
@@ -463,7 +487,7 @@ mod tests {
         InstallProvenanceSubject {
             name: name.into(),
             version: "1.0.0".into(),
-            integrity: "sha512-abc".into(),
+            integrity: Some("sha512-abc".into()),
         }
     }
 
@@ -488,6 +512,15 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("provenance rejected"));
+    }
+
+    #[test]
+    fn provenance_subject_keeps_a_missing_integrity_visible() {
+        let subject = InstallProvenanceSubject::registry("h3", "2.0.0", None);
+        assert_eq!(subject.name, "h3");
+        assert_eq!(subject.integrity, None);
+        let subject = InstallProvenanceSubject::registry("h3", "2.0.0", Some("sha1-abc"));
+        assert_eq!(subject.integrity.as_deref(), Some("sha1-abc"));
     }
 
     #[tokio::test]
