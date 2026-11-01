@@ -126,6 +126,41 @@ pub trait InstallPromptDecisionHandler: Send + Sync + 'static {
     fn decide(&self, prompt: InstallPrompt) -> InstallPromptDecisionFuture<'_>;
 }
 
+/// A registry package the install is about to fetch, with the integrity the
+/// lockfile pins for it.
+///
+/// `integrity` is the lockfile's `sha512-...` string. aube checks every
+/// tarball against it before importing it into the store, so a host that
+/// verifies an attestation whose subject digest equals this value has
+/// verified the bytes aube will install.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct InstallProvenanceSubject {
+    pub name: String,
+    pub version: String,
+    pub integrity: String,
+}
+
+/// Future returned by an [`InstallProvenanceVerifier`].
+pub type InstallProvenanceFuture<'a> =
+    Pin<Box<dyn Future<Output = miette::Result<()>> + Send + 'a>>;
+
+/// Host-provided verification of package provenance.
+///
+/// `trustPolicy` validates the shape of registry attestation metadata but does
+/// not verify the attached Sigstore bundles. A host that already ships a
+/// Sigstore verifier can register one with
+/// [`InstallControl::with_provenance_verifier`]. aube then calls it once per
+/// fetch with every registry package of the install, before any tarball is
+/// downloaded, and an error aborts the install. The host decides which
+/// packages to check, where to fetch their bundles and what to record.
+///
+/// With no verifier registered nothing changes. The call is skipped when an
+/// install has nothing to fetch, such as the up-to-date fast path.
+pub trait InstallProvenanceVerifier: Send + Sync + 'static {
+    fn verify(&self, packages: Vec<InstallProvenanceSubject>) -> InstallProvenanceFuture<'_>;
+}
+
 #[derive(Clone)]
 enum PromptHandler {
     Boolean(Arc<dyn InstallPromptHandler>),
@@ -137,6 +172,7 @@ pub struct InstallControl {
     output: InstallOutputMode,
     reporter: Option<Arc<dyn InstallReporter>>,
     prompt_handler: Option<PromptHandler>,
+    provenance_verifier: Option<Arc<dyn InstallProvenanceVerifier>>,
     cancellation: tokio_util::sync::CancellationToken,
 }
 
@@ -146,6 +182,10 @@ impl std::fmt::Debug for InstallControl {
             .field("output", &self.output)
             .field("has_reporter", &self.reporter.is_some())
             .field("has_prompt_handler", &self.prompt_handler.is_some())
+            .field(
+                "has_provenance_verifier",
+                &self.provenance_verifier.is_some(),
+            )
             .field("cancelled", &self.is_cancelled())
             .finish()
     }
@@ -157,6 +197,7 @@ impl Default for InstallControl {
             output: InstallOutputMode::Human,
             reporter: None,
             prompt_handler: None,
+            provenance_verifier: None,
             cancellation: tokio_util::sync::CancellationToken::new(),
         }
     }
@@ -168,6 +209,7 @@ impl InstallControl {
             output: InstallOutputMode::Events,
             reporter: Some(reporter),
             prompt_handler: None,
+            provenance_verifier: None,
             cancellation: tokio_util::sync::CancellationToken::new(),
         }
     }
@@ -193,6 +235,14 @@ impl InstallControl {
         handler: Arc<dyn InstallPromptDecisionHandler>,
     ) -> Self {
         self.prompt_handler = Some(PromptHandler::Decision(handler));
+        self
+    }
+
+    pub fn with_provenance_verifier(
+        mut self,
+        verifier: Arc<dyn InstallProvenanceVerifier>,
+    ) -> Self {
+        self.provenance_verifier = Some(verifier);
         self
     }
 
@@ -243,6 +293,23 @@ impl InstallControl {
                 }
             } => result,
         })
+    }
+
+    pub(crate) async fn verify_provenance(
+        &self,
+        packages: Vec<InstallProvenanceSubject>,
+    ) -> miette::Result<()> {
+        let Some(verifier) = self.provenance_verifier.clone() else {
+            return Ok(());
+        };
+        if packages.is_empty() {
+            return Ok(());
+        }
+        tokio::select! {
+            biased;
+            _ = self.cancelled() => self.check_cancelled(),
+            result = verifier.verify(packages) => result,
+        }
     }
 
     pub(crate) fn check_cancelled(&self) -> miette::Result<()> {
@@ -336,6 +403,12 @@ pub(crate) fn output(level: InstallOutputLevel, code: Option<&str>, message: imp
     current().output(level, code, message);
 }
 
+pub(crate) async fn verify_provenance(
+    packages: Vec<InstallProvenanceSubject>,
+) -> miette::Result<()> {
+    current().verify_provenance(packages).await
+}
+
 pub(crate) fn complete(total: usize) {
     current().complete(total);
 }
@@ -365,6 +438,68 @@ mod tests {
                 control.cancel();
             }
         }
+    }
+
+    struct RecordingVerifier {
+        seen: Mutex<Vec<InstallProvenanceSubject>>,
+        reject: bool,
+    }
+
+    impl InstallProvenanceVerifier for RecordingVerifier {
+        fn verify(&self, packages: Vec<InstallProvenanceSubject>) -> InstallProvenanceFuture<'_> {
+            self.seen.lock().unwrap().extend(packages);
+            let reject = self.reject;
+            Box::pin(async move {
+                if reject {
+                    Err(miette!("provenance rejected"))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    fn subject(name: &str) -> InstallProvenanceSubject {
+        InstallProvenanceSubject {
+            name: name.into(),
+            version: "1.0.0".into(),
+            integrity: "sha512-abc".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn provenance_verifier_receives_subjects_and_can_abort() {
+        let accepting = Arc::new(RecordingVerifier {
+            seen: Mutex::default(),
+            reject: false,
+        });
+        let control = InstallControl::silent().with_provenance_verifier(accepting.clone());
+        scope(control, verify_provenance(vec![subject("a")]))
+            .await
+            .unwrap();
+        assert_eq!(*accepting.seen.lock().unwrap(), vec![subject("a")]);
+
+        let rejecting = Arc::new(RecordingVerifier {
+            seen: Mutex::default(),
+            reject: true,
+        });
+        let control = InstallControl::silent().with_provenance_verifier(rejecting);
+        let err = scope(control, verify_provenance(vec![subject("a")]))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("provenance rejected"));
+    }
+
+    #[tokio::test]
+    async fn provenance_verification_is_skipped_without_a_verifier_or_subjects() {
+        verify_provenance(vec![subject("a")]).await.unwrap();
+        let verifier = Arc::new(RecordingVerifier {
+            seen: Mutex::default(),
+            reject: true,
+        });
+        let control = InstallControl::silent().with_provenance_verifier(verifier.clone());
+        scope(control, verify_provenance(Vec::new())).await.unwrap();
+        assert!(verifier.seen.lock().unwrap().is_empty());
     }
 
     #[test]

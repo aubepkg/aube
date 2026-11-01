@@ -48,7 +48,8 @@ pub use control::{
     INSTALL_OUTPUT_CODE_LIFECYCLE_SCRIPT, InstallControl, InstallEvent, InstallOutputLevel,
     InstallOutputMode, InstallPhase, InstallProgressSnapshot, InstallPrompt, InstallPromptDecision,
     InstallPromptDecisionFuture, InstallPromptDecisionHandler, InstallPromptFuture,
-    InstallPromptHandler, InstallReporter,
+    InstallPromptHandler, InstallProvenanceFuture, InstallProvenanceSubject,
+    InstallProvenanceVerifier, InstallReporter,
 };
 pub use dep_selection::DepSelection;
 pub(super) use fetch::fetch_packages;

@@ -508,6 +508,21 @@ where
     F: FnOnce() -> std::sync::Arc<aube_registry::client::RegistryClient>,
 {
     let packument_cache_dir = packument_cache_dir.to_path_buf();
+    // Let an embedding host verify provenance before any tarball is
+    // downloaded. Local, git and remote-tarball sources carry no registry
+    // integrity record, so they are not subjects.
+    let provenance_subjects: Vec<_> = packages
+        .values()
+        .filter(|p| p.local_source.is_none())
+        .filter_map(|p| {
+            Some(super::control::InstallProvenanceSubject {
+                name: p.name.clone(),
+                version: p.version.clone(),
+                integrity: p.integrity.clone()?,
+            })
+        })
+        .collect();
+    super::control::verify_provenance(provenance_subjects).await?;
     // No-op fast path: for every package whose per-project
     // `node_modules/.aube/<dep_path>` entry is already the one the
     // linker will accept, skip the package-index load entirely. The
