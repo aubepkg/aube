@@ -136,7 +136,9 @@ pub trait InstallPromptDecisionHandler: Send + Sync + 'static {
 /// acceptable. While a verifier is registered aube always checks every tarball
 /// against `integrity` before importing it into the store, even when
 /// `verifyStoreIntegrity` is off, so a host that verifies an attestation whose
-/// subject digest equals this value has verified the bytes aube will install.
+/// subject digest equals this value has verified the bytes aube imports. A
+/// package already in the store is trusted the way aube always trusts its
+/// store: the check covers the bytes of this install, not an earlier import.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct InstallProvenanceSubject {
@@ -238,11 +240,13 @@ impl InstallControl {
 
     /// The control for an install that aube runs on the host's behalf, such as
     /// a git dependency's `prepare`. It keeps the host's provenance verifier
-    /// and nothing else: output, progress and cancellation stay the nested
-    /// install's own.
+    /// and cancellation, which flows one way: cancelling the host's install
+    /// cancels the nested one, not the reverse. Output and progress stay the
+    /// nested install's own.
     pub(crate) fn nested(&self) -> Self {
         Self {
             provenance_verifier: self.provenance_verifier.clone(),
+            cancellation: self.cancellation.child_token(),
             ..Self::default()
         }
     }
@@ -538,10 +542,22 @@ mod tests {
         let nested = outer.nested();
         assert_eq!(nested.output_mode(), InstallOutputMode::Human);
         assert!(nested.reporter().is_none());
-        outer.cancel();
-        assert!(!nested.is_cancelled());
         nested.verify_provenance(vec![subject("a")]).await.unwrap();
         assert_eq!(*verifier.seen.lock().unwrap(), vec![subject("a")]);
+
+        let sibling = outer.nested();
+        sibling.cancel();
+        assert!(!outer.is_cancelled());
+        outer.cancel();
+        assert!(nested.is_cancelled());
+        assert!(
+            nested
+                .verify_provenance(vec![subject("b")])
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
         assert!(!InstallControl::silent().nested().has_provenance_verifier());
     }
 
