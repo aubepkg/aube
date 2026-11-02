@@ -443,7 +443,8 @@ pub(super) fn local_source_from_resolution(res: &Resolution) -> Option<LocalSour
             return Some(LocalSource::RemoteTarball(RemoteTarballSource {
                 url: tb.clone(),
                 integrity: res.integrity.clone().unwrap_or_default(),
-                git_hosted: res.git_hosted && !super::is_github_packages_url(tb),
+                git_hosted: res.git_hosted
+                    && !(res.integrity.is_some() && super::is_github_packages_url(tb)),
             }));
         }
         return None;

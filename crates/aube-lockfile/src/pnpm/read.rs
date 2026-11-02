@@ -748,14 +748,15 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             .cloned();
         // GitHub Packages serves plain registry tarballs; older aube
         // versions wrongly stamped them `gitHosted`, which pnpm rejects.
+        // Without integrity the flag is what keeps the entry readable, so keep it.
         let registry_git_hosted = pkg_info
             .and_then(|p| p.resolution.as_ref())
             .is_some_and(|r| {
                 r.git_hosted
-                    && !r
-                        .tarball
-                        .as_deref()
-                        .is_some_and(super::is_github_packages_url)
+                    && !(r.integrity.is_some()
+                        && r.tarball
+                            .as_deref()
+                            .is_some_and(super::is_github_packages_url))
             });
 
         // pnpm writes `version: <semver>` alongside non-registry entries

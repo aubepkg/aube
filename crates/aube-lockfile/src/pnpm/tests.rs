@@ -5853,3 +5853,46 @@ snapshots:
     assert!(yaml.contains(&format!("tarball: {url}")), "{yaml}");
     assert!(!yaml.contains("gitHosted"), "{yaml}");
 }
+
+#[test]
+fn parser_keeps_git_hosted_flag_on_github_packages_tarball_without_integrity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://npm.pkg.github.com/download/demo/1.0.0/deadbeef";
+    std::fs::write(
+        &path,
+        format!(
+            r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    dependencies:
+      demo:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+  demo@1.0.0:
+    resolution: {{tarball: {url}, gitHosted: true}}
+
+snapshots:
+  demo@1.0.0: {{}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&path).unwrap();
+    write_with_project_root(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
+    parse(&path).expect("rewritten lockfile stays readable");
+}
