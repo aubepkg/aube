@@ -746,9 +746,17 @@ pub fn parse_with_options(path: &Path, options: ParseOptions) -> Result<Lockfile
             .and_then(|r| r.tarball.as_ref())
             .filter(|t| t.starts_with("http://") || t.starts_with("https://"))
             .cloned();
+        // GitHub Packages serves plain registry tarballs; older aube
+        // versions wrongly stamped them `gitHosted`, which pnpm rejects.
         let registry_git_hosted = pkg_info
             .and_then(|p| p.resolution.as_ref())
-            .is_some_and(|r| r.git_hosted);
+            .is_some_and(|r| {
+                r.git_hosted
+                    && !r
+                        .tarball
+                        .as_deref()
+                        .is_some_and(super::is_github_packages_url)
+            });
 
         // pnpm writes `version: <semver>` alongside non-registry entries
         // whose dep-path key is a URL. Prefer that over the URL itself

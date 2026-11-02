@@ -4565,7 +4565,7 @@ fn writer_preserves_non_derivable_registry_tarball_url_by_default() {
 }
 
 #[test]
-fn parser_round_trips_registry_git_hosted_tarball_flag() {
+fn parser_drops_git_hosted_flag_on_github_packages_tarball() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pnpm-lock.yaml");
     std::fs::write(
@@ -4595,7 +4595,7 @@ snapshots:
 
     let graph = parse(&path).unwrap();
     let pkg = graph.packages.get("demo@1.0.0").expect("demo package");
-    assert!(pkg.registry_git_hosted);
+    assert!(!pkg.registry_git_hosted);
     assert!(pkg.local_source.is_none());
     assert_eq!(
         pkg.tarball_url.as_deref(),
@@ -4610,7 +4610,7 @@ snapshots:
     )
     .unwrap();
     let yaml = std::fs::read_to_string(&path).unwrap();
-    assert!(yaml.contains("gitHosted: true"), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
     assert!(
         yaml.contains("tarball: https://npm.pkg.github.com/download/demo/1.0.0/deadbeef"),
         "{yaml}"
