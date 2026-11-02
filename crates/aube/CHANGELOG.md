@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0](https://github.com/aubepkg/aube/compare/v2.8.5...v2.9.0) - 2026-11-01
+
+### Added
+
+- *(embed)* let hosts verify package provenance before fetch ([#1900](https://github.com/aubepkg/aube/pull/1900))
+
+### Fixed
+
+- *(install)* write packageManager to fresh .modules.yaml ([#1902](https://github.com/aubepkg/aube/pull/1902))
+- *(resolver)* read npm staged-publish approver from _npmUser, require provenance ([#1899](https://github.com/aubepkg/aube/pull/1899))
+
 ## [2.8.5](https://github.com/aubepkg/aube/compare/v2.8.4...v2.8.5) - 2026-10-30
 
 ### Other
