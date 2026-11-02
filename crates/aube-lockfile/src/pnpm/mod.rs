@@ -55,11 +55,15 @@ pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {
         return false;
     };
     match host.as_str() {
-        "codeload.github.com" | "npm.pkg.github.com" => true,
+        "codeload.github.com" => true,
         "gitlab.com" => path.contains("/-/archive/"),
         "bitbucket.org" => path.contains("/get/"),
         _ => false,
     }
+}
+
+pub(super) fn is_github_packages_url(url: &str) -> bool {
+    http_url_host_and_path(url).is_some_and(|(host, _)| host == "npm.pkg.github.com")
 }
 
 fn http_url_host_and_path(url: &str) -> Option<(String, &str)> {

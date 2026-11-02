@@ -4163,7 +4163,7 @@ fn git_resolution_integrity_roundtrips() {
 }
 
 #[test]
-fn writer_emits_git_hosted_for_hosted_git_resolution() {
+fn writer_omits_git_hosted_on_git_resolution() {
     let dir = tempfile::tempdir().unwrap();
     let lockfile_path = dir.path().join("pnpm-lock.yaml");
     let dep_path =
@@ -4210,7 +4210,7 @@ fn writer_emits_git_hosted_for_hosted_git_resolution() {
     )
     .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
-    assert!(yaml.contains("gitHosted: true"), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
     assert!(yaml.contains("integrity: sha512-hosted"), "{yaml}");
 }
 
@@ -4560,12 +4560,12 @@ fn writer_preserves_non_derivable_registry_tarball_url_by_default() {
         yaml.contains("tarball: https://npm.pkg.github.com/download/@scope/pkg/1.0.0/deadbeef"),
         "{yaml}"
     );
-    assert!(yaml.contains("gitHosted: true"), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
     assert!(!yaml.contains("lockfileIncludeTarballUrl: true"), "{yaml}");
 }
 
 #[test]
-fn parser_round_trips_registry_git_hosted_tarball_flag() {
+fn parser_drops_git_hosted_flag_on_github_packages_tarball() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pnpm-lock.yaml");
     std::fs::write(
@@ -4595,7 +4595,7 @@ snapshots:
 
     let graph = parse(&path).unwrap();
     let pkg = graph.packages.get("demo@1.0.0").expect("demo package");
-    assert!(pkg.registry_git_hosted);
+    assert!(!pkg.registry_git_hosted);
     assert!(pkg.local_source.is_none());
     assert_eq!(
         pkg.tarball_url.as_deref(),
@@ -4610,7 +4610,7 @@ snapshots:
     )
     .unwrap();
     let yaml = std::fs::read_to_string(&path).unwrap();
-    assert!(yaml.contains("gitHosted: true"), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
     assert!(
         yaml.contains("tarball: https://npm.pkg.github.com/download/demo/1.0.0/deadbeef"),
         "{yaml}"
@@ -5806,4 +5806,95 @@ snapshots:
     assert!(found.starts_with("child@file+"), "unexpected key: {found}");
     assert!(found.ends_with("(react@18.2.0)"), "unexpected key: {found}");
     assert!(graph.filter_deps(|_| true).packages.contains_key(&found));
+}
+
+#[test]
+fn parser_drops_git_hosted_flag_on_url_keyed_github_packages_tarball() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://npm.pkg.github.com/download/demo/1.0.0/deadbeef";
+    std::fs::write(
+        &path,
+        format!(
+            r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    dependencies:
+      demo:
+        specifier: {url}
+        version: {url}
+
+packages:
+  demo@{url}:
+    resolution: {{integrity: sha512-demo, tarball: {url}, gitHosted: true}}
+    version: 1.0.0
+
+snapshots:
+  demo@{url}: {{}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&path).unwrap();
+    write_with_project_root(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
+    let yaml = std::fs::read_to_string(&path).unwrap();
+    assert!(yaml.contains(&format!("tarball: {url}")), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
+}
+
+#[test]
+fn parser_reads_github_packages_tarball_without_integrity_and_drops_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://npm.pkg.github.com/download/demo/1.0.0/deadbeef";
+    std::fs::write(
+        &path,
+        format!(
+            r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    dependencies:
+      demo:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+  demo@1.0.0:
+    resolution: {{tarball: {url}, gitHosted: true}}
+
+snapshots:
+  demo@1.0.0: {{}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&path).unwrap();
+    write_with_project_root(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
+    let yaml = std::fs::read_to_string(&path).unwrap();
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
+    parse(&path).expect("rewritten lockfile stays readable");
 }
