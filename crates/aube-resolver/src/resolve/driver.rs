@@ -1157,9 +1157,6 @@ impl<'a> ResolveDriver<'a> {
         // LockedPackage lets both policies work without a
         // second packument fetch at write time.
         let tarball_url = version_meta.dist.as_ref().map(|d| d.tarball.clone());
-        let registry_git_hosted = tarball_url
-            .as_deref()
-            .is_some_and(|url| url.contains("://npm.pkg.github.com/"));
 
         // Stream this resolved package for early tarball fetching.
         // `alias_of` mirrors what the LockedPackage below
@@ -1262,7 +1259,7 @@ impl<'a> ResolveDriver<'a> {
                     v
                 },
                 tarball_url,
-                registry_git_hosted,
+                registry_git_hosted: false,
                 // `name` is the alias for npm-aliased tasks
                 // (`"h3-v2": "npm:h3@..."` → name = "h3-v2"),
                 // so stash the real registry name here. The
