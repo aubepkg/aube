@@ -4163,7 +4163,7 @@ fn git_resolution_integrity_roundtrips() {
 }
 
 #[test]
-fn writer_emits_git_hosted_for_hosted_git_resolution() {
+fn writer_omits_git_hosted_on_git_resolution() {
     let dir = tempfile::tempdir().unwrap();
     let lockfile_path = dir.path().join("pnpm-lock.yaml");
     let dep_path =
@@ -4210,7 +4210,7 @@ fn writer_emits_git_hosted_for_hosted_git_resolution() {
     )
     .unwrap();
     let yaml = std::fs::read_to_string(&lockfile_path).unwrap();
-    assert!(yaml.contains("gitHosted: true"), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
     assert!(yaml.contains("integrity: sha512-hosted"), "{yaml}");
 }
 
@@ -4560,7 +4560,7 @@ fn writer_preserves_non_derivable_registry_tarball_url_by_default() {
         yaml.contains("tarball: https://npm.pkg.github.com/download/@scope/pkg/1.0.0/deadbeef"),
         "{yaml}"
     );
-    assert!(yaml.contains("gitHosted: true"), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
     assert!(!yaml.contains("lockfileIncludeTarballUrl: true"), "{yaml}");
 }
 

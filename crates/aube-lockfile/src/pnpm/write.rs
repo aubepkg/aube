@@ -643,7 +643,7 @@ pub fn write_with_project_root(
             }),
             Some(LocalSource::Git(g)) => Some(WritableResolution {
                 integrity: g.integrity.clone().or_else(|| pkg.integrity.clone()),
-                git_hosted: crate::parse_hosted_git(&g.url).is_some(),
+                git_hosted: false,
                 directory: None,
                 tarball: None,
                 commit: Some(g.resolved.clone()),

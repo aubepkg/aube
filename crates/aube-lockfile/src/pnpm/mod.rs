@@ -55,7 +55,7 @@ pub(super) fn tarball_url_is_hosted_git(url: &str) -> bool {
         return false;
     };
     match host.as_str() {
-        "codeload.github.com" | "npm.pkg.github.com" => true,
+        "codeload.github.com" => true,
         "gitlab.com" => path.contains("/-/archive/"),
         "bitbucket.org" => path.contains("/get/"),
         _ => false,
