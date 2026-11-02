@@ -5807,3 +5807,49 @@ snapshots:
     assert!(found.ends_with("(react@18.2.0)"), "unexpected key: {found}");
     assert!(graph.filter_deps(|_| true).packages.contains_key(&found));
 }
+
+#[test]
+fn parser_drops_git_hosted_flag_on_url_keyed_github_packages_tarball() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    let url = "https://npm.pkg.github.com/download/demo/1.0.0/deadbeef";
+    std::fs::write(
+        &path,
+        format!(
+            r#"lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    dependencies:
+      demo:
+        specifier: {url}
+        version: {url}
+
+packages:
+  demo@{url}:
+    resolution: {{integrity: sha512-demo, tarball: {url}, gitHosted: true}}
+    version: 1.0.0
+
+snapshots:
+  demo@{url}: {{}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let graph = parse(&path).unwrap();
+    write_with_project_root(
+        &path,
+        path.parent().unwrap(),
+        &graph,
+        &PackageJson::default(),
+    )
+    .unwrap();
+    let yaml = std::fs::read_to_string(&path).unwrap();
+    assert!(yaml.contains(&format!("tarball: {url}")), "{yaml}");
+    assert!(!yaml.contains("gitHosted"), "{yaml}");
+}
