@@ -148,14 +148,20 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 /// value-taking flag such as `--prefix ci`. Stops at `--`.
 fn npm_command_token(args: &[OsString]) -> Option<&str> {
     let mut skip_value = false;
+    let mut skip_bool = false;
     for arg in args.iter().skip(1) {
         let s = arg.to_str()?;
         if s == "--" {
             return None;
         }
+        // npm reads a `true` / `false` after a bare `--audit` / `--fund` as its value.
+        if std::mem::take(&mut skip_bool) && matches!(s, "true" | "false") {
+            continue;
+        }
         if skip_value {
             skip_value = false;
         } else if let Some(flag) = s.strip_prefix("--") {
+            skip_bool = matches!(flag, "audit" | "fund");
             skip_value = !flag.contains('=') && npm_install_flag_takes_value(flag);
         } else if s.starts_with('-') {
             skip_value = matches!(s, "-C" | "-F" | "-w");
