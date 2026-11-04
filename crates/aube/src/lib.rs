@@ -1997,6 +1997,37 @@ mod multicall_tests {
     }
 
     #[test]
+    fn npm_audit_and_fund_flags_are_dropped_for_install_commands() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--no-audit",
+                "--no-fund",
+                "--",
+                "input-otp"
+            ])),
+            os(&["aube", "add", "--", "input-otp"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "i", "--audit=false", "--fund", "pkg"])),
+            os(&["aube", "add", "pkg"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "ci", "--no-audit", "--fund=false"])),
+            os(&["aube", "ci"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--", "--no-audit"])),
+            os(&["aube", "add", "--", "--no-audit"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "run", "x", "--no-audit"])),
+            os(&["aube", "run", "x", "--no-audit"])
+        );
+    }
+
+    #[test]
     fn npm_min_release_age_becomes_minimum_release_age_override() {
         assert_eq!(
             rewrite_multicall_argv(os(&[

@@ -114,6 +114,12 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     let legacy_peer_deps = take_npm_legacy_peer_deps(&mut args);
     let min_release_age = take_npm_min_release_age(&mut args);
     let mut args = rewrite_npm_command(args);
+    if matches!(
+        args.get(1).and_then(|s| s.to_str()),
+        Some("add" | "install" | "ci" | "remove")
+    ) {
+        drop_npm_audit_fund_flags(&mut args);
+    }
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
         // installs, which is what `auto-install-peers=false` means here. Emit it as a
@@ -135,7 +141,34 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     args
 }
 
-/// Remove npm's `--legacy-peer-deps` / `--legacy-peer-deps=<bool>` /
+/// Drop npm's `--audit` / `--fund` flags (and their `--no-` and `=<bool>` forms).
+/// They only control npm's post-install audit request and funding message, which
+/// aube has no counterpart for. Tokens after `--` are left alone.
+fn drop_npm_audit_fund_flags(args: &mut Vec<OsString>) {
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let mut i = 0;
+    args.retain(|arg| {
+        let drop = i > 0
+            && i < end
+            && matches!(
+                arg.to_str(),
+                Some(
+                    "--audit"
+                        | "--no-audit"
+                        | "--audit=true"
+                        | "--audit=false"
+                        | "--fund"
+                        | "--no-fund"
+                        | "--fund=true"
+                        | "--fund=false"
+                )
+            );
+        i += 1;
+        !drop
+    });
+}
+
+/// Remove npm's `--legacy-peer-deps` /`--legacy-peer-deps=<bool>` /
 /// `--no-legacy-peer-deps` flag, which aube has no flag of its own for, and return
 /// the value it requested (the last one wins). Tokens after `--` are left alone.
 fn take_npm_legacy_peer_deps(args: &mut Vec<OsString>) -> Option<bool> {
