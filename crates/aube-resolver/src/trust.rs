@@ -493,6 +493,11 @@ pub const DEFAULT_TRUST_POLICY_EXCLUDES: &[&str] = &[
     // account as the attested 3.2.0 release, but without provenance metadata.
     // Keep the exception version-scoped so later releases remain protected.
     "why-is-node-running@3.2.2",
+    // vercel moved CLI development to a private repository at 58.5.1. It still
+    // publishes through npm Trusted Publishing, but npm cannot attach SLSA
+    // provenance for a private source repo, and the abbreviated packument
+    // omits `_npmUser`, so every release since looks like a downgrade.
+    "vercel@>=58.5.1",
     "chokidar",
     "eslint-config-prettier",
     "eslint-import-resolver-typescript",
@@ -1705,6 +1710,18 @@ mod tests {
             "webpack-dev-middleware",
             &node_semver::Version::parse("8.3.0").unwrap()
         ));
+    }
+
+    #[test]
+    fn default_excludes_vercel_private_repo_releases() {
+        // Regression: vercel publishes via Trusted Publishing from a private
+        // repo since 58.5.1, so releases carry no provenance. Earlier
+        // releases stay protected.
+        let r = TrustExcludeRules::default();
+        for v in ["58.5.1", "65.11.0"] {
+            assert!(r.matches("vercel", &node_semver::Version::parse(v).unwrap()));
+        }
+        assert!(!r.matches("vercel", &node_semver::Version::parse("58.4.4").unwrap()));
     }
 
     #[test]
