@@ -1721,7 +1721,9 @@ mod tests {
         for v in ["58.5.1", "65.11.0"] {
             assert!(r.matches("vercel", &node_semver::Version::parse(v).unwrap()));
         }
-        assert!(!r.matches("vercel", &node_semver::Version::parse("58.4.4").unwrap()));
+        for v in ["58.5.0", "58.4.4"] {
+            assert!(!r.matches("vercel", &node_semver::Version::parse(v).unwrap()));
+        }
     }
 
     #[test]
