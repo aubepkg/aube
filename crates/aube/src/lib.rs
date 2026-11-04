@@ -1997,6 +1997,69 @@ mod multicall_tests {
     }
 
     #[test]
+    fn npm_audit_and_fund_flags_are_dropped_for_install_commands() {
+        assert_eq!(
+            rewrite_multicall_argv(os(&[
+                "npm",
+                "install",
+                "--no-audit",
+                "--no-fund",
+                "--",
+                "input-otp"
+            ])),
+            os(&["aube", "add", "--", "input-otp"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "i", "--audit=false", "--fund", "pkg"])),
+            os(&["aube", "add", "pkg"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "ci", "--no-audit", "--fund=false"])),
+            os(&["aube", "ci"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--no-audit", "--no-fund", "install"])),
+            os(&["aube", "install"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--no-audit", "uninstall", "pkg"])),
+            os(&["aube", "remove", "pkg"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--", "--no-audit"])),
+            os(&["aube", "add", "--", "--no-audit"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--audit", "false"])),
+            os(&["aube", "install"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--fund", "true", "pkg"])),
+            os(&["aube", "add", "pkg"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "install", "--audit=true", "--fund=true"])),
+            os(&["aube", "install"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "rm", "--no-audit", "react"])),
+            os(&["aube", "remove", "react"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--audit", "false", "install", "pkg"])),
+            os(&["aube", "add", "pkg"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--prefix", "ci", "run", "check", "--no-audit"])),
+            os(&["aube", "--prefix", "ci", "run", "check", "--no-audit"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "run", "x", "--no-audit"])),
+            os(&["aube", "run", "x", "--no-audit"])
+        );
+    }
+
+    #[test]
     fn npm_min_release_age_becomes_minimum_release_age_override() {
         assert_eq!(
             rewrite_multicall_argv(os(&[

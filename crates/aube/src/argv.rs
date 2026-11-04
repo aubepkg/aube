@@ -113,6 +113,15 @@ fn rewrite_pnpm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     let legacy_peer_deps = take_npm_legacy_peer_deps(&mut args);
     let min_release_age = take_npm_min_release_age(&mut args);
+    // Leading flags may precede the command (`npm --no-audit install`), so find the
+    // first non-flag token rather than assuming it sits at `args[1]`.
+    let npm_command = npm_command_token(&args);
+    if matches!(
+        npm_command,
+        Some("i" | "install" | "add" | "ci" | "remove" | "rm" | "uninstall" | "un")
+    ) {
+        drop_npm_audit_fund_flags(&mut args);
+    }
     let mut args = rewrite_npm_command(args);
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
@@ -135,7 +144,68 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     args
 }
 
-/// Remove npm's `--legacy-peer-deps` / `--legacy-peer-deps=<bool>` /
+/// The npm subcommand: the first token that is neither a flag nor the value of a
+/// value-taking flag such as `--prefix ci`. Stops at `--`.
+fn npm_command_token(args: &[OsString]) -> Option<&str> {
+    let mut skip_value = false;
+    let mut skip_bool = false;
+    for arg in args.iter().skip(1) {
+        let s = arg.to_str()?;
+        if s == "--" {
+            return None;
+        }
+        // npm reads a `true` / `false` after a bare `--audit` / `--fund` as its value.
+        if std::mem::take(&mut skip_bool) && matches!(s, "true" | "false") {
+            continue;
+        }
+        if skip_value {
+            skip_value = false;
+        } else if let Some(flag) = s.strip_prefix("--") {
+            skip_bool = matches!(flag, "audit" | "fund");
+            skip_value = !flag.contains('=') && npm_install_flag_takes_value(flag);
+        } else if s.starts_with('-') {
+            skip_value = matches!(s, "-C" | "-F" | "-w");
+        } else {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// Drop npm's `--audit` / `--fund` flags (and their `--no-` and `=<bool>` forms).
+/// They only control npm's post-install audit request and funding message, which
+/// aube has no counterpart for. npm also reads a `true` / `false` that follows a
+/// bare `--audit` / `--fund` as the flag's value, so that token goes with it.
+/// Tokens after `--` are left alone.
+fn drop_npm_audit_fund_flags(args: &mut Vec<OsString>) {
+    let mut i = 1;
+    while i < args.len() {
+        let count = match args[i].to_str() {
+            Some("--") => break,
+            Some("--audit" | "--fund") => {
+                if matches!(
+                    args.get(i + 1).and_then(|next| next.to_str()),
+                    Some("true" | "false")
+                ) {
+                    2
+                } else {
+                    1
+                }
+            }
+            Some(
+                "--no-audit" | "--no-fund" | "--audit=true" | "--audit=false" | "--fund=true"
+                | "--fund=false",
+            ) => 1,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        args.drain(i..i + count);
+    }
+}
+
+/// Remove npm's `--legacy-peer-deps` /`--legacy-peer-deps=<bool>` /
 /// `--no-legacy-peer-deps` flag, which aube has no flag of its own for, and return
 /// the value it requested (the last one wins). Tokens after `--` are left alone.
 fn take_npm_legacy_peer_deps(args: &mut Vec<OsString>) -> Option<bool> {
