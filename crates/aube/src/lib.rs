@@ -2018,6 +2018,14 @@ mod multicall_tests {
             os(&["aube", "ci"])
         );
         assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--no-audit", "--no-fund", "install"])),
+            os(&["aube", "install"])
+        );
+        assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--no-audit", "uninstall", "pkg"])),
+            os(&["aube", "remove", "pkg"])
+        );
+        assert_eq!(
             rewrite_multicall_argv(os(&["npm", "install", "--", "--no-audit"])),
             os(&["aube", "add", "--", "--no-audit"])
         );

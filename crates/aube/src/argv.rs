@@ -113,13 +113,20 @@ fn rewrite_pnpm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     let legacy_peer_deps = take_npm_legacy_peer_deps(&mut args);
     let min_release_age = take_npm_min_release_age(&mut args);
-    let mut args = rewrite_npm_command(args);
+    // Leading flags may precede the command (`npm --no-audit install`), so find the
+    // first non-flag token rather than assuming it sits at `args[1]`.
+    let npm_command = args
+        .iter()
+        .skip(1)
+        .take_while(|a| *a != "--")
+        .find_map(|a| a.to_str().filter(|s| !s.starts_with('-')));
     if matches!(
-        args.get(1).and_then(|s| s.to_str()),
-        Some("add" | "install" | "ci" | "remove")
+        npm_command,
+        Some("i" | "install" | "add" | "ci" | "remove" | "rm" | "uninstall" | "un")
     ) {
         drop_npm_audit_fund_flags(&mut args);
     }
+    let mut args = rewrite_npm_command(args);
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
         // installs, which is what `auto-install-peers=false` means here. Emit it as a
