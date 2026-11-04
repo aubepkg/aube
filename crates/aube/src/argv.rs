@@ -150,29 +150,35 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 
 /// Drop npm's `--audit` / `--fund` flags (and their `--no-` and `=<bool>` forms).
 /// They only control npm's post-install audit request and funding message, which
-/// aube has no counterpart for. Tokens after `--` are left alone.
+/// aube has no counterpart for. npm also reads a `true` / `false` that follows a
+/// bare `--audit` / `--fund` as the flag's value, so that token goes with it.
+/// Tokens after `--` are left alone.
 fn drop_npm_audit_fund_flags(args: &mut Vec<OsString>) {
-    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
-    let mut i = 0;
-    args.retain(|arg| {
-        let drop = i > 0
-            && i < end
-            && matches!(
-                arg.to_str(),
-                Some(
-                    "--audit"
-                        | "--no-audit"
-                        | "--audit=true"
-                        | "--audit=false"
-                        | "--fund"
-                        | "--no-fund"
-                        | "--fund=true"
-                        | "--fund=false"
-                )
-            );
-        i += 1;
-        !drop
-    });
+    let mut i = 1;
+    while i < args.len() {
+        let count = match args[i].to_str() {
+            Some("--") => break,
+            Some("--audit" | "--fund") => {
+                if matches!(
+                    args.get(i + 1).and_then(|next| next.to_str()),
+                    Some("true" | "false")
+                ) {
+                    2
+                } else {
+                    1
+                }
+            }
+            Some(
+                "--no-audit" | "--no-fund" | "--audit=true" | "--audit=false" | "--fund=true"
+                | "--fund=false",
+            ) => 1,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        args.drain(i..i + count);
+    }
 }
 
 /// Remove npm's `--legacy-peer-deps` /`--legacy-peer-deps=<bool>` /
