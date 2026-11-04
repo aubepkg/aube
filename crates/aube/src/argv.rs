@@ -115,11 +115,7 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     let min_release_age = take_npm_min_release_age(&mut args);
     // Leading flags may precede the command (`npm --no-audit install`), so find the
     // first non-flag token rather than assuming it sits at `args[1]`.
-    let npm_command = args
-        .iter()
-        .skip(1)
-        .take_while(|a| *a != "--")
-        .find_map(|a| a.to_str().filter(|s| !s.starts_with('-')));
+    let npm_command = npm_command_token(&args);
     if matches!(
         npm_command,
         Some("i" | "install" | "add" | "ci" | "remove" | "rm" | "uninstall" | "un")
@@ -146,6 +142,28 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         );
     }
     args
+}
+
+/// The npm subcommand: the first token that is neither a flag nor the value of a
+/// value-taking flag such as `--prefix ci`. Stops at `--`.
+fn npm_command_token(args: &[OsString]) -> Option<&str> {
+    let mut skip_value = false;
+    for arg in args.iter().skip(1) {
+        let s = arg.to_str()?;
+        if s == "--" {
+            return None;
+        }
+        if skip_value {
+            skip_value = false;
+        } else if let Some(flag) = s.strip_prefix("--") {
+            skip_value = !flag.contains('=') && npm_install_flag_takes_value(flag);
+        } else if s.starts_with('-') {
+            skip_value = matches!(s, "-C" | "-F" | "-w");
+        } else {
+            return Some(s);
+        }
+    }
+    None
 }
 
 /// Drop npm's `--audit` / `--fund` flags (and their `--no-` and `=<bool>` forms).

@@ -2046,6 +2046,10 @@ mod multicall_tests {
             os(&["aube", "remove", "react"])
         );
         assert_eq!(
+            rewrite_multicall_argv(os(&["npm", "--prefix", "ci", "run", "check", "--no-audit"])),
+            os(&["aube", "--prefix", "ci", "run", "check", "--no-audit"])
+        );
+        assert_eq!(
             rewrite_multicall_argv(os(&["npm", "run", "x", "--no-audit"])),
             os(&["aube", "run", "x", "--no-audit"])
         );
