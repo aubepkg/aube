@@ -450,7 +450,10 @@ impl RegistryClient {
                             drop(sf_guard.take());
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
@@ -908,7 +911,10 @@ impl RegistryClient {
                             drop(sf_guard.take());
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
@@ -1052,7 +1058,10 @@ impl RegistryClient {
                                 );
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
@@ -1279,7 +1288,10 @@ impl RegistryClient {
                             drop(sf_guard.take());
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
