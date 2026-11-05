@@ -436,6 +436,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -893,6 +894,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -1037,6 +1039,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -1262,6 +1265,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,

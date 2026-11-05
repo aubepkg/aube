@@ -205,7 +205,28 @@ impl RegistryClient {
         token
     }
 
+    /// Record an h2 `too_many_data_frames` abort so later metadata requests
+    /// use HTTP/1.1 instead of failing the same way.
+    pub(super) fn fall_back_from_h2_flood(&self, err: &(dyn std::error::Error + 'static)) {
+        let mut cause = Some(err);
+        while let Some(e) = cause {
+            if e.to_string().contains("too_many_data_frames") {
+                if !self
+                    .h2_flooded
+                    .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    tracing::debug!("h2 data-frame flood detected; using HTTP/1.1 for metadata");
+                }
+                return;
+            }
+            cause = e.source();
+        }
+    }
+
     pub(super) fn http_for(&self, registry_url: &str) -> &reqwest::Client {
+        if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
+            return self.http_tarball_for(registry_url);
+        }
         let uri_key = crate::config::registry_uri_key_pub(registry_url);
         crate::config::lookup_by_uri_prefix(&self.http_by_uri, &uri_key).unwrap_or(&self.http)
     }
@@ -215,6 +236,9 @@ impl RegistryClient {
         registry_url: &str,
         package_name: &str,
     ) -> &reqwest::Client {
+        if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
+            return self.http_tarball_for_package(registry_url, package_name);
+        }
         if let Some((prefix, scope, _)) = self
             .config
             .scoped_tls_config_for_package(registry_url, package_name)

@@ -74,6 +74,10 @@ pub struct RegistryClient {
     /// still apply where they help.
     http_tarball: reqwest::Client,
     token_helper_cache: Mutex<BTreeMap<String, Option<String>>>,
+    /// Set once h2 aborts a metadata body with `too_many_data_frames`
+    /// (some CDNs stream large packuments as tiny DATA frames); metadata
+    /// then goes over the HTTP/1.1 clients for the rest of the process.
+    h2_flooded: std::sync::atomic::AtomicBool,
     /// Memoized result of `registry_auth_token_for(url)`. Without this,
     /// every authed request walks `auth_by_uri` for a longest-prefix
     /// match against `registry_url`. On a 2000-package install that's
