@@ -59,7 +59,7 @@ impl RegistryClient {
         registry_url: &str,
     ) -> reqwest::RequestBuilder {
         self.authed(
-            self.http_for(registry_url).request(method, url),
+            self.with_h1_fallback_timeout(self.http_for(registry_url).request(method, url)),
             registry_url,
         )
     }
@@ -72,8 +72,10 @@ impl RegistryClient {
         package_name: &str,
     ) -> reqwest::RequestBuilder {
         self.authed_for_package(
-            self.http_for_package(registry_url, package_name)
-                .request(method, url),
+            self.with_h1_fallback_timeout(
+                self.http_for_package(registry_url, package_name)
+                    .request(method, url),
+            ),
             registry_url,
             package_name,
         )
@@ -89,7 +91,7 @@ impl RegistryClient {
         url: &str,
         registry_url: &str,
     ) -> reqwest::RequestBuilder {
-        self.http_for(registry_url).request(method, url)
+        self.with_h1_fallback_timeout(self.http_for(registry_url).request(method, url))
     }
 
     pub fn has_resolved_auth_for(&self, registry_url: &str) -> bool {
@@ -203,6 +205,19 @@ impl RegistryClient {
             cache.insert(helper.to_string(), token.clone());
         }
         token
+    }
+
+    /// The HTTP/1.1 fallback client only has connect and idle-read timeouts,
+    /// so restore the whole-response `fetchTimeout` metadata requests get on
+    /// the default client.
+    fn with_h1_fallback_timeout(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
+            req.timeout(std::time::Duration::from_millis(
+                self.fetch_policy.timeout_ms,
+            ))
+        } else {
+            req
+        }
     }
 
     /// Record an h2 `too_many_data_frames` abort so later metadata requests
