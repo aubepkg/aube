@@ -106,7 +106,10 @@ impl RegistryClient {
             .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
         let resp = self
-            .authed(self.http_for(registry_url).post(&url), registry_url)
+            .authed(
+                self.with_h1_fallback_timeout(self.http_for(registry_url).post(&url)),
+                registry_url,
+            )
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .body(body)

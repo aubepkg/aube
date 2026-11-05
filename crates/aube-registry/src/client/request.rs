@@ -210,7 +210,10 @@ impl RegistryClient {
     /// The HTTP/1.1 fallback client only has connect and idle-read timeouts,
     /// so restore the whole-response `fetchTimeout` metadata requests get on
     /// the default client.
-    fn with_h1_fallback_timeout(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    pub(super) fn with_h1_fallback_timeout(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
         if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
             req.timeout(std::time::Duration::from_millis(
                 self.fetch_policy.timeout_ms,
