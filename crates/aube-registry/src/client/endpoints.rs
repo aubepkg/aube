@@ -214,7 +214,9 @@ impl RegistryClient {
         }
         let resp = resp.error_for_status()?;
         check_body_cap(&resp, self.fetch_policy.packument_max_bytes, "packument")?;
-        let value: serde_json::Value = resp.json().await?;
+        let value: serde_json::Value = resp.json().await.inspect_err(|err| {
+            self.fall_back_from_h2_flood(err);
+        })?;
         Ok(value)
     }
 
