@@ -59,7 +59,7 @@ impl RegistryClient {
         registry_url: &str,
     ) -> reqwest::RequestBuilder {
         self.authed(
-            self.http_for(registry_url).request(method, url),
+            self.with_h1_fallback_timeout(self.http_for(registry_url).request(method, url)),
             registry_url,
         )
     }
@@ -72,8 +72,10 @@ impl RegistryClient {
         package_name: &str,
     ) -> reqwest::RequestBuilder {
         self.authed_for_package(
-            self.http_for_package(registry_url, package_name)
-                .request(method, url),
+            self.with_h1_fallback_timeout(
+                self.http_for_package(registry_url, package_name)
+                    .request(method, url),
+            ),
             registry_url,
             package_name,
         )
@@ -89,7 +91,7 @@ impl RegistryClient {
         url: &str,
         registry_url: &str,
     ) -> reqwest::RequestBuilder {
-        self.http_for(registry_url).request(method, url)
+        self.with_h1_fallback_timeout(self.http_for(registry_url).request(method, url))
     }
 
     pub fn has_resolved_auth_for(&self, registry_url: &str) -> bool {
@@ -205,7 +207,44 @@ impl RegistryClient {
         token
     }
 
+    /// The HTTP/1.1 fallback client only has connect and idle-read timeouts,
+    /// so restore the whole-response `fetchTimeout` metadata requests get on
+    /// the default client.
+    pub(super) fn with_h1_fallback_timeout(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
+            req.timeout(std::time::Duration::from_millis(
+                self.fetch_policy.timeout_ms,
+            ))
+        } else {
+            req
+        }
+    }
+
+    /// Record an h2 `too_many_data_frames` abort so later metadata requests
+    /// use HTTP/1.1 instead of failing the same way.
+    pub(super) fn fall_back_from_h2_flood(&self, err: &(dyn std::error::Error + 'static)) {
+        let mut cause = Some(err);
+        while let Some(e) = cause {
+            if e.to_string().contains("too_many_data_frames") {
+                if !self
+                    .h2_flooded
+                    .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    tracing::debug!("h2 data-frame flood detected; using HTTP/1.1 for metadata");
+                }
+                return;
+            }
+            cause = e.source();
+        }
+    }
+
     pub(super) fn http_for(&self, registry_url: &str) -> &reqwest::Client {
+        if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
+            return self.http_tarball_for(registry_url);
+        }
         let uri_key = crate::config::registry_uri_key_pub(registry_url);
         crate::config::lookup_by_uri_prefix(&self.http_by_uri, &uri_key).unwrap_or(&self.http)
     }
@@ -215,6 +254,9 @@ impl RegistryClient {
         registry_url: &str,
         package_name: &str,
     ) -> &reqwest::Client {
+        if self.h2_flooded.load(std::sync::atomic::Ordering::Relaxed) {
+            return self.http_tarball_for_package(registry_url, package_name);
+        }
         if let Some((prefix, scope, _)) = self
             .config
             .scoped_tls_config_for_package(registry_url, package_name)

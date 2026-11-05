@@ -128,6 +128,7 @@ impl RegistryClient {
             http_tarball_by_uri,
             http_tarball_by_uri_scope,
             token_helper_cache: Mutex::new(BTreeMap::new()),
+            h2_flooded: std::sync::atomic::AtomicBool::new(false),
             auth_token_by_url: Mutex::new(BTreeMap::new()),
             packument_in_flight: Mutex::new(aube_util::collections::FxMap::default()),
             config,

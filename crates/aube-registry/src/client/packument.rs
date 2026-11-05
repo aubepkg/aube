@@ -436,6 +436,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -449,7 +450,10 @@ impl RegistryClient {
                             drop(sf_guard.take());
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
@@ -732,6 +736,7 @@ impl RegistryClient {
                     return Ok(to_cache.history);
                 }
                 Err(err) if !is_last => {
+                    self.fall_back_from_h2_flood(&err);
                     let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                     tracing::warn!(
                         attempt = attempt + 1,
@@ -744,7 +749,10 @@ impl RegistryClient {
                     );
                     tokio::time::sleep(wait).await;
                 }
-                Err(err) => return Err(err),
+                Err(err) => {
+                    self.fall_back_from_h2_flood(&err);
+                    return Err(err);
+                }
             }
         }
         unreachable!("retry loop exited without returning; max_attempts was {max_attempts}")
@@ -893,6 +901,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -906,7 +915,10 @@ impl RegistryClient {
                             drop(sf_guard.take());
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
@@ -1037,6 +1049,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -1049,7 +1062,10 @@ impl RegistryClient {
                                 );
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {
@@ -1262,6 +1278,7 @@ impl RegistryClient {
                             return Ok(packument);
                         }
                         Err(err) if !is_last => {
+                            self.fall_back_from_h2_flood(&err);
                             let wait = self.fetch_policy.backoff_for_attempt(attempt + 1);
                             tracing::warn!(
                                     attempt = attempt + 1,
@@ -1275,7 +1292,10 @@ impl RegistryClient {
                             drop(sf_guard.take());
                             tokio::time::sleep(wait).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            self.fall_back_from_h2_flood(&err);
+                            return Err(err);
+                        }
                     }
                 }
                 Err(err) if !is_last => {

@@ -106,7 +106,10 @@ impl RegistryClient {
             .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
 
         let resp = self
-            .authed(self.http_for(registry_url).post(&url), registry_url)
+            .authed(
+                self.with_h1_fallback_timeout(self.http_for(registry_url).post(&url)),
+                registry_url,
+            )
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .body(body)
@@ -211,7 +214,9 @@ impl RegistryClient {
         }
         let resp = resp.error_for_status()?;
         check_body_cap(&resp, self.fetch_policy.packument_max_bytes, "packument")?;
-        let value: serde_json::Value = resp.json().await?;
+        let value: serde_json::Value = resp.json().await.inspect_err(|err| {
+            self.fall_back_from_h2_flood(err);
+        })?;
         Ok(value)
     }
 

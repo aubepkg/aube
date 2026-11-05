@@ -1720,3 +1720,36 @@ async fn fetch_packument_with_time_requests_full_document() {
         PACKUMENT_FULL_ACCEPT
     );
 }
+
+#[derive(Debug)]
+struct Wrapped(std::io::Error);
+
+impl std::fmt::Display for Wrapped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("error decoding response body")
+    }
+}
+
+impl std::error::Error for Wrapped {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+#[test]
+fn h2_data_frame_flood_switches_metadata_to_http1() {
+    let client = RegistryClient::from_config(NpmConfig::default());
+    let registry = client.config.registry.clone();
+    assert!(std::ptr::eq(client.http_for(&registry), &client.http));
+
+    client.fall_back_from_h2_flood(&Wrapped(std::io::Error::other("unrelated")));
+    assert!(std::ptr::eq(client.http_for(&registry), &client.http));
+
+    client.fall_back_from_h2_flood(&Wrapped(std::io::Error::other(
+        "detected excessive load generating behavior (too_many_data_frames)",
+    )));
+    assert!(std::ptr::eq(
+        client.http_for(&registry),
+        client.http_tarball_for(&registry)
+    ));
+}
