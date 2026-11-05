@@ -567,22 +567,18 @@ pub fn write_with_project_root(
             let deps = pkg.peer_dependencies_with_meta_defaults();
             if deps.is_empty() { None } else { Some(deps) }
         };
-        let peer_meta = if pkg.peer_dependencies_meta.is_empty() {
+        // pnpm drops `optional: false` entries rather than writing them,
+        // and rejects an entry without `optional` as a broken lockfile.
+        let peer_meta: BTreeMap<_, _> = pkg
+            .peer_dependencies_meta
+            .iter()
+            .filter(|(_, v)| v.optional)
+            .map(|(k, _)| (k.clone(), WritablePeerDepMeta { optional: true }))
+            .collect();
+        let peer_meta = if peer_meta.is_empty() {
             None
         } else {
-            Some(
-                pkg.peer_dependencies_meta
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.clone(),
-                            WritablePeerDepMeta {
-                                optional: v.optional,
-                            },
-                        )
-                    })
-                    .collect(),
-            )
+            Some(peer_meta)
         };
         // Always render the path through `path_posix()` so the
         // lockfile uses forward slashes regardless of the host OS —
@@ -1318,11 +1314,8 @@ struct WritableRuntimeTarget {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WritablePeerDepMeta {
-    // pnpm v9 omits `optional: false` entirely; only the truthy form
-    // shows up in real-world lockfiles. Skip the default so we stay
-    // byte-identical for the rare case where a packument explicitly
-    // marks a peer as non-optional.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    // Only optional peers are ever constructed (non-optional entries are
+    // filtered out at the call site), matching pnpm's lockfiles.
     optional: bool,
 }
 

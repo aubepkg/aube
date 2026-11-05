@@ -5898,3 +5898,59 @@ snapshots:
     assert!(!yaml.contains("gitHosted"), "{yaml}");
     parse(&path).expect("rewritten lockfile stays readable");
 }
+
+#[test]
+fn writer_omits_non_optional_peer_dependencies_meta_entries() {
+    let yaml = r#"lockfileVersion: '9.0'
+settings:
+  autoInstallPeers: true
+importers:
+  .:
+    dependencies:
+      host:
+        specifier: ^1.0.0
+        version: 1.0.0
+packages:
+  host@1.0.0:
+    resolution: {integrity: sha512-host}
+    peerDependencies:
+      opt: '*'
+      req: '*'
+    peerDependenciesMeta:
+      opt:
+        optional: true
+snapshots:
+  host@1.0.0: {}
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    std::fs::write(&path, yaml).unwrap();
+    let mut graph = parse(&path).unwrap();
+    graph
+        .packages
+        .get_mut("host@1.0.0")
+        .unwrap()
+        .peer_dependencies_meta
+        .insert("req".to_string(), crate::PeerDepMeta { optional: false });
+
+    let manifest = PackageJson {
+        name: Some("rt".to_string()),
+        version: Some("0.0.0".to_string()),
+        dependencies: [("host".to_string(), "^1.0.0".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let out_path = dir.path().join("out.yaml");
+    write_with_project_root(&out_path, out_path.parent().unwrap(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(&out_path).unwrap();
+
+    assert!(
+        !written.contains("req: {}"),
+        "non-optional meta entry must not be written as `{{}}`; got:\n{written}"
+    );
+    assert!(
+        written.contains("opt:\n        optional: true"),
+        "optional meta entry must be kept; got:\n{written}"
+    );
+}
