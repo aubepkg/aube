@@ -1253,6 +1253,9 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
                     )
                 )
             })?;
+            aube_workspace::selector::set_exclude_workspace_root(
+                cli.no_include_workspace_root || nested.no_include_workspace_root,
+            );
             let nested_filter = compute_effective_filter(&nested);
             match nested.command {
                 Some(Commands::Add(args)) => {

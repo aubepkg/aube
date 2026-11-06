@@ -264,19 +264,33 @@ pub fn select_workspace_packages(
     Ok(selected)
 }
 
-/// Remove the root package that a bare wildcard picked up as a workspace member (a
-/// `packages` glob such as `.` lists it), unless an explicit selector asked for it.
+/// Remove the root package from a selection unless a selector names it directly. The root
+/// can be listed as a member (a `packages` glob such as `.`) or reached through a graph
+/// walk (`...app` when the root depends on `app`); neither counts as asking for it.
 fn drop_unselected_root(
     workspace_root: &Path,
     filter: &EffectiveFilter,
     selected: &mut Vec<SelectedPackage>,
 ) {
-    let explicit = |selectors: &[String]| {
-        selectors
-            .iter()
-            .any(|s| s.as_str() != "*" && !s.starts_with('!'))
+    let Some(root) = selected.iter().find(|pkg| pkg.dir == workspace_root) else {
+        return;
     };
-    if !explicit(&filter.filters) && !explicit(&filter.filter_prods) {
+    let root_pkg = WorkspacePkg {
+        name: root.name.as_deref(),
+        dir: workspace_root,
+        workspace_root,
+    };
+    let names_root = |selectors: &[String], prod: bool| {
+        selectors.iter().any(|raw| {
+            raw != "*"
+                && match prod {
+                    true => Selector::parse_prod(raw),
+                    false => Selector::parse(raw),
+                }
+                .is_ok_and(|selector| !selector.exclude && selector.matches(&root_pkg))
+        })
+    };
+    if !names_root(&filter.filters, false) && !names_root(&filter.filter_prods, true) {
         selected.retain(|pkg| pkg.dir != workspace_root);
     }
 }
@@ -947,7 +961,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("package.json"),
-            r#"{"name":"root","version":"0.0.0","private":true}"#,
+            r#"{"name":"root","version":"0.0.0","private":true,"dependencies":{"app":"1.0.0"}}"#,
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("packages/app")).unwrap();
@@ -968,6 +982,11 @@ mod tests {
         };
 
         assert_eq!(names(&EffectiveFilter::from_filters(["*"])), vec!["app"]);
+        // The root depends on `app`, so `...app` reaches it without naming it.
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["...app"])),
+            vec!["app"]
+        );
         assert_eq!(
             names(&EffectiveFilter::from_filters(["root"])),
             vec!["root"]
