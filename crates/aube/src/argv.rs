@@ -116,6 +116,21 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     // Leading flags may precede the command (`npm --no-audit install`), so find the
     // first non-flag token rather than assuming it sits at `args[1]`.
     let npm_command = npm_command_token(&args);
+    let selects_workspaces = matches!(
+        npm_command,
+        Some(
+            "run"
+                | "run-script"
+                | "rum"
+                | "urn"
+                | "test"
+                | "t"
+                | "start"
+                | "stop"
+                | "restart"
+                | "exec"
+        )
+    );
     if matches!(
         npm_command,
         Some("i" | "install" | "add" | "ci" | "remove" | "rm" | "uninstall" | "un")
@@ -123,7 +138,9 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         drop_npm_audit_fund_flags(&mut args);
     }
     let mut args = rewrite_npm_command(args);
-    select_npm_workspaces(&mut args);
+    if selects_workspaces {
+        select_npm_workspaces(&mut args);
+    }
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
         // installs, which is what `auto-install-peers=false` means here. Emit it as a
@@ -212,15 +229,9 @@ fn drop_npm_audit_fund_flags(args: &mut Vec<OsString>) {
 /// `npm run build --workspaces` re-runs itself forever. `install` and `add` keep their own
 /// `--workspace` flag. Tokens after `--` belong to the script and are never touched.
 fn select_npm_workspaces(args: &mut Vec<OsString>) {
-    if !matches!(
-        args.get(1).and_then(|s| s.to_str()),
-        Some("run" | "test" | "start" | "stop" | "restart" | "exec")
-    ) {
-        return;
-    }
     let mut filters = Vec::new();
     let mut recursive = None;
-    let mut i = 2;
+    let mut i = 1;
     while i < args.len() {
         let Some(arg) = args[i].to_str().map(str::to_owned) else {
             i += 1;
@@ -263,12 +274,33 @@ fn select_npm_workspaces(args: &mut Vec<OsString>) {
     }
     let mut lifted: Vec<OsString> = filters
         .into_iter()
-        .flat_map(|f| [OsString::from("--filter"), OsString::from(f)])
+        .flat_map(|f| {
+            [
+                OsString::from("--filter"),
+                OsString::from(npm_workspace_selector(&f)),
+            ]
+        })
         .collect();
     if recursive == Some(true) {
         lifted.push(OsString::from("-r"));
     }
     args.splice(1..1, lifted);
+}
+
+/// npm's `--workspace` takes a package name or a directory. aube's `--filter` reads a bare
+/// value as a name, so a directory like `packages/child` needs a leading `./`. An
+/// unscoped name never contains `/`, and a scoped one starts with `@`.
+fn npm_workspace_selector(value: &str) -> String {
+    let is_path = value.contains('/')
+        && !value.starts_with('@')
+        && !value.starts_with("./")
+        && !value.starts_with("../")
+        && !value.starts_with('/');
+    if is_path {
+        format!("./{value}")
+    } else {
+        value.to_owned()
+    }
 }
 
 /// Remove npm's `--legacy-peer-deps` /`--legacy-peer-deps=<bool>` /
@@ -358,7 +390,7 @@ fn rewrite_npm_command(mut args: Vec<OsString>) -> Vec<OsString> {
         "ci" => replace_arg(&mut args, 1, "ci"),
         "exec" => replace_arg(&mut args, 1, "exec"),
         "remove" | "rm" | "uninstall" | "un" => replace_arg(&mut args, 1, "remove"),
-        "run" => replace_arg(&mut args, 1, "run"),
+        "run" | "run-script" | "rum" | "urn" => replace_arg(&mut args, 1, "run"),
         "restart" => replace_arg(&mut args, 1, "restart"),
         "start" => replace_arg(&mut args, 1, "start"),
         "stop" => replace_arg(&mut args, 1, "stop"),

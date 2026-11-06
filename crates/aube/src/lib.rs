@@ -1971,6 +1971,22 @@ mod multicall_tests {
             ),
             (&["npm", "test", "--workspaces=false"], &["aube", "test"]),
             (
+                &["npm", "run-script", "build", "--workspaces"],
+                &["aube", "-r", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "run", "build", "--workspaces"],
+                &["aube", "-r", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "-w", "@t/c", "run", "build"],
+                &["aube", "--filter", "@t/c", "run", "build"],
+            ),
+            (
+                &["npm", "run", "build", "-w", "packages/child"],
+                &["aube", "--filter", "./packages/child", "run", "build"],
+            ),
+            (
                 &["npm", "run", "echo", "--", "--workspaces", "-w"],
                 &["aube", "run", "echo", "--", "--workspaces", "-w"],
             ),
