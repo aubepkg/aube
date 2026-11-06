@@ -16858,6 +16858,19 @@
         "global": true
       },
       {
+        "name": "no-include-workspace-root",
+        "usage": "--no-include-workspace-root",
+        "help": "Leave the workspace root out of recursive workspace operations.",
+        "help_long": "Leave the workspace root out of recursive workspace operations.\n\nOverrides `--include-workspace-root` and `includeWorkspaceRoot`. The npm shim adds it for `npm --workspaces`, which never selects the root package.",
+        "help_first_line": "Leave the workspace root out of recursive workspace operations.",
+        "short": [],
+        "long": [
+          "no-include-workspace-root"
+        ],
+        "hide": true,
+        "global": true
+      },
+      {
         "name": "loglevel",
         "usage": "--loglevel <LEVEL>",
         "help": "Set the log level. Logs at or above this level are shown.",

@@ -20,6 +20,16 @@ use aube_manifest::{PackageJson, WorkspaceConfig};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static EXCLUDE_WORKSPACE_ROOT: AtomicBool = AtomicBool::new(false);
+
+/// Leave the workspace root out of every selection that did not pick it explicitly, even
+/// when `includeWorkspaceRoot` is set in the workspace config. This is the effect of
+/// `--no-include-workspace-root`; it overrides `--include-workspace-root` and the config.
+pub fn set_exclude_workspace_root(exclude: bool) {
+    EXCLUDE_WORKSPACE_ROOT.store(exclude, Ordering::Relaxed);
+}
 
 /// The effective `--filter` / `--filter-prod` input for a single command
 /// invocation. Commands receive this after `compute_effective_filter` in
@@ -377,6 +387,9 @@ fn include_workspace_root(
     filter: &EffectiveFilter,
     selected: &mut Vec<SelectedPackage>,
 ) -> Result<(), SelectError> {
+    if EXCLUDE_WORKSPACE_ROOT.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let include_workspace_root = filter.include_workspace_root
         || WorkspaceConfig::load(workspace_root)
             .map_err(SelectError::WorkspaceConfig)?

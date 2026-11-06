@@ -165,6 +165,13 @@ pub(crate) struct Cli {
     #[usage(long, global, hide)]
     include_workspace_root: bool,
 
+    /// Leave the workspace root out of recursive workspace operations.
+    ///
+    /// Overrides `--include-workspace-root` and `includeWorkspaceRoot`. The npm shim adds it
+    /// for `npm --workspaces`, which never selects the root package.
+    #[usage(long, global, hide)]
+    no_include_workspace_root: bool,
+
     /// Set the log level. Logs at or above this level are shown.
     #[usage(long, global, value_name = "LEVEL", value_enum)]
     loglevel: Option<LogLevel>,
@@ -1077,6 +1084,7 @@ async fn async_main(cli: Cli, invoked_as_aubr: bool) -> miette::Result<Option<i3
 
     // `--recursive` / `-r` is sugar for `--filter=*`. When a filter is
     // already set, `-r` is a no-op — the explicit scope wins.
+    aube_workspace::selector::set_exclude_workspace_root(cli.no_include_workspace_root);
     let effective_filter = compute_effective_filter(&cli);
 
     commands::set_global_output_flags(commands::GlobalOutputFlags {
@@ -1967,12 +1975,26 @@ mod multicall_tests {
             ),
             (
                 &["npm", "run", "build", "--workspaces", "--if-present"],
-                &["aube", "-r", "run", "build", "--if-present"],
+                &[
+                    "aube",
+                    "-r",
+                    "--no-include-workspace-root",
+                    "run",
+                    "build",
+                    "--if-present",
+                ],
             ),
             (&["npm", "test", "--workspaces=false"], &["aube", "test"]),
             (
                 &["npm", "--silent", "run", "build", "--workspaces"],
-                &["aube", "-r", "--silent", "run", "build"],
+                &[
+                    "aube",
+                    "-r",
+                    "--no-include-workspace-root",
+                    "--silent",
+                    "run",
+                    "build",
+                ],
             ),
             (
                 &["npm", "exec", "--workspace", "@t/c", "--", "tsc"],
@@ -1980,11 +2002,19 @@ mod multicall_tests {
             ),
             (
                 &["npm", "run-script", "build", "--workspaces"],
-                &["aube", "-r", "run", "build"],
+                &["aube", "-r", "--no-include-workspace-root", "run", "build"],
             ),
             (
                 &["npm", "--prefix", ".", "run", "build", "--workspaces"],
-                &["aube", "-r", "--prefix", ".", "run", "build"],
+                &[
+                    "aube",
+                    "-r",
+                    "--no-include-workspace-root",
+                    "--prefix",
+                    ".",
+                    "run",
+                    "build",
+                ],
             ),
             (
                 &["npm", "--prefix", ".", "rum", "build", "-w", "app"],

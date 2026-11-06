@@ -190,6 +190,13 @@ Include the workspace root in recursive workspace operations.
 Parsed for pnpm compatibility.
 """#
 }
+flag --no-include-workspace-root help="Leave the workspace root out of recursive workspace operations." global=#true hide=#true {
+    long_help #"""
+Leave the workspace root out of recursive workspace operations.
+
+Overrides `--include-workspace-root` and `includeWorkspaceRoot`. The npm shim adds it for `npm --workspaces`, which never selects the root package.
+"""#
+}
 flag --loglevel help="Set the log level. Logs at or above this level are shown." global=#true {
     arg <LEVEL> {
         choices {
