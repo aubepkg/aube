@@ -160,14 +160,9 @@ aube --version
 
 ## Shell completions
 
-Completions are powered by [`usage`](https://usage.jdx.dev), so install
-that first:
-
-```sh
-mise use -g usage
-```
-
-Install completion files for your shell:
+Completion scripts are short and ask the installed `aube` for candidates each time
+you press Tab, so they follow the version you have installed and need no other
+tool. Install completion files for your shell:
 
 ```sh
 aube completion bash --install
@@ -178,8 +173,8 @@ aube completion fish --install
 Run the command for the shell you use. It installs completion files for `aube`,
 `aubr`, and `aubx` and prints any shell-specific setup still needed. It does not
 edit your shell startup file. Omit `--install` to print the completion script
-instead. See [`aube completion`](/cli/completion) for PowerShell and per-binary
-options.
+instead. Bash, Zsh, Fish, PowerShell, Elvish, and Nushell are supported. See
+[`aube completion`](/cli/completion) for per-binary options.
 
 `aube run <TAB>` and `aubr <TAB>` complete the scripts declared in the
 `package.json` nearest your current directory, with each script's command
