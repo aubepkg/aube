@@ -280,6 +280,65 @@ _setup_no_match_workspace() {
 	assert_file_exists project/project-ran
 }
 
+@test "includeWorkspaceRoot=true: --no-include-workspace-root leaves the root out of a recursive run" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "root",
+		  "version": "0.0.0",
+		  "private": true,
+		  "scripts": { "test": "node -e \"require('fs').writeFileSync('root-ran','')\"" }
+		}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - "packages/*"
+		includeWorkspaceRoot: true
+	EOF
+	mkdir -p packages/project
+	cat >packages/project/package.json <<-'EOF'
+		{
+		  "name": "project",
+		  "version": "1.0.0",
+		  "scripts": { "test": "node -e \"require('fs').writeFileSync('project-ran','')\"" }
+		}
+	EOF
+
+	run aube -r --no-include-workspace-root run test --no-install
+	assert_success
+	assert_file_not_exists root-ran
+	assert_file_exists packages/project/project-ran
+}
+
+@test "npm --workspaces through the shim skips the root when includeWorkspaceRoot=true" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "root",
+		  "version": "0.0.0",
+		  "private": true,
+		  "scripts": { "build": "node -e \"require('fs').writeFileSync('root-ran','')\"" }
+		}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - "packages/*"
+		includeWorkspaceRoot: true
+	EOF
+	mkdir -p packages/project
+	cat >packages/project/package.json <<-'EOF'
+		{
+		  "name": "project",
+		  "version": "1.0.0",
+		  "scripts": { "build": "node -e \"require('fs').writeFileSync('project-ran','')\"" }
+		}
+	EOF
+
+	ln -s "$(command -v aube)" npm
+	run ./npm run build --workspaces --no-install
+	assert_success
+	assert_file_not_exists root-ran
+	assert_file_exists packages/project/project-ran
+}
+
 @test "aube list --filter=<no-match> --workspace-root: can return the root only" {
 	# Regression guard for callers that use the lower-level workspace
 	# selector directly. Root inclusion must happen before empty-match

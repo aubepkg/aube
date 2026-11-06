@@ -20,6 +20,16 @@ use aube_manifest::{PackageJson, WorkspaceConfig};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static EXCLUDE_WORKSPACE_ROOT: AtomicBool = AtomicBool::new(false);
+
+/// Leave the workspace root out of every selection that did not pick it explicitly, even
+/// when `includeWorkspaceRoot` is set in the workspace config. This is the effect of
+/// `--no-include-workspace-root`; it overrides `--include-workspace-root` and the config.
+pub fn set_exclude_workspace_root(exclude: bool) {
+    EXCLUDE_WORKSPACE_ROOT.store(exclude, Ordering::Relaxed);
+}
 
 /// The effective `--filter` / `--filter-prod` input for a single command
 /// invocation. Commands receive this after `compute_effective_filter` in
@@ -247,6 +257,56 @@ pub fn select_workspace_packages(
     workspace_pkgs: &[PathBuf],
     filter: &EffectiveFilter,
 ) -> Result<Vec<SelectedPackage>, SelectError> {
+    let mut selected = select_workspace_packages_inner(workspace_root, workspace_pkgs, filter)?;
+    if EXCLUDE_WORKSPACE_ROOT.load(Ordering::Relaxed) {
+        drop_unselected_root(workspace_root, filter, &mut selected);
+    }
+    Ok(selected)
+}
+
+/// Remove the root package from a selection unless a selector names it directly. The root
+/// can be listed as a member (a `packages` glob such as `.`) or reached through a graph
+/// walk (`...app` when the root depends on `app`); neither counts as asking for it.
+fn drop_unselected_root(
+    workspace_root: &Path,
+    filter: &EffectiveFilter,
+    selected: &mut Vec<SelectedPackage>,
+) {
+    let Some(root) = selected.iter().find(|pkg| pkg.dir == workspace_root) else {
+        return;
+    };
+    let root_pkg = WorkspacePkg {
+        name: root.name.as_deref(),
+        dir: workspace_root,
+        workspace_root,
+    };
+    let names_root = |selectors: &[String], prod: bool| {
+        selectors.iter().any(|raw| {
+            match prod {
+                true => Selector::parse_prod(raw),
+                false => Selector::parse(raw),
+            }
+            .is_ok_and(|selector| {
+                // A catch-all (`*`, `*...`) names no package in particular, and a selector
+                // that leaves out its own seed (`root^...`) does not pick the root itself.
+                let catch_all = matches!(&selector.base, BaseSelector::NameGlob(p) if p == "*");
+                !selector.exclude
+                    && !selector.exclude_self
+                    && !catch_all
+                    && selector.matches(&root_pkg)
+            })
+        })
+    };
+    if !names_root(&filter.filters, false) && !names_root(&filter.filter_prods, true) {
+        selected.retain(|pkg| pkg.dir != workspace_root);
+    }
+}
+
+fn select_workspace_packages_inner(
+    workspace_root: &Path,
+    workspace_pkgs: &[PathBuf],
+    filter: &EffectiveFilter,
+) -> Result<Vec<SelectedPackage>, SelectError> {
     let root_is_member = workspace_pkgs.iter().any(|dir| dir == workspace_root);
     let explicit = |selectors: &[String], keep_exclusions: bool| -> Vec<String> {
         selectors
@@ -377,6 +437,9 @@ fn include_workspace_root(
     filter: &EffectiveFilter,
     selected: &mut Vec<SelectedPackage>,
 ) -> Result<(), SelectError> {
+    if EXCLUDE_WORKSPACE_ROOT.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let include_workspace_root = filter.include_workspace_root
         || WorkspaceConfig::load(workspace_root)
             .map_err(SelectError::WorkspaceConfig)?
@@ -898,6 +961,48 @@ mod tests {
             .filter_map(|pkg| pkg.name.as_deref())
             .collect();
         assert_eq!(names, vec!["app", "root"]);
+    }
+
+    #[test]
+    fn excluded_root_is_dropped_from_a_wildcard_but_kept_for_an_explicit_selector() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"root","version":"0.0.0","private":true,"dependencies":{"app":"1.0.0"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/app")).unwrap();
+        std::fs::write(
+            dir.path().join("packages/app/package.json"),
+            r#"{"name":"app","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let members = [dir.path().to_path_buf(), dir.path().join("packages/app")];
+        let names = |filter: &EffectiveFilter| {
+            let mut selected =
+                select_workspace_packages_inner(dir.path(), &members, filter).unwrap();
+            drop_unselected_root(dir.path(), filter, &mut selected);
+            selected
+                .iter()
+                .filter_map(|pkg| pkg.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(names(&EffectiveFilter::from_filters(["*"])), vec!["app"]);
+        assert_eq!(names(&EffectiveFilter::from_filters(["*..."])), vec!["app"]);
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["*", "root^..."])),
+            vec!["app"]
+        );
+        // The root depends on `app`, so `...app` reaches it without naming it.
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["...app"])),
+            vec!["app"]
+        );
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["root"])),
+            vec!["root"]
+        );
     }
 
     #[test]

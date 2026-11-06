@@ -296,6 +296,15 @@ fn select_npm_workspaces(args: &mut Vec<OsString>) {
         .collect();
     if recursive == Some(true) {
         lifted.push(OsString::from("-r"));
+        // npm's `--workspaces` never selects the root package, which would otherwise
+        // run again when `includeWorkspaceRoot` is set and recurse through the root script.
+        let before_separator = args.iter().position(|a| a == "--").unwrap_or(args.len());
+        if !args[..before_separator]
+            .iter()
+            .any(|a| a == "--include-workspace-root" || a == "--include-workspace-root=true")
+        {
+            lifted.push(OsString::from("--no-include-workspace-root"));
+        }
     }
     args.splice(1..1, lifted);
 }
