@@ -123,6 +123,7 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
         drop_npm_audit_fund_flags(&mut args);
     }
     let mut args = rewrite_npm_command(args);
+    select_npm_workspaces(&mut args);
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
         // installs, which is what `auto-install-peers=false` means here. Emit it as a
@@ -203,6 +204,71 @@ fn drop_npm_audit_fund_flags(args: &mut Vec<OsString>) {
         };
         args.drain(i..i + count);
     }
+}
+
+/// Translate npm's workspace selection on script-running commands into aube's global
+/// `--filter` / `-r`, placed before the subcommand. Left alone, `--workspace` and
+/// `--workspaces` reach the root script as arguments, so a root script such as
+/// `npm run build --workspaces` re-runs itself forever. `install` and `add` keep their own
+/// `--workspace` flag. Tokens after `--` belong to the script and are never touched.
+fn select_npm_workspaces(args: &mut Vec<OsString>) {
+    if !matches!(
+        args.get(1).and_then(|s| s.to_str()),
+        Some("run" | "test" | "start" | "stop" | "restart" | "exec")
+    ) {
+        return;
+    }
+    let mut filters = Vec::new();
+    let mut recursive = None;
+    let mut i = 2;
+    while i < args.len() {
+        let Some(arg) = args[i].to_str().map(str::to_owned) else {
+            i += 1;
+            continue;
+        };
+        if arg == "--" {
+            break;
+        }
+        let consumed = if let Some(value) = arg.strip_prefix("--workspace=") {
+            filters.push(value.to_owned());
+            1
+        } else if let Some(value) = arg
+            .strip_prefix("-w")
+            .filter(|v| !v.is_empty() && !v.starts_with('-'))
+        {
+            filters.push(value.to_owned());
+            1
+        } else if arg == "--workspace" || arg == "-w" {
+            match args.get(i + 1).and_then(|s| s.to_str()) {
+                Some(value) if !value.starts_with('-') => {
+                    filters.push(value.to_owned());
+                    2
+                }
+                _ => 0,
+            }
+        } else if matches!(arg.as_str(), "--workspaces" | "--workspaces=true") {
+            recursive = Some(true);
+            1
+        } else if arg == "--workspaces=false" {
+            recursive = Some(false);
+            1
+        } else {
+            0
+        };
+        if consumed == 0 {
+            i += 1;
+        } else {
+            args.drain(i..i + consumed);
+        }
+    }
+    let mut lifted: Vec<OsString> = filters
+        .into_iter()
+        .flat_map(|f| [OsString::from("--filter"), OsString::from(f)])
+        .collect();
+    if recursive == Some(true) {
+        lifted.push(OsString::from("-r"));
+    }
+    args.splice(1..1, lifted);
 }
 
 /// Remove npm's `--legacy-peer-deps` /`--legacy-peer-deps=<bool>` /
