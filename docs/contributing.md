@@ -20,8 +20,48 @@ mise run build
 ```
 
 Use the Rust toolchain declared by the project and the tools pinned in
-`mise.toml`. `mise run` activates the Cargo build-cache wrapper. If you run
-Cargo directly, activate mise in your shell first.
+`mise.toml`. `mise run` activates the Cargo build-cache wrapper. To run a
+standalone Cargo command with the pinned Blaze setup, use
+`sh scripts/setup-blaze.sh cargo <command>`; merely activating mise does not
+provision Blaze for a fresh checkout.
+mbx shares build results between worktrees and collects inactive managed
+`target/` directories when their age or size limits are reached.
+
+`mise run build` and `mise run test` automatically provision verified
+[Blaze](https://github.com/indexable-inc/blaze) and mbx 1.28.0 prebuilts,
+select their matching `nightly-2026-10-25` compiler, and activate the Cargo
+shim. `scripts/build-tools.ref` pins the shared installer and archive checksums.
+The tools are built once in the [shared release workflow](https://github.com/jdalton/blaze/actions/workflows/release.yaml),
+not during each project build. Setup fails if a matching artifact is missing.
+
+Linux GNU x64/ARM64 and Apple Silicon macOS artifacts are available for local
+development. The CI build uses Blaze on Linux and plain Cargo on macOS. Windows
+uses plain Cargo locally and in CI. Blaze is experimental; full-project checks
+remain required even when a small edited-program probe passes.
+
+The Linux build and test jobs reuse mbx objects. The MSRV check
+clears the Blaze compiler selection so it still checks the minimum supported
+Rust version. Release and custom-profile builds continue through Cargo and
+mbx. To run another development command with the required tools, use
+`sh scripts/setup-blaze.sh cargo check`.
+
+For independent validation with the normal Rust compiler and mbx caching:
+
+On macOS and Linux:
+
+```sh
+MBX_BLAZE=0 mise exec -- cargo test
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:MBX_BLAZE = '0'
+mise exec -- cargo test
+```
+
+This explicit validation command does not change the required Blaze setup
+used by the development build and test tasks.
 
 The debug binary is `target/debug/aube`. BATS tests use that binary; release
 builds are for profiling and benchmarks.
@@ -35,14 +75,17 @@ mise run test:bats test/install.bats
 ```
 
 `mise run lint` runs the repository's hk checks, including formatting and
-Clippy. `mise run lint-fix` applies supported fixes. The equivalent core Cargo
-checks are:
+Clippy. `mise run lint-fix` applies supported fixes. On Blaze-supported hosts,
+prepare Blaze before running these Cargo commands directly:
 
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+sh scripts/setup-blaze.sh cargo test
+sh scripts/setup-blaze.sh cargo clippy --all-targets -- -D warnings
+sh scripts/setup-blaze.sh cargo fmt --check
 ```
+
+On Windows, use `MBX_BLAZE=0 mise exec -- cargo <command>` in PowerShell after
+setting `$env:MBX_BLAZE = '0'`, as shown above.
 
 BATS tests use the project's mise-managed Node and `rush` for parallel runs.
 Use `mise run test:bats` for the full shell suite. Supply specific `.bats` files

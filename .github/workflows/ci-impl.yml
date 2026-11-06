@@ -43,10 +43,18 @@ jobs:
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Activate prebuilt Rust build tools
+        if: runner.os == 'Linux'
+        run: sh scripts/setup-blaze.sh --github-env
+      - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
+        if: runner.os == 'Linux'
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: mise run build
+          github-cache-mode: objects
+          cache-generation: blaze-nightly-2026-10-25
+      - if: runner.os == 'Linux'
+        run: mise run build
+      - if: runner.os == 'macOS'
+        run: cargo build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aube-${{ matrix.os }}
@@ -72,9 +80,12 @@ jobs:
       - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Activate prebuilt Rust build tools
+        run: sh scripts/setup-blaze.sh --github-env
+      - uses: jdx/mr-boxington-action@88acf2bb50552c7c508cbac13e5f8c576b95b1de
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          github-cache-mode: objects
+          cache-generation: blaze-nightly-2026-10-25
       - run: node benchmarks/validate-results.mts
       - run: mise run test
       # online jactionlint checks (impostor commits, known-vulnerable actions, ...) run in CI only
@@ -84,7 +95,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - run: cargo-machete
       - run: mise x -- cargo-deny --locked check advisories bans licenses sources
-      - run: mise exec -- cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
+      - run: mise exec -- env -u RUSTC -u RUSTUP_TOOLCHAIN MBX_BLAZE=0 cargo msrv --manifest-path crates/aube/Cargo.toml verify --output-format minimal
       - run: mise run render
       - name: assert render produces no diff
         run: |
