@@ -1987,6 +1987,18 @@ mod multicall_tests {
                 &["aube", "-r", "--prefix", ".", "run", "build"],
             ),
             (
+                &["npm", "--prefix", ".", "rum", "build", "-w", "app"],
+                &["aube", "--filter", "app", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "urn", "build", "-w", "app"],
+                &["aube", "--filter", "app", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "run-script", "build", "-w", "app"],
+                &["aube", "--filter", "app", "--prefix", ".", "run", "build"],
+            ),
+            (
                 &["npm", "-w", "@t/c", "run", "build"],
                 &["aube", "--filter", "@t/c", "run", "build"],
             ),

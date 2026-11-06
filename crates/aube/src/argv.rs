@@ -137,8 +137,16 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     ) {
         drop_npm_audit_fund_flags(&mut args);
     }
+    let command_position = npm_command_position(&args);
     let mut args = rewrite_npm_command(args);
     if selects_workspaces {
+        // `rewrite_npm_command` only renames a command that sits at `args[1]`; rename
+        // `run-script` and its aliases where leading options pushed them further along.
+        if let Some(at) = command_position.filter(|at| *at > 1)
+            && matches!(args[at].to_str(), Some("run-script" | "rum" | "urn"))
+        {
+            args[at] = OsString::from("run");
+        }
         select_npm_workspaces(&mut args);
     }
     if let Some(legacy) = legacy_peer_deps {
@@ -165,9 +173,14 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 /// The npm subcommand: the first token that is neither a flag nor the value of a
 /// value-taking flag such as `--prefix ci`. Stops at `--`.
 fn npm_command_token(args: &[OsString]) -> Option<&str> {
+    npm_command_position(args).and_then(|i| args[i].to_str())
+}
+
+/// Index of the token `npm_command_token` returns.
+fn npm_command_position(args: &[OsString]) -> Option<usize> {
     let mut skip_value = false;
     let mut skip_bool = false;
-    for arg in args.iter().skip(1) {
+    for (i, arg) in args.iter().enumerate().skip(1) {
         let s = arg.to_str()?;
         if s == "--" {
             return None;
@@ -184,7 +197,7 @@ fn npm_command_token(args: &[OsString]) -> Option<&str> {
         } else if s.starts_with('-') {
             skip_value = matches!(s, "-C" | "-F" | "-w");
         } else {
-            return Some(s);
+            return Some(i);
         }
     }
     None
