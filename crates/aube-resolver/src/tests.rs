@@ -4374,6 +4374,104 @@ async fn lockfile_reuse_preserves_transitive_optional_edges() {
 }
 
 #[tokio::test]
+async fn lockfile_reuse_recomputes_optional_peer_edges() {
+    // pnpm/aube snapshots include peer edges but do not say whether the
+    // same name was also declared in dependencies or optionalDependencies.
+    for format in ["memory", "pnpm", "npm"] {
+        for provider in ["removed", "direct", "transitive", "dependency", "optional"] {
+            let client = Arc::new(aube_registry::client::RegistryClient::new(
+                "http://127.0.0.1:0",
+            ));
+            let mut resolver = Resolver::new(client);
+            let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+            let meta = host.versions.get_mut("1.0.0").unwrap();
+            meta.peer_dependencies.insert("peer".into(), "^1".into());
+            meta.peer_dependencies
+                .insert("required".into(), "^1".into());
+            meta.peer_dependencies_meta
+                .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+            if provider == "dependency" {
+                meta.dependencies.insert("peer".into(), "^1".into());
+            } else if provider == "optional" {
+                meta.optional_dependencies
+                    .insert("peer".into(), "^1".into());
+            }
+            let mut peer = make_packument("peer", &["1.0.0"], "1.0.0");
+            peer.versions
+                .get_mut("1.0.0")
+                .unwrap()
+                .dependencies
+                .insert("child".into(), "^1".into());
+            let mut holder = make_packument("holder", &["1.0.0"], "1.0.0");
+            holder
+                .versions
+                .get_mut("1.0.0")
+                .unwrap()
+                .dependencies
+                .insert("peer".into(), "^1".into());
+            for packument in [
+                host.clone(),
+                peer,
+                holder,
+                make_packument("child", &["1.0.0"], "1.0.0"),
+                make_packument("required", &["1.0.0"], "1.0.0"),
+            ] {
+                resolver
+                    .cache
+                    .insert(packument.name.clone(), packument.into());
+            }
+            let mut manifest = PackageJson::default();
+            manifest.dependencies.insert("host".into(), "^1".into());
+            manifest.dependencies.insert("peer".into(), "^1".into());
+            if provider == "transitive" {
+                manifest.dependencies.insert("holder".into(), "^1".into());
+            }
+            let initial = resolver.resolve(&manifest, None).await.unwrap();
+            assert!(graph_has_package(&initial, "peer", "1.0.0"));
+
+            let dir = tempfile::tempdir().unwrap();
+            let existing = match format {
+                "pnpm" => {
+                    let path = dir.path().join("pnpm-lock.yaml");
+                    aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+                    aube_lockfile::pnpm::parse(&path).unwrap()
+                }
+                "npm" => {
+                    let path = dir.path().join("package-lock.json");
+                    aube_lockfile::npm::write(&path, &initial, &manifest).unwrap();
+                    aube_lockfile::npm::parse(&path).unwrap()
+                }
+                _ => initial,
+            };
+            if provider != "direct" {
+                manifest.dependencies.remove("peer");
+            }
+            // Metadata hydration must still prefer the locked host version.
+            let mut newer = host.versions["1.0.0"].clone();
+            newer.version = "1.1.0".into();
+            host.versions.insert("1.1.0".into(), newer);
+            host.dist_tags.insert("latest".into(), "1.1.0".into());
+            resolver.cache.insert("host".into(), host.into());
+            let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+            let kept = provider != "removed";
+            for name in ["peer", "child"] {
+                assert_eq!(
+                    graph_has_package(&graph, name, "1.0.0"),
+                    kept,
+                    "{format}: {provider}: unexpected retention of {name}"
+                );
+            }
+            assert!(graph_has_package(&graph, "host", "1.0.0"));
+            assert!(!graph_has_package(&graph, "host", "1.1.0"));
+            assert!(graph_has_package(&graph, "required", "1.0.0"));
+            let host = graph.packages.values().find(|p| p.name == "host").unwrap();
+            assert_eq!(host.dependencies.contains_key("peer"), kept);
+            assert_eq!(host.dep_path.contains("(peer@"), kept);
+        }
+    }
+}
+
+#[tokio::test]
 async fn lockfile_reuse_keeps_required_peer_missing_from_locked_edges() {
     let client = Arc::new(aube_registry::client::RegistryClient::new(
         "http://127.0.0.1:0",

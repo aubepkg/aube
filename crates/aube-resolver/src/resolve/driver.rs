@@ -2249,6 +2249,22 @@ impl<'a> ResolveDriver<'a> {
             }
             return true;
         }
+        // pnpm/aube snapshots do not distinguish a resolved optional peer
+        // from a dependency with the same name. Refresh ambiguous metadata
+        // through the normal fetch path (which still prefers the locked
+        // version) before deciding which edges should keep packages alive.
+        if !locked_pkg.declared_dependencies_known()
+            && locked_pkg
+                .peer_dependencies_meta
+                .iter()
+                .any(|(name, meta)| {
+                    meta.optional
+                        && locked_pkg.dependencies.contains_key(name)
+                        && !locked_pkg.declared_dependencies.contains_key(name)
+                })
+        {
+            return false;
+        }
         let version = locked_pkg.version.clone();
         let dep_path = dep_path_for(&task.name, &version);
 
@@ -2379,6 +2395,17 @@ impl<'a> ResolveDriver<'a> {
             child_ancestors.push((task.name.clone(), version.clone()));
             let child_ancestors: Arc<[(String, String)]> = child_ancestors.into();
             for (dep_name, dep_version) in &locked_pkg.dependencies {
+                // A previously resolved optional peer is not a dependency
+                // declaration. Let the peer pass bind it again only if a
+                // surviving root or real dependency still provides it.
+                if locked_pkg
+                    .peer_dependencies_meta
+                    .get(dep_name)
+                    .is_some_and(|meta| meta.optional)
+                    && !locked_pkg.declared_dependencies.contains_key(dep_name)
+                {
+                    continue;
+                }
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);
                 let mut canonical_version =
