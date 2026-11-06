@@ -563,6 +563,20 @@ impl<'a> ResolveDriver<'a> {
             return Ok(());
         }
 
+        // A matching lock entry only falls through when its dependency
+        // declarations need metadata. Require that exact version from the
+        // fetch path so a compact cache or capped primer cannot satisfy the
+        // request with other releases and accidentally upgrade the package.
+        let locked_metadata_version = self
+            .locked_index
+            .find_satisfying(
+                &task.name,
+                &task.range,
+                task.registry_name(),
+                &self.resolver.vulnerable_ranges,
+            )
+            .map(|pkg| pkg.version.clone());
+
         // Packument not in cache. Spawn its fetch if one
         // isn't already running, then wait for packument
         // fetches to land until this task's packument is
@@ -583,11 +597,13 @@ impl<'a> ResolveDriver<'a> {
         let _diag_task_wait =
             aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "task_wait_packument")
                 .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&fetch_name)));
-        let exact_optional_version = (self.needs_time
-            && task.dep_type == DepType::Optional
-            && node_semver::Version::parse(&task.range).is_ok())
-        .then_some(task.range.as_str());
-        let fetch_key = exact_optional_version.map_or_else(
+        let exact_fetch_version = locked_metadata_version.as_deref().or_else(|| {
+            (self.needs_time
+                && task.dep_type == DepType::Optional
+                && node_semver::Version::parse(&task.range).is_ok())
+            .then_some(task.range.as_str())
+        });
+        let fetch_key = exact_fetch_version.map_or_else(
             || FetchKey::Full(fetch_name.clone()),
             |version| FetchKey::Exact(fetch_name.clone(), version.to_string()),
         );
@@ -595,15 +611,15 @@ impl<'a> ResolveDriver<'a> {
         // failure proves the package is reachable and leaves a trust-history
         // marker requiring authoritative full metadata. Discard the stale
         // prefetch failure so this range task can perform that refresh.
-        if exact_optional_version.is_none() && self.trust_histories.contains_key(&fetch_name) {
+        if exact_fetch_version.is_none() && self.trust_histories.contains_key(&fetch_name) {
             self.failed_fetches.remove(&fetch_key);
         }
-        while !self.cache_satisfies(&fetch_name, exact_optional_version)
+        while !self.cache_satisfies(&fetch_name, exact_fetch_version)
             && (!self.failed_fetches.contains_key(&fetch_key)
-                || (exact_optional_version.is_none()
+                || (exact_fetch_version.is_none()
                     && self.fetcher.has_active_exact_fetch(&fetch_name)))
         {
-            if let Some(version) = exact_optional_version {
+            if let Some(version) = exact_fetch_version {
                 self.ensure_exact_optional_fetch(&fetch_name, version);
             } else {
                 self.ensure_fetch(&fetch_name);
@@ -616,6 +632,28 @@ impl<'a> ResolveDriver<'a> {
                     }
                     if source == super::fetch::FetchSource::Primer {
                         self.fetcher.note_primer_seeded(name.clone());
+                    }
+                    if source == super::fetch::FetchSource::Disk
+                        && name == fetch_name
+                        && let Some(version) = locked_metadata_version.as_deref()
+                        && let FetchKey::Exact(_, fetched_version) = &key
+                        && fetched_version == version
+                        && let Some(metadata) = packument.versions.get(version)
+                    {
+                        // The lock already selects this release. Its cached
+                        // declarations can hydrate that entry without letting
+                        // an older disk inventory replace newer in-memory
+                        // versions or trigger an unnecessary live refresh.
+                        let metadata = metadata
+                            .metadata()
+                            .map_err(|error| Error::Registry(name.clone(), error.to_string()))?
+                            .clone();
+                        let metadata = self.prepare_dependency_metadata(metadata).await?;
+                        self.refreshed_dependency_metadata
+                            .insert((name, version.to_string()), metadata);
+                        self.failed_fetches.remove(&fetch_key);
+                        self.packument_fetch_count += 1;
+                        break;
                     }
                     let cached_exact_version = match &key {
                         FetchKey::Exact(_, version)
@@ -658,7 +696,7 @@ impl<'a> ResolveDriver<'a> {
         // A different request shape may have populated this task's data while
         // its own request failed (for example, a full fetch satisfying an
         // exact optional). In that case the usable cache entry wins.
-        if self.cache_satisfies(&fetch_name, exact_optional_version) {
+        if self.cache_satisfies(&fetch_name, exact_fetch_version) {
             self.failed_fetches.remove(&fetch_key);
         }
 
@@ -2275,16 +2313,32 @@ impl<'a> ResolveDriver<'a> {
         // whose writer may omit the dependency declaration. Consult the
         // package metadata before dropping such an edge, even if the parsed
         // format normally carries a complete declaration map.
-        let mut hydrated;
-        let locked_pkg = if locked_pkg
+        // Online resolves verify declarations even when the locked target
+        // survives: a format conversion may have lost the dependency type.
+        // Offline, use available declarations or preserve the encoded edge
+        // only when its exact target is independently reachable.
+        let metadata_available = self
+            .resolver
+            .cache
+            .get(task.registry_name())
+            .is_some_and(|packument| packument.versions.contains_key(&locked_pkg.version));
+        let refresh_declarations = locked_pkg
             .peer_dependencies_meta
             .iter()
             .any(|(name, meta)| {
                 meta.optional
                     && locked_pkg.dependencies.contains_key(name)
                     && !locked_pkg.declared_dependencies.contains_key(name)
-                    && !self.optional_peer_is_independently_provided(locked_pkg, name)
-            }) {
+                    && (self.resolver.client.network_mode() != aube_registry::NetworkMode::Offline
+                        || metadata_available
+                        || !self.optional_peer_is_independently_provided(locked_pkg, name)
+                        || self.refreshed_dependency_metadata.contains_key(&(
+                            task.registry_name().to_string(),
+                            locked_pkg.version.clone(),
+                        )))
+            });
+        let mut hydrated;
+        let locked_pkg = if refresh_declarations {
             let key = (task.registry_name().to_string(), locked_pkg.version.clone());
             let metadata = if let Some(metadata) = self.refreshed_dependency_metadata.get(&key) {
                 metadata.clone()
@@ -2292,15 +2346,9 @@ impl<'a> ResolveDriver<'a> {
                 let Some(packument) = self.resolver.cache.get(task.registry_name()) else {
                     return Ok(false);
                 };
-                let metadata = packument.versions.get(&locked_pkg.version).ok_or_else(|| {
-                    Error::Registry(
-                        task.name.clone(),
-                        format!(
-                            "metadata for locked version {} is unavailable; cannot refresh optional peer declarations",
-                            locked_pkg.version
-                        ),
-                    )
-                })?;
+                let Some(metadata) = packument.versions.get(&locked_pkg.version) else {
+                    return Ok(false);
+                };
                 let metadata = metadata
                     .metadata()
                     .map_err(|error| Error::Registry(task.name.clone(), error.to_string()))?
@@ -2457,14 +2505,17 @@ impl<'a> ResolveDriver<'a> {
             child_ancestors.push((task.name.clone(), version.clone()));
             let child_ancestors: Arc<[(String, String)]> = child_ancestors.into();
             for (dep_name, dep_version) in &locked_pkg.dependencies {
-                // A previously resolved optional peer is not a dependency
-                // declaration. Let the peer pass bind it again only if a
-                // surviving root or real dependency still provides it.
+                // Drop confirmed peer-only edges. Without metadata, an
+                // independently reachable target can keep its locked edge
+                // and type: dropping it and relying on peer rebinding could
+                // lose a real dependency or select a different version.
                 if locked_pkg
                     .peer_dependencies_meta
                     .get(dep_name)
                     .is_some_and(|meta| meta.optional)
                     && !locked_pkg.declared_dependencies.contains_key(dep_name)
+                    && (refresh_declarations
+                        || !self.optional_peer_is_independently_provided(locked_pkg, dep_name))
                 {
                     continue;
                 }
