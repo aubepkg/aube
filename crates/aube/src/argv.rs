@@ -116,13 +116,39 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
     // Leading flags may precede the command (`npm --no-audit install`), so find the
     // first non-flag token rather than assuming it sits at `args[1]`.
     let npm_command = npm_command_token(&args);
+    let selects_workspaces = matches!(
+        npm_command,
+        Some(
+            "run"
+                | "run-script"
+                | "rum"
+                | "urn"
+                | "test"
+                | "t"
+                | "start"
+                | "stop"
+                | "restart"
+                | "exec"
+        )
+    );
     if matches!(
         npm_command,
         Some("i" | "install" | "add" | "ci" | "remove" | "rm" | "uninstall" | "un")
     ) {
         drop_npm_audit_fund_flags(&mut args);
     }
+    let command_position = npm_command_position(&args);
     let mut args = rewrite_npm_command(args);
+    if selects_workspaces {
+        // `rewrite_npm_command` only renames a command that sits at `args[1]`; rename
+        // `run-script` and its aliases where leading options pushed them further along.
+        if let Some(at) = command_position.filter(|at| *at > 1)
+            && matches!(args[at].to_str(), Some("run-script" | "rum" | "urn"))
+        {
+            args[at] = OsString::from("run");
+        }
+        select_npm_workspaces(&mut args);
+    }
     if let Some(legacy) = legacy_peer_deps {
         // npm's `--legacy-peer-deps` is the opt-out from npm 7+'s automatic peer
         // installs, which is what `auto-install-peers=false` means here. Emit it as a
@@ -147,9 +173,14 @@ fn rewrite_npm_argv(mut args: Vec<OsString>) -> Vec<OsString> {
 /// The npm subcommand: the first token that is neither a flag nor the value of a
 /// value-taking flag such as `--prefix ci`. Stops at `--`.
 fn npm_command_token(args: &[OsString]) -> Option<&str> {
+    npm_command_position(args).and_then(|i| args[i].to_str())
+}
+
+/// Index of the token `npm_command_token` returns.
+fn npm_command_position(args: &[OsString]) -> Option<usize> {
     let mut skip_value = false;
     let mut skip_bool = false;
-    for arg in args.iter().skip(1) {
+    for (i, arg) in args.iter().enumerate().skip(1) {
         let s = arg.to_str()?;
         if s == "--" {
             return None;
@@ -166,7 +197,7 @@ fn npm_command_token(args: &[OsString]) -> Option<&str> {
         } else if s.starts_with('-') {
             skip_value = matches!(s, "-C" | "-F" | "-w");
         } else {
-            return Some(s);
+            return Some(i);
         }
     }
     None
@@ -202,6 +233,86 @@ fn drop_npm_audit_fund_flags(args: &mut Vec<OsString>) {
             }
         };
         args.drain(i..i + count);
+    }
+}
+
+/// Translate npm's workspace selection on script-running commands into aube's global
+/// `--filter` / `-r`, placed before the subcommand. Left alone, `--workspace` and
+/// `--workspaces` reach the root script as arguments, so a root script such as
+/// `npm run build --workspaces` re-runs itself forever. `install` and `add` keep their own
+/// `--workspace` flag. Tokens after `--` belong to the script and are never touched.
+fn select_npm_workspaces(args: &mut Vec<OsString>) {
+    let mut filters = Vec::new();
+    let mut recursive = None;
+    let mut i = 1;
+    while i < args.len() {
+        let Some(arg) = args[i].to_str().map(str::to_owned) else {
+            i += 1;
+            continue;
+        };
+        if arg == "--" {
+            break;
+        }
+        let consumed = if let Some(value) = arg.strip_prefix("--workspace=") {
+            filters.push(value.to_owned());
+            1
+        } else if let Some(value) = arg
+            .strip_prefix("-w")
+            .filter(|v| !v.is_empty() && !v.starts_with('-'))
+        {
+            filters.push(value.to_owned());
+            1
+        } else if arg == "--workspace" || arg == "-w" {
+            match args.get(i + 1).and_then(|s| s.to_str()) {
+                Some(value) if !value.starts_with('-') => {
+                    filters.push(value.to_owned());
+                    2
+                }
+                _ => 0,
+            }
+        } else if matches!(arg.as_str(), "--workspaces" | "--workspaces=true") {
+            recursive = Some(true);
+            1
+        } else if arg == "--workspaces=false" {
+            recursive = Some(false);
+            1
+        } else {
+            0
+        };
+        if consumed == 0 {
+            i += 1;
+        } else {
+            args.drain(i..i + consumed);
+        }
+    }
+    let mut lifted: Vec<OsString> = filters
+        .into_iter()
+        .flat_map(|f| {
+            [
+                OsString::from("--filter"),
+                OsString::from(npm_workspace_selector(&f)),
+            ]
+        })
+        .collect();
+    if recursive == Some(true) {
+        lifted.push(OsString::from("-r"));
+    }
+    args.splice(1..1, lifted);
+}
+
+/// npm's `--workspace` takes a package name or a directory. aube's `--filter` reads a bare
+/// value as a name, so a directory like `packages/child` needs a leading `./`. An
+/// unscoped name never contains `/`, and a scoped one starts with `@`.
+fn npm_workspace_selector(value: &str) -> String {
+    let is_path = value.contains('/')
+        && !value.starts_with('@')
+        && !value.starts_with("./")
+        && !value.starts_with("../")
+        && !value.starts_with('/');
+    if is_path {
+        format!("./{value}")
+    } else {
+        value.to_owned()
     }
 }
 
@@ -292,7 +403,7 @@ fn rewrite_npm_command(mut args: Vec<OsString>) -> Vec<OsString> {
         "ci" => replace_arg(&mut args, 1, "ci"),
         "exec" => replace_arg(&mut args, 1, "exec"),
         "remove" | "rm" | "uninstall" | "un" => replace_arg(&mut args, 1, "remove"),
-        "run" => replace_arg(&mut args, 1, "run"),
+        "run" | "run-script" | "rum" | "urn" => replace_arg(&mut args, 1, "run"),
         "restart" => replace_arg(&mut args, 1, "restart"),
         "start" => replace_arg(&mut args, 1, "start"),
         "stop" => replace_arg(&mut args, 1, "stop"),

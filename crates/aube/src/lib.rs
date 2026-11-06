@@ -1953,6 +1953,70 @@ mod multicall_tests {
     }
 
     #[test]
+    fn npm_workspace_flags_select_packages_instead_of_reaching_the_root_script() {
+        let cases: &[(&[&str], &[&str])] = &[
+            (
+                &["npm", "run", "build", "--workspace=@t/c"],
+                &["aube", "--filter", "@t/c", "run", "build"],
+            ),
+            (
+                &["npm", "run", "build", "-w", "@t/c", "-w@t/d"],
+                &[
+                    "aube", "--filter", "@t/c", "--filter", "@t/d", "run", "build",
+                ],
+            ),
+            (
+                &["npm", "run", "build", "--workspaces", "--if-present"],
+                &["aube", "-r", "run", "build", "--if-present"],
+            ),
+            (&["npm", "test", "--workspaces=false"], &["aube", "test"]),
+            (
+                &["npm", "--silent", "run", "build", "--workspaces"],
+                &["aube", "-r", "--silent", "run", "build"],
+            ),
+            (
+                &["npm", "exec", "--workspace", "@t/c", "--", "tsc"],
+                &["aube", "--filter", "@t/c", "exec", "--", "tsc"],
+            ),
+            (
+                &["npm", "run-script", "build", "--workspaces"],
+                &["aube", "-r", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "run", "build", "--workspaces"],
+                &["aube", "-r", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "rum", "build", "-w", "app"],
+                &["aube", "--filter", "app", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "urn", "build", "-w", "app"],
+                &["aube", "--filter", "app", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "--prefix", ".", "run-script", "build", "-w", "app"],
+                &["aube", "--filter", "app", "--prefix", ".", "run", "build"],
+            ),
+            (
+                &["npm", "-w", "@t/c", "run", "build"],
+                &["aube", "--filter", "@t/c", "run", "build"],
+            ),
+            (
+                &["npm", "run", "build", "-w", "packages/child"],
+                &["aube", "--filter", "./packages/child", "run", "build"],
+            ),
+            (
+                &["npm", "run", "echo", "--", "--workspaces", "-w"],
+                &["aube", "run", "echo", "--", "--workspaces", "-w"],
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(rewrite_multicall_argv(os(input)), os(expected), "{input:?}");
+        }
+    }
+
+    #[test]
     fn npm_legacy_peer_deps_becomes_auto_install_peers_override() {
         assert_eq!(
             rewrite_multicall_argv(os(&[
