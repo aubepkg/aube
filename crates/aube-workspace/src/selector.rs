@@ -282,12 +282,19 @@ fn drop_unselected_root(
     };
     let names_root = |selectors: &[String], prod: bool| {
         selectors.iter().any(|raw| {
-            raw != "*"
-                && match prod {
-                    true => Selector::parse_prod(raw),
-                    false => Selector::parse(raw),
-                }
-                .is_ok_and(|selector| !selector.exclude && selector.matches(&root_pkg))
+            match prod {
+                true => Selector::parse_prod(raw),
+                false => Selector::parse(raw),
+            }
+            .is_ok_and(|selector| {
+                // A catch-all (`*`, `*...`) names no package in particular, and a selector
+                // that leaves out its own seed (`root^...`) does not pick the root itself.
+                let catch_all = matches!(&selector.base, BaseSelector::NameGlob(p) if p == "*");
+                !selector.exclude
+                    && !selector.exclude_self
+                    && !catch_all
+                    && selector.matches(&root_pkg)
+            })
         })
     };
     if !names_root(&filter.filters, false) && !names_root(&filter.filter_prods, true) {
@@ -982,6 +989,11 @@ mod tests {
         };
 
         assert_eq!(names(&EffectiveFilter::from_filters(["*"])), vec!["app"]);
+        assert_eq!(names(&EffectiveFilter::from_filters(["*..."])), vec!["app"]);
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["*", "root^..."])),
+            vec!["app"]
+        );
         // The root depends on `app`, so `...app` reaches it without naming it.
         assert_eq!(
             names(&EffectiveFilter::from_filters(["...app"])),

@@ -301,7 +301,7 @@ fn select_npm_workspaces(args: &mut Vec<OsString>) {
         let before_separator = args.iter().position(|a| a == "--").unwrap_or(args.len());
         if !args[..before_separator]
             .iter()
-            .any(|a| a == "--include-workspace-root")
+            .any(|a| a == "--include-workspace-root" || a == "--include-workspace-root=true")
         {
             lifted.push(OsString::from("--no-include-workspace-root"));
         }

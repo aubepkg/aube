@@ -2008,6 +2008,22 @@ mod multicall_tests {
                 ],
             ),
             (
+                &[
+                    "npm",
+                    "--include-workspace-root=true",
+                    "run",
+                    "build",
+                    "--workspaces",
+                ],
+                &[
+                    "aube",
+                    "-r",
+                    "--include-workspace-root=true",
+                    "run",
+                    "build",
+                ],
+            ),
+            (
                 &["npm", "--silent", "run", "build", "--workspaces"],
                 &[
                     "aube",
