@@ -165,13 +165,6 @@ pub(crate) struct Cli {
     #[usage(long, global, hide)]
     include_workspace_root: bool,
 
-    /// Leave the workspace root out of recursive workspace operations.
-    ///
-    /// Overrides `--include-workspace-root` and `includeWorkspaceRoot`. The npm shim adds it
-    /// for `npm --workspaces`, which never selects the root package.
-    #[usage(long, global, hide)]
-    no_include_workspace_root: bool,
-
     /// Set the log level. Logs at or above this level are shown.
     #[usage(long, global, value_name = "LEVEL", value_enum)]
     loglevel: Option<LogLevel>,
@@ -182,6 +175,13 @@ pub(crate) struct Cli {
     /// so child processes see the same choice.
     #[usage(long, global)]
     no_color: bool,
+
+    /// Leave the workspace root out of recursive workspace operations.
+    ///
+    /// Overrides `--include-workspace-root` and `includeWorkspaceRoot`. The npm shim adds it
+    /// for `npm --workspaces`, which never selects the root package.
+    #[usage(long, global, hide)]
+    no_include_workspace_root: bool,
 
     /// Output format: default, append-only, ndjson, silent.
     ///
@@ -1985,6 +1985,25 @@ mod multicall_tests {
                 ],
             ),
             (&["npm", "test", "--workspaces=false"], &["aube", "test"]),
+            (
+                &[
+                    "npm",
+                    "run",
+                    "build",
+                    "--workspaces",
+                    "--",
+                    "--include-workspace-root",
+                ],
+                &[
+                    "aube",
+                    "-r",
+                    "--no-include-workspace-root",
+                    "run",
+                    "build",
+                    "--",
+                    "--include-workspace-root",
+                ],
+            ),
             (
                 &["npm", "--silent", "run", "build", "--workspaces"],
                 &[

@@ -257,6 +257,35 @@ pub fn select_workspace_packages(
     workspace_pkgs: &[PathBuf],
     filter: &EffectiveFilter,
 ) -> Result<Vec<SelectedPackage>, SelectError> {
+    let mut selected = select_workspace_packages_inner(workspace_root, workspace_pkgs, filter)?;
+    if EXCLUDE_WORKSPACE_ROOT.load(Ordering::Relaxed) {
+        drop_unselected_root(workspace_root, filter, &mut selected);
+    }
+    Ok(selected)
+}
+
+/// Remove the root package that a bare wildcard picked up as a workspace member (a
+/// `packages` glob such as `.` lists it), unless an explicit selector asked for it.
+fn drop_unselected_root(
+    workspace_root: &Path,
+    filter: &EffectiveFilter,
+    selected: &mut Vec<SelectedPackage>,
+) {
+    let explicit = |selectors: &[String]| {
+        selectors
+            .iter()
+            .any(|s| s.as_str() != "*" && !s.starts_with('!'))
+    };
+    if !explicit(&filter.filters) && !explicit(&filter.filter_prods) {
+        selected.retain(|pkg| pkg.dir != workspace_root);
+    }
+}
+
+fn select_workspace_packages_inner(
+    workspace_root: &Path,
+    workspace_pkgs: &[PathBuf],
+    filter: &EffectiveFilter,
+) -> Result<Vec<SelectedPackage>, SelectError> {
     let root_is_member = workspace_pkgs.iter().any(|dir| dir == workspace_root);
     let explicit = |selectors: &[String], keep_exclusions: bool| -> Vec<String> {
         selectors
@@ -911,6 +940,38 @@ mod tests {
             .filter_map(|pkg| pkg.name.as_deref())
             .collect();
         assert_eq!(names, vec!["app", "root"]);
+    }
+
+    #[test]
+    fn excluded_root_is_dropped_from_a_wildcard_but_kept_for_an_explicit_selector() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"root","version":"0.0.0","private":true}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/app")).unwrap();
+        std::fs::write(
+            dir.path().join("packages/app/package.json"),
+            r#"{"name":"app","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let members = [dir.path().to_path_buf(), dir.path().join("packages/app")];
+        let names = |filter: &EffectiveFilter| {
+            let mut selected =
+                select_workspace_packages_inner(dir.path(), &members, filter).unwrap();
+            drop_unselected_root(dir.path(), filter, &mut selected);
+            selected
+                .iter()
+                .filter_map(|pkg| pkg.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(names(&EffectiveFilter::from_filters(["*"])), vec!["app"]);
+        assert_eq!(
+            names(&EffectiveFilter::from_filters(["root"])),
+            vec!["root"]
+        );
     }
 
     #[test]
