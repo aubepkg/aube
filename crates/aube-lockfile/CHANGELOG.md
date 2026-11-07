@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.9.0...aube-lockfile-v2.10.0) - 2026-11-07
+
+### Fixed
+
+- *(lockfile)* omit non-optional peerDependenciesMeta entries from pnpm lockfile ([#1914](https://github.com/aubepkg/aube/pull/1914))
+- *(lockfile)* stop writing gitHosted on git and GitHub Packages resolutions ([#1904](https://github.com/aubepkg/aube/pull/1904))
+
 ## [2.9.0](https://github.com/aubepkg/aube/compare/aube-lockfile-v2.8.5...aube-lockfile-v2.9.0) - 2026-11-01
 
 ### Fixed
