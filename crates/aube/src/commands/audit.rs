@@ -178,8 +178,14 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
 
     // Build the bulk request body: { name: [version, ...] } with versions
     // deduped so the registry doesn't do extra work on a diamond dep.
+    // Packages with a non-registry source (workspace, `link:`, `file:`,
+    // portal, exec, git, tarball URL) are left out, as pnpm does: sending
+    // them would leak private names and match same-named public advisories.
     let mut pkg_versions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for pkg in closure.values() {
+        if pkg.local_source.is_some() {
+            continue;
+        }
         let entry = pkg_versions.entry(pkg.name.clone()).or_default();
         if !entry.contains(&pkg.version) {
             entry.push(pkg.version.clone());

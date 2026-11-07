@@ -213,7 +213,8 @@ _write_clean_fixture() {
 
 _start_audit_server() {
 	# Writes `audit-server.mjs` + `audit-server-port` (and exports
-	# `AUDIT_SERVER_PID`). The server responds with a low + high advisory
+	# `AUDIT_SERVER_PID`), and saves the last POST body to
+	# `audit-request.json`. The server responds with a low + high advisory
 	# on `is-number`, a high advisory on `is-odd`, and proxies the
 	# `is-number` packument so `--fix` / `--ignore-unfixable` can resolve
 	# a clean version. `--registry` tests point here while `.npmrc`
@@ -225,7 +226,7 @@ import fs from 'node:fs';
 
 const storage = process.env.STORAGE;
 const isNumber = JSON.parse(fs.readFileSync(`${storage}/is-number/package.json`, 'utf8'));
-const server = http.createServer((req, res) => {
+const handle = (req, res) => {
   if (req.method === 'POST' && req.url === '/-/npm/v1/security/advisories/bulk') {
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({
@@ -283,6 +284,14 @@ const server = http.createServer((req, res) => {
   }
   res.statusCode = 404;
   res.end('{}');
+};
+const server = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', () => {
+    if (req.method === 'POST') fs.writeFileSync('audit-request.json', body);
+    handle(req, res);
+  });
 });
 server.listen(0, '127.0.0.1', () => {
   fs.writeFileSync('audit-server-port', String(server.address().port));
@@ -562,4 +571,103 @@ _write_audit_update_exact_fixture() {
 	_stop_audit_server
 	[ "$rc" -eq 1 ]
 	assert_output --partial "number-high"
+}
+
+@test "aube audit leaves workspace and local packages out of the advisory request" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "audit-fixture",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "3.0.1",
+		    "ws-lib": "workspace:*",
+		    "file-lib": "file:./vendor/file-lib",
+		    "link-lib": "link:./vendor/link-lib"
+		  }
+		}
+	EOF
+	cat >pnpm-workspace.yaml <<-'EOF'
+		packages:
+		  - "packages/*"
+	EOF
+	mkdir -p packages/ws-lib vendor/file-lib vendor/link-lib
+	echo '{"name":"ws-lib","version":"1.0.0"}' >packages/ws-lib/package.json
+	echo '{"name":"file-lib","version":"1.0.0"}' >vendor/file-lib/package.json
+	echo '{"name":"link-lib","version":"1.0.0"}' >vendor/link-lib/package.json
+	run aube install
+	assert_success
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit
+	_stop_audit_server
+	assert_output --partial "odd-unfixable"
+
+	run cat audit-request.json
+	assert_output --partial '"is-odd"'
+	refute_output --partial "ws-lib"
+	refute_output --partial "file-lib"
+	refute_output --partial "link-lib"
+}
+
+@test "aube audit leaves git and remote tarball packages out of the advisory request" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "audit-fixture",
+		  "version": "1.0.0",
+		  "dependencies": {
+		    "is-odd": "3.0.1",
+		    "git-dep": "git+https://git.example.test/acme/git-dep.git#0123456789abcdef0123456789abcdef01234567",
+		    "url-dep": "https://example.test/url-dep-1.0.0.tgz"
+		  }
+		}
+	EOF
+	cat >aube-lock.yaml <<-'EOF'
+		lockfileVersion: '9.0'
+
+		settings:
+		  autoInstallPeers: true
+		  excludeLinksFromLockfile: false
+
+		importers:
+		  .:
+		    dependencies:
+		      git-dep:
+		        specifier: git+https://git.example.test/acme/git-dep.git#0123456789abcdef0123456789abcdef01234567
+		        version: git+https://git.example.test/acme/git-dep.git#0123456789abcdef0123456789abcdef01234567
+		      is-odd:
+		        specifier: 3.0.1
+		        version: 3.0.1
+		      url-dep:
+		        specifier: https://example.test/url-dep-1.0.0.tgz
+		        version: https://example.test/url-dep-1.0.0.tgz
+
+		packages:
+		  git-dep@git+https://git.example.test/acme/git-dep.git#0123456789abcdef0123456789abcdef01234567:
+		    resolution: {commit: 0123456789abcdef0123456789abcdef01234567, repo: https://git.example.test/acme/git-dep.git, type: git}
+		    version: 1.0.0
+		  is-odd@3.0.1:
+		    resolution: {integrity: sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==}
+		  url-dep@https://example.test/url-dep-1.0.0.tgz:
+		    resolution: {tarball: https://example.test/url-dep-1.0.0.tgz}
+		    version: 1.0.0
+
+		snapshots:
+		  git-dep@git+https://git.example.test/acme/git-dep.git#0123456789abcdef0123456789abcdef01234567: {}
+		  is-odd@3.0.1: {}
+		  url-dep@https://example.test/url-dep-1.0.0.tgz: {}
+	EOF
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit
+	_stop_audit_server
+	assert_output --partial "odd-unfixable"
+
+	run cat audit-request.json
+	assert_output --partial '"is-odd"'
+	refute_output --partial "git-dep"
+	refute_output --partial "url-dep"
 }
