@@ -525,6 +525,30 @@ _write_audit_update_exact_fixture() {
 	assert_output --partial "odd-unfixable"
 }
 
+@test "aube audit checks an npm-aliased package under its real name" {
+	cat >package.json <<-'EOF'
+		{
+		  "name": "audit-alias-fixture",
+		  "version": "1.0.0",
+		  "dependencies": { "odd-alias": "npm:is-odd@3.0.1" }
+		}
+	EOF
+	run aube install
+	assert_success
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit
+	_stop_audit_server
+	assert_failure
+	assert_output --partial "odd-unfixable"
+
+	run cat audit-request.json
+	assert_output --partial '"is-odd":["3.0.1"]'
+	refute_output --partial "odd-alias"
+}
+
 @test "aube audit --ignore accepts comma lists and CVE IDs" {
 	_install_audit_fixture
 	_start_audit_server

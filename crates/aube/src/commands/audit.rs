@@ -194,7 +194,9 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
         {
             continue;
         }
-        let entry = pkg_versions.entry(pkg.name.clone()).or_default();
+        let entry = pkg_versions
+            .entry(pkg.registry_name().to_string())
+            .or_default();
         if !entry.contains(&pkg.version) {
             entry.push(pkg.version.clone());
         }
