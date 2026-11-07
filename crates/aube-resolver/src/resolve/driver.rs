@@ -62,6 +62,12 @@ pub(crate) struct ResolveDriver<'a> {
     /// importer (or root, under `resolve-peers-from-workspace-root`)
     /// has already declared the peer.
     importer_declared_dep_names: BTreeMap<String, BTreeSet<String>>,
+    /// Packages reached from surviving roots without following ambiguous
+    /// optional-peer edges. These can supply peers without metadata fetches.
+    independent_locked_packages: FxHashSet<String>,
+    /// A registry version shared by aliases must run readPackage only once
+    /// when refreshing the declarations missing from a snapshot.
+    refreshed_dependency_metadata: FxHashMap<(String, String), aube_registry::VersionMetadata>,
 
     /// Locked packages keyed by dep_path. The output graph's packages
     /// field.
@@ -190,6 +196,7 @@ impl<'a> ResolveDriver<'a> {
             &mut queue,
             &mut importers,
         );
+        let independent_locked_packages = independent_locked_packages(existing, &queue, resolver);
 
         // Adaptive packument concurrency. Loaded from the cross-run
         // persistent store when available so the limiter resumes the
@@ -239,6 +246,8 @@ impl<'a> ResolveDriver<'a> {
             existing_names,
             locked_index,
             importer_declared_dep_names,
+            independent_locked_packages,
+            refreshed_dependency_metadata: FxHashMap::default(),
             resolved: BTreeMap::new(),
             resolved_versions: FxHashMap::with_capacity_and_hasher(1024, Default::default()),
             importers,
@@ -534,7 +543,10 @@ impl<'a> ResolveDriver<'a> {
     /// resolve.
     #[allow(clippy::too_many_lines)]
     async fn process_task(&mut self, mut task: ResolveTask) -> Result<(), Error> {
-        if !self.preprocess_task(&mut task)? {
+        if !Self::preprocess_task(self.resolver, &mut task, &mut self.catalog_picks)? {
+            if task.is_root {
+                self.note_root_done();
+            }
             return Ok(());
         }
 
@@ -550,9 +562,23 @@ impl<'a> ResolveDriver<'a> {
             return Ok(());
         }
 
-        if self.try_lockfile_reuse(&task).await {
+        if self.try_lockfile_reuse(&task).await? {
             return Ok(());
         }
+
+        // A matching lock entry only falls through when its dependency
+        // declarations need metadata. Require that exact version from the
+        // fetch path so a compact cache or capped primer cannot satisfy the
+        // request with other releases and accidentally upgrade the package.
+        let locked_metadata_version = self
+            .locked_index
+            .find_satisfying(
+                &task.name,
+                &task.range,
+                task.registry_name(),
+                &self.resolver.vulnerable_ranges,
+            )
+            .map(|pkg| pkg.version.clone());
 
         // Packument not in cache. Spawn its fetch if one
         // isn't already running, then wait for packument
@@ -574,11 +600,13 @@ impl<'a> ResolveDriver<'a> {
         let _diag_task_wait =
             aube_util::diag::Span::new(aube_util::diag::Category::Resolver, "task_wait_packument")
                 .with_meta_fn(|| format!(r#"{{"name":{}}}"#, aube_util::diag::jstr(&fetch_name)));
-        let exact_optional_version = (self.needs_time
-            && task.dep_type == DepType::Optional
-            && node_semver::Version::parse(&task.range).is_ok())
-        .then_some(task.range.as_str());
-        let fetch_key = exact_optional_version.map_or_else(
+        let exact_fetch_version = locked_metadata_version.as_deref().or_else(|| {
+            (self.needs_time
+                && task.dep_type == DepType::Optional
+                && node_semver::Version::parse(&task.range).is_ok())
+            .then_some(task.range.as_str())
+        });
+        let fetch_key = exact_fetch_version.map_or_else(
             || FetchKey::Full(fetch_name.clone()),
             |version| FetchKey::Exact(fetch_name.clone(), version.to_string()),
         );
@@ -586,15 +614,15 @@ impl<'a> ResolveDriver<'a> {
         // failure proves the package is reachable and leaves a trust-history
         // marker requiring authoritative full metadata. Discard the stale
         // prefetch failure so this range task can perform that refresh.
-        if exact_optional_version.is_none() && self.trust_histories.contains_key(&fetch_name) {
+        if exact_fetch_version.is_none() && self.trust_histories.contains_key(&fetch_name) {
             self.failed_fetches.remove(&fetch_key);
         }
-        while !self.cache_satisfies(&fetch_name, exact_optional_version)
+        while !self.cache_satisfies(&fetch_name, exact_fetch_version)
             && (!self.failed_fetches.contains_key(&fetch_key)
-                || (exact_optional_version.is_none()
+                || (exact_fetch_version.is_none()
                     && self.fetcher.has_active_exact_fetch(&fetch_name)))
         {
-            if let Some(version) = exact_optional_version {
+            if let Some(version) = exact_fetch_version {
                 self.ensure_exact_optional_fetch(&fetch_name, version);
             } else {
                 self.ensure_fetch(&fetch_name);
@@ -607,6 +635,28 @@ impl<'a> ResolveDriver<'a> {
                     }
                     if source == super::fetch::FetchSource::Primer {
                         self.fetcher.note_primer_seeded(name.clone());
+                    }
+                    if source == super::fetch::FetchSource::Disk
+                        && name == fetch_name
+                        && let Some(version) = locked_metadata_version.as_deref()
+                        && let FetchKey::Exact(_, fetched_version) = &key
+                        && fetched_version == version
+                        && let Some(metadata) = packument.versions.get(version)
+                    {
+                        // The lock already selects this release. Its cached
+                        // declarations can hydrate that entry without letting
+                        // an older disk inventory replace newer in-memory
+                        // versions or trigger an unnecessary live refresh.
+                        let metadata = metadata
+                            .metadata()
+                            .map_err(|error| Error::Registry(name.clone(), error.to_string()))?
+                            .clone();
+                        let metadata = self.prepare_dependency_metadata(metadata).await?;
+                        self.refreshed_dependency_metadata
+                            .insert((name, version.to_string()), metadata);
+                        self.failed_fetches.remove(&fetch_key);
+                        self.packument_fetch_count += 1;
+                        break;
                     }
                     let cached_exact_version = match &key {
                         FetchKey::Exact(_, version)
@@ -649,7 +699,7 @@ impl<'a> ResolveDriver<'a> {
         // A different request shape may have populated this task's data while
         // its own request failed (for example, a full fetch satisfying an
         // exact optional). In that case the usable cache entry wins.
-        if self.cache_satisfies(&fetch_name, exact_optional_version) {
+        if self.cache_satisfies(&fetch_name, exact_fetch_version) {
             self.failed_fetches.remove(&fetch_key);
         }
 
@@ -671,6 +721,13 @@ impl<'a> ResolveDriver<'a> {
         }
         if let Some(e) = self.failed_fetches.remove(&fetch_key) {
             return Err(e);
+        }
+
+        // A locked package may only have needed its declaration metadata
+        // refreshed. Reuse its exact child targets instead of resolving the
+        // newly fetched ranges and changing otherwise untouched versions.
+        if self.try_lockfile_reuse(&task).await? {
+            return Ok(());
         }
 
         // TimeBased wave-0 gate. Transitives that reach
@@ -948,54 +1005,7 @@ impl<'a> ResolveDriver<'a> {
         let already_visited = self.visited.contains(prehook_dep_path.as_str());
 
         if !already_visited {
-            apply_package_extensions(
-                &mut picked_owned,
-                &self.resolver.dependency_policy.package_extensions,
-            );
-        }
-
-        // readPackage hook. Runs at most once per version-picked
-        // package, before transitive enqueue. We honor edits to
-        // the four dep maps and warn on (then discard) edits to
-        // name/version/dist/platform/`hasInstallScript` — pnpm
-        // tolerates readPackage returning a hollowed-out
-        // object, so we restore those fields from the original
-        // packument entry after the call.
-        if !already_visited && let Some(hook) = self.resolver.read_package_hook.as_mut() {
-            let before_name = picked_owned.name.clone();
-            let before_version = picked_owned.version.clone();
-            let before_dist = picked_owned.dist.clone();
-            let before_os = picked_owned.os.clone();
-            let before_cpu = picked_owned.cpu.clone();
-            let before_libc = picked_owned.libc.clone();
-            let before_bundled = picked_owned.bundled_dependencies.clone();
-            let before_has_install_script = picked_owned.has_install_script;
-            let before_deprecated = picked_owned.deprecated.clone();
-            let input = picked_owned.clone();
-            let mut after = hook.read_package(input).await.map_err(|e| {
-                Error::Registry(before_name.clone(), format!("readPackage hook: {e}"))
-            })?;
-            if after.name != before_name || after.version != before_version {
-                tracing::warn!(
-                    code = aube_codes::warnings::WARN_AUBE_HOOK_IDENTITY_REWRITTEN,
-                    "[pnpmfile] readPackage rewrote {}@{} identity to {}@{}; \
-                             aube ignores identity edits",
-                    before_name,
-                    before_version,
-                    after.name,
-                    after.version,
-                );
-            }
-            after.name = before_name;
-            after.version = before_version;
-            after.dist = before_dist;
-            after.os = before_os;
-            after.cpu = before_cpu;
-            after.libc = before_libc;
-            after.bundled_dependencies = before_bundled;
-            after.has_install_script = before_has_install_script;
-            after.deprecated = before_deprecated;
-            picked_owned = after;
+            picked_owned = self.prepare_dependency_metadata(picked_owned).await?;
         }
         let version_meta = &picked_owned;
 
@@ -1920,7 +1930,11 @@ impl<'a> ResolveDriver<'a> {
     /// Returns `Ok(true)` to continue processing, `Ok(false)` when an
     /// override of `"-"` dropped the dep entirely (caller should skip
     /// to the next task), or `Err(_)` for malformed `jsr:` specs.
-    fn preprocess_task(&mut self, task: &mut ResolveTask) -> Result<bool, Error> {
+    fn preprocess_task(
+        resolver: &Resolver,
+        task: &mut ResolveTask,
+        catalog_picks: &mut BTreeMap<String, BTreeMap<String, String>>,
+    ) -> Result<bool, Error> {
         // Catalog protocol: rewrite `catalog:` / `catalog:<name>` to
         // the workspace catalog's actual range *before* the override
         // loop, so overrides can still target a catalog dep by bare
@@ -1939,9 +1953,8 @@ impl<'a> ResolveDriver<'a> {
         // until an override replaces the declaration.
         let mut catalog_pick: Option<(String, String)> = None;
         let mut catalog_declaration: Option<String> = None;
-        if let Some((catalog_name, real_range)) = self
-            .resolver
-            .resolve_catalog_spec(&task.name, &task.range)?
+        if let Some((catalog_name, real_range)) =
+            resolver.resolve_catalog_spec(&task.name, &task.range)?
         {
             tracing::trace!("catalog: {} {} -> {}", task.name, task.range, real_range);
             catalog_declaration = Some(std::mem::replace(&mut task.range, real_range.clone()));
@@ -1951,7 +1964,7 @@ impl<'a> ResolveDriver<'a> {
         for _ in 0..2 {
             let mut changed = false;
             if let Some(override_spec) = pick_override_spec(
-                &self.resolver.override_rules,
+                &resolver.override_rules,
                 &task.name,
                 catalog_declaration.as_deref().unwrap_or(&task.range),
                 &task.ancestors,
@@ -1962,9 +1975,6 @@ impl<'a> ResolveDriver<'a> {
                 // registry resolver.
                 if override_spec == "-" {
                     tracing::trace!("override: {}@{} -> dropped", task.name, task.range);
-                    if task.is_root {
-                        self.note_root_done();
-                    }
                     return Ok(false);
                 }
                 // An override may itself point at a catalog entry
@@ -1973,13 +1983,11 @@ impl<'a> ResolveDriver<'a> {
                 // original range, so resolve the indirection here
                 // before assigning — otherwise `catalog:` leaks
                 // through to the registry resolver.
-                let effective_spec = match self
-                    .resolver
-                    .resolve_catalog_spec(&task.name, &override_spec)?
-                {
-                    Some((_, real_range)) => real_range,
-                    None => override_spec,
-                };
+                let effective_spec =
+                    match resolver.resolve_catalog_spec(&task.name, &override_spec)? {
+                        Some((_, real_range)) => real_range,
+                        None => override_spec,
+                    };
                 // pnpm records the override-applied specifier for direct
                 // importer dependencies. Keep ordinary `catalog:` dependencies
                 // verbatim, but once an override fires use its effective value
@@ -2109,12 +2117,64 @@ impl<'a> ResolveDriver<'a> {
             }
         }
         if let Some((catalog_name, real_range)) = catalog_pick {
-            self.catalog_picks
+            catalog_picks
                 .entry(catalog_name)
                 .or_default()
                 .insert(task.name.clone(), real_range);
         }
         Ok(true)
+    }
+
+    /// Apply the same extensions and readPackage hook when picking a version
+    /// or refreshing a locked package's dependency declarations.
+    async fn prepare_dependency_metadata(
+        &mut self,
+        mut metadata: aube_registry::VersionMetadata,
+    ) -> Result<aube_registry::VersionMetadata, Error> {
+        apply_package_extensions(
+            &mut metadata,
+            &self.resolver.dependency_policy.package_extensions,
+        );
+        // Hooks may edit dependencies, but cannot replace package identity
+        // or artifact metadata. Preserve the existing fresh-resolution rules.
+        if let Some(hook) = self.resolver.read_package_hook.as_mut() {
+            let mut after = hook.read_package(metadata.clone()).await.map_err(|e| {
+                Error::Registry(metadata.name.clone(), format!("readPackage hook: {e}"))
+            })?;
+            if after.name != metadata.name || after.version != metadata.version {
+                tracing::warn!(
+                    code = aube_codes::warnings::WARN_AUBE_HOOK_IDENTITY_REWRITTEN,
+                    "[pnpmfile] readPackage rewrote {}@{} identity to {}@{}; \
+                             aube ignores identity edits",
+                    metadata.name,
+                    metadata.version,
+                    after.name,
+                    after.version,
+                );
+            }
+            after.name = metadata.name;
+            after.version = metadata.version;
+            after.dist = metadata.dist;
+            after.os = metadata.os;
+            after.cpu = metadata.cpu;
+            after.libc = metadata.libc;
+            after.bundled_dependencies = metadata.bundled_dependencies;
+            after.has_install_script = metadata.has_install_script;
+            after.deprecated = metadata.deprecated;
+            metadata = after;
+        }
+        Ok(metadata)
+    }
+
+    fn optional_peer_is_independently_provided(&self, pkg: &LockedPackage, name: &str) -> bool {
+        let Some(graph) = self.existing else {
+            return false;
+        };
+        let Some(tail) = pkg.dependencies.get(name) else {
+            return false;
+        };
+        aube_lockfile::resolve_dep_edge(name, tail, |key| graph.packages.contains_key(key))
+            .is_some_and(|key| self.independent_locked_packages.contains(&key))
     }
 
     /// Wire `task` into the resolver graph as a reuse of an
@@ -2210,14 +2270,14 @@ impl<'a> ResolveDriver<'a> {
     ///
     /// Returns true when a lockfile entry handled the task (whether
     /// fully resolved or dropped as a platform-mismatched optional).
-    async fn try_lockfile_reuse(&mut self, task: &ResolveTask) -> bool {
+    async fn try_lockfile_reuse(&mut self, task: &ResolveTask) -> Result<bool, Error> {
         let Some(locked_pkg) = self.locked_index.find_satisfying(
             &task.name,
             &task.range,
             task.registry_name(),
             &self.resolver.vulnerable_ranges,
         ) else {
-            return false;
+            return Ok(false);
         };
         // Drop optional deps whose platform constraints don't match
         // the active host / supported set. Handles frozen/lockfile
@@ -2247,8 +2307,75 @@ impl<'a> ResolveDriver<'a> {
             if task.is_root {
                 self.note_root_done();
             }
-            return true;
+            return Ok(true);
         }
+        // Snapshots do not distinguish optional peers from dependencies
+        // with the same name. That ambiguity also survives conversion to npm,
+        // whose writer may omit the dependency declaration. Consult the
+        // package metadata before dropping such an edge, even if the parsed
+        // format normally carries a complete declaration map.
+        // Online resolves verify declarations even when the locked target
+        // survives: a format conversion may have lost the dependency type.
+        // Offline, use available declarations or preserve the encoded edge
+        // only when its exact target is independently reachable.
+        let metadata_available = self
+            .resolver
+            .cache
+            .get(task.registry_name())
+            .is_some_and(|packument| packument.versions.contains_key(&locked_pkg.version));
+        let refresh_declarations = locked_pkg
+            .peer_dependencies_meta
+            .iter()
+            .any(|(name, meta)| {
+                meta.optional
+                    && locked_pkg.dependencies.contains_key(name)
+                    && !locked_pkg.declared_dependencies.contains_key(name)
+                    && (self.resolver.client.network_mode() != aube_registry::NetworkMode::Offline
+                        || metadata_available
+                        || !self.optional_peer_is_independently_provided(locked_pkg, name)
+                        || self.refreshed_dependency_metadata.contains_key(&(
+                            task.registry_name().to_string(),
+                            locked_pkg.version.clone(),
+                        )))
+            });
+        let mut hydrated;
+        let locked_pkg = if refresh_declarations {
+            let key = (task.registry_name().to_string(), locked_pkg.version.clone());
+            let metadata = if let Some(metadata) = self.refreshed_dependency_metadata.get(&key) {
+                metadata.clone()
+            } else {
+                let Some(packument) = self.resolver.cache.get(task.registry_name()) else {
+                    return Ok(false);
+                };
+                let Some(metadata) = packument.versions.get(&locked_pkg.version) else {
+                    return Ok(false);
+                };
+                let metadata = metadata
+                    .metadata()
+                    .map_err(|error| Error::Registry(task.name.clone(), error.to_string()))?
+                    .clone();
+                let metadata = self.prepare_dependency_metadata(metadata).await?;
+                self.refreshed_dependency_metadata
+                    .insert(key, metadata.clone());
+                metadata
+            };
+            hydrated = locked_pkg.clone().with_declared_dependencies_known();
+            hydrated.declared_dependencies = metadata.dependencies;
+            hydrated
+                .declared_dependencies
+                .extend(metadata.optional_dependencies.clone());
+            // A conversion may also have lost whether the real edge was
+            // optional. Restore its type while retaining the locked target.
+            hydrated.optional_dependencies = locked_pkg
+                .dependencies
+                .iter()
+                .filter(|(name, _)| metadata.optional_dependencies.contains_key(*name))
+                .map(|(name, version)| (name.clone(), version.clone()))
+                .collect();
+            &hydrated
+        } else {
+            locked_pkg
+        };
         let version = locked_pkg.version.clone();
         let dep_path = dep_path_for(&task.name, &version);
 
@@ -2379,6 +2506,20 @@ impl<'a> ResolveDriver<'a> {
             child_ancestors.push((task.name.clone(), version.clone()));
             let child_ancestors: Arc<[(String, String)]> = child_ancestors.into();
             for (dep_name, dep_version) in &locked_pkg.dependencies {
+                // Drop confirmed peer-only edges. Without metadata, an
+                // independently reachable target can keep its locked edge
+                // and type: dropping it and relying on peer rebinding could
+                // lose a real dependency or select a different version.
+                if locked_pkg
+                    .peer_dependencies_meta
+                    .get(dep_name)
+                    .is_some_and(|meta| meta.optional)
+                    && !locked_pkg.declared_dependencies.contains_key(dep_name)
+                    && (refresh_declarations
+                        || !self.optional_peer_is_independently_provided(locked_pkg, dep_name))
+                {
+                    continue;
+                }
                 let prefix = format!("{dep_name}@");
                 let stripped = dep_version.strip_prefix(&prefix).unwrap_or(dep_version);
                 let mut canonical_version =
@@ -2466,7 +2607,7 @@ impl<'a> ResolveDriver<'a> {
         if task.is_root {
             self.note_root_done();
         }
-        true
+        Ok(true)
     }
 
     /// Try to resolve `task` against a version another task already
@@ -2491,6 +2632,111 @@ impl<'a> ResolveDriver<'a> {
         self.link_to_existing_version(task, &matched_ver);
         true
     }
+}
+
+/// Find peer providers whose locked roots are still requested. Following
+/// only real dependency edges prevents a stale optional-peer binding (or a cycle of
+/// such bindings) from proving its own reachability during an offline repair.
+fn independent_locked_packages(
+    existing: Option<&LockfileGraph>,
+    tasks: &VecDeque<ResolveTask>,
+    resolver: &Resolver,
+) -> FxHashSet<String> {
+    let mut reached = FxHashSet::default();
+    let Some(graph) = existing else {
+        return reached;
+    };
+    // Changed overrides can remove or replace an otherwise ordinary edge.
+    if graph.overrides != resolver.lockfile_overrides() {
+        return reached;
+    }
+    let mut pending = Vec::new();
+    let mut catalog_picks = BTreeMap::new();
+    for task in tasks {
+        // Seeded tasks are roots. Run the same catalog/override/alias passes
+        // as resolution so the importer check sees the final recorded specifier.
+        let mut preprocessed = ResolveTask::root(
+            task.name.clone(),
+            task.range.clone(),
+            task.dep_type,
+            task.importer.clone(),
+        );
+        if !matches!(
+            ResolveDriver::preprocess_task(resolver, &mut preprocessed, &mut catalog_picks),
+            Ok(true)
+        ) {
+            // Normal processing reports invalid specs and counts removed roots.
+            continue;
+        }
+        let lockfile_specifier = preprocessed.lockfile_specifier();
+        if let Some(dep) = graph.importers.get(&task.importer).and_then(|deps| {
+            deps.iter().find(|dep| {
+                dep.name == task.name
+                    && dep.dep_type == task.dep_type
+                    && (dep.specifier.as_deref() == Some(task.range.as_str())
+                        || dep.specifier == lockfile_specifier)
+            })
+        }) {
+            let key = if graph.packages.contains_key(&dep.dep_path) {
+                Some(dep.dep_path.clone())
+            } else {
+                // An npm alias in a pnpm importer can carry the registry
+                // package name in its tail. Resolve that stored edge too.
+                dep.dep_path
+                    .strip_prefix(&format!("{}@", dep.name))
+                    .and_then(|tail| {
+                        aube_lockfile::resolve_dep_edge(&dep.name, tail, |key| {
+                            graph.packages.contains_key(key)
+                        })
+                    })
+            };
+            if let Some(key) = key {
+                pending.push((key, task.dep_type == DepType::Optional));
+            }
+        }
+    }
+    while let Some((key, optional)) = pending.pop() {
+        let Some(pkg) = graph.packages.get(&key) else {
+            continue;
+        };
+        if optional
+            && (resolver.ignored_optional_dependencies.contains(&pkg.name)
+                || !is_supported(
+                    &pkg.os,
+                    &pkg.cpu,
+                    &pkg.libc,
+                    &resolver.supported_architectures,
+                ))
+        {
+            continue;
+        }
+        if is_vulnerable(
+            pkg.registry_name(),
+            &pkg.version,
+            &resolver.vulnerable_ranges,
+        ) {
+            continue;
+        }
+        if pkg.local_source.is_some() || !reached.insert(key) {
+            continue;
+        }
+        for (name, tail) in &pkg.dependencies {
+            if pkg
+                .peer_dependencies_meta
+                .get(name)
+                .is_some_and(|meta| meta.optional)
+                && !pkg.declared_dependencies.contains_key(name)
+            {
+                continue;
+            }
+            if let Some(child) =
+                aube_lockfile::resolve_dep_edge(name, tail, |key| graph.packages.contains_key(key))
+            {
+                pending.push((child, pkg.optional_dependencies.contains_key(name)));
+            }
+        }
+    }
+    reached
 }
 
 fn merge_fetch_result(

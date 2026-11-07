@@ -4374,6 +4374,843 @@ async fn lockfile_reuse_preserves_transitive_optional_edges() {
 }
 
 #[tokio::test]
+async fn lockfile_reuse_recomputes_optional_peer_edges() {
+    // pnpm/aube snapshots include peer edges but do not say whether the
+    // same name was also declared in dependencies or optionalDependencies.
+    for format in ["memory", "pnpm", "npm", "pnpm-npm"] {
+        for provider in [
+            "removed",
+            "stale",
+            "direct",
+            "transitive",
+            "dependency",
+            "optional",
+        ] {
+            let client = Arc::new(aube_registry::client::RegistryClient::new(
+                "http://127.0.0.1:0",
+            ));
+            let mut resolver = Resolver::new(client);
+            let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+            let meta = host.versions.get_mut("1.0.0").unwrap();
+            meta.peer_dependencies.insert("peer".into(), "^1".into());
+            meta.peer_dependencies
+                .insert("required".into(), "^1".into());
+            meta.peer_dependencies_meta
+                .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+            if provider == "dependency" {
+                meta.dependencies.insert("peer".into(), "^1".into());
+            } else if provider == "optional" {
+                meta.optional_dependencies
+                    .insert("peer".into(), "^1".into());
+            }
+            let mut peer = make_packument("peer", &["1.0.0"], "1.0.0");
+            peer.versions
+                .get_mut("1.0.0")
+                .unwrap()
+                .dependencies
+                .insert("child".into(), "^1".into());
+            let mut holder = make_packument("holder", &["1.0.0"], "1.0.0");
+            holder
+                .versions
+                .get_mut("1.0.0")
+                .unwrap()
+                .dependencies
+                .insert("peer".into(), "^1".into());
+            for packument in [
+                host.clone(),
+                peer,
+                holder,
+                make_packument("child", &["1.0.0"], "1.0.0"),
+                make_packument("required", &["1.0.0"], "1.0.0"),
+            ] {
+                resolver
+                    .cache
+                    .insert(packument.name.clone(), packument.into());
+            }
+            let mut manifest = PackageJson::default();
+            manifest.dependencies.insert("host".into(), "^1".into());
+            manifest.dependencies.insert("peer".into(), "^1".into());
+            if provider == "transitive" {
+                manifest.dependencies.insert("holder".into(), "^1".into());
+            }
+            let initial = resolver.resolve(&manifest, None).await.unwrap();
+            assert!(graph_has_package(&initial, "peer", "1.0.0"));
+
+            let dir = tempfile::tempdir().unwrap();
+            let mut existing = match format {
+                "pnpm" => {
+                    let path = dir.path().join("pnpm-lock.yaml");
+                    aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+                    aube_lockfile::pnpm::parse(&path).unwrap()
+                }
+                "npm" => {
+                    let path = dir.path().join("package-lock.json");
+                    aube_lockfile::npm::write(&path, &initial, &manifest).unwrap();
+                    aube_lockfile::npm::parse(&path).unwrap()
+                }
+                "pnpm-npm" => {
+                    let pnpm = dir.path().join("pnpm-lock.yaml");
+                    aube_lockfile::pnpm::write(&pnpm, &initial, &manifest).unwrap();
+                    let converted = aube_lockfile::pnpm::parse(&pnpm).unwrap();
+                    let npm = dir.path().join("package-lock.json");
+                    aube_lockfile::npm::write(&npm, &converted, &manifest).unwrap();
+                    aube_lockfile::npm::parse(&npm).unwrap()
+                }
+                _ => initial,
+            };
+            if provider != "direct" {
+                manifest.dependencies.remove("peer");
+            }
+            if provider == "stale" {
+                existing
+                    .importers
+                    .get_mut(".")
+                    .unwrap()
+                    .retain(|dep| dep.name != "peer");
+            }
+            // Metadata hydration must still prefer the locked host version.
+            let mut newer = host.versions["1.0.0"].clone();
+            newer.version = "1.1.0".into();
+            host.versions.insert("1.1.0".into(), newer);
+            host.dist_tags.insert("latest".into(), "1.1.0".into());
+            resolver.cache.insert("host".into(), host.into());
+            let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+            let kept = !matches!(provider, "removed" | "stale");
+            for name in ["peer", "child"] {
+                assert_eq!(
+                    graph_has_package(&graph, name, "1.0.0"),
+                    kept,
+                    "{format}: {provider}: unexpected retention of {name}"
+                );
+            }
+            assert!(graph_has_package(&graph, "host", "1.0.0"));
+            assert!(!graph_has_package(&graph, "host", "1.1.0"));
+            assert!(graph_has_package(&graph, "required", "1.0.0"));
+            let host = graph.packages.values().find(|p| p.name == "host").unwrap();
+            assert_eq!(host.dependencies.contains_key("peer"), kept);
+            assert_eq!(host.dep_path.contains("(peer@"), kept);
+            if matches!(provider, "dependency" | "optional") {
+                assert_eq!(
+                    host.optional_dependencies.contains_key("peer"),
+                    provider == "optional",
+                    "{format}: {provider}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_refresh_preserves_transitive_pins() {
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+    let meta = host.versions.get_mut("1.0.0").unwrap();
+    meta.dependencies.insert("child".into(), "^1".into());
+    meta.peer_dependencies.insert("peer".into(), "^1".into());
+    meta.peer_dependencies_meta
+        .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+    let mut other = make_packument("other", &["1.0.0"], "1.0.0");
+    other
+        .versions
+        .get_mut("1.0.0")
+        .unwrap()
+        .dependencies
+        .insert("child".into(), "1.0.0".into());
+    for packument in [
+        host,
+        other,
+        make_packument("peer", &["1.0.0"], "1.0.0"),
+        make_packument("child", &["1.0.0", "1.5.0"], "1.5.0"),
+    ] {
+        resolver
+            .cache
+            .insert(packument.name.clone(), packument.into());
+    }
+    let mut manifest = PackageJson::default();
+    for name in ["host", "other", "peer"] {
+        manifest.dependencies.insert(name.into(), "^1".into());
+    }
+    let initial = resolver.resolve(&manifest, None).await.unwrap();
+    let host = initial
+        .packages
+        .values()
+        .find(|p| p.name == "host")
+        .unwrap();
+    assert_eq!(host.dependencies["child"], "1.5.0");
+    assert!(graph_has_package(&initial, "child", "1.0.0"));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+    let existing = aube_lockfile::pnpm::parse(&path).unwrap();
+    manifest.dependencies.remove("peer");
+    let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+    let host = graph.packages.values().find(|p| p.name == "host").unwrap();
+    let other = graph.packages.values().find(|p| p.name == "other").unwrap();
+    assert_eq!(host.dependencies["child"], "1.5.0");
+    assert_eq!(other.dependencies["child"], "1.0.0");
+    assert!(!graph_has_package(&graph, "peer", "1.0.0"));
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
+    let client = Arc::new(
+        aube_registry::client::RegistryClient::new("http://127.0.0.1:0")
+            .with_network_mode(aube_registry::NetworkMode::Offline),
+    );
+    for (provider, override_rules) in [
+        ("direct", &[][..]),
+        ("transitive", &[][..]),
+        ("optional-root", &[][..]),
+        ("optional-transitive", &[][..]),
+        ("direct", &[("peer", "1.0.0")][..]),
+        ("transitive", &[("holder", "1.0.0")][..]),
+        ("direct", &[("peer@^1.0.0", "1.0.0")][..]),
+        ("direct", &[("peer", "npm:peer@1.0.0")][..]),
+        (
+            "direct",
+            &[("peer@^1.0.0", "^2.0.0"), ("peer@^2.0.0", "1.0.0")][..],
+        ),
+        ("direct", &[("peer", "catalog:")][..]),
+        ("transitive", &[("holder", "catalog:")][..]),
+        ("direct", &[("peer", "catalog:pinned")][..]),
+    ] {
+        let overrides: BTreeMap<_, _> = override_rules
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        let mut catalogs = BTreeMap::from([(
+            "default".to_string(),
+            BTreeMap::from([
+                ("peer".to_string(), "1.0.0".to_string()),
+                ("holder".to_string(), "1.0.0".to_string()),
+            ]),
+        )]);
+        catalogs.insert("pinned".into(), catalogs["default"].clone());
+        let mut seed = Resolver::new(client.clone())
+            .with_overrides(overrides.clone())
+            .with_catalogs(catalogs.clone());
+        let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+        let meta = host.versions.get_mut("1.0.0").unwrap();
+        meta.peer_dependencies
+            .insert("peer".into(), "^1.0.0".into());
+        meta.peer_dependencies_meta
+            .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+        let mut holder = make_packument("holder", &["1.0.0"], "1.0.0");
+        let holder_meta = holder.versions.get_mut("1.0.0").unwrap();
+        if provider == "optional-transitive" {
+            holder_meta
+                .optional_dependencies
+                .insert("peer".into(), "^1.0.0".into());
+        } else {
+            holder_meta
+                .dependencies
+                .insert("peer".into(), "^1.0.0".into());
+        }
+        for packument in [host, holder, make_packument("peer", &["1.0.0"], "1.0.0")] {
+            seed.cache.insert(packument.name.clone(), packument.into());
+        }
+        let mut manifest = PackageJson::default();
+        manifest.dependencies.insert("host".into(), "^1.0.0".into());
+        if provider == "optional-root" {
+            manifest
+                .optional_dependencies
+                .insert("peer".into(), "^1.0.0".into());
+        } else {
+            manifest.dependencies.insert(
+                if provider == "direct" {
+                    "peer"
+                } else {
+                    "holder"
+                }
+                .into(),
+                "^1.0.0".into(),
+            );
+        }
+        let initial = seed
+            .resolve(&manifest, None)
+            .await
+            .unwrap_or_else(|error| panic!("{provider}: {overrides:?}: seed: {error}"));
+        let dir = tempfile::tempdir().unwrap();
+        for format in ["pnpm", "npm"] {
+            let path = dir.path().join(if format == "pnpm" {
+                "pnpm-lock.yaml"
+            } else {
+                "package-lock.json"
+            });
+            let existing = if format == "pnpm" {
+                aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+                aube_lockfile::pnpm::parse(&path).unwrap()
+            } else {
+                aube_lockfile::npm::write(&path, &initial, &manifest).unwrap();
+                aube_lockfile::npm::parse(&path).unwrap()
+            };
+            let mut offline = Resolver::new(client.clone())
+                .with_overrides(overrides.clone())
+                .with_catalogs(catalogs.clone());
+            assert!(offline.cache.is_empty());
+            let result = offline.resolve(&manifest, Some(&existing)).await;
+            if format == "npm" && !overrides.is_empty() {
+                // npm lockfiles omit overrides, so they cannot prove that the
+                // locked provider is still requested without metadata.
+                let error = result.unwrap_err();
+                assert!(
+                    matches!(&error, Error::Registry(name, message)
+                        if name == "host" && message.contains("offline: packument for host")),
+                    "{provider}: {format}: {overrides:?}: {error}"
+                );
+                continue;
+            }
+            let graph = result
+                .unwrap_or_else(|error| panic!("{provider}: {format}: {overrides:?}: {error}"));
+            let host = graph.packages.values().find(|p| p.name == "host").unwrap();
+            assert!(
+                host.dependencies.contains_key("peer"),
+                "{provider}: {format}: {overrides:?}"
+            );
+            assert!(graph_has_package(&graph, "peer", "1.0.0"));
+            assert!(offline.cache.is_empty());
+
+            if provider == "direct" && overrides.values().any(|spec| spec.starts_with("catalog:")) {
+                // The raw override is unchanged, but a changed catalog value
+                // no longer proves that the old provider is independently used.
+                let mut changed_catalogs = catalogs.clone();
+                for catalog in changed_catalogs.values_mut() {
+                    for range in catalog.values_mut() {
+                        *range = "2.0.0".into();
+                    }
+                }
+                let mut changed = Resolver::new(client.clone())
+                    .with_overrides(overrides.clone())
+                    .with_catalogs(changed_catalogs);
+                let error = changed
+                    .resolve(&manifest, Some(&existing))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(&error, Error::Registry(name, message)
+                        if name == "host" && message.contains("offline: packument for host")),
+                    "{provider}: {format}: changed catalogs: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_filtered_provider_does_not_hide_real_dependency() {
+    for reason in ["platform", "ignored"] {
+        let client = Arc::new(aube_registry::client::RegistryClient::new(
+            "http://127.0.0.1:0",
+        ));
+        let mut resolver = Resolver::new(client);
+        let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+        let meta = host.versions.get_mut("1.0.0").unwrap();
+        meta.dependencies.insert("peer".into(), "^1".into());
+        meta.peer_dependencies.insert("peer".into(), "^1".into());
+        meta.peer_dependencies_meta
+            .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+        for packument in [host, make_packument("peer", &["1.0.0"], "1.0.0")] {
+            resolver
+                .cache
+                .insert(packument.name.clone(), packument.into());
+        }
+        let mut manifest = PackageJson::default();
+        manifest.dependencies.insert("host".into(), "^1".into());
+        manifest
+            .optional_dependencies
+            .insert("peer".into(), "^1".into());
+        let initial = resolver.resolve(&manifest, None).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pnpm-lock.yaml");
+        aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+        let mut existing = aube_lockfile::pnpm::parse(&path).unwrap();
+        if reason == "platform" {
+            existing
+                .packages
+                .values_mut()
+                .find(|pkg| pkg.name == "peer")
+                .unwrap()
+                .os = vec!["unsupported-test-platform".into()].into();
+        } else {
+            resolver.ignored_optional_dependencies.insert("peer".into());
+        }
+        let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+        let host = graph
+            .packages
+            .values()
+            .find(|pkg| pkg.name == "host")
+            .unwrap();
+        assert!(graph_has_package(&graph, "peer", "1.0.0"), "{reason}");
+        assert_eq!(host.dependencies["peer"], "1.0.0");
+        assert!(!host.optional_dependencies.contains_key("peer"));
+    }
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_keeps_real_edge_without_peer_dedupe() {
+    assert_optional_peer_real_edge_with_independent_provider(false).await;
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_keeps_real_edge_with_wider_peer_range() {
+    assert_optional_peer_real_edge_with_independent_provider(true).await;
+}
+
+async fn assert_optional_peer_real_edge_with_independent_provider(dedupe: bool) {
+    for optional in [false, true] {
+        for format in ["pnpm", "pnpm-offline", "pnpm-npm"] {
+            let client = Arc::new(
+                aube_registry::client::RegistryClient::new("http://127.0.0.1:0")
+                    .with_network_mode(aube_registry::NetworkMode::Offline),
+            );
+            let mut resolver = Resolver::new(client).with_dedupe_peer_dependents(dedupe);
+            let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+            let meta = host.versions.get_mut("1.0.0").unwrap();
+            let dependencies = if optional {
+                &mut meta.optional_dependencies
+            } else {
+                &mut meta.dependencies
+            };
+            dependencies.insert("peer".into(), "^1".into());
+            meta.peer_dependencies.insert("peer".into(), "*".into());
+            meta.peer_dependencies_meta
+                .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+            resolver.cache.insert("host".into(), host.into());
+            resolver.cache.insert(
+                "peer".into(),
+                make_packument("peer", &["1.0.0", "2.0.0"], "2.0.0").into(),
+            );
+            let mut manifest = PackageJson::default();
+            manifest.dependencies.insert("host".into(), "^1".into());
+            for (name, range) in [("holder-old", "^1"), ("holder-new", "^2")] {
+                let mut holder = make_packument(name, &["1.0.0"], "1.0.0");
+                holder
+                    .versions
+                    .get_mut("1.0.0")
+                    .unwrap()
+                    .dependencies
+                    .insert("peer".into(), range.into());
+                resolver.cache.insert(name.into(), holder.into());
+                manifest.dependencies.insert(name.into(), "^1".into());
+            }
+            let initial = resolver.resolve(&manifest, None).await.unwrap();
+            let initial_host = initial
+                .packages
+                .values()
+                .find(|pkg| pkg.name == "host")
+                .unwrap();
+            assert_eq!(initial_host.dependencies["peer"], "1.0.0");
+            assert_eq!(
+                initial_host.optional_dependencies.contains_key("peer"),
+                optional
+            );
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("pnpm-lock.yaml");
+            aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+            let mut existing = aube_lockfile::pnpm::parse(&path).unwrap();
+            if format == "pnpm-npm" {
+                let path = dir.path().join("package-lock.json");
+                aube_lockfile::npm::write(&path, &existing, &manifest).unwrap();
+                existing = aube_lockfile::npm::parse(&path).unwrap();
+            } else if format == "pnpm-offline" {
+                resolver.cache.clear();
+            }
+            let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+            let host = graph
+                .packages
+                .values()
+                .find(|pkg| pkg.name == "host")
+                .unwrap();
+            assert_eq!(
+                host.dependencies.get("peer").map(String::as_str),
+                Some("1.0.0"),
+                "{format}: optional={optional}: dedupe={dedupe}"
+            );
+            assert_eq!(
+                host.optional_dependencies.contains_key("peer"),
+                optional,
+                "{format}: optional={optional}: dedupe={dedupe}"
+            );
+            assert!(graph_has_package(&graph, "peer", "2.0.0"));
+            if format == "pnpm-offline" {
+                assert!(resolver.cache.is_empty());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_refreshes_incomplete_packument() {
+    assert_locked_optional_peer_metadata_refresh("network").await;
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_replacement_provider_does_not_keep_old_target() {
+    for dedupe in [false, true] {
+        for metadata_available in [false, true] {
+            let client = Arc::new(
+                aube_registry::client::RegistryClient::new("http://127.0.0.1:0")
+                    .with_network_mode(aube_registry::NetworkMode::Offline),
+            );
+            let mut resolver = Resolver::new(client).with_dedupe_peer_dependents(dedupe);
+            let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+            let meta = host.versions.get_mut("1.0.0").unwrap();
+            meta.peer_dependencies.insert("peer".into(), "*".into());
+            meta.peer_dependencies_meta
+                .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+            let mut holder = make_packument("holder", &["1.0.0"], "1.0.0");
+            holder
+                .versions
+                .get_mut("1.0.0")
+                .unwrap()
+                .dependencies
+                .insert("peer".into(), "2.0.0".into());
+            for packument in [
+                host,
+                holder,
+                make_packument("peer", &["1.0.0", "2.0.0"], "2.0.0"),
+            ] {
+                resolver
+                    .cache
+                    .insert(packument.name.clone(), packument.into());
+            }
+            let mut manifest = PackageJson::default();
+            for name in ["host", "holder", "peer"] {
+                manifest.dependencies.insert(name.into(), "1.0.0".into());
+            }
+            let initial = resolver.resolve(&manifest, None).await.unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("pnpm-lock.yaml");
+            aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+            let existing = aube_lockfile::pnpm::parse(&path).unwrap();
+            manifest.dependencies.remove("peer");
+            if !metadata_available {
+                resolver.cache.clear();
+            }
+            let outcome = resolver.resolve(&manifest, Some(&existing)).await;
+            if !metadata_available {
+                assert!(matches!(outcome, Err(Error::Registry(_, ref message))
+                    if message.contains("offline")));
+                continue;
+            }
+            let graph = outcome.unwrap();
+            assert!(!graph_has_package(&graph, "peer", "1.0.0"));
+            assert!(graph_has_package(&graph, "peer", "2.0.0"));
+            let host = graph
+                .packages
+                .values()
+                .find(|pkg| pkg.name == "host")
+                .unwrap();
+            assert_eq!(
+                host.dependencies.get("peer").map(String::as_str),
+                dedupe.then_some("2.0.0")
+            );
+            assert_eq!(host.optional_dependencies.contains_key("peer"), dedupe);
+        }
+    }
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_refreshes_from_complete_offline_cache() {
+    assert_locked_optional_peer_metadata_refresh("offline-cache").await;
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_missing_locked_version_does_not_upgrade() {
+    assert_locked_optional_peer_metadata_refresh("missing").await;
+}
+
+async fn assert_locked_optional_peer_metadata_refresh(source: &str) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut host = make_packument("host", &["1.0.0", "2.0.0"], "2.0.0");
+    let meta = host.versions.get_mut("1.0.0").unwrap();
+    meta.dependencies.insert("child".into(), "^1".into());
+    meta.peer_dependencies.insert("peer".into(), "^1".into());
+    meta.peer_dependencies_meta
+        .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+    let body = serde_json::to_vec(&if source == "missing" {
+        make_packument("host", &["2.0.0"], "2.0.0")
+    } else {
+        host.clone()
+    })
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let requests = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                requests.fetch_add(1, Ordering::Relaxed);
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                });
+            }
+        })
+    };
+    let mut client = aube_registry::client::RegistryClient::new(&registry);
+    let cache = tempfile::tempdir().unwrap();
+    if source == "offline-cache" {
+        client = client.with_network_mode(aube_registry::NetworkMode::Offline);
+        client.seed_full_packument_cache("host", cache.path(), &host, None, None, true);
+    }
+    let mut resolver = Resolver::new(Arc::new(client));
+    if source == "offline-cache" {
+        resolver = resolver.with_packument_full_cache(cache.path().to_path_buf());
+    }
+    for packument in [
+        host,
+        make_packument("peer", &["1.0.0"], "1.0.0"),
+        make_packument("child", &["1.0.0", "1.5.0"], "1.5.0"),
+    ] {
+        resolver
+            .cache
+            .insert(packument.name.clone(), packument.into());
+    }
+    let mut manifest = PackageJson::default();
+    manifest.dependencies.insert("host".into(), "*".into());
+    // Seed the old lock with only host@1 available. The manifest permits both
+    // releases, but metadata refresh must retain the lockfile's selection.
+    resolver
+        .cache
+        .get_mut("host")
+        .unwrap()
+        .versions
+        .remove("2.0.0");
+    manifest.dependencies.insert("peer".into(), "^1".into());
+    let initial = resolver.resolve(&manifest, None).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+    let existing = aube_lockfile::pnpm::parse(&path).unwrap();
+    manifest.dependencies.remove("peer");
+    resolver.cache.insert(
+        "host".into(),
+        make_packument("host", &["2.0.0"], "2.0.0").into(),
+    );
+    if source == "offline-cache" {
+        resolver = resolver.with_minimum_release_age(Some(MinimumReleaseAge {
+            minutes: 60,
+            ..Default::default()
+        }));
+    }
+    let cached_before =
+        serde_json::to_value(resolver.cache["host"].materialize().unwrap()).unwrap();
+    let outcome = resolver.resolve(&manifest, Some(&existing)).await;
+    server.abort();
+    if source == "missing" {
+        assert!(matches!(outcome, Err(Error::Registry(_, ref message))
+            if message.contains("version 1.0.0 is missing")));
+        // The exact response and full fallback both lack the locked release.
+        assert_eq!(requests.load(Ordering::Relaxed), 2);
+        return;
+    }
+    let graph = outcome.expect("incomplete cached metadata must refresh the locked version");
+    assert_eq!(
+        requests.load(Ordering::Relaxed),
+        usize::from(source == "network")
+    );
+    if source == "offline-cache" {
+        assert_eq!(
+            serde_json::to_value(resolver.cache["host"].materialize().unwrap()).unwrap(),
+            cached_before,
+            "hydration must not replace newer cache contents with an older disk inventory"
+        );
+    }
+    assert!(graph_has_package(&graph, "host", "1.0.0"));
+    assert!(!graph_has_package(&graph, "host", "2.0.0"));
+    assert!(!graph_has_package(&graph, "peer", "1.0.0"));
+    let host = graph
+        .packages
+        .values()
+        .find(|pkg| pkg.name == "host")
+        .unwrap();
+    assert_eq!(host.dependencies["child"], "1.5.0");
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_cold_conversion_keeps_required_type() {
+    assert_cold_optional_peer_conversion(false).await;
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_cold_conversion_keeps_optional_type() {
+    assert_cold_optional_peer_conversion(true).await;
+}
+
+struct CountHostHook(Arc<std::sync::atomic::AtomicUsize>);
+
+impl ReadPackageHook for CountHostHook {
+    fn read_package<'a>(
+        &'a mut self,
+        pkg: VersionMetadata,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<VersionMetadata, String>> + Send + 'a>,
+    > {
+        if pkg.name == "host" {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        Box::pin(async move { Ok(pkg) })
+    }
+}
+
+async fn assert_cold_optional_peer_conversion(optional: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+    let meta = host.versions.get_mut("1.0.0").unwrap();
+    if optional {
+        meta.optional_dependencies
+            .insert("peer".into(), "^1".into());
+    } else {
+        meta.dependencies.insert("peer".into(), "^1".into());
+    }
+    meta.peer_dependencies.insert("peer".into(), "*".into());
+    meta.peer_dependencies_meta
+        .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+    let body = serde_json::to_vec(&host).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let registry = format!("http://{}/", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let requests = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                requests.fetch_add(1, Ordering::Relaxed);
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.write_all(&body).await.unwrap();
+                });
+            }
+        })
+    };
+    let client = Arc::new(aube_registry::client::RegistryClient::new(&registry));
+    let mut resolver = Resolver::new(client).with_dedupe_peer_dependents(false);
+    let mut holder = make_packument("holder", &["1.0.0"], "1.0.0");
+    holder
+        .versions
+        .get_mut("1.0.0")
+        .unwrap()
+        .dependencies
+        .insert("peer".into(), "^1".into());
+    for packument in [host, holder, make_packument("peer", &["1.0.0"], "1.0.0")] {
+        resolver
+            .cache
+            .insert(packument.name.clone(), packument.into());
+    }
+    let mut manifest = PackageJson::default();
+    for alias in ["host-one", "host-two"] {
+        manifest
+            .dependencies
+            .insert(alias.into(), "npm:host@^1".into());
+    }
+    manifest.dependencies.insert("holder".into(), "^1".into());
+    let initial = resolver.resolve(&manifest, None).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let pnpm = dir.path().join("pnpm-lock.yaml");
+    aube_lockfile::pnpm::write(&pnpm, &initial, &manifest).unwrap();
+    let converted = aube_lockfile::pnpm::parse(&pnpm).unwrap();
+    let npm = dir.path().join("package-lock.json");
+    aube_lockfile::npm::write(&npm, &converted, &manifest).unwrap();
+    let existing = aube_lockfile::npm::parse(&npm).unwrap();
+    resolver.cache.clear();
+    let hooks = Arc::new(AtomicUsize::new(0));
+    resolver.read_package_hook = Some(Box::new(CountHostHook(hooks.clone())));
+    let outcome = resolver.resolve(&manifest, Some(&existing)).await;
+    server.abort();
+    let graph = outcome.unwrap();
+    for alias in ["host-one", "host-two"] {
+        let host = graph
+            .packages
+            .values()
+            .find(|pkg| pkg.name == alias)
+            .unwrap();
+        assert_eq!(host.dependencies["peer"], "1.0.0");
+        assert_eq!(
+            host.optional_dependencies.contains_key("peer"),
+            optional,
+            "{alias}: a cold cache must not change the real dependency type"
+        );
+    }
+    assert_eq!(
+        hooks.load(Ordering::SeqCst),
+        1,
+        "aliases share refreshed declarations"
+    );
+    assert_eq!(
+        requests.load(Ordering::Relaxed),
+        1,
+        "aliases share the exact metadata fetch"
+    );
+}
+
+#[tokio::test]
+async fn lockfile_reuse_optional_peer_hydrates_registry_version_once_for_aliases() {
+    let client = Arc::new(aube_registry::client::RegistryClient::new(
+        "http://127.0.0.1:0",
+    ));
+    let mut resolver = Resolver::new(client);
+    let mut host = make_packument("host", &["1.0.0"], "1.0.0");
+    let meta = host.versions.get_mut("1.0.0").unwrap();
+    meta.peer_dependencies.insert("peer".into(), "^1".into());
+    meta.peer_dependencies_meta
+        .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
+    for packument in [host, make_packument("peer", &["1.0.0"], "1.0.0")] {
+        resolver
+            .cache
+            .insert(packument.name.clone(), packument.into());
+    }
+    let mut manifest = PackageJson::default();
+    for alias in ["host-one", "host-two"] {
+        manifest
+            .dependencies
+            .insert(alias.into(), "npm:host@^1".into());
+    }
+    manifest.dependencies.insert("peer".into(), "^1".into());
+    let initial = resolver.resolve(&manifest, None).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pnpm-lock.yaml");
+    aube_lockfile::pnpm::write(&path, &initial, &manifest).unwrap();
+    let existing = aube_lockfile::pnpm::parse(&path).unwrap();
+    manifest.dependencies.remove("peer");
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    resolver.read_package_hook = Some(Box::new(CountHostHook(calls.clone())));
+    let graph = resolver.resolve(&manifest, Some(&existing)).await.unwrap();
+    assert!(!graph_has_package(&graph, "peer", "1.0.0"));
+    for alias in ["host-one", "host-two"] {
+        assert!(graph_has_package(&graph, alias, "1.0.0"));
+    }
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn lockfile_reuse_keeps_required_peer_missing_from_locked_edges() {
     let client = Arc::new(aube_registry::client::RegistryClient::new(
         "http://127.0.0.1:0",

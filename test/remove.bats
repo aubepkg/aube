@@ -61,6 +61,57 @@ EOF
 	assert_file_exists node_modules/is-even/index.js
 }
 
+@test "aube remove: drops a package only retained as an optional peer" {
+	for format in aube npm; do
+		mkdir "$format"
+		cp .npmrc "$format/.npmrc"
+		pushd "$format" >/dev/null
+		lockfile=aube-lock.yaml
+		if [ "$format" = npm ]; then
+			lockfile=package-lock.json
+			printf '{"lockfileVersion":3,"packages":{}}\n' >"$lockfile"
+		fi
+		cat >package.json <<'EOF'
+{
+  "name": "test-remove-optional-peer",
+  "version": "0.0.0",
+  "dependencies": {
+    "fdir": "6.5.0",
+    "picomatch": "4.0.4"
+  }
+}
+EOF
+		run aube install --ignore-scripts
+		assert_success
+		assert_file_exists "$lockfile"
+		run grep -E 'picomatch@4[.]0[.]4|node_modules/picomatch' "$lockfile"
+		assert_success
+		run env NODE_PATH="$PWD/node_modules/.aube/node_modules" node -e 'require("picomatch")'
+		assert_success
+
+		run aube remove picomatch --ignore-scripts
+		assert_success
+		run node -e 'require("node:assert/strict").equal(require("./package.json").dependencies.picomatch, undefined)'
+		assert_success
+		run env NODE_PATH="$PWD/node_modules/.aube/node_modules" node -e '
+const assert = require("node:assert/strict");
+assert.throws(() => require.resolve("picomatch"), { code: "MODULE_NOT_FOUND" });
+require("fdir");
+'
+		assert_success
+		# Cached virtual-store entries may remain; the active hidden hoist
+		# must no longer expose the removed package to bin shims.
+		run test -L node_modules/.aube/node_modules/picomatch
+		assert_failure
+		assert_file_exists "$lockfile"
+		run grep -E 'picomatch@4[.]0[.]4|node_modules/picomatch' "$lockfile"
+		assert_failure 1
+		run aube install --frozen-lockfile --ignore-scripts
+		assert_success
+		popd >/dev/null
+	done
+}
+
 @test "aube remove: pruned relink fetches a missing retained artifact" {
 	cat >package.json <<'EOF'
 {
