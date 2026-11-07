@@ -543,7 +543,10 @@ impl<'a> ResolveDriver<'a> {
     /// resolve.
     #[allow(clippy::too_many_lines)]
     async fn process_task(&mut self, mut task: ResolveTask) -> Result<(), Error> {
-        if !self.preprocess_task(&mut task)? {
+        if !Self::preprocess_task(self.resolver, &mut task, &mut self.catalog_picks)? {
+            if task.is_root {
+                self.note_root_done();
+            }
             return Ok(());
         }
 
@@ -1927,7 +1930,11 @@ impl<'a> ResolveDriver<'a> {
     /// Returns `Ok(true)` to continue processing, `Ok(false)` when an
     /// override of `"-"` dropped the dep entirely (caller should skip
     /// to the next task), or `Err(_)` for malformed `jsr:` specs.
-    fn preprocess_task(&mut self, task: &mut ResolveTask) -> Result<bool, Error> {
+    fn preprocess_task(
+        resolver: &Resolver,
+        task: &mut ResolveTask,
+        catalog_picks: &mut BTreeMap<String, BTreeMap<String, String>>,
+    ) -> Result<bool, Error> {
         // Catalog protocol: rewrite `catalog:` / `catalog:<name>` to
         // the workspace catalog's actual range *before* the override
         // loop, so overrides can still target a catalog dep by bare
@@ -1946,9 +1953,8 @@ impl<'a> ResolveDriver<'a> {
         // until an override replaces the declaration.
         let mut catalog_pick: Option<(String, String)> = None;
         let mut catalog_declaration: Option<String> = None;
-        if let Some((catalog_name, real_range)) = self
-            .resolver
-            .resolve_catalog_spec(&task.name, &task.range)?
+        if let Some((catalog_name, real_range)) =
+            resolver.resolve_catalog_spec(&task.name, &task.range)?
         {
             tracing::trace!("catalog: {} {} -> {}", task.name, task.range, real_range);
             catalog_declaration = Some(std::mem::replace(&mut task.range, real_range.clone()));
@@ -1958,7 +1964,7 @@ impl<'a> ResolveDriver<'a> {
         for _ in 0..2 {
             let mut changed = false;
             if let Some(override_spec) = pick_override_spec(
-                &self.resolver.override_rules,
+                &resolver.override_rules,
                 &task.name,
                 catalog_declaration.as_deref().unwrap_or(&task.range),
                 &task.ancestors,
@@ -1969,9 +1975,6 @@ impl<'a> ResolveDriver<'a> {
                 // registry resolver.
                 if override_spec == "-" {
                     tracing::trace!("override: {}@{} -> dropped", task.name, task.range);
-                    if task.is_root {
-                        self.note_root_done();
-                    }
                     return Ok(false);
                 }
                 // An override may itself point at a catalog entry
@@ -1980,13 +1983,11 @@ impl<'a> ResolveDriver<'a> {
                 // original range, so resolve the indirection here
                 // before assigning — otherwise `catalog:` leaks
                 // through to the registry resolver.
-                let effective_spec = match self
-                    .resolver
-                    .resolve_catalog_spec(&task.name, &override_spec)?
-                {
-                    Some((_, real_range)) => real_range,
-                    None => override_spec,
-                };
+                let effective_spec =
+                    match resolver.resolve_catalog_spec(&task.name, &override_spec)? {
+                        Some((_, real_range)) => real_range,
+                        None => override_spec,
+                    };
                 // pnpm records the override-applied specifier for direct
                 // importer dependencies. Keep ordinary `catalog:` dependencies
                 // verbatim, but once an override fires use its effective value
@@ -2116,7 +2117,7 @@ impl<'a> ResolveDriver<'a> {
             }
         }
         if let Some((catalog_name, real_range)) = catalog_pick {
-            self.catalog_picks
+            catalog_picks
                 .entry(catalog_name)
                 .or_default()
                 .insert(task.name.clone(), real_range);
@@ -2646,45 +2647,34 @@ fn independent_locked_packages(
         return reached;
     };
     // Changed overrides can remove or replace an otherwise ordinary edge.
-    if graph.overrides != resolver.overrides {
+    if graph.overrides != resolver.lockfile_overrides() {
         return reached;
     }
     let mut pending = Vec::new();
+    let mut catalog_picks = BTreeMap::new();
     for task in tasks {
-        // Importers may record the applied override rather than the manifest's
-        // original range. Use the same matcher as normal task preprocessing.
-        let override_spec = pick_override_spec(
-            &resolver.override_rules,
-            &task.name,
-            &task.range,
-            &task.ancestors,
+        // Seeded tasks are roots. Run the same catalog/override/alias passes
+        // as resolution so the importer check sees the final recorded specifier.
+        let mut preprocessed = ResolveTask::root(
+            task.name.clone(),
+            task.range.clone(),
+            task.dep_type,
+            task.importer.clone(),
         );
-        if override_spec.as_deref() == Some("-") {
+        if !matches!(
+            ResolveDriver::preprocess_task(resolver, &mut preprocessed, &mut catalog_picks),
+            Ok(true)
+        ) {
+            // Normal processing reports invalid specs and counts removed roots.
             continue;
         }
-        let override_spec = match override_spec {
-            Some(spec) => match resolver.resolve_catalog_spec(&task.name, &spec) {
-                Ok(Some((_, range))) => Some(range),
-                Ok(None) => Some(spec),
-                // Normal task preprocessing reports invalid catalogs. They
-                // cannot establish independent reachability here.
-                Err(_) => continue,
-            },
-            None => None,
-        };
+        let lockfile_specifier = preprocessed.lockfile_specifier();
         if let Some(dep) = graph.importers.get(&task.importer).and_then(|deps| {
             deps.iter().find(|dep| {
                 dep.name == task.name
                     && dep.dep_type == task.dep_type
                     && (dep.specifier.as_deref() == Some(task.range.as_str())
-                        || override_spec.as_deref().is_some_and(|spec| {
-                            dep.specifier.as_deref() == Some(spec)
-                                || aube_lockfile::importer_relative_override(spec, &task.importer)
-                                    .as_deref()
-                                    .is_some_and(|relative| {
-                                        dep.specifier.as_deref() == Some(relative)
-                                    })
-                        }))
+                        || dep.specifier == lockfile_specifier)
             })
         }) {
             let key = if graph.packages.contains_key(&dep.dep_path) {

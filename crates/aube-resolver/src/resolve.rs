@@ -95,23 +95,8 @@ impl Resolver {
             && !workspace_hit
     }
 
-    /// Build the final `LockfileGraph` from accumulated resolver state.
-    ///
-    /// Runs the catalog-pick materialization, hoists auto-installed
-    /// peers when `auto_install_peers` is on, and applies peer-context
-    /// suffixes. Returns the post-peer-context graph ready for lockfile
-    /// emission.
-    fn finalize_resolved_graph(
-        &self,
-        importers: BTreeMap<String, Vec<DirectDep>>,
-        resolved: BTreeMap<String, LockedPackage>,
-        resolved_versions: &FxHashMap<String, Vec<String>>,
-        resolved_times: BTreeMap<String, String>,
-        skipped_optional_dependencies: BTreeMap<String, BTreeMap<String, String>>,
-        catalog_picks: BTreeMap<String, BTreeMap<String, String>>,
-    ) -> Result<LockfileGraph, Error> {
-        let resolved_catalogs =
-            catalog::materialize_catalog_picks(catalog_picks, resolved_versions);
+    /// Canonical override values shared by lockfile emission and reuse checks.
+    fn lockfile_overrides(&self) -> BTreeMap<String, String> {
         // pnpm stores catalog-expanded override values in its lockfile header,
         // not the raw `catalog:` references from pnpm-workspace.yaml. Resolve
         // every valid selector against the configured catalogs here so even an
@@ -137,6 +122,26 @@ impl Resolver {
             };
             lockfile_overrides.insert(rule.raw_key.clone(), real_range.clone());
         }
+        lockfile_overrides
+    }
+
+    /// Build the final `LockfileGraph` from accumulated resolver state.
+    ///
+    /// Runs the catalog-pick materialization, hoists auto-installed
+    /// peers when `auto_install_peers` is on, and applies peer-context
+    /// suffixes. Returns the post-peer-context graph ready for lockfile
+    /// emission.
+    fn finalize_resolved_graph(
+        &self,
+        importers: BTreeMap<String, Vec<DirectDep>>,
+        resolved: BTreeMap<String, LockedPackage>,
+        resolved_versions: &FxHashMap<String, Vec<String>>,
+        resolved_times: BTreeMap<String, String>,
+        skipped_optional_dependencies: BTreeMap<String, BTreeMap<String, String>>,
+        catalog_picks: BTreeMap<String, BTreeMap<String, String>>,
+    ) -> Result<LockfileGraph, Error> {
+        let resolved_catalogs =
+            catalog::materialize_catalog_picks(catalog_picks, resolved_versions);
 
         let canonical = LockfileGraph {
             importers,
@@ -151,7 +156,7 @@ impl Resolver {
             },
             // Stamp the pnpm-canonical override values into the output graph so
             // the writer and the next install's drift check see the same shape.
-            overrides: lockfile_overrides,
+            overrides: self.lockfile_overrides(),
             ignored_optional_dependencies: self.ignored_optional_dependencies.clone(),
             times: resolved_times,
             skipped_optional_dependencies,

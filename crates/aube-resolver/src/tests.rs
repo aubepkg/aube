@@ -4560,35 +4560,42 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
         aube_registry::client::RegistryClient::new("http://127.0.0.1:0")
             .with_network_mode(aube_registry::NetworkMode::Offline),
     );
-    for (provider, override_rule) in [
-        ("direct", None),
-        ("transitive", None),
-        ("optional-root", None),
-        ("optional-transitive", None),
-        ("direct", Some(("peer", "1.0.0"))),
-        ("transitive", Some(("holder", "1.0.0"))),
-        ("direct", Some(("peer@^1", "1.0.0"))),
-        ("direct", Some(("peer", "npm:peer@1.0.0"))),
-        ("direct", Some(("peer", "catalog:"))),
-        ("transitive", Some(("holder", "catalog:"))),
+    for (provider, override_rules) in [
+        ("direct", &[][..]),
+        ("transitive", &[][..]),
+        ("optional-root", &[][..]),
+        ("optional-transitive", &[][..]),
+        ("direct", &[("peer", "1.0.0")][..]),
+        ("transitive", &[("holder", "1.0.0")][..]),
+        ("direct", &[("peer@^1.0.0", "1.0.0")][..]),
+        ("direct", &[("peer", "npm:peer@1.0.0")][..]),
+        (
+            "direct",
+            &[("peer@^1.0.0", "^2.0.0"), ("peer@^2.0.0", "1.0.0")][..],
+        ),
+        ("direct", &[("peer", "catalog:")][..]),
+        ("transitive", &[("holder", "catalog:")][..]),
+        ("direct", &[("peer", "catalog:pinned")][..]),
     ] {
-        let overrides: BTreeMap<_, _> = override_rule
-            .into_iter()
+        let overrides: BTreeMap<_, _> = override_rules
+            .iter()
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect();
-        let catalogs = BTreeMap::from([(
+        let mut catalogs = BTreeMap::from([(
             "default".to_string(),
             BTreeMap::from([
                 ("peer".to_string(), "1.0.0".to_string()),
                 ("holder".to_string(), "1.0.0".to_string()),
             ]),
         )]);
+        catalogs.insert("pinned".into(), catalogs["default"].clone());
         let mut seed = Resolver::new(client.clone())
             .with_overrides(overrides.clone())
             .with_catalogs(catalogs.clone());
         let mut host = make_packument("host", &["1.0.0"], "1.0.0");
         let meta = host.versions.get_mut("1.0.0").unwrap();
-        meta.peer_dependencies.insert("peer".into(), "^1".into());
+        meta.peer_dependencies
+            .insert("peer".into(), "^1.0.0".into());
         meta.peer_dependencies_meta
             .insert("peer".into(), aube_registry::PeerDepMeta { optional: true });
         let mut holder = make_packument("holder", &["1.0.0"], "1.0.0");
@@ -4596,19 +4603,21 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
         if provider == "optional-transitive" {
             holder_meta
                 .optional_dependencies
-                .insert("peer".into(), "^1".into());
+                .insert("peer".into(), "^1.0.0".into());
         } else {
-            holder_meta.dependencies.insert("peer".into(), "^1".into());
+            holder_meta
+                .dependencies
+                .insert("peer".into(), "^1.0.0".into());
         }
         for packument in [host, holder, make_packument("peer", &["1.0.0"], "1.0.0")] {
             seed.cache.insert(packument.name.clone(), packument.into());
         }
         let mut manifest = PackageJson::default();
-        manifest.dependencies.insert("host".into(), "^1".into());
+        manifest.dependencies.insert("host".into(), "^1.0.0".into());
         if provider == "optional-root" {
             manifest
                 .optional_dependencies
-                .insert("peer".into(), "^1".into());
+                .insert("peer".into(), "^1.0.0".into());
         } else {
             manifest.dependencies.insert(
                 if provider == "direct" {
@@ -4617,10 +4626,13 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
                     "holder"
                 }
                 .into(),
-                "^1".into(),
+                "^1.0.0".into(),
             );
         }
-        let initial = seed.resolve(&manifest, None).await.unwrap();
+        let initial = seed
+            .resolve(&manifest, None)
+            .await
+            .unwrap_or_else(|error| panic!("{provider}: {overrides:?}: seed: {error}"));
         let dir = tempfile::tempdir().unwrap();
         for format in ["pnpm", "npm"] {
             let path = dir.path().join(if format == "pnpm" {
@@ -4640,10 +4652,15 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
                 .with_catalogs(catalogs.clone());
             assert!(offline.cache.is_empty());
             let result = offline.resolve(&manifest, Some(&existing)).await;
-            if existing.overrides != overrides {
+            if format == "npm" && !overrides.is_empty() {
                 // npm lockfiles omit overrides, so they cannot prove that the
                 // locked provider is still requested without metadata.
-                assert!(result.is_err(), "{provider}: {format}: {overrides:?}");
+                let error = result.unwrap_err();
+                assert!(
+                    matches!(&error, Error::Registry(name, message)
+                        if name == "host" && message.contains("offline: packument for host")),
+                    "{provider}: {format}: {overrides:?}: {error}"
+                );
                 continue;
             }
             let graph = result
@@ -4655,6 +4672,29 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
             );
             assert!(graph_has_package(&graph, "peer", "1.0.0"));
             assert!(offline.cache.is_empty());
+
+            if provider == "direct" && overrides.values().any(|spec| spec.starts_with("catalog:")) {
+                // The raw override is unchanged, but a changed catalog value
+                // no longer proves that the old provider is independently used.
+                let mut changed_catalogs = catalogs.clone();
+                for catalog in changed_catalogs.values_mut() {
+                    for range in catalog.values_mut() {
+                        *range = "2.0.0".into();
+                    }
+                }
+                let mut changed = Resolver::new(client.clone())
+                    .with_overrides(overrides.clone())
+                    .with_catalogs(changed_catalogs);
+                let error = changed
+                    .resolve(&manifest, Some(&existing))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(&error, Error::Registry(name, message)
+                        if name == "host" && message.contains("offline: packument for host")),
+                    "{provider}: {format}: changed catalogs: {error}"
+                );
+            }
         }
     }
 }
