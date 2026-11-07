@@ -4560,13 +4560,32 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
         aube_registry::client::RegistryClient::new("http://127.0.0.1:0")
             .with_network_mode(aube_registry::NetworkMode::Offline),
     );
-    for provider in [
-        "direct",
-        "transitive",
-        "optional-root",
-        "optional-transitive",
+    for (provider, override_rule) in [
+        ("direct", None),
+        ("transitive", None),
+        ("optional-root", None),
+        ("optional-transitive", None),
+        ("direct", Some(("peer", "1.0.0"))),
+        ("transitive", Some(("holder", "1.0.0"))),
+        ("direct", Some(("peer@^1", "1.0.0"))),
+        ("direct", Some(("peer", "npm:peer@1.0.0"))),
+        ("direct", Some(("peer", "catalog:"))),
+        ("transitive", Some(("holder", "catalog:"))),
     ] {
-        let mut seed = Resolver::new(client.clone());
+        let overrides: BTreeMap<_, _> = override_rule
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        let catalogs = BTreeMap::from([(
+            "default".to_string(),
+            BTreeMap::from([
+                ("peer".to_string(), "1.0.0".to_string()),
+                ("holder".to_string(), "1.0.0".to_string()),
+            ]),
+        )]);
+        let mut seed = Resolver::new(client.clone())
+            .with_overrides(overrides.clone())
+            .with_catalogs(catalogs.clone());
         let mut host = make_packument("host", &["1.0.0"], "1.0.0");
         let meta = host.versions.get_mut("1.0.0").unwrap();
         meta.peer_dependencies.insert("peer".into(), "^1".into());
@@ -4616,13 +4635,23 @@ async fn lockfile_reuse_optional_peer_unchanged_offline_without_packuments() {
                 aube_lockfile::npm::write(&path, &initial, &manifest).unwrap();
                 aube_lockfile::npm::parse(&path).unwrap()
             };
-            let mut offline = Resolver::new(client.clone());
+            let mut offline = Resolver::new(client.clone())
+                .with_overrides(overrides.clone())
+                .with_catalogs(catalogs.clone());
             assert!(offline.cache.is_empty());
-            let graph = offline.resolve(&manifest, Some(&existing)).await.unwrap();
+            let result = offline.resolve(&manifest, Some(&existing)).await;
+            if existing.overrides != overrides {
+                // npm lockfiles omit overrides, so they cannot prove that the
+                // locked provider is still requested without metadata.
+                assert!(result.is_err(), "{provider}: {format}: {overrides:?}");
+                continue;
+            }
+            let graph = result
+                .unwrap_or_else(|error| panic!("{provider}: {format}: {overrides:?}: {error}"));
             let host = graph.packages.values().find(|p| p.name == "host").unwrap();
             assert!(
                 host.dependencies.contains_key("peer"),
-                "{provider}: {format}"
+                "{provider}: {format}: {overrides:?}"
             );
             assert!(graph_has_package(&graph, "peer", "1.0.0"));
             assert!(offline.cache.is_empty());

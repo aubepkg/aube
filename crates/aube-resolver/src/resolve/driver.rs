@@ -2651,14 +2651,58 @@ fn independent_locked_packages(
     }
     let mut pending = Vec::new();
     for task in tasks {
+        // Importers may record the applied override rather than the manifest's
+        // original range. Use the same matcher as normal task preprocessing.
+        let override_spec = pick_override_spec(
+            &resolver.override_rules,
+            &task.name,
+            &task.range,
+            &task.ancestors,
+        );
+        if override_spec.as_deref() == Some("-") {
+            continue;
+        }
+        let override_spec = match override_spec {
+            Some(spec) => match resolver.resolve_catalog_spec(&task.name, &spec) {
+                Ok(Some((_, range))) => Some(range),
+                Ok(None) => Some(spec),
+                // Normal task preprocessing reports invalid catalogs. They
+                // cannot establish independent reachability here.
+                Err(_) => continue,
+            },
+            None => None,
+        };
         if let Some(dep) = graph.importers.get(&task.importer).and_then(|deps| {
             deps.iter().find(|dep| {
                 dep.name == task.name
                     && dep.dep_type == task.dep_type
-                    && dep.specifier.as_deref() == Some(task.range.as_str())
+                    && (dep.specifier.as_deref() == Some(task.range.as_str())
+                        || override_spec.as_deref().is_some_and(|spec| {
+                            dep.specifier.as_deref() == Some(spec)
+                                || aube_lockfile::importer_relative_override(spec, &task.importer)
+                                    .as_deref()
+                                    .is_some_and(|relative| {
+                                        dep.specifier.as_deref() == Some(relative)
+                                    })
+                        }))
             })
         }) {
-            pending.push((dep.dep_path.clone(), task.dep_type == DepType::Optional));
+            let key = if graph.packages.contains_key(&dep.dep_path) {
+                Some(dep.dep_path.clone())
+            } else {
+                // An npm alias in a pnpm importer can carry the registry
+                // package name in its tail. Resolve that stored edge too.
+                dep.dep_path
+                    .strip_prefix(&format!("{}@", dep.name))
+                    .and_then(|tail| {
+                        aube_lockfile::resolve_dep_edge(&dep.name, tail, |key| {
+                            graph.packages.contains_key(key)
+                        })
+                    })
+            };
+            if let Some(key) = key {
+                pending.push((key, task.dep_type == DepType::Optional));
+            }
         }
     }
     while let Some((key, optional)) = pending.pop() {
