@@ -865,3 +865,65 @@ EOF2
 	run grep "is-odd@0.1.2" aube-lock.yaml
 	assert_failure
 }
+
+# A member two levels deep that links a sibling through `workspace:*`.
+# The shared lockfile records the link relative to the member, as pnpm does.
+_setup_member_workspace_link() {
+	cat >package.json <<'EOF2'
+{"name":"root","private":true}
+EOF2
+	cat >pnpm-workspace.yaml <<'EOF2'
+packages:
+  - "apps/*"
+  - "packages/*"
+EOF2
+	mkdir -p apps/a packages/b
+	cat >apps/a/package.json <<'EOF2'
+{"name":"a","version":"1.0.0","dependencies":{"b":"workspace:*","is-odd":"^3.0.1"}}
+EOF2
+	cat >packages/b/package.json <<'EOF2'
+{"name":"b","version":"1.0.0","dependencies":{"is-odd":"^3.0.1"}}
+EOF2
+	run aube install
+	assert_success
+	run grep -c "version: link:../../packages/b" aube-lock.yaml
+	assert_output 1
+}
+
+_assert_member_workspace_link_kept() {
+	run grep "version: link:" aube-lock.yaml
+	assert_output "        version: link:../../packages/b"
+	assert_file_exists apps/a/node_modules/b/package.json
+}
+
+@test "aube update at the workspace root keeps a member's workspace link member-relative" {
+	_setup_member_workspace_link
+
+	run aube update is-odd
+	assert_success
+	_assert_member_workspace_link_kept
+}
+
+@test "aube update -r --no-save keeps a member's workspace link member-relative" {
+	_setup_member_workspace_link
+
+	run aube update -r --no-save is-odd
+	assert_success
+	_assert_member_workspace_link_kept
+}
+
+@test "aube update -r keeps a member's workspace link member-relative" {
+	_setup_member_workspace_link
+
+	run aube update -r is-odd
+	assert_success
+	_assert_member_workspace_link_kept
+}
+
+@test "aube --filter update keeps a member's workspace link member-relative" {
+	_setup_member_workspace_link
+
+	run aube --filter a update is-odd
+	assert_success
+	_assert_member_workspace_link_kept
+}
