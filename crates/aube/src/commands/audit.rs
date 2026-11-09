@@ -712,14 +712,23 @@ async fn write_fix_lockfile_update(
         .wrap_err("failed to resolve audit fixes")?;
 
     let after = resolved_versions_by_name(&new_graph, filter, no_optional, &vulnerable_names);
+    let member_only: BTreeSet<&str> =
+        super::collect_workspace_dep_closure(graph, filter, no_optional)
+            .values()
+            .map(|pkg| pkg.registry_name())
+            .filter(|name| !before.contains_key(*name))
+            .collect();
     let remaining: Vec<Row> = rows
         .iter()
         .filter(|row| {
-            after.get(&row.name).is_some_and(|versions| {
-                versions.iter().any(|version| {
+            // A name absent from the root closure (a workspace member's
+            // dependency) cannot be verified as fixed, so it stays.
+            match after.get(&row.name) {
+                Some(versions) => versions.iter().any(|version| {
                     version_is_vulnerable(version, std::slice::from_ref(&row.vulnerable_versions))
-                })
-            })
+                }),
+                None => member_only.contains(row.name.as_str()),
+            }
         })
         .cloned()
         .collect();
