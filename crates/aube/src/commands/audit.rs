@@ -147,10 +147,21 @@ pub enum FixMode {
 
 pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
-    let cwd = crate::dirs::workspace_or_project_root()?;
+    let project_dir = crate::dirs::project_root_or_cwd()?;
+    let workspace_dir = crate::dirs::workspace_or_project_root().unwrap_or(project_dir.clone());
+    // Under `sharedWorkspaceLockfile=false` each member owns its lockfile,
+    // so only climb to the workspace root when the lockfile is shared.
+    let cwd = if with_audit_settings_ctx(
+        &workspace_dir,
+        aube_settings::resolved::shared_workspace_lockfile,
+    )? {
+        workspace_dir
+    } else {
+        project_dir
+    };
     let audit_level = resolve_audit_level(&cwd, args.audit_level)?;
 
-    let manifest = super::load_manifest(&cwd.join("package.json"))?;
+    let manifest = super::load_manifest_or_default(&cwd)?;
 
     let graph = super::load_graph(
         &cwd,
@@ -982,7 +993,7 @@ fn resolved_versions_by_name(
     no_optional: bool,
     names: &BTreeSet<String>,
 ) -> BTreeMap<String, BTreeSet<String>> {
-    let closure = super::collect_workspace_dep_closure(graph, filter, no_optional);
+    let closure = super::collect_dep_closure(graph, filter, no_optional);
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for pkg in closure.values() {
         let name = pkg.registry_name();
