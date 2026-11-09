@@ -6,6 +6,7 @@ setup() {
 }
 
 teardown() {
+	_stop_audit_server
 	_common_teardown
 }
 
