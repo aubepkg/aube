@@ -716,6 +716,46 @@ fn classic_write_keeps_optional_only_edges() {
 }
 
 #[test]
+fn classic_write_uses_retargeted_optional_edge() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), OPTIONAL_LOCK).unwrap();
+    let manifest = make_manifest(&[("rolldown", "~1.2.14")], &[]);
+    let mut graph = parse(tmp.path(), &manifest).unwrap();
+    // A hook retargeted the edge in `dependencies` only.
+    let mut newer = graph.packages["@rolldown/binding-darwin-arm64@1.2.15"].clone();
+    newer.version = "1.2.16".to_string();
+    newer.dep_path = "@rolldown/binding-darwin-arm64@1.2.16".to_string();
+    graph.packages.insert(newer.dep_path.clone(), newer);
+    graph
+        .packages
+        .get_mut("rolldown@1.2.15")
+        .unwrap()
+        .dependencies
+        .insert(
+            "@rolldown/binding-darwin-arm64".to_string(),
+            "1.2.16".to_string(),
+        );
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_classic(out.path(), &graph, &manifest).unwrap();
+    let reparsed = parse(out.path(), &manifest).unwrap();
+    assert_eq!(
+        reparsed.packages["rolldown@1.2.15"]
+            .dependencies
+            .get("@rolldown/binding-darwin-arm64")
+            .map(String::as_str),
+        Some("1.2.16")
+    );
+    assert_eq!(
+        reparsed.packages["rolldown@1.2.15"]
+            .optional_dependencies
+            .get("@rolldown/binding-darwin-arm64")
+            .map(String::as_str),
+        Some("1.2.16")
+    );
+}
+
+#[test]
 fn test_dev_dep_classification() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let content = r#"foo@^1.0.0:

@@ -485,12 +485,7 @@ pub fn write_classic(
     // Without a declared range the dependency is rendered as its pin,
     // so the pin has to be a header spec for reparse to find it.
     for pkg in canonical.values() {
-        // Berry-sourced graphs carry optional edges only in
-        // `optional_dependencies`; the other readers mirror them into
-        // `dependencies` too. `dependencies` is chained last so its target
-        // wins if a hook retargeted it without touching the optional map.
-        for (dep_name, resolved_value) in pkg.optional_dependencies.iter().chain(&pkg.dependencies)
-        {
+        for (dep_name, resolved_value) in merged_edges(pkg) {
             let target = crate::npm::child_canonical_key(dep_name, resolved_value);
             if !canonical.contains_key(&target) {
                 continue;
@@ -542,9 +537,8 @@ pub fn write_classic(
         // Optional edges are mirrored in `dependencies`; yarn lists them
         // only under `optionalDependencies:`.
         let render_edges = |optional: bool| -> BTreeMap<&str, String> {
-            pkg.optional_dependencies
-                .iter()
-                .chain(&pkg.dependencies)
+            merged_edges(pkg)
+                .into_iter()
                 .filter(|(n, _)| pkg.optional_dependencies.contains_key(*n) == optional)
                 .filter_map(|(n, v)| {
                     let key = crate::npm::child_canonical_key(n, v);
@@ -593,6 +587,17 @@ pub fn write_classic(
 
     crate::atomic_write_lockfile(path, out.as_bytes())?;
     Ok(())
+}
+
+/// Every dependency edge of `pkg`, one target per name. Berry-sourced graphs
+/// hold optional edges only in `optional_dependencies`; the other readers
+/// mirror them into `dependencies` too, and `dependencies` wins when a hook
+/// retargeted an edge without touching the optional map.
+fn merged_edges(pkg: &LockedPackage) -> BTreeMap<&String, &String> {
+    pkg.optional_dependencies
+        .iter()
+        .chain(&pkg.dependencies)
+        .collect()
 }
 
 /// The `resolved` value yarn would have written for `pkg`: the verbatim
