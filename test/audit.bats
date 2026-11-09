@@ -58,6 +58,10 @@ _write_clean_fixture() {
 	refute_output --partial "No dependencies to audit"
 	assert_output --partial "No known vulnerabilities found"
 
+	run aube audit --json
+	assert_success
+	printf '%s\n' "$output" | jq -e '.metadata.totalDependencies > 0 and .metadata.dependencies == 1'
+
 	cd pkg
 	run aube audit
 	assert_success
