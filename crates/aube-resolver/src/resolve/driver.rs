@@ -779,17 +779,6 @@ impl<'a> ResolveDriver<'a> {
         // versions bypass the cutoff entirely (the prior behavior).
         let cutoff_for_pkg = self.published_by.as_deref();
         let exempt_cutoff = self.time_cutoff.as_deref();
-        // A cutoff-aware `latest` request must remain a range over all
-        // versions. Resolving the dist-tag to its exact version first would
-        // leave no mature alternative for the age gate to select and, in
-        // lenient mode, would admit the quarantined tag through the
-        // lowest-satisfying fallback. Keep dist-tag preference inside
-        // `pick_version`; `*` only broadens the fallback candidate set.
-        let version_range = if task.range == "latest" && cutoff_for_pkg.is_some() {
-            "*"
-        } else {
-            task.range.as_str()
-        };
         // Strict semantics in two cases:
         //   - `minimumReleaseAgeStrict=true` (the user opted in
         //     to hard failures), or
@@ -832,7 +821,7 @@ impl<'a> ResolveDriver<'a> {
             })?;
             let pick = crate::semver_util::pick_resolution_version(
                 packument,
-                version_range,
+                task.range.as_str(),
                 locked_version,
                 pick_lowest,
                 cutoff_for_pkg,
@@ -958,7 +947,7 @@ impl<'a> ResolveDriver<'a> {
             prefer_non_vulnerable_pick(
                 task.registry_name(),
                 packument,
-                version_range,
+                task.range.as_str(),
                 &selected_pick,
                 pick_lowest,
                 cutoff_for_pkg,

@@ -36,13 +36,12 @@ impl<'a> PickResult<'a> {
 /// `minimum_release_age` to get today's ungated pick (dist-tag preference,
 /// then highest satisfying).
 ///
-/// A gated `latest` range is normalized to `*` here, at the API boundary,
-/// so no caller can reintroduce the bypass: `pick_version`'s internal
-/// dist-tag fallback turns `latest` into the tagged version's exact range,
-/// whose lenient fallback would admit a fresh publish — the very thing the
-/// gate exists to block. `*` keeps the dist-tag preference for a mature
-/// `latest`, steers a gated one to the newest version clearing the cutoff,
-/// and (unlike the tag) still resolves when `dist-tags.latest` is missing.
+/// A gated `latest` range is treated as `*` inside `pick_version_key`, so no
+/// caller can reintroduce the bypass: the dist-tag fallback would turn
+/// `latest` into the tagged version's exact range, whose lenient fallback
+/// would admit a fresh publish. The tag still wins when it clears the cutoff
+/// (or is excluded), even as a prerelease; otherwise the newest mature
+/// version is chosen, and a missing `dist-tags.latest` still resolves.
 pub fn pick_version_for_add<'a>(
     packument: &'a Packument,
     registry_name: &str,
@@ -99,11 +98,6 @@ fn pick_key_for_add<'a, V: VersionCandidate>(
 ) -> VersionPick<'a> {
     let cutoff = minimum_release_age.and_then(|m| m.cutoff());
     let range = registry_alias_range(range);
-    let range = if range == "latest" && cutoff.is_some() {
-        "*"
-    } else {
-        range
-    };
     let strict = minimum_release_age.is_some_and(|m| m.strict);
     let exclude = minimum_release_age.map(|m| &m.exclude);
     let is_age_exempt = |ver: &str, parsed: Option<&node_semver::Version>| {
@@ -300,6 +294,16 @@ pub(crate) fn pick_version_key<'a, V: VersionCandidate>(
     strict: bool,
     is_age_exempt: impl Fn(&str, Option<&node_semver::Version>) -> bool,
 ) -> VersionPick<'a> {
+    // A cutoff-aware `latest` request must remain a range over all
+    // versions: resolving the tag to its exact version first would leave
+    // no mature alternative for the age gate to select and, in lenient
+    // mode, would admit a quarantined tag through the lowest-satisfying
+    // fallback. `*` never matches a prerelease, so the tag itself is
+    // exempted from the range check below; it still has to clear the
+    // cutoff (or be age-exempt) to win.
+    let gated_latest = range_str == "latest" && cutoff.is_some();
+    let range_str = if gated_latest { "*" } else { range_str };
+
     // Handle dist-tag references. If the requested range is a tag
     // name and the packument has that tag, use the tagged version
     // as the effective range. Special case `latest`: some registries
@@ -387,7 +391,7 @@ pub(crate) fn pick_version_key<'a, V: VersionCandidate>(
     if !pick_lowest
         && let Some(latest_ver) = packument.dist_tags.get("latest")
         && let Ok(v) = node_semver::Version::parse(latest_ver)
-        && v.satisfies(&range)
+        && (gated_latest || v.satisfies(&range))
         && passes_cutoff(latest_ver, Some(&v))
         && let Some((key, _)) = packument.versions.get_key_value(latest_ver)
     {
