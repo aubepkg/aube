@@ -65,7 +65,7 @@ const PREFERRED_ALGOS: [&[u8]; 3] = [b"zstd", b"lzo", b"zlib"];
 // fall back to the bare FS_COMPR_FL flag (the mount's default codec). Called on the
 // empty temp file so the bytes compress as they're written.
 fn request_codec(fd: libc::c_int) -> Result<(), Error> {
-    for algo in PREFERRED_ALGOS {
+    let selected = try_preferred_codec(|algo| {
         let rc = unsafe {
             libc::fsetxattr(
                 fd,
@@ -76,14 +76,79 @@ fn request_codec(fd: libc::c_int) -> Result<(), Error> {
             )
         };
         if rc == 0 {
-            return Ok(());
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
         }
+    })
+    .map_err(|source| Error::Io {
+        context: "set btrfs.compression",
+        source,
+    })?;
+    if selected {
+        return Ok(());
     }
     let flags = get_flags(fd)? | FS_COMPR_FL;
     if unsafe { libc::ioctl(fd, FS_IOC_SETFLAGS as _, &flags) } != 0 {
         return Err(io("FS_IOC_SETFLAGS"));
     }
     Ok(())
+}
+
+/// Select the first supported codec. Only `EINVAL` means that this kernel
+/// rejected a codec name; every other error must reach the caller unchanged.
+fn try_preferred_codec(
+    mut set_codec: impl FnMut(&[u8]) -> std::io::Result<()>,
+) -> std::io::Result<bool> {
+    for algo in PREFERRED_ALGOS {
+        match set_codec(algo) {
+            Ok(()) => return Ok(true),
+            Err(error) if error.raw_os_error() == Some(libc::EINVAL) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
+mod codec_tests {
+    use super::try_preferred_codec;
+
+    #[test]
+    fn retries_unsupported_codecs_in_preference_order() {
+        let mut tried = Vec::new();
+        let selected = try_preferred_codec(|codec| {
+            tried.push(codec.to_vec());
+            if codec == b"zlib" {
+                Ok(())
+            } else {
+                Err(std::io::Error::from_raw_os_error(libc::EINVAL))
+            }
+        })
+        .unwrap();
+        assert!(selected);
+        assert_eq!(tried, [b"zstd".to_vec(), b"lzo".to_vec(), b"zlib".to_vec()]);
+    }
+
+    #[test]
+    fn preserves_non_codec_errors_without_retrying() {
+        let mut attempts = 0;
+        let error = try_preferred_codec(|_| {
+            attempts += 1;
+            Err(std::io::Error::from_raw_os_error(libc::EIO))
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
+    }
+
+    #[test]
+    fn reports_when_all_codecs_are_unsupported() {
+        assert!(
+            !try_preferred_codec(|_| { Err(std::io::Error::from_raw_os_error(libc::EINVAL)) })
+                .unwrap()
+        );
+    }
 }
 
 pub(crate) fn prepare_stream(file: &std::fs::File) -> Result<(), Error> {

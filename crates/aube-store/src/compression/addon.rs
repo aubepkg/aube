@@ -23,6 +23,8 @@
 //! mirror-image ABI of `socket-btm/packages/bin-infra` (`smol_segment_reader.c` /
 //! `compression_constants.h`).
 
+use std::io::Read;
+
 use sha2::{Digest, Sha512};
 
 /// "__SMOL_PRESSED_DATA_MAGIC_MARKER" (SMOL_PRESSED_DATA_MAGIC_MARKER).
@@ -42,6 +44,10 @@ const HEADER_LEN: usize = MAGIC_MARKER.len()
     + SMOL_CONFIG_FLAG_LEN;
 /// Refuse a decompressed-size claim past this (DoS guard, matches bin-infra's 512 MB).
 const MAX_DECOMPRESSED: u64 = 512 * 1024 * 1024;
+/// Small addon frames benefit from zstd's bulk decoder and a single exact-size
+/// output allocation. Larger payloads use the streaming decoder to keep peak
+/// working memory bounded while they are decoded.
+const BULK_DECODE_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// If `content` is a napi `--compress` hybrid, decode its embedded addon and return
 /// the raw `.node` bytes; otherwise `None`. Integrity-checked (SHA-512 over the zstd
@@ -95,11 +101,165 @@ pub fn decode_pressed_data(section: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
 
-    let raw = zstd::stream::decode_all(payload).ok()?;
-    if raw.len() as u64 != uncompressed_size {
+    decode_zstd_payload(payload, uncompressed_size)
+}
+
+fn decode_zstd_payload(payload: &[u8], expected_size: u64) -> Option<Vec<u8>> {
+    decode_zstd_payload_with_bulk_limit(payload, expected_size, BULK_DECODE_LIMIT)
+}
+
+fn decode_zstd_payload_with_bulk_limit(
+    payload: &[u8],
+    expected_size: u64,
+    bulk_decode_limit: u64,
+) -> Option<Vec<u8>> {
+    let expected = usize::try_from(expected_size).ok()?;
+    // The embedded format carries exactly one frame. Reject concatenated frames
+    // and trailing bytes before decoding, so neither path can silently accept
+    // extra output beyond the header's claimed size.
+    let frame_size = zstd::zstd_safe::find_frame_compressed_size(payload).ok()?;
+    if frame_size != payload.len() {
         return None;
     }
-    Some(raw)
+
+    // Current napi-rs frames may retain a 2 MiB default window even for small
+    // payloads. Keep that compatibility floor, then scale the limit with the
+    // claimed output for large native addons.
+    let window_log = (64 - expected_size.saturating_sub(1).leading_zeros()).max(21);
+    let raw = if expected_size <= bulk_decode_limit {
+        let mut decoder = zstd::bulk::Decompressor::new().ok()?;
+        decoder
+            .set_parameter(zstd::zstd_safe::DParameter::WindowLogMax(window_log))
+            .ok()?;
+        decoder.decompress(payload, expected).ok()?
+    } else {
+        let mut context = zstd::zstd_safe::DCtx::create();
+        context
+            .set_parameter(zstd::zstd_safe::DParameter::WindowLogMax(window_log))
+            .ok()?;
+        let decoder =
+            zstd::stream::read::Decoder::with_context(std::io::Cursor::new(payload), &mut context)
+                .single_frame();
+        // Read at most one byte past the declared output size. This rejects a
+        // dishonest size header without allowing an unbounded decode_all Vec.
+        let mut limited = decoder.take(expected_size.checked_add(1)?);
+        let mut raw = Vec::new();
+        raw.try_reserve_exact(expected).ok()?;
+        limited.read_to_end(&mut raw).ok()?;
+        raw
+    };
+    (raw.len() == expected).then_some(raw)
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::{decode_zstd_payload, decode_zstd_payload_with_bulk_limit};
+
+    fn frame(raw: &[u8]) -> Vec<u8> {
+        zstd::stream::encode_all(raw, 3).expect("encode fixture")
+    }
+
+    #[test]
+    fn bulk_decode_matches_the_claimed_size() {
+        let raw = b"native addon fixture";
+        let decoded = decode_zstd_payload(&frame(raw), raw.len() as u64).unwrap();
+        assert_eq!(decoded, raw);
+        assert!(decode_zstd_payload(&frame(raw), (raw.len() - 1) as u64).is_none());
+    }
+
+    #[test]
+    fn bounded_stream_decode_matches_the_claimed_size() {
+        let raw = b"native addon fixture decoded through the streaming path";
+        let compressed = frame(raw);
+        let decoded =
+            decode_zstd_payload_with_bulk_limit(&compressed, raw.len() as u64, 1).unwrap();
+        assert_eq!(decoded, raw);
+        assert!(
+            decode_zstd_payload_with_bulk_limit(&compressed, (raw.len() - 1) as u64, 1).is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_frame_bytes() {
+        let raw = b"native addon fixture";
+        let mut compressed = frame(raw);
+        compressed.push(0);
+        assert!(decode_zstd_payload(&compressed, raw.len() as u64).is_none());
+    }
+
+    #[test]
+    #[ignore = "local decode comparison; run explicitly with AUBE_CODEC_BENCH_INPUTS"]
+    fn compare_local_addon_decoders() {
+        let inputs = std::env::var_os("AUBE_CODEC_BENCH_INPUTS").expect("input paths");
+        for path in std::env::split_paths(&inputs) {
+            let raw = std::fs::read(&path).expect("read input");
+            let payload = zstd::stream::encode_all(raw.as_slice(), 3).expect("compress fixture");
+            println!(
+                "{} raw_mb={:.1} zstd_mb={:.1}",
+                path.display(),
+                raw.len() as f64 / 1_000_000.0,
+                payload.len() as f64 / 1_000_000.0
+            );
+            let mut timings: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
+            for _ in 0..2 {
+                let _ = zstd::stream::decode_all(payload.as_slice()).expect("warm legacy decode");
+                let _ =
+                    decode_zstd_payload(&payload, raw.len() as u64).expect("warm bounded decode");
+            }
+            for round in 0..9 {
+                let order = if round % 2 == 0 { [0, 1] } else { [1, 0] };
+                for decoder in order {
+                    let start = std::time::Instant::now();
+                    let decoded = if decoder == 0 {
+                        zstd::stream::decode_all(payload.as_slice()).expect("legacy decode")
+                    } else {
+                        decode_zstd_payload(&payload, raw.len() as u64).expect("bounded decode")
+                    };
+                    timings[decoder].push(start.elapsed().as_secs_f64());
+                    assert_eq!(decoded, raw);
+                    std::hint::black_box(decoded);
+                }
+            }
+            for (index, label) in ["decode_all", "bounded"].into_iter().enumerate() {
+                timings[index].sort_by(f64::total_cmp);
+                println!("decoder={label} median_s={:.4}", timings[index][4]);
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[ignore = "local decoder peak-memory comparison; run explicitly with benchmark environment"]
+    fn measure_local_decoder_peak_memory() {
+        let input = std::env::var_os("AUBE_CODEC_BENCH_INPUTS").expect("input path");
+        let input = std::env::split_paths(&input)
+            .next()
+            .expect("first input path");
+        let raw = std::fs::read(input).expect("read input");
+        let payload = zstd::stream::encode_all(raw.as_slice(), 3).expect("compress fixture");
+        let mode = std::env::var("AUBE_ZSTD_BENCH_MODE").unwrap_or_else(|_| "bounded".into());
+        let mut before = unsafe { std::mem::zeroed::<libc::rusage>() };
+        assert_eq!(
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut before) },
+            0
+        );
+        let decoded = if mode == "legacy" {
+            zstd::stream::decode_all(payload.as_slice()).expect("legacy decode")
+        } else {
+            decode_zstd_payload(&payload, raw.len() as u64).expect("bounded decode")
+        };
+        assert_eq!(decoded, raw);
+        let mut after = unsafe { std::mem::zeroed::<libc::rusage>() };
+        assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut after) }, 0);
+        println!(
+            "mode={mode} raw_mb={:.1} compressed_mb={:.1} before_peak_mb={:.1} after_peak_mb={:.1}",
+            raw.len() as f64 / 1_000_000.0,
+            payload.len() as f64 / 1_000_000.0,
+            before.ru_maxrss as f64 / 1_000_000.0,
+            after.ru_maxrss as f64 / 1_000_000.0
+        );
+        std::hint::black_box(decoded);
+    }
 }
 
 fn read_u64_le(buf: &[u8], at: usize) -> Option<u64> {
