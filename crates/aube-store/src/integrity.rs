@@ -354,21 +354,26 @@ pub fn validate_pkg_content(
 
 /// Strip leading zeros from the numeric `major.minor.patch` core of a
 /// version (`2024.04.13` -> `2024.4.13`), leaving any prerelease or
-/// build suffix untouched. Components that aren't all digits are kept
-/// as-is, so non-semver strings pass through unchanged.
+/// build suffix untouched. Anything whose core isn't exactly three
+/// non-empty all-digit components is returned unchanged, so malformed
+/// or non-semver strings still need an exact match.
 fn strip_leading_zeros(version: &str) -> String {
     let split = version.find(['-', '+']).unwrap_or(version.len());
     let (core, rest) = version.split_at(split);
-    let core = core
-        .split('.')
-        .map(|part| {
-            if part.len() > 1 && part.bytes().all(|b| b.is_ascii_digit()) {
-                part.trim_start_matches('0')
-            } else {
-                part
-            }
+    let parts: Vec<&str> = core.split('.').collect();
+    let well_formed = parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if !well_formed {
+        return version.to_string();
+    }
+    let core = parts
+        .iter()
+        .map(|p| match p.trim_start_matches('0') {
+            "" => "0",
+            trimmed => trimmed,
         })
-        .map(|part| if part.is_empty() { "0" } else { part })
         .collect::<Vec<_>>()
         .join(".");
     format!("{core}{rest}")
