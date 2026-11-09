@@ -1594,6 +1594,17 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_pkg_content_tolerates_tarball_leading_zeros() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        let index = index_with_manifest(&store, "geotiff-geokeys-to-proj4", "2024.04.13");
+        assert!(validate_pkg_content(&index, "geotiff-geokeys-to-proj4", "2024.4.13").is_ok());
+        let err =
+            validate_pkg_content(&index, "geotiff-geokeys-to-proj4", "2024.4.14").unwrap_err();
+        assert!(err.to_string().contains("content mismatch"), "{err}");
+    }
+
+    #[test]
     fn test_validate_pkg_content_build_metadata_keeps_base_version_strict() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::at(dir.path().join("files"));
