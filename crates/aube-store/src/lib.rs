@@ -1594,6 +1594,35 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_pkg_content_tolerates_tarball_leading_zeros() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        let index = index_with_manifest(&store, "geotiff-geokeys-to-proj4", "2024.04.13");
+        assert!(validate_pkg_content(&index, "geotiff-geokeys-to-proj4", "2024.4.13").is_ok());
+        let err =
+            validate_pkg_content(&index, "geotiff-geokeys-to-proj4", "2024.4.14").unwrap_err();
+        assert!(err.to_string().contains("content mismatch"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_pkg_content_leading_zeros_with_build_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        let index = index_with_manifest(&store, "pkg", "2024.04.13+abc");
+        assert!(validate_pkg_content(&index, "pkg", "2024.4.13").is_ok());
+    }
+
+    #[test]
+    fn test_validate_pkg_content_leading_zeros_only_for_three_part_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path().join("files"));
+        let two_part = index_with_manifest(&store, "pkg", "01.02");
+        assert!(validate_pkg_content(&two_part, "pkg", "1.2").is_err());
+        let empty_part = index_with_manifest(&store, "pkg", "1..0");
+        assert!(validate_pkg_content(&empty_part, "pkg", "1.0.0").is_err());
+    }
+
+    #[test]
     fn test_validate_pkg_content_build_metadata_keeps_base_version_strict() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::at(dir.path().join("files"));
