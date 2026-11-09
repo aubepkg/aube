@@ -487,8 +487,9 @@ pub fn write_classic(
     for pkg in canonical.values() {
         // Berry-sourced graphs carry optional edges only in
         // `optional_dependencies`; the other readers mirror them into
-        // `dependencies` too.
-        for (dep_name, resolved_value) in pkg.dependencies.iter().chain(&pkg.optional_dependencies)
+        // `dependencies` too. `dependencies` is chained last so its target
+        // wins if a hook retargeted it without touching the optional map.
+        for (dep_name, resolved_value) in pkg.optional_dependencies.iter().chain(&pkg.dependencies)
         {
             let target = crate::npm::child_canonical_key(dep_name, resolved_value);
             if !canonical.contains_key(&target) {
@@ -541,9 +542,9 @@ pub fn write_classic(
         // Optional edges are mirrored in `dependencies`; yarn lists them
         // only under `optionalDependencies:`.
         let render_edges = |optional: bool| -> BTreeMap<&str, String> {
-            pkg.dependencies
+            pkg.optional_dependencies
                 .iter()
-                .chain(&pkg.optional_dependencies)
+                .chain(&pkg.dependencies)
                 .filter(|(n, _)| pkg.optional_dependencies.contains_key(*n) == optional)
                 .filter_map(|(n, v)| {
                     let key = crate::npm::child_canonical_key(n, v);

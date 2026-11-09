@@ -701,6 +701,10 @@ fn classic_write_keeps_optional_only_edges() {
     rolldown
         .dependencies
         .retain(|name, _| !name.starts_with("@rolldown/binding-"));
+    // Also drop the declared ranges so the writer must fall back to the pin.
+    rolldown
+        .declared_dependencies
+        .retain(|name, _| !name.starts_with("@rolldown/binding-"));
 
     let out = tempfile::NamedTempFile::new().unwrap();
     write_classic(out.path(), &graph, &manifest).unwrap();
