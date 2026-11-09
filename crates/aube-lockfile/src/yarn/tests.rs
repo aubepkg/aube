@@ -749,6 +749,14 @@ fn classic_write_uses_retargeted_optional_edge() {
     let out = tempfile::NamedTempFile::new().unwrap();
     write_classic(out.path(), &graph, &manifest).unwrap();
     let reparsed = parse(out.path(), &manifest).unwrap();
+    // The written selector must admit the retargeted version.
+    assert_eq!(
+        reparsed.packages["rolldown@1.2.15"]
+            .declared_dependencies
+            .get("@rolldown/binding-darwin-arm64")
+            .map(String::as_str),
+        Some("1.2.16")
+    );
     assert_eq!(
         reparsed.packages["rolldown@1.2.15"]
             .dependencies
