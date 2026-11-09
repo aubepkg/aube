@@ -109,4 +109,31 @@ mod tests {
         );
         assert_eq!(picked.version, "1.9.0");
     }
+
+    #[test]
+    fn gated_latest_repicks_stable_when_prerelease_tag_is_vulnerable() {
+        let packument: Packument = serde_json::from_value(serde_json::json!({
+            "name": "foo",
+            "versions": {
+                "0.15.0": {"name": "foo", "version": "0.15.0"},
+                "1.0.0-beta.1": {"name": "foo", "version": "1.0.0-beta.1"}
+            },
+            "dist-tags": {"latest": "1.0.0-beta.1"},
+            "time": {"0.15.0": "2020-01-01T00:00:00.000Z", "1.0.0-beta.1": "2020-01-02T00:00:00.000Z"}
+        }))
+        .unwrap();
+        let vulnerable = BTreeMap::from([("foo".to_string(), vec!["1.0.0-beta.1".to_string()])]);
+        let picked = prefer_non_vulnerable_pick(
+            "foo",
+            &packument,
+            "latest",
+            &packument.versions["1.0.0-beta.1"],
+            false,
+            Some("2025-01-01"),
+            None,
+            &vulnerable,
+            |_, _| false,
+        );
+        assert_eq!(picked.version, "0.15.0");
+    }
 }
