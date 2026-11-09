@@ -601,6 +601,95 @@ bar@^2.0.0:
     );
 }
 
+const OPTIONAL_LOCK: &str = r#"# yarn lockfile v1
+
+rolldown@~1.2.14:
+  version "1.2.15"
+  integrity sha512-rolldown
+  dependencies:
+    "@rolldown/pluginutils" "^1.0.0"
+  optionalDependencies:
+    "@rolldown/binding-darwin-arm64" "1.2.15"
+    "@rolldown/binding-linux-x64-gnu" "1.2.15"
+
+"@rolldown/pluginutils@^1.0.0":
+  version "1.0.1"
+  integrity sha512-utils
+
+"@rolldown/binding-darwin-arm64@1.2.15":
+  version "1.2.15"
+  integrity sha512-darwin
+
+"@rolldown/binding-linux-x64-gnu@1.2.15":
+  version "1.2.15"
+  integrity sha512-linux
+"#;
+
+#[test]
+fn classic_parse_keeps_optional_dependencies_edges() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), OPTIONAL_LOCK).unwrap();
+    let manifest = make_manifest(&[("rolldown", "~1.2.14")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    let rolldown = &graph.packages["rolldown@1.2.15"];
+    assert_eq!(
+        rolldown.optional_dependencies.keys().collect::<Vec<_>>(),
+        [
+            "@rolldown/binding-darwin-arm64",
+            "@rolldown/binding-linux-x64-gnu"
+        ]
+    );
+    // Optional edges are mirrored into `dependencies` so graph walks
+    // reach the platform packages.
+    assert_eq!(
+        rolldown
+            .dependencies
+            .get("@rolldown/binding-darwin-arm64")
+            .map(String::as_str),
+        Some("1.2.15")
+    );
+    assert!(rolldown.dependencies.contains_key("@rolldown/pluginutils"));
+    assert!(
+        !rolldown
+            .optional_dependencies
+            .contains_key("@rolldown/pluginutils")
+    );
+}
+
+#[test]
+fn classic_write_roundtrips_optional_dependencies() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), OPTIONAL_LOCK).unwrap();
+    let manifest = make_manifest(&[("rolldown", "~1.2.14")], &[]);
+    let graph = parse(tmp.path(), &manifest).unwrap();
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_classic(out.path(), &graph, &manifest).unwrap();
+    let written = std::fs::read_to_string(out.path()).unwrap();
+    assert!(
+        written.contains(
+            "  optionalDependencies:\n    \"@rolldown/binding-darwin-arm64\" \"1.2.15\"\n"
+        ),
+        "{written}"
+    );
+    // Optional edges must not also appear under `dependencies:`.
+    assert_eq!(
+        written.matches("@rolldown/binding-darwin-arm64\" ").count(),
+        1
+    );
+
+    let reparsed = parse(out.path(), &manifest).unwrap();
+    assert_eq!(
+        reparsed.packages["rolldown@1.2.15"].optional_dependencies,
+        graph.packages["rolldown@1.2.15"].optional_dependencies
+    );
+    assert_eq!(
+        reparsed.packages["rolldown@1.2.15"].dependencies,
+        graph.packages["rolldown@1.2.15"].dependencies
+    );
+}
+
 #[test]
 fn test_dev_dep_classification() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
