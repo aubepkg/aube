@@ -39,6 +39,31 @@ _write_clean_fixture() {
 	assert_output --partial "{}"
 }
 
+@test "aube audit covers workspace members when the root has no dependencies" {
+	cat >package.json <<-'EOF'
+		{ "name": "root", "private": true }
+	EOF
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-odd": "3.0.1" } }
+	EOF
+	run aube install
+	assert_success
+
+	run aube audit
+	assert_success
+	refute_output --partial "No dependencies to audit"
+	assert_output --partial "No known vulnerabilities found"
+
+	cd pkg
+	run aube audit
+	assert_success
+	refute_output --partial "No dependencies to audit"
+}
+
 @test "aube audit fails without a lockfile" {
 	_write_clean_fixture
 	run aube audit

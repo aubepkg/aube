@@ -147,7 +147,7 @@ pub enum FixMode {
 
 pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
-    let cwd = crate::dirs::project_root()?;
+    let cwd = crate::dirs::workspace_or_project_root()?;
     let audit_level = resolve_audit_level(&cwd, args.audit_level)?;
 
     let manifest = super::load_manifest(&cwd.join("package.json"))?;
@@ -163,7 +163,7 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     )?;
 
     let filter = DepFilter::from_flags(args.prod, args.dev);
-    let closure = super::collect_dep_closure(&graph, filter, args.no_optional);
+    let closure = super::collect_workspace_dep_closure(&graph, filter, args.no_optional);
 
     // Build the bulk request body: { name: [version, ...] } with versions
     // deduped so the registry doesn't do extra work on a diamond dep.
@@ -982,7 +982,7 @@ fn resolved_versions_by_name(
     no_optional: bool,
     names: &BTreeSet<String>,
 ) -> BTreeMap<String, BTreeSet<String>> {
-    let closure = super::collect_dep_closure(graph, filter, no_optional);
+    let closure = super::collect_workspace_dep_closure(graph, filter, no_optional);
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for pkg in closure.values() {
         let name = pkg.registry_name();
@@ -1118,7 +1118,7 @@ fn count_dependencies(
         optional_dependencies: 0,
         total: closure.len(),
     };
-    for dep in graph.root_deps() {
+    for dep in graph.importers.values().flatten() {
         if !filter.keeps(dep.dep_type) {
             continue;
         }
