@@ -485,7 +485,11 @@ pub fn write_classic(
     // Without a declared range the dependency is rendered as its pin,
     // so the pin has to be a header spec for reparse to find it.
     for pkg in canonical.values() {
-        for (dep_name, resolved_value) in &pkg.dependencies {
+        // Berry-sourced graphs carry optional edges only in
+        // `optional_dependencies`; the other readers mirror them into
+        // `dependencies` too.
+        for (dep_name, resolved_value) in pkg.dependencies.iter().chain(&pkg.optional_dependencies)
+        {
             let target = crate::npm::child_canonical_key(dep_name, resolved_value);
             if !canonical.contains_key(&target) {
                 continue;
@@ -539,6 +543,7 @@ pub fn write_classic(
         let render_edges = |optional: bool| -> BTreeMap<&str, String> {
             pkg.dependencies
                 .iter()
+                .chain(&pkg.optional_dependencies)
                 .filter(|(n, _)| pkg.optional_dependencies.contains_key(*n) == optional)
                 .filter_map(|(n, v)| {
                     let key = crate::npm::child_canonical_key(n, v);

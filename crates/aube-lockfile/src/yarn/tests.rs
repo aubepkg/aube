@@ -691,6 +691,27 @@ fn classic_write_roundtrips_optional_dependencies() {
 }
 
 #[test]
+fn classic_write_keeps_optional_only_edges() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), OPTIONAL_LOCK).unwrap();
+    let manifest = make_manifest(&[("rolldown", "~1.2.14")], &[]);
+    let mut graph = parse(tmp.path(), &manifest).unwrap();
+    // Berry-sourced graphs hold optional edges only in `optional_dependencies`.
+    let rolldown = graph.packages.get_mut("rolldown@1.2.15").unwrap();
+    rolldown
+        .dependencies
+        .retain(|name, _| !name.starts_with("@rolldown/binding-"));
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    write_classic(out.path(), &graph, &manifest).unwrap();
+    let reparsed = parse(out.path(), &manifest).unwrap();
+    assert_eq!(
+        reparsed.packages["rolldown@1.2.15"].optional_dependencies,
+        graph.packages["rolldown@1.2.15"].optional_dependencies
+    );
+}
+
+#[test]
 fn test_dev_dep_classification() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let content = r#"foo@^1.0.0:

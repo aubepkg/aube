@@ -112,6 +112,23 @@ fn graph_from_shape(shape: GraphShape) -> (LockfileGraph, aube_manifest::Package
     (graph, manifest)
 }
 
+/// Mark every edge whose child index bit is set in `optional_mask` as
+/// optional, mirrored into `dependencies` the way the classic reader does.
+fn with_optional_edges(mut graph: LockfileGraph, optional_mask: u32) -> LockfileGraph {
+    for pkg in graph.packages.values_mut() {
+        for (name, version) in pkg.dependencies.clone() {
+            let child_idx: u32 = name
+                .strip_prefix("pkg-")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            if optional_mask & (1 << child_idx) != 0 {
+                pkg.optional_dependencies.insert(name, version);
+            }
+        }
+    }
+    graph
+}
+
 fn package_name(idx: usize) -> String {
     format!("pkg-{idx}")
 }
@@ -331,6 +348,16 @@ proptest! {
     #[test]
     fn yarn_classic_lockfile_roundtrips_generated_registry_graph(shape in graph_shapes()) {
         let (graph, manifest) = graph_from_shape(shape);
+        prop_assert_eq!(roundtrip(&graph, &manifest, LockfileKind::Yarn), normalize(&graph));
+    }
+
+    #[test]
+    fn yarn_classic_lockfile_roundtrips_optional_edges(
+        shape in graph_shapes(),
+        optional_mask in 0u32..256,
+    ) {
+        let (graph, manifest) = graph_from_shape(shape);
+        let graph = with_optional_edges(graph, optional_mask);
         prop_assert_eq!(roundtrip(&graph, &manifest, LockfileKind::Yarn), normalize(&graph));
     }
 
