@@ -147,10 +147,21 @@ pub enum FixMode {
 
 pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     args.network.install_overrides();
-    let cwd = crate::dirs::project_root()?;
+    let project_dir = crate::dirs::project_root_or_cwd()?;
+    let workspace_dir = crate::dirs::workspace_or_project_root().unwrap_or(project_dir.clone());
+    // Under `sharedWorkspaceLockfile=false` each member owns its lockfile,
+    // so only climb to the workspace root when the lockfile is shared.
+    let cwd = if with_audit_settings_ctx(
+        &workspace_dir,
+        aube_settings::resolved::shared_workspace_lockfile,
+    )? {
+        workspace_dir
+    } else {
+        project_dir
+    };
     let audit_level = resolve_audit_level(&cwd, args.audit_level)?;
 
-    let manifest = super::load_manifest(&cwd.join("package.json"))?;
+    let manifest = super::load_manifest_or_default(&cwd)?;
 
     let graph = super::load_graph(
         &cwd,
@@ -163,7 +174,7 @@ pub async fn run(args: AuditArgs) -> miette::Result<Option<i32>> {
     )?;
 
     let filter = DepFilter::from_flags(args.prod, args.dev);
-    let closure = super::collect_dep_closure(&graph, filter, args.no_optional);
+    let closure = super::collect_workspace_dep_closure(&graph, filter, args.no_optional);
 
     // Build the bulk request body: { name: [version, ...] } with versions
     // deduped so the registry doesn't do extra work on a diamond dep.
@@ -701,14 +712,23 @@ async fn write_fix_lockfile_update(
         .wrap_err("failed to resolve audit fixes")?;
 
     let after = resolved_versions_by_name(&new_graph, filter, no_optional, &vulnerable_names);
+    let member_only: BTreeSet<&str> =
+        super::collect_workspace_dep_closure(graph, filter, no_optional)
+            .values()
+            .map(|pkg| pkg.registry_name())
+            .filter(|name| !before.contains_key(*name))
+            .collect();
     let remaining: Vec<Row> = rows
         .iter()
         .filter(|row| {
-            after.get(&row.name).is_some_and(|versions| {
-                versions.iter().any(|version| {
+            // A name absent from the root closure (a workspace member's
+            // dependency) cannot be verified as fixed, so it stays.
+            match after.get(&row.name) {
+                Some(versions) => versions.iter().any(|version| {
                     version_is_vulnerable(version, std::slice::from_ref(&row.vulnerable_versions))
-                })
-            })
+                }),
+                None => member_only.contains(row.name.as_str()),
+            }
         })
         .cloned()
         .collect();
@@ -1118,7 +1138,7 @@ fn count_dependencies(
         optional_dependencies: 0,
         total: closure.len(),
     };
-    for dep in graph.root_deps() {
+    for dep in graph.importers.values().flatten() {
         if !filter.keeps(dep.dep_type) {
             continue;
         }

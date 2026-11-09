@@ -6,6 +6,7 @@ setup() {
 }
 
 teardown() {
+	_stop_audit_server
 	_common_teardown
 }
 
@@ -37,6 +38,106 @@ _write_clean_fixture() {
 	run aube audit --json
 	assert_success
 	assert_output --partial "{}"
+}
+
+@test "aube audit covers workspace members when the root has no dependencies" {
+	cat >package.json <<-'EOF'
+		{ "name": "root", "private": true }
+	EOF
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-odd": "3.0.1" } }
+	EOF
+	run aube install
+	assert_success
+
+	run aube audit
+	assert_success
+	refute_output --partial "No dependencies to audit"
+	assert_output --partial "No known vulnerabilities found"
+
+	run aube audit --json
+	assert_success
+	printf '%s\n' "$output" | jq -e '.metadata.totalDependencies > 0 and .metadata.dependencies == 1'
+
+	cd pkg
+	run aube audit
+	assert_success
+	refute_output --partial "No dependencies to audit"
+}
+
+@test "aube audit reports advisories for member-only dependencies" {
+	cat >package.json <<-'EOF'
+		{ "name": "root", "private": true }
+	EOF
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-odd": "3.0.1" } }
+	EOF
+	run aube install
+	assert_success
+
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit
+	assert_failure
+	assert_output --partial "is-odd"
+
+	cd pkg
+	run aube audit
+	_stop_audit_server
+	assert_failure
+	assert_output --partial "is-odd"
+}
+
+@test "aube audit covers workspace members when the root has no package.json" {
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-odd": "3.0.1" } }
+	EOF
+	run aube install
+	assert_success
+
+	cd pkg
+	run aube audit
+	assert_success
+	refute_output --partial "No dependencies to audit"
+	assert_output --partial "No known vulnerabilities found"
+}
+
+@test "aube audit --fix=update does not report member-only advisories as fixed" {
+	cat >package.json <<-'EOF'
+		{ "name": "root", "private": true }
+	EOF
+	cat >aube-workspace.yaml <<-'EOF'
+		packages: [pkg]
+	EOF
+	mkdir pkg
+	cat >pkg/package.json <<-'EOF'
+		{ "name": "pkg", "private": true, "dependencies": { "is-number": ">=0.1.0" } }
+	EOF
+	run aube install
+	assert_success
+
+	_start_audit_server
+	port="$(cat audit-server-port)"
+	echo "registry=http://127.0.0.1:${port}/" >.npmrc
+
+	run aube audit --fix=update
+	_stop_audit_server
+	assert_failure
+	assert_output --partial "is-number"
 }
 
 @test "aube audit fails without a lockfile" {

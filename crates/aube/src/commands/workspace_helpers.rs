@@ -40,11 +40,34 @@ pub(crate) fn collect_dep_closure(
     filter: DepFilter,
     no_optional: bool,
 ) -> std::collections::BTreeMap<String, &aube_lockfile::LockedPackage> {
+    collect_closure_from(graph, graph.root_deps().iter(), filter, no_optional)
+}
+
+/// Like [`collect_dep_closure`], but seeded from the direct deps of every
+/// importer in the lockfile, so a workspace whose root manifest declares
+/// no dependencies still yields the members' packages.
+pub(crate) fn collect_workspace_dep_closure(
+    graph: &aube_lockfile::LockfileGraph,
+    filter: DepFilter,
+    no_optional: bool,
+) -> std::collections::BTreeMap<String, &aube_lockfile::LockedPackage> {
+    collect_closure_from(
+        graph,
+        graph.importers.values().flatten(),
+        filter,
+        no_optional,
+    )
+}
+
+fn collect_closure_from<'a>(
+    graph: &'a aube_lockfile::LockfileGraph,
+    roots: impl Iterator<Item = &'a aube_lockfile::DirectDep>,
+    filter: DepFilter,
+    no_optional: bool,
+) -> std::collections::BTreeMap<String, &'a aube_lockfile::LockedPackage> {
     let mut out: std::collections::BTreeMap<String, &aube_lockfile::LockedPackage> =
         std::collections::BTreeMap::new();
-    let mut stack: Vec<String> = graph
-        .root_deps()
-        .iter()
+    let mut stack: Vec<String> = roots
         .filter(|d| filter.keeps(d.dep_type))
         .filter(|d| !(no_optional && matches!(d.dep_type, aube_lockfile::DepType::Optional)))
         .map(|d| d.dep_path.clone())
