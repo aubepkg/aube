@@ -33,6 +33,13 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
     if !is_vulnerable(package_name, &fallback.version, vulnerable_ranges) {
         return fallback;
     }
+    // Same gated-`latest` handling as `pick_version_key`: a cutoff turns
+    // the tag into `*` so a safe mature version can replace a vulnerable one.
+    let range_str = if range_str == "latest" && cutoff.is_some() {
+        "*"
+    } else {
+        range_str
+    };
     let Ok(range) = node_semver::Range::parse(crate::semver_util::normalize_range(range_str))
     else {
         return fallback;
@@ -70,4 +77,36 @@ pub(super) fn prefer_non_vulnerable_pick<'a>(
         }
     }
     best.map(|(_, meta)| meta).unwrap_or(fallback)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gated_latest_repicks_safe_version_when_tag_is_vulnerable() {
+        let packument: Packument = serde_json::from_value(serde_json::json!({
+            "name": "foo",
+            "versions": {
+                "1.9.0": {"name": "foo", "version": "1.9.0"},
+                "2.0.0": {"name": "foo", "version": "2.0.0"}
+            },
+            "dist-tags": {"latest": "2.0.0"},
+            "time": {"1.9.0": "2020-01-01T00:00:00.000Z", "2.0.0": "2020-01-02T00:00:00.000Z"}
+        }))
+        .unwrap();
+        let vulnerable = BTreeMap::from([("foo".to_string(), vec!["2.0.0".to_string()])]);
+        let picked = prefer_non_vulnerable_pick(
+            "foo",
+            &packument,
+            "latest",
+            &packument.versions["2.0.0"],
+            false,
+            Some("2025-01-01"),
+            None,
+            &vulnerable,
+            |_, _| false,
+        );
+        assert_eq!(picked.version, "1.9.0");
+    }
 }
