@@ -721,7 +721,8 @@ fn classic_write_uses_retargeted_optional_edge() {
     std::fs::write(tmp.path(), OPTIONAL_LOCK).unwrap();
     let manifest = make_manifest(&[("rolldown", "~1.2.14")], &[]);
     let mut graph = parse(tmp.path(), &manifest).unwrap();
-    // A hook retargeted the edge in `dependencies` only.
+    // A hook retargeted the edge (and its declared range) in `dependencies`
+    // only; the optional map still holds the old target.
     let mut newer = graph.packages["@rolldown/binding-darwin-arm64@1.2.15"].clone();
     newer.version = "1.2.16".to_string();
     newer.dep_path = "@rolldown/binding-darwin-arm64@1.2.16".to_string();
@@ -731,6 +732,15 @@ fn classic_write_uses_retargeted_optional_edge() {
         .get_mut("rolldown@1.2.15")
         .unwrap()
         .dependencies
+        .insert(
+            "@rolldown/binding-darwin-arm64".to_string(),
+            "1.2.16".to_string(),
+        );
+    graph
+        .packages
+        .get_mut("rolldown@1.2.15")
+        .unwrap()
+        .declared_dependencies
         .insert(
             "@rolldown/binding-darwin-arm64".to_string(),
             "1.2.16".to_string(),
