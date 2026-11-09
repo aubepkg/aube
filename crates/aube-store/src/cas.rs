@@ -1,5 +1,5 @@
+use crate::compression::Gate;
 use crate::{Error, Store, StoredFile};
-use decmpfs::Gate;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -116,7 +116,7 @@ pub(crate) fn parse_compress_store_gate(spec: &str) -> Option<Gate> {
     if glob.is_none() && size.is_none() {
         return Some(Gate::default());
     }
-    match Gate::new(glob.or(Some(decmpfs::DEFAULT_GLOB)), size) {
+    match Gate::new(glob.or(Some(crate::compression::DEFAULT_GLOB)), size) {
         Ok(gate) => Some(gate),
         Err(err) => {
             warn!(
@@ -718,7 +718,7 @@ impl Store {
     /// unwrapped if it is a napi `--compress` hybrid (so the CAS stores
     /// the raw `.node`, not the wrapper) and then written into the CAS
     /// as a transparently-compressed file in ONE pass via
-    /// [`decmpfs::compress_bytes`] — never a write-then-read-back. The
+    /// Aube's internal platform backends — never a write-then-read-back. The
     /// kernel decompresses on read, so the stored file keeps its logical
     /// size and exact bytes; `cas_file_matches_len` and the BLAKE3 CAS
     /// key are computed against that logical content, unchanged.
@@ -756,7 +756,7 @@ impl Store {
         // gate's size check and the CAS hash — a non-hybrid `.node`
         // returns `None`, so this is a no-op for ordinary addons and the
         // bytes (and CAS key) are identical to the ungated path.
-        let unwrapped = decmpfs::addon::unwrap_if_hybrid(content);
+        let unwrapped = crate::compression::addon::unwrap_if_hybrid(content);
         let stored_bytes: &[u8] = unwrapped.as_deref().unwrap_or(content);
 
         if !gate.matches(rel_path, stored_bytes.len() as u64) {
@@ -803,14 +803,14 @@ impl Store {
         // `compress_bytes` too, but we pass `Gate::any()` because we have
         // already matched against `rel_path` (a CAS path no longer
         // carries the package-relative name the glob expects).
-        match decmpfs::compress_bytes(&store_path, stored_bytes, &Gate::any()) {
+        match crate::compression::compress_bytes(&store_path, stored_bytes, &Gate::any()) {
             Ok(_) => {}
             Err(err) => {
                 // A genuine I/O failure from the one-pass writer. Fall
                 // back to the fully-guarded CAS path so the install is
                 // never left without the file.
                 warn!(
-                    "decmpfs one-pass write failed for {} ({err}); \
+                    "native filesystem compression failed for {} ({err}); \
                      falling back to the plain CAS path",
                     store_path.display()
                 );
@@ -819,7 +819,7 @@ impl Store {
         }
 
         // Guard against a torn/short write the same way `import_bytes`
-        // does. decmpfs verifies the kernel read-back equals the bytes
+        // does. the platform backend verifies the kernel read-back equals the bytes
         // for a compressed Outcome, but a fail-soft plain fallback inside
         // `compress_bytes` could still race a concurrent writer.
         if !cas_file_matches_len(&store_path, stored_bytes.len() as u64) {

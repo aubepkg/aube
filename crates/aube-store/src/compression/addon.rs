@@ -1,0 +1,244 @@
+//! `addon` feature — unwrap a napi `--compress` hybrid back to the raw `.node`.
+//!
+//! A binpress hybrid carries the original addon, zstd-compressed, inside a
+//! `PRESSED_DATA` SIGNABLE SECTION (Mach-O `__PRESSED_DATA` in segment `SMOL`, ELF
+//! `.PRESSED_DATA`, PE `.PRESSED` — read from the binary's SECTION HEADERS, NOT an
+//! EOF footer). The section content is the bin-infra pressed-data blob:
+//!
+//! ```text
+//! [magic marker  32B]  "__SMOL_PRESSED_DATA_MAGIC_MARKER"
+//! [compressed    u64 LE]  zstd payload length
+//! [uncompressed  u64 LE]  raw addon length
+//! [cache key     16B]  hex, ignored here
+//! [platform      3B ]  platform/arch/libc, ignored here
+//! [integrity     64B]  SHA-512 of the zstd payload
+//! [has_config    1B ]  0/1
+//! [config        1192B] only if has_config == 1
+//! [payload       compressed bytes]  zstd frame
+//! ```
+//!
+//! `unwrap_if_hybrid(&content)` returns `Some(raw addon)` for a hybrid whose payload
+//! zstd-decodes to `uncompressed` bytes and matches the SHA-512, else `None`. The
+//! PM helper then feeds the raw addon to `compress_bytes`. This is the
+//! mirror-image ABI of `socket-btm/packages/bin-infra` (`smol_segment_reader.c` /
+//! `compression_constants.h`).
+
+use sha2::{Digest, Sha512};
+
+/// "__SMOL_PRESSED_DATA_MAGIC_MARKER" (SMOL_PRESSED_DATA_MAGIC_MARKER).
+const MAGIC_MARKER: &[u8; 32] = b"__SMOL_PRESSED_DATA_MAGIC_MARKER";
+const SIZE_HEADER_LEN: usize = 16; // compressed u64 + uncompressed u64
+const CACHE_KEY_LEN: usize = 16;
+const PLATFORM_METADATA_LEN: usize = 3;
+const INTEGRITY_HASH_LEN: usize = 64; // SHA-512
+const SMOL_CONFIG_FLAG_LEN: usize = 1;
+const SMOL_CONFIG_BINARY_LEN: usize = 1192;
+/// Fixed header length up to and including the has-config flag.
+const HEADER_LEN: usize = MAGIC_MARKER.len()
+    + SIZE_HEADER_LEN
+    + CACHE_KEY_LEN
+    + PLATFORM_METADATA_LEN
+    + INTEGRITY_HASH_LEN
+    + SMOL_CONFIG_FLAG_LEN;
+/// Refuse a decompressed-size claim past this (DoS guard, matches bin-infra's 512 MB).
+const MAX_DECOMPRESSED: u64 = 512 * 1024 * 1024;
+
+/// If `content` is a napi `--compress` hybrid, decode its embedded addon and return
+/// the raw `.node` bytes; otherwise `None`. Integrity-checked (SHA-512 over the zstd
+/// payload) — a hybrid that fails verification returns `None`, never partial bytes.
+pub fn unwrap_if_hybrid(content: &[u8]) -> Option<Vec<u8>> {
+    let section = find_pressed_data_section(content)?;
+    decode_pressed_data(section)
+}
+
+/// Parse the bin-infra pressed-data blob (magic + header + zstd payload) into the
+/// raw addon. Split from section-finding so the format round-trips in a unit test
+/// without synthesizing a whole Mach-O/ELF/PE.
+pub fn decode_pressed_data(section: &[u8]) -> Option<Vec<u8>> {
+    if section.len() < HEADER_LEN {
+        return None;
+    }
+    if &section[..MAGIC_MARKER.len()] != MAGIC_MARKER.as_slice() {
+        return None;
+    }
+    let mut at = MAGIC_MARKER.len();
+    let compressed_size = read_u64_le(section, at)?;
+    at += 8;
+    let uncompressed_size = read_u64_le(section, at)?;
+    at += 8;
+    // Skip cache key + platform metadata.
+    at += CACHE_KEY_LEN + PLATFORM_METADATA_LEN;
+    let integrity = section.get(at..at + INTEGRITY_HASH_LEN)?;
+    let mut hash = [0u8; INTEGRITY_HASH_LEN];
+    hash.copy_from_slice(integrity);
+    at += INTEGRITY_HASH_LEN;
+    let has_config = *section.get(at)?;
+    at += SMOL_CONFIG_FLAG_LEN;
+    if has_config != 0 {
+        at = at.checked_add(SMOL_CONFIG_BINARY_LEN)?;
+    }
+
+    if compressed_size == 0
+        || uncompressed_size == 0
+        || uncompressed_size > MAX_DECOMPRESSED
+        || compressed_size > MAX_DECOMPRESSED
+    {
+        return None;
+    }
+    let payload = section.get(at..at.checked_add(compressed_size as usize)?)?;
+
+    // Integrity: SHA-512 of the zstd payload, BEFORE decompressing (reject a
+    // tampered frame up front).
+    let mut hasher = Sha512::new();
+    hasher.update(payload);
+    if hasher.finalize().as_slice() != hash {
+        return None;
+    }
+
+    let raw = zstd::stream::decode_all(payload).ok()?;
+    if raw.len() as u64 != uncompressed_size {
+        return None;
+    }
+    Some(raw)
+}
+
+fn read_u64_le(buf: &[u8], at: usize) -> Option<u64> {
+    let bytes = buf.get(at..at + 8)?;
+    let mut arr = [0u8; 8];
+    arr.copy_from_slice(bytes);
+    Some(u64::from_le_bytes(arr))
+}
+
+fn read_u32_le(buf: &[u8], at: usize) -> Option<u32> {
+    let bytes = buf.get(at..at + 4)?;
+    let mut arr = [0u8; 4];
+    arr.copy_from_slice(bytes);
+    Some(u32::from_le_bytes(arr))
+}
+
+fn read_u16_le(buf: &[u8], at: usize) -> Option<u16> {
+    let bytes = buf.get(at..at + 2)?;
+    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+/// Locate the PRESSED_DATA section's raw bytes by walking the binary's section /
+/// load-command table — never an EOF footer. Dispatches on the leading magic.
+fn find_pressed_data_section(content: &[u8]) -> Option<&[u8]> {
+    match content.get(..4)? {
+        // Mach-O 64-bit, both endiannesses.
+        [0xcf, 0xfa, 0xed, 0xfe] | [0xfe, 0xed, 0xfa, 0xcf] => find_macho(content),
+        [0x7f, b'E', b'L', b'F'] => find_elf(content),
+        [b'M', b'Z', ..] => find_pe(content),
+        _ => None,
+    }
+}
+
+/// Mach-O 64-bit (little-endian host): find segment `SMOL` → section `__PRESSED_DATA`
+/// → its (offset,size) and return the slice. Mirrors smol_segment_reader.c.
+fn find_macho(content: &[u8]) -> Option<&[u8]> {
+    const LC_SEGMENT_64: u32 = 0x19;
+    // mach_header_64: magic(4) cputype(4) cpusubtype(4) filetype(4) ncmds(4) ...
+    let ncmds = read_u32_le(content, 16)?;
+    let mut cmd_off = 32usize; // sizeof(mach_header_64)
+    for _ in 0..ncmds.min(10_000) {
+        let cmd = read_u32_le(content, cmd_off)?;
+        let cmdsize = read_u32_le(content, cmd_off + 4)? as usize;
+        if cmdsize == 0 {
+            return None;
+        }
+        if cmd == LC_SEGMENT_64 {
+            // segment_command_64: cmd(4) cmdsize(4) segname(16) vmaddr(8) vmsize(8)
+            //   fileoff(8) filesize(8) maxprot(4) initprot(4) nsects(4) flags(4)
+            let segname = content.get(cmd_off + 8..cmd_off + 24)?;
+            if name_eq(segname, b"SMOL") {
+                let nsects = read_u32_le(content, cmd_off + 64)?;
+                let mut sect_off = cmd_off + 72; // start of section_64 array
+                for _ in 0..nsects.min(1000) {
+                    // section_64: sectname(16) segname(16) addr(8) size(8) offset(4) ...
+                    let sectname = content.get(sect_off..sect_off + 16)?;
+                    if name_eq(sectname, b"__PRESSED_DATA") {
+                        let size = read_u64_le(content, sect_off + 40)? as usize;
+                        let offset = read_u32_le(content, sect_off + 48)? as usize;
+                        return content.get(offset..offset.checked_add(size)?);
+                    }
+                    sect_off += 80; // sizeof(section_64)
+                }
+            }
+        }
+        cmd_off = cmd_off.checked_add(cmdsize)?;
+    }
+    None
+}
+
+/// ELF 64-bit: walk the section header table, match `.PRESSED_DATA` against the
+/// section-header string table, return its (sh_offset, sh_size) slice.
+fn find_elf(content: &[u8]) -> Option<&[u8]> {
+    // EI_CLASS at offset 4: 2 == 64-bit. Only 64-bit addons ship.
+    if *content.get(4)? != 2 {
+        return None;
+    }
+    let e_shoff = read_u64_le(content, 40)? as usize;
+    let e_shentsize = read_u16_le(content, 58)? as usize;
+    let e_shnum = read_u16_le(content, 60)? as usize;
+    let e_shstrndx = read_u16_le(content, 62)? as usize;
+    if e_shentsize < 64 || e_shnum == 0 || e_shstrndx >= e_shnum {
+        return None;
+    }
+    // String table section header → its (offset,size).
+    let strtab_hdr = e_shoff.checked_add(e_shstrndx.checked_mul(e_shentsize)?)?;
+    let strtab_off = read_u64_le(content, strtab_hdr + 24)? as usize;
+    let strtab_size = read_u64_le(content, strtab_hdr + 32)? as usize;
+    let strtab = content.get(strtab_off..strtab_off.checked_add(strtab_size)?)?;
+
+    for i in 0..e_shnum {
+        let shdr = e_shoff.checked_add(i.checked_mul(e_shentsize)?)?;
+        let sh_name = read_u32_le(content, shdr)? as usize;
+        if cstr_at(strtab, sh_name) == Some(b".PRESSED_DATA".as_slice()) {
+            let sh_offset = read_u64_le(content, shdr + 24)? as usize;
+            let sh_size = read_u64_le(content, shdr + 32)? as usize;
+            return content.get(sh_offset..sh_offset.checked_add(sh_size)?);
+        }
+    }
+    None
+}
+
+/// PE: parse the section table for `.PRESSED` (the 8-byte-name truncation of
+/// `.PRESSED_DATA`) and return (PointerToRawData, SizeOfRawData).
+fn find_pe(content: &[u8]) -> Option<&[u8]> {
+    let pe_off = read_u32_le(content, 0x3c)? as usize;
+    if content.get(pe_off..pe_off + 4)? != b"PE\0\0" {
+        return None;
+    }
+    let coff = pe_off + 4;
+    let number_of_sections = read_u16_le(content, coff + 2)? as usize;
+    let size_of_optional = read_u16_le(content, coff + 16)? as usize;
+    if number_of_sections > 200 {
+        return None;
+    }
+    let mut sect = coff + 20 + size_of_optional; // section table start
+    for _ in 0..number_of_sections {
+        let name = content.get(sect..sect + 8)?;
+        if name == b".PRESSED" {
+            let size_of_raw = read_u32_le(content, sect + 16)? as usize;
+            let ptr_raw = read_u32_le(content, sect + 20)? as usize;
+            return content.get(ptr_raw..ptr_raw.checked_add(size_of_raw)?);
+        }
+        sect += 40; // sizeof(IMAGE_SECTION_HEADER)
+    }
+    None
+}
+
+/// Compare a fixed-width, NUL-padded name field against a logical name.
+fn name_eq(field: &[u8], want: &[u8]) -> bool {
+    if want.len() > field.len() {
+        return false;
+    }
+    field[..want.len()] == *want && field[want.len()..].iter().all(|&b| b == 0)
+}
+
+/// The NUL-terminated string at `off` within a string table.
+fn cstr_at(strtab: &[u8], off: usize) -> Option<&[u8]> {
+    let rest = strtab.get(off..)?;
+    let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+    Some(&rest[..end])
+}
