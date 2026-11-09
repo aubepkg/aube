@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0](https://github.com/aubepkg/aube/compare/aube-workspace-v2.9.0...aube-workspace-v2.10.0) - 2026-11-09
+
+### Added
+
+- *(workspace)* add --no-include-workspace-root and use it for npm --workspaces ([#1917](https://github.com/aubepkg/aube/pull/1917))
+
 ## [2.7.2](https://github.com/aubepkg/aube/compare/aube-workspace-v2.7.1...aube-workspace-v2.7.2) - 2026-10-17
 
 ### Fixed

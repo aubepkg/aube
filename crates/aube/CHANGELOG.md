@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0](https://github.com/aubepkg/aube/compare/v2.9.0...v2.10.0) - 2026-11-09
+
+### Added
+
+- *(workspace)* add --no-include-workspace-root and use it for npm --workspaces ([#1917](https://github.com/aubepkg/aube/pull/1917))
+
+### Fixed
+
+- *(audit)* audit every workspace importer, not just the root ([#1927](https://github.com/aubepkg/aube/pull/1927))
+- *(shim)* map npm --workspace/--workspaces to --filter/-r on script commands ([#1916](https://github.com/aubepkg/aube/pull/1916))
+- *(install)* drop npm --audit/--fund flags in the npm shim ([#1908](https://github.com/aubepkg/aube/pull/1908))
+
 ## [2.9.0](https://github.com/aubepkg/aube/compare/v2.8.5...v2.9.0) - 2026-11-01
 
 ### Added

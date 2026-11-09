@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0](https://github.com/aubepkg/aube/compare/aube-store-v2.9.0...aube-store-v2.10.0) - 2026-11-09
+
+### Fixed
+
+- *(store)* tolerate zero-padded tarball versions in content check ([#1926](https://github.com/aubepkg/aube/pull/1926))
+
 ## [2.7.0](https://github.com/aubepkg/aube/compare/aube-store-v2.6.1...aube-store-v2.7.0) - 2026-10-07
 
 ### Other
