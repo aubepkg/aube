@@ -360,7 +360,7 @@ pub fn validate_pkg_content(
 fn strip_leading_zeros(version: &str) -> String {
     let split = version.find(['-', '+']).unwrap_or(version.len());
     let (core, rest) = version.split_at(split);
-    let parts: Vec<&str> = core.split('.').collect();
+    let parts: Vec<&str> = core.splitn(4, '.').collect();
     let well_formed = parts.len() == 3
         && parts
             .iter()
