@@ -34,12 +34,13 @@ const COMPRESSION_LZFSE: i32 = 0x801;
 // 2026-07-16 — The data supports keeping a 64 MiB in-memory fast path for now.
 // The sampled Darwin ARM64 Vite ecosystem topped out at SWC 36.563 MiB, followed
 // by Rolldown 15.6–17.9 MiB, Oxlint 14.4 MiB, Lightning CSS 8.1 MiB, and Oxc
-// bindings at 1.9–5.7 MiB. Keeping <=64 MiB on parallel LZVN + one `setxattr`
+// bindings at 1.9–5.7 MiB. Keeping <=64 MiB on parallel LZFSE + one `setxattr`
 // leaves 27 MiB of headroom above that observed upper tail; larger assets stream
 // to `..namedfork/rsrc` so peak output memory stays bounded. Re-benchmark this
 // boundary as native-addon sizes or the streaming implementation changes.
 pub(crate) const STREAMING_THRESHOLD: usize = 64 * 1024 * 1024;
 
+/// Use streamed output only when the raw input exceeds the in-memory threshold.
 fn should_stream_resource_fork(raw_len: usize, threshold: usize) -> bool {
     raw_len > threshold
 }
@@ -88,6 +89,7 @@ unsafe extern "C" {
     fn compression_encode_scratch_buffer_size(algorithm: i32) -> usize;
 }
 
+/// Report an unrepresentable resource-fork offset as a size-limit error.
 fn resource_fork_too_large() -> Error {
     Error::Io {
         context: "decmpfs resource fork exceeds u32 offsets",
@@ -95,6 +97,7 @@ fn resource_fork_too_large() -> Error {
     }
 }
 
+/// Read filesystem capabilities, propagating path and system-call errors.
 fn statfs(path: &Path) -> Result<libc::statfs, Error> {
     let cpath = cstring(path)?;
     let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
@@ -134,6 +137,7 @@ fn classify_fs(is_local: bool, fstype: &[u8]) -> Support {
     }
 }
 
+/// Read file flags without following a symlink.
 fn st_flags(path: &Path) -> Result<u32, Error> {
     let cpath = cstring(path)?;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -143,6 +147,7 @@ fn st_flags(path: &Path) -> Result<u32, Error> {
     Ok(st.st_flags)
 }
 
+/// Check the kernel flag that enables transparent resource-fork decoding.
 pub(crate) fn is_already_compressed(path: &Path) -> Result<bool, Error> {
     Ok(st_flags(path)? & UF_COMPRESSED != 0)
 }
@@ -176,6 +181,7 @@ fn compress_block_with_codec(src: &[u8], scratch: &mut [u8], codec: Codec) -> Op
     Some(dst)
 }
 
+/// Compute the offset-table size without overflowing addressable memory.
 fn resource_fork_table_len(num_blocks: usize) -> Result<usize, Error> {
     num_blocks
         .checked_add(1)
@@ -199,6 +205,7 @@ fn build_resource_fork_with_codec(raw: &[u8], codec: Codec) -> Result<Option<Vec
     build_resource_fork_with_workers(raw, codec, workers, compress_block_with_codec)
 }
 
+/// Encode blocks in order with bounded worker queues; cancel and join workers on failure.
 fn build_resource_fork_with_workers(
     raw: &[u8],
     codec: Codec,
@@ -461,6 +468,7 @@ fn build_streaming_resource_fork(path: &Path, raw: &[u8]) -> Result<Option<Codec
     Ok(None)
 }
 
+/// Serialize the OS compression header with the codec and original logical size.
 fn decmpfs_header(codec: Codec, raw_len: usize) -> [u8; 16] {
     let mut header = [0u8; 16];
     header[..4].copy_from_slice(&DECMPFS_MAGIC.to_le_bytes());
@@ -469,6 +477,7 @@ fn decmpfs_header(codec: Codec, raw_len: usize) -> [u8; 16] {
     header
 }
 
+/// Write a compression attribute without following symlinks; preserve syscall errors.
 fn setxattr(path: &std::ffi::CStr, name: &std::ffi::CStr, value: &[u8]) -> Result<(), Error> {
     let rc = unsafe {
         libc::setxattr(
@@ -486,6 +495,7 @@ fn setxattr(path: &std::ffi::CStr, name: &std::ffi::CStr, value: &[u8]) -> Resul
     Ok(())
 }
 
+/// Rebuild compression from the supplied snapshot while retaining file permissions.
 pub(crate) fn apply_inplace(path: &Path, snapshot: &[u8]) -> Result<(), Error> {
     // Fail-soft: skip if we can't write the original (by mode or ownership) — the
     // temp+rename below would otherwise replace even a file we can't open for write.
@@ -516,6 +526,7 @@ pub(crate) fn apply_bytes(
     apply_bytes_with_streaming_threshold(path, content, mode, STREAMING_THRESHOLD)
 }
 
+/// Select buffered or streamed resource-fork output before atomically publishing the file.
 fn apply_bytes_with_streaming_threshold(
     path: &Path,
     content: &[u8],

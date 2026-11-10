@@ -104,10 +104,12 @@ pub fn decode_pressed_data(section: &[u8]) -> Option<Vec<u8>> {
     decode_zstd_payload(payload, uncompressed_size)
 }
 
+/// Decode one native-addon frame with the production bulk-allocation threshold.
 fn decode_zstd_payload(payload: &[u8], expected_size: u64) -> Option<Vec<u8>> {
     decode_zstd_payload_with_bulk_limit(payload, expected_size, BULK_DECODE_LIMIT)
 }
 
+/// Reject trailing frames and size mismatches while bounding output and decoder history.
 fn decode_zstd_payload_with_bulk_limit(
     payload: &[u8],
     expected_size: u64,
@@ -151,6 +153,7 @@ fn decode_zstd_payload_with_bulk_limit(
     (raw.len() == expected).then_some(raw)
 }
 
+/// Read a little-endian integer; reject truncated or overflowing offsets.
 fn read_u64_le(buf: &[u8], at: usize) -> Option<u64> {
     let bytes = buf.get(at..at.checked_add(8)?)?;
     let mut arr = [0u8; 8];
@@ -158,6 +161,7 @@ fn read_u64_le(buf: &[u8], at: usize) -> Option<u64> {
     Some(u64::from_le_bytes(arr))
 }
 
+/// Read a little-endian integer; reject truncated or overflowing offsets.
 fn read_u32_le(buf: &[u8], at: usize) -> Option<u32> {
     let bytes = buf.get(at..at.checked_add(4)?)?;
     let mut arr = [0u8; 4];
@@ -165,6 +169,7 @@ fn read_u32_le(buf: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(arr))
 }
 
+/// Read a little-endian integer; reject truncated or overflowing offsets.
 fn read_u16_le(buf: &[u8], at: usize) -> Option<u16> {
     let bytes = buf.get(at..at.checked_add(2)?)?;
     Some(u16::from_le_bytes([bytes[0], bytes[1]]))

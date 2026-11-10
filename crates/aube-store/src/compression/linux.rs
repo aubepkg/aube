@@ -38,6 +38,7 @@ const FIEMAP_EXTENT_ENCODED: u32 = 0x0008;
 // makes writes and renames EPERM).
 const FS_COMPR_FL: libc::c_long = 0x0000_0004;
 
+/// Read the filesystem type used to restrict compression to btrfs.
 fn statfs_type(path: &Path) -> Result<i64, Error> {
     let cpath = cstring(path)?;
     let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
@@ -47,6 +48,7 @@ fn statfs_type(path: &Path) -> Result<i64, Error> {
     Ok(buf.f_type as i64)
 }
 
+/// Read inode flags through the filesystem ioctl.
 fn get_flags(fd: libc::c_int) -> Result<libc::c_long, Error> {
     let mut flags: libc::c_long = 0;
     if unsafe { libc::ioctl(fd, FS_IOC_GETFLAGS as _, &mut flags) } != 0 {
@@ -64,6 +66,7 @@ const PREFERRED_ALGOS: [&[u8]; 3] = [b"zstd", b"lzo", b"zlib"];
 // without a given algo rejects it (EINVAL), so we walk the list; if none take we
 // fall back to the bare FS_COMPR_FL flag (the mount's default codec). Called on the
 // empty temp file so the bytes compress as they're written.
+/// Select a supported codec, falling back to the mount default only if all names are rejected.
 fn request_codec(fd: libc::c_int) -> Result<(), Error> {
     let selected = try_preferred_codec(|algo| {
         let rc = unsafe {
@@ -151,10 +154,12 @@ mod codec_tests {
     }
 }
 
+/// Request compression on the empty file before streaming bytes into it.
 pub(crate) fn prepare_stream(file: &std::fs::File) -> Result<(), Error> {
     request_codec(file.as_raw_fd())
 }
 
+/// Enable the backend only when the path belongs to a btrfs filesystem.
 pub(crate) fn detect(path: &Path) -> Result<Support, Error> {
     if statfs_type(path)? == BTRFS_SUPER_MAGIC {
         Ok(Support::Supported)
@@ -231,6 +236,7 @@ pub(crate) fn compressed_on_disk(path: &Path) -> Result<Option<bool>, Error> {
     Ok(Some(compressed_via_fiemap(path)?))
 }
 
+/// Check whether the inode requests compression for subsequent writes.
 pub(crate) fn is_already_compressed(path: &Path) -> Result<bool, Error> {
     let file = std::fs::File::open(path).map_err(|source| Error::Io {
         context: "open",
@@ -239,6 +245,7 @@ pub(crate) fn is_already_compressed(path: &Path) -> Result<bool, Error> {
     Ok(get_flags(file.as_raw_fd())? & FS_COMPR_FL != 0)
 }
 
+/// Rewrite the existing snapshot atomically, retaining the original permissions.
 pub(crate) fn apply_inplace(path: &Path, snapshot: &[u8]) -> Result<(), Error> {
     // `snapshot` is the file's bytes the caller already read for rollback — reuse
     // it instead of a second full read.

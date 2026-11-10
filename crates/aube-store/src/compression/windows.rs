@@ -110,6 +110,7 @@ fn set_compression(handle: HANDLE) -> Result<(), Error> {
     Ok(())
 }
 
+/// Check whether the containing volume supports per-file compression.
 pub(crate) fn detect(path: &Path) -> Result<Support, Error> {
     let handle = open(path, GENERIC_READ)?;
     let mut flags: u32 = 0;
@@ -135,6 +136,7 @@ pub(crate) fn detect(path: &Path) -> Result<Support, Error> {
     }
 }
 
+/// Read the compressed file attribute, propagating missing-file and access errors.
 pub(crate) fn is_already_compressed(path: &Path) -> Result<bool, Error> {
     let attrs = unsafe { GetFileAttributesW(wide(path).as_ptr()) };
     if attrs == INVALID_FILE_ATTRIBUTES {
@@ -146,6 +148,7 @@ pub(crate) fn is_already_compressed(path: &Path) -> Result<bool, Error> {
 // `_snapshot` is unused on Windows: FSCTL_SET_COMPRESSION flags the EXISTING
 // file in place (the kernel recompresses), so there's no temp+rewrite that would
 // reuse the caller's bytes.
+/// Ask the kernel to compress the existing file through its writable handle.
 pub(crate) fn apply_inplace(path: &Path, _snapshot: &[u8]) -> Result<(), Error> {
     let handle = open(path, GENERIC_READ | GENERIC_WRITE)?;
     set_compression(handle.0)
@@ -185,11 +188,13 @@ fn move_file_replace(tmp: &Path, dest: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Enable compression on an empty file before streaming its contents.
 pub(crate) fn prepare_stream(file: &std::fs::File) -> Result<(), Error> {
     use std::os::windows::io::AsRawHandle;
     set_compression(file.as_raw_handle() as HANDLE)
 }
 
+/// Replace the destination atomically with write-through publication.
 pub(crate) fn publish_stream(tmp: &Path, dest: &Path) -> Result<(), Error> {
     move_file_replace(tmp, dest)
 }
