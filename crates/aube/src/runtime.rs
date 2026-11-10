@@ -541,8 +541,10 @@ pub(crate) fn node_child_path_entries() -> Vec<PathBuf> {
 /// shim dir. Wrappers lead so a local `node` cannot bypass their shim;
 /// selectors follow so package-provided commands keep normal precedence.
 /// Startup strips that dir from aube's own `PATH`, so it is restored here.
-/// It sits ahead of a selected runtime's bin dir, which ships a real `npm`,
-/// but behind project bins and wrapper runtimes.
+/// It sits ahead of an aube-selected runtime's bin dir, which ships a real
+/// `npm`, but behind project bins and wrapper runtimes. A host-supplied
+/// selector keeps its bin dir first: the shim dir also holds `node`, which
+/// would re-resolve the project pin instead of the host's chosen Node.
 pub fn user_command_path_entries(project_bins: Vec<PathBuf>) -> Vec<PathBuf> {
     let shim_dir = crate::tool_shims::activated_shim_dir();
     let Some(context) = current() else {
@@ -554,6 +556,10 @@ pub fn user_command_path_entries(project_bins: Vec<PathBuf>) -> Vec<PathBuf> {
     match context.bin_dir.as_deref() {
         Some(runtime) if context.bin_dir_precedes_project_bins => {
             entries.insert(0, runtime.to_path_buf());
+            entries.extend(shim_dir);
+        }
+        Some(runtime) if context.provenance == RuntimeProvenance::Embedder => {
+            entries.push(runtime.to_path_buf());
             entries.extend(shim_dir);
         }
         Some(runtime) => {
