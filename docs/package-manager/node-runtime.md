@@ -89,6 +89,11 @@ the project runtime and execs the selected Node. The `npm`, `npx`,
 commands to aube, so an accidental `pnpm install` in a project with a
 different existing lockfile still lets aube preserve that lockfile kind.
 
+The shims stay on `PATH` for commands that aube starts for you: package
+scripts, `aube run <bin>`, `aube exec`, and `aube dlx` / `aubx`. A tool
+launched through any of them that runs `npm install` reaches the aube shim
+rather than the real npm.
+
 ## `onFail` policy
 
 `devEngines.runtime.onFail` controls what happens when no satisfying

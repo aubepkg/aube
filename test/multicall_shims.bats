@@ -52,3 +52,21 @@ teardown() {
 	assert_success
 	assert_output --partial "/node"
 }
+
+@test "aube exec and run <bin> keep the activated tool shim dir on PATH" {
+	_skip_on_windows "uses a POSIX shell bin"
+	_setup_basic_fixture
+	aube install
+	mkdir -p shims node_modules/.bin
+	printf '#!/bin/sh\n' >shims/npm
+	chmod +x shims/npm
+	printf '#!/bin/sh\ncommand -v npm\n' >node_modules/.bin/whichnpm
+	chmod +x node_modules/.bin/whichnpm
+	export AUBE_SHIM_DIR="$PWD/shims"
+	run aube exec whichnpm
+	assert_success
+	assert_output "$PWD/shims/npm"
+	run aube run whichnpm
+	assert_success
+	assert_output "$PWD/shims/npm"
+}
