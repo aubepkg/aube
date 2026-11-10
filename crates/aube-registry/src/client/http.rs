@@ -577,7 +577,7 @@ mod tests {
 
     /// A throwaway CA plus a loopback HTTPS listener whose leaf chains
     /// only to it. Neither the OS trust store nor the webpki bundle
-    /// `with_webpki_root_fallback` merges in issued this chain, so a
+    /// `with_webpki_root_fallback` can merge in issued this chain, so a
     /// completed handshake against the listener is proof that the CA
     /// reached the client through `NODE_EXTRA_CA_CERTS`.
     struct PrivateCaServer {

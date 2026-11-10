@@ -92,6 +92,7 @@ pub const WARN_AUBE_INVALID_CA: &str = "WARN_AUBE_INVALID_CA";
 pub const WARN_AUBE_INVALID_CAFILE: &str = "WARN_AUBE_INVALID_CAFILE";
 pub const WARN_AUBE_UNREADABLE_CAFILE: &str = "WARN_AUBE_UNREADABLE_CAFILE";
 pub const WARN_AUBE_INVALID_CLIENT_CERT: &str = "WARN_AUBE_INVALID_CLIENT_CERT";
+pub const WARN_AUBE_BUNDLED_ROOTS_FALLBACK: &str = "WARN_AUBE_BUNDLED_ROOTS_FALLBACK";
 
 // ── resolver ────────────────────────────────────────────────────────
 pub const WARN_AUBE_UNSUPPORTED_PLATFORM_INSTALL: &str = "WARN_AUBE_UNSUPPORTED_PLATFORM_INSTALL";
@@ -537,6 +538,12 @@ pub const ALL: &[CodeMeta] = &[
         name: WARN_AUBE_INVALID_CLIENT_CERT,
         category: category::REGISTRY_TLS,
         description: "Per-registry client `cert`/`key` PEM pair didn't parse.",
+        exit_code: None,
+    },
+    CodeMeta {
+        name: WARN_AUBE_BUNDLED_ROOTS_FALLBACK,
+        category: category::REGISTRY_TLS,
+        description: "The system trust store yielded no CA certificates (minimal container without `ca-certificates`, or `SSL_CERT_FILE`/`SSL_CERT_DIR` naming nothing readable), so aube trusts its bundled Mozilla roots instead. Never emitted when any system root loads.",
         exit_code: None,
     },
     // Resolver
